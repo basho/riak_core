@@ -23,7 +23,7 @@
 %% @doc incoming data handler for TCP-based handoff
 
 -module(riak_core_handoff_receiver).
--include_lib("riak_core/include/riak_core_handoff.hrl").
+-include_lib("riak_core_handoff.hrl").
 -behaviour(gen_server2).
 -export([start_link/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,

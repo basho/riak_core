@@ -18,7 +18,7 @@
 %% -------------------------------------------------------------------
 -module(riak_core_vnode).
 -behaviour(gen_fsm).
--include_lib("riak_core/include/riak_core_vnode.hrl").
+-include_lib("riak_core_vnode.hrl").
 -export([behaviour_info/1]).
 -export([start_link/2,
          send_command/2,

@@ -1,0 +1,5 @@
+syntax regex
+.*~
+^ebin/.*.beam
+include/riak_core_pb.hrl
+^.eunit

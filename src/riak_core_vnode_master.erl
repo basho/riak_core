@@ -23,7 +23,7 @@
 %% @doc dispatch to vnodes
 
 -module(riak_core_vnode_master).
--include_lib("riak_core/include/riak_core_vnode.hrl").
+-include_lib("riak_core_vnode.hrl").
 -behaviour(gen_server).
 -export([start_link/1, start_link/2, get_vnode_pid/2,
          start_vnode/2, command/3, command/4, sync_command/3,
