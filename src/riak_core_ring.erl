@@ -192,7 +192,8 @@ rename_node(State=#chstate{chring=Ring, nodename=ThisNode}, OldNode, NewNode)
                            _ -> AccIn
                        end
                end, Ring, riak_core_ring:all_owners(State)),
-      nodename=case ThisNode of OldNode -> NewNode; _ -> ThisNode end}.
+      nodename=case ThisNode of OldNode -> NewNode; _ -> ThisNode end,
+      vclock=vclock:increment(NewNode, State#chstate.vclock)}.
 
 ancestors(RingStates) ->
     Ancest = [[O2 || O2 <- RingStates,
