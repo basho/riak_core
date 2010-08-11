@@ -36,7 +36,7 @@ remove_exclusion(Module, Index) ->
     gen_server:cast(?MODULE, {del_exclusion, {Module, Index}}).    
 
 get_exclusions(Module) ->
-    gen_server:call(?MODULE, {get_exclusions, Module}).
+    gen_server:call(?MODULE, {get_exclusions, Module}, infinity).
 
 get_handoff_lock(LockId) ->
     TokenCount = app_helper:get_env(riak_core, handoff_concurrency, 4),

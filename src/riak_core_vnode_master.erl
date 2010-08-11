@@ -54,7 +54,7 @@ start_vnode(Index, VNodeMod) ->
 
 get_vnode_pid(Index, VNodeMod) ->
     RegName = reg_name(VNodeMod),
-    gen_server:call(RegName, {Index, get_vnode}).
+    gen_server:call(RegName, {Index, get_vnode}, infinity).
     
 command(Preflist, Msg, VMaster) ->
     command(Preflist, Msg, noreply, VMaster).
@@ -103,7 +103,7 @@ make_request(Request, Sender, Index) ->
 %% Request a list of Pids for all vnodes 
 all_nodes(VNodeMod) ->
     RegName = reg_name(VNodeMod),
-    gen_server:call(RegName, all_nodes).
+    gen_server:call(RegName, all_nodes, infinity).
 
 %% @private
 init([VNodeMod, LegacyMod, RegName]) ->

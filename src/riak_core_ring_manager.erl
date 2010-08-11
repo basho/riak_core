@@ -70,7 +70,7 @@ get_my_ring() ->
 
 %% @spec set_my_ring(riak_core_ring:riak_core_ring()) -> ok
 set_my_ring(Ring) ->
-    gen_server2:call(?MODULE, {set_my_ring, Ring}).
+    gen_server2:call(?MODULE, {set_my_ring, Ring}, infinity).
 
 
 %% @spec write_ringfile() -> ok
@@ -78,7 +78,7 @@ write_ringfile() ->
     gen_server2:cast(?MODULE, write_ringfile).
 
 ring_trans(Fun, Args) ->
-    gen_server2:call(?MODULE, {ring_trans, Fun, Args}).
+    gen_server2:call(?MODULE, {ring_trans, Fun, Args}, infinity).
 
 
 do_write_ringfile(Ring) ->
