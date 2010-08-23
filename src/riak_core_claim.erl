@@ -57,7 +57,12 @@
 -export([default_choose_claim/2,
          claim_rebalance_n/2]).
 
+-ifdef(TEST).
+-ifdef(EQC).
+-include_lib("eqc/include/eqc.hrl").
+-endif.
 -include_lib("eunit/include/eunit.hrl").
+-endif.
 
 %% @spec default_wants_claim(riak_core_ring()) -> {yes, integer()} | no
 %% @doc Want a partition if we currently have less than floor(ringsize/nodes).
@@ -229,7 +234,14 @@ random_choose_claim(Ring) ->
 %% @doc For use by nodes that should not claim any partitions.
 never_wants_claim(_) -> no.
 
+
+%% ===================================================================
+%% Unit tests
+%% ===================================================================
+-ifdef(TEST).
+
 wants_claim_test() ->
+    riak_core_ring_events:start_link(),
     riak_core_ring_manager:start_link(test),
     riak_core_test_util:setup_mockring1(),
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -259,3 +271,5 @@ find_biggest_hole_test() ->
     ?assertEqual({Part16*13, Part16*3},
                  find_biggest_hole([Part16*3, Part16*7,
                                     Part16*10, Part16*13])).
+
+-endif. % TEST
