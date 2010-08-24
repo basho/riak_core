@@ -67,8 +67,11 @@
 %% @spec default_wants_claim(riak_core_ring()) -> {yes, integer()} | no
 %% @doc Want a partition if we currently have less than floor(ringsize/nodes).
 default_wants_claim(Ring) ->
+    default_wants_claim(Ring, node()).
+
+default_wants_claim(Ring, Node) ->
     NumPart = riak_core_ring:num_partitions(Ring),
-    NumOwners = length(lists:usort([node() | riak_core_ring:all_members(Ring)])),
+    NumOwners = length(lists:usort([Node | riak_core_ring:all_members(Ring)])),
     Mine = length(riak_core_ring:my_indices(Ring)),
     Want = trunc(NumPart / NumOwners) - Mine,
     case Want > 0 of 
@@ -272,4 +275,49 @@ find_biggest_hole_test() ->
                  find_biggest_hole([Part16*3, Part16*7,
                                     Part16*10, Part16*13])).
 
+-ifdef(EQC).
+
+
+-define(QC_OUT(P),
+        eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
+
+-define(POW_2(N), trunc(math:pow(2, N))).
+
+test_nodes(Count) ->
+    [node() | [list_to_atom(lists:concat(["n_", N])) || N <- lists:seq(1, Count-1)]].
+
+prop_claim_ensures_unique_nodes_test_() ->
+    Prop = eqc:numtests(250, ?QC_OUT(prop_claim_ensures_unique_nodes())),
+    {timeout, 120, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
+
+prop_claim_ensures_unique_nodes() ->
+    ?FORALL({PartsPow, NodeCount}, {choose(4, 9), choose(3, 15)},
+            begin
+                Nval = 3,
+                application:set_env(riak_core, target_n_val, Nval + 1),
+
+                Partitions = ?POW_2(PartsPow),
+                [Node0 | RestNodes] = test_nodes(NodeCount),
+
+                R0 = riak_core_ring:fresh(Partitions, Node0),
+                Rfinal = lists:foldl(fun(Node, Racc) ->
+                                             default_choose_claim(Racc, Node)
+                                     end, R0, RestNodes),
+
+                Preflists = riak_core_ring:all_preflists(Rfinal, Nval),
+                Counts = orddict:to_list(
+                           lists:foldl(fun(PL,Acc) ->
+                                               PLNodes = lists:usort([N || {_,N} <- PL]),
+                                               case length(PLNodes) of
+                                                   Nval ->
+                                                       Acc;
+                                                   _ ->
+                                                       ordsets:add_element(PL, Acc)
+                                               end
+                                       end, [], Preflists)),
+                ?assertEqual([], Counts),
+                true
+            end).
+
+-endif. % EQC
 -endif. % TEST
