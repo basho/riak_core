@@ -24,7 +24,9 @@
 %% -------------------------------------------------------------------
 -module(riak_core_apl).
 -export([active_owners/1, active_owners/2,
-         get_apl/3, get_apl/4]).
+         get_apl/3, get_apl/4,
+         get_primary_apl/3, get_primary_apl/4
+        ]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -65,6 +67,21 @@ get_apl(DocIdx, N, Ring, UpNodes) ->
     {Primaries, Fallbacks} = lists:split(N, Preflist),
     {Up, Pangs} = check_up(Primaries, UpNodes1, [], []),
     lists:reverse(Up) ++ find_fallbacks(Pangs, Fallbacks, UpNodes1, []).
+
+%% Same as get_apl, but returns only the primaries.
+-spec get_primary_apl(binary(), n_val(), atom()) -> preflist().
+get_primary_apl(DocIdx, N, Service) ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    get_primary_apl(DocIdx, N, Ring, riak_core_node_watcher:nodes(Service)).
+
+%% Same as get_apl, but returns only the primaries.
+-spec get_primary_apl(binary(), n_val(), ring(), [node()]) -> preflist().
+get_primary_apl(DocIdx, N, Ring, UpNodes) ->
+    UpNodes1 = ordsets:from_list(UpNodes),
+    Preflist = riak_core_ring:preflist(DocIdx, Ring),
+    {Primaries, _} = lists:split(N, Preflist),
+    {Up, _} = check_up(Primaries, UpNodes1, [], []),
+    lists:reverse(Up).
 
 %% Split a preference list into up and down lists
 -spec check_up(preflist(), [node()], preflist(), preflist()) -> {preflist(), preflist()}.
