@@ -45,5 +45,5 @@ register_vnode_module(VNodeMod) when is_atom(VNodeMod)  ->
         {ok, Mods} ->
             application:set_env(riak_core, vnode_modules, [VNodeMod|Mods])
     end,
-    riak_core_ring_events:force_update().
+    riak_core_ring_events:force_sync_update().
     
