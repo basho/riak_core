@@ -88,7 +88,7 @@ random_other_index(State) ->
     L = [I || {I,Owner} <- ?MODULE:all_owners(State), Owner =/= node()],
     case L of
         [] -> hd(my_indices(State));
-        _ -> lists:nth(crypto:rand_uniform(1, length(L)+1), L)
+        _ -> lists:nth(random:uniform(length(L)), L)
     end.
 
 -spec random_other_index(State :: chstate(), Exclude :: [term()]) -> integer() | no_indices.
@@ -98,7 +98,7 @@ random_other_index(State, Exclude) when is_list(Exclude) ->
               not lists:member(I, Exclude)],
     case L of
         [] -> no_indices;
-        _ -> lists:nth(crypto:rand_uniform(1, length(L)+1), L)
+        _ -> lists:nth(random:uniform(length(L)), L)
     end.
 
 % @doc Return the node that owns the given index.
@@ -120,7 +120,7 @@ all_members(State) ->
 -spec random_node(State :: chstate()) -> Node :: term().
 random_node(State) ->
     L = all_members(State),
-    lists:nth(crypto:rand_uniform(1, length(L)+1), L).
+    lists:nth(random:uniform(length(L)), L).
 
 % @doc Return a randomly-chosen node from amongst the owners other than this one.
 -spec random_other_node(State :: chstate()) -> Node :: term() | no_node.
@@ -129,7 +129,7 @@ random_other_node(State) ->
         [] ->
             no_node;
         L ->
-            lists:nth(crypto:rand_uniform(1, length(L)+1), L)
+            lists:nth(random:uniform(length(L)), L)
     end.
 
 % @doc Provide all ownership information in the form of {Index,Node} pairs.

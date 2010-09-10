@@ -233,8 +233,7 @@ attempt_simple_transfer(Ring, [{P, Exit}|Rest], TargetN, Exit, Idx, Last) ->
                     target_n_fail;
                 Qualifiers ->
                     %% these nodes don't violate target_n forward
-                    Chosen = lists:nth(crypto:rand_uniform(
-                                         1, length(Qualifiers)+1),
+                    Chosen = lists:nth(random:uniform(length(Qualifiers)),
                                        Qualifiers),
                     %% choose one, and do the rest of the ring
                     attempt_simple_transfer(

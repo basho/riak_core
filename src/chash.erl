@@ -164,7 +164,7 @@ merge_rings(CHashA,CHashB) ->
 
 % @spec randomnode(NodeA :: node(), NodeB :: node()) -> node()
 randomnode(NodeA,NodeA) -> NodeA;
-randomnode(NodeA,NodeB) -> lists:nth(crypto:rand_uniform(1,3),[NodeA,NodeB]).
+randomnode(NodeA,NodeB) -> lists:nth(random:uniform(2),[NodeA,NodeB]).
 
 % @doc Return the number of partitions in the ring.
 % @spec size(CHash :: chash()) -> integer()
