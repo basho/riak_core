@@ -70,13 +70,30 @@ default_wants_claim(Ring) ->
     default_wants_claim(Ring, node()).
 
 default_wants_claim(Ring, Node) ->
-    NumPart = riak_core_ring:num_partitions(Ring),
-    NumOwners = length(lists:usort([Node | riak_core_ring:all_members(Ring)])),
-    Mine = length(riak_core_ring:my_indices(Ring)),
-    Want = trunc(NumPart / NumOwners) - Mine,
-    case Want > 0 of 
-        true -> {yes, Want};
-        false -> no
+    %% Determine how many nodes are involved with the ring; if the requested
+    %% node is not yet part of the ring, include it in the count.
+    AllMembers = riak_core_ring:all_members(Ring),
+    case lists:member(Node, AllMembers) of
+        true ->
+            Mval = length(AllMembers);
+        false ->
+            Mval = length(AllMembers) + 1
+    end,
+
+    %% Calculate the expected # of partitions for a perfectly balanced ring. Use
+    %% this expectation to determine the relative balance of the ring. If the
+    %% ring isn't within +-2 partitions on all nodes, we need to rebalance.
+    ExpParts = riak_core_ring:num_partitions(Ring) div Mval,
+    PCounts = lists:foldl(fun({_Index, ANode}, Acc) ->
+                                  orddict:update_counter(ANode, 1, Acc)
+                          end, [{Node, 0}], riak_core_ring:all_owners(Ring)),
+    RelativeCounts = [I - ExpParts || {_ANode, I} <- PCounts],
+    WantsClaim = (lists:min(RelativeCounts) < -2) or (lists:max(RelativeCounts) > 2),
+    case WantsClaim of
+        true ->
+            {yes, 0};
+        false ->
+            no
     end.
 
 %% @spec default_choose_claim(riak_core_ring()) -> riak_core_ring()
