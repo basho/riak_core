@@ -50,7 +50,7 @@ behaviour_info(callbacks) ->
 behaviour_info(_Other) ->
     undefined.
 
--define(TIMEOUT, 60000).
+-define(DEFAULT_TIMEOUT, 60000).
 -define(LOCK_RETRY_TIMEOUT, 10000).
 -define(MODSTATE, State#state{mod=Mod,modstate=ModState}).
 -record(state, {
@@ -58,7 +58,8 @@ behaviour_info(_Other) ->
           mod :: module(),
           modstate :: term(),
           handoff_token :: non_neg_integer(),
-          handoff_node=none :: none | node()}).
+          handoff_node=none :: none | node(),
+          inactivity_timeout}).
 
 start_link(Mod, Index) ->
     gen_fsm:start_link(?MODULE, [Mod, Index], []).
@@ -80,13 +81,15 @@ init([Mod, Index]) ->
     process_flag(trap_exit, true),
     {ok, ModState} = Mod:init([Index]),
     riak_core_handoff_manager:remove_exclusion(Mod, Index),
-    {ok, active, #state{index=Index, mod=Mod, modstate=ModState}, 0}.
+    Timeout = app_helper:get_env(riak_core, vnode_inactivity_timeout, ?DEFAULT_TIMEOUT),
+    {ok, active, #state{index=Index, mod=Mod, modstate=ModState,
+                        inactivity_timeout=Timeout}, 0}.
 
 get_mod_index(VNode) ->
     gen_fsm:sync_send_all_state_event(VNode, get_mod_index).
 
 continue(State) ->
-    {next_state, active, State, ?TIMEOUT}.
+    {next_state, active, State, State#state.inactivity_timeout}.
 
 continue(State, NewModState) ->
     continue(State#state{modstate=NewModState}).
@@ -154,26 +157,28 @@ active(handoff_complete, State=#state{mod=Mod,
 
 active(_Event, _From, State) ->
     Reply = ok,
-    {reply, Reply, active, State, ?TIMEOUT}.
+    {reply, Reply, active, State, State#state.inactivity_timeout}.
 
 handle_event(R=?VNODE_REQ{}, _StateName, State) ->
     active(R, State).
 
 handle_sync_event(get_mod_index, _From, StateName,
                   State=#state{index=Idx,mod=Mod}) ->
-    {reply, {Mod, Idx}, StateName, State, ?TIMEOUT};
+    {reply, {Mod, Idx}, StateName, State, State#state.inactivity_timeout};
 handle_sync_event({handoff_data,BinObj}, _From, StateName, 
                   State=#state{mod=Mod, modstate=ModState}) ->
     case Mod:handle_handoff_data(BinObj, ModState) of
         {reply, ok, NewModState} ->
-            {reply, ok, StateName, State#state{modstate=NewModState}, ?TIMEOUT};
+            {reply, ok, StateName, State#state{modstate=NewModState},
+             State#state.inactivity_timeout};
         {reply, {error, Err}, NewModState} ->
             error_logger:error_msg("Error storing handoff obj: ~p~n", [Err]),            
-            {reply, {error, Err}, StateName, State#state{modstate=NewModState}, ?TIMEOUT}
+            {reply, {error, Err}, StateName, State#state{modstate=NewModState}, 
+             State#state.inactivity_timeout}
     end.
 
 handle_info(_Info, StateName, State) ->
-    {next_state, StateName, State, ?TIMEOUT}.
+    {next_state, StateName, State, State#state.inactivity_timeout}.
 
 terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState}) ->
     Mod:terminate(Reason, ModState),

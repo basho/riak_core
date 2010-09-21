@@ -80,6 +80,10 @@
                                  {postcommit, []},
                                  {chash_keyfun, {riak_core_util, chash_std_keyfun}}]},
 
+         %% Vnode inactivity timeout (how often to check if fallback vnodes
+         %% should return their data) in ms.
+         {vnode_inactivity_timeout, 60000},
+         
          %% Number of VNodes allowed to do handoff concurrently.
          {handoff_concurrency, 4},
 
