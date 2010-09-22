@@ -57,14 +57,17 @@ start_fold(TargetNode, Module, Partition, ParentPid) ->
          {ok,[?PT_MSG_OLDSYNC|<<"sync">>]} = gen_tcp:recv(Socket, 0),
          M = <<?PT_MSG_INIT:8,Partition:160/integer>>,
          ok = gen_tcp:send(Socket, M),
+         StartFoldTime = now(),
          {Socket,ParentPid,Module,_Ack,SentCount} = 
              riak_core_vnode_master:sync_command({Partition, node()},
                                                  ?FOLD_REQ{
                                                     foldfun=fun visit_item/3,
                                                     acc0={Socket,ParentPid,Module,0,0}},
                                                  VMaster, infinity),
-         error_logger:info_msg("Handoff of partition ~p ~p to ~p completed: sent ~p objects~n", 
-                               [Module, Partition, TargetNode, SentCount]),
+         EndFoldTime = now(),
+         error_logger:info_msg("Handoff of partition ~p ~p to ~p completed: sent ~p objects in ~.2f seconds", 
+                               [Module, Partition, TargetNode, SentCount,
+                                timer:now_diff(EndFoldTime, StartFoldTime) / 1000000]),
          gen_fsm:send_event(ParentPid, handoff_complete)
          %% Socket will be closed when this process exits
      catch
