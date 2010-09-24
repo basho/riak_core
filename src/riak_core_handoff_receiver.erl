@@ -43,15 +43,25 @@ init([Socket]) ->
     inet:setopts(Socket, [{active, once}, {packet, 4}, {header, 1}]),
     {ok, #state{sock=Socket, count=0}}.
 
-handle_info({tcp_closed,Socket},State=#state{sock=Socket,partition=Partition,count=Count}) ->
+handle_info({tcp_closed,_Socket},State=#state{partition=Partition,count=Count}) ->
     error_logger:info_msg("Handoff receiver for partition ~p exiting after processing ~p"
                           " objects~n", [Partition, Count]),
     {stop, normal, State};
-handle_info({tcp, _Sock, Data}, State=#state{sock=Socket}) ->
+handle_info({tcp_error, _Socket, _Reason}, State=#state{partition=Partition,count=Count}) ->
+    error_logger:info_msg("Handoff receiver for partition ~p exiting after processing ~p"
+                          " objects~n", [Partition, Count]),
+    {stop, normal, State};
+handle_info({tcp, _Socket, Data}, State) ->
     [MsgType|MsgData] = Data,
-    NewState = process_message(MsgType,MsgData,State),
-    inet:setopts(Socket, [{active, once}]),
-    {noreply, NewState}.
+    case catch(process_message(MsgType, MsgData, State)) of
+        {'EXIT', Reason} ->
+            error_logger:error_msg("Handoff receiver for partition ~p exiting abnormally after "
+                                   "processing ~p objects: ~p\n", [State#state.count, Reason]),
+            {stop, normal, State};
+        NewState when is_record(NewState, state) ->
+            {noreply, NewState}
+    end.
+
 
 process_message(?PT_MSG_INIT, MsgData, State=#state{vnode_mod=VNodeMod}) ->
     <<Partition:160/integer>> = MsgData,
