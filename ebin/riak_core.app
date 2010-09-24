@@ -1,9 +1,9 @@
 %% -*- tab-width: 4;erlang-indent-level: 4;indent-tabs-mode: nil -*-
 %% ex: ts=4 sw=4 et
 {application, riak_core,
- [
+[
   {description, "Riak Core"},
-  {vsn, "0.13.0rc1"},
+  {vsn, "0.13.0rc2"},
   {modules, [
              app_helper,
              bloom,
