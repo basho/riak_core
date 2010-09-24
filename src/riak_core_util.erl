@@ -40,6 +40,9 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
+%% R14 Compatibility
+-compile({no_auto_import,[integer_to_list/2]}).
+
 %% ===================================================================
 %% Public API
 %% ===================================================================
