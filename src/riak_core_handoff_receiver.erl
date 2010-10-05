@@ -58,7 +58,7 @@ handle_info({tcp_error, _Socket, _Reason}, State=#state{partition=Partition,coun
     error_logger:info_msg("Handoff receiver for partition ~p exiting after processing ~p"
                           " objects~n", [Partition, Count]),
     {stop, normal, State};
-handle_info({tcp, _Socket, Data}, State) ->
+handle_info({tcp, Socket, Data}, State) ->
     [MsgType|MsgData] = Data,
     case catch(process_message(MsgType, MsgData, State)) of
         {'EXIT', Reason} ->
@@ -66,6 +66,7 @@ handle_info({tcp, _Socket, Data}, State) ->
                                    "processing ~p objects: ~p\n", [State#state.count, Reason]),
             {stop, normal, State};
         NewState when is_record(NewState, state) ->
+            inet:setopts(Socket, [{active, once}]),
             {noreply, NewState}
     end.
 
@@ -77,22 +78,22 @@ process_message(?PT_MSG_INIT, MsgData, State=#state{vnode_mod=VNodeMod}) ->
     State#state{partition=Partition, vnode=VNode};
 process_message(?PT_MSG_OBJ, MsgData, State=#state{vnode=VNode, count=Count}) ->
     Msg = {handoff_data, MsgData},
-    ok = gen_fsm:sync_send_all_state_event(VNode, Msg, 60000),
+    gen_fsm:sync_send_all_state_event(VNode, Msg, 60000),
     State#state{count=Count+1};
 process_message(?PT_MSG_OLDSYNC, MsgData, State=#state{sock=Socket}) ->
-    ok = gen_tcp:send(Socket, <<?PT_MSG_OLDSYNC:8,"sync">>),
+    gen_tcp:send(Socket, <<?PT_MSG_OLDSYNC:8,"sync">>),
     <<VNodeModBin/binary>> = MsgData,
     VNodeMod = binary_to_atom(VNodeModBin, utf8),
     State#state{vnode_mod=VNodeMod};
 process_message(?PT_MSG_SYNC, _MsgData, State=#state{sock=Socket}) ->
-    ok = gen_tcp:send(Socket, <<?PT_MSG_SYNC:8, "sync">>),
+    gen_tcp:send(Socket, <<?PT_MSG_SYNC:8, "sync">>),
     State;
 process_message(?PT_MSG_CONFIGURE, MsgData, State) ->
     ConfProps = binary_to_term(MsgData),
     State#state{vnode_mod=proplists:get_value(vnode_mod, ConfProps),
                 partition=proplists:get_value(partition, ConfProps)};
 process_message(_, _MsgData, State=#state{sock=Socket}) ->
-    ok = gen_tcp:send(Socket, <<255:8,"unknown_msg">>),
+    gen_tcp:send(Socket, <<255:8,"unknown_msg">>),
     State.
 
 handle_cast(_Msg, State) -> {noreply, State}.
