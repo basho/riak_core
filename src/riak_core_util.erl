@@ -34,7 +34,8 @@
          chash_std_keyfun/1,
          chash_bucketonly_keyfun/1,
          mkclientid/1,
-         start_app_deps/1]).
+         start_app_deps/1,
+         rpc_every_member/4]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -213,6 +214,15 @@ ensure_started(App) ->
 	    ok
     end.
 
+%% @spec rpc_every_member(atom(), atom(), [term()], integer()|infinity)
+%%          -> {Results::[term()], BadNodes::[node()]}
+%% @doc Make an RPC call to the given module and function on each
+%%      member of the cluster.  See rpc:multicall/5 for a description
+%%      of the return value.
+rpc_every_member(Module, Function, Args, Timeout) ->
+    {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
+    Nodes = riak_core_ring:all_members(MyRing),
+    rpc:multicall(Nodes, Module, Function, Args, Timeout).
 
 %% ===================================================================
 %% EUnit tests
