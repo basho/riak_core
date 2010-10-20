@@ -30,10 +30,10 @@ assign(Partition, ToNode) ->
     F = fun(Ring, _) ->
                 {new_ring, riak_core_ring:transfer_node(Partition, ToNode, Ring)}
         end,
-    {ok, _} = riak_core_ring_manager:ring_trans(F, undefined),
+    {ok, NewRing} = riak_core_ring_manager:ring_trans(F, undefined),
     %% TODO: ring_trans really should kick off a write of the ringfile, but
     %% currently doesn't. Do so manually.
-    riak_core_ring_manager:do_write_ringfile(),
+    riak_core_ring_manager:do_write_ringfile(NewRing),
     ok.
 
 %% @doc Check the local ring for any preflists that do not satisfy n_val
