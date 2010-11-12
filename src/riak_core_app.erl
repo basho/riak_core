@@ -46,6 +46,10 @@ start(_StartType, _StartArgs) ->
             throw({error, invalid_ring_state_dir})
     end,
 
+    %% Register our cluster_info app callback modules, with catch if
+    %% the app is missing or packaging is broken.
+    catch cluster_info:register_app(riak_core_cinfo_basic),
+
     %% Spin up the supervisor; prune ring files as necessary
     case riak_core_sup:start_link() of
         {ok, Pid} ->
