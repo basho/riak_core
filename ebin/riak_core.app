@@ -40,6 +40,7 @@
              riak_core_vnode_master,
              riak_core_vnode_sup,
              riak_core_web,
+             riak_core_wm_urlmap,
              slide,
              spiraltime,
              vclock
