@@ -33,17 +33,43 @@
 %%</dd></dl>
 -module(riak_core_web).
 
--export([config/0]).
+-export([bindings/1]).
 
-%% @spec config() -> [{Key :: atom(), Value :: term()}]
-%% @doc Returns the standard Webmachine configuration.
-%%      pass the return of this function to
-%%      webmachine_mochiweb:start/1 to start up a Webmachine
-%%      resource serving out of
-%%      http://{web_ip}:{web_port}/raw/
-config() ->
-    [{ip, app_helper:get_env(riak_core, web_ip)},
-     {port, app_helper:get_env(riak_core, web_port)},
-     {log_dir, app_helper:get_env(riak_core, web_logdir, "log")},
-     {backlog, 128},
-     {dispatch, []}].
+bindings(Scheme) ->
+  Pairs = app_helper:get_env(riak_core, Scheme, []),
+  [binding_config(Scheme, Pair) || Pair <- Pairs].
+
+binding_config(Scheme, Binding) ->
+  {Ip, Port} = Binding,
+  Name = spec_name(Scheme, Ip, Port),
+  Config = spec_from_binding(Scheme, Name, Binding),
+  
+  {Name,
+    {webmachine_mochiweb, start, [Config]},
+      permanent, 5000, worker, dynamic}.
+  
+spec_from_binding(http, Name, Binding) ->
+  {Ip, Port} = Binding,
+  lists:flatten([{name, Name},
+                  {ip, Ip},
+                  {port, Port}],
+                  common_config());
+
+spec_from_binding(https, Name, Binding) ->
+  {Ip, Port} = Binding,
+  SslOpts = app_helper:get_env(riak_core, ssl,
+                     [{certfile, "etc/cert.pem"}, {keyfile, "etc/key.pem"}]),
+  lists:flatten([{name, Name},
+                  {ip, Ip},
+                  {port, Port},
+                  {ssl, true},
+                  {ssl_opts, SslOpts}],
+                  common_config()).
+
+spec_name(Scheme, Ip, Port) ->
+  atom_to_list(Scheme) ++ "_" ++ Ip ++ ":" ++ integer_to_list(Port).
+
+common_config() ->
+  [{log_dir, app_helper:get_env(riak_core, http_logdir, "log")},
+    {backlog, 128},
+    {dispatch, []}].
