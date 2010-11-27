@@ -265,7 +265,7 @@ wants_claim_test() ->
     riak_core_ring_manager:start_link(test),
     riak_core_test_util:setup_mockring1(),
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    ?assertEqual(yes, erlang:element(1,default_wants_claim(Ring))),
+    ?assertEqual(no, default_wants_claim(Ring)),
     riak_core_ring_manager:stop().
 
 find_biggest_hole_test() ->
