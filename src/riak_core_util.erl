@@ -229,7 +229,6 @@ rpc_every_member(Module, Function, Args, Timeout) ->
 %% ===================================================================
 -ifdef(TEST).
 
-%% @spec moment_test() -> boolean()
 moment_test() ->
     M1 = riak_core_util:moment(),
     M2 = riak_core_util:moment(),
