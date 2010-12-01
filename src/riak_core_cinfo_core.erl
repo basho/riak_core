@@ -40,7 +40,8 @@ cluster_info_generator_funs() ->
     [
      {"Riak Core vnode modules", fun vnode_modules/1},
      {"Riak Core ring", fun get_my_ring/1},
-     {"Riak Core latest ring file", fun latest_ringfile/1}
+     {"Riak Core latest ring file", fun latest_ringfile/1},
+     {"Riak Core active partitions", fun active_partitions/1}
     ].
 
 vnode_modules(CPid) -> % CPid is the data collector's pid.
@@ -55,4 +56,12 @@ latest_ringfile(CPid) ->
     {ok, Contents} = file:read_file(Path),
     cluster_info:format(CPid, "Latest ringfile: ~s\n", [Path]),
     cluster_info:format(CPid, "File contents:\n~p\n", [binary_to_term(Contents)]).
+
+active_partitions(CPid) ->
+    Pids = [Pid || {_,Pid,_,_} <- supervisor:which_children(riak_core_vnode_sup)],
+    Vnodes = [riak_core_vnode:get_mod_index(Pid) || Pid <- Pids],
+    Partitions = lists:foldl(fun({_,P}, Ps) -> 
+                                     ordsets:add_element(P, Ps)
+                             end, ordsets:new(), Vnodes),
+    cluster_info:format(CPid, "~p\n", [Partitions]).
 
