@@ -33,11 +33,33 @@
 %%</dd></dl>
 -module(riak_core_web).
 
--export([bindings/1]).
+-export([bindings/1,
+         old_binding/0]).
 
 bindings(Scheme) ->
   Pairs = app_helper:get_env(riak_core, Scheme, []),
   [binding_config(Scheme, Pair) || Pair <- Pairs].
+
+%% read the old, unwrapped web_ip and web_port config
+old_binding() ->
+    case {app_helper:get_env(riak_core, web_ip),
+          app_helper:get_env(riak_core, web_port)} of
+        {IP, Port} when IP /= undefined,
+                        Port /= undefined ->
+            error_logger:warning_msg(
+              "app.config is using old-style {web_ip, ~p} and"
+              " {web_port, ~p} settings in its riak_core configuration.~n"
+              "These are now deprecated, and will be removed in a"
+              " future version of Riak.~n"
+              "Please migrate to the new-style riak_core configuration"
+              " of {http, [{~p, ~p}]}.~n",
+              [IP, Port, IP, Port]),
+            [binding_config(http, {IP, Port})];
+        _ ->
+            %% do not start the HTTP interface if any part of its
+            %% config is missing (maintains 0.13 behavior)
+            []
+    end.
 
 binding_config(Scheme, Binding) ->
   {Ip, Port} = Binding,
