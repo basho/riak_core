@@ -49,6 +49,7 @@ start(_StartType, _StartArgs) ->
     %% Register our cluster_info app callback modules, with catch if
     %% the app is missing or packaging is broken.
     catch cluster_info:register_app(riak_core_cinfo_basic),
+    catch cluster_info:register_app(riak_core_cinfo_core),
 
     %% Spin up the supervisor; prune ring files as necessary
     case riak_core_sup:start_link() of
