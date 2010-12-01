@@ -72,4 +72,4 @@ spec_name(Scheme, Ip, Port) ->
 common_config() ->
   [{log_dir, app_helper:get_env(riak_core, http_logdir, "log")},
     {backlog, 128},
-    {dispatch, []}].
+    {dispatch, [{[], riak_core_wm_urlmap, []}]}].
