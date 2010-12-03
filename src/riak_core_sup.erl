@@ -46,8 +46,15 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-    RiakWebs = lists:flatten(riak_core_web:bindings(http),
-                             riak_core_web:bindings(https)),
+    RiakWebs = case lists:flatten(riak_core_web:bindings(http),
+                                  riak_core_web:bindings(https)) of
+                   [] ->
+                       %% check for old settings, in case app.config
+                       %% was not updated
+                       riak_core_web:old_binding();
+                   Binding ->
+                       Binding
+               end,
 
     Children = lists:flatten(
                  [?CHILD(riak_core_vnode_sup, supervisor),
