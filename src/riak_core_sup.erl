@@ -46,11 +46,15 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-    RiakWeb = {webmachine_mochiweb,
-                 {webmachine_mochiweb, start, [riak_core_web:config()]},
-                  permanent, 5000, worker, dynamic},
-    IsWebConfigured = (app_helper:get_env(riak_core, web_ip) /= undefined)
-        andalso (app_helper:get_env(riak_core, web_port) /= undefined),
+    RiakWebs = case lists:flatten(riak_core_web:bindings(http),
+                                  riak_core_web:bindings(https)) of
+                   [] ->
+                       %% check for old settings, in case app.config
+                       %% was not updated
+                       riak_core_web:old_binding();
+                   Binding ->
+                       Binding
+               end,
 
     Children = lists:flatten(
                  [?CHILD(riak_core_vnode_sup, supervisor),
@@ -61,7 +65,7 @@ init([]) ->
                   ?CHILD(riak_core_node_watcher_events, worker),
                   ?CHILD(riak_core_node_watcher, worker),
                   ?CHILD(riak_core_gossip, worker),
-                  ?IF(IsWebConfigured, RiakWeb, [])
+                  RiakWebs
                  ]),
 
     {ok, {{one_for_one, 10, 10}, Children}}.
