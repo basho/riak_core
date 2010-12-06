@@ -38,6 +38,7 @@ cluster_info_init() ->
 
 cluster_info_generator_funs() ->
     [
+     {"Riak Core config files", fun config_files/1},
      {"Riak Core vnode modules", fun vnode_modules/1},
      {"Riak Core ring", fun get_my_ring/1},
      {"Riak Core latest ring file", fun latest_ringfile/1},
@@ -64,4 +65,14 @@ active_partitions(CPid) ->
                                      ordsets:add_element(P, Ps)
                              end, ordsets:new(), Vnodes),
     cluster_info:format(CPid, "~p\n", [Partitions]).
+
+config_files(C) ->
+    {ok, [[AppPath]]} = init:get_argument(config),
+    EtcDir = filename:dirname(AppPath),
+    VmPath = filename:join(EtcDir, "vm.args"),
+    [begin
+         cluster_info:format(C, "File: ~s\n", [os:cmd("ls -l " ++ File)]),
+         {ok, FileBin} = file:read_file(File),
+         cluster_info:format(C, "File contents:\n~s\n", [FileBin])
+     end || File <- [AppPath, VmPath]].
 
