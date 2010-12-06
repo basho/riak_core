@@ -19,6 +19,7 @@
              riak_core_app,
              riak_core_bucket,
              riak_core_cinfo_basic,
+             riak_core_cinfo_core,
              riak_core_claim,
              riak_core_gossip,
              riak_core_handoff_listener,
