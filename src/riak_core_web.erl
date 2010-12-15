@@ -72,20 +72,24 @@ binding_config(Scheme, Binding) ->
   
 spec_from_binding(http, Name, Binding) ->
   {Ip, Port} = Binding,
+  NoDelay = app_helper:get_env(riak_core, disable_http_nagle, false),
   lists:flatten([{name, Name},
                   {ip, Ip},
-                  {port, Port}],
+                  {port, Port},
+                  {nodelay, NoDelay}],
                   common_config());
 
 spec_from_binding(https, Name, Binding) ->
   {Ip, Port} = Binding,
   SslOpts = app_helper:get_env(riak_core, ssl,
                      [{certfile, "etc/cert.pem"}, {keyfile, "etc/key.pem"}]),
+  NoDelay = app_helper:get_env(riak_core, disable_http_nagle, false),
   lists:flatten([{name, Name},
                   {ip, Ip},
                   {port, Port},
                   {ssl, true},
-                  {ssl_opts, SslOpts}],
+                  {ssl_opts, SslOpts},
+                  {nodelay, NoDelay}],
                   common_config()).
 
 spec_name(Scheme, Ip, Port) ->

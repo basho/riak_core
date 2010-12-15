@@ -91,6 +91,9 @@
          %% Number of VNodes allowed to do handoff concurrently.
          {handoff_concurrency, 4},
 
+         %% Disable Nagle on HTTP sockets
+         {disable_http_nagle, false},
+
          %% Handoff IP/port
          {handoff_port, 8099},
          {handoff_ip, "0.0.0.0"}
