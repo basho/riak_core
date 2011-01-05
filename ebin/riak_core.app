@@ -3,7 +3,7 @@
 {application, riak_core,
 [
   {description, "Riak Core"},
-  {vsn, "0.14.0rc1"},
+  {vsn, "0.14.0"},
   {modules, [
              app_helper,
              bloom,
