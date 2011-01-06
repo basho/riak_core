@@ -3,7 +3,7 @@
 {application, riak_core,
 [
   {description, "Riak Core"},
-  {vsn, "0.13.0"},
+  {vsn, "0.14.0"},
   {modules, [
              app_helper,
              bloom,
@@ -90,6 +90,9 @@
          
          %% Number of VNodes allowed to do handoff concurrently.
          {handoff_concurrency, 4},
+
+         %% Disable Nagle on HTTP sockets
+         {disable_http_nagle, false},
 
          %% Handoff IP/port
          {handoff_port, 8099},
