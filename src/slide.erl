@@ -170,18 +170,18 @@ mean_and_nines(#slide{dir=Dir, window = Window}, _Moment) ->
     compute_quantiles(Blobs).
 
 compute_quantiles(Blobs) ->
-    {H, Count} = compute_quantiles(Blobs,
-                                   stats_histogram:new(0, 5000000, 20000), 0),
-    {_Min, Mean, Max, _Var, _SDev} = stats_histogram:summary_stats(H),
-    P50 = stats_histogram:quantile(0.50, H),
-    P95 = stats_histogram:quantile(0.95, H),
-    P99 = stats_histogram:quantile(0.99, H),
+    {H, Count} = compute_quantiles(
+                   Blobs, basho_stats_histogram:new(0, 5000000, 20000), 0),
+    {_Min, Mean, Max, _Var, _SDev} = basho_stats_histogram:summary_stats(H),
+    P50 = basho_stats_histogram:quantile(0.50, H),
+    P95 = basho_stats_histogram:quantile(0.95, H),
+    P99 = basho_stats_histogram:quantile(0.99, H),
     {Count, my_trunc(Mean),
      {my_trunc(P50), my_trunc(P95), my_trunc(P99), my_trunc(Max)}}.
 
 compute_quantiles([Blob|Blobs], H, Count) ->
     Ns = [binary_to_term(Bin) || <<_Hdr:32, Bin:8/binary>> <= Blob],
-    H2 = stats_histogram:update_all(Ns, H),
+    H2 = basho_stats_histogram:update_all(Ns, H),
     compute_quantiles(Blobs, H2, Count + length(Ns));
 compute_quantiles([], H, Count) ->
     {H, Count}.
