@@ -42,15 +42,7 @@
 %%                      NinetyFivePercentWeight,
 %%                      NinetyNinePercentWeight,
 %%                      HeaviestWeight} = slide:nines(TN, slide:moment())
-%%
-%%      The slide module attempts to be tunably efficient by exposing
-%%      the ability to determine how often to "prune" readings.  By default,
-%%      readings are pruned whenever a reading is made with a timestamp
-%%      that is two window-lengths newer than the oldest timestamp in the
-%%      slide.  At that point, all readings older than one window-length away
-%%      from the latest reading will be removed.  Use a different value
-%%      for the Trigger parameter of fresh/2 to change when pruning is
-%%      triggered.
+
 -module(slide).
 
 -export([fresh/0, fresh/1, fresh/2]).
@@ -58,13 +50,23 @@
 -export([sum/1, sum/2, sum/3]).
 -export([mean/1, mean/2, mean/3]).
 -export([nines/1, nines/2, nines/3]).
+-export([mean_and_nines/2]).
+-export([private_dir/0, sync/1]).
+%% -export([yay_math/3]). % timer:tc/3 timing/testing only
+
+-include_lib("kernel/include/file.hrl").
 -include_lib("eunit/include/eunit.hrl").
+
+-define(DIR, "/tmp/riak/slide-data"). % SLF TODO: need pkg-specific data dir handling
+-define(REC_BYTES, 12).          % 4 + (size(term_to_binary(4000000000)) = 8)
 
 -record(slide, {
           oldest,   %% oldest timestamp here
           window,   %% window to which to trim
           trigger,  %% age at which to trigger pruning
-          readings  %% {timestamp, reading}
+          dir,      %% directory for data
+          readings_fh, %% filehandle for current moment's readings
+          readings_m %% moment associated with readings_fh
          }).
 
 %% @spec fresh() -> slide()
@@ -72,19 +74,23 @@
 fresh() -> fresh(60).
 
 %% @spec fresh(integer()) -> slide()
-%% @equiv fresh(Window, Window*2)
-fresh(Window) -> fresh(Window, Window*2).
+%% @equiv fresh(Window, Window)
+fresh(Window) -> fresh(Window, Window).
 
 %% @spec fresh(integer(), integer()) -> slide()
 %% @doc Create an empty slide for tracking Window-seconds worth of
 %%      readings, and pruning those readings after Trigger seconds.
 fresh(Window, Trigger) when Trigger >= Window ->
-    #slide{window=Window, trigger=Trigger, readings=[]}.
+    {A,B,C} = now(),
+    Dir = lists:flatten(io_lib:format("~s/~p.~p.~p", [private_dir(), A, B, C])),
+    filelib:ensure_dir(Dir),
+    file:make_dir(Dir),
+    #slide{window=Window, trigger=Trigger, dir=Dir}.
 
 %% @spec moment() -> integer()
 %% @doc Get the current time in seconds.
 moment() ->
-    calendar:datetime_to_gregorian_seconds(calendar:universal_time()).
+    calendar:datetime_to_gregorian_seconds(calendar:local_time()).
 
 %% @spec update(slide(), term()) -> slide()
 %% @equiv update(S, Reading, moment())
@@ -95,56 +101,30 @@ update(S, Reading) -> update(S, Reading, moment()).
 %%      pruned if Moment is as new as or newer than the most recent
 %%      reading stored, and more than Trigger seconds newer than the
 %%      oldest reading stored.
-update(S=#slide{oldest=O, trigger=P, readings=R=[{Y,_}|_]},
-       Reading, Moment) ->
-    if Moment >= Y ->
-            %% Reading is newest
-            Pruned = maybe_prune(S, Moment),
-            Pruned#slide{oldest=case Pruned#slide.oldest of
-                                     undefined -> Moment;
-                                     PrunedOldest -> PrunedOldest
-                                 end,
-                          readings=[{Moment, Reading}|Pruned#slide.readings]};
-       Moment > Y-P ->
-            %% Reading is after our trigger time
-            %% assume normal use case adds a 'newest' regularly,
-            %% and don't bother pruning here
-            {Younger, Older} =
-                lists:splitwith(fun({T,_}) -> T > Moment end, R),
-            S#slide{
-              oldest=if Moment < O -> Moment;
-                        true -> O
-                     end,
-              readings=Younger++[{Moment, Reading}]++Older};
-       true ->
-            %% Reading is before the trigger time
-            S
-    end;
-update(S=#slide{readings=[]}, Reading, Moment) ->
-    S#slide{oldest=Moment, readings=[{Moment, Reading}]}.
-
-%% @spec maybe_prune(slide(), moment()) -> slide()
-%% @doc Prune if the trigger has been ... er, triggered.
-maybe_prune(S=#slide{oldest=O, trigger=P, window=W}, Moment) ->
-    if Moment-P > O -> prune(S, Moment-W);
-       true -> S
-    end.
-
-%% @spec prune(slide(), integer()) -> slide()
-%% @doc Remove all readings taken before MaxAge.
-prune(S=#slide{readings=R}, MaxAge) ->
-    Prune = fun(Reading={T, _}, Acc) ->
-                    if T > MaxAge -> [Reading|Acc];
-                       true       -> Acc
-                    end
-            end,
-    case lists:foldl(Prune, [], R) of
-        [] ->
-            S#slide{oldest=undefined, readings=[]};
-        RevFiltered=[{NewOldest,_}|_] ->
-            S#slide{oldest=NewOldest,
-                     readings=lists:reverse(RevFiltered)}
-    end.
+update(S0=#slide{oldest=Oldest,dir=Dir,readings_m=RdMoment,readings_fh=FH},
+       Reading0, Moment) ->
+    S1 = if Moment == RdMoment ->
+                 S0;
+            true ->
+                 catch file:close(FH),
+                 File = integer_to_list(Moment rem S0#slide.window),
+                 {ok, FH2} = file:open(filename:join(Dir, File),
+                                       [write, raw, binary, delayed_write]),
+                 S0#slide{readings_m = Moment,
+                          readings_fh = FH2,
+                          oldest = if Oldest == undefined ->
+                                           Moment;
+                                      true ->
+                                           Oldest
+                                   end}
+         end,
+    Reading = if Reading0 < 4000000000 -> Reading0;
+                 true                  -> 4000000000
+              end,
+    %% 4 bytes len header + 8 bytes ... 
+    Bin = pad_bin(term_to_binary(Reading), 8),
+    ok = file:write(S1#slide.readings_fh, [<<8:32>>, Bin]),
+    S1.
 
 %% @spec sum(slide()) -> {Count::integer(), Sum::integer()}
 %% @doc Sum of readings from now through Window seconds ago.  Return is
@@ -162,13 +142,57 @@ sum(Slide, Moment) -> sum(Slide, Moment, Slide#slide.window).
 %% @doc Sum of readings from Moment through Seconds seconds before
 %%      Moment.  Return is number of readings in the range and the sum
 %%      of those readings.
-sum(#slide{readings=R}, Moment, Seconds) ->
+sum(#slide{dir=Dir}, Moment, Seconds) ->
     Cutoff = Moment-Seconds,
-    Sum = fun({T, Reading}, {Count, Sum}) when T =< Moment, T > Cutoff ->
-                  {Count+1, Sum+Reading};
-             (_, Acc) -> Acc
-          end,
-    lists:foldl(Sum, {0, 0}, R).
+    Names = filelib:wildcard("*", Dir),
+    ToScan = [Name || Name <- Names, list_to_integer(Name) >= 0],
+    Blobs = [element(2, file:read_file(filename:join(Dir, Name))) ||
+                        Name <- ToScan],
+    %% histo_experiment(Blobs),
+    sum_blobs(Blobs, Moment, Cutoff).
+
+private_dir() ->
+    lists:flatten(io_lib:format("~s/~s", [?DIR, os:getpid()])).
+
+sync(_S) ->
+    todo.
+
+mean_and_nines(#slide{dir=Dir, window = Window}, _Moment) ->
+    Now = moment(),
+    Names = filelib:wildcard("*", Dir),
+    ModTime = fun(Name) ->
+                      {ok, FI} = file:read_file_info(filename:join(Dir, Name)),
+                      calendar:datetime_to_gregorian_seconds(FI#file_info.mtime)
+              end,
+    ToScan = [Name || Name <- Names,
+                      Now - ModTime(Name) =< Window],
+    Blobs = [element(2, file:read_file(filename:join(Dir, Name))) ||
+                        Name <- ToScan],
+    yay_math(Blobs).
+
+yay_math(Blobs) ->
+    %% {USec, {H, Count}} = timer:tc(?MODULE, yay_math,
+    %%                      [Blobs, stats_histogram:new(0, 5000000, 20000), 0]),
+    %% io:format("yay_math: USec ~p\n", [USec]),
+    {H, Count} = yay_math(Blobs, stats_histogram:new(0, 5000000, 20000), 0),
+    {_Min, Mean, Max, _Var, _SDev} = stats_histogram:summary_stats(H),
+    P50 = stats_histogram:quantile(0.50, H),
+    P95 = stats_histogram:quantile(0.95, H),
+    P99 = stats_histogram:quantile(0.99, H),
+    {Count, my_trunc(Mean),
+     {my_trunc(P50), my_trunc(P95), my_trunc(P99), my_trunc(Max)}}.
+
+yay_math([Blob|Blobs], H, Count) ->
+    Ns = [binary_to_term(Bin) || <<_Hdr:32, Bin:8/binary>> <= Blob],
+    H2 = stats_histogram:update_all(Ns, H),
+    yay_math(Blobs, H2, Count + length(Ns));
+yay_math([], H, Count) ->
+    {H, Count}.
+
+my_trunc(X) when is_atom(X) ->
+    0;
+my_trunc(N) ->
+    trunc(N).
 
 %% @spec mean(slide()) -> {Count::integer(), Mean::number()}
 %% @doc Mean of readings from now through Window seconds ago.  Return is
@@ -214,43 +238,84 @@ nines(Slide, Moment) -> nines(Slide, Moment, Slide#slide.window).
 %% @doc Median, 95%, 99%, and 100% readings from Moment through
 %%      Seconds seconds before Moment.  Return is number of readings
 %%      in the range and the nines of those readings.
-nines(#slide{readings=R}, Moment, Seconds) ->
-    Cutoff = Moment-Seconds,
-    case lists:sort([ Reading || {T, Reading} <- R,
-                                 T < Moment, T > Cutoff]) of
-        [] -> {0, {undefined, undefined, undefined, undefined}};
-        Window ->
-            Count = length(Window),
+nines(#slide{dir=Dir}, Moment, Seconds) ->
+    _Cutoff = Moment-Seconds,
+    Names = filelib:wildcard("*", Dir),
+    ToScan = [Name || Name <- Names, list_to_integer(Name) >= 0],
+    OutFile = filename:join(Dir, "-42"),
+    Opts = [], %%[{no_files, 64}],
+    ok = file_sorter:sort([filename:join(Dir, Name) || Name <- ToScan],
+                          OutFile, Opts),
+    {ok, FI} = file:read_file_info(OutFile),
+    case FI#file_info.size of
+        0 ->
+            {0, {undefined, undefined, undefined, undefined}};
+        Size ->
+            Count = (Size div ?REC_BYTES) - 1,
             {Count,
-             {lists:nth(mochinum:int_ceil(Count*0.5), Window),
-              lists:nth(mochinum:int_ceil(Count*0.95), Window),
-              lists:nth(mochinum:int_ceil(Count*0.99), Window),
-              lists:last(Window)}}
+             {read_word_at(mochinum:int_ceil(Count*0.50) * ?REC_BYTES, OutFile),
+              read_word_at(mochinum:int_ceil(Count*0.95) * ?REC_BYTES, OutFile),
+              read_word_at(mochinum:int_ceil(Count*0.99) * ?REC_BYTES, OutFile),
+              read_word_at(Count * ?REC_BYTES, OutFile)}}
     end.
+
+read_word_at(Offset, File) ->
+    {ok, FH} = file:open(File, [read, raw, binary]),
+    {ok, Bin} = file:pread(FH, Offset + 4, ?REC_BYTES - 4), % 4 = header to skip
+    binary_to_term(Bin).
+
+%% Using accumulator func args avoids the garbage creation by
+%% lists:foldl's need to create 2-tuples to manage accumulator.
+
+sum_blobs(Blobs, Moment, Cutoff) ->
+    sum_blobs2(Blobs, Moment, Cutoff, 0, 0).
+
+sum_blobs2([], _Moment, _Cutoff, TCount, TSum) ->
+    {TCount, TSum};
+sum_blobs2([Blob|Blobs], Moment, Cutoff, TCount, TSum) ->
+    {Count, Sum} = sum_ints(
+                     [binary_to_term(Bin) || <<_Hdr:32, Bin:8/binary>> <= Blob],
+                     0, 0),
+    sum_blobs2(Blobs, Moment, Cutoff, TCount + Count, TSum + Sum).
+
+%% Dunno if this is any faster/slower than lists:sum/1 + erlang:length/1.
+
+sum_ints([I|Is], Count, Sum) ->
+    sum_ints(Is, Count + 1, Sum + I);
+sum_ints([], Count, Sum) ->
+    {Count, Sum}.
+
+pad_bin(Bin, Size) when size(Bin) == Size ->
+    Bin;
+pad_bin(Bin, Size) ->
+    Bits = (Size - size(Bin)) * 8,
+    <<Bin/binary, 0:Bits>>.
 
 %%
 %% Test
 %%
 
-direct_prune_test() ->
-    S0 = slide:fresh(10),
-    S1 = slide:update(S0, 5, 3),
-    ?assertEqual(S1, prune(S1, 2)),
-    ?assertEqual(S0, prune(S1, 4)).
+-ifdef(TEST).
 
-maybe_prune_test() ->
-    S0 = slide:fresh(10, 20),
-    S1 = slide:update(S0, 3, 1),
-    S2 = slide:update(S1, 5, 15),
-    ?assertEqual(S2, maybe_prune(S2, 12)),
-    ?assertEqual({1,5}, slide:sum(maybe_prune(S2, 22), 22)).
+%% direct_prune_test() ->
+%%     S0 = slide:fresh(10),
+%%     S1 = slide:update(S0, 5, 3),
+%%     ?assertEqual(S1, prune(S1, 2)),
+%%     ?assertEqual(S0, prune(S1, 4)).
 
-auto_prune_test() ->
-    S0 = slide:fresh(10),
-    S1 = slide:update(S0, 5, 3),
-    S2 = slide:update(S1, 6, 14),
-    ?assertEqual({1, 5}, slide:sum(S1, 4, 10)),
-    ?assertEqual({1, 6}, slide:sum(S2, 15, 10)).
+%% maybe_prune_test() ->
+%%     S0 = slide:fresh(10, 20),
+%%     S1 = slide:update(S0, 3, 1),
+%%     S2 = slide:update(S1, 5, 15),
+%%     ?assertEqual(S2, maybe_prune(S2, 12)),
+%%     ?assertEqual({1,5}, slide:sum(maybe_prune(S2, 22), 22)).
+
+%% auto_prune_test() ->
+%%     S0 = slide:fresh(10),
+%%     S1 = slide:update(S0, 5, 3),
+%%     S2 = slide:update(S1, 6, 14),
+%%     ?assertEqual({1, 5}, slide:sum(S1, 4, 10)),
+%%     ?assertEqual({1, 6}, slide:sum(S2, 15, 10)).
 
 sum_test() ->
     S0 = slide:fresh(10),
@@ -334,3 +399,5 @@ already_pruned_test() ->
     S2 = slide:update(S1, 5, 1),
     ?assertEqual(slide:sum(S1, 30, 30),
                  slide:sum(S2, 30, 30)).
+
+-endif. %TEST
