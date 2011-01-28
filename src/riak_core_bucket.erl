@@ -42,8 +42,7 @@
 %%      hard-coded values.
 append_bucket_defaults(Items) when is_list(Items) ->
     OldDefaults = app_helper:get_env(riak_core, default_bucket_props, []),
-    NewDefaults =
-        lists:ukeymerge(1, lists:sort(OldDefaults), lists:sort(Items)),
+    NewDefaults = merge_props(OldDefaults, Items),
     application:set_env(riak_core, default_bucket_props, NewDefaults).
 
 
@@ -52,17 +51,20 @@ append_bucket_defaults(Items) when is_list(Items) ->
 set_bucket(Name, BucketProps) ->
     F = fun(Ring, _Args) ->
             OldBucket = get_bucket(Name),
-            NewKeys = proplists:get_keys(BucketProps),
-            PrunedOld = [{K,V} || {K,V} <- OldBucket, 
-                                  not lists:member(K,NewKeys)],
+            NewBucket = merge_props(BucketProps, OldBucket),
             {new_ring, riak_core_ring:update_meta({bucket,Name},
-                                                  BucketProps ++ PrunedOld,
+                                                  NewBucket,
                                                   Ring)}
         end,
     riak_core_ring_manager:ring_trans(F, undefined),
     riak_core_ring_manager:write_ringfile(),
     ok.
 
+%% @spec merge_props(list(), list()) -> list()
+%% @doc Merge two sets of bucket props.  If duplicates exist, the
+%%      entries in Overriding are chosen before those in Other.
+merge_props(Overriding, Other) ->
+    lists:ukeymerge(1, lists:sort(Overriding), lists:sort(Other)).
 
 %% @spec get_bucket(riak_object:bucket()) ->
 %%         {ok, BucketProps :: riak_core_bucketprops()}
