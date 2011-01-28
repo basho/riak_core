@@ -51,6 +51,16 @@ start(_StartType, _StartArgs) ->
     catch cluster_info:register_app(riak_core_cinfo_basic),
     catch cluster_info:register_app(riak_core_cinfo_core),
 
+    %% add these defaults now to supplement the set that may have been
+    %% configured in app.config
+    riak_core_bucket:append_bucket_defaults(
+      [{n_val,3},
+       {allow_mult,false},
+       {last_write_wins,false},
+       {precommit, []},
+       {postcommit, []},
+       {chash_keyfun, {riak_core_util, chash_std_keyfun}}]),
+
     %% Spin up the supervisor; prune ring files as necessary
     case riak_core_sup:start_link() of
         {ok, Pid} ->

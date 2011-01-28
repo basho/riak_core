@@ -36,7 +36,8 @@
 
 %% @doc Add a list of defaults to global list of defaults for new buckets.
 append_bucket_defaults(Items) when is_list(Items) ->
-    NewDefaults = app_helper:get_env(riak_core, default_bucket_props) ++ Items,
+    NewDefaults =
+        app_helper:get_env(riak_core, default_bucket_props, []) ++ Items,
     application:set_env(riak_core, default_bucket_props, NewDefaults).
 
 

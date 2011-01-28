@@ -76,14 +76,6 @@
          {wants_claim_fun, {riak_core_claim, default_wants_claim}},
          {choose_claim_fun, {riak_core_claim, default_choose_claim}},
 
-         %% Default bucket props
-         {default_bucket_props, [{n_val,3},
-                                 {allow_mult,false},
-                                 {last_write_wins,false},
-                                 {precommit, []},
-                                 {postcommit, []},
-                                 {chash_keyfun, {riak_core_util, chash_std_keyfun}}]},
-
          %% Vnode inactivity timeout (how often to check if fallback vnodes
          %% should return their data) in ms.
          {vnode_inactivity_timeout, 60000},
