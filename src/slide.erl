@@ -52,7 +52,6 @@
 -export([nines/1, nines/2, nines/3]).
 -export([mean_and_nines/2]).
 -export([private_dir/0, sync/1]).
-%% -export([yay_math/3]). % timer:tc/3 timing/testing only
 
 -include_lib("kernel/include/file.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -168,25 +167,23 @@ mean_and_nines(#slide{dir=Dir, window = Window}, _Moment) ->
                       Now - ModTime(Name) =< Window],
     Blobs = [element(2, file:read_file(filename:join(Dir, Name))) ||
                         Name <- ToScan],
-    yay_math(Blobs).
+    compute_quantiles(Blobs).
 
-yay_math(Blobs) ->
-    %% {USec, {H, Count}} = timer:tc(?MODULE, yay_math,
-    %%                      [Blobs, stats_histogram:new(0, 5000000, 20000), 0]),
-    %% io:format("yay_math: USec ~p\n", [USec]),
-    {H, Count} = yay_math(Blobs, stats_histogram:new(0, 5000000, 20000), 0),
-    {_Min, Mean, Max, _Var, _SDev} = stats_histogram:summary_stats(H),
-    P50 = stats_histogram:quantile(0.50, H),
-    P95 = stats_histogram:quantile(0.95, H),
-    P99 = stats_histogram:quantile(0.99, H),
+compute_quantiles(Blobs) ->
+    {H, Count} = compute_quantiles(
+                   Blobs, basho_stats_histogram:new(0, 5000000, 20000), 0),
+    {_Min, Mean, Max, _Var, _SDev} = basho_stats_histogram:summary_stats(H),
+    P50 = basho_stats_histogram:quantile(0.50, H),
+    P95 = basho_stats_histogram:quantile(0.95, H),
+    P99 = basho_stats_histogram:quantile(0.99, H),
     {Count, my_trunc(Mean),
      {my_trunc(P50), my_trunc(P95), my_trunc(P99), my_trunc(Max)}}.
 
-yay_math([Blob|Blobs], H, Count) ->
+compute_quantiles([Blob|Blobs], H, Count) ->
     Ns = [binary_to_term(Bin) || <<_Hdr:32, Bin:8/binary>> <= Blob],
-    H2 = stats_histogram:update_all(Ns, H),
-    yay_math(Blobs, H2, Count + length(Ns));
-yay_math([], H, Count) ->
+    H2 = basho_stats_histogram:update_all(Ns, H),
+    compute_quantiles(Blobs, H2, Count + length(Ns));
+compute_quantiles([], H, Count) ->
     {H, Count}.
 
 my_trunc(X) when is_atom(X) ->

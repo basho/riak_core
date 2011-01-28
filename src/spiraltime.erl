@@ -24,8 +24,8 @@
 %%
 %% This keeps stats per second for the last minute.
 %%
-%% This module has been butchered to avoid keeping unused stats where
-%% unused = more than one minute old.
+%% See git commit history for versions of this module which keep stats
+%% for more than 1 minute.
 
 -module(spiraltime).
 -author('Justin Sheehy <justin@basho.com>').
