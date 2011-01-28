@@ -34,10 +34,16 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
-%% @doc Add a list of defaults to global list of defaults for new buckets.
+%% @doc Add a list of defaults to global list of defaults for new
+%%      buckets.  If any item is in Items is already set in the
+%%      current defaults list, the new setting is omitted, and the old
+%%      setting is kept.  Omitting the new setting is intended
+%%      behavior, to allow settings from app.config to override any
+%%      hard-coded values.
 append_bucket_defaults(Items) when is_list(Items) ->
+    OldDefaults = app_helper:get_env(riak_core, default_bucket_props, []),
     NewDefaults =
-        app_helper:get_env(riak_core, default_bucket_props, []) ++ Items,
+        lists:ukeymerge(1, lists:sort(OldDefaults), lists:sort(Items)),
     application:set_env(riak_core, default_bucket_props, NewDefaults).
 
 
