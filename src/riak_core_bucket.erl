@@ -64,7 +64,8 @@ set_bucket(Name, BucketProps) ->
 %% @doc Merge two sets of bucket props.  If duplicates exist, the
 %%      entries in Overriding are chosen before those in Other.
 merge_props(Overriding, Other) ->
-    lists:ukeymerge(1, lists:sort(Overriding), lists:sort(Other)).
+    lists:ukeymerge(1, lists:ukeysort(1, Overriding),
+                    lists:ukeysort(1, Other)).
 
 %% @spec get_bucket(riak_object:bucket()) ->
 %%         {ok, BucketProps :: riak_core_bucketprops()}
