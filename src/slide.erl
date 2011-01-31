@@ -151,7 +151,12 @@ sum(#slide{dir=Dir}, Moment, Seconds) ->
     sum_blobs(Blobs, Moment, Cutoff).
 
 private_dir() ->
-    lists:flatten(io_lib:format("~s/~s", [?DIR, os:getpid()])).
+    case application:get_env(riak_core, slide_private_dir) of
+        undefined ->
+            lists:flatten(io_lib:format("~s/~s", [?DIR, os:getpid()]));
+        {ok, Dir} ->
+            Dir
+    end.
 
 sync(_S) ->
     todo.
