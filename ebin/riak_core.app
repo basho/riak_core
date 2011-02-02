@@ -35,6 +35,7 @@
              riak_core_ring_manager,
              riak_core_ring_util,
              riak_core_sup,
+             riak_core_sysmon_handler,
              riak_core_test_util,
              riak_core_util,
              riak_core_vnode,
@@ -52,6 +53,7 @@
                   stdlib,
                   sasl,
                   crypto,
+                  riak_sysmon,
                   webmachine
                  ]},
   {mod, { riak_core_app, []}},

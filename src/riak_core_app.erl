@@ -32,6 +32,9 @@
 %% ===================================================================
 
 start(_StartType, _StartArgs) ->
+    %% Add our system_monitor event handler
+    riak_core_sysmon_handler:add_handler(),
+
     %% Validate that the ring state directory exists
     riak_core_util:start_app_deps(riak_core),
     RingStateDir = app_helper:get_env(riak_core, ring_state_dir),
