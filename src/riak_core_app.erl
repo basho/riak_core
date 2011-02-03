@@ -32,8 +32,9 @@
 %% ===================================================================
 
 start(_StartType, _StartArgs) ->
-    %% Add our system_monitor event handler
-    riak_core_sysmon_handler:add_handler(),
+    %% Don't add our system_monitor event handler here.  Instead, let
+    %% riak_core_sysmon_minder start it, because that process can act
+    %% on any handler crash notification, whereas we cannot.
 
     %% Validate that the ring state directory exists
     riak_core_util:start_app_deps(riak_core),

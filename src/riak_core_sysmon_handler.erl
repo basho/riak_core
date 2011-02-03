@@ -119,8 +119,9 @@ handle_call(_Call, State) ->
 %%                         remove_handler
 %% @end
 %%--------------------------------------------------------------------
-handle_info(die, _State) ->
-    exit(told_to_die);
+handle_info(die_for_testing_purposes_only, _State) ->
+    %% exit({told_to_die, lists:duplicate(500000, $x)});
+    exit({told_to_die, lists:duplicate(50, $x)});
 handle_info(Info, State) ->
     error_logger:info_msg("handle_info got ~p\n", [Info]),
     {ok, State}.
