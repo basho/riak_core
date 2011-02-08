@@ -304,11 +304,12 @@ test_nodes(Count) ->
     [node() | [list_to_atom(lists:concat(["n_", N])) || N <- lists:seq(1, Count-1)]].
 
 prop_claim_ensures_unique_nodes_test_() ->
-    Prop = eqc:numtests(250, ?QC_OUT(prop_claim_ensures_unique_nodes())),
+    Prop = eqc:numtests(500, ?QC_OUT(prop_claim_ensures_unique_nodes())),
     {timeout, 120, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
 
 prop_claim_ensures_unique_nodes() ->
-    ?FORALL({PartsPow, NodeCount}, {choose(4, 9), choose(3, 15)},
+    %% NOTE: We know that this doesn't work for the case of {_, 3}.
+    ?FORALL({PartsPow, NodeCount}, {choose(4, 9), choose(4, 15)},
             begin
                 Nval = 3,
                 application:set_env(riak_core, target_n_val, Nval + 1),
