@@ -101,6 +101,11 @@ get_bucket(Name, Ring) ->
 
 simple_set_test() ->
     application:load(riak_core),
+    %% appending an empty list of defaults makes up for the fact that
+    %% riak_core_app:start/2 is not called during eunit runs
+    %% (that's where the usual defaults are set at startup),
+    %% while also not adding any trash that might affect other tests
+    append_bucket_defaults([]),
     riak_core_ring_events:start_link(),
     riak_core_ring_manager:start_link(test),
     ok = set_bucket(a_bucket,[{key,value}]),
