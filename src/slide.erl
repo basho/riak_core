@@ -108,7 +108,7 @@ update(S0=#slide{oldest=Oldest,dir=Dir,readings_m=RdMoment,readings_fh=FH},
                  catch file:close(FH),
                  File = integer_to_list(Moment rem S0#slide.window),
                  {ok, FH2} = file:open(filename:join(Dir, File),
-                                       [write, raw, binary, delayed_write]),
+                                       file_write_options()),
                  S0#slide{readings_m = Moment,
                           readings_fh = FH2,
                           oldest = if Oldest == undefined ->
@@ -297,29 +297,29 @@ pad_bin(Bin, Size) ->
 %% Test
 %%
 
+setup_eunit_proc_dict() ->
+    erlang:put({?MODULE, eunit}, true).
+
+file_write_options() ->
+    case erlang:get({?MODULE, eunit}) of
+        true ->
+            [write, raw, binary];
+        _ ->
+            [write, raw, binary, delayed_write]
+    end.
+
 -ifdef(TEST).
 
-%% direct_prune_test() ->
-%%     S0 = slide:fresh(10),
-%%     S1 = slide:update(S0, 5, 3),
-%%     ?assertEqual(S1, prune(S1, 2)),
-%%     ?assertEqual(S0, prune(S1, 4)).
-
-%% maybe_prune_test() ->
-%%     S0 = slide:fresh(10, 20),
-%%     S1 = slide:update(S0, 3, 1),
-%%     S2 = slide:update(S1, 5, 15),
-%%     ?assertEqual(S2, maybe_prune(S2, 12)),
-%%     ?assertEqual({1,5}, slide:sum(maybe_prune(S2, 22), 22)).
-
-%% auto_prune_test() ->
-%%     S0 = slide:fresh(10),
-%%     S1 = slide:update(S0, 5, 3),
-%%     S2 = slide:update(S1, 6, 14),
-%%     ?assertEqual({1, 5}, slide:sum(S1, 4, 10)),
-%%     ?assertEqual({1, 6}, slide:sum(S2, 15, 10)).
+auto_prune_test() ->
+    S0 = slide:fresh(10),
+    S1 = slide:update(S0, 5, 3),
+    S1b = idle_time_passing(S1, 4, 13),
+    S2 = slide:update(S1b, 6, 14),
+    S2b = idle_time_passing(S2, 15, 15),
+    ?assertEqual(6, element(2, slide:sum(S2b, 15, 10))).
 
 sum_test() ->
+    setup_eunit_proc_dict(),
     S0 = slide:fresh(10),
     ?assertEqual({0, 0}, % no points, sum = 0
                  slide:sum(S0, 9, 10)),
@@ -332,18 +332,24 @@ sum_test() ->
     S3 = slide:update(S2, 7, 5),
     ?assertEqual({3, 15}, % three points (two concurrent), sum = 15
                  slide:sum(S3, 9, 10)),
-    S4 = slide:update(S3, 11, 14),
-    ?assertEqual({3, 23}, % ignoring first reading, sum = 23
-                 slide:sum(S4, 14, 10)),
-    ?assertEqual({1, 11}, % shifted window
-                 slide:sum(S4, 18, 10)),
-    S5 = slide:update(S4, 13, 22),
-    ?assertEqual({1, 11}, % pruned early readings
-                 slide:sum(S5, 14, 10)),
-    ?assertEqual({2, 24}, % shifted window
-                 slide:sum(S5, 22, 10)).
+    S3b = idle_time_passing(S3, 6, 13),
+    S4 = slide:update(S3b, 11, 14),
+    ?assertEqual(23, % ignoring first reading, sum = 23
+                 element(2, slide:sum(S4, 14, 10))),
+    S4b = idle_time_passing(S4, 15, 18),
+    ?assertEqual(11, % shifted window
+                 element(2, slide:sum(S4b, 18, 10))),
+    S4c = idle_time_passing(S4b, 19, 21),
+    S5 = slide:update(S4c, 13, 22),
+    ?assertEqual(24, % shifted window
+                 element(2, slide:sum(S5, 22, 10))).
+
+idle_time_passing(Slide, StartMoment, EndMoment) ->
+    lists:foldl(fun(Moment, S) -> slide:update(S, 0, Moment) end,
+                Slide, lists:seq(StartMoment, EndMoment)).
 
 mean_test() ->
+    setup_eunit_proc_dict(),
     S0 = slide:fresh(10),
     ?assertEqual({0, undefined}, % no points, no average
                  slide:mean(S0)),
@@ -356,18 +362,20 @@ mean_test() ->
     S3 = slide:update(S2, 7, 5),
     ?assertEqual({3, 5.0}, % three points (two concurrent), avg = 5
                   slide:mean(S3, 9, 10)),
-    S4 = slide:update(S3, 11, 14),
-    ?assertEqual({3, 23/3}, % ignoring first reading, avg = 
-                 slide:mean(S4, 14, 10)),
-    ?assertEqual({1, 11.0}, % shifted window
-                 slide:mean(S4, 18, 10)),
-    S5 = slide:update(S4, 13, 22),
-    ?assertEqual({1, 11.0}, % pruned early readings
-                 slide:mean(S5, 14, 10)),
-    ?assertEqual({2, 12.0}, % shifted window
-                 slide:mean(S5, 22, 10)).
+    S3b = idle_time_passing(S3, 6, 13),
+    S4 = slide:update(S3b, 11, 14),
+    ?assertEqual(23/11, % ignoring first reading, avg = 
+                 element(2, slide:mean(S4, 14, 10))),
+    S4b = idle_time_passing(S4, 15, 18),
+    ?assertEqual(11/10, % shifted window
+                 element(2, slide:mean(S4b, 18, 10))),
+    S4c = idle_time_passing(S4b, 19, 21),
+    S5 = slide:update(S4c, 13, 22),
+    ?assertEqual(24/10, % shifted window
+                 element(2, slide:mean(S5, 22, 10))).
     
-nines_test() ->
+mean_and_nines_test() ->
+    setup_eunit_proc_dict(),
     PushReadings = fun(S, Readings) ->
                            lists:foldl(
                              fun({R,T}, A) ->
@@ -378,28 +386,21 @@ nines_test() ->
     S0 = slide:fresh(10),
     ?assertEqual({0, {undefined, undefined, undefined, undefined}},
                  slide:nines(S0)),
-    S1 = PushReadings(S0, [ {R, 1} || R <- lists:seq(1, 10) ]),
-    ?assertEqual({10, {5, 10, 10, 10}}, slide:nines(S1, 9, 10)),
-    S2 = PushReadings(S1, [ {R, 2} || R <- lists:seq(11, 20) ]),
-    ?assertEqual({20, {10, 19, 20, 20}}, slide:nines(S2, 9, 10)),
-    S3 = PushReadings(S2, [ {R, 3} || R <- lists:seq(21, 100) ]),
-    ?assertEqual({100, {50, 95, 99, 100}}, slide:nines(S3, 9, 10)),
-    ?assertEqual({90, {55, 96, 100, 100}}, slide:nines(S3, 11, 10)).
-
-not_most_recent_test() ->
-    S0 = slide:fresh(10, 20),
-    S1 = slide:update(S0, 3, 13),
-    S2 = slide:update(S1, 5, 1),
-    S3 = slide:update(S2, 7, 22),
-    ?assertEqual({2, 8}, slide:sum(S2, 13, 13)),
-    ?assertEqual({1, 3}, slide:sum(S3, 13, 13)),
-    ?assertEqual({2, 10}, slide:sum(S3, 22, 22)).
-
-already_pruned_test() ->
-    S0 = slide:fresh(10, 20),
-    S1 = slide:update(S0, 3, 30),
-    S2 = slide:update(S1, 5, 1),
-    ?assertEqual(slide:sum(S1, 30, 30),
-                 slide:sum(S2, 30, 30)).
+    S1 = PushReadings(S0, [ {R*100, 1} || R <- lists:seq(1, 10) ]),
+    %% lists:sum([X*100 || X <- lists:seq(1,10)]) / 10 -> 550
+    ?assertEqual({10, 550, {500, 958, 991, 1000}},
+                 slide:mean_and_nines(S1, 10)),
+    S2 = PushReadings(S1, [ {R*100, 2} || R <- lists:seq(11, 20) ]),
+    %% lists:sum([X*100 || X <- lists:seq(1,20)]) / 20 -> 1050
+    ?assertEqual({20, 1050, {1000, 1916, 1983, 2000}},
+                 slide:mean_and_nines(S2, 10)),
+    S3 = PushReadings(S2, [ {R*100, 3} || R <- lists:seq(21, 100) ]),
+    %% lists:sum([X*100 || X <- lists:seq(1,100)]) / 100 -> 5050
+    ?assertEqual({100, 5050, {5000, 9500, 9916, 10000}},
+                 slide:mean_and_nines(S3, 10)),
+    S4 = idle_time_passing(S3, 4, 11),          % 8 samples
+    %% lists:sum([X*100 || X <- lists:seq(11,100)]) / (90+8) -> 5096.9
+    ?assertEqual({98, 5096, {5125, 9512, 9918, 10000}},
+                 slide:mean_and_nines(S4, 11)).
 
 -endif. %TEST
