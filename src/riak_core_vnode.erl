@@ -110,7 +110,7 @@ vnode_command(Sender, Request, State=#state{mod=Mod, modstate=ModState}) ->
     case impure(State, {mod, Mod}, handle_command,
                 [Request, Sender, ModState]) of
         {reply, Reply, NewModState} ->
-            impure(State, {mod, Mod}, reply, [Sender, Reply]),
+            impure(State, {mod, ?MODULE}, reply, [Sender, Reply]),
             continue(State, NewModState);
         {noreply, NewModState} ->
             continue(State, NewModState);
@@ -125,7 +125,7 @@ vnode_handoff_command(Sender, Request, State=#state{index=Index,
     case impure(State, {mod, Mod}, handle_handoff_command,
                 [Request, Sender, ModState]) of
         {reply, Reply, NewModState} ->
-            reply(Sender, Reply),
+            impure(State, {mod, ?MODULE}, reply, [Sender, Reply]),
             continue(State, NewModState);
         {noreply, NewModState} ->
             continue(State, NewModState);
