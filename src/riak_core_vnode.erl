@@ -90,10 +90,10 @@ init({Mod, Index, PureOpts}) ->
     PureP = proplists:get_value(debug, PureOpts, false),
     S0 = #state{index=Index, mod=Mod, 
                 pure_p=PureP,pure_opts=PureOpts},
-    {ok, ModState} = impure_mod_init(S0, Mod, [Index]),
-    impure_riak_core_handoff_manager_remove_exclusion(S0, Mod, Index),
-    Timeout = impure_app_get_env(S0, riak_core, vnode_inactivity_timeout,
-                                 ?DEFAULT_TIMEOUT),
+    {ok, ModState} = impure(S0, {mod, Mod}, init, [[Index]]),
+    impure(S0, riak_core_handoff_manager, remove_exclusion, [Mod, Index]),
+    Timeout = impure(S0, app_helper, get_env,
+                     [riak_core, vnode_inactivity_timeout, ?DEFAULT_TIMEOUT]),
     {ok, active, S0#state{modstate=ModState, inactivity_timeout=Timeout}, 0}.
 
 get_mod_index(VNode) ->
@@ -107,7 +107,8 @@ continue(State, NewModState) ->
     
 
 vnode_command(Sender, Request, State=#state{mod=Mod, modstate=ModState}) ->
-    case impure_mod_handle_command(State, Mod, Request, Sender, ModState) of
+    case impure(State, {mod, Mod}, handle_command,
+                [Request, Sender, ModState]) of
         {reply, Reply, NewModState} ->
             reply(Sender, Reply),
             continue(State, NewModState);
@@ -121,17 +122,17 @@ vnode_handoff_command(Sender, Request, State=#state{index=Index,
                                                     mod=Mod, 
                                                     modstate=ModState, 
                                                     handoff_node=HN}) ->
-    case impure_mod_handle_handoff_command(State, Mod,
-                                           Request, Sender, ModState) of
+    case impure(State, {mod, Mod}, handle_handoff_command,
+                [Request, Sender, ModState]) of
         {reply, Reply, NewModState} ->
             reply(Sender, Reply),
             continue(State, NewModState);
         {noreply, NewModState} ->
             continue(State, NewModState);
         {forward, NewModState} ->
-            RegName = impure_riak_core_vnode_master:reg_name(State, Mod),
-            impure_riak_core_vnode_master_command(
-              State, {Index, HN}, Request, Sender, RegName),
+            RegName = impure(State, riak_core_vnode_master, reg_name, [Mod]),
+            impure(State, riak_core_vnode_master, command, 
+                   [{Index, HN}, Request, Sender, RegName]),
             continue(State, NewModState);
         {drop, NewModState} ->
             continue(State, NewModState);
@@ -142,7 +143,8 @@ vnode_handoff_command(Sender, Request, State=#state{index=Index,
 active(timeout, State=#state{mod=Mod, modstate=ModState}) ->
     case should_handoff(State) of
         {true, TargetNode} ->
-            case Mod:handoff_starting(TargetNode, ModState) of
+            case impure(State, {mod, Mod}, handoff_starting,
+                        [TargetNode, ModState]) of
                 {true, NewModState} ->
                     start_handoff(State#state{modstate=NewModState}, TargetNode);
                 {false, NewModState} ->
@@ -162,8 +164,8 @@ active(handoff_complete, State=#state{mod=Mod,
                                       handoff_node=HN,
                                       handoff_token=HT}) ->
     riak_core_handoff_manager:release_handoff_lock({Mod, Idx}, HT),
-    Mod:handoff_finished(HN, ModState),
-    {ok, NewModState} = Mod:delete(ModState),
+    impure(State, {mod, Mod}, handoff_finished, [HN, ModState]),
+    {ok, NewModState} = impure(State, {mod, Mod}, delete, [ModState]),
     riak_core_handoff_manager:add_exclusion(Mod, Idx),
     {stop, normal, State#state{modstate=NewModState, handoff_node=none}}.
 
@@ -179,7 +181,7 @@ handle_sync_event(get_mod_index, _From, StateName,
     {reply, {Mod, Idx}, StateName, State, State#state.inactivity_timeout};
 handle_sync_event({handoff_data,BinObj}, _From, StateName, 
                   State=#state{mod=Mod, modstate=ModState}) ->
-    case Mod:handle_handoff_data(BinObj, ModState) of
+    case impure(State, {mod, Mod}, handle_handoff_data, [BinObj, ModState]) of
         {reply, ok, NewModState} ->
             {reply, ok, StateName, State#state{modstate=NewModState},
              State#state.inactivity_timeout};
@@ -192,16 +194,16 @@ handle_sync_event({handoff_data,BinObj}, _From, StateName,
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State, State#state.inactivity_timeout}.
 
-terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState}) ->
-    Mod:terminate(Reason, ModState),
+terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState} = State) ->
+    impure(State, {mod, Mod}, terminate, [Reason, ModState]),
     ok.
 
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
 should_handoff(#state{index=Idx, mod=Mod} = S) ->
-    {ok, Ring} = impure_get_my_ring(S),
-    Me = impure_node(S),
+    {ok, Ring} = impure(S, riak_core_ring_manager, get_my_ring, []),
+    Me = impure(S, erlang, node, []),
     case riak_core_ring:index_owner(Ring, Idx) of
         Me ->
             false;
@@ -211,29 +213,34 @@ should_handoff(#state{index=Idx, mod=Mod} = S) ->
                     [First, "vnode"]          -> First
                 end,
             App = list_to_atom("riak_" ++ A),
-            case lists:member(TargetNode, impure_riak_core_node_watcher_nodes(S, App)) of
+            AppNodes = impure(S, riak_core_node, watcher_nodes, [App]),
+            case lists:member(TargetNode, AppNodes) of
                 false  -> false;
                 true -> {true, TargetNode}
             end
     end.
 
 start_handoff(State=#state{index=Idx, mod=Mod, modstate=ModState}, TargetNode) ->
-    case Mod:is_empty(ModState) of
+    case impure(State, {mod, Mod}, is_empty, [ModState]) of
         {true, NewModState} ->
-            {ok, NewModState1} = Mod:delete(NewModState),
+            {ok, NewModState1} = impure(State,
+                                        {mod, Mod}, delete, [NewModState]),
             riak_core_handoff_manager:add_exclusion(Mod, Idx),
             {stop, normal, State#state{modstate=NewModState1}};
         {false, NewModState} ->  
             case riak_core_handoff_manager:get_handoff_lock({Mod, Idx}) of
                 {error, max_concurrency} ->
-                    {ok, NewModState1} = Mod:handoff_cancelled(NewModState),
+                    {ok, NewModState1} = impure(State,
+                                                {mod, Mod}, handoff_cancelled,
+                                                [NewModState]),
                     NewState = State#state{modstate=NewModState1},
                     {next_state, active, NewState, ?LOCK_RETRY_TIMEOUT};
                 {ok, {handoff_token, HandoffToken}} ->
                     NewState = State#state{modstate=NewModState, 
                                            handoff_token=HandoffToken,
                                            handoff_node=TargetNode},
-                    riak_core_handoff_sender:start_link(TargetNode, Mod, Idx),
+                    impure(NewState, riak_core_handoff_sender, start_link,
+                           [TargetNode, Mod, Idx]),
                     continue(NewState)
             end
     end.
@@ -269,77 +276,12 @@ imp_interp(Fun, Arg) when not is_tuple(Fun), is_function(Fun, 1) ->
 imp_interp(Else, _) ->
     Else.
 
-impure_get_my_ring(State) ->
-    imp_get_my_ring(State#state.pure_p, State#state.pure_opts).
-
-imp_get_my_ring(false, _PureOpts) ->
-    riak_core_ring_manager:get_my_ring();
-imp_get_my_ring(true, PureOpts) ->
-    {ok, proplists:get_value(get_my_ring, PureOpts)}.
-
-impure_riak_core_node_watcher_nodes(State, App) ->
-    imp_riak_core_node_watcher_nodes(State#state.pure_p, State#state.pure_opts, App).
-
-imp_riak_core_node_watcher_nodes(false, _PureOpts, App) ->
-    riak_core_node_watcher:nodes(App);
-imp_riak_core_node_watcher_nodes(true, PureOpts, _App) ->
-    proplists:get_value(node_watcher_nodes, PureOpts, crashme_watcher_nodelist).
-
-impure_node(State) ->
-    imp_node(State#state.pure_p, State#state.pure_opts).
-
-imp_node(false, _PureOpts) ->
-    node();
-imp_node(true, PureOpts) ->
-    proplists:get_value(node, PureOpts).
-
-impure_riak_core_handoff_manager_remove_exclusion(State, Mod, Index) ->
-    imp_riak_core_handoff_manager_remove_exclusion(
-      State#state.pure_p, State#state.pure_opts, Mod, Index).
-
-imp_riak_core_handoff_manager_remove_exclusion(false, _PureOpts, Mod, Index) ->
-    riak_core_handoff_manager:remove_exclusion(Mod, Index);
-imp_riak_core_handoff_manager_remove_exclusion(true, _PureOpts, _Mod, _Index) ->
-    ok.
-
-impure_app_get_env(State, App, Key, Default) ->
-    imp_app_get_env(State#state.pure_p, State#state.pure_opts,
-                    App, Key, Default).
-
-imp_app_get_env(false, _, App, Key, Default) ->
-    app_helper:get_env(App, Key, Default);
-imp_app_get_env(true, PureOpts, _App, _Key, _Default) ->
-    proplists:get_value(env_timeout, PureOpts, 99999999999).
-
-impure_mod_
-
-impure_mod_init(State, Mod, Arg) ->
-    imp_mod_init(State#state.pure_p, State#state.pure_opts, Mod, Arg).
-
-imp_mod_init(false, _, Mod, Arg) ->
-    Mod:init(Arg);
-imp_mod_init(true, PureOpts, Mod, Arg) ->
-%%    proplists:get_value(mod_init, PureOpts, {ok, foo_pure_state}).
-    imp_interp(proplists:get_value(mod_init, PureOpts, {ok, foo_pure_state}),
-               {Mod, Arg}).
-
-impure_mod_handle_command(State, Mod, Request, Sender, ModState) ->
-    imp_mod_handle_command(State#state.pure_p, State#state.pure_opts,
-                           Mod, Request, Sender, ModState).
-
-imp_mod_handle_command(false, _, Mod, Request, Sender, ModState) ->
-    Mod:handle_command(Request, Sender, ModState);
-imp_mod_handle_command(true, PureOpts, Mod, Request, Sender, ModState) ->
-    imp_interp(proplists:get_value(mod_handle_command, PureOpts),
-               {Request, Sender, ModState}).
-
-impure_mod_handle_handoff_command(State, Mod, Request, Sender, ModState) ->
-    imp_mod_handle_handoff_command(State#state.pure_p, State#state.pure_opts,
-                           Mod, Request, Sender, ModState).
-
-imp_mod_handle_handoff_command(false, _, Mod, Request, Sender, ModState) ->
-    Mod:handle_handoff_command(Request, Sender, ModState);
-imp_mod_handle_handoff_command(true, PureOpts, Mod, Request, Sender, ModState)->
-    imp_interp(proplists:get_value(mod_handle_handoff_command, PureOpts),
-               {Request, Sender, ModState}).
+impure(#state{pure_p = false}, {mod, Mod}, Func, ArgList) ->
+    erlang:apply(Mod, Func, ArgList);
+impure(#state{pure_p = false}, Mod, Func, ArgList) ->
+    erlang:apply(Mod, Func, ArgList);
+impure(#state{pure_opts = PureOpts}, {mod, _Mod}, Func, ArgList) ->
+    imp_interp(proplists:get_value({mod, Func}, PureOpts), ArgList);
+impure(#state{pure_opts = PureOpts}, Mod, Func, ArgList) ->
+    imp_interp(proplists:get_value({Mod, Func}, PureOpts), ArgList).
 
