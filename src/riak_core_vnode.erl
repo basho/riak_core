@@ -110,7 +110,7 @@ vnode_command(Sender, Request, State=#state{mod=Mod, modstate=ModState}) ->
     case impure(State, {mod, Mod}, handle_command,
                 [Request, Sender, ModState]) of
         {reply, Reply, NewModState} ->
-            reply(Sender, Reply),
+            impure(State, {mod, Mod}, reply, [Sender, Reply]),
             continue(State, NewModState);
         {noreply, NewModState} ->
             continue(State, NewModState);
@@ -163,10 +163,11 @@ active(handoff_complete, State=#state{mod=Mod,
                                       index=Idx, 
                                       handoff_node=HN,
                                       handoff_token=HT}) ->
-    riak_core_handoff_manager:release_handoff_lock({Mod, Idx}, HT),
+    impure(State, riak_core_handoff_manager, release_handoff_lock,
+           [{Mod, Idx}, HT]),
     impure(State, {mod, Mod}, handoff_finished, [HN, ModState]),
     {ok, NewModState} = impure(State, {mod, Mod}, delete, [ModState]),
-    riak_core_handoff_manager:add_exclusion(Mod, Idx),
+    impure(State, riak_core_handoff_manager, add_exclusion, [Mod, Idx]),
     {stop, normal, State#state{modstate=NewModState, handoff_node=none}}.
 
 active(_Event, _From, State) ->
@@ -225,10 +226,11 @@ start_handoff(State=#state{index=Idx, mod=Mod, modstate=ModState}, TargetNode) -
         {true, NewModState} ->
             {ok, NewModState1} = impure(State,
                                         {mod, Mod}, delete, [NewModState]),
-            riak_core_handoff_manager:add_exclusion(Mod, Idx),
+            impure(State, riak_core_handoff_manager, add_exclusion, [Mod, Idx]),
             {stop, normal, State#state{modstate=NewModState1}};
         {false, NewModState} ->  
-            case riak_core_handoff_manager:get_handoff_lock({Mod, Idx}) of
+            case impure(State, riak_core_handoff_manager, get_handoff_lock,
+                        [{Mod, Idx}]) of
                 {error, max_concurrency} ->
                     {ok, NewModState1} = impure(State,
                                                 {mod, Mod}, handoff_cancelled,
