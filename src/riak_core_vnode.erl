@@ -20,7 +20,7 @@
 -behaviour(gen_fsm).
 -include_lib("riak_core_vnode.hrl").
 -export([behaviour_info/1]).
--export([start_link/2,
+-export([start_link/2, pure_start/4,
          send_command/2,
          send_command_after/2]).
 -export([init/1, 
@@ -53,16 +53,24 @@ behaviour_info(_Other) ->
 -define(DEFAULT_TIMEOUT, 60000).
 -define(LOCK_RETRY_TIMEOUT, 10000).
 -define(MODSTATE, State#state{mod=Mod,modstate=ModState}).
+-define(PURE_DRIVER, gen_fsm_test_driver).
+
 -record(state, {
           index :: partition(),
           mod :: module(),
           modstate :: term(),
           handoff_token :: non_neg_integer(),
           handoff_node=none :: none | node(),
-          inactivity_timeout}).
+          inactivity_timeout,
+          pure_p = false :: boolean(),
+          pure_opts = [] :: list()
+         }).
 
 start_link(Mod, Index) ->
-    gen_fsm:start_link(?MODULE, [Mod, Index], []).
+    gen_fsm:start_link(?MODULE, {Mod, Index, []}, []).
+
+pure_start(FsmID, Mod, Index, PureOpts) ->
+    ?PURE_DRIVER:start(FsmID, ?MODULE, {Mod, Index, PureOpts}).
 
 %% Send a command message for the vnode module by Pid - 
 %% typically to do some deferred processing after returning yourself
@@ -76,14 +84,16 @@ send_command_after(Time, Request) ->
     gen_fsm:send_event_after(Time, ?VNODE_REQ{request=Request}).
     
 
-init([Mod, Index]) ->
+init({Mod, Index, PureOpts}) ->
     %%TODO: Should init args really be an array if it just gets Init?
     process_flag(trap_exit, true),
     {ok, ModState} = Mod:init([Index]),
     riak_core_handoff_manager:remove_exclusion(Mod, Index),
     Timeout = app_helper:get_env(riak_core, vnode_inactivity_timeout, ?DEFAULT_TIMEOUT),
+    PureP = proplists:get_value(debug, PureOpts, false),
     {ok, active, #state{index=Index, mod=Mod, modstate=ModState,
-                        inactivity_timeout=Timeout}, 0}.
+                        inactivity_timeout=Timeout,
+                        pure_p=PureP,pure_opts=PureOpts}, 0}.
 
 get_mod_index(VNode) ->
     gen_fsm:sync_send_all_state_event(VNode, get_mod_index).
@@ -186,16 +196,19 @@ terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState}) ->
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
-should_handoff(#state{index=Idx, mod=Mod}) ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    Me = node(),
+should_handoff(#state{index=Idx, mod=Mod} = S) ->
+    {ok, Ring} = impure_get_my_ring(S),
+    Me = impure_node(S),
     case riak_core_ring:index_owner(Ring, Idx) of
         Me ->
             false;
         TargetNode ->
-            ["riak", A, "vnode"] = string:tokens(atom_to_list(Mod), "_"),
+            A = case string:tokens(atom_to_list(Mod), "_") of
+                    ["riak", Middle, "vnode"] -> Middle;
+                    [First, "vnode"]          -> First
+                end,
             App = list_to_atom("riak_" ++ A),
-            case lists:member(TargetNode, riak_core_node_watcher:nodes(App)) of
+            case lists:member(TargetNode, impure_riak_core_node_watcher_nodes(S, App)) of
                 false  -> false;
                 true -> {true, TargetNode}
             end
@@ -243,3 +256,33 @@ reply({raw, Ref, From}, Reply) ->
 reply(ignore, _Reply) ->
     ok.
                    
+%% Impure handling stuff
+
+imp_interp(Fun, Arg) when is_function(Fun, 1) ->
+    Fun(Arg);
+imp_interp(Else, _) ->
+    Else.
+
+impure_get_my_ring(StateData) ->
+    imp_get_my_ring(StateData#state.pure_p, StateData#state.pure_opts).
+
+imp_get_my_ring(false, _PureOpts) ->
+    riak_core_ring_manager:get_my_ring();
+imp_get_my_ring(true, PureOpts) ->
+    {ok, proplists:get_value(get_my_ring, PureOpts)}.
+
+impure_riak_core_node_watcher_nodes(StateData, App) ->
+    imp_riak_core_node_watcher_nodes(StateData#state.pure_p, StateData#state.pure_opts, App).
+
+imp_riak_core_node_watcher_nodes(false, _PureOpts, App) ->
+    riak_core_node_watcher:nodes(App);
+imp_riak_core_node_watcher_nodes(true, PureOpts, _App) ->
+    proplists:get_value(node_watcher_nodes, PureOpts, crashme_watcher_nodelist).
+
+impure_node(StateData) ->
+    imp_node(StateData#state.pure_p, StateData#state.pure_opts).
+
+imp_node(false, _PureOpts) ->
+    node();
+imp_node(true, PureOpts) ->
+    proplists:get_value(node, PureOpts).

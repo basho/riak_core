@@ -33,7 +33,9 @@
          latereply/1,
          stop/1]).
 -export([init/1,
+         delete/1,
          handle_command/3,
+         handoff_finished/2,
          terminate/2]).
 
 -record(state, {index, counter}).
@@ -67,7 +69,6 @@ latereply(Preflist) ->
 stop(Preflist) ->
     riak_core_vnode_master:sync_command(Preflist, stop, ?MASTER).
 
-
 %% Callbacks
 
 init([Index]) ->
@@ -94,6 +95,12 @@ handle_command(latereply, Sender, State = #state{counter=Counter}) ->
                   riak_core_vnode:reply(Sender, latereply)
           end),
     {noreply, State#state{counter = Counter + 1}}.
+
+delete(State) ->
+    {ok, State}.
+
+handoff_finished(_TargetNode, State) ->
+    {ok, State}.
 
 terminate(_Reason, _State) ->
     ok.

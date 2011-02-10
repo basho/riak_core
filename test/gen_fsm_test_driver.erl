@@ -40,7 +40,7 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 start(FsmID, Mod, Args) ->
-    io:format("Start: ~p\n", [FsmID]),
+    %% io:format("Start: ~p\n", [FsmID]),
     destroy_id(FsmID),
     erlang:put(make_key(FsmID, trace), []),
     simplify_init(Mod:init(Args)).
