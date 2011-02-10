@@ -86,6 +86,8 @@ make_key(FsmID, Type) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 run_iterations(FsmID, Mod, {next_state, StateName, StateData, 0}, Events) ->
+    add_trace(FsmID, {{frame, event}, timeout}),
+    add_trace(FsmID, {{frame, callback}, StateName}),
     NextI = Mod:StateName(timeout, StateData),
     run_iterations(FsmID, Mod, simplify(FsmID, unused, NextI), Events);
 run_iterations(_FsmID, _Mod, {next_state, StateName, StateData, _}, []) ->
@@ -95,15 +97,23 @@ run_iterations(_FsmID, _Mod, {stop, StateName, StateData}, UnconsumedEvents) ->
 run_iterations(FsmID, Mod, {next_state, StateName, StateData, _}, [E|Es]) ->
     case E of
         {send_event, Event} ->
+            add_trace(FsmID, {{frame, event}, Event}),
+            add_trace(FsmID, {{frame, callback}, StateName}),
             NextI = Mod:StateName(Event, StateData),
             run_iterations(FsmID, Mod, simplify(FsmID, unused, NextI), Es);
         {send_all_state_event, Event} ->
+            add_trace(FsmID, {{frame, all_state_event}, Event}),
+            add_trace(FsmID, {{frame, handle_event}, StateName}),
             NextI = Mod:handle_event(Event, StateName, StateData),
             run_iterations(FsmID, Mod, simplify(FsmID, unused, NextI), Es);
         {sync_send_event, From, Event} ->
+            add_trace(FsmID, {{frame, sync_send_event}, Event}),
+            add_trace(FsmID, {{frame, sync_callback}, StateName}),
             NextI = Mod:StateName(Event, From, StateData),
             run_iterations(FsmID, Mod, simplify(FsmID, From, NextI), Es);
         {sync_send_all_state_event, From, Event} ->
+            add_trace(FsmID, {{frame, sync_send_all_state_event}, Event}),
+            add_trace(FsmID, {{frame, handle_sync_event}, StateName}),
             NextI = Mod:handle_sync_event(Event, From, StateName, StateData),
             run_iterations(FsmID, Mod, simplify(FsmID, From, NextI), Es)
     end.

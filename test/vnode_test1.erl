@@ -32,14 +32,29 @@ pure_1st_trivial_test() ->
     Ring = {NumParts, [{Idx, SeedNode} ||
                           Idx <- lists:seq(0, NumParts*MyPart-1, MyPart)]},
     ChState = {chstate, SeedNode, [], Ring, dict:new()}, % ugly hack
+    NoReplyFun = fun(Args) -> {noreply, lists:last(Args)} end,
     PureOpts = [{debug, true},
-                {node, SeedNode},
-                {get_my_ring, ChState},
-                {node_watcher_nodes, [SeedNode]}
+                {{erlang, node}, SeedNode},
+                {{riak_core_ring_manager, get_my_ring}, {ok, ChState}},
+                {{riak_core_node_watcher, node_watcher_nodes}, [SeedNode]},
+                {{app_helper, get_env},
+                 fun([riak_core, vnode_inactivity_timeout, _Default]) ->
+                         9999999999
+                 end},
+                {{mod, init}, {ok, foo_mod_state}},
+                {{mod, handle_command}, NoReplyFun},
+                {{mod, handle_handoff_command}, NoReplyFun},
+                {{mod, handle_handoff_data}, NoReplyFun},
+                {{mod, handoff_starting}, NoReplyFun},
+                {{mod, handoff_finished}, NoReplyFun},
+                {{mod, handoff_cancelled}, NoReplyFun},
+                {{mod, delete}, NoReplyFun},
+                {{mod, is_empty}, NoReplyFun},
+                {{mod, terminate}, NoReplyFun}
                ],
     
-    InitIter = ?MUT:pure_start(FsmID, mock_vnode, MyPart, PureOpts),
-    Events = [],
+    InitIter = ?MUT:pure_start(FsmID, riak_bogus_vnode, MyPart, PureOpts),
+    Events = [],%[{send_event, timeout}],
     {need_events, _, _} = X =
         ?PURE_DRIVER:run_to_completion(FsmID, ?MUT, InitIter, Events),
     [{res, X},
