@@ -41,7 +41,7 @@ verify_bz520_test() ->
     MyPart = 42,                                % 42 is a nice partition #....
     OtherNode = other@node,
     OtherOpts = [{partition_owners, [{42, OtherNode}]}],
-    BZ520_request_is_this = verify_bz520,
+    BZ520_request_is_this = bz520_request_is_a_single_atom_not_tuple,
     PureOpts = [
                 %% Setup should_handoff(): OtherNode is up
                 {{riak_core_node_watcher, nodes},
