@@ -36,12 +36,92 @@ pure_1st_trivial_test() ->
     [{res, X},
      {trace, ?PURE_DRIVER:get_trace(FsmID)}].
 
-make_general_pure_opts(FsmID, PartitionInterval = PI)
+verify_bz520_test() ->
+    FsmID = trivial_1st,
+    MyPart = 42,                                % 42 is a nice partition #....
+    OtherNode = other@node,
+    OtherOpts = [{partition_owners, [{42, OtherNode}]}],
+    BZ520_request_is_this = verify_bz520,
+    PureOpts = [
+                %% Setup should_handoff(): OtherNode is up
+                {{riak_core_node_watcher, nodes},
+                 fun([_App]) ->
+                         [OtherNode]
+                 end},
+                %% Setup active(): backend is ready for handoff
+                {{mod, handoff_starting},
+                 fun([_, ModState]) ->
+                         {true, ModState}
+                 end},
+                %% Setup start_handoff(): backend is not empty
+                {{mod, is_empty},
+                 fun([ModState]) ->
+                         {false, ModState}
+                 end},
+                %% Setup start_handoff(): handoff lock is good
+                {{riak_core_handoff_manager, get_handoff_lock},
+                 fun(_) ->
+                         {ok, {handoff_token, go}}
+                 end},
+                %% Setup start_handoff(): don't need to call
+                %% riak_core_handoff_sender:start_link().
+
+                %% TODO: All the steps above here are needed to get the
+                %% existing riak_core_vnode code to set #state.handoff_node
+                %% the way that we want it.  If we wanted to add
+                %% debugging-only code, e.g. with an -ifdef(TEST) wrapper,
+                %% then it could be worthwhile to simplify test setup.
+
+                %% Setup vnode_handoff_command(): need to forward
+                {{mod, handle_handoff_command},
+                 fun([_Request, _Sender, ModState]) ->
+                         {forward, ModState}
+                 end},
+                %% This is what we're after: put Req into the trace so that we
+                %% can verify it.
+                {{riak_core_vnode_master, command},
+                 fun([_To2Tuple, Req, _Sender, _RegName]) ->
+                         ?PURE_DRIVER:add_trace(FsmID, {verify_req, Req})
+                 end}
+               ] ++ make_general_pure_opts(FsmID, MyPart, OtherOpts),
+    InitIter = ?MUT:pure_start(FsmID, riak_bogus_vnode, MyPart, PureOpts),
+    Events = [
+              {send_event, timeout},
+              {send_event, ?MUT:make_vnode_request(BZ520_request_is_this)}
+             ],
+
+    {need_events, _, _} = X =
+        ?PURE_DRIVER:run_to_completion(FsmID, ?MUT, InitIter, Events),
+    Trace = ?PURE_DRIVER:get_trace(FsmID),
+    CapturedRequest = proplists:get_value(verify_req, Trace),
+    {got, BZ520_request_is_this} = {got, CapturedRequest},
+    [{res, X},
+     {trace, Trace}].
+
+make_general_pure_opts(FsmID, PartitionInterval) ->
+    make_general_pure_opts(FsmID, PartitionInterval, []).
+
+make_general_pure_opts(FsmID, PartitionInterval = PI, Opts)
   when PartitionInterval > 0 ->
     NumParts = 8,
     SeedNode = r1@node,
-    Ring = {NumParts, [{Idx, SeedNode} ||
-                          Idx <- lists:seq(0, (NumParts*PI) - 1, PI)]},
+    RingL0 = [{Idx, SeedNode} ||
+                 Idx <- lists:seq(0, (NumParts*PI) - 1, PI)],
+    RingL = case proplists:get_value(partition_owners, Opts) of
+               undefined ->
+                   RingL0;
+               Others ->
+                   lists:map(
+                     fun({Part, _Node} = PN) ->
+                             case proplists:get_value(Part, Others) of
+                                 undefined ->
+                                     PN;
+                                 NewNode ->
+                                     {Part, NewNode}
+                             end
+                     end, RingL0)
+           end,
+    Ring = {NumParts, RingL},
     ChState = {chstate, SeedNode, [], Ring, dict:new()}, % ugly hack
     NoReplyFun = fun(Args) -> {noreply, lists:last(Args)} end,
     [{debug, true},
