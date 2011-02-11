@@ -47,6 +47,12 @@ pure_1st_trivial_test() ->
                                         FsmID, {error_logger, error_msg,
                                                 lists:flatten(Str)})
                  end},
+                {{error_logger, info_msg},
+                 fun([Fmt, Args]) -> Str = io_lib:format(Fmt, Args),
+                                     ?PURE_DRIVER:add_trace(
+                                        FsmID, {error_logger, info_msg,
+                                                lists:flatten(Str)})
+                 end},
                 {{mod, reply},
                  fun([Sender, Reply]) -> ?PURE_DRIVER:add_trace(
                                             FsmID, {reply, Sender, Reply})

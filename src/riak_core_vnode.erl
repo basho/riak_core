@@ -196,16 +196,16 @@ handle_sync_event({handoff_data,BinObj}, _From, StateName,
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State, State#state.inactivity_timeout}.
 
-terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState} = State) ->
+terminate(Reason, _StateName, State=#state{mod=Mod, modstate=ModState}) ->
     impure(State, {mod, Mod}, terminate, [Reason, ModState]),
     ok.
 
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
-should_handoff(#state{index=Idx, mod=Mod} = S) ->
-    {ok, Ring} = impure(S, riak_core_ring_manager, get_my_ring, []),
-    Me = impure(S, erlang, node, []),
+should_handoff(State=#state{index=Idx, mod=Mod}) ->
+    {ok, Ring} = impure(State, riak_core_ring_manager, get_my_ring, []),
+    Me = impure(State, erlang, node, []),
     case riak_core_ring:index_owner(Ring, Idx) of
         Me ->
             false;
@@ -215,7 +215,7 @@ should_handoff(#state{index=Idx, mod=Mod} = S) ->
                     [First, "vnode"]          -> First
                 end,
             App = list_to_atom("riak_" ++ A),
-            AppNodes = impure(S, riak_core_node, watcher_nodes, [App]),
+            AppNodes = impure(State, riak_core_node_watcher, nodes, [App]),
             case lists:member(TargetNode, AppNodes) of
                 false  -> false;
                 true -> {true, TargetNode}
