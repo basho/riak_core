@@ -41,6 +41,16 @@ pure_1st_trivial_test() ->
                  fun([riak_core, vnode_inactivity_timeout, _Default]) ->
                          9999999999
                  end},
+                {{error_logger, error_msg},
+                 fun([Fmt, Args]) -> Str = io_lib:format(Fmt, Args),
+                                     ?PURE_DRIVER:add_trace(
+                                        FsmID, {error_logger, error_msg,
+                                                lists:flatten(Str)})
+                 end},
+                {{mod, reply},
+                 fun([Sender, Reply]) -> ?PURE_DRIVER:add_trace(
+                                            FsmID, {reply, Sender, Reply})
+                 end},
                 {{mod, init}, {ok, foo_mod_state}},
                 {{mod, handle_command}, NoReplyFun},
                 {{mod, handle_handoff_command}, NoReplyFun},
