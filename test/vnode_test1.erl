@@ -94,6 +94,8 @@ verify_bz520_test() ->
         ?PURE_DRIVER:run_to_completion(FsmID, ?MUT, InitIter, Events),
     Trace = ?PURE_DRIVER:get_trace(FsmID),
     CapturedRequest = proplists:get_value(verify_req, Trace),
+    %% If the BZ 520 bug is present, then CapturedRequest will be a tuple
+    %% representing an inappropriately-wrapped request.
     {got, BZ520_request_is_this} = {got, CapturedRequest},
     [{res, X},
      {trace, Trace}].
