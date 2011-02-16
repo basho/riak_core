@@ -43,23 +43,25 @@
 %% @doc Get the HTTP IP address and port number environment variables.
 http_ip_and_port() ->
     case get_riak_core_env(http) of
-        {ok, [{WebIp, WebPort} | _]} ->            
+        [{WebIp, WebPort} | _] ->            
             {WebIp, WebPort};
-        {ok, []} ->
+        [] ->
             error;
         undefined ->
             %% Fallback to pre-0.14 HTTP config.                                                                                                                        
             %% TODO: Remove in 0.16                                                                                                                                     
-            WebIpCfg = get_riak_core_env(web_ip),
-            WebPortCfg = get_riak_core_env(web_port),
-            case {WebIpCfg, WebPortCfg} of
-                {{ok, WebIp}, {ok, WebPort}} ->
+            WebIp = get_riak_core_env(web_ip),
+            WebPort = get_riak_core_env(web_port),
+            if
+                WebIp == undefined ->
+                    error;
+                WebPort == undefined ->
+                    error;
+                true ->
                     error_logger:info_msg("Found HTTP config for riak_jmx using pre-0.14 config "
                                           "values; please update the config file to use new HTTP "
                                           "binding configuration values.\n"),
-                    {WebIp, WebPort};
-                _ ->
-                    error
+                    {WebIp, WebPort}
             end
     end.
 
@@ -103,25 +105,80 @@ get_riak_core_env(Key) ->
 %% ===================================================================
 -ifdef(TEST).
 
-http_ip_and_port_test() ->
-    ?assert(false).
+riak_core_config_test_() ->
+    { setup,
+      fun setup/0,
+      fun cleanup/1,
+      [
+       fun http_ip_and_port_test_case/0,
+       fun default_bucket_props_test_case/0,
+       fun target_n_val_test_case/0,
+       fun gossip_interval_test_case/0,
+       fun cluster_name_test_case/0,
+       fun ring_creation_size_test_case/0,
+       fun ring_state_dir_test_case/0,
+       fun non_existent_var_test_case/0
+      ]
+    }.
 
-default_bucket_props_test() ->
-    ?assert(false).
+http_ip_and_port_test_case() ->
+    ?assertEqual(error, http_ip_and_port()),
+    %% Test the pre-0.14 style config
+    application:set_env(riak_core, web_ip, "127.0.0.1"),
+    application:set_env(riak_core, web_port, 8098),
+    ?assertEqual({"127.0.0.1", 8098}, http_ip_and_port()),
+    %% Test the config for 0.14 and later
+    application:set_env(riak_core, http, [{"localhost", 9000}]),
+    ?assertEqual({"localhost", 9000}, http_ip_and_port()).
 
-target_n_val_test() ->
-    ?assert(false).
 
-gossip_interval_test() ->
-    ?assert(false).
+default_bucket_props_test_case() ->
+    DefaultBucketProps = [{allow_mult,false},
+                          {chash_keyfun,{riak_core_util,chash_std_keyfun}},
+                          {last_write_wins,false},
+                          {n_val,3},
+                          {postcommit,[]},
+                          {precommit,[]}],
+    ?assertEqual(DefaultBucketProps, default_bucket_props()).
 
-cluster_name_test() ->
-    ?assert(false).
+target_n_val_test_case() ->
+    ?assertEqual(4, target_n_val()).
 
-ring_creation_size_test() ->
-    ?assert(false).
+gossip_interval_test_case() ->
+    %% Explicitly set the value because other
+    %% unit tests change the default.
+    application:set_env(riak_core, gossip_interval, 60000),
+    ?assertEqual(60000, gossip_interval()).
 
-ring_state_dir_test() ->
-    ?assert(false).
+cluster_name_test_case() ->
+    ?assertEqual("default", cluster_name()).
 
+ring_creation_size_test_case() ->
+    %% Explicitly set the value because other
+    %% unit tests change the default.
+    application:set_env(riak_core, ring_creation_size, 64),
+    ?assertEqual(64, ring_creation_size()).
+
+ring_state_dir_test_case() ->
+    ?assertEqual("data/ring", ring_state_dir()).
+
+non_existent_var_test_case() ->
+    ?assertEqual(undefined, get_riak_core_env(bogus)).
+
+setup() ->
+    
+    %% Start the applications required for riak_core to start 
+    application:start(sasl),
+    application:start(crypto),
+    application:start(riak_sysmon),
+    application:start(webmachine),
+    application:start(riak_core).
+
+cleanup(_Pid) ->
+    application:stop(riak_core),
+    application:stop(webmachine),
+    application:stop(riak_sysmon),
+    application:stop(crypto),
+    application:stop(sasl).
+    
 -endif.
