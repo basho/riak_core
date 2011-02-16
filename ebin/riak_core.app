@@ -21,6 +21,7 @@
              riak_core_cinfo_basic,
              riak_core_cinfo_core,
              riak_core_claim,
+             riak_core_config,
              riak_core_gossip,
              riak_core_handoff_listener,
              riak_core_handoff_manager,
