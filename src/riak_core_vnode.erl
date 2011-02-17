@@ -274,9 +274,9 @@ make_vnode_request(Request) ->
 
 %% Impure handling stuff
 
-imp_interp(Fun, Arg) when not is_tuple(Fun), is_function(Fun, 1) ->
+impure_mod_call(Fun, Arg) when not is_tuple(Fun), is_function(Fun, 1) ->
     Fun(Arg);
-imp_interp(Else, _) ->
+impure_mod_call(Else, _) ->
     Else.
 
 impure(#state{pure_p = false}, {mod, Mod}, Func, ArgList) ->
@@ -284,7 +284,7 @@ impure(#state{pure_p = false}, {mod, Mod}, Func, ArgList) ->
 impure(#state{pure_p = false}, Mod, Func, ArgList) ->
     erlang:apply(Mod, Func, ArgList);
 impure(#state{pure_opts = PureOpts}, {mod, _Mod}, Func, ArgList) ->
-    imp_interp(proplists:get_value({mod, Func}, PureOpts), ArgList);
+    impure_mod_call(proplists:get_value({mod, Func}, PureOpts), ArgList);
 impure(#state{pure_opts = PureOpts}, Mod, Func, ArgList) ->
-    imp_interp(proplists:get_value({Mod, Func}, PureOpts), ArgList).
+    impure_mod_call(proplists:get_value({Mod, Func}, PureOpts), ArgList).
 
