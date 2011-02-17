@@ -2,7 +2,7 @@
 %%
 %% riak_core: Core Riak Application
 %%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -58,7 +58,7 @@ http_ip_and_port() ->
                 WebPort == undefined ->
                     error;
                 true ->
-                    error_logger:info_msg("Found HTTP config for riak_jmx using pre-0.14 config "
+                    error_logger:info_msg("Found HTTP config for riak_core using pre-0.14 config "
                                           "values; please update the config file to use new HTTP "
                                           "binding configuration values.\n"),
                     {WebIp, WebPort}
@@ -139,6 +139,7 @@ default_bucket_props_test_case() ->
                           {n_val,3},
                           {postcommit,[]},
                           {precommit,[]}],
+    application:set_env(riak_core, default_bucket_props, DefaultBucketProps),
     ?assertEqual(DefaultBucketProps, default_bucket_props()).
 
 target_n_val_test_case() ->
@@ -165,20 +166,10 @@ ring_state_dir_test_case() ->
 non_existent_var_test_case() ->
     ?assertEqual(undefined, get_riak_core_env(bogus)).
 
-setup() ->
-    
-    %% Start the applications required for riak_core to start 
-    application:start(sasl),
-    application:start(crypto),
-    application:start(riak_sysmon),
-    application:start(webmachine),
-    application:start(riak_core).
+setup() ->   
+    application:load(riak_core).
 
 cleanup(_Pid) ->
-    application:stop(riak_core),
-    application:stop(webmachine),
-    application:stop(riak_sysmon),
-    application:stop(crypto),
-    application:stop(sasl).
+    application:unload(riak_core).
     
 -endif.
