@@ -82,8 +82,8 @@ fresh(Window) -> fresh(Window, Window).
 fresh(Window, Trigger) when Trigger >= Window ->
     {A,B,C} = now(),
     Dir = lists:flatten(io_lib:format("~s/~p.~p.~p", [private_dir(), A, B, C])),
-    filelib:ensure_dir(Dir),
-    file:make_dir(Dir),
+    {ok, parent, Dir} = {filelib:ensure_dir(Dir), parent, Dir},
+    {ok, Dir} = {file:make_dir(Dir), Dir},
     #slide{window=Window, trigger=Trigger, dir=Dir}.
 
 %% @spec moment() -> integer()
