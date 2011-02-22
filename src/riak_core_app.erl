@@ -76,6 +76,7 @@ start(_StartType, _StartArgs) ->
                     Ring = riak_core_ring_manager:read_ringfile(RingFile),
                     riak_core_ring_manager:set_my_ring(Ring);
                 {error, not_found} ->
+                    riak_core_ring_manager:write_ringfile(),
                     error_logger:warning_msg("No ring file available.\n");
                 {error, Reason} ->
                     error_logger:error_msg("Failed to load ring file: ~p\n",

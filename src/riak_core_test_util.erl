@@ -23,6 +23,8 @@
 %% @doc utilities for test scripts
 
 -module(riak_core_test_util).
+
+-ifdef(TEST).
 -export([setup_mockring1/0]).
 -include_lib("eunit/include/eunit.hrl").
 
@@ -38,4 +40,6 @@ setup_mockring1() ->
                                  hd(riak_core_ring:my_indices(R)),
                                  othernode2@otherhost2, R) end,
                        Ring0,[1,2,3,4,5,6]),
-    riak_core_ring_manager:set_my_ring(Ring).
+    riak_core_ring_manager:set_ring_global(Ring).
+
+-endif. %TEST.

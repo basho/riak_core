@@ -105,21 +105,11 @@ handle_cast({reconcile_ring, OtherRing}, RingChanged) ->
             {noreply, true}
     end;
 
-handle_cast(gossip_ring, RingChanged) ->
+handle_cast(gossip_ring, _RingChanged) ->
     % First, schedule the next round of gossip...
     schedule_next_gossip(),
 
-    % If the ring has changed since our last write,
-    % then rewrite the ring...
-    case RingChanged of
-        true ->
-            riak_core_ring_manager:prune_ringfiles(),
-            riak_core_ring_manager:write_ringfile();
-        false ->
-            ignore
-    end,
-
-    % Finally, gossip the ring to some random other node...
+    % Gossip the ring to some random other node...
     {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
     case riak_core_ring:random_other_node(MyRing) of
         no_node -> % must be single node cluster
