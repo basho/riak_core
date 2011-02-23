@@ -24,7 +24,7 @@
 %% -------------------------------------------------------------------
 -module(riak_core_apl).
 -export([active_owners/1, active_owners/2,
-         get_apl/3, get_apl/4,
+         get_apl/3, get_apl/4, get_apl2/4,
          get_primary_apl/3, get_primary_apl/4
         ]).
 
@@ -36,6 +36,7 @@
 -type n_val() :: non_neg_integer().
 -type ring() :: term().
 -type preflist() :: [{index(), node()}].
+-type preflist2() :: [{{index(), node()}, primary|fallback}].
 
 %% Return preflist of all active primary nodes (with no
 %% substituion of fallbacks).  Used to simulate a
@@ -62,6 +63,14 @@ get_apl(DocIdx, N, Service) ->
 %% for a given ring/upnodes list
 -spec get_apl(binary(), n_val(), ring(), [node()]) -> preflist().
 get_apl(DocIdx, N, Ring, UpNodes) ->
+    [{Partition, Node} || {{Partition, Node}, _Type} <- 
+                              get_apl2(DocIdx, N, Ring, UpNodes)].
+
+%% Get the active preflist taking account of which nodes are up
+%% for a given ring/upnodes list and annotate each node with type of
+%% primary/fallback
+-spec get_apl2(binary(), n_val(), ring(), [node()]) -> preflist2().
+get_apl2(DocIdx, N, Ring, UpNodes) ->
     UpNodes1 = ordsets:from_list(UpNodes),
     Preflist = riak_core_ring:preflist(DocIdx, Ring),
     {Primaries, Fallbacks} = lists:split(N, Preflist),
@@ -90,7 +99,7 @@ check_up([], _UpNodes, Up, Pangs) ->
 check_up([{Partition,Node}|Rest], UpNodes, Up, Pangs) ->
     case is_up(Node, UpNodes) of
         true ->
-            check_up(Rest, UpNodes, [{Partition, Node} | Up], Pangs);
+            check_up(Rest, UpNodes, [{{Partition, Node}, primary} | Up], Pangs);
         false ->
             check_up(Rest, UpNodes, Up, [{Partition, Node} | Pangs])
     end.
@@ -104,11 +113,12 @@ find_fallbacks([], _Fallbacks, _UpNodes, Secondaries) ->
 find_fallbacks([{Partition, _Node}|Rest]=Pangs, [{_,FN}|Fallbacks], UpNodes, Secondaries) ->
     case is_up(FN, UpNodes) of
         true ->
-            find_fallbacks(Rest, Fallbacks, UpNodes, [{Partition, FN} | Secondaries]);
+            find_fallbacks(Rest, Fallbacks, UpNodes,
+                           [{{Partition, FN}, fallback} | Secondaries]);
         false ->
             find_fallbacks(Pangs, Fallbacks, UpNodes, Secondaries)
     end.
-        
+
 %% Return true if a node is up
 is_up(Node, UpNodes) ->
     ordsets:is_element(Node, UpNodes).
