@@ -21,6 +21,7 @@
 -include_lib("riak_core_vnode.hrl").
 -export([behaviour_info/1]).
 -export([start_link/2,
+         start_link/3,
          send_command/2,
          send_command_after/2]).
 -export([init/1, 
@@ -62,7 +63,10 @@ behaviour_info(_Other) ->
           inactivity_timeout}).
 
 start_link(Mod, Index) ->
-    gen_fsm:start_link(?MODULE, [Mod, Index], []).
+    start_link(Mod, Index, 0).
+
+start_link(Mod, Index, InitialInactivityTimeout) ->
+    gen_fsm:start_link(?MODULE, [Mod, Index, InitialInactivityTimeout], []).
 
 %% Send a command message for the vnode module by Pid - 
 %% typically to do some deferred processing after returning yourself
@@ -76,14 +80,14 @@ send_command_after(Time, Request) ->
     gen_fsm:send_event_after(Time, ?VNODE_REQ{request=Request}).
     
 
-init([Mod, Index]) ->
+init([Mod, Index, InitialInactivityTimeout]) ->
     %%TODO: Should init args really be an array if it just gets Init?
     process_flag(trap_exit, true),
     {ok, ModState} = Mod:init([Index]),
     riak_core_handoff_manager:remove_exclusion(Mod, Index),
     Timeout = app_helper:get_env(riak_core, vnode_inactivity_timeout, ?DEFAULT_TIMEOUT),
     {ok, active, #state{index=Index, mod=Mod, modstate=ModState,
-                        inactivity_timeout=Timeout}, 0}.
+                        inactivity_timeout=Timeout}, InitialInactivityTimeout}.
 
 get_mod_index(VNode) ->
     gen_fsm:sync_send_all_state_event(VNode, get_mod_index).
