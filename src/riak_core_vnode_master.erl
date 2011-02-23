@@ -62,6 +62,9 @@ command(Preflist, Msg, VMaster) ->
 %% Send the command to the preflist given with responses going to Sender
 command([], _Msg, _Sender, _VMaster) ->
     ok;
+command([{Index, Pid}|Rest], Msg, Sender, VMaster) when is_pid(Pid) ->
+    gen_fsm:send_event(Pid, make_request(Msg, Sender, Index)),
+    command(Rest, Msg, Sender, VMaster);
 command([{Index,Node}|Rest], Msg, Sender, VMaster) ->
     gen_server:cast({VMaster, Node}, make_request(Msg, Sender, Index)),
     command(Rest, Msg, Sender, VMaster);
