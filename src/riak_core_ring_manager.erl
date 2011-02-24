@@ -175,10 +175,11 @@ init([Mode]) ->
             Ring = riak_core_ring:fresh(16,node())
     end,
 
-    %% Set the ring and send initial notification to local observers that ring has changed.
-    %% Do *not* save the ring to disk here.  On startup we deliberately come up
-    %% with a ring where the local node owns all partitions so that any fallback vnodes
-    %% will be started so they can hand off.
+    %% Set the ring and send initial notification to local observers that
+    %% ring has changed.
+    %% Do *not* save the ring to disk here.  On startup we deliberately come
+    %% up with a ring where the local node owns all partitions so that any
+    %% fallback vnodes will be started so they can hand off.
     set_ring_global(Ring),
     riak_core_ring_events:ring_update(Ring),
     {ok, Mode}.

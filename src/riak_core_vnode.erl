@@ -79,7 +79,6 @@ send_command_after(Time, Request) ->
 init([Mod, Index]) ->
     %%TODO: Should init args really be an array if it just gets Init?
     process_flag(trap_exit, true),
-    error_logger:info_msg("Starting vnode ~p\n", [Index]),
     {ok, ModState} = Mod:init([Index]),
     riak_core_handoff_manager:remove_exclusion(Mod, Index),
     Timeout = app_helper:get_env(riak_core, vnode_inactivity_timeout, ?DEFAULT_TIMEOUT),
@@ -208,7 +207,6 @@ start_handoff(State=#state{index=Idx, mod=Mod, modstate=ModState}, TargetNode) -
         {true, NewModState} ->
             {ok, NewModState1} = Mod:delete(NewModState),
             riak_core_handoff_manager:add_exclusion(Mod, Idx),
-            error_logger:info_msg("Stopped vnode ~p after handoff\n", [Idx]),
             {stop, normal, State#state{modstate=NewModState1}};
         {false, NewModState} ->  
             case riak_core_handoff_manager:get_handoff_lock({Mod, Idx}) of
