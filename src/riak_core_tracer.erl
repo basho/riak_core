@@ -89,13 +89,13 @@ get_fsm_events({trace, _Pid, call,
                  [ReqId,B,K,_R,_T,_ReplyTo]}}) ->
     [{get_start, ReqId, {B, K}}];
 get_fsm_events({trace, _Pid, call,
-                {riak_kv_get_fsm, send_reply,
-                 [_Client, ReqId, Reply]}}) ->
-    [{get_finished, ReqId, Reply}].
+                {riak_kv_get_fsm, client_reply,
+                 [Reply, State]}}) ->
+    [{get_finished, element(8, State), Reply}].
 
 log_get_fsm() ->
     riak_core_tracer:filter([{riak_kv_get_fsm, start},
-                   {riak_kv_get_fsm, send_reply}],
+                   {riak_kv_get_fsm, client_reply}],
                   fun get_fsm_events/1).
 
 put_fsm_events({trace, _Pid, call,
