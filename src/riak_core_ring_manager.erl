@@ -30,6 +30,7 @@
 -export([start_link/0,
          start_link/1,
          get_my_ring/0,
+         leave_the_ring/1,
          set_my_ring/1,
          write_ringfile/0,
          prune_ringfiles/0,
@@ -67,6 +68,9 @@ get_my_ring() ->
         undefined -> {error, no_ring}
     end.
 
+%% @spec leave_the_ring(riak_core_ring:riak_core_ring()) -> ok
+leave_the_ring(Ring) ->
+    gen_server2:call(?MODULE, {leave_the_ring, Ring}, infinity).
 
 %% @spec set_my_ring(riak_core_ring:riak_core_ring()) -> ok
 set_my_ring(Ring) ->
@@ -187,6 +191,26 @@ init([Mode]) ->
 
 handle_call({set_my_ring, Ring}, _From, State) ->
     prune_write_notify_ring(Ring),
+    {reply,ok,State};
+handle_call({leave_the_ring, Ring}, _From, State) ->
+    %% All of the following operations need to be
+    %% synchronous so we can make sure they have
+    %% completed before the node stops.
+    set_ring_global(Ring),
+
+    %% Notify any local observers that the ring has changed (sync)
+    riak_core_ring_events:ring_sync_update(Ring),
+    
+    %% This node is leaving the cluster so create a fresh ring file
+    FreshRing = riak_core_ring:fresh(),
+    set_ring_global(FreshRing),
+    riak_core_ring_events:ring_sync_update(FreshRing),
+    do_write_ringfile(FreshRing),
+
+    %% Handoff is complete and fresh ring is written
+    %% so we can safely stop now.
+    riak_core:stop("node removal completed, exiting."),
+
     {reply,ok,State};
 handle_call({ring_trans, Fun, Args}, _From, State) ->
     {ok, Ring} = get_my_ring(),

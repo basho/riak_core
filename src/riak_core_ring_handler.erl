@@ -59,11 +59,7 @@ code_change(_OldVsn, State, _Extra) ->
 ensure_vnodes_started(Ring) ->
     case riak_core:vnode_modules() of
         [] -> ok;
-        Mods ->
-            case ensure_vnodes_started(Mods, Ring, []) of
-                [] -> riak_core:stop("node removal completed, exiting.");
-                _ -> ok
-            end
+        Mods -> ensure_vnodes_started(Mods, Ring, [])
     end.
 
 ensure_vnodes_started([], _Ring, Acc) ->
