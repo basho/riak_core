@@ -73,7 +73,15 @@ ensure_vnodes_started([H|T], Ring, Acc) ->
 
 ensure_vnodes_started(Mod, Ring) ->
     Startable = startable_vnodes(Mod, Ring),
-    [Mod:start_vnode(I) || I <- Startable],
+    spawn_link(fun() ->
+                       try register(riak_core_ring_handler_ensure, self())
+                       catch error:badarg ->
+                               exit(normal)
+                       end,
+                       wait_for_kv_app(100, 100),
+                       [Mod:start_vnode(I) || I <- Startable],
+                       exit(normal)
+               end),
     Startable.
 
 startable_vnodes(Mod, Ring) ->
@@ -94,4 +102,15 @@ startable_vnodes(Mod, Ring) ->
                 RO ->
                     [RO | riak_core_ring:my_indices(Ring)]
             end
+    end.
+
+wait_for_kv_app(0, _) ->
+    bummer;
+wait_for_kv_app(Count, Sleep) ->
+    case lists:keymember(riak_kv, 1, application:which_applications()) of
+        true ->
+            ok;
+        false ->
+            timer:sleep(Sleep),
+            wait_for_kv_app(Count - 1, Sleep)
     end.
