@@ -261,8 +261,8 @@ never_wants_claim(_) -> no.
 -ifdef(TEST).
 
 wants_claim_test() ->
-    riak_core_ring_events:start_link(),
-    riak_core_ring_manager:start_link(test),
+    %% riak_core_ring_events:start_link(),
+    %% riak_core_ring_manager:start_link(test),
     riak_core_test_util:setup_mockring1(),
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     ?assertEqual(no, default_wants_claim(Ring)),

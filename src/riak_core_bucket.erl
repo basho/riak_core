@@ -56,8 +56,7 @@ set_bucket(Name, BucketProps) ->
                                                   NewBucket,
                                                   Ring)}
         end,
-    riak_core_ring_manager:ring_trans(F, undefined),
-    riak_core_ring_manager:write_ringfile(),
+    {ok, _NewRing} = riak_core_ring_manager:ring_trans(F, undefined),
     ok.
 
 %% @spec merge_props(list(), list()) -> list()

@@ -91,7 +91,7 @@ do_write_ringfile(Ring) ->
             Cluster = app_helper:get_env(riak_core, cluster_name),
             FN = Dir ++ "/riak_core_ring." ++ Cluster ++ TS,
             ok = filelib:ensure_dir(FN),
-            file:write_file(FN, term_to_binary(Ring))
+            ok = file:write_file(FN, term_to_binary(Ring))
     end.
 
 %% @spec find_latest_ringfile() -> string()
@@ -174,31 +174,31 @@ init([Mode]) ->
         test ->
             Ring = riak_core_ring:fresh(16,node())
     end,
-    mochiglobal:put(?RING_KEY, Ring),
 
-    % Initial notification to local observers that ring has changed
+    %% Set the ring and send initial notification to local observers that
+    %% ring has changed.
+    %% Do *not* save the ring to disk here.  On startup we deliberately come
+    %% up with a ring where the local node owns all partitions so that any
+    %% fallback vnodes will be started so they can hand off.
+    set_ring_global(Ring),
     riak_core_ring_events:ring_update(Ring),
     {ok, Mode}.
 
 
 handle_call({set_my_ring, Ring}, _From, State) ->
-    set_ring_global(Ring),
-
-    % Notify any local observers that the ring has changed (async)
-    riak_core_ring_events:ring_update(Ring),
+    prune_write_notify_ring(Ring),
     {reply,ok,State};
 handle_call({ring_trans, Fun, Args}, _From, State) ->
     {ok, Ring} = get_my_ring(),
     case catch Fun(Ring, Args) of
         {new_ring, NewRing} ->
-            mochiglobal:put(?RING_KEY, NewRing),
+            prune_write_notify_ring(NewRing),
             case riak_core_ring:random_other_node(NewRing) of
                 no_node ->
                     ignore;
                 Node ->
                     riak_core_gossip:send_ring(Node)
             end,
-            riak_core_ring_events:ring_update(NewRing),
             {reply, {ok, NewRing}, State};
         ignore ->
             {reply, not_changed, State};
@@ -252,3 +252,11 @@ back(N,X,[H|T]) ->
 %% process.
 set_ring_global(Ring) ->
     mochiglobal:put(?RING_KEY, Ring).
+
+
+%% Persist a new ring file, set the global value and notify any listeners
+prune_write_notify_ring(Ring) ->
+    riak_core_ring_manager:prune_ringfiles(),
+    do_write_ringfile(Ring),
+    set_ring_global(Ring),
+    riak_core_ring_events:ring_update(Ring).
