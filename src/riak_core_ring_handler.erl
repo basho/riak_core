@@ -73,6 +73,11 @@ ensure_vnodes_started([H|T], Ring, Acc) ->
 
 ensure_vnodes_started(Mod, Ring) ->
     Startable = startable_vnodes(Mod, Ring),
+    %% NOTE: This following is a hack.  There's a basic
+    %%       dependency/race between riak_core (want to start vnodes
+    %%       right away to trigger possible handoffs) and riak_kv
+    %%       (needed to support those vnodes).  The hack does not fix
+    %%       that dependency: internal techdebt todo list #A7 does.
     spawn_link(fun() ->
                        try register(riak_core_ring_handler_ensure, self())
                        catch error:badarg ->
