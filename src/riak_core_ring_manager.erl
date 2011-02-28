@@ -204,7 +204,7 @@ handle_call({leave_the_ring, Ring}, _From, State) ->
     %% This node is leaving the cluster so create a fresh ring file
     FreshRing = riak_core_ring:fresh(),
     set_ring_global(FreshRing),
-    riak_core_ring_events:ring_sync_update(FreshRing),
+    %% Make sure the fresh ring gets written before stopping
     do_write_ringfile(FreshRing),
 
     %% Handoff is complete and fresh ring is written
