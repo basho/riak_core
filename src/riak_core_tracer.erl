@@ -19,7 +19,6 @@
 -module(riak_core_tracer).
 
 -behaviour(gen_server).
--include_lib("riak_kv/include/riak_kv_vnode.hrl").
 
 %% API
 -export([start_link/0,
@@ -27,14 +26,9 @@
          filter/2,
          collect/0, collect/1, collect/2,
          results/0]).
--export([log_get_fsm/0,
-         log_put_fsm/0]).
--export([test_get/0,
-         test_put/0,
-         test_get_put/0,
-         test_all_events/1]).
+-export([test_all_events/1]).
 
--export([all_events/1, get_fsm_events/1]).
+-export([all_events/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -78,78 +72,6 @@ results() ->
 
 all_events({trace, Pid, call, {M,F,A}}) ->
     [{node(Pid), {M,F,A}}].
-
-%%===================================================================
-%% Pre-canned examples - tracing of riak_kv, but not compile time
-%% coupling.
-%%===================================================================
-
-get_fsm_events({trace, _Pid, call,
-                {riak_kv_get_fsm,start,
-                 [ReqId,B,K,_R,_T,_ReplyTo]}}) ->
-    [{get_start, ReqId, {B, K}}];
-get_fsm_events({trace, _Pid, call,
-                {riak_kv_get_fsm, send_reply,
-                 [_Client, ReqId, Reply]}}) ->
-    [{get_finished, ReqId, Reply}].
-
-log_get_fsm() ->
-    riak_core_tracer:filter([{riak_kv_get_fsm, start},
-                   {riak_kv_get_fsm, send_reply}],
-                  fun get_fsm_events/1).
-
-put_fsm_events({trace, _Pid, call,
-               {riak_kv_put_fsm,start,
-                [ReqId,Obj, _W, _DW,_T,_ReplyTo,[]]}}) ->
-    [{put_start, ReqId, Obj}];
-put_fsm_events({trace, _Pid, call,
-                {riak_kv_put_fsm, send_reply,
-                 [_Client, ReqId, Reply]}}) ->
-    [{put_finished, ReqId, Reply}].
-
-log_put_fsm() ->
-    riak_core_tracer:filter([{riak_kv_put_fsm, start},
-                   {riak_kv_put_fsm, send_reply}],
-                  fun put_fsm_events/1).
- 
-%% Some functions to execute
-test_get() ->
-    riak_core_tracer:start_link(),
-    riak_core_tracer:reset(),
-    log_get_fsm(),
-    riak_core_tracer:collect(5000),
-    {ok, C} = riak:local_client(),
-    C:get(<<"b">>,<<"k1">>),
-    C:get(<<"b">>,<<"k2">>),
-    C:get(<<"b">>,<<"k3">>),
-    timer:sleep(100),
-    riak_core_tracer:results().
-
-test_put() ->
-    riak_core_tracer:start_link(),
-    riak_core_tracer:reset(),
-    log_put_fsm(),
-    riak_core_tracer:collect(5000),
-    {ok, C} = riak:local_client(),
-    C:put(riak_object:new(<<"b">>,<<"k1">>,<<"v1">>)),
-    C:put(riak_object:new(<<"b">>,<<"k2">>,<<"v2">>)),
-    C:put(riak_object:new(<<"b">>,<<"k3">>,<<"v3">>)),
-    timer:sleep(100),
-    riak_core_tracer:results().
-
-test_get_put() ->
-    riak_core_tracer:start_link(),
-    riak_core_tracer:reset(),
-    log_get_fsm(),
-    riak_core_tracer:collect(5000),
-    {ok, C} = riak:local_client(),
-    C:get(<<"b">>,<<"k1">>),
-    C:put(riak_object:new(<<"b">>,<<"k1">>,<<"v1">>)),
-    C:get(<<"b">>,<<"k2">>),
-    C:put(riak_object:new(<<"b">>,<<"k1">>,<<"v1">>)),
-    timer:sleep(100),
-    riak_core_tracer:results().
-
 
 test_all_events(Ms) ->
     riak_core_tracer:start_link(),
