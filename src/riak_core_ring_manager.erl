@@ -277,10 +277,63 @@ back(N,X,[H|T]) ->
 set_ring_global(Ring) ->
     mochiglobal:put(?RING_KEY, Ring).
 
-
 %% Persist a new ring file, set the global value and notify any listeners
 prune_write_notify_ring(Ring) ->
     riak_core_ring_manager:prune_ringfiles(),
     do_write_ringfile(Ring),
     set_ring_global(Ring),
     riak_core_ring_events:ring_update(Ring).
+
+
+%% ===================================================================
+%% Unit tests
+%% ===================================================================
+-ifdef(TEST).
+
+back_test() ->
+    X = [1,2,3],
+    List1 = [[1,2,3],[4,2,3], [7,8,3], [11,12,13], [1,2,3]],
+    List2 = [[7,8,9], [1,2,3]],
+    List3 = [[1,2,3]],
+    ?assertEqual([[4,2,3]], back(1, X, List1)),
+    ?assertEqual([[7,8,9]], back(1, X, List2)),
+    ?assertEqual([], back(1, X, List3)),
+    ?assertEqual([[7,8,3]], back(2, X, List1)),
+    ?assertEqual([[11,12,13]], back(3, X, List1)).    
+
+prune_list_test() ->
+    TSList1 = [[2011,2,28,16,32,16],[2011,2,28,16,32,36],[2011,2,28,16,30,27],[2011,2,28,16,32,16],[2011,2,28,16,32,36]],
+    TSList2 = [[2011,2,28,16,32,36],[2011,2,28,16,31,16],[2011,2,28,16,30,27],[2011,2,28,16,32,16],[2011,2,28,16,32,36]],
+    PrunedList1 = [[2011,2,28,16,30,27],[2011,2,28,16,32,16]],
+    PrunedList2 = [[2011,2,28,16,31,16],[2011,2,28,16,32,36]],
+    ?assertEqual(PrunedList1, prune_list(TSList1)),
+    ?assertEqual(PrunedList2, prune_list(TSList2)).    
+
+set_ring_global_test() ->
+    application:set_env(riak_core,ring_creation_size, 4),
+    Ring = riak_core_ring:fresh(),
+    set_ring_global(Ring),
+    ?assertEqual(Ring, mochiglobal:get(?RING_KEY)).
+
+set_my_ring_test() ->
+    application:set_env(riak_core,ring_creation_size, 4),
+    Ring = riak_core_ring:fresh(),
+    set_ring_global(Ring),
+    ?assertEqual({ok, Ring}, get_my_ring()).
+
+leave_the_ring_test() ->
+    application:set_env(riak_core, ring_creation_size, 4),
+    application:set_env(riak_core, ring_state_dir, "/tmp"),
+    application:set_env(riak_core, cluster_name, "test"),
+    riak_core_ring_events:start_link(),
+    riak_core_ring_manager:start_link(test),
+    riak_core_test_util:setup_mockring1(),
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    ?assertEqual(ok, riak_core_ring_manager:leave_the_ring(Ring)),
+    riak_core_ring_manager:stop(),
+    %% Cleanup the ring file created for this test
+    {ok, RingFile} = find_latest_ringfile(),
+    file:delete(RingFile).
+
+-endif.
+
