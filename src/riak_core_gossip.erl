@@ -201,7 +201,7 @@ remove_from_cluster(ExitingNode) ->
     distribute_ring(ExitRing),
 
     % Instruct the exiting node to clean up and leave the ring
-    rpc:call(ExitingNode, riak_core_ring_manager, leave_the_ring, [ExitRing]).
+    rpc:call(ExitingNode, riak_core_ring_manager, leave_the_ring, [ExitRing, Ring]).
 
 
 attempt_simple_transfer(Ring, Owners, ExitingNode) ->
