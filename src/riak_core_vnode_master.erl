@@ -164,7 +164,7 @@ handle_call({spawn,
              Req=?VNODE_REQ{index=Idx, sender={server, undefined, undefined}}}, From, State) ->
     Pid = get_vnode(Idx, State),
     Sender = {server, undefined, From},
-    spawn(
+    spawn_link(
       fun() -> gen_fsm:send_all_state_event(Pid, Req?VNODE_REQ{sender=Sender}) end),
     {noreply, State};
 handle_call(all_nodes, _From, State) ->
