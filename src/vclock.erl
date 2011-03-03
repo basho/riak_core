@@ -178,7 +178,10 @@ equal(VA,VB) ->
 % @doc Possibly shrink the size of a vclock, depending on current age and size.
 -spec prune(V::vclock(), Now::integer(), BucketProps::term()) -> vclock().
 prune(V,Now,BucketProps) ->
-    SortV = lists:sort(fun({_,{_,A}},{_,{_,B}}) -> A < B end, V),
+prune(V,Now,BucketProps) ->
+    %% This sort need to be deterministic, to avoid spurious merge conflicts later.
+    %% We achieve this by using the node ID as secondary key.
+    SortV = lists:sort(fun({N1,{_,T1}},{N2,{_,T2}}) -> {T1,N1} < {T2,N2} end, V),
     prune_vclock1(SortV,Now,BucketProps).
 % @private
 prune_vclock1(V,Now,BProps) ->
