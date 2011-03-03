@@ -200,8 +200,9 @@ remove_from_cluster(ExitingNode) ->
     % Send the new ring to all nodes except the exiting node
     distribute_ring(ExitRing),
 
-    % Instruct the exiting node to clean up and leave the ring
-    rpc:call(ExitingNode, riak_core_ring_manager, leave_the_ring, [ExitRing, Ring]).
+    % Set the new ring on the exiting node. This will trigger
+    % it to begin handoff and cleanly leave the cluster.
+    rpc:call(ExitingNode, riak_core_ring_manager, set_my_ring, [ExitRing]).
 
 
 attempt_simple_transfer(Ring, Owners, ExitingNode) ->

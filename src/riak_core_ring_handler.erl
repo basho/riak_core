@@ -58,8 +58,13 @@ code_change(_OldVsn, State, _Extra) ->
 
 ensure_vnodes_started(Ring) ->
     case riak_core:vnode_modules() of
-        [] -> ok;
-        Mods -> ensure_vnodes_started(Mods, Ring, [])
+        [] ->
+            ok;
+        Mods ->            
+            case ensure_vnodes_started(Mods, Ring, []) of
+                [] -> riak_core_ring_manager:leave_the_ring();
+                _ -> ok
+            end
     end.
 
 ensure_vnodes_started([], _Ring, Acc) ->

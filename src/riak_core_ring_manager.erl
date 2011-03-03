@@ -30,7 +30,7 @@
 -export([start_link/0,
          start_link/1,
          get_my_ring/0,
-         leave_the_ring/2,
+         leave_the_ring/0,
          set_my_ring/1,
          write_ringfile/0,
          prune_ringfiles/0,
@@ -68,10 +68,9 @@ get_my_ring() ->
         undefined -> {error, no_ring}
     end.
 
-%% @spec leave_the_ring(riak_core_ring:riak_core_ring()) -> ok
-leave_the_ring(NewRing, OldRing) ->
-    PartitionIndices = riak_core_ring:my_indices(OldRing),
-    gen_server2:call(?MODULE, {leave_the_ring, NewRing, PartitionIndices}, infinity).
+%% @spec leave_the_ring() -> ok
+leave_the_ring() ->
+    gen_server2:call(?MODULE, leave_the_ring, infinity).
 
 %% @spec set_my_ring(riak_core_ring:riak_core_ring()) -> ok
 set_my_ring(Ring) ->
@@ -193,18 +192,7 @@ init([Mode]) ->
 handle_call({set_my_ring, Ring}, _From, State) ->
     prune_write_notify_ring(Ring),
     {reply,ok,State};
-handle_call({leave_the_ring, Ring, Indices}, _From, State) ->
-    %% All of the following operations need to be
-    %% synchronous so we can make sure they have
-    %% completed before the node stops.
-    set_ring_global(Ring),
-
-    %% Notify any local observers that the ring has changed (sync)
-    riak_core_ring_events:ring_sync_update(Ring),
-
-    %% Begin handoff of vnodes
-    handoff_vnodes(Indices),
-
+handle_call(leave_the_ring, _From, State) ->
     %% This node is leaving the cluster so create a fresh ring file
     FreshRing = riak_core_ring:fresh(),
     set_ring_global(FreshRing),
@@ -288,17 +276,6 @@ prune_write_notify_ring(Ring) ->
     set_ring_global(Ring),
     riak_core_ring_events:ring_update(Ring).
 
-handoff_vnodes(Indices) ->
-    [handoff_vnode(Index) || Index <- Indices].
-
-handoff_vnode(Index) ->
-    VNodePid = riak_core_vnode_master:get_vnode_pid(Index, riak_kv_vnode),
-    %% Sending a timeout event to a vnode will have the
-    %% effect of prompting it to handoff. Send the 
-    %% event synchronously since we need to ensure the 
-    %% handoff is complete so the node can shutdown. 
-    riak_core_vnode:send_sync_command(VNodePid, timeout).
-    
 
 %% ===================================================================
 %% Unit tests
@@ -336,21 +313,20 @@ set_my_ring_test() ->
     set_ring_global(Ring),
     ?assertEqual({ok, Ring}, get_my_ring()).
 
-%% leave_the_ring_test() ->
-%%     application:set_env(riak_core, ring_creation_size, 4),
-%%     application:set_env(riak_core, ring_state_dir, "/tmp"),
-%%     application:set_env(riak_core, cluster_name, "test"),
-%%     riak_core_ring_events:start_link(),
-%%     riak_core_ring_manager:start_link(test),
-%%     riak_core_vnode_sup:start_link(),
-%%     riak_core_vnode_master:start_link(riak_core_vnode),
-%%     riak_core_test_util:setup_mockring1(),
-%%     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-%%     ?assertEqual(ok, riak_core_ring_manager:leave_the_ring(Ring, Ring)),
-%%     riak_core_ring_manager:stop(),
-%%     %% Cleanup the ring file created for this test
-%%     {ok, RingFile} = find_latest_ringfile(),
-%%     file:delete(RingFile).
+leave_the_ring_test() ->
+    application:set_env(riak_core, ring_creation_size, 4),
+    application:set_env(riak_core, ring_state_dir, "/tmp"),
+    application:set_env(riak_core, cluster_name, "test"),
+    riak_core_ring_events:start_link(),
+    riak_core_ring_manager:start_link(test),
+    riak_core_vnode_sup:start_link(),
+    riak_core_vnode_master:start_link(riak_core_vnode),
+    riak_core_test_util:setup_mockring1(),
+    ?assertEqual(ok, riak_core_ring_manager:leave_the_ring()),
+    riak_core_ring_manager:stop(),
+    %% Cleanup the ring file created for this test
+    {ok, RingFile} = find_latest_ringfile(),
+    file:delete(RingFile).
 
 -endif.
 

@@ -22,7 +22,6 @@
 -export([behaviour_info/1]).
 -export([start_link/2,
          send_command/2,
-         send_sync_command/2,
          send_command_after/2]).
 -export([init/1, 
          active/2, 
@@ -70,9 +69,6 @@ start_link(Mod, Index) ->
 send_command(Pid, Request) ->
     gen_fsm:send_event(Pid, ?VNODE_REQ{request=Request}).
 
-%% Send a synchronous command message for the vnode module by Pid
-send_sync_command(Pid, Request) ->
-    gen_fsm:sync_send_event(Pid, ?VNODE_REQ{request=Request}).
 
 %% Sends a command to the FSM that called it after Time 
 %% has passed.
