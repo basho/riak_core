@@ -106,11 +106,10 @@ vnode_command(Sender, Request, State=#state{mod=Mod, modstate=ModState}) ->
             {stop, Reason, State#state{modstate=NewModState}}
     end.
 
-vnode_handoff_command(Sender, Request, WrapperReq,
-                      State=#state{index=Index,
-                                   mod=Mod, 
-                                   modstate=ModState, 
-                                   handoff_node=HN}) ->
+vnode_handoff_command(Sender, Request, State=#state{index=Index,
+                                                    mod=Mod, 
+                                                    modstate=ModState, 
+                                                    handoff_node=HN}) ->
     case Mod:handle_handoff_command(Request, Sender, ModState) of
         {reply, Reply, NewModState} ->
             reply(Sender, Reply),
@@ -118,7 +117,7 @@ vnode_handoff_command(Sender, Request, WrapperReq,
         {noreply, NewModState} ->
             continue(State, NewModState);
         {forward, NewModState} ->
-            riak_core_vnode_master:command({Index, HN}, WrapperReq, Sender, 
+            riak_core_vnode_master:command({Index, HN}, Request, Sender, 
                                            riak_core_vnode_master:reg_name(Mod)),
             continue(State, NewModState);
         {drop, NewModState} ->
@@ -142,8 +141,8 @@ active(timeout, State=#state{mod=Mod, modstate=ModState}) ->
 active(?VNODE_REQ{sender=Sender, request=Request},
        State=#state{handoff_node=HN}) when HN =:= none ->
     vnode_command(Sender, Request, State);
-active(VR=?VNODE_REQ{sender=Sender, request=Request},State) ->
-    vnode_handoff_command(Sender, Request, VR, State);
+active(?VNODE_REQ{sender=Sender, request=Request},State) ->
+    vnode_handoff_command(Sender, Request, State);
 active(handoff_complete, State=#state{mod=Mod, 
                                       modstate=ModState,
                                       index=Idx, 

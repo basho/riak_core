@@ -3,7 +3,7 @@
 {application, riak_core,
 [
   {description, "Riak Core"},
-  {vsn, "0.14.1"},
+  {vsn, "0.14.0"},
   {modules, [
              app_helper,
              bloom,
@@ -21,6 +21,7 @@
              riak_core_cinfo_basic,
              riak_core_cinfo_core,
              riak_core_claim,
+             riak_core_config,
              riak_core_gossip,
              riak_core_handoff_listener,
              riak_core_handoff_manager,
@@ -35,6 +36,8 @@
              riak_core_ring_manager,
              riak_core_ring_util,
              riak_core_sup,
+             riak_core_sysmon_handler,
+             riak_core_sysmon_minder,
              riak_core_test_util,
              riak_core_util,
              riak_core_vnode,
@@ -52,6 +55,7 @@
                   stdlib,
                   sasl,
                   crypto,
+                  riak_sysmon,
                   webmachine
                  ]},
   {mod, { riak_core_app, []}},
@@ -75,14 +79,6 @@
          %% Default claims functions
          {wants_claim_fun, {riak_core_claim, default_wants_claim}},
          {choose_claim_fun, {riak_core_claim, default_choose_claim}},
-
-         %% Default bucket props
-         {default_bucket_props, [{n_val,3},
-                                 {allow_mult,false},
-                                 {last_write_wins,false},
-                                 {precommit, []},
-                                 {postcommit, []},
-                                 {chash_keyfun, {riak_core_util, chash_std_keyfun}}]},
 
          %% Vnode inactivity timeout (how often to check if fallback vnodes
          %% should return their data) in ms.

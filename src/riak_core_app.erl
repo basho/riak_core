@@ -32,6 +32,10 @@
 %% ===================================================================
 
 start(_StartType, _StartArgs) ->
+    %% Don't add our system_monitor event handler here.  Instead, let
+    %% riak_core_sysmon_minder start it, because that process can act
+    %% on any handler crash notification, whereas we cannot.
+
     %% Validate that the ring state directory exists
     riak_core_util:start_app_deps(riak_core),
     RingStateDir = app_helper:get_env(riak_core, ring_state_dir),
@@ -51,6 +55,16 @@ start(_StartType, _StartArgs) ->
     catch cluster_info:register_app(riak_core_cinfo_basic),
     catch cluster_info:register_app(riak_core_cinfo_core),
 
+    %% add these defaults now to supplement the set that may have been
+    %% configured in app.config
+    riak_core_bucket:append_bucket_defaults(
+      [{n_val,3},
+       {allow_mult,false},
+       {last_write_wins,false},
+       {precommit, []},
+       {postcommit, []},
+       {chash_keyfun, {riak_core_util, chash_std_keyfun}}]),
+
     %% Spin up the supervisor; prune ring files as necessary
     case riak_core_sup:start_link() of
         {ok, Pid} ->
@@ -62,6 +76,7 @@ start(_StartType, _StartArgs) ->
                     Ring = riak_core_ring_manager:read_ringfile(RingFile),
                     riak_core_ring_manager:set_my_ring(Ring);
                 {error, not_found} ->
+                    riak_core_ring_manager:write_ringfile(),
                     error_logger:warning_msg("No ring file available.\n");
                 {error, Reason} ->
                     error_logger:error_msg("Failed to load ring file: ~p\n",
