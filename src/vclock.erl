@@ -250,6 +250,18 @@ prune_old_test() ->
              {big_vclock,2},{old_vclock,10000}],
     ?assert(length(prune(VC, Now, Props)) =:= 1).
 
+prune_order_test() ->
+    % vclock with two nodes of the same timestamp will be pruned down
+    % to the same node
+    Now = riak_core_util:moment(),
+    OldTime = Now - 100000,    
+    VC1 = [{<<"1">>, {1, OldTime}},
+           {<<"2">>, {2, OldTime}}],
+    VC2 = lists:reverse(VC1),
+    Props = [{small_vclock,1},{young_vclock,1},
+             {big_vclock,2},{old_vclock,10000}],
+    ?assertEqual(prune(VC1, Now, Props), prune(VC2, Now, Props)).
+
 accessor_test() ->
     VC = [{<<"1">>, {1, 1}},
           {<<"2">>, {2, 2}}],
