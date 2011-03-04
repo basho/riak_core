@@ -62,7 +62,7 @@ ensure_vnodes_started(Ring) ->
             ok;
         Mods ->            
             case ensure_vnodes_started(Mods, Ring, []) of
-                [] -> riak_core_ring_manager:leave_the_ring();
+                [] -> riak_core_ring_manager:refresh_my_ring();
                 _ -> ok
             end
     end.

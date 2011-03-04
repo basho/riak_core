@@ -30,7 +30,7 @@
 -export([start_link/0,
          start_link/1,
          get_my_ring/0,
-         leave_the_ring/0,
+         refresh_my_ring/0,
          set_my_ring/1,
          write_ringfile/0,
          prune_ringfiles/0,
@@ -68,9 +68,9 @@ get_my_ring() ->
         undefined -> {error, no_ring}
     end.
 
-%% @spec leave_the_ring() -> ok
-leave_the_ring() ->
-    gen_server2:call(?MODULE, leave_the_ring, infinity).
+%% @spec refresh_my_ring() -> ok
+refresh_my_ring() ->
+    gen_server2:call(?MODULE, refresh_my_ring, infinity).
 
 %% @spec set_my_ring(riak_core_ring:riak_core_ring()) -> ok
 set_my_ring(Ring) ->
@@ -192,7 +192,7 @@ init([Mode]) ->
 handle_call({set_my_ring, Ring}, _From, State) ->
     prune_write_notify_ring(Ring),
     {reply,ok,State};
-handle_call(leave_the_ring, _From, State) ->
+handle_call(refresh_my_ring, _From, State) ->
     %% This node is leaving the cluster so create a fresh ring file
     FreshRing = riak_core_ring:fresh(),
     set_ring_global(FreshRing),
@@ -313,7 +313,7 @@ set_my_ring_test() ->
     set_ring_global(Ring),
     ?assertEqual({ok, Ring}, get_my_ring()).
 
-leave_the_ring_test() ->
+refresh_my_ring_test() ->
     application:set_env(riak_core, ring_creation_size, 4),
     application:set_env(riak_core, ring_state_dir, "/tmp"),
     application:set_env(riak_core, cluster_name, "test"),
@@ -322,7 +322,7 @@ leave_the_ring_test() ->
     riak_core_vnode_sup:start_link(),
     riak_core_vnode_master:start_link(riak_core_vnode),
     riak_core_test_util:setup_mockring1(),
-    ?assertEqual(ok, riak_core_ring_manager:leave_the_ring()),
+    ?assertEqual(ok, riak_core_ring_manager:refresh_my_ring()),
     riak_core_ring_manager:stop(),
     %% Cleanup the ring file created for this test
     {ok, RingFile} = find_latest_ringfile(),
