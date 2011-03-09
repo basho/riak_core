@@ -22,13 +22,16 @@
 
 %% API
 -export([start_link/0,
+         stop/0,
          reset/0,
          filter/2,
          collect/0, collect/1, collect/2,
-         results/0]).
+         results/0,
+         stop_collect/0]).
 -export([test_all_events/1]).
 
 -export([all_events/1]).
+-export([trigger_sentinel/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -39,7 +42,9 @@
 -record(state, {trace=[],
                 filters=[],
                 mfs=[],
-                stop_tref}).
+                stop_tref,
+                stop_from,
+                tracing=false}).
 
 %%===================================================================
 %% API
@@ -47,6 +52,9 @@
 
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+
+stop() ->
+    gen_server:call(?SERVER, stop).
 
 reset() ->
     gen_server:call(?SERVER, reset).
@@ -65,6 +73,10 @@ collect(Duration) ->
 
 collect(Duration, Nodes) ->
     gen_server:call(?SERVER, {collect, Duration,  Nodes}).
+
+%% Stop collection
+stop_collect() ->
+    gen_server:call(?SERVER, stop_collect).
 
 %% Return the trace
 results() ->
@@ -94,9 +106,12 @@ handle_call({filter, MFs, Filter}, _From, State) ->
                             filters = [Filter | State#state.filters]}};
 handle_call({collect, Duration, Nodes}, _From, State) ->
     cancel_timer(State#state.stop_tref),
-    Tref = timer:send_after(Duration, stop),
-    dbg:tracer(process, {fun (Msg, Pid) ->
-                                 %io:format("~p ! ~p\n", [Pid, Msg]),
+    Tref = timer:send_after(Duration, collect_timeout),
+    dbg:stop_clear(),
+    dbg:tracer(process, {fun ({trace, _, call, {?MODULE, trigger_sentinel, _}}, Pid) ->
+                                 gen_server:cast(Pid, stop_sentinel),
+                                 Pid;
+                             (Msg, Pid) ->
                                  Entries = lists:flatten(
                                              [begin
                                                   case catch F(Msg) of
@@ -119,8 +134,15 @@ handle_call({collect, Duration, Nodes}, _From, State) ->
                          end, self()}),
     dbg:p(all, call),
     [{ok, N} = dbg:n(N) || N <- Nodes],
+    dbg:tpl(?MODULE, trigger_sentinel, []),
     add_tracers(State#state.mfs),
-    {reply, ok, State#state{trace=[], stop_tref = Tref}};
+    {reply, ok, State#state{trace=[], stop_tref = Tref, tracing = true}};
+handle_call(stop_collect, From, State = #state{tracing = true}) ->
+    %% Trigger the sentinel so that we wait for the trace buffer to flush
+    ?MODULE:trigger_sentinel(),
+    {noreply, State#state{stop_from = From, tracing = stopping}};
+handle_call(stop_collect, _From, State) ->
+    {reply, State#state.tracing, State};
 handle_call({traces, Entries}, _From, State) ->
     {reply, ok, State#state{trace=Entries ++ State#state.trace}};
 handle_call(results, _From, State) ->
@@ -131,13 +153,25 @@ handle_call(results, _From, State) ->
             {MinTs,_} = hd(STrace),
             R = zero_ts(MinTs, STrace, [])
     end,
-    {reply, R, State}.
+    {reply, R, State};
+handle_call(stop, _From, State) ->
+    {stop, normal, ok, State}.
 
+handle_cast(stop_sentinel, State) ->
+    dbg:stop_clear(),
+    case State#state.stop_from of
+        undefined ->
+            ok;
+        StopFrom ->
+            gen_server:reply(StopFrom, ok)
+    end,
+    {noreply, State#state{stop_from = undefined}};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info(stop, State) ->
-    dbg:stop_clear(),
+handle_info(collect_timeout, State = #state{tracing = true}) ->
+    handle_call(stop_collect, undefined, State);
+handle_info(collect_timeout, State) ->
     {noreply, State}.
 
 terminate(_Reason, _State) ->
@@ -176,3 +210,5 @@ zero_ts(_Offset, [], Acc) ->
 zero_ts(Offset, [{Ts,Trace}|Rest], Acc) ->
     zero_ts(Offset, Rest, [{Ts - Offset, Trace} | Acc]).
 
+trigger_sentinel() ->
+    ok.
