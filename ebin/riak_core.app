@@ -38,6 +38,7 @@
              riak_core_sup,
              riak_core_sysmon_handler,
              riak_core_sysmon_minder,
+             riak_core_tracer,
              riak_core_test_util,
              riak_core_util,
              riak_core_vnode,
