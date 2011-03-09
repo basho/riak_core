@@ -24,7 +24,7 @@
 %% -------------------------------------------------------------------
 -module(riak_core_apl).
 -export([active_owners/1, active_owners/2,
-         get_apl/3, get_apl/4, get_apl2/4,
+         get_apl/3, get_apl/4, get_apl_ann/4,
          get_primary_apl/3, get_primary_apl/4
         ]).
 
@@ -64,13 +64,13 @@ get_apl(DocIdx, N, Service) ->
 -spec get_apl(binary(), n_val(), ring(), [node()]) -> preflist().
 get_apl(DocIdx, N, Ring, UpNodes) ->
     [{Partition, Node} || {{Partition, Node}, _Type} <- 
-                              get_apl2(DocIdx, N, Ring, UpNodes)].
+                              get_apl_ann(DocIdx, N, Ring, UpNodes)].
 
 %% Get the active preflist taking account of which nodes are up
 %% for a given ring/upnodes list and annotate each node with type of
 %% primary/fallback
--spec get_apl2(binary(), n_val(), ring(), [node()]) -> preflist2().
-get_apl2(DocIdx, N, Ring, UpNodes) ->
+-spec get_apl_ann(binary(), n_val(), ring(), [node()]) -> preflist2().
+get_apl_ann(DocIdx, N, Ring, UpNodes) ->
     UpNodes1 = ordsets:from_list(UpNodes),
     Preflist = riak_core_ring:preflist(DocIdx, Ring),
     {Primaries, Fallbacks} = lists:split(N, Preflist),
