@@ -57,7 +57,7 @@ get_vnode_pid(Index, VNodeMod) ->
     gen_server:call(RegName, {Index, get_vnode}, infinity).
     
 command(Preflist, Msg, VMaster) ->
-    command(Preflist, Msg, noreply, VMaster).
+    command(Preflist, Msg, ignore, VMaster).
      
 %% Send the command to the preflist given with responses going to Sender
 command([], _Msg, _Sender, _VMaster) ->
