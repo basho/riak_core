@@ -30,6 +30,7 @@
 -export([start_link/0,
          start_link/1,
          get_my_ring/0,
+         refresh_my_ring/0,
          set_my_ring/1,
          write_ringfile/0,
          prune_ringfiles/0,
@@ -67,6 +68,9 @@ get_my_ring() ->
         undefined -> {error, no_ring}
     end.
 
+%% @spec refresh_my_ring() -> ok
+refresh_my_ring() ->
+    gen_server2:call(?MODULE, refresh_my_ring, infinity).
 
 %% @spec set_my_ring(riak_core_ring:riak_core_ring()) -> ok
 set_my_ring(Ring) ->
@@ -188,6 +192,18 @@ init([Mode]) ->
 handle_call({set_my_ring, Ring}, _From, State) ->
     prune_write_notify_ring(Ring),
     {reply,ok,State};
+handle_call(refresh_my_ring, _From, State) ->
+    %% This node is leaving the cluster so create a fresh ring file
+    FreshRing = riak_core_ring:fresh(),
+    set_ring_global(FreshRing),
+    %% Make sure the fresh ring gets written before stopping
+    do_write_ringfile(FreshRing),
+
+    %% Handoff is complete and fresh ring is written
+    %% so we can safely stop now.
+    riak_core:stop("node removal completed, exiting."),
+
+    {reply,ok,State};
 handle_call({ring_trans, Fun, Args}, _From, State) ->
     {ok, Ring} = get_my_ring(),
     case catch Fun(Ring, Args) of
@@ -253,10 +269,64 @@ back(N,X,[H|T]) ->
 set_ring_global(Ring) ->
     mochiglobal:put(?RING_KEY, Ring).
 
-
 %% Persist a new ring file, set the global value and notify any listeners
 prune_write_notify_ring(Ring) ->
     riak_core_ring_manager:prune_ringfiles(),
     do_write_ringfile(Ring),
     set_ring_global(Ring),
     riak_core_ring_events:ring_update(Ring).
+
+
+%% ===================================================================
+%% Unit tests
+%% ===================================================================
+-ifdef(TEST).
+
+back_test() ->
+    X = [1,2,3],
+    List1 = [[1,2,3],[4,2,3], [7,8,3], [11,12,13], [1,2,3]],
+    List2 = [[7,8,9], [1,2,3]],
+    List3 = [[1,2,3]],
+    ?assertEqual([[4,2,3]], back(1, X, List1)),
+    ?assertEqual([[7,8,9]], back(1, X, List2)),
+    ?assertEqual([], back(1, X, List3)),
+    ?assertEqual([[7,8,3]], back(2, X, List1)),
+    ?assertEqual([[11,12,13]], back(3, X, List1)).    
+
+prune_list_test() ->
+    TSList1 = [[2011,2,28,16,32,16],[2011,2,28,16,32,36],[2011,2,28,16,30,27],[2011,2,28,16,32,16],[2011,2,28,16,32,36]],
+    TSList2 = [[2011,2,28,16,32,36],[2011,2,28,16,31,16],[2011,2,28,16,30,27],[2011,2,28,16,32,16],[2011,2,28,16,32,36]],
+    PrunedList1 = [[2011,2,28,16,30,27],[2011,2,28,16,32,16]],
+    PrunedList2 = [[2011,2,28,16,31,16],[2011,2,28,16,32,36]],
+    ?assertEqual(PrunedList1, prune_list(TSList1)),
+    ?assertEqual(PrunedList2, prune_list(TSList2)).    
+
+set_ring_global_test() ->
+    application:set_env(riak_core,ring_creation_size, 4),
+    Ring = riak_core_ring:fresh(),
+    set_ring_global(Ring),
+    ?assertEqual(Ring, mochiglobal:get(?RING_KEY)).
+
+set_my_ring_test() ->
+    application:set_env(riak_core,ring_creation_size, 4),
+    Ring = riak_core_ring:fresh(),
+    set_ring_global(Ring),
+    ?assertEqual({ok, Ring}, get_my_ring()).
+
+refresh_my_ring_test() ->
+    application:set_env(riak_core, ring_creation_size, 4),
+    application:set_env(riak_core, ring_state_dir, "/tmp"),
+    application:set_env(riak_core, cluster_name, "test"),
+    riak_core_ring_events:start_link(),
+    riak_core_ring_manager:start_link(test),
+    riak_core_vnode_sup:start_link(),
+    riak_core_vnode_master:start_link(riak_core_vnode),
+    riak_core_test_util:setup_mockring1(),
+    ?assertEqual(ok, riak_core_ring_manager:refresh_my_ring()),
+    riak_core_ring_manager:stop(),
+    %% Cleanup the ring file created for this test
+    {ok, RingFile} = find_latest_ringfile(),
+    file:delete(RingFile).
+
+-endif.
+

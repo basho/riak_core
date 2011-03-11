@@ -36,7 +36,7 @@
 -export([start_link/0, stop/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
--export ([send_ring/1, send_ring/2, remove_from_cluster/1]).
+-export ([distribute_ring/1, send_ring/1, send_ring/2, remove_from_cluster/1]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -45,6 +45,11 @@
 %% ===================================================================
 %% Public API
 %% ===================================================================
+
+%% distribute_ring/1 -
+%% Distribute a ring to all members of that ring.
+distribute_ring(Ring) ->
+    gen_server:cast({?MODULE, node()}, {distribute_ring, Ring}).
 
 %% send_ring/1 -
 %% Send the current node's ring to some other node.
@@ -84,6 +89,11 @@ handle_call(_, _From, State) ->
 handle_cast({send_ring_to, Node}, RingChanged) ->
     {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
     gen_server:cast({?MODULE, Node}, {reconcile_ring, MyRing}),
+    {noreply, RingChanged};
+
+handle_cast({distribute_ring, Ring}, RingChanged) ->
+    Nodes = riak_core_ring:all_members(Ring),
+    gen_server:abcast(Nodes, ?MODULE, {reconcile_ring, Ring}),
     {noreply, RingChanged};
 
 handle_cast({reconcile_ring, OtherRing}, RingChanged) ->
@@ -187,11 +197,12 @@ remove_from_cluster(ExitingNode) ->
                 riak_core_claim:claim_rebalance_n(TempRing, Other)
         end,
 
-    % Update our local copy of the ring
-    riak_core_ring_manager:set_my_ring(ExitRing),
+    % Send the new ring to all nodes except the exiting node
+    distribute_ring(ExitRing),
 
-    % Send the new ring to all other rings
-    [send_ring(X) || X <- riak_core_ring:all_members(Ring)].
+    % Set the new ring on the exiting node. This will trigger
+    % it to begin handoff and cleanly leave the cluster.
+    rpc:call(ExitingNode, riak_core_ring_manager, set_my_ring, [ExitRing]).
 
 
 attempt_simple_transfer(Ring, Owners, ExitingNode) ->

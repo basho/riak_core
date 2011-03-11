@@ -178,7 +178,9 @@ equal(VA,VB) ->
 % @doc Possibly shrink the size of a vclock, depending on current age and size.
 -spec prune(V::vclock(), Now::integer(), BucketProps::term()) -> vclock().
 prune(V,Now,BucketProps) ->
-    SortV = lists:sort(fun({_,{_,A}},{_,{_,B}}) -> A < B end, V),
+    %% This sort need to be deterministic, to avoid spurious merge conflicts later.
+    %% We achieve this by using the node ID as secondary key.
+    SortV = lists:sort(fun({N1,{_,T1}},{N2,{_,T2}}) -> {T1,N1} < {T2,N2} end, V),
     prune_vclock1(SortV,Now,BucketProps).
 % @private
 prune_vclock1(V,Now,BProps) ->
@@ -247,6 +249,18 @@ prune_old_test() ->
     Props = [{small_vclock,1},{young_vclock,1},
              {big_vclock,2},{old_vclock,10000}],
     ?assert(length(prune(VC, Now, Props)) =:= 1).
+
+prune_order_test() ->
+    % vclock with two nodes of the same timestamp will be pruned down
+    % to the same node
+    Now = riak_core_util:moment(),
+    OldTime = Now - 100000,    
+    VC1 = [{<<"1">>, {1, OldTime}},
+           {<<"2">>, {2, OldTime}}],
+    VC2 = lists:reverse(VC1),
+    Props = [{small_vclock,1},{young_vclock,1},
+             {big_vclock,2},{old_vclock,10000}],
+    ?assertEqual(prune(VC1, Now, Props), prune(VC2, Now, Props)).
 
 accessor_test() ->
     VC = [{<<"1">>, {1, 1}},
