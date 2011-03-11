@@ -1,6 +1,6 @@
 * riak_core
 ** Overview
-Riak Core is a an open source Erlang library that helps you build distributed, scalable, fault-tolerant
+Riak Core is an open source Erlang library that helps you build distributed, scalable, fault-tolerant
 applications. Riak Core is influenced by the [[http://s3.amazonaws.com/AllThingsDistributed/sosp/amazon-dynamo-sosp2007.pdf][Amazon Dynamo Paper]] and [[http://portal.acm.org/citation.cfm?doid=564585.564601][CAP Theorem]].
 
 ** Quick Start
