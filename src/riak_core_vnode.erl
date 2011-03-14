@@ -177,7 +177,7 @@ handle_sync_event({handoff_data,BinObj}, _From, StateName,
              State#state.inactivity_timeout}
     end.
 
-handle_info({'EXIT', _Pid, _Reason}, StateName, State#state{mod=Mod}) ->
+handle_info({'EXIT', Pid, Reason}, StateName, State=#state{mod=Mod}) ->
     %% A linked processes has died so use the
     %% handle_exit callback to allow the vnode 
     %% process to take appropriate action.
