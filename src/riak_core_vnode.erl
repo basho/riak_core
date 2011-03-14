@@ -176,9 +176,18 @@ handle_sync_event({handoff_data,BinObj}, _From, StateName,
              State#state.inactivity_timeout}
     end.
 
+handle_info({'EXIT', _Pid, _Reason}, StateName, StateData) ->
+    %% A linked processes has died so the vnode
+    %% process should terminate and be respawned
+    %% by riak_core_vnode_master to prevent 
+    %% messages from stacking up on the process message
+    %% queue and never being processed.
+    {stop, linked_process_death, StateData};
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State, State#state.inactivity_timeout}.
 
+terminate(linked_process_death, _StateName, _State) ->
+    crash;
 terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState}) ->
     Mod:terminate(Reason, ModState),
     ok.
