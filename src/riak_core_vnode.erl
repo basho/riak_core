@@ -47,10 +47,26 @@ behaviour_info(callbacks) ->
      {encode_handoff_item,2},
      {is_empty,1},
      {terminate,2},
-     {delete,1},
-     {handle_exit,3}];
+     {delete,1}];
 behaviour_info(_Other) ->
     undefined.
+
+%% handle_exit/4 is an optional behaviour callback that can be implemented. 
+%% It will be called in the case that a process that is linked to the vnode
+%% process dies and allows the module using the behaviour to take appropriate
+%% action. It is called by handle_info when it receives an {'EXIT', Pid, Reason}
+%% message and the function signature is: handle_exit(Pid, Reason, StateName, State).
+%%
+%% It should return a tuple indicating the next state for the fsm. For a list of
+%% valid return types see the documentation for the gen_fsm handle_info callback.
+%%
+%% Here is what the spec for handle_exit/4 would look like:
+%% -spec handle_exit(pid(), atom(), atom(), term()) ->
+%%                          {next_state, atom(), term()} |
+%%                          {next_state, atom(), term(), int() | infinity} |
+%%                          {next_state, atom(), term(), hibernate} |
+%%                          {stop, term(), term()}
+                         
 
 -define(DEFAULT_TIMEOUT, 60000).
 -define(LOCK_RETRY_TIMEOUT, 10000).
@@ -189,9 +205,9 @@ handle_info({'EXIT', Pid, Reason}, StateName, State=#state{mod=Mod}) ->
     %% If the function is not implemented default
     %% to crashing the process.
     try
-        Mod:handle_exit({Pid, Reason}, StateName, State)
+        Mod:handle_exit(Pid, Reason, StateName, State)
     catch
-        _ErrorType:_ ->
+        _ErrorType:undef ->
             {stop, linked_process_crash, State}
     end;
 handle_info(_Info, StateName, State) ->
