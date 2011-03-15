@@ -186,7 +186,14 @@ handle_info({'EXIT', Pid, Reason}, StateName, State=#state{mod=Mod}) ->
     %% A linked processes has died so use the
     %% handle_exit callback to allow the vnode 
     %% process to take appropriate action.
-    Mod:handle_exit({Pid, Reason}, StateName, State);
+    %% If the function is not implemented default
+    %% to crashing the process.
+    try
+        Mod:handle_exit({Pid, Reason}, StateName, State)
+    catch
+        _ErrorType:_ ->
+            {stop, linked_process_crash, State}
+    end;
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State, State#state.inactivity_timeout}.
 
