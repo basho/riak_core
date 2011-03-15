@@ -192,8 +192,6 @@ handle_info({'EXIT', Pid, Reason}, StateName, State=#state{mod=Mod}) ->
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State, State#state.inactivity_timeout}.
 
-terminate(process_crash, _StateName, _State) ->
-    process_crash;
 terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState}) ->
     Mod:terminate(Reason, ModState),
     ok.
