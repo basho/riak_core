@@ -35,7 +35,7 @@
 -author('Andy Gross <andy@basho.com>').
 
 -export([fresh/0,descends/2,merge/1,get_counter/2,get_timestamp/2,
-	increment/2,all_nodes/1,equal/2,prune/3]).
+	increment/2,increment/3,all_nodes/1,equal/2,prune/3,timestamp/0]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -143,20 +143,28 @@ get_timestamp(Node, VClock) ->
 % @doc Increment VClock at Node.
 -spec increment(Node :: vclock_node(), VClock :: vclock()) -> vclock().
 increment(Node, VClock) ->
+    increment(Node, timestamp(), VClock).
+
+% @doc Increment VClock at Node.
+-spec increment(Node :: vclock_node(), IncTs :: timestamp(),
+                VClock :: vclock()) -> vclock().
+increment(Node, IncTs, VClock) ->
     {{_Ctr, _TS}=C1,NewV} = case lists:keytake(Node, 1, VClock) of
                                 false ->
-                                    {{1, timestamp()}, VClock};
+                                    {{1, IncTs}, VClock};
                                 {value, {_N, {C, _T}}, ModV} ->
-                                    {{C + 1, timestamp()}, ModV}
+                                    {{C + 1, IncTs}, ModV}
                             end,
     [{Node,C1}|NewV].
+
 
 % @doc Return the list of all nodes that have ever incremented VClock.
 -spec all_nodes(VClock :: vclock()) -> [vclock_node()].
 all_nodes(VClock) ->
     [X || {X,{_,_}} <- VClock].
 
-% @private
+% @doc Return a timestamp for a vector clock
+-spec timestamp() -> timestamp().
 timestamp() ->
     calendar:datetime_to_gregorian_seconds(erlang:universaltime()).
 
