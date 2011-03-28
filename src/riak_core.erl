@@ -39,11 +39,27 @@ vnode_modules() ->
     end.
 
 register_vnode_module(VNodeMod) when is_atom(VNodeMod)  ->
+    {ok, App} = case application:get_application(self()) of
+        {ok, AppName} -> {ok, AppName};
+        undefined -> app_for_module(VNodeMod)                        
+    end,
     case application:get_env(riak_core, vnode_modules) of
         undefined ->
-            application:set_env(riak_core, vnode_modules, [VNodeMod]);
+            application:set_env(riak_core, vnode_modules, [{App,VNodeMod}]);
         {ok, Mods} ->
-            application:set_env(riak_core, vnode_modules, [VNodeMod|Mods])
+            application:set_env(riak_core, vnode_modules, [{App,VNodeMod}|Mods])
     end,
     riak_core_ring_events:force_sync_update().
     
+
+app_for_module(Mod) ->
+    app_for_module(application:which_applications(), Mod).
+
+app_for_module([], _Mod) ->
+    undefined;
+app_for_module([{App,_,_}|T], Mod) ->
+    {ok, Mods} = application:get_key(App, modules),
+    case lists:member(Mod, Mods) of
+        true -> {ok, App};
+        false -> app_for_module(T, Mod)
+    end.
