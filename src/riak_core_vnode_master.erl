@@ -33,7 +33,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 -record(idxrec, {idx, pid, monref}).
--record(state, {idxtab, excl=ordsets:new(), sup_name, vnode_mod, legacy}).
+-record(state, {idxtab, sup_name, vnode_mod, legacy}).
 
 -define(DEFAULT_TIMEOUT, 5000).
 
@@ -141,9 +141,9 @@ init([VNodeMod, LegacyMod, RegName]) ->
                 vnode_mod=VNodeMod,
                 legacy=LegacyMod}}.
 
-handle_cast({Partition, start_vnode}, State=#state{excl=Excl}) ->
+handle_cast({Partition, start_vnode}, State) ->
     get_vnode(Partition, State),
-    {noreply, State#state{excl=ordsets:del_element(Partition, Excl)}};    
+    {noreply, State};
 handle_cast(Req=?VNODE_REQ{index=Idx}, State) ->
     Pid = get_vnode(Idx, State),
     gen_fsm:send_event(Pid, Req),
