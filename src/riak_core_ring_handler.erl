@@ -60,8 +60,8 @@ ensure_vnodes_started(Ring) ->
     case riak_core:vnode_modules() of
         [] ->
             ok;
-        Mods ->            
-            case ensure_vnodes_started(Mods, Ring, []) of
+        AppMods ->            
+            case ensure_vnodes_started(AppMods, Ring, []) of
                 [] -> riak_core_ring_manager:refresh_my_ring();
                 _ -> ok
             end
@@ -69,10 +69,10 @@ ensure_vnodes_started(Ring) ->
 
 ensure_vnodes_started([], _Ring, Acc) ->
     lists:flatten(Acc);
-ensure_vnodes_started([H|T], Ring, Acc) ->
-    ensure_vnodes_started(T, Ring, [ensure_vnodes_started(H, Ring)|Acc]).
+ensure_vnodes_started([{App, Mod}|T], Ring, Acc) ->
+    ensure_vnodes_started(T, Ring, [ensure_vnodes_started({App,Mod},Ring)|Acc]).
 
-ensure_vnodes_started(Mod, Ring) ->
+ensure_vnodes_started({App,Mod}, Ring) ->
     Startable = startable_vnodes(Mod, Ring),
     %% NOTE: This following is a hack.  There's a basic
     %%       dependency/race between riak_core (want to start vnodes
@@ -80,11 +80,16 @@ ensure_vnodes_started(Mod, Ring) ->
     %%       (needed to support those vnodes).  The hack does not fix
     %%       that dependency: internal techdebt todo list #A7 does.
     spawn_link(fun() ->
-                       try register(riak_core_ring_handler_ensure, self())
+    %%                 Use a registered name as a lock to prevent the same
+    %%                 vnode module from being started twice.
+                       RegName = list_to_atom(
+                                   "riak_core_ring_handler_ensure_"
+                                   ++ atom_to_list(Mod)),
+                       try register(RegName, self())
                        catch error:badarg ->
                                exit(normal)
                        end,
-                       wait_for_kv_app(100, 100),
+                       wait_for_app(App, 100, 100),
                        [Mod:start_vnode(I) || I <- Startable],
                        exit(normal)
                end),
@@ -110,13 +115,13 @@ startable_vnodes(Mod, Ring) ->
             end
     end.
 
-wait_for_kv_app(0, _) ->
+wait_for_app(_, 0, _) ->
     bummer;
-wait_for_kv_app(Count, Sleep) ->
-    case lists:keymember(riak_kv, 1, application:which_applications()) of
+wait_for_app(App, Count, Sleep) ->
+    case lists:keymember(App, 1, application:which_applications()) of
         true ->
             ok;
         false ->
             timer:sleep(Sleep),
-            wait_for_kv_app(Count - 1, Sleep)
+            wait_for_app(App, Count - 1, Sleep)
     end.
