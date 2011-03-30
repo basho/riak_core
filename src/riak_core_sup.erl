@@ -59,7 +59,7 @@ init([]) ->
     Children = lists:flatten(
                  [?CHILD(riak_core_sysmon_minder, worker),
                   ?CHILD(riak_core_vnode_sup, supervisor),
-                  ?CHILD(riak_core_handler_sup, supervisor),
+                  ?CHILD(riak_core_eventhandler_sup, supervisor),
                   ?CHILD(riak_core_handoff_manager, worker),
                   ?CHILD(riak_core_handoff_listener, worker),
                   ?CHILD(riak_core_ring_events, worker),

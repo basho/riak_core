@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_core_handler_sup: supervise minder processes for gen_event handlers
+%% riak_core_eventhandler_sup: supervise minder processes for gen_event handlers
 %%
 %% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
 %%
@@ -20,9 +20,8 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc supervise riak_core_handler_guard processes
-
--module(riak_core_handler_sup).
+%% @doc supervise riak_core_eventhandler_guard processes
+-module(riak_core_eventhandler_sup).
 -behaviour(supervisor).
 -export([start_link/0, init/1]).
 -export([start_handler_guard/3]).
@@ -35,8 +34,8 @@ start_handler_guard(HandlerMod, Handler, Args) ->
 
 handler_spec(HandlerMod, Handler, Args) ->
     {{HandlerMod, Handler},
-     {riak_core_handler_guard, start_link, [HandlerMod, Handler, Args]},
-     permanent, 5000, worker, [riak_core_handler_guard]}.
+     {riak_core_eventhandler_guard, start_link, [HandlerMod, Handler, Args]},
+     permanent, 5000, worker, [riak_core_eventhandler_guard]}.
 
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).

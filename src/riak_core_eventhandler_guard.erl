@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_core_handler_guard: Guard process for persistent event handlers.
+%% riak_core_eventhandler_guard: Guard process for persistent event handlers.
 %%
 %% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
 %%
@@ -19,7 +19,7 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
--module(riak_core_handler_guard).
+-module(riak_core_eventhandler_guard).
 -behaviour(gen_server).
 -export([start_link/3]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,

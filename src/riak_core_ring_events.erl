@@ -51,13 +51,13 @@ add_handler(Handler, Args) ->
     gen_event:add_handler(?MODULE, Handler, Args).
 
 add_sup_handler(Handler, Args) ->
-    riak_core_handler_sup:start_handler_guard(?MODULE, Handler, Args).
+    riak_core_eventhandler_sup:start_handler_guard(?MODULE, Handler, Args).
 
 add_callback(Fn) when is_function(Fn) ->
     gen_event:add_handler(?MODULE, {?MODULE, make_ref()}, [Fn]).
 
 add_sup_callback(Fn) when is_function(Fn) ->
-    riak_core_handler_sup:start_handler_guard(?MODULE, {?MODULE, make_ref()}, [Fn]).
+    riak_core_eventhandler_sup:start_handler_guard(?MODULE, {?MODULE, make_ref()}, [Fn]).
 
 force_update() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
