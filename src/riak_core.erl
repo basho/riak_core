@@ -26,11 +26,20 @@
 %% @spec stop() -> ok
 %% @doc Stop the riak application and the calling process.
 stop() -> stop("riak stop requested").
+
+-ifdef(TEST).
+stop(Reason) ->
+    error_logger:info_msg(io_lib:format("~p~n",[Reason])),
+    % if we're in test mode, we don't want to halt the node, so instead
+    % we just stop the application.
+    application:stop(riak_core).
+-else.
 stop(Reason) ->
     % we never do an application:stop because that makes it very hard
     %  to really halt the runtime, which is what we need here.
     error_logger:info_msg(io_lib:format("~p~n",[Reason])),
     init:stop().
+-endif.
 
 vnode_modules() ->
     case application:get_env(riak_core, vnode_modules) of
