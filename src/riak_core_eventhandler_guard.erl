@@ -21,28 +21,45 @@
 %% -------------------------------------------------------------------
 -module(riak_core_eventhandler_guard).
 -behaviour(gen_server).
--export([start_link/3]).
+-export([start_link/3, start_link/4]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
--record(state, {}).
+-record(state, {handlermod, handler, exitfun}).
 
 start_link(HandlerMod, Handler, Args) ->
-    gen_server:start_link(?MODULE, [HandlerMod, Handler, Args], []).
+    start_link(HandlerMod, Handler, Args, undefined).
 
-init([HandlerMod, Handler, Args]) ->
+start_link(HandlerMod, Handler, Args, ExitFun) ->
+    gen_server:start_link(?MODULE, [HandlerMod, Handler, Args, ExitFun], []).
+
+init([HandlerMod, Handler, Args, ExitFun]) ->
     ok = gen_event:add_sup_handler(HandlerMod, Handler, Args),
-    {ok, #state{}}.
+    {ok, #state{handlermod=HandlerMod, handler=Handler, exitfun=ExitFun}}.
 
 handle_call(_Request, _From, State) -> {reply, ok, State}.
 
 handle_cast(_Msg, State) -> {noreply, State}.
 
-handle_info({gen_event_EXIT, Handler, Reason}, State) ->
-    error_logger:error_msg("~w: ~s: handler ~w exited for reason ~s",
-                           [self(), ?MODULE, Handler, Reason]),
-    {stop, gen_event_EXIT, State}.
 
-terminate(_Reason, _State) -> ok.
+handle_info({gen_event_EXIT, _Handler, shutdown}, State) ->
+    {stop, shutdown, State};
+handle_info({gen_event_EXIT, _Handler, normal}, State) ->
+    {stop, normal, State};
+handle_info({gen_event_EXIT, Handler, Reason}, State=#state{exitfun=undefined}) ->
+    default_exitfun(Handler, Reason),
+    {stop, Reason, State};
+handle_info({gen_event_EXIT, Handler, Reason}, State=#state{exitfun=ExitFun}) ->
+    ExitFun(Handler, Reason),
+    {stop, Reason, State};
+handle_info(_Info, State) ->
+    {noreply, State}.
+
+terminate(_Reason, #state{}) ->
+    ok.
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
+default_exitfun(Handler, Reason) ->
+    error_logger:error_msg("~w: ~s: handler ~w exited for reason ~p",
+                           [self(), ?MODULE, Handler, Reason]).
+    
