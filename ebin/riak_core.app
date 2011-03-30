@@ -22,6 +22,8 @@
              riak_core_claim,
              riak_core_config,
              riak_core_gossip,
+             riak_core_handler_guard,
+             riak_core_handler_sup,
              riak_core_handoff_listener,
              riak_core_handoff_manager,
              riak_core_handoff_receiver,
