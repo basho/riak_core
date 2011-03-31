@@ -227,9 +227,8 @@ update_avsn(State) ->
     State#state { avsn = State#state.avsn + 1 }.
 
 watch_for_ring_events() ->
-    Self = self(),
     Fn = fun(R) ->
-                 gen_server:cast(Self, {ring_update, R})
+                 gen_server:cast(riak_core_node_watcher, {ring_update, R})
          end,
     riak_core_ring_events:add_sup_callback(Fn).
 
