@@ -4,4 +4,5 @@ priv/*
 *.o
 *.beam
 include/*_pb.hrl
-
+*~
+doc/*
