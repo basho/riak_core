@@ -22,6 +22,8 @@
 -module(riak_core).
 -export([stop/0, stop/1]).
 -export([register_vnode_module/1, vnode_modules/0]).
+-export([add_guarded_event_handler/3, add_guarded_event_handler/4]).
+
 
 %% @spec stop() -> ok
 %% @doc Stop the riak application and the calling process.
@@ -51,6 +53,12 @@ register_vnode_module(VNodeMod) when is_atom(VNodeMod)  ->
     end,
     riak_core_ring_events:force_sync_update().
     
+
+add_guarded_event_handler(HandlerMod, Handler, Args) ->
+    add_guarded_event_handler(HandlerMod, Handler, Args, undefined).
+
+add_guarded_event_handler(HandlerMod, Handler, Args, ExitFun) ->
+    riak_core_eventhandler_sup:start_guarded_handler(HandlerMod, Handler, Args, ExitFun).
 
 app_for_module(Mod) ->
     app_for_module(application:which_applications(), Mod).
