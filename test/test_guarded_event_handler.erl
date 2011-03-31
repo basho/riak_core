@@ -42,9 +42,7 @@ handle_event({event, E}, State=#state{events=Events}) ->
     {ok, State#state{events=[E|Events]}};
 handle_event(crash, State) ->
     exit(crash),
-    {ok, State};
-handle_event(stop, State) ->
-    {stop, normal, State}.
+    {ok, State}.
 
 handle_call(get_events, State) ->
     {ok, State#state.events, State}.
