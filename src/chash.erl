@@ -46,7 +46,7 @@
 %  NumPartitions = integer()
 %  NodeEntry = {IndexAsInt, Node}
 %  IndexAsInt = integer()
-%  Node = node().
+%  Node = chash_node().
 % It is not recommended that code outside this module make use
 % of the structure of a chash.
 
@@ -54,7 +54,7 @@
 % Indices into the ring, used as keys for object location, are binary
 % representations of 160-bit integers.
 
-% @type node() = term().
+% @type chash_node() = term().
 % A Node is the unique identifier for the owner of a given partition.
 % An Erlang Pid works well here, but the chash module allows it to
 % be any term.
@@ -63,27 +63,27 @@
 %      initially all partitions are owned by the seednode.  If NumPartitions
 %      is not much larger than the intended eventual number of
 %       participating nodes, then performance will suffer.
-% @spec fresh(NumPartitions :: integer(), SeedNode :: node()) -> chash()
+% @spec fresh(NumPartitions :: integer(), SeedNode :: chash_node()) -> chash()
 fresh(NumPartitions, SeedNode) ->
     Inc = ?RINGTOP div NumPartitions,
     {NumPartitions, [{IndexAsInt, SeedNode} ||
            IndexAsInt <- lists:seq(0,(?RINGTOP-1),Inc)]}.
 
 % @doc Find the Node that owns the partition identified by IndexAsInt.
-% @spec lookup(IndexAsInt :: integer(), CHash :: chash()) -> node()
+% @spec lookup(IndexAsInt :: integer(), CHash :: chash()) -> chash_node()
 lookup(IndexAsInt, CHash) ->
     {_NumPartitions, Nodes} = CHash,
     {IndexAsInt, X} = proplists:lookup(IndexAsInt, Nodes),
     X.
 
 % @doc Return true if named Node owns any partitions in the ring, else false.
-% @spec contains_name(Name :: node(), CHash :: chash()) -> bool()
+% @spec contains_name(Name :: chash_node(), CHash :: chash()) -> bool()
 contains_name(Name, CHash) ->
     {_NumPartitions, Nodes} = CHash,
     [X || {_,X} <- Nodes, X == Name] =/= [].
 
 % @doc Make the partition beginning at IndexAsInt owned by Name'd node.
-% @spec update(IndexAsInt :: integer(), Name :: node(), CHash :: chash())
+% @spec update(IndexAsInt :: integer(), Name :: chash_node(), CHash :: chash())
 %                -> chash()
 update(IndexAsInt, Name, CHash) ->
     {NumPartitions, Nodes} = CHash,
@@ -162,7 +162,7 @@ merge_rings(CHashA,CHashB) ->
     {NumPartitions, [{I,randomnode(A,B)} || 
            {{I,A},{I,B}} <- lists:zip(NodesA,NodesB)]}.
 
-% @spec randomnode(NodeA :: node(), NodeB :: node()) -> node()
+% @spec randomnode(NodeA :: chash_node(), NodeB :: chash_node()) -> chash_node()
 randomnode(NodeA,NodeA) -> NodeA;
 randomnode(NodeA,NodeB) -> lists:nth(random:uniform(2),[NodeA,NodeB]).
 

@@ -80,7 +80,7 @@ ring_creation_size() ->
 cluster_name() ->
     get_riak_core_env(cluster_name).
 
-%% @spec gossip_interva() -> integer() | undefined
+%% @spec gossip_interval() -> integer() | undefined
 %% @doc Get the gossip_interval environment variable.
 gossip_interval() ->
     get_riak_core_env(gossip_interval).
