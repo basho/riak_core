@@ -2,7 +2,7 @@
 %%
 %% test_guarded_event_handler
 %%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -42,7 +42,9 @@ handle_event({event, E}, State=#state{events=Events}) ->
     {ok, State#state{events=[E|Events]}};
 handle_event(crash, State) ->
     exit(crash),
-    {ok, State}.
+    {ok, State};
+handle_event(stop, State) ->
+    {stop, normal, State}.
 
 handle_call(get_events, State) ->
     {ok, State#state.events, State}.
@@ -58,17 +60,32 @@ code_change(_OldVsn, State, _Extra) ->
 
 -ifdef(TEST).
 
-guarded_handler_test() ->
+guarded_handler_test_() ->
+    { setup, local,
+      fun setup/0,
+      fun cleanup/1,
+      [
+       fun guarded_handler_test_case/0
+      ]
+    }.
+
+setup() ->
     riak_core_eventhandler_sup:start_link(),
-    ?MODULE:start_link(),
+    ?MODULE:start_link().
+
+cleanup(_Pid) ->
+    %% ARG: ugly hack to not die when the supervisor exits.
+    process_flag(trap_exit, true),
+    gen_event:stop(?MODULE).
+
+guarded_handler_test_case() ->
     Self = self(),
     F = fun(Handler, Reason) ->
                 Self ! {Handler, Reason}
         end,
     riak_core:add_guarded_event_handler(?MODULE, ?MODULE, [], F),
     gen_event:notify(?MODULE, {event, foo}),
-    Events = ?MODULE:get_events(),
-    ?assertEqual(Events, [foo]),
+    ?assertEqual(?MODULE:get_events(), [foo]),
     gen_event:notify(?MODULE, crash),
     Res = receive 
               {?MODULE, {'EXIT', crash}} ->

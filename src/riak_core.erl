@@ -53,10 +53,26 @@ register_vnode_module(VNodeMod) when is_atom(VNodeMod)  ->
     end,
     riak_core_ring_events:force_sync_update().
     
-
+%% @spec add_guarded_event_handler(HandlerMod, Handler, Args) -> AddResult
+%%       HandlerMod = module()
+%%       Handler = module() | {module(), term()}
+%%       Args = list()
+%%       AddResult = ok | {error, Reason::term()}
 add_guarded_event_handler(HandlerMod, Handler, Args) ->
     add_guarded_event_handler(HandlerMod, Handler, Args, undefined).
 
+%% @spec add_guarded_event_handler(HandlerMod, Handler, Args, ExitFun) -> AddResult
+%%       HandlerMod = module()
+%%       Handler = module() | {module(), term()}
+%%       Args = list()
+%%       ExitFun = fun(Handler, Reason::term())
+%%       AddResult = ok | {error, Reason::term()}
+%%
+%% @doc Add a "guarded" event handler to a gen_event instance.  
+%%      A guarded handler is implemented as a supervised gen_server 
+%%      (riak_core_eventhandler_guard) that adds a supervised handler in its 
+%%      init() callback and exits when the handler crashes so it can be
+%%      restarted by the supervisor.
 add_guarded_event_handler(HandlerMod, Handler, Args, ExitFun) ->
     riak_core_eventhandler_sup:start_guarded_handler(HandlerMod, Handler, Args, ExitFun).
 

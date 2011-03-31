@@ -199,11 +199,6 @@ handle_info({'DOWN', Mref, _, _Pid, _Info}, State) ->
             {noreply, update_avsn(S2)}
     end;
 
-handle_info({gen_event_EXIT, _, _}, State) ->
-    %% Ring event handler has been removed for some reason; re-register
-    watch_for_ring_events(),
-    {noreply, update_avsn(State)};
-
 handle_info(broadcast, State) ->
     S2 = broadcast(State#state.peers, State),
     {noreply, S2}.
