@@ -35,7 +35,8 @@
          chash_bucketonly_keyfun/1,
          mkclientid/1,
          start_app_deps/1,
-         rpc_every_member/4]).
+         rpc_every_member/4,
+         fun_uniq_id/1]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -223,6 +224,13 @@ rpc_every_member(Module, Function, Args, Timeout) ->
     {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
     Nodes = riak_core_ring:all_members(MyRing),
     rpc:multicall(Nodes, Module, Function, Args, Timeout).
+
+%% @spec fun_uniq_id(function()) -> integer()
+%% @doc Return a unique integer for a fun, based on erlang:fun_info().
+fun_uniq_id(Fn) when is_function(Fn) ->
+    {uniq, Uniq} = erlang:fun_info(Fn, uniq),
+    Uniq.
+
 
 %% ===================================================================
 %% EUnit tests

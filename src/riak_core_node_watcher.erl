@@ -230,7 +230,7 @@ watch_for_ring_events() ->
     Fn = fun(R) ->
                  gen_server:cast(riak_core_node_watcher, {ring_update, R})
          end,
-    riak_core_ring_events:add_sup_callback(Fn).
+    riak_core_ring_events:add_guarded_callback(Fn).
 
 delete_service_mref(Id) ->
     %% Cleanup the monitor if one exists

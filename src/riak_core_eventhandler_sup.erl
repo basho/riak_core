@@ -24,12 +24,12 @@
 -module(riak_core_eventhandler_sup).
 -behaviour(supervisor).
 -export([start_link/0, init/1]).
--export([start_handler_guard/3, start_handler_guard/4]).
+-export([start_guarded_handler/3, start_guarded_handler/4]).
 
-start_handler_guard(HandlerMod, Handler, Args) ->
-    start_handler_guard(HandlerMod, Handler, Args, undefined).
+start_guarded_handler(HandlerMod, Handler, Args) ->
+    start_guarded_handler(HandlerMod, Handler, Args, undefined).
 
-start_handler_guard(HandlerMod, Handler, Args, ExitFun) ->
+start_guarded_handler(HandlerMod, Handler, Args, ExitFun) ->
     case supervisor:start_child(?MODULE, handler_spec(HandlerMod, Handler, Args, ExitFun)) of
         {ok, _Pid} -> ok;
         Other -> Other
