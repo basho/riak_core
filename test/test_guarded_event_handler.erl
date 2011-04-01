@@ -50,8 +50,8 @@ handle_call(get_events, State) ->
 handle_info(_Info, State) ->
     {ok, State}.
 
-terminate(_Reason, _State) ->
-    ok.
+terminate(Reason, _State) ->
+    Reason.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
@@ -76,6 +76,14 @@ cleanup(_Pid) ->
     process_flag(trap_exit, true),
     gen_event:stop(?MODULE).
 
+wait_for_exitfun() ->
+    receive 
+        {?MODULE, {'EXIT', crash}} ->
+            ok
+    after 5000 ->
+            fail
+    end.
+    
 guarded_handler_test_case() ->
     Self = self(),
     F = fun(Handler, Reason) ->
@@ -85,17 +93,13 @@ guarded_handler_test_case() ->
     gen_event:notify(?MODULE, {event, foo}),
     ?assertEqual(?MODULE:get_events(), [foo]),
     gen_event:notify(?MODULE, crash),
-    Res = receive 
-              {?MODULE, {'EXIT', crash}} ->
-                  ok
-              after 5000 ->
-                  fail
-              end,
-    ?assertEqual(Res, ok),
+    ?assertEqual(wait_for_exitfun(), ok),
     wait_for_handler(?MODULE, 1000, 100),
     gen_event:notify(?MODULE, {event, baz}),
-    Events2 = ?MODULE:get_events(),
-    ?assertEqual(Events2, [baz]).
+    ?assertEqual(?MODULE:get_events(), [baz]),
+    ?assertEqual(riak_core:delete_guarded_event_handler(?MODULE,?MODULE,quux), quux),
+    ?assertNot(lists:member(?MODULE, gen_event:which_handlers(?MODULE))),
+    ?assertEqual([], supervisor:which_children(riak_core_eventhandler_sup)).
 
 wait_for_handler(_, 0, _) ->
     fail;

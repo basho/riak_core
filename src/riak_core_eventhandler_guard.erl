@@ -42,14 +42,14 @@ handle_cast(_Msg, State) -> {noreply, State}.
 
 
 handle_info({gen_event_EXIT, _Handler, shutdown}, State) ->
-    {stop, shutdown, State};
+    {stop, normal, State};
 handle_info({gen_event_EXIT, _Handler, normal}, State) ->
     {stop, normal, State};
-handle_info({gen_event_EXIT, _Handler, _Reason}, State=#state{exitfun=undefined}) ->
-    {stop, normal, State};
+handle_info({gen_event_EXIT, Handler, _Reason}, State=#state{exitfun=undefined}) ->
+    {stop, {gen_event_EXIT, Handler}, State};
 handle_info({gen_event_EXIT, Handler, Reason}, State=#state{exitfun=ExitFun}) ->
     ExitFun(Handler, Reason),
-    {stop, normal, State};
+    {stop, {gen_event_EXIT, Handler}, State};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -58,7 +58,3 @@ terminate(_Reason, #state{}) ->
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
-%default_exitfun(Handler, _Reason) ->
-%    error_logger:error_msg(" ~s: handler ~w exited",
-%                           [?MODULE, Handler]).
-    
