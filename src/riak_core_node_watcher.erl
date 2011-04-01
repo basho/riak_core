@@ -199,16 +199,17 @@ handle_info({'DOWN', Mref, _, _Pid, _Info}, State) ->
             {noreply, update_avsn(S2)}
     end;
 
+handle_info({gen_event_EXIT, _, _}, State) ->
+    %% Ring event handler has been removed for some reason; re-register
+    watch_for_ring_events(),
+    {noreply, update_avsn(State)};
+
 handle_info(broadcast, State) ->
     S2 = broadcast(State#state.peers, State),
     {noreply, S2}.
 
 
 terminate(_Reason, State) ->
-    %% This works because we are trapping exits - if we stop doing that, the
-    %% handler won't get deleted.
-    riak_core:delete_guarded_event_handler(riak_core_ring_events, 
-                                           {riak_core_ring_events, self()}, []),
     %% Let our peers know that we are shutting down
     broadcast(State#state.peers, State#state { status = down }).
 
@@ -230,7 +231,7 @@ watch_for_ring_events() ->
     Fn = fun(R) ->
                  gen_server:cast(Self, {ring_update, R})
          end,
-    riak_core_ring_events:add_guarded_handler({riak_core_ring_events, Self}, [Fn]).
+    riak_core_ring_events:add_sup_callback(Fn).
 
 delete_service_mref(Id) ->
     %% Cleanup the monitor if one exists
