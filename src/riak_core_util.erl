@@ -224,7 +224,6 @@ rpc_every_member(Module, Function, Args, Timeout) ->
     Nodes = riak_core_ring:all_members(MyRing),
     rpc:multicall(Nodes, Module, Function, Args, Timeout).
 
-
 %% ===================================================================
 %% EUnit tests
 %% ===================================================================
