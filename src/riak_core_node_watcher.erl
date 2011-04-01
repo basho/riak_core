@@ -205,6 +205,10 @@ handle_info(broadcast, State) ->
 
 
 terminate(_Reason, State) ->
+    %% This works because we are trapping exits - if we stop doing that, the
+    %% handler won't get deleted.
+    riak_core:delete_guarded_event_handler(riak_core_ring_events, 
+                                           {riak_core_ring_events, self()}, []),
     %% Let our peers know that we are shutting down
     broadcast(State#state.peers, State#state { status = down }).
 
@@ -222,10 +226,11 @@ update_avsn(State) ->
     State#state { avsn = State#state.avsn + 1 }.
 
 watch_for_ring_events() ->
+    Self = self(),
     Fn = fun(R) ->
-                 gen_server:cast(riak_core_node_watcher, {ring_update, R})
+                 gen_server:cast(Self, {ring_update, R})
          end,
-    riak_core_ring_events:add_guarded_callback(Fn).
+    riak_core_ring_events:add_guarded_handler({riak_core_ring_events, Self}, [Fn]).
 
 delete_service_mref(Id) ->
     %% Cleanup the monitor if one exists

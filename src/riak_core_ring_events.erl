@@ -65,8 +65,7 @@ add_sup_callback(Fn) when is_function(Fn) ->
     gen_event:add_sup_handler(?MODULE, {?MODULE, make_ref()}, [Fn]).
 
 add_guarded_callback(Fn) when is_function(Fn) ->
-    riak_core:add_guarded_event_handler(
-      ?MODULE, {?MODULE,riak_core_util:fun_uniq_id(Fn)}, [Fn]).
+    riak_core:add_guarded_event_handler(?MODULE, {?MODULE, make_ref()}, [Fn]).
 
 force_update() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
