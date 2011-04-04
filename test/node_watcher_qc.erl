@@ -49,6 +49,7 @@ prop_main() ->
     application:set_env(riak_core, ring_creation_size, 8),
 
     %% Start supporting processes
+    riak_core_eventhandler_sup:start_link(),
     riak_core_ring_events:start_link(),
     riak_core_node_watcher_events:start_link(),
 

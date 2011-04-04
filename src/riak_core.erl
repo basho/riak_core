@@ -22,6 +22,8 @@
 -module(riak_core).
 -export([stop/0, stop/1]).
 -export([register_vnode_module/1, vnode_modules/0]).
+-export([add_guarded_event_handler/3, add_guarded_event_handler/4]).
+-export([delete_guarded_event_handler/3]).
 
 %% @spec stop() -> ok
 %% @doc Stop the riak application and the calling process.
@@ -51,6 +53,47 @@ register_vnode_module(VNodeMod) when is_atom(VNodeMod)  ->
     end,
     riak_core_ring_events:force_sync_update().
     
+%% @spec add_guarded_event_handler(HandlerMod, Handler, Args) -> AddResult
+%%       HandlerMod = module()
+%%       Handler = module() | {module(), term()}
+%%       Args = list()
+%%       AddResult = ok | {error, Reason::term()}
+add_guarded_event_handler(HandlerMod, Handler, Args) ->
+    add_guarded_event_handler(HandlerMod, Handler, Args, undefined).
+
+%% @spec add_guarded_event_handler(HandlerMod, Handler, Args, ExitFun) -> AddResult
+%%       HandlerMod = module()
+%%       Handler = module() | {module(), term()}
+%%       Args = list()
+%%       ExitFun = fun(Handler, Reason::term())
+%%       AddResult = ok | {error, Reason::term()}
+%%
+%% @doc Add a "guarded" event handler to a gen_event instance.  
+%%      A guarded handler is implemented as a supervised gen_server 
+%%      (riak_core_eventhandler_guard) that adds a supervised handler in its 
+%%      init() callback and exits when the handler crashes so it can be
+%%      restarted by the supervisor.
+add_guarded_event_handler(HandlerMod, Handler, Args, ExitFun) ->
+    riak_core_eventhandler_sup:start_guarded_handler(HandlerMod, Handler, Args, ExitFun).
+
+%% @spec delete_guarded_event_handler(HandlerMod, Handler, Args) -> Result
+%%       HandlerMod = module()
+%%       Handler = module() | {module(), term()}
+%%       Args = term()
+%%       Result = term() | {error, module_not_found} | {'EXIT', Reason}
+%%       Reason = term()
+%%
+%% @doc Delete a guarded event handler from a gen_event instance.
+%% 
+%%      Args is an arbitrary term which is passed as one of the arguments to 
+%%      Module:terminate/2.
+%%
+%%      The return value is the return value of Module:terminate/2. If the 
+%%      specified event handler is not installed, the function returns 
+%%      {error,module_not_found}. If the callback function fails with Reason, 
+%%      the function returns {'EXIT',Reason}.
+delete_guarded_event_handler(HandlerMod, Handler, Args) ->
+    riak_core_eventhandler_sup:stop_guarded_handler(HandlerMod, Handler, Args).
 
 app_for_module(Mod) ->
     app_for_module(application:which_applications(), Mod).

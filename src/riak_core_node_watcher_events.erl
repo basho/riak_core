@@ -27,8 +27,10 @@
 -export([start_link/0,
          add_handler/2,
          add_sup_handler/2,
+         add_guarded_handler/2,
          add_callback/1,
          add_sup_callback/1,
+         add_guarded_callback/1,
          service_update/1]).
 
 %% gen_event callbacks
@@ -50,11 +52,17 @@ add_handler(Handler, Args) ->
 add_sup_handler(Handler, Args) ->
     gen_event:add_sup_handler(?MODULE, Handler, Args).
 
+add_guarded_handler(Handler, Args) ->
+    riak_core:add_guarded_event_handler(?MODULE, Handler, Args).
+
 add_callback(Fn) when is_function(Fn) ->
     gen_event:add_handler(?MODULE, {?MODULE, make_ref()}, [Fn]).
 
 add_sup_callback(Fn) when is_function(Fn) ->
     gen_event:add_sup_handler(?MODULE, {?MODULE, make_ref()}, [Fn]).
+
+add_guarded_callback(Fn) when is_function(Fn) ->
+    riak_core:add_guarded_event_handler(?MODULE, {?MODULE, make_ref()}, [Fn]).
 
 service_update(Services) ->
     gen_event:notify(?MODULE, {service_update, Services}).
