@@ -37,6 +37,8 @@
          all_preflists/2,
          get_meta/2, update_meta/3, equal_rings/2]).	 
 
+-export_type([riak_core_ring/0]).
+
 % @type riak_core_ring(). The opaque data type used for partition ownership.
 -record(chstate, {
     nodename, % the Node responsible for this chstate
