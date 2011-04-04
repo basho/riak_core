@@ -28,13 +28,14 @@
          get_primary_apl/3, get_primary_apl/4
         ]).
 
+-export_type([preflist/0, preflist2/0]).
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
 -type index() :: non_neg_integer().
 -type n_val() :: non_neg_integer().
--type ring() :: term().
+-type ring() :: riak_core_ring:riak_core_ring().
 -type preflist() :: [{index(), node()}].
 -type preflist2() :: [{{index(), node()}, primary|fallback}].
 
@@ -93,7 +94,7 @@ get_primary_apl(DocIdx, N, Ring, UpNodes) ->
     lists:reverse(Up).
 
 %% Split a preference list into up and down lists
--spec check_up(preflist(), [node()], preflist(), preflist()) -> {preflist(), preflist()}.
+-spec check_up(preflist(), [node()], preflist2(), preflist()) -> {preflist2(), preflist()}.
 check_up([], _UpNodes, Up, Pangs) ->
     {Up, Pangs};
 check_up([{Partition,Node}|Rest], UpNodes, Up, Pangs) ->
@@ -105,7 +106,7 @@ check_up([{Partition,Node}|Rest], UpNodes, Up, Pangs) ->
     end.
 
 %% Find fallbacks for downed nodes in the preference list
--spec find_fallbacks(preflist(), preflist(), [node()], preflist()) -> preflist().
+-spec find_fallbacks(preflist(), preflist(), [node()], preflist2()) -> preflist2().
 find_fallbacks(_Pangs, [], _UpNodes, Secondaries) ->
     Secondaries;
 find_fallbacks([], _Fallbacks, _UpNodes, Secondaries) ->
