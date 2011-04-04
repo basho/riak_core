@@ -37,9 +37,13 @@
 -export([fresh/0,descends/2,merge/1,get_counter/2,get_timestamp/2,
 	increment/2,increment/3,all_nodes/1,equal/2,prune/3,timestamp/0]).
 
+-ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
+-endif.
 
--type vclock() :: [vc_entry()].
+-export_type([vclock/0, timestamp/0, vclock_node/0]).
+
+-opaque vclock() :: [vc_entry()].
 % The timestamp is present but not used, in case a client wishes to inspect it.
 -type vc_entry() :: {vclock_node(), {counter(), timestamp()}}.
 
@@ -53,28 +57,8 @@
 fresh() ->
     [].
 
-%% @todo Use common_test or other good test framework, and write more tests.
-%
-% @doc Serves as both a trivial test and some example code.
-example_test() ->
-    A = vclock:fresh(),
-    B = vclock:fresh(),
-    A1 = vclock:increment(a, A),
-    B1 = vclock:increment(b, B),
-    true = vclock:descends(A1,A),
-    true = vclock:descends(B1,B),
-    false = vclock:descends(A1,B1),
-    A2 = vclock:increment(a, A1),
-    C = vclock:merge([A2, B1]),
-    C1 = vclock:increment(c, C),
-    true = vclock:descends(C1, A2),
-    true = vclock:descends(C1, B1),
-    false = vclock:descends(B1, C1),
-    false = vclock:descends(B1, A1),
-    ok.
-
 % @doc Return true if Va is a direct descendant of Vb, else false -- remember, a vclock is its own descendant!
--spec descends(Va :: vclock(), Vb :: vclock()) -> boolean().
+-spec descends(Va :: vclock()|[], Vb :: vclock()|[]) -> boolean().
 descends(_, []) ->
     % all vclocks descend from the empty vclock
     true;
@@ -99,7 +83,7 @@ descends(Va, Vb) ->
 
 % @doc Combine all VClocks in the input list into their least possible
 %      common descendant.
--spec merge(VClocks :: [vclock()]) -> vclock().
+-spec merge(VClocks :: [vclock()]) -> vclock() | [].
 merge([])             -> [];
 merge([SingleVclock]) -> SingleVclock;
 merge([First|Rest])   -> merge(Rest, lists:keysort(1, First)).
@@ -213,6 +197,29 @@ prune_vclock1(V,Now,BProps,HeadTime) ->
             end
     end.
 
+%% ===================================================================
+%% EUnit tests
+%% ===================================================================
+-ifdef(TEST).
+
+% @doc Serves as both a trivial test and some example code.
+example_test() ->
+    A = vclock:fresh(),
+    B = vclock:fresh(),
+    A1 = vclock:increment(a, A),
+    B1 = vclock:increment(b, B),
+    true = vclock:descends(A1,A),
+    true = vclock:descends(B1,B),
+    false = vclock:descends(A1,B1),
+    A2 = vclock:increment(a, A1),
+    C = vclock:merge([A2, B1]),
+    C1 = vclock:increment(c, C),
+    true = vclock:descends(C1, A2),
+    true = vclock:descends(C1, B1),
+    false = vclock:descends(B1, C1),
+    false = vclock:descends(B1, A1),
+    ok.
+
 prune_small_test() ->
     % vclock with less entries than small_vclock will be untouched
     Now = riak_core_util:moment(),
@@ -290,3 +297,5 @@ merge_test() ->
     ?assertEqual([], merge(vclock:fresh())),
     ?assertEqual([{<<"1">>,{1,1}},{<<"2">>,{2,2}},{<<"3">>,{3,3}},{<<"4">>,{4,4}}],
                  merge([VC1, VC2])).
+
+-endif.
