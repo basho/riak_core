@@ -156,12 +156,10 @@ mi_insert({Offset,MI},Tree) ->
 		Key -> % replacing!
 		    mkleaf(MI);
 		_ -> % turning a leaf into an inner
-		    K0 = orddict:new(),
-		    K1 = orddict:store(offset_key(Offset,Key),
-				       mkleaf(MI),K0),
-		    TKey = Tree#merk.key,
-		    Kids = orddict:store(offset_key(Offset,TKey),Tree,K1),
-		    mkinner(Offset,Kids)
+		    Kid = orddict:store(offset_key(Offset,Tree#merk.key),
+		   	       Tree,orddict:new()),	 
+		    NewInner = mkinner(Offset,Kid),
+		    mi_insert1({Offset,MI},NewInner)
 	    end;
 	inner ->
 	    mi_insert1({Offset,MI},Tree)
@@ -362,6 +360,9 @@ merkle_test() ->
     ?assertEqual([one], diff(C2,undefined)),
     STree1 = build_tree([{"hello", "hi"},{"and", "what"}]),
     STree2 = build_tree([{"hello", "hi"},{"goodbye", "bye"}]),
-    ?assertEqual(lists:usort(["and", "goodbye"]), diff(STree1, STree2)).
+    ?assertEqual(lists:usort(["and", "goodbye"]), diff(STree1, STree2)),
+    I = [{<<"riak.com42">>,sha("should not")},{<<"riak.com452">>,sha("clobber")}],
+    I2 = build_tree(I),
+    ?assertEqual(2, length(allkeys(I2))).
 
 
