@@ -227,11 +227,14 @@ should_handoff(#state{index=Idx, mod=Mod}) ->
         Me ->
             false;
         TargetNode ->
-            ["riak", A, "vnode"] = string:tokens(atom_to_list(Mod), "_"),
-            App = list_to_atom("riak_" ++ A),
-            case lists:member(TargetNode, riak_core_node_watcher:nodes(App)) of
-                false  -> false;
-                true -> {true, TargetNode}
+            case app_for_vnode_module(Mod) of
+                undefined -> false;
+                {ok, App} ->
+                    case lists:member(TargetNode, 
+                                      riak_core_node_watcher:nodes(App)) of
+                        false  -> false;
+                        true -> {true, TargetNode}
+                    end
             end
     end.
 
@@ -277,3 +280,14 @@ reply({raw, Ref, From}, Reply) ->
 reply(ignore, _Reply) ->
     ok.
                    
+app_for_vnode_module(Mod) when is_atom(Mod) ->
+    case application:get_env(riak_core, vnode_modules) of
+        {ok, Mods} ->
+            case lists:keysearch(Mod, 2, Mods) of
+                {value, {App, Mod}} ->
+                    {ok, App};
+                false ->
+                    undefined
+            end;
+        undefined -> undefined
+    end.
