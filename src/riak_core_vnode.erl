@@ -77,6 +77,7 @@ behaviour_info(_Other) ->
           modstate :: term(),
           handoff_token :: non_neg_integer(),
           handoff_node=none :: none | node(),
+          handoff_pid :: pid(),
           inactivity_timeout}).
 
 start_link(Mod, Index) ->
@@ -174,7 +175,18 @@ active(handoff_complete, State=#state{mod=Mod,
     Mod:handoff_finished(HN, ModState),
     {ok, NewModState} = Mod:delete(ModState),
     riak_core_handoff_manager:add_exclusion(Mod, Idx),
-    {stop, normal, State#state{modstate=NewModState, handoff_node=none}}.
+    {stop, normal, State#state{modstate=NewModState, 
+                               handoff_node=none, 
+                               handoff_pid=undefined}};
+active({handoff_error, _Err, _Reason}, State=#state{mod=Mod, 
+                                                    modstate=ModState,
+                                                    index=Idx, 
+                                                    handoff_token=HT}) ->
+    riak_core_handoff_manager:release_handoff_lock({Mod, Idx}, HT),
+    %% it would be nice to pass {Err, Reason} to the vnode but the 
+    %% API doesn't currently allow for that.
+    Mod:handoff_cancelled(ModState),
+    continue(State#state{handoff_node=none}).
 
 active(_Event, _From, State) ->
     Reply = ok,
@@ -198,6 +210,8 @@ handle_sync_event({handoff_data,BinObj}, _From, StateName,
              State#state.inactivity_timeout}
     end.
 
+handle_info({'EXIT', Pid, _Reason}, _StateName, State=#state{handoff_pid=Pid}) ->
+    continue(State#state{handoff_pid=undefined});
 handle_info({'EXIT', Pid, Reason}, StateName, State=#state{mod=Mod}) ->
     %% A linked processes has died so use the
     %% handle_exit callback to allow the vnode 
@@ -254,8 +268,8 @@ start_handoff(State=#state{index=Idx, mod=Mod, modstate=ModState}, TargetNode) -
                     NewState = State#state{modstate=NewModState, 
                                            handoff_token=HandoffToken,
                                            handoff_node=TargetNode},
-                    riak_core_handoff_sender:start_link(TargetNode, Mod, Idx),
-                    continue(NewState)
+                    {ok, HandoffPid} = riak_core_handoff_sender:start_link(TargetNode, Mod, Idx),
+                    continue(NewState#state{handoff_pid=HandoffPid})
             end
     end.
             
