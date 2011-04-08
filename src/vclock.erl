@@ -82,9 +82,8 @@ merge([], NClock) -> NClock;
 merge([AClock|VClocks],NClock) ->
     merge(VClocks, merge(lists:keysort(1, AClock), NClock, [])).
 
-merge([], [], AccClock) -> lists:reverse(AccClock);
-merge([], [Left|Rest], AccClock) -> merge([], Rest, [Left|AccClock]);
-merge(Left, [], AccClock) -> merge([], Left, AccClock);
+merge([], Left, AccClock) -> lists:reverse(AccClock, Left);
+merge(Left, [], AccClock) -> lists:reverse(AccClock, Left);
 merge(V=[{Node1,{Ctr1,TS1}}|VClock],
       N=[{Node2,{Ctr2,TS2}}|NClock], AccClock) ->
     if Node1 < Node2 ->
