@@ -64,21 +64,12 @@ descends(_, []) ->
     true;
 descends(Va, Vb) ->
     [{NodeB, {CtrB, _T}}|RestB] = Vb,
-    CtrA = 
-	case lists:keyfind(NodeB, 1, Va) of
-	    false           -> false;
-	    {_, {CA, _TSA}} -> CA
-	end,
-    case CtrA of
-	false -> false;
-	_ -> 
-	    if
-		CtrA < CtrB ->
-		    false;
-		true ->
-		    descends(Va,RestB)
-	    end
-    end.
+    case lists:keyfind(NodeB, 1, Va) of
+        false ->
+            false;
+        {_, {CtrA, _TSA}} ->
+            (CtrA >= CtrB) andalso descends(Va,RestB)
+        end.
 
 % @doc Combine all VClocks in the input list into their least possible
 %      common descendant.
