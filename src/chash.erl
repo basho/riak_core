@@ -101,8 +101,14 @@ successors(Index, CHash) ->
 %                                                             -> [NodeEntry]
 successors(Index, CHash, N) ->
     Num = max_n(N, CHash),
-    {Res, _} = lists:split(Num, ordered_from(Index, CHash)),
-    Res.
+    Ordered = ordered_from(Index, CHash),
+    {NumPartitions, _Nodes} = CHash,
+    if Num =:= NumPartitions ->
+	    Ordered;
+       true ->
+	    {Res, _} = lists:split(Num, Ordered),
+	    Res
+    end.
 
 % @doc Given an object key, return all NodeEntries in reverse order
 %      starting at Index.
