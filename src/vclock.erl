@@ -65,10 +65,9 @@ descends(_, []) ->
 descends(Va, Vb) ->
     [{NodeB, {CtrB, _T}}|RestB] = Vb,
     CtrA = 
-	case proplists:get_value(NodeB, Va) of
-	    undefined ->
-		false;
-	    {CA, _TSA} -> CA
+	case lists:keyfind(NodeB, 1, Va) of
+	    false           -> false;
+	    {_, {CA, _TSA}} -> CA
 	end,
     case CtrA of
 	false -> false;
@@ -111,17 +110,17 @@ merge(V=[{Node1,{Ctr1,TS1}}|VClock],
 % @doc Get the counter value in VClock set from Node.
 -spec get_counter(Node :: vclock_node(), VClock :: vclock()) -> counter() | undefined.
 get_counter(Node, VClock) ->
-    case proplists:get_value(Node, VClock) of
-	{Ctr, _TS} -> Ctr;
-	undefined -> undefined
+    case lists:keyfind(Node, 1, VClock) of
+	{_, {Ctr, _TS}} -> Ctr;
+	false           -> undefined
     end.
 
 % @doc Get the timestamp value in a VClock set from Node.
 -spec get_timestamp(Node :: vclock_node(), VClock :: vclock()) -> timestamp() | undefined.
 get_timestamp(Node, VClock) ->
-    case proplists:get_value(Node, VClock) of
-	{_Ctr, TS} -> TS;
-	undefined -> undefined
+    case lists:keyfind(Node, 1, VClock) of
+	{_, {_Ctr, TS}} -> TS;
+	false           -> undefined
     end.
 
 % @doc Increment VClock at Node.
@@ -176,11 +175,11 @@ prune(V,Now,BucketProps) ->
     prune_vclock1(SortV,Now,BucketProps).
 % @private
 prune_vclock1(V,Now,BProps) ->
-    case length(V) =< proplists:get_value(small_vclock,BProps) of
+    case length(V) =< get_property(small_vclock, BProps) of
         true -> V;
         false ->
             {_,{_,HeadTime}} = hd(V),
-            case (Now - HeadTime) < proplists:get_value(young_vclock,BProps) of
+            case (Now - HeadTime) < get_property(young_vclock,BProps) of
                 true -> V;
                 false -> prune_vclock1(V,Now,BProps,HeadTime)
             end
@@ -188,14 +187,18 @@ prune_vclock1(V,Now,BProps) ->
 % @private
 prune_vclock1(V,Now,BProps,HeadTime) ->
     % has a precondition that V is longer than small and older than young
-    case length(V) > proplists:get_value(big_vclock,BProps) of
+    case length(V) > get_property(big_vclock,BProps) of
         true -> prune_vclock1(tl(V),Now,BProps);
         false ->
-            case (Now - HeadTime) > proplists:get_value(old_vclock,BProps) of
+            case (Now - HeadTime) > get_property(old_vclock,BProps) of
                 true -> prune_vclock1(tl(V),Now,BProps);
                 false -> V
             end
     end.
+
+get_property(Key, PairList) ->
+    {_Key, Value} = lists:keyfind(Key, 1, PairList),
+    Value.
 
 %% ===================================================================
 %% EUnit tests
