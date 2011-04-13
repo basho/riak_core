@@ -148,6 +148,10 @@ postcondition(_From,_To,_S,
     Index =:= ReplyIndex;
 postcondition(_From,_To,#qcst{crash_reasons=CRs},
               {call,mock_vnode,get_crash_reason,[{Index,_Node}]},{ok, Reason}) ->
+    %% there is the potential for a race here if get_crash_reason is called
+    %% before the EXIT signal is sent to the vnode, but it didn't appear 
+    %% even with 1k tests - just a note in case a heisenbug rears its head
+    %% on some future, less deterministic day.
     orddict:fetch(Index, CRs) =:= Reason;
 postcondition(_From,_To,#qcst{counters=Counters},
               {call,mock_vnode,get_counter,[{Index,_Node}]},{ok,ReplyCount}) ->
