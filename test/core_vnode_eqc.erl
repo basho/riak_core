@@ -36,7 +36,8 @@
 
 -record(qcst, {started,
                counters, % Dict of counters for each index
-               indices}).
+               indices,
+               crash_reasons}).
                
 simple_test() ->
     simple_test(100).
@@ -82,20 +83,24 @@ initial_state_data() ->
     riak_core_ring_manager:set_ring_global(Ring),
     #qcst{started=[],
           counters=orddict:new(),
+          crash_reasons=orddict:new(),
           indices=[I || {I,_N} <- riak_core_ring:all_owners(Ring)]
          }.
 
 %% Mark the vnode as started
 next_state_data(_From,_To,S=#qcst{started=Started,
-                                  counters=Counters},_R,
+                                  counters=Counters,
+                                  crash_reasons=CRs},_R,
                 {call,?MODULE,start_vnode,[Index]}) ->
     S#qcst{started=[Index|Started],
-           counters=orddict:store(Index, 0, Counters)};
-next_state_data(_From,_To,S=#qcst{counters=Counters},_R,
+           counters=orddict:store(Index, 0, Counters),
+           crash_reasons=orddict:store(Index, undefined, CRs)};
+next_state_data(_From,_To,S=#qcst{counters=Counters, crash_reasons=CRs},_R,
                 {call,mock_vnode,stop,[{Index,_Node}]}) ->
     %% If a node is stopped, reset the counter ready for next
     %% time it is called which should start it
-    S#qcst{counters=orddict:store(Index, 0, Counters)};
+    S#qcst{counters=orddict:store(Index, 0, Counters),
+           crash_reasons=orddict:store(Index, undefined, CRs)};
 %% Update the counters for the index if a command that changes them
 next_state_data(_From,_To,S=#qcst{counters=Counters},_R,
                 {call,_Mod,Func,[Preflist]})
@@ -103,6 +108,10 @@ next_state_data(_From,_To,S=#qcst{counters=Counters},_R,
     S#qcst{counters=lists:foldl(fun({I, _N}, C) ->
                                         orddict:update_counter(I, 1, C)
                                 end, Counters, Preflist)};
+%% Update the counters for the index if a command that changes them
+next_state_data(_From,_To,S=#qcst{crash_reasons=CRs},_R,
+                {call,mock_vnode,crash,[{Index,_Node}]}) ->
+    S#qcst{crash_reasons=orddict:store(Index, Index, CRs)};
 next_state_data(_From,_To,S,_R,_C) ->
     S.
 % 
@@ -115,6 +124,8 @@ running(S) ->
      {history, {call,?MODULE,start_vnode,[index(S)]}},
      {history, {call,mock_vnode,get_index,[active_preflist1(S)]}},
      {history, {call,mock_vnode,get_counter,[active_preflist1(S)]}},
+     {history, {call,mock_vnode,crash,[active_preflist1(S)]}},
+     {history, {call,mock_vnode,get_crash_reason,[active_preflist1(S)]}},
      {history, {call,mock_vnode,neverreply,[active_preflist(S)]}},
      {history, {call,?MODULE,returnreply,[active_preflist(S)]}},
      {history, {call,?MODULE,latereply,[active_preflist(S)]}},
@@ -127,7 +138,7 @@ precondition(_From,_To,#qcst{started=Started},{call,?MODULE,start_vnode,[Index]}
     not lists:member(Index, Started);
 precondition(_From,_To,#qcst{started=Started},{call,_Mod,Func,[Preflist]}) 
   when Func =:= get_index; Func =:= get_counter; Func =:= neverreply; Func =:= returnreply;
-       Func =:= latereply ->
+       Func =:= latereply; Func =:= crash; Func =:= get_crash_reason ->
     preflist_is_active(Preflist, Started);
 precondition(_From,_To,_S,_C) ->
     true.
@@ -135,6 +146,9 @@ precondition(_From,_To,_S,_C) ->
 postcondition(_From,_To,_S,
               {call,mock_vnode,get_index,[{Index,_Node}]},{ok,ReplyIndex}) ->
     Index =:= ReplyIndex;
+postcondition(_From,_To,#qcst{crash_reasons=CRs},
+              {call,mock_vnode,get_crash_reason,[{Index,_Node}]},{ok, Reason}) ->
+    orddict:fetch(Index, CRs) =:= Reason;
 postcondition(_From,_To,#qcst{counters=Counters},
               {call,mock_vnode,get_counter,[{Index,_Node}]},{ok,ReplyCount}) ->
     orddict:fetch(Index, Counters) =:= ReplyCount;
@@ -223,3 +237,4 @@ wait_for_pid(Pid) ->
     end.
 
 -endif.
+

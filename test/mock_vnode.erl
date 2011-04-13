@@ -31,12 +31,15 @@
          neverreply/1,
          returnreply/1,
          latereply/1,
+         crash/1,
+         get_crash_reason/1,
          stop/1]).
 -export([init/1,
          handle_command/3,
-         terminate/2]).
+         terminate/2,
+         handle_exit/3]).
 
--record(state, {index, counter}).
+-record(state, {index, counter, crash_reason}).
 
 -define(MASTER, mock_vnode_master).
 
@@ -64,6 +67,12 @@ latereply(Preflist) ->
     riak_core_vnode_master:command(Preflist, latereply, {raw, Ref, self()}, ?MASTER),
     {ok, Ref}.
 
+crash(Preflist) ->
+    riak_core_vnode_master:sync_command(Preflist, crash, ?MASTER).
+
+get_crash_reason(Preflist) ->
+    riak_core_vnode_master:sync_command(Preflist, get_crash_reason, ?MASTER).
+
 stop(Preflist) ->
     riak_core_vnode_master:sync_command(Preflist, stop, ?MASTER).
 
@@ -77,7 +86,12 @@ handle_command(get_index, _Sender, State) ->
     {reply, {ok, State#state.index}, State};
 handle_command(get_counter, _Sender, State) ->
     {reply, {ok, State#state.counter}, State};
+handle_command(get_crash_reason, _Sender, State) ->
+    {reply, {ok, State#state.crash_reason}, State};
 
+handle_command(crash, _Sender, State) ->
+    spawn_link(fun() -> exit(State#state.index) end),
+    {reply, ok, State};
 handle_command(stop, Sender, State = #state{counter=Counter}) ->
     %% Send reply here as vnode_master:sync_command does a call 
     %% which is cast on to the vnode process.  Returning {stop,...}
@@ -94,6 +108,8 @@ handle_command(latereply, Sender, State = #state{counter=Counter}) ->
                   riak_core_vnode:reply(Sender, latereply)
           end),
     {noreply, State#state{counter = Counter + 1}}.
+handle_exit(_Pid, Reason, State) ->
+    {noreply, State#state{crash_reason=Reason}}.
 
 terminate(_Reason, _State) ->
     ok.
