@@ -52,22 +52,19 @@ behaviour_info(callbacks) ->
 behaviour_info(_Other) ->
     undefined.
 
-%% handle_exit/4 is an optional behaviour callback that can be implemented. 
+%% handle_exit/3 is an optional behaviour callback that can be implemented. 
 %% It will be called in the case that a process that is linked to the vnode
 %% process dies and allows the module using the behaviour to take appropriate
 %% action. It is called by handle_info when it receives an {'EXIT', Pid, Reason}
-%% message and the function signature is: handle_exit(Pid, Reason, StateName, State).
+%% message and the function signature is: handle_exit(Pid, Reason, State).
 %%
 %% It should return a tuple indicating the next state for the fsm. For a list of
 %% valid return types see the documentation for the gen_fsm handle_info callback.
 %%
-%% Here is what the spec for handle_exit/4 would look like:
-%% -spec handle_exit(pid(), atom(), atom(), term()) ->
-%%                          {next_state, atom(), term()} |
-%%                          {next_state, atom(), term(), int() | infinity} |
-%%                          {next_state, atom(), term(), hibernate} |
+%% Here is what the spec for handle_exit/3 would look like:
+%% -spec handle_exit(pid(), atom(), term()) ->
+%%                          {noreply, term()} |
 %%                          {stop, term(), term()}
-                         
 
 -define(DEFAULT_TIMEOUT, 60000).
 -define(LOCK_RETRY_TIMEOUT, 10000).
@@ -221,13 +218,12 @@ handle_info({'EXIT', Pid, Reason}, StateName, State=#state{mod=Mod,modstate=ModS
     %% If the function is not implemented default
     %% to crashing the process.
     try
-        % Surely Mod:handle_exit should look like this? as I should not 
-        % need to know the internals of State to extract modstate out
-        % for my app that inherits this behaviour?
         case Mod:handle_exit(Pid, Reason, ModState) of
             {noreply,NewModState} ->
                 {next_state, StateName, State#state{modstate=NewModState},
                     State#state.inactivity_timeout};
+            {stop, Reason, NewModState} ->
+                 {stop, Reason, State#state{modstate=NewModState}};
             Else ->
                 Else
         end
