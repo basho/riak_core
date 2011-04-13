@@ -3,7 +3,7 @@
 {application, riak_core,
 [
   {description, "Riak Core"},
-  {vsn, "0.14.1"},
+  {vsn, "0.14.2-trifork"},
   {modules, [
              app_helper,
              bloom,
