@@ -39,6 +39,7 @@
 behaviour_info(callbacks) ->
     [{init,1},
      {handle_command,3},
+     {handle_exit,3},
      {handoff_starting,2},
      {handoff_cancelled,1},
      {handoff_finished,2},
@@ -212,18 +213,29 @@ handle_sync_event({handoff_data,BinObj}, _From, StateName,
 
 handle_info({'EXIT', Pid, _Reason}, _StateName, State=#state{handoff_pid=Pid}) ->
     continue(State#state{handoff_pid=undefined});
-handle_info({'EXIT', Pid, Reason}, StateName, State=#state{mod=Mod}) ->
+
+handle_info({'EXIT', Pid, Reason}, StateName, State=#state{mod=Mod,modstate=ModState}) ->
     %% A linked processes has died so use the
     %% handle_exit callback to allow the vnode 
     %% process to take appropriate action.
     %% If the function is not implemented default
     %% to crashing the process.
     try
-        Mod:handle_exit(Pid, Reason, StateName, State)
+        % Surely Mod:handle_exit should look like this? as I should not 
+        % need to know the internals of State to extract modstate out
+        % for my app that inherits this behaviour?
+        case Mod:handle_exit(Pid, Reason, ModState) of
+            {noreply,NewModState} ->
+                {next_state, StateName, State#state{modstate=NewModState},
+                    State#state.inactivity_timeout};
+            Else ->
+                Else
+        end
     catch
         _ErrorType:undef ->
             {stop, linked_process_crash, State}
     end;
+
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State, State#state.inactivity_timeout}.
 
