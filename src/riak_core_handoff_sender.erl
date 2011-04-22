@@ -23,14 +23,14 @@
 %% @doc send a partition's data via TCP-based handoff
 
 -module(riak_core_handoff_sender).
--export([start_link/3]).
+-export([start_link/3, get_handoff_ssl_options/0]).
 -include_lib("riak_core_vnode.hrl").
 -include_lib("riak_core_handoff.hrl").
 -define(ACK_COUNT, 1000).
 
 start_link(TargetNode, Module, Partition) ->
     Self = self(),
-    SslOpts = app_helper:get_env(riak_core, handoff_ssl_options, []),
+    SslOpts = get_handoff_ssl_options(),
     Pid = spawn_link(fun()->start_fold(TargetNode, Module,Partition, Self, SslOpts) end),
     {ok, Pid}.
 
@@ -137,10 +137,33 @@ get_handoff_port(Node) when is_atom(Node) ->
         Other -> Other
     end.
 
-
-
-
-
-
-
-
+get_handoff_ssl_options() ->
+    case app_helper:get_env(riak_core, handoff_ssl_options, []) of
+        [] ->
+            [];
+        Props ->
+            try
+                %% We'll check if the file(s) exist but won't check
+                %% file contents' sanity.
+                ZZ = [{_, {ok, _}} = {ToCheck, file:read_file(Path)} ||
+                         ToCheck <- [certfile, keyfile, cacertfile, dhfile],
+                         Path <- [proplists:get_value(ToCheck, Props)],
+                         Path /= undefined],
+                spawn(fun() -> self() ! ZZ end), % Avoid term...never used err
+                %% Props are OK
+                Props
+            catch
+                error:{badmatch, {FailProp, BadMat}} ->
+                    error_logger:error_msg("riak_core handoff_ssl_options "
+                                           "config error: property ~p: ~p.  "
+                                           "Disabling handoff SSL\n",
+                                           [FailProp, BadMat]),
+                    [];
+                X:Y ->
+                    error_logger:error_msg("riak_core handoff_ssl_options "
+                                           "failure {~p, ~p} processing config "
+                                           "~p.  Disabling handoff SSL\n",
+                                           [X, Y, Props]),
+                    []
+            end
+    end.

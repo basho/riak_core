@@ -36,7 +36,7 @@
 start_link() ->
     PortNum = app_helper:get_env(riak_core, handoff_port),
     IpAddr = app_helper:get_env(riak_core, handoff_ip),
-    SslOpts = app_helper:get_env(riak_core, handoff_ssl_options, []),
+    SslOpts = riak_core_handoff_sender:get_handoff_ssl_options(),
     gen_nb_server:start_link(?MODULE, IpAddr, PortNum, [PortNum, SslOpts]).
 
 init([PortNum, SslOpts]) ->
