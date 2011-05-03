@@ -66,6 +66,15 @@ behaviour_info(_Other) ->
 %%                          {noreply, term()} |
 %%                          {stop, term(), term()}
 
+%% handle_info/2 is an optional behaviour callback too.
+%% It will be called in the case when a vnode receives any other message
+%% than an EXIT message.
+%% The function signature is: handle_info(Info, State).
+%% It should return a tuple of the form {ok, NextState}
+%%
+%% Here is what the spec for handle_info/2 would look like:
+%% -spec handle_info(term(), term()) -> {ok, term()}
+
 -define(DEFAULT_TIMEOUT, 60000).
 -define(LOCK_RETRY_TIMEOUT, 10000).
 -define(MODSTATE, State#state{mod=Mod,modstate=ModState}).
@@ -223,17 +232,22 @@ handle_info({'EXIT', Pid, Reason}, StateName, State=#state{mod=Mod,modstate=ModS
                 {next_state, StateName, State#state{modstate=NewModState},
                     State#state.inactivity_timeout};
             {stop, Reason, NewModState} ->
-                 {stop, Reason, State#state{modstate=NewModState}};
-            Else ->
-                Else
+                 {stop, Reason, State#state{modstate=NewModState}}
         end
     catch
         _ErrorType:undef ->
             {stop, linked_process_crash, State}
     end;
 
-handle_info(_Info, StateName, State) ->
-    {next_state, StateName, State, State#state.inactivity_timeout}.
+handle_info(Info, StateName, State=#state{mod=Mod,modstate=ModState}) ->
+    case erlang:function_exported(Mod, handle_info, 2) of
+        true ->
+            {ok, NewModState} = Mod:handle_info(Info, ModState),
+            {next_state, StateName, State#state{modstate=NewModState},
+             State#state.inactivity_timeout};
+        false ->
+            {next_state, StateName, State, State#state.inactivity_timeout}
+    end.
 
 terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState}) ->
     Mod:terminate(Reason, ModState),
