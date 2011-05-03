@@ -232,9 +232,7 @@ handle_info({'EXIT', Pid, Reason}, StateName, State=#state{mod=Mod,modstate=ModS
                 {next_state, StateName, State#state{modstate=NewModState},
                     State#state.inactivity_timeout};
             {stop, Reason, NewModState} ->
-                 {stop, Reason, State#state{modstate=NewModState}};
-            Else ->
-                Else
+                 {stop, Reason, State#state{modstate=NewModState}}
         end
     catch
         _ErrorType:undef ->
@@ -244,13 +242,9 @@ handle_info({'EXIT', Pid, Reason}, StateName, State=#state{mod=Mod,modstate=ModS
 handle_info(Info, StateName, State=#state{mod=Mod,modstate=ModState}) ->
     case erlang:function_exported(Mod, handle_info, 2) of
         true ->
-            case Mod:handle_info(Info, ModState) of
-                {ok, NewModState} ->
-                    {next_state, StateName, State#state{modstate=NewModState},
-                        State#state.inactivity_timeout};
-                Else ->
-                    Else
-            end;
+            {ok, NewModState} = Mod:handle_info(Info, ModState),
+            {next_state, StateName, State#state{modstate=NewModState},
+             State#state.inactivity_timeout};
         false ->
             {next_state, StateName, State, State#state.inactivity_timeout}
     end.
