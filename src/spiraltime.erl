@@ -41,7 +41,8 @@
 %% The number of entries recorded in some time period.
 
 -record(spiral, {moment :: integer(),
-                 seconds :: [integer()]
+                 seconds :: [integer()],
+                 seconds_len :: integer()
                 }).
 
 n() ->
@@ -56,12 +57,9 @@ fresh() ->
 %% @spec fresh(moment()) -> spiral()
 fresh(Moment) ->
     #spiral{moment=Moment,
-            seconds=[0 || _ <- lists:seq(1,60)]
+            seconds=[0 || _ <- lists:seq(1,60)],
+            seconds_len = 60
            }.
-
-fieldlen(#spiral.seconds) -> 60.
-
-nextfield(#spiral.seconds) -> done.
 
 %% @doc Produce the number of entries recorded in the last second.
 %% @spec rep_second(spiral()) -> {moment(), count()}
@@ -82,47 +80,80 @@ incr(N, Spiral) -> incr(N,n(),Spiral).
 %% @spec incr(count(), moment(), spiral()) -> spiral()
 incr(N, Moment, Spiral) when Spiral#spiral.moment =:= Moment ->
     % common case -- updates for "now"
-    Spiral#spiral{seconds=[hd(Spiral#spiral.seconds)+N|
-                           tl(Spiral#spiral.seconds)]};
-incr(_N, Moment, Spiral) when Spiral#spiral.moment - Moment > 60 ->
+    Spiral#spiral{seconds=bump(N, Spiral#spiral.seconds)};
+incr(_N, Moment, Spiral) when Spiral#spiral.moment - Moment >= 60 ->
     Spiral; % updates more than a minute old are dropped! whee!
+incr(N, Moment, Spiral) when Moment =< Spiral#spiral.moment ->
+    % increment in recent past
+    {Front,Back} = lists:split(Spiral#spiral.moment - Moment,
+                               Spiral#spiral.seconds),
+    Spiral#spiral{seconds=Front ++ bump(N, Back)};
+incr(N, Moment, Spiral) when Moment - Spiral#spiral.moment > 60 ->
+    % increment in far future - we can drop all the history
+    Fresh = fresh(Moment),
+    Fresh#spiral{seconds=bump(N, Fresh#spiral.seconds)};
 incr(N, Moment, Spiral) ->
-    S1 = update_moment(Moment, Spiral),
-    {Front,Back} = lists:split(S1#spiral.moment - Moment,
-                               S1#spiral.seconds),
-    S1#spiral{seconds=Front ++ [hd(Back)+N|tl(Back)]}.
+    % increment in near future
+    Num = Moment - Spiral#spiral.moment,
+    Trimmed = drop_tail(Num, Spiral),
+    PaddedSeconds = push_zeros(Num, Trimmed#spiral.seconds),
+    PaddedSecondsLength = Num + Trimmed#spiral.seconds_len,
+    Trimmed#spiral{moment = Moment,
+                   seconds = bump(N, PaddedSeconds),
+                   seconds_len = PaddedSecondsLength}.
 
-update_moment(Moment, Spiral) when Moment =< Spiral#spiral.moment ->
+%% @doc Add N to item at the front of the list
+%% @spec bump(integer(), [integer()]) -> [integer()]
+bump(N, [H|T]) ->
+    [H + N | T].
+
+%% @doc Add N to item at the front of the list
+%% @spec bump(integer(), [integer()]) -> [integer()]
+push_zeros(0, Seconds) ->
+    Seconds;
+push_zeros(Num, Seconds) ->
+    push_zeros(Num - 1, [0|Seconds]).
+
+%% @doc drops trailing seconds if necessary
+%% @spec drop_tail(integer(), spiral()) -> spiral()
+drop_tail(Num, Spiral) when Num + Spiral#spiral.seconds_len =< 120 ->
     Spiral;
-update_moment(Moment, Spiral) when Moment - Spiral#spiral.moment > 36288000 ->
-    fresh(Moment);
-update_moment(Moment, Spiral) ->
-    update_moment(Moment, push(0, Spiral#spiral{
-                                    moment=Spiral#spiral.moment+1},
-                               #spiral.seconds)).
-
-getfield(Spiral,Field)   -> element(Field, Spiral).
-setfield(Spiral,X,Field) -> setelement(Field, Spiral, X).
-
-push(_N, Spiral, done) ->
-    Spiral;
-push(N, Spiral, Field) ->
-    Full = [N|getfield(Spiral,Field)],
-    Double = 2 * fieldlen(Field),
-    case length(Full) of
-        Double ->
-            {Keep, _Past} = lists:split(fieldlen(Field), Full),
-            push(lists:sum(Keep),setfield(Spiral,Keep,Field),nextfield(Field));
-        _ ->
-            setfield(Spiral,Full,Field)
-    end.
+drop_tail(Num, Spiral) ->
+    NewLength = 60 - Num,
+    {Keep, _Past} = lists:split(0, NewLength),
+    Spiral#spiral{seconds=Keep, seconds_len=NewLength}.
 
 test_spiraltime() ->
     Start = n(),
     S0 = fresh(Start),
+
     S1 = incr(17, Start, S0),
-    PlusOne = Start+1,
-    S2 = incr(3, PlusOne, S1),
-    {PlusOne, 3} = rep_second(S2),
-    {PlusOne, 20} = rep_minute(S2),
+
+    % test updates just now
+    {Start, 17} = rep_second(S1),
+    {Start, 17} = rep_minute(S1),
+
+    % test updates within a minute from now
+    lists:foreach(fun(N) ->
+        PlusN = Start+N,
+        S2a = incr(3, PlusN, S1),
+        {PlusN, 3} = rep_second(S2a),
+        {PlusN, 20} = rep_minute(S2a),
+        S2b = incr(3, Start - N, S1),
+        {Start, 17} = rep_second(S2b),
+        {Start, 20} = rep_minute(S2b)
+    end, lists:seq(1, 59)),
+
+    % test updates more than a minute from now
+    lists:foreach(fun(N) ->
+        PlusN = Start+N,
+        S2a = incr(3, PlusN, S1),
+        {PlusN, 3} = rep_second(S2a),
+        {PlusN, 3} = rep_minute(S2a),
+        S2b = incr(3, Start - N, S1),
+        {Start, 17} = rep_second(S2b),
+        {Start, 17} = rep_minute(S2b),
+        ok
+    end, lists:seq(60, 200)),
+
     true.
