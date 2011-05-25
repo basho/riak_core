@@ -90,7 +90,7 @@
          {handoff_concurrency, 4},
 
          %% Disable Nagle on HTTP sockets
-         {disable_http_nagle, false},
+         {disable_http_nagle, true},
 
          %% Handoff IP/port
          {handoff_port, 8099},

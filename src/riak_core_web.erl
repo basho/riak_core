@@ -72,7 +72,7 @@ binding_config(Scheme, Binding) ->
   
 spec_from_binding(http, Name, Binding) ->
   {Ip, Port} = Binding,
-  NoDelay = app_helper:get_env(riak_core, disable_http_nagle, false),
+  NoDelay = app_helper:get_env(riak_core, disable_http_nagle, true),
   lists:flatten([{name, Name},
                   {ip, Ip},
                   {port, Port},
