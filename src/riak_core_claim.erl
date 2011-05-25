@@ -52,9 +52,9 @@
 %% default is 3.
 
 -module(riak_core_claim).
--export([default_wants_claim/1, default_choose_claim/1,
+-export([default_wants_claim/1, default_choose_claim/1, balanced_choose_claim/1,
          never_wants_claim/1, random_choose_claim/1]).
--export([default_choose_claim/2,
+-export([default_choose_claim/2, balanced_choose_claim/2,
          claim_rebalance_n/2]).
 
 -ifdef(TEST).
@@ -69,21 +69,25 @@
 default_wants_claim(Ring) ->
     default_wants_claim(Ring, node()).
 
-default_wants_claim(Ring, Node) ->
+get_member_count(Ring, Node) ->
     %% Determine how many nodes are involved with the ring; if the requested
     %% node is not yet part of the ring, include it in the count.
     AllMembers = riak_core_ring:all_members(Ring),
     case lists:member(Node, AllMembers) of
         true ->
-            Mval = length(AllMembers);
+            length(AllMembers);
         false ->
-            Mval = length(AllMembers) + 1
-    end,
+            length(AllMembers) + 1
+    end.
 
+get_expected_partitions(Ring, Node) ->
+    riak_core_ring:num_partitions(Ring) div get_member_count(Ring, Node).
+
+default_wants_claim(Ring, Node) ->
     %% Calculate the expected # of partitions for a perfectly balanced ring. Use
     %% this expectation to determine the relative balance of the ring. If the
     %% ring isn't within +-2 partitions on all nodes, we need to rebalance.
-    ExpParts = riak_core_ring:num_partitions(Ring) div Mval,
+    ExpParts = get_expected_partitions(Ring, Node),
     PCounts = lists:foldl(fun({_Index, ANode}, Acc) ->
                                   orddict:update_counter(ANode, 1, Acc)
                           end, [{Node, 0}], riak_core_ring:all_owners(Ring)),
@@ -95,6 +99,86 @@ default_wants_claim(Ring, Node) ->
         false ->
             no
     end.
+
+get_position(Node, Owners) -> 
+    get_position(Node, Owners, 1).
+
+get_position(_, [], _)  -> not_found;
+get_position(Node, [{_, Node}|_], Pos) -> Pos;
+get_position(Node, [_|T], Pos) -> get_position(Node, T, Pos + 1).
+
+%% @spec balanced_choose_claim(riak_core_ring()) -> riak_core_ring()
+%% @doc Choose partitions, being sure to maintain target_n_val spacing and ideal spread.
+balanced_choose_claim(Ring) ->
+    balanced_choose_claim(Ring, node()).
+
+balanced_choose_claim(Ring, Node) ->
+    MemberCount = get_member_count(Ring, Node),
+    TargetN = app_helper:get_env(riak_core, target_n_val),
+
+    case MemberCount =< (TargetN + 1) of
+        true -> 
+            claim_rebalance_n(Ring, Node);
+        false -> 
+            Owners = riak_core_ring:all_owners(Ring),
+            RingSize = length(Owners),
+            ExpParts = get_expected_partitions(Ring, Node),
+
+            Dist = lists:foldl(fun({_Index, ANode}, Acc) -> dict:update_counter(ANode, 1, Acc) end, dict:from_list([{Node, 0}]), Owners),
+            LargeDist = lists:filter(fun({_ANode, Parts}) -> Parts > ExpParts end, dict:to_list(Dist)),
+            LargeDistSorted = lists:reverse(lists:keysort(2, LargeDist)),
+
+            {_, MaxParts} = hd(LargeDistSorted),
+            MaxNodes = [ANode || {ANode, Parts} <- LargeDistSorted, Parts == MaxParts],
+            
+            Offset = case length(MaxNodes) > 0 of
+                true ->
+                    MinPos = lists:min([get_position(ANode, Owners) || ANode <- MaxNodes]),
+                    lists:max([(MinPos + 1) rem MemberCount, MinPos - (MemberCount * (ExpParts - 1))]);
+                false ->
+                    1
+            end,
+
+            Limit = lists:min([Offset + (ExpParts - 1) * MemberCount + 1, RingSize]),
+            
+            {NewRing, _} = lists:foldl(fun(WindowEnd, {NewRing0, LargeDist0}) ->
+                               PQ0 = gb_trees:insert(0, lists:nth(WindowEnd, Owners), gb_trees:empty()),
+                               PQ = case MemberCount > TargetN of
+                                   true ->
+                                       WindowStart = lists:max([WindowEnd - MemberCount + TargetN, 1]),
+                                       lists:foldl(fun(Pos, PQ) ->
+                                                       {IdxAtPos, NodeAtPos} = lists:nth(Pos, Owners),
+                                                       case lists:keymember(NodeAtPos, 1, LargeDist0) of
+                                                           true ->
+                                                               {NodeAtPos, Parts} = lists:keyfind(NodeAtPos, 1, LargeDist0),
+                                                               gb_trees:enter(Parts, {IdxAtPos, NodeAtPos}, PQ);
+                                                           false ->
+                                                               PQ
+                                                       end
+                                                   end, PQ0, lists:seq(WindowStart, WindowEnd));
+                                   false -> 
+                                       PQ0
+                               end,
+                               {_, {Idx, PrevNode}} = gb_trees:largest(PQ),
+                               NewRing1 = riak_core_ring:transfer_node(Idx, Node, NewRing0),
+                               LargeDist1 = [case ANode of 
+                                                 PrevNode -> 
+                                                     {PrevNode, Parts - 1};
+                                                 _ -> 
+                                                     {ANode, Parts}
+                                             end || {ANode, Parts} <- LargeDist0],
+                               {NewRing1, LargeDist1}
+                           end, {Ring, LargeDistSorted}, lists:seq(Offset, Limit, MemberCount)),
+
+            case meets_target_n(NewRing, TargetN) of
+                {true, _} ->
+                    NewRing;
+                false ->
+                    %% last resort
+                    claim_rebalance_n(Ring, Node)
+            end
+    end.
+
 
 %% @spec default_choose_claim(riak_core_ring()) -> riak_core_ring()
 %% @doc Choose a partition at random.
@@ -247,8 +331,11 @@ claim_rebalance_n(Ring, Node) ->
                 Zipped).
 
 random_choose_claim(Ring) ->
+    random_choose_claim(Ring, node()).
+
+random_choose_claim(Ring, Node) ->
     riak_core_ring:transfer_node(riak_core_ring:random_other_index(Ring),
-                            node(), Ring).
+                            Node, Ring).
 
 %% @spec never_wants_claim(riak_core_ring()) -> no
 %% @doc For use by nodes that should not claim any partitions.
