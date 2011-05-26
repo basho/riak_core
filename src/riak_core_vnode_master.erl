@@ -27,6 +27,7 @@
 -behaviour(gen_server).
 -export([start_link/1, start_link/2, get_vnode_pid/2,
          start_vnode/2, command/3, command/4, sync_command/3,
+         command_return_vnode/4,
          sync_command/4,
          sync_spawn_command/3, make_request/3,
          all_nodes/1, reg_name/1]).
@@ -72,6 +73,13 @@ command([{Index,Node}|Rest], Msg, Sender, VMaster) ->
 %% Send the command to an individual Index/Node combination
 command({Index,Node}, Msg, Sender, VMaster) ->
     gen_server:cast({VMaster, Node}, make_request(Msg, Sender, Index)).
+
+%% Send the command to an individual Index/Node combination, but also
+%% return the pid for the vnode handling the request, as `{ok,
+%% VnodePid}'.
+command_return_vnode({Index,Node}, Msg, Sender, VMaster) ->
+    gen_server:call({VMaster, Node},
+                    {return_vnode, make_request(Msg, Sender, Index)}).
 
 %% Send a synchronous command to an individual Index/Node combination.
 %% Will not return until the vnode has returned
@@ -156,6 +164,10 @@ handle_cast(Other, State=#state{legacy=Legacy}) when Legacy =/= undefined ->
             {noreply, State}
     end.
 
+handle_call({return_vnode, Req=?VNODE_REQ{index=Idx}}, _From, State) ->
+    Pid = get_vnode(Idx, State),
+    gen_fsm:send_event(Pid, Req),
+    {reply, {ok, Pid}, State};
 handle_call(Req=?VNODE_REQ{index=Idx, sender={server, undefined, undefined}}, From, State) ->
     Pid = get_vnode(Idx, State),
     gen_fsm:send_event(Pid, Req?VNODE_REQ{sender={server, undefined, From}}),
