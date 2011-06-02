@@ -84,7 +84,7 @@ incr(N, Moment, Spiral) when Spiral#spiral.moment =:= Moment ->
     % common case -- updates for "now"
     Spiral#spiral{seconds=[hd(Spiral#spiral.seconds)+N|
                            tl(Spiral#spiral.seconds)]};
-incr(_N, Moment, Spiral) when Spiral#spiral.moment - Moment > 60 ->
+incr(_N, Moment, Spiral) when Spiral#spiral.moment - Moment > 59 ->
     Spiral; % updates more than a minute old are dropped! whee!
 incr(N, Moment, Spiral) ->
     S1 = update_moment(Moment, Spiral),
@@ -125,4 +125,6 @@ test_spiraltime() ->
     S2 = incr(3, PlusOne, S1),
     {PlusOne, 3} = rep_second(S2),
     {PlusOne, 20} = rep_minute(S2),
+    %% Drops items 60 seconds or older
+    S2 = incr(1, PlusOne-60, S2),
     true.
