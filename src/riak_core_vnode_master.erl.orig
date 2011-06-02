@@ -180,9 +180,7 @@ handle_call({spawn,
       fun() -> gen_fsm:send_all_state_event(Pid, Req?VNODE_REQ{sender=Sender}) end),
     {noreply, State};
 handle_call(all_nodes, _From, State) ->
-    IdxPid = ets:match(State#state.idxtab, {idxrec, '$1', '$2', '_'}),
-    IdxPid2 = lists:map(fun list_to_tuple/1, IdxPid),
-    {reply, IdxPid2, State};
+    {reply, lists:flatten(ets:match(State#state.idxtab, {idxrec, '_', '$1', '_'})), State};
 handle_call({Partition, get_vnode}, _From, State) ->
     Pid = get_vnode(Partition, State),
     {reply, {ok, Pid}, State};
