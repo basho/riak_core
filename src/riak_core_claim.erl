@@ -134,7 +134,7 @@ balanced_choose_claim(Ring, Node) ->
             Offset = case length(MaxNodes) > 0 of
                 true ->
                     MinPos = lists:min([get_position(ANode, Owners) || ANode <- MaxNodes]),
-                    lists:max([(MinPos + 1) rem MemberCount, MinPos - (MemberCount * (ExpParts - 1))]);
+                    lists:max([1, MinPos rem MemberCount, MinPos - (MemberCount * (ExpParts - 1))]);
                 false ->
                     1
             end,
