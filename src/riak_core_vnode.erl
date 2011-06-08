@@ -45,6 +45,7 @@ behaviour_info(callbacks) ->
      {handoff_finished,2},
      {handle_handoff_command,3},
      {handle_handoff_data,2},
+     {handle_handoff_received,1},
      {encode_handoff_item,2},
      {is_empty,1},
      {terminate,2},
@@ -214,6 +215,16 @@ handle_sync_event({handoff_data,BinObj}, _From, StateName,
         {reply, {error, Err}, NewModState} ->
             error_logger:error_msg("Error storing handoff obj: ~p~n", [Err]),            
             {reply, {error, Err}, StateName, State#state{modstate=NewModState}, 
+             State#state.inactivity_timeout}
+    end;
+handle_sync_event(handoff_received, _From, StateName, 
+                  State=#state{mod=Mod, modstate=ModState}) ->
+    case Mod:handle_handoff_received(ModState) of
+        {reply, ok, NewModState} ->
+            {reply, ok, StateName, State#state{modstate=NewModState},
+             State#state.inactivity_timeout};
+        _ ->
+            {reply, ok, StateName, State#state{modstate=ModState},
              State#state.inactivity_timeout}
     end.
 
