@@ -187,8 +187,12 @@ prune_vclock1(V,Now,BProps,HeadTime) ->
     end.
 
 get_property(Key, PairList) ->
-    {_Key, Value} = lists:keyfind(Key, 1, PairList),
-    Value.
+    case lists:keyfind(Key, 1, PairList) of
+      {_Key, Value} ->
+        Value;
+      false ->
+        undefined
+    end.
 
 %% ===================================================================
 %% EUnit tests
