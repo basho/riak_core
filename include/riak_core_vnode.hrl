@@ -14,11 +14,16 @@
           sender=ignore :: sender(),
           request :: vnode_req()}).
 
+-record(riak_coverage_req_v1, {
+          index :: partition(),
+          keyspaces :: [{partition(), [partition()]}],
+          sender=ignore :: sender(),
+          request :: vnode_req()}).
 
 -record(riak_core_fold_req_v1, {
           foldfun :: fun(),
           acc0 :: term()}).
 
 -define(VNODE_REQ, #riak_vnode_req_v1).
+-define(COVERAGE_REQ, #riak_coverage_req_v1).
 -define(FOLD_REQ, #riak_core_fold_req_v1).
-
