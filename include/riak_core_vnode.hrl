@@ -19,6 +19,16 @@
           foldfun :: fun(),
           acc0 :: term()}).
 
+-record(riak_core_coverage_req_v1, {
+          args=[] :: list(),
+          bucket=all :: binary(),
+          caller :: pid(),
+          filter :: function(),
+          modfun :: {atom(), atom()},
+          qry :: term(),
+          req_id :: non_neg_integer()}).
+
 -define(VNODE_REQ, #riak_vnode_req_v1).
 -define(FOLD_REQ, #riak_core_fold_req_v1).
+-define(COVERAGE_REQ, #riak_core_coverage_req_v1).
 
