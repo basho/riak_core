@@ -110,20 +110,31 @@ coverage(?COVERAGE_REQ{bucket=Bucket, filter=ItemFilter, req_id=ReqId}=Req, _Cov
         {NodeIndexes, VNodeFilters, RequiredResponseCount} ->
             %% Send the request to the nodes involved in the coverage plan            
             %% TODO: Iterate over nodes and cast message including Indexes, VNode filter, and ItemFilter
-            CastFun = 
+            NodeCastFun = 
                 fun(Node) ->
                         %% Get the VNode indexes for the node
                         Indexes = proplists:get_value(Node, NodeIndexes),
+                        %% Build a list of VNode tuples
+                        VNodes = [{Index, Node} || Index <- Indexes],
                         %% Get the list of VNodes that require filtering 
                         %% for this node.
                         FilterVNodes = proplists:get_value(Node, VNodeFilters),
                         %% Build the final filters for the node
-                        Filters = riak_core_coverage_filter:build_filters(Bucket, ItemFilter, Indexes, FilterVNodes),
-                        VNodes = [{Index, Node} || Index <- Indexes],
-                        %% Send the coverage request to the VNodes on the node
-                        command(VNodes, Req?COVERAGE_REQ{filter=Filters}, ignore, VMaster)
+                        Filters = riak_core_coverage_filter:build_filters(Bucket, ItemFilter, VNodes, FilterVNodes),
+                        VNodeCastFun = 
+                            fun(Idx) ->
+                                    case proplists:get_value(Idx, Filters) of
+                                        undefined ->
+                                            Filter = none;
+                                        Filter ->
+                                            ok
+                                    end,
+                                    %% Send the coverage request to the VNodes on the node
+                                    command({Idx, Node}, Req?COVERAGE_REQ{filter=Filter}, ignore, VMaster)
+                            end,
+                        [VNodeCastFun(I) || I <- Indexes] 
                 end,
-            [CastFun(N) || N <- proplists:get_keys(NodeIndexes)],
+            [NodeCastFun(N) || N <- proplists:get_keys(NodeIndexes)],
             {ok, RequiredResponseCount}
     end.
 
