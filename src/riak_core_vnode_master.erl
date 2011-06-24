@@ -75,7 +75,11 @@ command([{Index,Node}|Rest], Msg, Sender, VMaster) ->
 command({Index,Node}, Msg, Sender, VMaster) ->
     gen_server:cast({VMaster, Node}, make_request(Msg, Sender, Index)).
 
-coverage(?COVERAGE_REQ{bucket=Bucket, filter=ItemFilter, req_id=ReqId}=Req, _CoverageFactor, VMaster) ->
+coverage(?COVERAGE_REQ{args=Args, 
+                       bucket=Bucket,
+                       filter=ItemFilter, 
+                       modfun={Mod, Fun},
+                       req_id=ReqId}, _CoverageFactor, VMaster) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     case Bucket of
         all ->
@@ -109,7 +113,7 @@ coverage(?COVERAGE_REQ{bucket=Bucket, filter=ItemFilter, req_id=ReqId}=Req, _Cov
             CoveragePlanResult;
         {NodeIndexes, VNodeFilters, RequiredResponseCount} ->
             %% Send the request to the nodes involved in the coverage plan            
-            %% TODO: Iterate over nodes and cast message including Indexes, VNode filter, and ItemFilter
+            %% TODO: Clean this up. There's definitely a better way to do this.
             NodeCastFun = 
                 fun(Node) ->
                         %% Get the VNode indexes for the node
@@ -130,7 +134,12 @@ coverage(?COVERAGE_REQ{bucket=Bucket, filter=ItemFilter, req_id=ReqId}=Req, _Cov
                                             ok
                                     end,
                                     %% Send the coverage request to the VNodes on the node
-                                    command({Idx, Node}, Req?COVERAGE_REQ{filter=Filter}, ignore, VMaster)
+                                    command({Idx, Node},
+                                            ?COVERAGE_VNODE_REQ{module=Mod, 
+                                                                function=Fun,
+                                                                args=Args,
+                                                                filter=Filter},
+                                            ignore, VMaster)
                             end,
                         [VNodeCastFun(I) || I <- Indexes] 
                 end,

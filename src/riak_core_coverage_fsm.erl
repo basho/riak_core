@@ -43,8 +43,7 @@
 %% API
 -export([behaviour_info/1]).
 
--export([start_link/6,
-         start_link/7]).
+-export([start_link/6]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -65,61 +64,45 @@
 -spec behaviour_info(atom()) -> 'undefined' | [{atom(), arity()}].
 behaviour_info(callbacks) ->
     [
-     {process_results, 4}
+     {process_results, 3}
     ];
 behaviour_info(_) ->
     undefined.
 
--type req_id() :: non_neg_integer().
--type bucket() :: binary().
 -type filter() :: fun() | [mfa()].
+-type req_id() :: non_neg_integer().
 -type modfun() :: {module(), fun()}.
 -type from() :: {raw, req_id(), pid()}.
 
 -record(state, {args :: [{atom(), pos_integer()}],
-                bucket :: bucket(),
                 client_type :: atom(),
                 coverage_factor :: pos_integer(),
-                filter :: any(),
+                filter :: filter(),
                 from :: from(),
                 mod :: atom(),
                 modfun :: modfun(),
                 required_responses :: pos_integer(),
                 response_count=0 :: non_neg_integer(),
-                timeout :: timeout()
+                timeout :: timeout(),
+                vnode_master :: atom()
                }).
 
 %% ===================================================================
 %% Public API
 %% ===================================================================
 
-%% @doc Start a riak_core_coverage_fsm.
-%% @deprecated Only in place for backwards compatibility.
-%% Please use start_link/5.
-%% start_link(ReqId, Input, Timeout, ClientType, _ErrorTolerance, From) ->
-%%     case Input of
-%%         {filter, Bucket, Filter} ->
-%%             ok;
-%%         {Bucket, Filter} ->
-%%             ok;
-%%         _ ->
-%%             Bucket = Input,
-%%             Filter = none
-%%     end,
-%%     start_link({raw, ReqId, From}, Bucket, Filter, Timeout, ClientType).
-
 %% @doc Start a riak_core_coverage_fsm
--spec start_link(module(), req_id(), bucket(), filter(), timeout(), atom(), pid()) ->
-                        {ok, pid()} | ignore | {error, term()}.
-start_link(Mod, ReqId, Bucket, Filter, Timeout, ClientType, From) ->
-    start_link(Mod, {raw, ReqId, From}, Bucket, Filter, Timeout, ClientType).
+%% -spec start_link(module(), req_id(), list(), timeout(), atom(), pid()) ->
+%%                         {ok, pid()} | ignore | {error, term()}.
+%% start_link(Mod, RequestArgs, Timeout, ClientType, From) ->
+%%     start_link(Mod, {raw, hd(RequestArgs), From}, RequestArgs, Timeout, ClientType).
 
 %% @doc Start a riak_core_coverage_fsm.
--spec start_link(module(), from(), bucket(), filter(), timeout(), atom()) ->
+-spec start_link(module(), from(), list(), fun(), timeout(), atom()) ->
                         {ok, pid()} | ignore | {error, term()}.
-start_link(Mod, From, Bucket, Filter, Timeout, ClientType) ->
+start_link(Mod, From, RequestArgs, ItemFilter, Timeout, ClientType) ->
     gen_fsm:start_link(?MODULE,
-                  [Mod, From, Bucket, Filter, Timeout, ClientType], []).
+                  [Mod, From, RequestArgs, ItemFilter, Timeout, ClientType], []).
 
 %% ===================================================================
 %% Test API
@@ -132,13 +115,13 @@ start_link(Mod, From, Bucket, Filter, Timeout, ClientType) ->
 %% bucket_props - bucket properties
 %% preflist2 - [{{Idx,Node},primary|fallback}] preference list
 %%
-test_link(Mod, ReqId, Bucket, Filter, R, Timeout, From, StateProps) ->
-    test_link(Mod, {raw, ReqId, From}, Bucket, Filter, [{r, R}, {timeout, Timeout}], StateProps).
+test_link(Mod, ReqId, RequestArgs, ItemFilter, R, Timeout, From, StateProps) ->
+    test_link(Mod, {raw, ReqId, From}, RequestArgs, ItemFilter, [{r, R}, {timeout, Timeout}], StateProps).
 
-test_link(Mod, From, Bucket, Filter, _Options, StateProps) ->
+test_link(Mod, From, RequestArgs, ItemFilter, _Options, StateProps) ->
     Timeout = 60000,
     ClientType = plain,
-    gen_fsm:start_link(?MODULE, {test, [Mod, From, Bucket, Filter, Timeout, ClientType], StateProps}, []).
+    gen_fsm:start_link(?MODULE, {test, [Mod, From, RequestArgs, ItemFilter, Timeout, ClientType], StateProps}, []).
 
 -endif.
 
@@ -147,17 +130,17 @@ test_link(Mod, From, Bucket, Filter, _Options, StateProps) ->
 %% ====================================================================
 
 %% @private
-init([Mod, From={raw, _, ClientPid}, Bucket, Filter, Timeout, ClientType]) ->
-    {ok, ModFun, Args, CoverageFactor} = Mod:init(),
-    StateData = #state{args=Args,
-                       bucket=Bucket,
+init([Mod, From={raw, _, ClientPid}, RequestArgs, ItemFilter, Timeout, ClientType]) ->
+    {ok, ModFun, CoverageFactor, VNodeMaster} = Mod:init(),
+    StateData = #state{args=RequestArgs,
                        client_type=ClientType,
                        coverage_factor=CoverageFactor,
-                       filter=Filter,
+                       filter=ItemFilter,
                        from=From,
                        mod=Mod,
                        modfun=ModFun,
-                       timeout=Timeout},
+                       timeout=Timeout,
+                       vnode_master=VNodeMaster},
     case ClientType of
         %% Link to the mapred job so we die if the job dies
         mapred ->
@@ -185,20 +168,18 @@ init({test, Args, StateProps}) ->
 
 %% @private
 initialize(timeout, StateData0=#state{args=Args,
-                                      bucket=Bucket,
                                       coverage_factor=CoverageFactor,
-                                      filter=Filter,
+                                      filter=ItemFilter,
                                       from={_, ReqId, _},
                                       modfun=ModFun,
-                                      timeout=Timeout}) ->
-    Request = ?COVERAGE_REQ{args=Args,
-                            bucket=Bucket,
-                            caller=self(),
-                            filter=Filter,
+                                      timeout=Timeout, 
+                                      vnode_master=VNodeMaster}) ->
+    Request = ?COVERAGE_REQ{args=[self() | Args],
+                            bucket=lists:nth(2, Args), % bucket should always be second in args list
+                            filter=ItemFilter,
                             modfun=ModFun,
                             req_id=ReqId},
-    %% TODO: Review use of riak_kv_vnode_master as final parameter.
-    case riak_core_vnode_master:coverage(Request, CoverageFactor, riak_kv_vnode_master) of
+    case riak_core_vnode_master:coverage(Request, CoverageFactor, VNodeMaster) of
         {ok, RequiredResponseCount} ->
             StateData = StateData0#state{required_responses=RequiredResponseCount},
             {next_state, waiting_results, StateData, Timeout};
@@ -208,12 +189,11 @@ initialize(timeout, StateData0=#state{args=Args,
 
 %% @private
 waiting_results({ReqId, {results, _VNode, Results}},
-           StateData=#state{bucket=Bucket,
-                            client_type=ClientType,
+           StateData=#state{client_type=ClientType,
                             from=From={raw, ReqId, _},
                             mod=Mod,
                             timeout=Timeout}) ->
-    Mod:process_results(Results, Bucket, ClientType, From),
+    Mod:process_results(Results, ClientType, From),
     {next_state, waiting_results, StateData, Timeout};
 waiting_results({ReqId, _VNode, done}, StateData0=#state{from={raw, ReqId, _},
                                                     required_responses=RequiredResponses,
