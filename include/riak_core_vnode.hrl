@@ -14,6 +14,10 @@
           sender=ignore :: sender(),
           request :: vnode_req()}).
 
+-record(riak_node_req_v1, {
+          indexes :: [partition()],
+          sender=ignore :: sender(),
+          request :: vnode_req()}).
 
 -record(riak_core_fold_req_v1, {
           foldfun :: fun(),
@@ -34,6 +38,7 @@
           filter :: fun()}).
 
 -define(VNODE_REQ, #riak_vnode_req_v1).
+-define(NODE_REQ, #riak_node_req_v1).
 -define(FOLD_REQ, #riak_core_fold_req_v1).
 -define(COVERAGE_REQ, #riak_core_coverage_req_v1).
 -define(COVERAGE_VNODE_REQ, #riak_core_vnode_coverage_req_v1).

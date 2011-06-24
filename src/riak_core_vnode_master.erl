@@ -80,6 +80,7 @@ coverage(?COVERAGE_REQ{args=Args,
                        filter=ItemFilter, 
                        modfun={Mod, Fun},
                        req_id=ReqId}, _CoverageFactor, VMaster) ->
+    %% TODO: Not sure this belongs here. Maybe move it somewhere better.
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     case Bucket of
         all ->
@@ -113,7 +114,6 @@ coverage(?COVERAGE_REQ{args=Args,
             CoveragePlanResult;
         {NodeIndexes, VNodeFilters, RequiredResponseCount} ->
             %% Send the request to the nodes involved in the coverage plan            
-            %% TODO: Clean this up. There's definitely a better way to do this.
             NodeCastFun = 
                 fun(Node) ->
                         %% Get the VNode indexes for the node
@@ -125,23 +125,7 @@ coverage(?COVERAGE_REQ{args=Args,
                         FilterVNodes = proplists:get_value(Node, VNodeFilters),
                         %% Build the final filters for the node
                         Filters = riak_core_coverage_filter:build_filters(Bucket, ItemFilter, VNodes, FilterVNodes),
-                        VNodeCastFun = 
-                            fun(Idx) ->
-                                    case proplists:get_value(Idx, Filters) of
-                                        undefined ->
-                                            Filter = none;
-                                        Filter ->
-                                            ok
-                                    end,
-                                    %% Send the coverage request to the VNodes on the node
-                                    command({Idx, Node},
-                                            ?COVERAGE_VNODE_REQ{module=Mod, 
-                                                                function=Fun,
-                                                                args=Args,
-                                                                filter=Filter},
-                                            ignore, VMaster)
-                            end,
-                        [VNodeCastFun(I) || I <- Indexes] 
+                        gen_server:cast({VMaster, Node}, ?NODE_REQ{indexes=Indexes, request={Mod, Fun, Args, Filters}})
                 end,
             [NodeCastFun(N) || N <- proplists:get_keys(NodeIndexes)],
             {ok, RequiredResponseCount}
@@ -228,6 +212,21 @@ handle_cast({Partition, start_vnode}, State) ->
 handle_cast(Req=?VNODE_REQ{index=Idx}, State) ->
     Pid = get_vnode(Idx, State),
     gen_fsm:send_event(Pid, Req),
+    {noreply, State};
+handle_cast(?NODE_REQ{indexes=Indexes,
+                          request={Mod, Fun, Args, Filters}},
+            State) ->
+    EventFun = 
+        fun(Index) ->
+                Filter = proplists:get_value(Index, Filters, none),
+                Pid = get_vnode(Index, State),
+                gen_fsm:send_event(Pid, 
+                                   ?COVERAGE_VNODE_REQ{module=Mod, 
+                                                       function=Fun,
+                                                       args=Args,
+                                                       filter=Filter})
+        end,
+    [EventFun(I) || I <- Indexes],
     {noreply, State};
 handle_cast(Other, State=#state{legacy=Legacy}) when Legacy =/= undefined ->
     case catch Legacy:rewrite_cast(Other) of

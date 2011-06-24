@@ -174,6 +174,8 @@ active(?VNODE_REQ{sender=Sender, request=Request},
     vnode_command(Sender, Request, State);
 active(?VNODE_REQ{sender=Sender, request=Request},State) ->
     vnode_handoff_command(Sender, Request, State);
+active(Request=?COVERAGE_VNODE_REQ{}, State) ->
+    vnode_command(ignore, Request, State);
 active(handoff_complete, State=#state{mod=Mod, 
                                       modstate=ModState,
                                       index=Idx, 
@@ -201,6 +203,8 @@ active(_Event, _From, State) ->
     {reply, Reply, active, State, State#state.inactivity_timeout}.
 
 handle_event(R=?VNODE_REQ{}, _StateName, State) ->
+    active(R, State);
+handle_event(R=?COVERAGE_VNODE_REQ{}, _StateName, State) ->
     active(R, State).
 
 handle_sync_event(get_mod_index, _From, StateName,
