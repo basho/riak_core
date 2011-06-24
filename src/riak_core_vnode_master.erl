@@ -84,9 +84,9 @@ coverage(?COVERAGE_REQ{args=Args,
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     case Bucket of
         all ->
-            %% TODO: Decide how to handle bucket lookup.
-            %% TODO: Test for bucket listing failures
-            NVal = 3;
+            %% It sucks, but for bucket listing we have to
+            %% check all vnodes because of variable n_val.
+            NVal = 1;
         _ ->
             BucketProps = riak_core_bucket:get_bucket(Bucket, Ring),
             NVal = proplists:get_value(n_val, BucketProps)
