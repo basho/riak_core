@@ -80,6 +80,7 @@ behaviour_info(_) ->
                 bucket :: bucket(),
                 client_type :: atom(),
                 coverage_factor :: pos_integer(),
+                coverage_vnodes :: [{non_neg_integer(), node()}],
                 filter :: filter(),
                 from :: from(),
                 mod :: atom(),
@@ -191,41 +192,56 @@ initialize(timeout, StateData0=#state{args=Args,
                             modfun=ModFun,
                             req_id=ReqId},
     case riak_core_vnode_master:coverage(Request, CoverageFactor, VNodeMaster) of
-        {ok, RequiredResponseCount} ->
-            StateData = StateData0#state{required_responses=RequiredResponseCount},
+        {ok, CoverageVNodes} ->
+            StateData = StateData0#state{coverage_vnodes=CoverageVNodes},
             {next_state, waiting_results, StateData, Timeout};
         {error, Reason} ->
             finish({error, Reason}, StateData0)
     end.
 
 %% @private
-waiting_results({ReqId, {results, _VNode, Results}},
+waiting_results({ReqId, {results, VNode, Results}},
            StateData=#state{client_type=ClientType,
+                            coverage_vnodes=CoverageVNodes,
                             from=From={raw, ReqId, _},
                             mod=Mod,
                             timeout=Timeout}) ->
-    Mod:process_results(Results, ClientType, From),
+    case lists:member(VNode, CoverageVNodes) of
+        true -> % Received an expected response from a Vnode
+            Mod:process_results(Results, ClientType, From);
+        false -> % Ignore a response from a VNode that is not part of the coverage plan
+           ignore
+    end,
     {next_state, waiting_results, StateData, Timeout};
-waiting_results({ReqId, _VNode, done}, StateData0=#state{from={raw, ReqId, _},
-                                                    required_responses=RequiredResponses,
-                                                    response_count=ResponseCount,
-                                                    timeout=Timeout}) ->
-    ResponseCount1 = ResponseCount + 1,
-    StateData = StateData0#state{response_count=ResponseCount1},
-    case ResponseCount1 >= RequiredResponses of
-        true -> finish(clean, StateData);
-        false -> {next_state, waiting_results, StateData, Timeout}
+waiting_results({ReqId, {final_results, VNode, Results}},
+           StateData=#state{client_type=ClientType,
+                            coverage_vnodes=CoverageVNodes,
+                            from=From={raw, ReqId, _},
+                            mod=Mod,
+                            timeout=Timeout}) ->
+    case lists:member(VNode, CoverageVNodes) of
+        true -> % Received an expected response from a Vnode
+            Mod:process_results(Results, ClientType, From),
+            UpdatedVNodes = lists:delete(VNode, CoverageVNodes),
+            case UpdatedVNodes of 
+                [] ->
+                    finish(clean, StateData);
+                _ ->
+                    {next_state, waiting_results, StateData#state{coverage_vnodes=UpdatedVNodes}, Timeout}
+            end;
+        false -> % Ignore a response from a VNode that is not part of the coverage plan
+            {next_state, waiting_results, StateData#state{timeout=Timeout}, Timeout}
     end;
 waiting_results(timeout, StateData) ->
     finish({error, timeout}, StateData).
 
 %% @private
-handle_event(_Event, _StateName, StateData) ->
-    {stop,badmsg,StateData}.
+handle_event(_Event, _StateName, State) ->
+    {stop, badmsg, State}.
 
 %% @private
-handle_sync_event(_Event, _From, _StateName, StateData) ->
-    {stop,badmsg,StateData}.
+handle_sync_event(_Event, _From, StateName, State) ->
+    {next_state, StateName, State}.
 
 %% @private
 handle_info({'EXIT', _Pid, Reason}, _StateName, StateData) ->

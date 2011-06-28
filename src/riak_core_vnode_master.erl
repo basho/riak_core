@@ -84,8 +84,8 @@ coverage(?COVERAGE_REQ{args=Args,
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     case Bucket of
         all ->
-            %% It sucks, but for bucket listing we have to
-            %% check all vnodes because of variable n_val.
+            %% It sucks, but for operations involving all buckets
+            %% we have to check all vnodes because of variable n_val.
             NVal = 1;
         _ ->
             BucketProps = riak_core_bucket:get_bucket(Bucket, Ring),
@@ -112,7 +112,7 @@ coverage(?COVERAGE_REQ{args=Args,
         {error, _} ->
             %% Failed to create a coverage plan so return the error
             CoveragePlanResult;
-        {NodeIndexes, VNodeFilters, RequiredResponseCount} ->
+        {NodeIndexes, CoverageVNodes, VNodeFilters} ->
             %% Send the request to the nodes involved in the coverage plan            
             NodeCastFun = 
                 fun(Node) ->
@@ -128,7 +128,7 @@ coverage(?COVERAGE_REQ{args=Args,
                         gen_server:cast({VMaster, Node}, ?NODE_REQ{indexes=Indexes, request={Mod, Fun, Args, Filters}})
                 end,
             [NodeCastFun(N) || N <- proplists:get_keys(NodeIndexes)],
-            {ok, RequiredResponseCount}
+            {ok, CoverageVNodes}
     end.
 
     

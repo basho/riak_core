@@ -72,7 +72,7 @@ create_plan(NVal, PartitionCount, Ring, Offset, DownVNodes) ->
                                end,
             {CoverageVNodes, FilterVNodes} = lists:mapfoldl(CoverageVNodeFun, [], CoveragePlan),
             NodeIndexes = group_indexes_by_node(CoverageVNodes, []),
-            {NodeIndexes, FilterVNodes, length(CoverageVNodes)};
+            {NodeIndexes, CoverageVNodes, FilterVNodes};
        {insufficient_vnodes_available, _KeySpace, _Coverage}  ->
             {error, insufficient_vnodes_available}
     end.
