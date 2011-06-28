@@ -27,7 +27,7 @@
 
 %% API
 -export([
-         create_plan/5
+         create_plan/4
          ]).
          
 -define(RINGTOP, trunc(math:pow(2,160)-1)).  % SHA-1 space
@@ -37,7 +37,34 @@
 %% ===================================================================
 
 %% @doc TODO
-create_plan(NVal, PartitionCount, Ring, Offset, DownVNodes) ->
+create_plan(Bucket, _PVC, ReqId, Service) ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    case Bucket of
+        all ->
+            %% It sucks, but for operations involving all buckets
+            %% we have to check all vnodes because of variable n_val.
+            NVal = 1;
+        _ ->
+            BucketProps = riak_core_bucket:get_bucket(Bucket, Ring),
+            NVal = proplists:get_value(n_val, BucketProps)
+    end,
+    PartitionCount = riak_core_ring:num_partitions(Ring),
+    %% Get the list of all nodes and the list of available
+    %% nodes so we can have a list of unavailable nodes
+    %% while creating a coverage plan.
+    Nodes = riak_core_ring:all_members(Ring),
+    %% Check which nodes are up for the specified service
+    %% so we can determine which VNodes are ineligible 
+    %% to be part of the coverage plan.
+    UpNodes = riak_core_node_watcher:nodes(Service),
+    %% Create a coverage plan with the requested coverage factor
+    %% Get a list of the VNodes owned by any unavailble nodes
+    DownVNodes = [Index || {Index, Node} <- riak_core_ring:all_owners(Ring), lists:member(Node, (Nodes -- UpNodes))],
+    %% Calculate an offset based on the request id to offer
+    %% the possibility of different sets of VNodes being
+    %% used even when all nodes are available.
+    Offset = ReqId rem NVal,
+
     RingIndexInc = ?RINGTOP div PartitionCount,
     AllKeySpaces = lists:seq(0, PartitionCount - 1),
     UnavailableKeySpaces = [(DownVNode div RingIndexInc) || DownVNode <- DownVNodes],

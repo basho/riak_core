@@ -78,13 +78,14 @@ behaviour_info(_) ->
 
 -record(state, {args :: [term()],
                 bucket :: bucket(),
-                client_type :: atom(),
-                coverage_factor :: pos_integer(),
+                client_type :: atom(),         
                 coverage_vnodes :: [{non_neg_integer(), node()}],
                 filter :: filter(),
                 from :: from(),
                 mod :: atom(),
                 modfun :: modfun(),
+                node_check_service :: module(),
+                pvc :: all | pos_integer(), % primary vnode coverage
                 required_responses :: pos_integer(),
                 response_count=0 :: non_neg_integer(),
                 timeout :: timeout(),
@@ -135,7 +136,7 @@ test_link(Mod, From, Bucket, ItemFilter, RequestArgs, _Options, StateProps) ->
 
 %% @private
 init([Mod, From={raw, ReqId, ClientPid}, Bucket, ItemFilter, RequestArgs, Timeout, ClientType]) ->
-    {ok, ModFun, CoverageFactor, VNodeMaster} = Mod:init(),
+    {ok, ModFun, PrimaryVnodeCoverage, NodeCheckService, VNodeMaster} = Mod:init(),
     case Bucket of
         all ->
             Args = [self(), ReqId] ++ RequestArgs;
@@ -145,11 +146,12 @@ init([Mod, From={raw, ReqId, ClientPid}, Bucket, ItemFilter, RequestArgs, Timeou
     StateData = #state{args=Args,
                        bucket=Bucket,
                        client_type=ClientType,
-                       coverage_factor=CoverageFactor,
                        filter=ItemFilter,
                        from=From,
                        mod=Mod,
                        modfun=ModFun,
+                       node_check_service=NodeCheckService,
+                       pvc = PrimaryVnodeCoverage,
                        timeout=Timeout,
                        vnode_master=VNodeMaster},
     case ClientType of
@@ -180,10 +182,11 @@ init({test, Args, StateProps}) ->
 %% @private
 initialize(timeout, StateData0=#state{args=Args,
                                       bucket=Bucket,
-                                      coverage_factor=CoverageFactor,
                                       filter=ItemFilter,
                                       from={_, ReqId, _},
                                       modfun=ModFun,
+                                      node_check_service=NodeCheckService,
+                                      pvc=PVC,
                                       timeout=Timeout, 
                                       vnode_master=VNodeMaster}) ->
     Request = ?COVERAGE_REQ{args=Args,
@@ -191,12 +194,14 @@ initialize(timeout, StateData0=#state{args=Args,
                             filter=ItemFilter,
                             modfun=ModFun,
                             req_id=ReqId},
-    case riak_core_vnode_master:coverage(Request, CoverageFactor, VNodeMaster) of
-        {ok, CoverageVNodes} ->
-            StateData = StateData0#state{coverage_vnodes=CoverageVNodes},
-            {next_state, waiting_results, StateData, Timeout};
+    CoveragePlan = riak_core_coverage_plan:create_plan(Bucket, PVC, ReqId, NodeCheckService),
+    case CoveragePlan of
         {error, Reason} ->
-            finish({error, Reason}, StateData0)
+            finish({error, Reason}, StateData0);
+        {_, CoverageVNodes, _} ->
+            riak_core_vnode_master:coverage(Request, CoveragePlan, ItemFilter, VNodeMaster),
+            StateData = StateData0#state{coverage_vnodes=CoverageVNodes},
+            {next_state, waiting_results, StateData, Timeout}
     end.
 
 %% @private

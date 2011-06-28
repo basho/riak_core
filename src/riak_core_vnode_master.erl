@@ -27,7 +27,7 @@
 -behaviour(gen_server).
 -export([start_link/1, start_link/2, get_vnode_pid/2,
          start_vnode/2, command/3, command/4, sync_command/3,
-         coverage/3,
+         coverage/4,
          command_return_vnode/4,
          sync_command/4,
          sync_spawn_command/3, make_request/3,
@@ -78,60 +78,24 @@ command({Index,Node}, Msg, Sender, VMaster) ->
 coverage(?COVERAGE_REQ{args=Args, 
                        bucket=Bucket,
                        filter=ItemFilter, 
-                       modfun={Mod, Fun},
-                       req_id=ReqId}, _CoverageFactor, VMaster) ->
-    %% TODO: Not sure this belongs here. Maybe move it somewhere better.
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    case Bucket of
-        all ->
-            %% It sucks, but for operations involving all buckets
-            %% we have to check all vnodes because of variable n_val.
-            NVal = 1;
-        _ ->
-            BucketProps = riak_core_bucket:get_bucket(Bucket, Ring),
-            NVal = proplists:get_value(n_val, BucketProps)
-    end,
-    PartitionCount = riak_core_ring:num_partitions(Ring),
-    %% Get the list of all nodes and the list of available
-    %% nodes so we can have a list of unavailable nodes
-    %% while creating a coverage plan.
-    Nodes = riak_core_ring:all_members(Ring),
-    %% TODO: Remove hardcoded use of riak_kv here
-    UpNodes = riak_core_node_watcher:nodes(riak_kv),
-    %% Create a coverage plan with the requested coverage factor
-    %% Get a list of the VNodes owned by any unavailble nodes
-    DownVNodes = [Index || {Index, Node} <- riak_core_ring:all_owners(Ring), lists:member(Node, (Nodes -- UpNodes))],
-    %% Calculate an offset based on the request id to offer
-    %% the possibility of different sets of VNodes being
-    %% used even when all nodes are available.
-    Offset = ReqId rem NVal,
-    %% Generate a coverage plan
-    CoveragePlanResult =
-        riak_core_coverage_plan:create_plan(NVal, PartitionCount, Ring, Offset, DownVNodes),
-    case CoveragePlanResult of
-        {error, _} ->
-            %% Failed to create a coverage plan so return the error
-            CoveragePlanResult;
-        {NodeIndexes, CoverageVNodes, VNodeFilters} ->
-            %% Send the request to the nodes involved in the coverage plan            
-            NodeCastFun = 
-                fun(Node) ->
-                        %% Get the VNode indexes for the node
-                        Indexes = proplists:get_value(Node, NodeIndexes),
-                        %% Build a list of VNode tuples
-                        VNodes = [{Index, Node} || Index <- Indexes],
-                        %% Get the list of VNodes that require filtering 
-                        %% for this node.
-                        FilterVNodes = proplists:get_value(Node, VNodeFilters),
-                        %% Build the final filters for the node
-                        Filters = riak_core_coverage_filter:build_filters(Bucket, ItemFilter, VNodes, FilterVNodes),
-                        gen_server:cast({VMaster, Node}, ?NODE_REQ{indexes=Indexes, request={Mod, Fun, Args, Filters}})
-                end,
-            [NodeCastFun(N) || N <- proplists:get_keys(NodeIndexes)],
-            {ok, CoverageVNodes}
-    end.
+                       modfun={Mod, Fun}},
+         {NodeIndexes, _, VNodeFilters}, ItemFilter, VMaster) ->
+    %% Send the request to the nodes involved in the coverage plan            
+    NodeCastFun = 
+        fun(Node) ->
+                %% Get the VNode indexes for the node
+                Indexes = proplists:get_value(Node, NodeIndexes),
+                %% Build a list of VNode tuples
+                VNodes = [{Index, Node} || Index <- Indexes],
+                %% Get the list of VNodes that require filtering 
+                %% for this node.
+                FilterVNodes = proplists:get_value(Node, VNodeFilters),
+                %% Build the final filters for the node
+                Filters = riak_core_coverage_filter:build_filters(Bucket, ItemFilter, VNodes, FilterVNodes),
+                gen_server:cast({VMaster, Node}, ?NODE_REQ{indexes=Indexes, request={Mod, Fun, Args, Filters}})
+        end,
+    [NodeCastFun(N) || N <- proplists:get_keys(NodeIndexes)].
 
-    
 %% Send the command to an individual Index/Node combination, but also
 %% return the pid for the vnode handling the request, as `{ok,
 %% VnodePid}'.
