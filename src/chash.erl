@@ -42,6 +42,7 @@
          key_of/1,
          members/1,
          merge_rings/2,
+         next_index/2,
          nodes/1,
          predecessors/2,
          predecessors/3,
@@ -117,6 +118,12 @@ merge_rings(CHashA,CHashB) ->
     {NumPartitions, NodesB} = CHashB,
     {NumPartitions, [{I,random_node(A,B)} || 
            {{I,A},{I,B}} <- lists:zip(NodesA,NodesB)]}.
+
+%% @doc Given an object key, return the next Index.
+-spec next_index(Index :: index(), CHash :: chash()) -> index_as_int().
+next_index(Index, {NumPartitions, _}) ->
+        Inc = ?RINGTOP div NumPartitions,
+        ((Index div Inc) + 1) * Inc.
 
 %% @doc Return the entire set of NodeEntries in the ring.
 -spec nodes(CHash :: chash()) -> [node_entry()].

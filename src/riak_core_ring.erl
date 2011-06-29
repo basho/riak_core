@@ -34,7 +34,7 @@
          transfer_node/3, rename_node/3, reconcile/2, my_indices/1,
 	 index_owner/2,diff_nodes/2,random_node/1, random_other_node/1, random_other_index/1,
          random_other_index/2,
-         all_preflists/2,
+         all_preflists/2, responsible_index/2,
          get_meta/2, update_meta/3, equal_rings/2]).	 
 
 -export_type([riak_core_ring/0]).
@@ -305,6 +305,14 @@ update_meta(Key, Val, State) ->
        true ->
             State
     end.
+
+%% @doc Determine the integer ring index responsible
+%%      for a {Bucket, Key} pair.
+-spec responsible_index({binary(), binary()}, {integer(), list()}) ->
+                               integer().
+responsible_index({Bucket, Key}, #chstate{chring=Ring}) ->
+    ChashKey = riak_core_util:chash_key({Bucket, Key}),
+    chash:next_index(ChashKey, Ring).
 
 sequence_test() ->
     I1 = 365375409332725729550921208179070754913983135744,
