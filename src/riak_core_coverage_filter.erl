@@ -98,7 +98,7 @@ build_filter(KeySpaceIndexes, PrefListFun, ItemFilter) ->
 %% @private
 build_vnode_filter(KeySpaceIndexes, PrefListFun) ->
     fun(X) ->
-            {PrefListIndex, _} = PrefListFun(X),
+            PrefListIndex = PrefListFun(X),
             lists:member(PrefListIndex, KeySpaceIndexes)
     end.
 
@@ -119,16 +119,8 @@ build_preflist_fun(Bucket, Ring) ->
     %% responsible for a bkey pair without working out the
     %% entire preflist.
     fun(Key) ->
-            get_first_preflist({Bucket, Key}, Ring)
+            riak_core_ring:responsible_index({Bucket, Key}, Ring)
     end.
-
-%% @private
-get_first_preflist({Bucket, Key}, Ring) ->
-    %% Get the chash key for the bucket-key pair and
-    %% use that to determine the preference list to
-    %% use in filtering the keys from this VNode.
-    ChashKey = riak_core_util:chash_key({Bucket, Key}),
-    hd(riak_core_ring:preflist(ChashKey, Ring)).
 
 compose([]) ->    
     none;
