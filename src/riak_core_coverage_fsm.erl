@@ -49,7 +49,7 @@
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 %% Test API
--export([test_link/8, test_link/6]).
+-export([test_link/9, test_link/7]).
 -endif.
 
 %% gen_fsm callbacks
