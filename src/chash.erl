@@ -50,6 +50,8 @@
          successors/2,
          successors/3,
          update/3]).
+
+-export_type([chash/0]).
     
 -define(RINGTOP, trunc(math:pow(2,160)-1)).  % SHA-1 space
 
@@ -119,11 +121,13 @@ merge_rings(CHashA,CHashB) ->
     {NumPartitions, [{I,random_node(A,B)} || 
            {{I,A},{I,B}} <- lists:zip(NodesA,NodesB)]}.
 
-%% @doc Given an object key, return the next Index.
--spec next_index(Index :: index(), CHash :: chash()) -> index_as_int().
-next_index(Index, {NumPartitions, _}) ->
+%% @doc Given the integer representation of the chash of
+%%      a {Bucket, Key} pair, return the next ring index
+%%      integer value.
+-spec next_index(IntegerKey :: integer(), CHash :: chash()) -> index_as_int().
+next_index(IntegerKey, {NumPartitions, _}) ->
         Inc = ?RINGTOP div NumPartitions,
-        ((Index div Inc) + 1) * Inc.
+        (((IntegerKey div Inc) + 1) rem NumPartitions) * Inc.
 
 %% @doc Return the entire set of NodeEntries in the ring.
 -spec nodes(CHash :: chash()) -> [node_entry()].
