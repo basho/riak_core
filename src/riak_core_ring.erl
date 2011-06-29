@@ -27,29 +27,45 @@
 %%      view of node/partition ownership.
 
 -module(riak_core_ring).
--include_lib("eunit/include/eunit.hrl").
 
--export([fresh/0,fresh/1,fresh/2,preflist/2,
-	 owner_node/1,all_members/1,num_partitions/1,all_owners/1,
-         transfer_node/3, rename_node/3, reconcile/2, my_indices/1,
-	 index_owner/2,diff_nodes/2,random_node/1, random_other_node/1, random_other_index/1,
+-export([all_members/1,
+         all_owners/1,
+         all_preflists/2, 
+         diff_nodes/2,
+         equal_rings/2,
+         fresh/0,
+         fresh/1,
+         fresh/2,
+         get_meta/2, 
+	 index_owner/2,
+         my_indices/1,
+         num_partitions/1,
+	 owner_node/1,
+         preflist/2,
+         random_node/1,
+         random_other_index/1,
          random_other_index/2,
-         all_preflists/2, responsible_index/2,
-         get_meta/2, update_meta/3, equal_rings/2]).	 
+         random_other_node/1, 
+         reconcile/2, 
+         rename_node/3, 
+         responsible_index/2,
+         transfer_node/3, 
+         update_meta/3]).	 
 
 -export_type([riak_core_ring/0]).
 
-% @type riak_core_ring(). The opaque data type used for partition ownership.
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -record(chstate, {
-    nodename, % the Node responsible for this chstate
+    nodename :: node(), % the Node responsible for this chstate
     vclock,   % for this chstate object, entries are {Node, Ctr}
-    chring,   % chash ring of {IndexAsInt, Node} mappings
+    chring :: chash:chash(),   % chash ring of {IndexAsInt, Node} mappings
     meta      % dict of cluster-wide other data (primarily bucket N-value, etc)
 }). 
--type riak_core_ring() :: #chstate{}.
--type chstate() :: riak_core_ring().
 
-% @type meta_entry(). Record for each entry in #chstate.meta
+%% type meta_entry(). Record for each entry in #chstate.meta
 -record(meta_entry, {
     value,    % The value stored under this entry
     lastmod   % The last modified time of this entry, 
@@ -57,20 +73,62 @@
               %                             calendar:universal_time()), 
 }).
 
-% @doc This is used only when this node is creating a brand new cluster.
+%% riak_core_ring() is the opaque data type used for partition ownership
+-type riak_core_ring() :: #chstate{}.
+-type chstate() :: riak_core_ring().
+
+%% ===================================================================
+%% Public API
+%% ===================================================================
+
+%% @doc Produce a list of all nodes that own any partitions.
+-spec all_members(State :: chstate()) -> [Node :: term()].
+all_members(State) ->
+    chash:members(State#chstate.chring).
+
+%% @doc Provide all ownership information in the form of {Index,Node} pairs.
+-spec all_owners(State :: chstate()) -> [{Index :: integer(), Node :: term()}].
+all_owners(State) ->
+    chash:nodes(State#chstate.chring).
+
+%% @doc Provide every preflist in the ring, truncated at N.
+-spec all_preflists(State :: chstate(), N :: integer()) ->
+                               [[{Index :: integer(), Node :: term()}]].
+all_preflists(State, N) ->
+    [lists:sublist(preflist(Key, State),N) ||
+        Key <- [<<(I+1):160/integer>> ||
+                   {I,_Owner} <- ?MODULE:all_owners(State)]].
+
+%% @doc For two rings, return the list of owners that have differing ownership.
+-spec diff_nodes(chstate(), chstate()) -> [node()].
+diff_nodes(State1,State2) ->
+    AO = lists:zip(all_owners(State1),all_owners(State2)),
+    AllDiff = [[N1,N2] || {{I,N1},{I,N2}} <- AO, N1 =/= N2],
+    lists:usort(lists:flatten(AllDiff)).
+
+-spec equal_rings(chstate(), chstate()) -> boolean().
+equal_rings(_A=#chstate{chring=RA,meta=MA},_B=#chstate{chring=RB,meta=MB}) ->
+    MDA = lists:sort(dict:to_list(MA)),
+    MDB = lists:sort(dict:to_list(MB)),
+    case MDA =:= MDB of
+        false -> false;
+        true -> RA =:= RB
+    end.
+
+%% @doc This is used only when this node is creating a brand new cluster.
 -spec fresh() -> chstate().
 fresh() ->
     % use this when starting a new cluster via this node
     fresh(node()).
 
-% @doc Equivalent to fresh/0 but allows specification of the local node name.
-%      Called by fresh/0, and otherwise only intended for testing purposes.
+%% @doc Equivalent to fresh/0 but allows specification of the local node name.
+%%      Called by fresh/0, and otherwise only intended for testing purposes.
 -spec fresh(NodeName :: term()) -> chstate().
 fresh(NodeName) ->
     fresh(app_helper:get_env(riak_core, ring_creation_size), NodeName).
 
-% @doc Equivalent to fresh/1 but allows specification of the ring size.
-%      Called by fresh/1, and otherwise only intended for testing purposes.
+%% @doc Equivalent to fresh/1 but allows specification of the ring size.
+%%      Called by fresh/1, and otherwise only intended for testing purposes.
 -spec fresh(RingSize :: integer(), NodeName :: term()) -> chstate().
 fresh(RingSize, NodeName) ->
     #chstate{nodename=NodeName,
@@ -78,13 +136,49 @@ fresh(RingSize, NodeName) ->
 	    chring=chash:fresh(RingSize, NodeName),
             meta=dict:new()}.
 
-% @doc Return all partition indices owned by the node executing this function.
+% @doc Return a value from the cluster metadata dict
+-spec get_meta(Key :: term(), State :: chstate()) -> 
+    {ok, term()} | undefined.
+get_meta(Key, State) -> 
+    case dict:find(Key, State#chstate.meta) of
+        error -> undefined;
+        {ok, M} -> {ok, M#meta_entry.value}
+    end.
+
+%% @doc Return the node that owns the given index.
+-spec index_owner(State :: chstate(), Idx :: integer()) -> Node :: term().
+index_owner(State, Idx) ->
+    hd([Owner || {I, Owner} <- ?MODULE:all_owners(State), I =:= Idx]).
+
+%% @doc Return all partition indices owned by the node executing this function.
 -spec my_indices(State :: chstate()) -> [integer()].
 my_indices(State) ->
     [I || {I,Owner} <- ?MODULE:all_owners(State), Owner =:= node()].
 
-% @doc Return a partition index not owned by the node executing this function.
-%      If this node owns all partitions, return any index.
+%% @doc Return the number of partitions in this Riak ring.
+-spec num_partitions(State :: chstate()) -> integer().
+num_partitions(State) ->
+    chash:size(State#chstate.chring).
+
+%% @doc Return the node that is responsible for a given chstate.
+-spec owner_node(State :: chstate()) -> Node :: term().
+owner_node(State) ->
+    State#chstate.nodename.
+
+%% @doc For a given object key, produce the ordered list of
+%%      {partition,node} pairs that could be responsible for that object.
+-spec preflist(Key :: binary(), State :: chstate()) ->
+                               [{Index :: integer(), Node :: term()}].
+preflist(Key, State) -> chash:successors(Key, State#chstate.chring).
+
+%% @doc Return a randomly-chosen node from amongst the owners.
+-spec random_node(State :: chstate()) -> Node :: term().
+random_node(State) ->
+    L = all_members(State),
+    lists:nth(random:uniform(length(L)), L).
+
+%% @doc Return a partition index not owned by the node executing this function.
+%%      If this node owns all partitions, return any index.
 -spec random_other_index(State :: chstate()) -> integer().
 random_other_index(State) ->
     L = [I || {I,Owner} <- ?MODULE:all_owners(State), Owner =/= node()],
@@ -103,28 +197,7 @@ random_other_index(State, Exclude) when is_list(Exclude) ->
         _ -> lists:nth(random:uniform(length(L)), L)
     end.
 
-% @doc Return the node that owns the given index.
--spec index_owner(State :: chstate(), Idx :: integer()) -> Node :: term().
-index_owner(State, Idx) ->
-    hd([Owner || {I, Owner} <- ?MODULE:all_owners(State), I =:= Idx]).
-
-% @doc Return the node that is responsible for a given chstate.
--spec owner_node(State :: chstate()) -> Node :: term().
-owner_node(State) ->
-    State#chstate.nodename.
-
-% @doc Produce a list of all nodes that own any partitions.
--spec all_members(State :: chstate()) -> [Node :: term()].
-all_members(State) ->
-    chash:members(State#chstate.chring).
-
-% @doc Return a randomly-chosen node from amongst the owners.
--spec random_node(State :: chstate()) -> Node :: term().
-random_node(State) ->
-    L = all_members(State),
-    lists:nth(random:uniform(length(L)), L).
-
-% @doc Return a randomly-chosen node from amongst the owners other than this one.
+%% @doc Return a randomly-chosen node from amongst the owners other than this one.
 -spec random_other_node(State :: chstate()) -> Node :: term() | no_node.
 random_other_node(State) ->
     case lists:delete(node(), all_members(State)) of
@@ -133,76 +206,6 @@ random_other_node(State) ->
         L ->
             lists:nth(random:uniform(length(L)), L)
     end.
-
-% @doc Provide all ownership information in the form of {Index,Node} pairs.
--spec all_owners(State :: chstate()) -> [{Index :: integer(), Node :: term()}].
-all_owners(State) ->
-    chash:nodes(State#chstate.chring).
-
-% @doc For two rings, return the list of owners that have differing ownership.
--spec diff_nodes(chstate(), chstate()) -> [node()].
-diff_nodes(State1,State2) ->
-    AO = lists:zip(all_owners(State1),all_owners(State2)),
-    AllDiff = [[N1,N2] || {{I,N1},{I,N2}} <- AO, N1 =/= N2],
-    lists:usort(lists:flatten(AllDiff)).
-
-% @doc Return the number of partitions in this Riak ring.
--spec num_partitions(State :: chstate()) -> integer().
-num_partitions(State) ->
-    chash:size(State#chstate.chring).
-
-% @doc For a given object key, produce the ordered list of
-%      {partition,node} pairs that could be responsible for that object.
--spec preflist(Key :: binary(), State :: chstate()) ->
-                               [{Index :: integer(), Node :: term()}].
-preflist(Key, State) -> chash:successors(Key, State#chstate.chring).
-
-% @doc Provide every preflist in the ring, truncated at N.
--spec all_preflists(State :: chstate(), N :: integer()) ->
-                               [[{Index :: integer(), Node :: term()}]].
-all_preflists(State, N) ->
-    [lists:sublist(preflist(Key, State),N) ||
-        Key <- [<<(I+1):160/integer>> ||
-                   {I,_Owner} <- ?MODULE:all_owners(State)]].
-
-
--spec transfer_node(Idx :: integer(), Node :: term(), MyState :: chstate()) ->
-           chstate().
-transfer_node(Idx, Node, MyState) ->
-    case chash:lookup(Idx, MyState#chstate.chring) of
-	Node ->
-	    MyState;
-	_ ->
-	    Me = MyState#chstate.nodename,
-	    VClock = vclock:increment(Me, MyState#chstate.vclock),
-	    CHRing = chash:update(Idx, Node, MyState#chstate.chring),
-	    #chstate{nodename=Me,vclock=VClock,chring=CHRing,
-                    meta=MyState#chstate.meta}
-    end.
-
-% @doc  Rename OldNode to NewNode in a Riak ring.
--spec rename_node(State :: chstate(), OldNode :: atom(), NewNode :: atom()) ->
-            chstate().
-rename_node(State=#chstate{chring=Ring, nodename=ThisNode}, OldNode, NewNode) 
-  when is_atom(OldNode), is_atom(NewNode)  ->
-    State#chstate{
-      chring=lists:foldl(
-               fun({Idx, Owner}, AccIn) ->
-                       case Owner of
-                           OldNode -> 
-                               chash:update(Idx, NewNode, AccIn);
-                           _ -> AccIn
-                       end
-               end, Ring, riak_core_ring:all_owners(State)),
-      nodename=case ThisNode of OldNode -> NewNode; _ -> ThisNode end,
-      vclock=vclock:increment(NewNode, State#chstate.vclock)}.
-
-ancestors(RingStates) ->
-    Ancest = [[O2 || O2 <- RingStates,
-     vclock:descends(O1#chstate.vclock,O2#chstate.vclock),
-     (vclock:descends(O2#chstate.vclock,O1#chstate.vclock) == false)]
-		|| O1 <- RingStates],
-    lists:flatten(Ancest).
 
 % @doc Incorporate another node's state into our view of the Riak world.
 -spec reconcile(ExternState :: chstate(), MyState :: chstate()) ->
@@ -236,53 +239,46 @@ reconcile(ExternState, MyState) ->
             end
     end.
 
--spec equal_rings(chstate(), chstate()) -> boolean().
-equal_rings(_A=#chstate{chring=RA,meta=MA},_B=#chstate{chring=RB,meta=MB}) ->
-    MDA = lists:sort(dict:to_list(MA)),
-    MDB = lists:sort(dict:to_list(MB)),
-    case MDA =:= MDB of
-        false -> false;
-        true -> RA =:= RB
+%% @doc  Rename OldNode to NewNode in a Riak ring.
+-spec rename_node(State :: chstate(), OldNode :: atom(), NewNode :: atom()) ->
+            chstate().
+rename_node(State=#chstate{chring=Ring, nodename=ThisNode}, OldNode, NewNode) 
+  when is_atom(OldNode), is_atom(NewNode)  ->
+    State#chstate{
+      chring=lists:foldl(
+               fun({Idx, Owner}, AccIn) ->
+                       case Owner of
+                           OldNode -> 
+                               chash:update(Idx, NewNode, AccIn);
+                           _ -> AccIn
+                       end
+               end, Ring, riak_core_ring:all_owners(State)),
+      nodename=case ThisNode of OldNode -> NewNode; _ -> ThisNode end,
+      vclock=vclock:increment(NewNode, State#chstate.vclock)}.
+
+%% @doc Determine the integer ring index responsible
+%%      for a {Bucket, Key} pair.
+-spec responsible_index({binary(), binary()}, chstate()) ->
+                               integer().
+responsible_index({Bucket, Key}, #chstate{chring=Ring}) ->
+    ChashKey = riak_core_util:chash_key({Bucket, Key}),
+    <<IndexAsInt:160/integer>> = ChashKey,
+    chash:next_index(IndexAsInt, Ring).
+
+-spec transfer_node(Idx :: integer(), Node :: term(), MyState :: chstate()) ->
+           chstate().
+transfer_node(Idx, Node, MyState) ->
+    case chash:lookup(Idx, MyState#chstate.chring) of
+	Node ->
+	    MyState;
+	_ ->
+	    Me = MyState#chstate.nodename,
+	    VClock = vclock:increment(Me, MyState#chstate.vclock),
+	    CHRing = chash:update(Idx, Node, MyState#chstate.chring),
+	    #chstate{nodename=Me,vclock=VClock,chring=CHRing,
+                    meta=MyState#chstate.meta}
     end.
 
-% @doc If two states are mutually non-descendant, merge them anyway.
-%      This can cause a bit of churn, but should converge.
-% @spec reconcile(MyNodeName :: term(),
-%                 StateA :: chstate(), StateB :: chstate())
-%              -> chstate()
-reconcile(MyNodeName, StateA, StateB) ->
-    % take two states (non-descendant) and merge them
-    VClock = vclock:increment(MyNodeName,
-				 vclock:merge([StateA#chstate.vclock,
-					       StateB#chstate.vclock])),
-    CHRing = chash:merge_rings(StateA#chstate.chring,StateB#chstate.chring),
-    Meta = merge_meta(StateA#chstate.meta, StateB#chstate.meta),
-    #chstate{nodename=MyNodeName,
-             vclock=VClock,
-             chring=CHRing,
-             meta=Meta}.
-
-merge_meta(M1,M2) ->
-    dict:merge(fun(_,D1,D2) -> pick_val(D1,D2) end, M1, M2).
-
-
-pick_val(M1,M2) ->
-    case M1#meta_entry.lastmod > M2#meta_entry.lastmod of
-        true -> M1;
-        false -> M2
-    end.
-    
-
-% @doc Return a value from the cluster metadata dict
--spec get_meta(Key :: term(), State :: chstate()) -> 
-    {ok, term()} | undefined.
-get_meta(Key, State) -> 
-    case dict:find(Key, State#chstate.meta) of
-        error -> undefined;
-        {ok, M} -> {ok, M#meta_entry.value}
-    end.
-
-                
 % @doc Set a key in the cluster metadata dict
 -spec update_meta(Key :: term(), Val :: term(), State :: chstate()) -> chstate().
 update_meta(Key, Val, State) ->
@@ -306,13 +302,51 @@ update_meta(Key, Val, State) ->
             State
     end.
 
-%% @doc Determine the integer ring index responsible
-%%      for a {Bucket, Key} pair.
--spec responsible_index({binary(), binary()}, {integer(), list()}) ->
-                               integer().
-responsible_index({Bucket, Key}, #chstate{chring=Ring}) ->
-    ChashKey = riak_core_util:chash_key({Bucket, Key}),
-    chash:next_index(ChashKey, Ring).
+%% ====================================================================
+%% Internal functions
+%% ====================================================================
+
+%% @private
+ancestors(RingStates) ->
+    Ancest = [[O2 || O2 <- RingStates,
+     vclock:descends(O1#chstate.vclock,O2#chstate.vclock),
+     (vclock:descends(O2#chstate.vclock,O1#chstate.vclock) == false)]
+		|| O1 <- RingStates],
+    lists:flatten(Ancest).
+
+%% @private
+merge_meta(M1,M2) ->
+    dict:merge(fun(_,D1,D2) -> pick_val(D1,D2) end, M1, M2).
+
+%% @private
+pick_val(M1,M2) ->
+    case M1#meta_entry.lastmod > M2#meta_entry.lastmod of
+        true -> M1;
+        false -> M2
+    end.                   
+
+%% @private
+% @doc If two states are mutually non-descendant, merge them anyway.
+%      This can cause a bit of churn, but should converge.
+% @spec reconcile(MyNodeName :: term(),
+%                 StateA :: chstate(), StateB :: chstate())
+%              -> chstate()
+reconcile(MyNodeName, StateA, StateB) ->
+    % take two states (non-descendant) and merge them
+    VClock = vclock:increment(MyNodeName,
+				 vclock:merge([StateA#chstate.vclock,
+					       StateB#chstate.vclock])),
+    CHRing = chash:merge_rings(StateA#chstate.chring,StateB#chstate.chring),
+    Meta = merge_meta(StateA#chstate.meta, StateB#chstate.meta),
+    #chstate{nodename=MyNodeName,
+             vclock=VClock,
+             chring=CHRing,
+             meta=Meta}.
+
+%% ===================================================================
+%% EUnit tests
+%% ===================================================================
+-ifdef(TEST).
 
 sequence_test() ->
     I1 = 365375409332725729550921208179070754913983135744,
@@ -391,3 +425,5 @@ random_other_node_test() ->
     ?assertEqual(no_node, random_other_node(Ring0)),
     Ring1 = transfer_node(0, 'new@new', Ring0),
     ?assertEqual('new@new', random_other_node(Ring1)).
+
+-endif.
