@@ -26,10 +26,8 @@
 -author('Kelly McLaughlin <kelly@basho.com>').
 
 %% API
--export([
-         create_plan/4
-         ]).
-         
+-export([create_plan/4]).
+
 -define(RINGTOP, trunc(math:pow(2,160)-1)).  % SHA-1 space
 
 %% ===================================================================
@@ -37,7 +35,7 @@
 %% ===================================================================
 
 %% @doc TODO
-create_plan(Bucket, _PVC, ReqId, Service) ->
+create_plan(Bucket, PVC, ReqId, Service) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     case Bucket of
         all ->
@@ -54,7 +52,7 @@ create_plan(Bucket, _PVC, ReqId, Service) ->
     %% while creating a coverage plan.
     Nodes = riak_core_ring:all_members(Ring),
     %% Check which nodes are up for the specified service
-    %% so we can determine which VNodes are ineligible 
+    %% so we can determine which VNodes are ineligible
     %% to be part of the coverage plan.
     UpNodes = riak_core_node_watcher:nodes(Service),
     %% Create a coverage plan with the requested coverage factor
@@ -71,9 +69,12 @@ create_plan(Bucket, _PVC, ReqId, Service) ->
     %% The offset value serves as a tiebreaker in the
     %% compare_next_vnode function and is used to distribute
     %% work to different sets of VNodes.
-    AvailableKeySpaces = [{((VNode+Offset) rem PartitionCount), VNode, n_keyspaces(VNode, NVal, PartitionCount)}
-                          || VNode <- (AllKeySpaces -- UnavailableKeySpaces)],
-    CoverageResult = find_coverage(ordsets:from_list(AllKeySpaces), AvailableKeySpaces, []),
+    case PVC > NVal of
+        true ->
+            CoverageResult = find_coverage(AllKeySpaces, Offset, NVal, PartitionCount, UnavailableKeySpaces, NVal, []);
+        false ->
+            CoverageResult = find_coverage(AllKeySpaces, Offset, NVal, PartitionCount, UnavailableKeySpaces, PVC, [])
+    end,
     case CoverageResult of
         {ok, CoveragePlan} ->
             %% Assemble the data structures required for
@@ -100,7 +101,7 @@ create_plan(Bucket, _PVC, ReqId, Service) ->
             {CoverageVNodes, FilterVNodes} = lists:mapfoldl(CoverageVNodeFun, [], CoveragePlan),
             NodeIndexes = group_indexes_by_node(CoverageVNodes, []),
             {NodeIndexes, CoverageVNodes, FilterVNodes};
-       {insufficient_vnodes_available, _KeySpace, _Coverage}  ->
+        {insufficient_vnodes_available, _KeySpace, _Coverage}  ->
             {error, insufficient_vnodes_available}
     end.
 
@@ -109,26 +110,74 @@ create_plan(Bucket, _PVC, ReqId, Service) ->
 %% ====================================================================
 
 %% @private
+find_coverage(AllKeySpaces, Offset, NVal, PartitionCount, UnavailableKeySpaces, PVC, []) ->
+    %% Calculate the available keyspaces.
+    AvailableKeySpaces = [{((VNode+Offset) rem PartitionCount), VNode, n_keyspaces(VNode, NVal, PartitionCount)}
+                          || VNode <- (AllKeySpaces -- UnavailableKeySpaces)],
+    case find_coverage_vnodes(ordsets:from_list(AllKeySpaces), AvailableKeySpaces, []) of
+        {ok, CoverageResults} ->
+            case PVC of
+                1 ->
+                    {ok, CoverageResults};
+                _ ->
+                    find_coverage(AllKeySpaces, Offset, NVal, PartitionCount, UnavailableKeySpaces, PVC-1, CoverageResults)
+            end;
+        Error ->
+            Error
+    end;
+find_coverage(AllKeySpaces, Offset, NVal, PartitionCount, UnavailableKeySpaces, PVC, ResultsAcc) ->
+    %% Calculate the available keyspaces. The list of
+    %% keyspaces for each vnode that have already been
+    %% covered by the plan are subtracted from the complete
+    %% list of keyspaces so that coverage plans that
+    %% want to cover more one preflist vnode work out
+    %% correctly.
+    AvailableKeySpaces = [{((VNode+Offset) rem PartitionCount), VNode, n_keyspaces(VNode, NVal, PartitionCount) -- proplists:get_value(VNode, ResultsAcc, [])}
+                          || VNode <- (AllKeySpaces -- UnavailableKeySpaces)],
+    case find_coverage_vnodes(ordsets:from_list(AllKeySpaces), AvailableKeySpaces, ResultsAcc) of
+        {ok, CoverageResults} ->
+            UpdateResultsFun =
+                fun({Key, NewValues}, Results) ->
+                        case proplists:get_value(Key, Results) of
+                            undefined ->
+                                [{Key, NewValues} | Results];
+                            Values ->
+                                UniqueValues = lists:usort(Values ++ NewValues),
+                                [{Key, UniqueValues} | proplists:delete(Key, Results)]
+                        end
+                end,
+            UpdatedResults = lists:foldl(UpdateResultsFun, ResultsAcc, CoverageResults),
+            case PVC of
+                1 ->
+                    {ok, UpdatedResults};
+                _ ->
+                    find_coverage(AllKeySpaces, Offset, NVal, PartitionCount, UnavailableKeySpaces, PVC-1, UpdatedResults)
+            end;
+        Error ->
+            Error
+    end.
+
+%% @private
 %% @doc Find the N key spaces for a VNode
 n_keyspaces(VNode, N, PartitionCount) ->
-     ordsets:from_list([X rem PartitionCount || X <- lists:seq(PartitionCount + VNode - N, PartitionCount + VNode - 1)]).
+    ordsets:from_list([X rem PartitionCount || X <- lists:seq(PartitionCount + VNode - N, PartitionCount + VNode - 1)]).
 
 %% @private
 %% @doc Find a minimal set of covering VNodes
-find_coverage([], _, Coverage) ->
+find_coverage_vnodes([], _, Coverage) ->
     {ok, lists:sort(Coverage)};
-find_coverage(KeySpace, [], Coverage) ->
+find_coverage_vnodes(KeySpace, [], Coverage) ->
     {insufficient_vnodes_available, KeySpace, lists:sort(Coverage)};
-find_coverage(KeySpace, Available, Coverage) ->
+find_coverage_vnodes(KeySpace, Available, Coverage) ->
     Res = next_vnode(KeySpace, Available),
-        case Res of
+    case Res of
         {0, _, _} -> % out of vnodes
-            find_coverage(KeySpace, [], Coverage);
+            find_coverage_vnodes(KeySpace, [], Coverage);
         {_NumCovered, VNode, _} ->
             {value, {_, VNode, Covers}, UpdAvailable} = lists:keytake(VNode, 2, Available),
             UpdCoverage = [{VNode, ordsets:intersection(KeySpace, Covers)} | Coverage],
             UpdKeySpace = ordsets:subtract(KeySpace, Covers),
-            find_coverage(UpdKeySpace, UpdAvailable, UpdCoverage)
+            find_coverage_vnodes(UpdKeySpace, UpdAvailable, UpdCoverage)
     end.
 
 %% @private
