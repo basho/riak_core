@@ -35,17 +35,22 @@
 %%      Modules implementing this behavior should return 
 %%      a 5 member tuple from their init function that looks
 %%      like this: 
-%%          {ok, ModFun, PrimaryVNodeCoverage, 
-%%            NodeCheckService, VNodeMaster}
-%%      
-%%      ModFun - The function that will be called by each
-%%               VNode that is part of the coverage plan.
-%%      PrimaryVNodeCoverage - The number of primary VNodes
+%%
+%%         `{ok, ModFun, PrimaryVNodeCoverage, 
+%%            NodeCheckService, VNodeMaster}'
+%%   
+%%      The description of the tuple members is as follows:
+%%
+%%      <ul>   
+%%      <li>ModFun - The function that will be called by each
+%%               VNode that is part of the coverage plan.</li>
+%%      <li>PrimaryVNodeCoverage - The number of primary VNodes
 %%      from the preference list to use in creating the coverage
-%%      plan.
-%%      NodeCheckService - The service to use to check for available
-%%      nodes (e.g. riak_kv).
-%%      VNodeMaster - The atom to use to reach the vnode master module.
+%%      plan.</li>
+%%      <li>NodeCheckService - The service to use to check for available
+%%      nodes (e.g. riak_kv).</li>
+%%      <li>VNodeMaster - The atom to use to reach the vnode master module.</li>
+%%      </ul>
 -module(riak_core_coverage_fsm).
 -author('Kelly McLaughlin <kelly@basho.com>').
 
