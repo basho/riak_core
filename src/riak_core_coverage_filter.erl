@@ -1,7 +1,7 @@
-
+%% -------------------------------------------------------------------
 %%
-%% riak_core_coverage_filter: Manage results for a bucket from a
-%%                    coverage operation including any necessary filtering.
+%% riak_core_coverage_filter: Construct coverage filter functions.
+%%                        
 %%
 %% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
 %%
@@ -21,18 +21,30 @@
 %%
 %% -------------------------------------------------------------------
 
+%% @doc This module is used to construct a property list of VNode
+%%      indexes and a functions to filter results from a coverage
+%%      operation. This may include filtering based on the particular
+%%      VNode or filtering on each item in the result list from any
+%%      VNode.
+
 -module(riak_core_coverage_filter).
 -author('Kelly McLaughlin <kelly@basho.com>').
 
 %% API
 -export([build_filters/4]).
 
+-type bucket() :: binary().
+-type filter() :: none | fun().
+-type filter_list() :: [{index(), fun()}].
+-type index() :: non_neg_integer().
+-type vnodes() :: [{index(), node()}].
 
 %% ===================================================================
 %% Public API
 %% ===================================================================
 
-%% @doc TODO
+%% @doc Build the list of filter functions for any required VNode indexes.
+-spec build_filters(bucket(), filter(), vnodes(), [index()]) -> filter_list().
 build_filters(Bucket, FilterInput, VNodes, FilterVNodes) ->
     ItemFilter = build_item_filter(FilterInput),
 
@@ -114,10 +126,6 @@ build_item_filter(FilterInput) ->
 
 %% @private
 build_preflist_fun(Bucket, Ring) ->
-    %% TODO: Change this to use the upcoming addition to
-    %% riak_core_ring that will allow finding the index
-    %% responsible for a bkey pair without working out the
-    %% entire preflist.
     fun(Key) ->
             riak_core_ring:responsible_index({Bucket, Key}, Ring)
     end.

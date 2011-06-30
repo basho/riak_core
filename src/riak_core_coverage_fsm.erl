@@ -1,6 +1,7 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_core_coverage_fsm: TODO
+%% riak_core_coverage_fsm: Distribute work to a covering set of VNodes.
+%% 
 %%
 %% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
 %%
@@ -20,19 +21,31 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc TODO
+%% @doc The coverage fsm is a behavior used to create
+%%      a plan to cover a set of VNodes, distribute
+%%      a specified command to each VNode in the plan
+%%      and then compile the results.
 %%
-%%      The keys fsm creates a plan to achieve coverage
-%%      of all keys from the cluster using the minimum
-%%      possible number of VNodes, sends key listing
-%%      commands to each of those VNodes, and compiles the
-%%      responses.
+%%      The number of VNodes required for full coverage
+%%      is based on the number of partitions, the bucket
+%%      n_val, and the number of primary VNodes from the
+%%      preference list that are configured to be used by
+%%      the module implementing this behavior.
 %%
-%%      The number of VNodes required for full
-%%      coverage is based on the number
-%%      of partitions, the number of available physical
-%%      nodes, and the bucket n_val.
-
+%%      Modules implementing this behavior should return 
+%%      a 5 member tuple from their init function that looks
+%%      like this: 
+%%          {ok, ModFun, PrimaryVNodeCoverage, 
+%%            NodeCheckService, VNodeMaster}
+%%      
+%%      ModFun - The function that will be called by each
+%%               VNode that is part of the coverage plan.
+%%      PrimaryVNodeCoverage - The number of primary VNodes
+%%      from the preference list to use in creating the coverage
+%%      plan.
+%%      NodeCheckService - The service to use to check for available
+%%      nodes (e.g. riak_kv).
+%%      VNodeMaster - The atom to use to reach the vnode master module.
 -module(riak_core_coverage_fsm).
 -author('Kelly McLaughlin <kelly@basho.com>').
 
@@ -65,13 +78,14 @@
 -spec behaviour_info(atom()) -> 'undefined' | [{atom(), arity()}].
 behaviour_info(callbacks) ->
     [
+     {init, 0},
      {process_results, 3}
     ];
 behaviour_info(_) ->
     undefined.
 
--type bucket() :: binary().
--type filter() :: fun() | [mfa()].
+-type bucket() :: all | binary().
+-type filter() :: none | fun() | [mfa()].
 -type req_id() :: non_neg_integer().
 -type modfun() :: {module(), fun()}.
 -type from() :: {raw, req_id(), pid()}.
@@ -97,13 +111,13 @@ behaviour_info(_) ->
 %% ===================================================================
 
 %% @doc Start a riak_core_coverage_fsm.
--spec start_link(module(), from(), fun(), list(), timeout(), atom()) ->
+-spec start_link(module(), from(), filter(), list(), timeout(), atom()) ->
                         {ok, pid()} | ignore | {error, term()}.
 start_link(Mod, From, ItemFilter, RequestArgs, Timeout, ClientType) ->
     start_link(Mod, From, all, ItemFilter, RequestArgs, Timeout, ClientType).
 
 %% @doc Start a riak_core_coverage_fsm.
--spec start_link(module(), from(), bucket(), fun(), list(), timeout(), atom()) ->
+-spec start_link(module(), from(), bucket(), filter(), list(), timeout(), atom()) ->
                         {ok, pid()} | ignore | {error, term()}.
 start_link(Mod, From, Bucket, ItemFilter, RequestArgs, Timeout, ClientType) ->
     gen_fsm:start_link(?MODULE,

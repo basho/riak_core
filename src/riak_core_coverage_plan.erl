@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_core_coverage_plan: TODO
+%% riak_core_coverage_plan: Create a plan to cover a minimal set of VNodes.
 %%
 %% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
 %%
@@ -20,7 +20,9 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc TODO
+%% @doc A module to calculate a plan to cover a minimal set of VNodes.
+%%      There is also an option to specify a number of primary VNodes
+%%      from each preference list to use in the plan. 
 
 -module(riak_core_coverage_plan).
 -author('Kelly McLaughlin <kelly@basho.com>').
@@ -30,11 +32,22 @@
 
 -define(RINGTOP, trunc(math:pow(2,160)-1)).  % SHA-1 space
 
+-type bucket() :: binary().
+-type index() :: non_neg_integer().
+-type req_id() :: non_neg_integer().
+-type node_indexes() :: {node(), [index()]}.
+-type coverage_vnodes() :: [{index(), node()}].
+-type vnode_filters() :: [{node(), [{index(), [index()]}]}].
+-type coverage_plan() :: {node_indexes(), coverage_vnodes(), vnode_filters()}.
+
 %% ===================================================================
 %% Public API
 %% ===================================================================
 
-%% @doc TODO
+%% @doc Create a coverage plan to distribute work to a set
+%%      covering VNodes around the ring.
+-spec create_plan(bucket(), pos_integer(), req_id(), atom()) ->
+                         {error, term()} | coverage_plan().
 create_plan(Bucket, PVC, ReqId, Service) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     case Bucket of
