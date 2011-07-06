@@ -39,7 +39,6 @@
 behaviour_info(callbacks) ->
     [{init,1},
      {handle_command,3},
-     {handle_coverage,2},
      {handle_exit,3},
      {handoff_starting,2},
      {handoff_cancelled,1},
