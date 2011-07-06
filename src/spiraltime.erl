@@ -43,7 +43,7 @@
 
 %% @type moment() = integer().
 %% This is a number of seconds, as produced by
-%% calendar:datetime_to_gregorian_seconds(calendar:universal_time())
+%% calendar:datetime_to_gregorian_seconds(calendar:local_time())
 
 %% @type count() = integer().
 %% The number of entries recorded in some time period.
@@ -53,7 +53,7 @@
                 }).
 
 n() ->
-    calendar:datetime_to_gregorian_seconds(calendar:universal_time()).
+    calendar:datetime_to_gregorian_seconds(calendar:local_time()).
 
 %% @doc Create an empty spiral with which to begin recording entries.
 %% @spec fresh() -> spiral()
