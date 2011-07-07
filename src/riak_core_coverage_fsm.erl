@@ -140,12 +140,28 @@ start_link(Mod, From, Bucket, ItemFilter, RequestArgs, Timeout, ClientType) ->
 %% preflist2 - [{{Idx,Node},primary|fallback}] preference list
 %%
 test_link(Mod, ReqId, Bucket, ItemFilter, RequestArgs, R, Timeout, From, StateProps) ->
-    test_link(Mod, {raw, ReqId, From}, Bucket, ItemFilter, RequestArgs, [{r, R}, {timeout, Timeout}], StateProps).
+    test_link(Mod,
+              {raw, ReqId, From},
+              Bucket,
+              ItemFilter,
+              RequestArgs,
+              [{r, R}, {timeout, Timeout}],
+              StateProps).
 
 test_link(Mod, From, Bucket, ItemFilter, RequestArgs, _Options, StateProps) ->
     Timeout = 60000,
     ClientType = plain,
-    gen_fsm:start_link(?MODULE, {test, [Mod, From, Bucket, ItemFilter, RequestArgs, Timeout, ClientType], StateProps}, []).
+    gen_fsm:start_link(?MODULE, 
+                       {test, 
+                        [Mod, 
+                         From, 
+                         Bucket,
+                         ItemFilter,
+                         RequestArgs,
+                         Timeout,
+                         ClientType],
+                        StateProps},
+                       []).
 
 -endif.
 
