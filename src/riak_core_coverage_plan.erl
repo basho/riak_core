@@ -30,8 +30,6 @@
 %% API
 -export([create_plan/4]).
 
--define(RINGTOP, trunc(math:pow(2,160)-1)).  % SHA-1 space
-
 -type bucket() :: binary().
 -type index() :: non_neg_integer().
 -type req_id() :: non_neg_integer().
@@ -80,7 +78,7 @@ create_plan(Bucket, PVC, ReqId, Service) ->
     %% used even when all nodes are available.
     Offset = ReqId rem NVal,
 
-    RingIndexInc = ?RINGTOP div PartitionCount,
+    RingIndexInc = chash:ring_increment(PartitionCount),
     AllKeySpaces = lists:seq(0, PartitionCount - 1),
     UnavailableKeySpaces = [(DownVNode div RingIndexInc) || DownVNode <- DownVNodes],
     %% The offset value serves as a tiebreaker in the

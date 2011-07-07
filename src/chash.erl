@@ -46,6 +46,7 @@
          nodes/1,
          predecessors/2,
          predecessors/3,
+         ring_increment/1,
          size/1,
          successors/2,
          successors/3,
@@ -87,7 +88,7 @@ contains_name(Name, CHash) ->
 %%       participating nodes, then performance will suffer.
 -spec fresh(NumPartitions :: num_partitions(), SeedNode :: chash_node()) -> chash().
 fresh(NumPartitions, SeedNode) ->
-    Inc = ?RINGTOP div NumPartitions,
+    Inc = ring_increment(NumPartitions),
     {NumPartitions, [{IndexAsInt, SeedNode} ||
            IndexAsInt <- lists:seq(0,(?RINGTOP-1),Inc)]}.
 
@@ -126,7 +127,7 @@ merge_rings(CHashA,CHashB) ->
 %%      integer value.
 -spec next_index(IntegerKey :: integer(), CHash :: chash()) -> index_as_int().
 next_index(IntegerKey, {NumPartitions, _}) ->
-        Inc = ?RINGTOP div NumPartitions,
+        Inc = ring_increment(NumPartitions),
         (((IntegerKey div Inc) + 1) rem NumPartitions) * Inc.
 
 %% @doc Return the entire set of NodeEntries in the ring.
@@ -139,7 +140,7 @@ nodes(CHash) ->
 -spec ordered_from(Index :: index(), CHash :: chash()) -> [node_entry()].
 ordered_from(Index, {NumPartitions, Nodes}) ->
     <<IndexAsInt:160/integer>> = Index,
-    Inc = ?RINGTOP div NumPartitions,
+    Inc = ring_increment(NumPartitions),
     {A, B} = lists:split((IndexAsInt div Inc)+1, Nodes),
     B ++ A.
 
@@ -157,6 +158,12 @@ predecessors(Index, CHash, N) ->
     Num = max_n(N, CHash),
     {Res, _} = lists:split(Num, lists:reverse(ordered_from(Index,CHash))),
     Res.
+
+%% @doc Return increment between ring indexes given
+%% the number of ring partitions.
+-spec ring_increment(NumPartitions :: pos_integer()) -> pos_integer().
+ring_increment(NumPartitions) ->
+    ?RINGTOP div NumPartitions.
 
 %% @doc Return the number of partitions in the ring.
 -spec size(CHash :: chash()) -> integer().
