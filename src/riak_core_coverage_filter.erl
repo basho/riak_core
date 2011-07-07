@@ -1,7 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% riak_core_coverage_filter: Construct coverage filter functions.
-%%                        
+%%
 %%
 %% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
 %%
@@ -49,7 +49,8 @@ build_filters(Bucket, FilterInput, VNodes, FilterVNodes) ->
     ItemFilter = build_item_filter(FilterInput),
 
     if
-        (ItemFilter == none) andalso (FilterVNodes == undefined) -> % no filtering
+        (ItemFilter == none) andalso
+        (FilterVNodes == undefined) -> % no filtering
             [];
         (FilterVNodes == undefined) -> % only key filtering
             %% Associate a key filtering function with each VNode
@@ -58,13 +59,18 @@ build_filters(Bucket, FilterInput, VNodes, FilterVNodes) ->
             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
             PrefListFun = build_preflist_fun(Bucket, Ring),
             %% Create VNode filters only as necessary
-            [{Index, build_filter(proplists:get_value(Index, FilterVNodes), PrefListFun)} || {Index, _} <- VNodes, proplists:is_defined(Index, FilterVNodes)];
+            [{Index, build_filter(proplists:get_value(Index, FilterVNodes),
+                                  PrefListFun)} ||
+                {Index, _} <- VNodes, proplists:is_defined(Index,
+                                                           FilterVNodes)];
         true -> % key and vnode filtering
             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
             PrefListFun = build_preflist_fun(Bucket, Ring),
             %% Create a filter for each VNode
-            [{Index, build_filter(proplists:get_value(Index, FilterVNodes), PrefListFun, ItemFilter)} || {Index, _} <- VNodes]
-    end.    
+            [{Index, build_filter(proplists:get_value(Index, FilterVNodes),
+                                  PrefListFun, ItemFilter)} ||
+                {Index, _} <- VNodes]
+    end.
 
 %% ====================================================================
 %% Internal functions
@@ -122,7 +128,7 @@ build_item_filter(FilterInput) when is_function(FilterInput) ->
 build_item_filter(FilterInput) ->
     %% FilterInput is a list of MFA tuples
     compose(FilterInput).
-    
+
 
 %% @private
 build_preflist_fun(Bucket, Ring) ->
@@ -130,7 +136,7 @@ build_preflist_fun(Bucket, Ring) ->
             riak_core_ring:responsible_index({Bucket, Key}, Ring)
     end.
 
-compose([]) ->    
+compose([]) ->
     none;
 compose(Filters) ->
     compose(Filters, fun(V) -> V end).

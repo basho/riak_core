@@ -1,7 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% riak_core_coverage_fsm: Distribute work to a covering set of VNodes.
-%% 
+%%
 %%
 %% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
 %%
@@ -32,16 +32,16 @@
 %%      preference list that are configured to be used by
 %%      the module implementing this behavior.
 %%
-%%      Modules implementing this behavior should return 
+%%      Modules implementing this behavior should return
 %%      a 5 member tuple from their init function that looks
-%%      like this: 
+%%      like this:
 %%
-%%         `{ok, ModFun, PrimaryVNodeCoverage, 
+%%         `{ok, ModFun, PrimaryVNodeCoverage,
 %%            NodeCheckService, VNodeMaster}'
-%%   
+%%
 %%      The description of the tuple members is as follows:
 %%
-%%      <ul>   
+%%      <ul>
 %%      <li>ModFun - The function that will be called by each
 %%               VNode that is part of the coverage plan.</li>
 %%      <li>PrimaryVNodeCoverage - The number of primary VNodes
@@ -97,7 +97,7 @@ behaviour_info(_) ->
 
 -record(state, {args :: [term()],
                 bucket :: bucket(),
-                client_type :: atom(),         
+                client_type :: atom(),
                 coverage_vnodes :: [{non_neg_integer(), node()}],
                 filter :: filter(),
                 from :: from(),
@@ -154,14 +154,21 @@ test_link(Mod, From, Bucket, ItemFilter, RequestArgs, _Options, StateProps) ->
 %% ====================================================================
 
 %% @private
-init([Mod, From={raw, ReqId, ClientPid}, Bucket, ItemFilter, RequestArgs, Timeout, ClientType]) ->
-    {ok, ModFun, PrimaryVnodeCoverage, NodeCheckService, VNodeMaster} = Mod:init(),
+init([Mod,
+      From={raw, ReqId, ClientPid},
+      Bucket,
+      ItemFilter,
+      RequestArgs,
+      Timeout,
+      ClientType]) ->
+    {ok, ModFun, PrimaryVnodeCoverage, NodeCheckService, VNodeMaster} =
+        Mod:init(),
     case Bucket of
         all ->
             Args = [self(), ReqId] ++ RequestArgs;
         _ ->
             Args = [self(), ReqId, Bucket] ++ RequestArgs
-                end,
+    end,
     StateData = #state{args=Args,
                        bucket=Bucket,
                        client_type=ClientType,
@@ -206,19 +213,25 @@ initialize(timeout, StateData0=#state{args=Args,
                                       modfun=ModFun,
                                       node_check_service=NodeCheckService,
                                       pvc=PVC,
-                                      timeout=Timeout, 
+                                      timeout=Timeout,
                                       vnode_master=VNodeMaster}) ->
     Request = ?COVERAGE_REQ{args=Args,
                             bucket=Bucket,
                             filter=ItemFilter,
                             modfun=ModFun,
                             req_id=ReqId},
-    CoveragePlan = riak_core_coverage_plan:create_plan(Bucket, PVC, ReqId, NodeCheckService),
+    CoveragePlan = riak_core_coverage_plan:create_plan(Bucket,
+                                                       PVC,
+                                                       ReqId,
+                                                       NodeCheckService),
     case CoveragePlan of
         {error, Reason} ->
             finish({error, Reason}, StateData0);
         {_, CoverageVNodes, _} ->
-            riak_core_vnode_master:coverage(Request, CoveragePlan, ItemFilter, VNodeMaster),
+            riak_core_vnode_master:coverage(Request,
+                                            CoveragePlan,
+                                            ItemFilter,
+                                            VNodeMaster),
             StateData = StateData0#state{coverage_vnodes=CoverageVNodes},
             {next_state, waiting_results, StateData, Timeout}
     end.
@@ -233,7 +246,8 @@ waiting_results({ReqId, {results, VNode, Results}},
     case lists:member(VNode, CoverageVNodes) of
         true -> % Received an expected response from a Vnode
             Mod:process_results(Results, ClientType, From);
-        false -> % Ignore a response from a VNode that is not part of the coverage plan
+        false -> % Ignore a response from a VNode that
+                 % is not part of the coverage plan
            ignore
     end,
     {next_state, waiting_results, StateData, Timeout};
@@ -247,14 +261,21 @@ waiting_results({ReqId, {final_results, VNode, Results}},
         true -> % Received an expected response from a Vnode
             Mod:process_results(Results, ClientType, From),
             UpdatedVNodes = lists:delete(VNode, CoverageVNodes),
-            case UpdatedVNodes of 
+            case UpdatedVNodes of
                 [] ->
                     finish(clean, StateData);
                 _ ->
-                    {next_state, waiting_results, StateData#state{coverage_vnodes=UpdatedVNodes}, Timeout}
+                    {next_state,
+                     waiting_results,
+                     StateData#state{coverage_vnodes=UpdatedVNodes},
+                     Timeout}
             end;
-        false -> % Ignore a response from a VNode that is not part of the coverage plan
-            {next_state, waiting_results, StateData#state{timeout=Timeout}, Timeout}
+        false -> % Ignore a response from a VNode that
+                 % is not part of the coverage plan
+            {next_state,
+             waiting_results,
+             StateData#state{timeout=Timeout},
+             Timeout}
     end;
 waiting_results(timeout, StateData) ->
     finish({error, timeout}, StateData).
@@ -270,7 +291,9 @@ handle_sync_event(_Event, _From, StateName, State) ->
 %% @private
 handle_info({'EXIT', _Pid, Reason}, _StateName, StateData) ->
     finish({error, {node_failure, Reason}}, StateData);
-handle_info({_ReqId, {ok, _Pid}}, StateName, StateData=#state{timeout=Timeout}) ->
+handle_info({_ReqId, {ok, _Pid}},
+            StateName,
+            StateData=#state{timeout=Timeout}) ->
     %% Received a message from a coverage node that
     %% did not start up within the timeout. Just ignore
     %% the message and move on.
@@ -291,7 +314,9 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %% ====================================================================
 
 %% @private
-finish({error, Error}, StateData=#state{from={raw, ReqId, ClientPid}, client_type=ClientType}) ->
+finish({error, Error},
+       StateData=#state{from={raw, ReqId, ClientPid},
+                        client_type=ClientType}) ->
     case ClientType of
         mapred ->
             %% An error occurred or the timeout interval elapsed
@@ -304,7 +329,9 @@ finish({error, Error}, StateData=#state{from={raw, ReqId, ClientPid}, client_typ
             ClientPid ! {ReqId, Error}
     end,
     {stop,normal,StateData};
-finish(clean, StateData=#state{from={raw, ReqId, ClientPid}, client_type=ClientType}) ->
+finish(clean,
+       StateData=#state{from={raw, ReqId, ClientPid},
+                        client_type=ClientType}) ->
     case ClientType of
         mapred ->
             luke_flow:finish_inputs(ClientPid);
