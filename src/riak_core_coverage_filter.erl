@@ -22,7 +22,7 @@
 %% -------------------------------------------------------------------
 
 %% @doc This module is used to construct a property list of VNode
-%%      indexes and a functions to filter results from a coverage
+%%      indexes and functions to filter results from a coverage
 %%      operation. This may include filtering based on the particular
 %%      VNode or filtering on each item in the result list from any
 %%      VNode.
