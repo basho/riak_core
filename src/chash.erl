@@ -24,7 +24,7 @@
 %%      coincides with SHA-1 hashes, and so any two keys producing the same
 %%      SHA-1 hash are considered identical within the ring.
 %%
-%$      Warning: It is not recommended that code outside this module make use
+%%      Warning: It is not recommended that code outside this module make use
 %%      of the structure of a chash.
 %%
 %% @reference Karger, D.; Lehman, E.; Leighton, T.; Panigrahy, R.; Levine, M.;
