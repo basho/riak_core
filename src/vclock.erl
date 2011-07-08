@@ -136,10 +136,20 @@ increment(Node, IncTs, VClock) ->
 all_nodes(VClock) ->
     [X || {X,{_,_}} <- VClock].
 
+-define(DAYS_FROM_GREGORIAN_BASE_TO_EPOCH, (1970*365+478)).
+-define(SECONDS_FROM_GREGORIAN_BASE_TO_EPOCH,
+	(?DAYS_FROM_GREGORIAN_BASE_TO_EPOCH * 24*60*60)
+	%% == calendar:datetime_to_gregorian_seconds({{1970,1,1},{0,0,0}})
+       ).
+
 % @doc Return a timestamp for a vector clock
 -spec timestamp() -> timestamp().
 timestamp() ->
-    calendar:datetime_to_gregorian_seconds(erlang:universaltime()).
+    %% Same as calendar:datetime_to_gregorian_seconds(erlang:universaltime()),
+    %% but significantly faster.
+    %% Assumes that less than a million now() calls are done per second.
+    {MegaSeconds, Seconds, _} = now(),
+    ?SECONDS_FROM_GREGORIAN_BASE_TO_EPOCH + MegaSeconds*1000000 + Seconds.
 
 % @doc Compares two VClocks for equality.
 -spec equal(VClockA :: vclock(), VClockB :: vclock()) -> boolean().
