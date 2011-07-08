@@ -122,9 +122,8 @@ merge_rings(CHashA,CHashB) ->
     {NumPartitions, [{I,random_node(A,B)} || 
            {{I,A},{I,B}} <- lists:zip(NodesA,NodesB)]}.
 
-%% @doc Given the integer representation of the chash of
-%%      a {Bucket, Key} pair, return the next ring index
-%%      integer value.
+%% @doc Given the integer representation of a chash key,
+%%      return the next ring index integer value.
 -spec next_index(IntegerKey :: integer(), CHash :: chash()) -> index_as_int().
 next_index(IntegerKey, {NumPartitions, _}) ->
         Inc = ring_increment(NumPartitions),

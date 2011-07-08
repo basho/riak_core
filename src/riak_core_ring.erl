@@ -257,11 +257,9 @@ rename_node(State=#chstate{chring=Ring, nodename=ThisNode}, OldNode, NewNode)
       vclock=vclock:increment(NewNode, State#chstate.vclock)}.
 
 %% @doc Determine the integer ring index responsible
-%%      for a {Bucket, Key} pair.
--spec responsible_index({binary(), binary()}, chstate()) ->
-                               integer().
-responsible_index({Bucket, Key}, #chstate{chring=Ring}) ->
-    ChashKey = riak_core_util:chash_key({Bucket, Key}),
+%%      for a chash key.
+-spec responsible_index(chash:index(), chstate()) -> integer().
+responsible_index(ChashKey, #chstate{chring=Ring}) ->
     <<IndexAsInt:160/integer>> = ChashKey,
     chash:next_index(IndexAsInt, Ring).
 
