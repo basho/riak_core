@@ -167,13 +167,12 @@ prune_vclock1(V,Now,BProps) ->
 % @private
 prune_vclock1(V,Now,BProps,HeadTime) ->
     % has a precondition that V is longer than small and older than young
-    case length(V) > get_property(big_vclock,BProps) of
+    case (length(V) > get_property(big_vclock,BProps))
+	orelse
+	((Now - HeadTime) > get_property(old_vclock,BProps))
+	of
         true -> prune_vclock1(tl(V),Now,BProps);
-        false ->
-            case (Now - HeadTime) > get_property(old_vclock,BProps) of
-                true -> prune_vclock1(tl(V),Now,BProps);
-                false -> V
-            end
+        false -> V
     end.
 
 get_property(Key, PairList) ->
