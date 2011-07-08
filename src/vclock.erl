@@ -142,19 +142,9 @@ timestamp() ->
     calendar:datetime_to_gregorian_seconds(erlang:universaltime()).
 
 % @doc Compares two VClocks for equality.
-%      Not very fast.
 -spec equal(VClockA :: vclock(), VClockB :: vclock()) -> boolean().
 equal(VA,VB) ->
-    VSet1 = sets:from_list(VA),
-    VSet2 = sets:from_list(VB),
-    case sets:size(sets:subtract(VSet1,VSet2)) > 0 of
-        true -> false;
-        false ->
-            case sets:size(sets:subtract(VSet2,VSet1)) > 0 of
-                true -> false;
-                false -> true
-            end
-    end.
+    lists:sort(VA) =:= lists:sort(VB).
 
 % @doc Possibly shrink the size of a vclock, depending on current age and size.
 -spec prune(V::vclock(), Now::integer(), BucketProps::term()) -> vclock().
