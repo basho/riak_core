@@ -21,7 +21,6 @@
              riak_core_cinfo_core,
              riak_core_claim,
              riak_core_config,
-             riak_core_coverage_filter,
              riak_core_coverage_fsm,
              riak_core_coverage_plan,
              riak_core_eventhandler_guard,

@@ -75,31 +75,10 @@ command([{Index,Node}|Rest], Msg, Sender, VMaster) ->
 command({Index,Node}, Msg, Sender, VMaster) ->
     gen_server:cast({VMaster, Node}, make_request(Msg, Sender, Index)).
 
-coverage(?COVERAGE_REQ{args=Args,
-                       bucket=Bucket,
-                       filter=ItemFilter,
-                       modfun={Mod, Fun}},
-         {NodeIndexes, _, VNodeFilters}, ItemFilter, VMaster) ->
-    %% Send the request to the nodes involved in the coverage plan
-    NodeCastFun =
-        fun(Node) ->
-                %% Get the VNode indexes for the node
-                Indexes = proplists:get_value(Node, NodeIndexes),
-                %% Build a list of VNode tuples
-                VNodes = [{Index, Node} || Index <- Indexes],
-                %% Get the list of VNodes that require filtering
-                %% for this node.
-                FilterVNodes = proplists:get_value(Node, VNodeFilters),
-                %% Build the final filters for the node
-                Filters = riak_core_coverage_filter:build_filters(Bucket,
-                                                                  ItemFilter,
-                                                                  VNodes,
-                                                                  FilterVNodes),
-                gen_server:cast({VMaster, Node},
-                                ?NODE_REQ{indexes=Indexes,
-                                          request={Mod, Fun, Args, Filters}})
-        end,
-    [NodeCastFun(N) || N <- proplists:get_keys(NodeIndexes)].
+%% Send a command to a covering set of vnodes
+coverage(Msg, CoverageVNodes, FilterVNodes, VMaster) ->
+    [gen_server:cast({VMaster, Node}, make_request({Msg, FilterVNodes}, ignore, Index)) ||
+        {Index, Node} <- CoverageVNodes].
 
 %% Send the command to an individual Index/Node combination, but also
 %% return the pid for the vnode handling the request, as `{ok,
@@ -182,21 +161,21 @@ handle_cast(Req=?VNODE_REQ{index=Idx}, State) ->
     Pid = get_vnode(Idx, State),
     gen_fsm:send_event(Pid, Req),
     {noreply, State};
-handle_cast(?NODE_REQ{indexes=Indexes,
-                          request={Mod, Fun, Args, Filters}},
-            State) ->
-    EventFun =
-        fun(Index) ->
-                Filter = proplists:get_value(Index, Filters, none),
-                Pid = get_vnode(Index, State),
-                gen_fsm:send_event(Pid,
-                                   ?COVERAGE_VNODE_REQ{module=Mod,
-                                                       function=Fun,
-                                                       args=Args,
-                                                       filter=Filter})
-        end,
-    [EventFun(I) || I <- Indexes],
-    {noreply, State};
+%% handle_cast(?NODE_REQ{indexes=Indexes,
+%%                           request={Mod, Fun, Args, Filters}},
+%%             State) ->
+%%     EventFun =
+%%         fun(Index) ->
+%%                 Filter = proplists:get_value(Index, Filters, none),
+%%                 Pid = get_vnode(Index, State),
+%%                 gen_fsm:send_event(Pid,
+%%                                    ?COVERAGE_VNODE_REQ{module=Mod,
+%%                                                        function=Fun,
+%%                                                        args=Args,
+%%                                                        filter=Filter})
+%%         end,
+%%     [EventFun(I) || I <- Indexes],
+%%     {noreply, State};
 handle_cast(Other, State=#state{legacy=Legacy}) when Legacy =/= undefined ->
     case catch Legacy:rewrite_cast(Other) of
         {ok, ?VNODE_REQ{}=Req} ->

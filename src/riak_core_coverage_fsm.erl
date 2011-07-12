@@ -36,20 +36,29 @@
 %%      a 5 member tuple from their init function that looks
 %%      like this:
 %%
-%%         `{ok, ModFun, PrimaryVNodeCoverage,
-%%            NodeCheckService, VNodeMaster}'
+%%         `{Request, VNodeSelector, NVal, PrimaryVNodeCoverage, 
+%%          NodeCheckService, VNodeMaster, Timeout, State}'
 %%
 %%      The description of the tuple members is as follows:
 %%
 %%      <ul>
-%%      <li>ModFun - The function that will be called by each
-%%               VNode that is part of the coverage plan.</li>
+%%      <li>Request - An opaque data structure that is used by
+%%        the VNode to implement the specific coverage request.</li>
+%%      <li>VNodeSelector - Either the atom `all' to indicate that 
+%%        enough VNodes must be available to achieve a minimal 
+%%        covering set or `allup' to use whatever VNodes are
+%%        available even if they do not represent a fully covering
+%%        set.</li>
+%%      <li>NVal - Indicates the replication factor and is used to
+%%        accurately create a minimal covering set of VNodes.</li>
 %%      <li>PrimaryVNodeCoverage - The number of primary VNodes
 %%      from the preference list to use in creating the coverage
 %%      plan.</li>
 %%      <li>NodeCheckService - The service to use to check for available
 %%      nodes (e.g. riak_kv).</li>
 %%      <li>VNodeMaster - The atom to use to reach the vnode master module.</li>
+%%      <li>Timeout - The timeout interval for the coverage request.</li>
+%%      <li>State - The initial state for the module.</li>
 %%      </ul>
 -module(riak_core_coverage_fsm).
 -author('Kelly McLaughlin <kelly@basho.com>').
@@ -61,13 +70,12 @@
 %% API
 -export([behaviour_info/1]).
 
--export([start_link/6,
-         start_link/7]).
+-export([start_link/3]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 %% Test API
--export([test_link/9, test_link/7]).
+-export([test_link/5]).
 -endif.
 
 %% gen_fsm callbacks
@@ -83,28 +91,25 @@
 -spec behaviour_info(atom()) -> 'undefined' | [{atom(), arity()}].
 behaviour_info(callbacks) ->
     [
-     {init, 0},
-     {process_results, 3}
+     {init, 2},
+     {process_results, 2},
+     {finish, 2}
     ];
 behaviour_info(_) ->
     undefined.
 
--type bucket() :: all | binary().
--type filter() :: none | fun() | [mfa()].
 -type req_id() :: non_neg_integer().
--type modfun() :: {module(), fun()}.
 -type from() :: {raw, req_id(), pid()}.
 
--record(state, {args :: [term()],
-                bucket :: bucket(),
-                client_type :: atom(),
-                coverage_vnodes :: [{non_neg_integer(), node()}],
-                filter :: filter(),
-                from :: from(),
+-record(state, {coverage_vnodes :: [{non_neg_integer(), node()}],
                 mod :: atom(),
-                modfun :: modfun(),
+                mod_state :: tuple(),
+                n_val :: pos_integer(),
                 node_check_service :: module(),
+                vnode_selector :: all | allup,
                 pvc :: all | pos_integer(), % primary vnode coverage
+                request :: tuple(),
+                req_id :: req_id(),
                 required_responses :: pos_integer(),
                 response_count=0 :: non_neg_integer(),
                 timeout :: timeout(),
@@ -116,50 +121,27 @@ behaviour_info(_) ->
 %% ===================================================================
 
 %% @doc Start a riak_core_coverage_fsm.
--spec start_link(module(), from(), filter(), list(), timeout(), atom()) ->
+-spec start_link(module(), from(), [term()]) ->
                         {ok, pid()} | ignore | {error, term()}.
-start_link(Mod, From, ItemFilter, RequestArgs, Timeout, ClientType) ->
-    start_link(Mod, From, all, ItemFilter, RequestArgs, Timeout, ClientType).
-
-%% @doc Start a riak_core_coverage_fsm.
--spec start_link(module(), from(), bucket(), filter(), list(), timeout(), atom()) ->
-                        {ok, pid()} | ignore | {error, term()}.
-start_link(Mod, From, Bucket, ItemFilter, RequestArgs, Timeout, ClientType) ->
-    gen_fsm:start_link(?MODULE,
-                  [Mod, From, Bucket, ItemFilter, RequestArgs, Timeout, ClientType], []).
+start_link(Mod, From, RequestArgs) ->
+    gen_fsm:start_link(?MODULE, [Mod, From, RequestArgs], []).
 
 %% ===================================================================
 %% Test API
 %% ===================================================================
 
 -ifdef(TEST).
-%% Create a coverage FSM for testing. StateProps must include
-%% starttime - start time in gregorian seconds
-%% n - N-value for request (is grabbed from bucket props in prepare)
-%% bucket_props - bucket properties
-%% preflist2 - [{{Idx,Node},primary|fallback}] preference list
-%%
-test_link(Mod, ReqId, Bucket, ItemFilter, RequestArgs, R, Timeout, From, StateProps) ->
-    test_link(Mod,
-              {raw, ReqId, From},
-              Bucket,
-              ItemFilter,
-              RequestArgs,
-              [{r, R}, {timeout, Timeout}],
-              StateProps).
 
-test_link(Mod, From, Bucket, ItemFilter, RequestArgs, _Options, StateProps) ->
+%% Create a coverage FSM for testing.
+test_link(Mod, From, RequestArgs, _Options, StateProps) ->
     Timeout = 60000,
     ClientType = plain,
     gen_fsm:start_link(?MODULE, 
                        {test, 
                         [Mod, 
                          From, 
-                         Bucket,
-                         ItemFilter,
                          RequestArgs,
-                         Timeout,
-                         ClientType],
+                         Timeout],
                         StateProps},
                        []).
 
@@ -171,38 +153,21 @@ test_link(Mod, From, Bucket, ItemFilter, RequestArgs, _Options, StateProps) ->
 
 %% @private
 init([Mod,
-      From={raw, ReqId, ClientPid},
-      Bucket,
-      ItemFilter,
-      RequestArgs,
-      Timeout,
-      ClientType]) ->
-    {ok, ModFun, PrimaryVnodeCoverage, NodeCheckService, VNodeMaster} =
-        Mod:init(),
-    case Bucket of
-        all ->
-            Args = [self(), ReqId] ++ RequestArgs;
-        _ ->
-            Args = [self(), ReqId, Bucket] ++ RequestArgs
-    end,
-    StateData = #state{args=Args,
-                       bucket=Bucket,
-                       client_type=ClientType,
-                       filter=ItemFilter,
-                       from=From,
-                       mod=Mod,
-                       modfun=ModFun,
+      From={raw, ReqId, _},
+      RequestArgs]) ->
+    {Request, VNodeSelector, NVal, PrimaryVNodeCoverage, 
+     NodeCheckService, VNodeMaster, Timeout, ModState} =
+        Mod:init(From, RequestArgs),
+    StateData = #state{mod=Mod,
+                       mod_state=ModState,
                        node_check_service=NodeCheckService,
-                       pvc = PrimaryVnodeCoverage,
+                       vnode_selector=VNodeSelector,
+                       n_val=NVal,
+                       pvc = PrimaryVNodeCoverage,
+                       request=Request,
+                       req_id=ReqId,
                        timeout=Timeout,
                        vnode_master=VNodeMaster},
-    case ClientType of
-        %% Link to the mapred job so we die if the job dies
-        mapred ->
-            link(ClientPid);
-        _ ->
-            ok
-    end,
     {ok, initialize, StateData, 0};
 init({test, Args, StateProps}) ->
     %% Call normal init
@@ -222,31 +187,28 @@ init({test, Args, StateProps}) ->
     {ok, waiting_results, TestStateData, 0}.
 
 %% @private
-initialize(timeout, StateData0=#state{args=Args,
-                                      bucket=Bucket,
-                                      filter=ItemFilter,
-                                      from={_, ReqId, _},
-                                      modfun=ModFun,
+initialize(timeout, StateData0=#state{mod=Mod,
+                                      mod_state=ModState,
+                                      n_val=NVal,
                                       node_check_service=NodeCheckService,
+                                      vnode_selector=VNodeSelector,
                                       pvc=PVC,
+                                      request=Request,
+                                      req_id=ReqId,
                                       timeout=Timeout,
                                       vnode_master=VNodeMaster}) ->
-    Request = ?COVERAGE_REQ{args=Args,
-                            bucket=Bucket,
-                            filter=ItemFilter,
-                            modfun=ModFun,
-                            req_id=ReqId},
-    CoveragePlan = riak_core_coverage_plan:create_plan(Bucket,
+    CoveragePlan = riak_core_coverage_plan:create_plan(VNodeSelector,
+                                                       NVal,
                                                        PVC,
                                                        ReqId,
                                                        NodeCheckService),
     case CoveragePlan of
         {error, Reason} ->
-            finish({error, Reason}, StateData0);
-        {_, CoverageVNodes, _} ->
+            Mod:finish({error, Reason}, ModState);
+        {CoverageVNodes, FilterVNodes} ->
             riak_core_vnode_master:coverage(Request,
-                                            CoveragePlan,
-                                            ItemFilter,
+                                            CoverageVNodes,
+                                            FilterVNodes,
                                             VNodeMaster),
             StateData = StateData0#state{coverage_vnodes=CoverageVNodes},
             {next_state, waiting_results, StateData, Timeout}
@@ -254,36 +216,38 @@ initialize(timeout, StateData0=#state{args=Args,
 
 %% @private
 waiting_results({ReqId, {results, VNode, Results}},
-           StateData=#state{client_type=ClientType,
-                            coverage_vnodes=CoverageVNodes,
-                            from=From={raw, ReqId, _},
+           StateData=#state{coverage_vnodes=CoverageVNodes,
                             mod=Mod,
+                            mod_state=ModState,
+                            req_id=ReqId,
                             timeout=Timeout}) ->
     case lists:member(VNode, CoverageVNodes) of
         true -> % Received an expected response from a Vnode
-            Mod:process_results(Results, ClientType, From);
+            UpdModState = Mod:process_results(Results, ModState),
+            UpdStateData = StateData#state{mod_state=UpdModState};
         false -> % Ignore a response from a VNode that
                  % is not part of the coverage plan
-           ignore
+           UpdStateData = StateData
     end,
-    {next_state, waiting_results, StateData, Timeout};
+    {next_state, waiting_results, UpdStateData, Timeout};
 waiting_results({ReqId, {final_results, VNode, Results}},
-           StateData=#state{client_type=ClientType,
-                            coverage_vnodes=CoverageVNodes,
-                            from=From={raw, ReqId, _},
+           StateData=#state{coverage_vnodes=CoverageVNodes,
                             mod=Mod,
+                            mod_state=ModState,
+                            req_id=ReqId,
                             timeout=Timeout}) ->
     case lists:member(VNode, CoverageVNodes) of
         true -> % Received an expected response from a Vnode
-            Mod:process_results(Results, ClientType, From),
+            UpdModState = Mod:process_results(Results, ModState),
             UpdatedVNodes = lists:delete(VNode, CoverageVNodes),
             case UpdatedVNodes of
                 [] ->
-                    finish(clean, StateData);
+                    Mod:finish(clean, UpdModState);
                 _ ->
                     {next_state,
                      waiting_results,
-                     StateData#state{coverage_vnodes=UpdatedVNodes},
+                     StateData#state{coverage_vnodes=UpdatedVNodes,
+                                     mod_state=UpdModState},
                      Timeout}
             end;
         false -> % Ignore a response from a VNode that
@@ -293,8 +257,9 @@ waiting_results({ReqId, {final_results, VNode, Results}},
              StateData#state{timeout=Timeout},
              Timeout}
     end;
-waiting_results(timeout, StateData) ->
-    finish({error, timeout}, StateData).
+waiting_results(timeout, #state{mod=Mod,
+                                mod_state=ModState}) ->
+    Mod:finish({error, timeout}, ModState).
 
 %% @private
 handle_event(_Event, _StateName, State) ->
@@ -305,8 +270,9 @@ handle_sync_event(_Event, _From, StateName, State) ->
     {next_state, StateName, State}.
 
 %% @private
-handle_info({'EXIT', _Pid, Reason}, _StateName, StateData) ->
-    finish({error, {node_failure, Reason}}, StateData);
+handle_info({'EXIT', _Pid, Reason}, _StateName, #state{mod=Mod,
+                                                       mod_state=ModState}) ->
+    Mod:finish({error, {node_failure, Reason}}, ModState);
 handle_info({_ReqId, {ok, _Pid}},
             StateName,
             StateData=#state{timeout=Timeout}) ->
@@ -324,34 +290,3 @@ terminate(Reason, _StateName, _State) ->
 %% @private
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
-
-%% ====================================================================
-%% Internal functions
-%% ====================================================================
-
-%% @private
-finish({error, Error},
-       StateData=#state{from={raw, ReqId, ClientPid},
-                        client_type=ClientType}) ->
-    case ClientType of
-        mapred ->
-            %% An error occurred or the timeout interval elapsed
-            %% so all we can do now is die so that the rest of the
-            %% MapReduce processes will also die and be cleaned up.
-            exit(Error);
-        plain ->
-            %% Notify the requesting client that an error
-            %% occurred or the timeout has elapsed.
-            ClientPid ! {ReqId, Error}
-    end,
-    {stop,normal,StateData};
-finish(clean,
-       StateData=#state{from={raw, ReqId, ClientPid},
-                        client_type=ClientType}) ->
-    case ClientType of
-        mapred ->
-            luke_flow:finish_inputs(ClientPid);
-        plain ->
-            ClientPid ! {ReqId, done}
-    end,
-    {stop,normal,StateData}.
