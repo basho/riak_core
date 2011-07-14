@@ -219,7 +219,7 @@ handle_call({ring_trans, Fun, Args}, _From, State) ->
         ignore ->
             {reply, not_changed, State};
         Other ->
-            error_logger:error_msg("ring_trans: invalid return value: ~p~n", 
+            lager:error("ring_trans: invalid return value: ~p", 
                                    [Other]),
             {reply, not_changed, State}
     end.

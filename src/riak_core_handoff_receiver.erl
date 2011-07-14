@@ -68,19 +68,19 @@ handle_call({set_socket, Socket0}, _From, State = #state{ssl_opts = SslOpts}) ->
     {reply, ok, State#state { sock = Socket }}.
 
 handle_info({tcp_closed,_Socket},State=#state{partition=Partition,count=Count}) ->
-    error_logger:info_msg("Handoff receiver for partition ~p exiting after processing ~p"
-                          " objects~n", [Partition, Count]),
+    lager:info("Handoff receiver for partition ~p exiting after processing ~p"
+                          " objects", [Partition, Count]),
     {stop, normal, State};
 handle_info({tcp_error, _Socket, _Reason}, State=#state{partition=Partition,count=Count}) ->
-    error_logger:info_msg("Handoff receiver for partition ~p exiting after processing ~p"
-                          " objects~n", [Partition, Count]),
+    lager:info("Handoff receiver for partition ~p exiting after processing ~p"
+                          " objects", [Partition, Count]),
     {stop, normal, State};
 handle_info({tcp, Socket, Data}, State) ->
     [MsgType|MsgData] = Data,
     case catch(process_message(MsgType, MsgData, State)) of
         {'EXIT', Reason} ->
-            error_logger:error_msg("Handoff receiver for partition ~p exiting abnormally after "
-                                   "processing ~p objects: ~p\n", [State#state.partition, State#state.count, Reason]),
+            lager:error("Handoff receiver for partition ~p exiting abnormally after "
+                                   "processing ~p objects: ~p", [State#state.partition, State#state.count, Reason]),
             {stop, normal, State};
         NewState when is_record(NewState, state) ->
             InetMod = if NewState#state.ssl_opts /= [] -> ssl;
@@ -98,7 +98,7 @@ handle_info({ssl, Socket, Data}, State) ->
 
 process_message(?PT_MSG_INIT, MsgData, State=#state{vnode_mod=VNodeMod}) ->
     <<Partition:160/integer>> = MsgData,
-    error_logger:info_msg("Receiving handoff data for partition ~p:~p~n", [VNodeMod, Partition]),
+    lager:info("Receiving handoff data for partition ~p:~p", [VNodeMod, Partition]),
     {ok, VNode} = riak_core_vnode_master:get_vnode_pid(Partition, VNodeMod),
     State#state{partition=Partition, vnode=VNode};
 process_message(?PT_MSG_OBJ, MsgData, State=#state{vnode=VNode, count=Count}) ->

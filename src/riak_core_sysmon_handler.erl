@@ -82,11 +82,11 @@ init([]) ->
 %%--------------------------------------------------------------------
 handle_event({monitor, Pid, Type, Info}, State) ->
     Pretty = format_pretty_proc_info(Pid, almost_current_function),
-    error_logger:info_msg("monitor ~w ~w ~s ~w\n",
+    lager:info("monitor ~w ~w ~s ~w",
                           [Type, Pid, Pretty, Info]),
     {ok, State};
 handle_event(Event, State) ->
-    error_logger:info_msg("Monitor ~p\n", [Event]),
+    lager:info("Monitor ~p", [Event]),
     {ok, State}.
 
 %%--------------------------------------------------------------------
@@ -123,7 +123,7 @@ handle_info(die_for_testing_purposes_only, _State) ->
     %% exit({told_to_die, lists:duplicate(500000, $x)});
     exit({told_to_die, lists:duplicate(50, $x)});
 handle_info(Info, State) ->
-    error_logger:info_msg("handle_info got ~p\n", [Info]),
+    lager:info("handle_info got ~p", [Info]),
     {ok, State}.
 
 %%--------------------------------------------------------------------

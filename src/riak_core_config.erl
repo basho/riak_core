@@ -58,9 +58,9 @@ http_ip_and_port() ->
                 WebPort == undefined ->
                     error;
                 true ->
-                    error_logger:info_msg("Found HTTP config for riak_core using pre-0.14 config "
-                                          "values; please update the config file to use new HTTP "
-                                          "binding configuration values.\n"),
+                    lager:info("Found HTTP config for riak_core using pre-0.14 config "
+                        "values; please update the config file to use new HTTP "
+                        "binding configuration values."),
                     {WebIp, WebPort}
             end
     end.

@@ -36,7 +36,7 @@ start_link(TargetNode, Module, Partition) ->
 
 start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
      try
-         error_logger:info_msg("Starting handoff of partition ~p ~p to ~p~n", 
+         lager:info("Starting handoff of partition ~p ~p to ~p", 
                                [Module, Partition, TargetNode]),
          [_Name,Host] = string:tokens(atom_to_list(TargetNode), "@"),
          {ok, Port} = get_handoff_port(TargetNode),
@@ -73,9 +73,9 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
          EndFoldTime = now(),
          case ErrStatus of
              ok ->
-                 error_logger:info_msg("Handoff of partition ~p ~p to ~p "
+                 lager:info("Handoff of partition ~p ~p to ~p "
                                        "completed: sent ~p objects in ~.2f "
-                                       "seconds\n", 
+                                       "seconds", 
                                        [Module, Partition, TargetNode, 
                                         SentCount,
                                         timer:now_diff(
@@ -83,9 +83,9 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
                                           StartFoldTime) / 1000000]),
                  gen_fsm:send_event(ParentPid, handoff_complete);
              {error, ErrReason} ->
-                 error_logger:error_msg("Handoff of partition ~p ~p to ~p "
+                 lager:error("Handoff of partition ~p ~p to ~p "
                                         "FAILED: (~p) after sending ~p objects "
-                                        "in ~.2f seconds\n", 
+                                        "in ~.2f seconds", 
                                         [Module, Partition, TargetNode, 
                                          ErrReason, SentCount,
                                          timer:now_diff(
@@ -96,7 +96,7 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
          end
      catch
          Err:Reason ->
-             error_logger:error_msg("Handoff sender ~p ~p failed ~p:~p\n", 
+             lager:error("Handoff sender ~p ~p failed ~p:~p", 
                                     [Module, Partition, Err,Reason]),
              gen_fsm:send_event(ParentPid, {handoff_error, Err, Reason})
      end.
@@ -154,15 +154,15 @@ get_handoff_ssl_options() ->
                 Props
             catch
                 error:{badmatch, {FailProp, BadMat}} ->
-                    error_logger:error_msg("riak_core handoff_ssl_options "
+                    lager:error("riak_core handoff_ssl_options "
                                            "config error: property ~p: ~p.  "
-                                           "Disabling handoff SSL\n",
+                                           "Disabling handoff SSL",
                                            [FailProp, BadMat]),
                     [];
                 X:Y ->
-                    error_logger:error_msg("riak_core handoff_ssl_options "
+                    lager:error("riak_core handoff_ssl_options "
                                            "failure {~p, ~p} processing config "
-                                           "~p.  Disabling handoff SSL\n",
+                                           "~p.  Disabling handoff SSL",
                                            [X, Y, Props]),
                     []
             end
