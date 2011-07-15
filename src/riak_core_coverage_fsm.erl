@@ -112,6 +112,7 @@ behaviour_info(_) ->
                 req_id :: req_id(),
                 required_responses :: pos_integer(),
                 response_count=0 :: non_neg_integer(),
+                sender :: {fsm, req_id(), pid()},
                 timeout :: timeout(),
                 vnode_master :: atom()
                }).
@@ -155,7 +156,7 @@ test_link(Mod, From, RequestArgs, _Options, StateProps) ->
 init([Mod,
       From={raw, ReqId, _},
       RequestArgs]) ->
-    {Request, VNodeSelector, NVal, PrimaryVNodeCoverage, 
+    {Request, Sender, VNodeSelector, NVal, PrimaryVNodeCoverage, 
      NodeCheckService, VNodeMaster, Timeout, ModState} =
         Mod:init(From, RequestArgs),
     StateData = #state{mod=Mod,
@@ -166,6 +167,7 @@ init([Mod,
                        pvc = PrimaryVNodeCoverage,
                        request=Request,
                        req_id=ReqId,
+                       sender=Sender,
                        timeout=Timeout,
                        vnode_master=VNodeMaster},
     {ok, initialize, StateData, 0};
@@ -195,6 +197,7 @@ initialize(timeout, StateData0=#state{mod=Mod,
                                       pvc=PVC,
                                       request=Request,
                                       req_id=ReqId,
+                                      sender=Sender,
                                       timeout=Timeout,
                                       vnode_master=VNodeMaster}) ->
     CoveragePlan = riak_core_coverage_plan:create_plan(VNodeSelector,
@@ -209,6 +212,7 @@ initialize(timeout, StateData0=#state{mod=Mod,
             riak_core_vnode_master:coverage(Request,
                                             CoverageVNodes,
                                             FilterVNodes,
+                                            Sender,
                                             VNodeMaster),
             StateData = StateData0#state{coverage_vnodes=CoverageVNodes},
             {next_state, waiting_results, StateData, Timeout}

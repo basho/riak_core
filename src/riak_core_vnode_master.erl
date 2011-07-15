@@ -27,7 +27,7 @@
 -behaviour(gen_server).
 -export([start_link/1, start_link/2, get_vnode_pid/2,
          start_vnode/2, command/3, command/4, sync_command/3,
-         coverage/4,
+         coverage/5,
          command_return_vnode/4,
          sync_command/4,
          sync_spawn_command/3, make_request/3,
@@ -76,8 +76,8 @@ command({Index,Node}, Msg, Sender, VMaster) ->
     gen_server:cast({VMaster, Node}, make_request(Msg, Sender, Index)).
 
 %% Send a command to a covering set of vnodes
-coverage(Msg, CoverageVNodes, FilterVNodes, VMaster) ->
-    [gen_server:cast({VMaster, Node}, make_request({Msg, FilterVNodes}, ignore, Index)) ||
+coverage(Msg, CoverageVNodes, FilterVNodes, Sender, VMaster) ->
+    [gen_server:cast({VMaster, Node}, make_request({Msg, FilterVNodes}, Sender, Index)) ||
         {Index, Node} <- CoverageVNodes].
 
 %% Send the command to an individual Index/Node combination, but also
