@@ -43,7 +43,7 @@ start(_StartType, _StartArgs) ->
         ok ->
             ok;
         {error, RingReason} ->
-            lager:error(
+            lager:alert(
               "Ring state directory ~p does not exist, "
               "and could not be created. (reason: ~p)",
               [RingStateDir, RingReason]),
@@ -72,13 +72,19 @@ start(_StartType, _StartArgs) ->
             riak_core_ring_manager:prune_ringfiles(),
             case riak_core_ring_manager:find_latest_ringfile() of
                 {ok, RingFile} ->
-                    Ring = riak_core_ring_manager:read_ringfile(RingFile),
-                    riak_core_ring_manager:set_my_ring(Ring);
+                    case riak_core_ring_manager:read_ringfile(RingFile) of
+                        {error, Reason} ->
+                            lager:critical("Failed to read ring file: ~p",
+                                [Reason]),
+                            throw({error, Reason});
+                        Ring ->
+                            riak_core_ring_manager:set_my_ring(Ring)
+                    end;
                 {error, not_found} ->
                     riak_core_ring_manager:write_ringfile(),
                     lager:warning("No ring file available.");
                 {error, Reason} ->
-                    lagerr:error("Failed to load ring file: ~p", [Reason]),
+                    lager:critical("Failed to load ring file: ~p", [Reason]),
                     throw({error, Reason})
             end,
             {ok, Pid};

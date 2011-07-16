@@ -154,16 +154,14 @@ get_handoff_ssl_options() ->
                 Props
             catch
                 error:{badmatch, {FailProp, BadMat}} ->
-                    lager:error("riak_core handoff_ssl_options "
-                                           "config error: property ~p: ~p.  "
-                                           "Disabling handoff SSL",
-                                           [FailProp, BadMat]),
+                    lager:error("Config error: property ~p: ~p.  "
+                                "Disabling handoff SSL",
+                                [FailProp, BadMat]),
                     [];
                 X:Y ->
-                    lager:error("riak_core handoff_ssl_options "
-                                           "failure {~p, ~p} processing config "
-                                           "~p.  Disabling handoff SSL",
-                                           [X, Y, Props]),
+                    lager:error("Failure {~p, ~p} processing config "
+                                "~p.  Disabling handoff SSL",
+                                [X, Y, Props]),
                     []
             end
     end.
