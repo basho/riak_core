@@ -42,8 +42,8 @@
 
 %% @doc Create a coverage plan to distribute work to a set
 %%      covering VNodes around the ring.
--spec create_plan(VNodeSelector :: all | allup, NVal :: pos_integer(),
-                  PVC :: pos_integer(), ReqId :: req_id(), Service :: atom()) ->
+-spec create_plan(all | allup, pos_integer(), pos_integer(), 
+                  req_id(), atom()) ->
                          {error, term()} | coverage_plan().
 create_plan(VNodeSelector, NVal, PVC, ReqId, Service) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
