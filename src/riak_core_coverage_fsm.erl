@@ -219,42 +219,29 @@ initialize(timeout, StateData0=#state{mod=Mod,
     end.
 
 %% @private
-waiting_results({ReqId, {done, VNode}},
-           StateData=#state{coverage_vnodes=CoverageVNodes,
-                            mod=Mod,
-                            mod_state=ModState,
-                            req_id=ReqId,
-                            timeout=Timeout}) ->
-    case lists:member(VNode, CoverageVNodes) of
-        true -> % Received an expected response from a Vnode
-            UpdatedVNodes = lists:delete(VNode, CoverageVNodes),
-            case UpdatedVNodes of
-                [] ->
-                    Mod:finish(clean, ModState);
-                _ ->
-                    {next_state,
-                     waiting_results,
-                     StateData#state{coverage_vnodes=UpdatedVNodes},
-                     Timeout}
-            end;
-        false -> % Ignore a response from a VNode that
-                 % is not part of the coverage plan
-            {next_state,
-             waiting_results,
-             StateData#state{timeout=Timeout},
-             Timeout}
-    end;
 waiting_results({ReqId, Results},
            StateData=#state{coverage_vnodes=CoverageVNodes,
                             mod=Mod,
                             mod_state=ModState,
                             req_id=ReqId,
                             timeout=Timeout}) ->
-    UpdModState = Mod:process_results(Results, CoverageVNodes, ModState),
-    UpdStateData = StateData#state{mod_state=UpdModState},
-    {next_state, waiting_results, UpdStateData, Timeout};
-waiting_results(timeout, #state{mod=Mod,
-                                mod_state=ModState}) ->
+    case Mod:process_results(Results, CoverageVNodes, ModState) of
+        {done, VNode, UpdModState} ->
+            UpdatedVNodes = lists:delete(VNode, CoverageVNodes),
+            case UpdatedVNodes of
+                [] ->
+                    Mod:finish(clean, UpdModState);
+                _ ->
+                    {next_state,
+                     waiting_results,
+                     StateData#state{coverage_vnodes=UpdatedVNodes},
+                     Timeout}
+            end;
+        UpdModState ->
+            UpdStateData = StateData#state{mod_state=UpdModState},
+            {next_state, waiting_results, UpdStateData, Timeout}
+    end;
+waiting_results(timeout, #state{mod=Mod, mod_state=ModState}) ->
     Mod:finish({error, timeout}, ModState).
 
 %% @private
