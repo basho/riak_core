@@ -226,6 +226,9 @@ waiting_results({ReqId, Results},
                             req_id=ReqId,
                             timeout=Timeout}) ->
     case Mod:process_results(Results, CoverageVNodes, ModState) of
+        {ok, UpdModState} ->
+            UpdStateData = StateData#state{mod_state=UpdModState},
+            {next_state, waiting_results, UpdStateData, Timeout};
         {done, VNode, UpdModState} ->
             UpdatedVNodes = lists:delete(VNode, CoverageVNodes),
             case UpdatedVNodes of
@@ -236,10 +239,7 @@ waiting_results({ReqId, Results},
                      waiting_results,
                      StateData#state{coverage_vnodes=UpdatedVNodes},
                      Timeout}
-            end;
-        UpdModState ->
-            UpdStateData = StateData#state{mod_state=UpdModState},
-            {next_state, waiting_results, UpdStateData, Timeout}
+            end
     end;
 waiting_results(timeout, #state{mod=Mod, mod_state=ModState}) ->
     Mod:finish({error, timeout}, ModState).
