@@ -36,7 +36,7 @@
 %%      a 5 member tuple from their init function that looks
 %%      like this:
 %%
-%%         `{Request, VNodeSelector, NVal, PrimaryVNodeCoverage, 
+%%         `{Request, VNodeSelector, NVal, PrimaryVNodeCoverage,
 %%          NodeCheckService, VNodeMaster, Timeout, State}'
 %%
 %%      The description of the tuple members is as follows:
@@ -44,8 +44,8 @@
 %%      <ul>
 %%      <li>Request - An opaque data structure that is used by
 %%        the VNode to implement the specific coverage request.</li>
-%%      <li>VNodeSelector - Either the atom `all' to indicate that 
-%%        enough VNodes must be available to achieve a minimal 
+%%      <li>VNodeSelector - Either the atom `all' to indicate that
+%%        enough VNodes must be available to achieve a minimal
 %%        covering set or `allup' to use whatever VNodes are
 %%        available even if they do not represent a fully covering
 %%        set.</li>
@@ -92,7 +92,7 @@
 behaviour_info(callbacks) ->
     [
      {init, 2},
-     {process_results, 2},
+     {process_results, 3},
      {finish, 2}
     ];
 behaviour_info(_) ->
@@ -137,10 +137,10 @@ start_link(Mod, From, RequestArgs) ->
 test_link(Mod, From, RequestArgs, _Options, StateProps) ->
     Timeout = 60000,
     ClientType = plain,
-    gen_fsm:start_link(?MODULE, 
-                       {test, 
-                        [Mod, 
-                         From, 
+    gen_fsm:start_link(?MODULE,
+                       {test,
+                        [Mod,
+                         From,
                          RequestArgs,
                          Timeout],
                         StateProps},
@@ -156,7 +156,7 @@ test_link(Mod, From, RequestArgs, _Options, StateProps) ->
 init([Mod,
       From={raw, ReqId, _},
       RequestArgs]) ->
-    {Request, Sender, VNodeSelector, NVal, PrimaryVNodeCoverage, 
+    {Request, Sender, VNodeSelector, NVal, PrimaryVNodeCoverage,
      NodeCheckService, VNodeMaster, Timeout, ModState} =
         Mod:init(From, RequestArgs),
     StateData = #state{mod=Mod,
@@ -219,7 +219,7 @@ initialize(timeout, StateData0=#state{mod=Mod,
     end.
 
 %% @private
-waiting_results({ReqId, {results, VNode, Results}},
+waiting_results({ReqId, {done, VNode}},
            StateData=#state{coverage_vnodes=CoverageVNodes,
                             mod=Mod,
                             mod_state=ModState,
@@ -227,31 +227,14 @@ waiting_results({ReqId, {results, VNode, Results}},
                             timeout=Timeout}) ->
     case lists:member(VNode, CoverageVNodes) of
         true -> % Received an expected response from a Vnode
-            UpdModState = Mod:process_results(Results, ModState),
-            UpdStateData = StateData#state{mod_state=UpdModState};
-        false -> % Ignore a response from a VNode that
-                 % is not part of the coverage plan
-           UpdStateData = StateData
-    end,
-    {next_state, waiting_results, UpdStateData, Timeout};
-waiting_results({ReqId, {final_results, VNode, Results}},
-           StateData=#state{coverage_vnodes=CoverageVNodes,
-                            mod=Mod,
-                            mod_state=ModState,
-                            req_id=ReqId,
-                            timeout=Timeout}) ->
-    case lists:member(VNode, CoverageVNodes) of
-        true -> % Received an expected response from a Vnode
-            UpdModState = Mod:process_results(Results, ModState),
             UpdatedVNodes = lists:delete(VNode, CoverageVNodes),
             case UpdatedVNodes of
                 [] ->
-                    Mod:finish(clean, UpdModState);
+                    Mod:finish(clean, ModState);
                 _ ->
                     {next_state,
                      waiting_results,
-                     StateData#state{coverage_vnodes=UpdatedVNodes,
-                                     mod_state=UpdModState},
+                     StateData#state{coverage_vnodes=UpdatedVNodes},
                      Timeout}
             end;
         false -> % Ignore a response from a VNode that
@@ -261,6 +244,15 @@ waiting_results({ReqId, {final_results, VNode, Results}},
              StateData#state{timeout=Timeout},
              Timeout}
     end;
+waiting_results({ReqId, Results},
+           StateData=#state{coverage_vnodes=CoverageVNodes,
+                            mod=Mod,
+                            mod_state=ModState,
+                            req_id=ReqId,
+                            timeout=Timeout}) ->
+    UpdModState = Mod:process_results(Results, CoverageVNodes, ModState),
+    UpdStateData = StateData#state{mod_state=UpdModState},
+    {next_state, waiting_results, UpdStateData, Timeout};
 waiting_results(timeout, #state{mod=Mod,
                                 mod_state=ModState}) ->
     Mod:finish({error, timeout}, ModState).
