@@ -31,7 +31,7 @@ stop() -> stop("riak stop requested").
 
 -ifdef(TEST).
 stop(Reason) ->
-    lager:info("~p", [Reason]),
+    lager:notice("~p", [Reason]),
     % if we're in test mode, we don't want to halt the node, so instead
     % we just stop the application.
     application:stop(riak_core).
@@ -39,7 +39,7 @@ stop(Reason) ->
 stop(Reason) ->
     % we never do an application:stop because that makes it very hard
     %  to really halt the runtime, which is what we need here.
-    lager:info("~p", [Reason]),
+    lager:notice("~p", [Reason]),
     init:stop().
 -endif.
 
