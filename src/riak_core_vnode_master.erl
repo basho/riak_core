@@ -161,21 +161,6 @@ handle_cast(Req=?VNODE_REQ{index=Idx}, State) ->
     Pid = get_vnode(Idx, State),
     gen_fsm:send_event(Pid, Req),
     {noreply, State};
-%% handle_cast(?NODE_REQ{indexes=Indexes,
-%%                           request={Mod, Fun, Args, Filters}},
-%%             State) ->
-%%     EventFun =
-%%         fun(Index) ->
-%%                 Filter = proplists:get_value(Index, Filters, none),
-%%                 Pid = get_vnode(Index, State),
-%%                 gen_fsm:send_event(Pid,
-%%                                    ?COVERAGE_VNODE_REQ{module=Mod,
-%%                                                        function=Fun,
-%%                                                        args=Args,
-%%                                                        filter=Filter})
-%%         end,
-%%     [EventFun(I) || I <- Indexes],
-%%     {noreply, State};
 handle_cast(Other, State=#state{legacy=Legacy}) when Legacy =/= undefined ->
     case catch Legacy:rewrite_cast(Other) of
         {ok, ?VNODE_REQ{}=Req} ->
