@@ -71,6 +71,7 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
                                                     acc0={Socket,ParentPid,Module,TcpMod,0,0,ok}},
                                                  VMaster, infinity),
          EndFoldTime = now(),
+         FoldTimeDiff = timer:now_diff(EndFoldTime, StartFoldTime) / 1000000,
          case ErrStatus of
              ok ->
                  lager:info("Handoff of partition ~p ~p to ~p "
@@ -78,19 +79,15 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
                                        "seconds", 
                                        [Module, Partition, TargetNode, 
                                         SentCount,
-                                        timer:now_diff(
-                                          EndFoldTime, 
-                                          StartFoldTime) / 1000000]),
+                                        FoldTimeDiff]),
                  gen_fsm:send_event(ParentPid, handoff_complete);
              {error, ErrReason} ->
                  lager:error("Handoff of partition ~p ~p to ~p "
-                                        "FAILED: (~p) after sending ~p objects "
-                                        "in ~.2f seconds", 
+                                        "FAILED after sending ~p objects "
+                                        "in ~.2f seconds: ~p", 
                                         [Module, Partition, TargetNode, 
-                                         ErrReason, SentCount,
-                                         timer:now_diff(
-                                           EndFoldTime, 
-                                           StartFoldTime) / 1000000]),
+                                         SentCount, FoldTimeDiff,
+                                         ErrReason]),
                  gen_fsm:send_event(ParentPid, {handoff_error, 
                                                 fold_error, ErrReason})
          end
@@ -154,14 +151,13 @@ get_handoff_ssl_options() ->
                 Props
             catch
                 error:{badmatch, {FailProp, BadMat}} ->
-                    lager:error("Config error: property ~p: ~p.  "
-                                "Disabling handoff SSL",
+                    lager:error("SSL handoff config error: property ~p: ~p.",
                                 [FailProp, BadMat]),
                     [];
                 X:Y ->
-                    lager:error("Failure {~p, ~p} processing config "
-                                "~p.  Disabling handoff SSL",
-                                [X, Y, Props]),
+                    lager:error("Failure processing SSL handoff config "
+                                "~p: ~p:~p",
+                                [Props, X, Y]),
                     []
             end
     end.

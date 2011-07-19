@@ -68,18 +68,18 @@ handle_call({set_socket, Socket0}, _From, State = #state{ssl_opts = SslOpts}) ->
     {reply, ok, State#state { sock = Socket }}.
 
 handle_info({tcp_closed,_Socket},State=#state{partition=Partition,count=Count}) ->
-    lager:info("Handoff receiver for partition ~p exiting after processing ~p"
+    lager:info("Handoff receiver for partition ~p exited after processing ~p"
                           " objects", [Partition, Count]),
     {stop, normal, State};
 handle_info({tcp_error, _Socket, _Reason}, State=#state{partition=Partition,count=Count}) ->
-    lager:info("Handoff receiver for partition ~p exiting after processing ~p"
+    lager:info("Handoff receiver for partition ~p exited after processing ~p"
                           " objects", [Partition, Count]),
     {stop, normal, State};
 handle_info({tcp, Socket, Data}, State) ->
     [MsgType|MsgData] = Data,
     case catch(process_message(MsgType, MsgData, State)) of
         {'EXIT', Reason} ->
-            lager:error("Handoff receiver for partition ~p exiting abnormally after "
+            lager:error("Handoff receiver for partition ~p exited abnormally after "
                                    "processing ~p objects: ~p", [State#state.partition, State#state.count, Reason]),
             {stop, normal, State};
         NewState when is_record(NewState, state) ->

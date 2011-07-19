@@ -86,7 +86,7 @@ handle_event({monitor, Pid, Type, Info}, State) ->
                           [Type, Pid, Pretty, Info]),
     {ok, State};
 handle_event(Event, State) ->
-    lager:info("Monitor ~p", [Event]),
+    lager:info("Monitor got ~p", [Event]),
     {ok, State}.
 
 %%--------------------------------------------------------------------
