@@ -31,6 +31,7 @@
          command_return_vnode/4,
          sync_command/4,
          sync_spawn_command/3, make_request/3,
+         make_coverage_request/4,
          all_nodes/1, reg_name/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
@@ -76,8 +77,12 @@ command({Index,Node}, Msg, Sender, VMaster) ->
     gen_server:cast({VMaster, Node}, make_request(Msg, Sender, Index)).
 
 %% Send a command to a covering set of vnodes
-coverage(Msg, CoverageVNodes, FilterVNodes, Sender, VMaster) ->
-    [gen_server:cast({VMaster, Node}, make_request({Msg, FilterVNodes}, Sender, Index)) ||
+coverage(Msg, CoverageVNodes, Keyspaces, Sender, VMaster) ->
+    [gen_server:cast({VMaster, Node}, 
+                     make_coverage_request(Msg,
+                                           Keyspaces, 
+                                           Sender,
+                                           Index)) ||
         {Index, Node} <- CoverageVNodes].
 
 %% Send the command to an individual Index/Node combination, but also
@@ -115,6 +120,14 @@ make_request(Request, Sender, Index) ->
               index=Index,
               sender=Sender,
               request=Request}.
+
+%% Make a request record - exported for use by legacy modules
+-spec make_coverage_request(vnode_req(), [{partition(), [partition()]}], sender(), partition()) -> #riak_coverage_req_v1{}.
+make_coverage_request(Request, KeySpaces, Sender, Index) ->
+    #riak_coverage_req_v1{index=Index,
+                          keyspaces=KeySpaces,
+                          sender=Sender,
+                          request=Request}.
 
 %% Request a list of Pids for all vnodes
 all_nodes(VNodeMod) ->
@@ -158,6 +171,10 @@ handle_cast({Partition, start_vnode}, State) ->
     get_vnode(Partition, State),
     {noreply, State};
 handle_cast(Req=?VNODE_REQ{index=Idx}, State) ->
+    Pid = get_vnode(Idx, State),
+    gen_fsm:send_event(Pid, Req),
+    {noreply, State};
+handle_cast(Req=?COVERAGE_REQ{index=Idx}, State) ->
     Pid = get_vnode(Idx, State),
     gen_fsm:send_event(Pid, Req),
     {noreply, State};

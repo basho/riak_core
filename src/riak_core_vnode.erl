@@ -39,6 +39,7 @@
 behaviour_info(callbacks) ->
     [{init,1},
      {handle_command,3},
+     {handle_coverage,4},
      {handle_exit,3},
      {handoff_starting,2},
      {handoff_cancelled,1},
@@ -136,6 +137,21 @@ vnode_command(Sender, Request, State=#state{mod=Mod, modstate=ModState}) ->
             {stop, Reason, State#state{modstate=NewModState}}
     end.
 
+vnode_coverage(Sender, Request, KeySpaces, State=#state{index=Index, mod=Mod, modstate=ModState}) ->
+    ReplyFun = 
+        fun(CoverageReply) ->
+                reply(Sender, {{Index, node()}, CoverageReply})
+        end,
+    case Mod:handle_coverage(Request, KeySpaces, ReplyFun, ModState) of
+        {reply, Reply, NewModState} ->
+            ReplyFun(Reply),
+            continue(State, NewModState);
+        {noreply, NewModState} ->
+            continue(State, NewModState);
+        {stop, Reason, NewModState} ->
+            {stop, Reason, State#state{modstate=NewModState}}
+    end.
+
 vnode_handoff_command(Sender, Request, State=#state{index=Index,
                                                     mod=Mod, 
                                                     modstate=ModState, 
@@ -168,6 +184,11 @@ active(timeout, State=#state{mod=Mod, modstate=ModState}) ->
         false ->
             continue(State)
     end;
+active(?COVERAGE_REQ{keyspaces=KeySpaces, 
+                     request=Request,
+                     sender=Sender},
+       State=#state{handoff_node=HN}) when HN =:= none ->
+    vnode_coverage(Sender, Request, KeySpaces, State);
 active(?VNODE_REQ{sender=Sender, request=Request},
        State=#state{handoff_node=HN}) when HN =:= none ->
     vnode_command(Sender, Request, State);
@@ -200,7 +221,10 @@ active(_Event, _From, State) ->
     {reply, Reply, active, State, State#state.inactivity_timeout}.
 
 handle_event(R=?VNODE_REQ{}, _StateName, State) ->
+    active(R, State);
+handle_event(R=?COVERAGE_REQ{}, _StateName, State) ->
     active(R, State).
+
 
 handle_sync_event(get_mod_index, _From, StateName,
                   State=#state{index=Idx,mod=Mod}) ->
@@ -315,7 +339,7 @@ reply({raw, Ref, From}, Reply) ->
     From ! {Ref, Reply};
 reply(ignore, _Reply) ->
     ok.
-                   
+
 app_for_vnode_module(Mod) when is_atom(Mod) ->
     case application:get_env(riak_core, vnode_modules) of
         {ok, Mods} ->

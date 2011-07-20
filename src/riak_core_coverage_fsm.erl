@@ -92,7 +92,7 @@
 behaviour_info(callbacks) ->
     [
      {init, 2},
-     {process_results, 3},
+     {process_results, 2},
      {finish, 2}
     ];
 behaviour_info(_) ->
@@ -219,27 +219,29 @@ initialize(timeout, StateData0=#state{mod=Mod,
     end.
 
 %% @private
-waiting_results({ReqId, Results},
-           StateData=#state{coverage_vnodes=CoverageVNodes,
-                            mod=Mod,
-                            mod_state=ModState,
-                            req_id=ReqId,
-                            timeout=Timeout}) ->
-    case Mod:process_results(Results, CoverageVNodes, ModState) of
+waiting_results({ReqId, {VNode, Results}},
+                StateData=#state{coverage_vnodes=CoverageVNodes,
+                                 mod=Mod,
+                                 mod_state=ModState,
+                                 req_id=ReqId,
+                                 timeout=Timeout}) ->
+    case Mod:process_results(Results, ModState) of
         {ok, UpdModState} ->
             UpdStateData = StateData#state{mod_state=UpdModState},
             {next_state, waiting_results, UpdStateData, Timeout};
-        {done, VNode, UpdModState} ->
+        {done, UpdModState} ->
             UpdatedVNodes = lists:delete(VNode, CoverageVNodes),
             case UpdatedVNodes of
                 [] ->
-                    Mod:finish(clean, UpdModState);
+                    Mod:finish(clean, ModState);
                 _ ->
-                    {next_state,
-                     waiting_results,
-                     StateData#state{coverage_vnodes=UpdatedVNodes},
-                     Timeout}
-            end
+                    UpdStateData =
+                        StateData#state{coverage_vnodes=UpdatedVNodes,
+                                        mod_state=UpdModState},
+                    {next_state, waiting_results, UpdStateData, Timeout}
+            end;
+        Error ->
+            Mod:finish(Error, ModState)
     end;
 waiting_results(timeout, #state{mod=Mod, mod_state=ModState}) ->
     Mod:finish({error, timeout}, ModState).
