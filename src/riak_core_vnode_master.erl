@@ -27,9 +27,11 @@
 -behaviour(gen_server).
 -export([start_link/1, start_link/2, get_vnode_pid/2,
          start_vnode/2, command/3, command/4, sync_command/3,
+         coverage/5,
          command_return_vnode/4,
          sync_command/4,
          sync_spawn_command/3, make_request/3,
+         make_coverage_request/4,
          all_nodes/1, reg_name/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
@@ -41,12 +43,12 @@
 make_name(VNodeMod,Suffix) -> list_to_atom(atom_to_list(VNodeMod)++Suffix).
 reg_name(VNodeMod) ->  make_name(VNodeMod, "_master").
 
-start_link(VNodeMod) -> 
+start_link(VNodeMod) ->
     start_link(VNodeMod, undefined).
 
-start_link(VNodeMod, LegacyMod) -> 
+start_link(VNodeMod, LegacyMod) ->
     RegName = reg_name(VNodeMod),
-    gen_server:start_link({local, RegName}, ?MODULE, 
+    gen_server:start_link({local, RegName}, ?MODULE,
                           [VNodeMod,LegacyMod,RegName], []).
 
 start_vnode(Index, VNodeMod) ->
@@ -56,10 +58,10 @@ start_vnode(Index, VNodeMod) ->
 get_vnode_pid(Index, VNodeMod) ->
     RegName = reg_name(VNodeMod),
     gen_server:call(RegName, {Index, get_vnode}, infinity).
-    
+
 command(Preflist, Msg, VMaster) ->
     command(Preflist, Msg, ignore, VMaster).
-     
+
 %% Send the command to the preflist given with responses going to Sender
 command([], _Msg, _Sender, _VMaster) ->
     ok;
@@ -73,6 +75,15 @@ command([{Index,Node}|Rest], Msg, Sender, VMaster) ->
 %% Send the command to an individual Index/Node combination
 command({Index,Node}, Msg, Sender, VMaster) ->
     gen_server:cast({VMaster, Node}, make_request(Msg, Sender, Index)).
+
+%% Send a command to a covering set of vnodes
+coverage(Msg, CoverageVNodes, Keyspaces, {Type, Ref, From}, VMaster) ->
+    [gen_server:cast({VMaster, Node}, 
+                     make_coverage_request(Msg,
+                                           Keyspaces, 
+                                           {Type, {Ref, {Index, Node}}, From},
+                                           Index)) ||
+        {Index, Node} <- CoverageVNodes].
 
 %% Send the command to an individual Index/Node combination, but also
 %% return the pid for the vnode handling the request, as `{ok,
@@ -88,21 +99,20 @@ sync_command(IndexNode, Msg, VMaster) ->
 
 sync_command({Index,Node}, Msg, VMaster, Timeout) ->
     %% Issue the call to the master, it will update the Sender with
-    %% the From for handle_call so that the {reply} return gets 
+    %% the From for handle_call so that the {reply} return gets
     %% sent here.
-    gen_server:call({VMaster, Node}, 
+    gen_server:call({VMaster, Node},
                     make_request(Msg, {server, undefined, undefined}, Index), Timeout).
-
 
 %% Send a synchronous spawned command to an individual Index/Node combination.
 %% Will not return until the vnode has returned, but the vnode_master will
 %% continue to handle requests.
 sync_spawn_command({Index,Node}, Msg, VMaster) ->
-    gen_server:call({VMaster, Node}, 
+    gen_server:call({VMaster, Node},
                     {spawn, make_request(Msg, {server, undefined, undefined}, Index)},
                     infinity).
 
-    
+
 %% Make a request record - exported for use by legacy modules
 -spec make_request(vnode_req(), sender(), partition()) -> #riak_vnode_req_v1{}.
 make_request(Request, Sender, Index) ->
@@ -111,7 +121,15 @@ make_request(Request, Sender, Index) ->
               sender=Sender,
               request=Request}.
 
-%% Request a list of Pids for all vnodes 
+%% Make a request record - exported for use by legacy modules
+-spec make_coverage_request(vnode_req(), [{partition(), [partition()]}], sender(), partition()) -> #riak_coverage_req_v1{}.
+make_coverage_request(Request, KeySpaces, Sender, Index) ->
+    #riak_coverage_req_v1{index=Index,
+                          keyspaces=KeySpaces,
+                          sender=Sender,
+                          request=Request}.
+
+%% Request a list of Pids for all vnodes
 all_nodes(VNodeMod) ->
     RegName = reg_name(VNodeMod),
     gen_server:call(RegName, all_nodes, infinity).
@@ -130,8 +148,8 @@ init([VNodeMod, LegacyMod, RegName]) ->
     %% for.  During startup it is possible that these vnodes may be shutting
     %% down as we check them if there are several types of vnodes active.
     PidIdxs = lists:flatten(
-                [try 
-                     [{Pid, riak_core_vnode:get_mod_index(Pid)}] 
+                [try
+                     [{Pid, riak_core_vnode:get_mod_index(Pid)}]
                  catch
                      _:_Err ->
                          []
@@ -156,6 +174,10 @@ handle_cast(Req=?VNODE_REQ{index=Idx}, State) ->
     Pid = get_vnode(Idx, State),
     gen_fsm:send_event(Pid, Req),
     {noreply, State};
+handle_cast(Req=?COVERAGE_REQ{index=Idx}, State) ->
+    Pid = get_vnode(Idx, State),
+    gen_fsm:send_event(Pid, Req),
+    {noreply, State};
 handle_cast(Other, State=#state{legacy=Legacy}) when Legacy =/= undefined ->
     case catch Legacy:rewrite_cast(Other) of
         {ok, ?VNODE_REQ{}=Req} ->
@@ -172,7 +194,7 @@ handle_call(Req=?VNODE_REQ{index=Idx, sender={server, undefined, undefined}}, Fr
     Pid = get_vnode(Idx, State),
     gen_fsm:send_event(Pid, Req?VNODE_REQ{sender={server, undefined, From}}),
     {noreply, State};
-handle_call({spawn, 
+handle_call({spawn,
              Req=?VNODE_REQ{index=Idx, sender={server, undefined, undefined}}}, From, State) ->
     Pid = get_vnode(Idx, State),
     Sender = {server, undefined, From},
@@ -197,7 +219,7 @@ handle_info({'DOWN', MonRef, process, _P, _I}, State) ->
     {noreply, State}.
 
 %% @private
-terminate(_Reason, _State) -> 
+terminate(_Reason, _State) ->
     ok.
 
 %% @private
