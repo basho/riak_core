@@ -2,7 +2,7 @@
 %%
 %% Riak: A lightweight, decentralized key-value store.
 %%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -20,7 +20,7 @@
 %%
 %% -------------------------------------------------------------------
 -module(riak_core).
--export([stop/0, stop/1]).
+-export([stop/0, stop/1, join/1, remove_from_cluster/1]).
 -export([register_vnode_module/1, vnode_modules/0]).
 -export([add_guarded_event_handler/3, add_guarded_event_handler/4]).
 -export([delete_guarded_event_handler/3]).
@@ -42,6 +42,34 @@ stop(Reason) ->
     error_logger:info_msg(io_lib:format("~p~n",[Reason])),
     init:stop().
 -endif.
+
+%%
+%% @doc Join the ring found on the specified remote node
+%%
+join(NodeStr) when is_list(NodeStr) ->
+    join(riak_core_util:str_to_node(NodeStr));
+join(Node) when is_atom(Node) ->
+    {ok, OurRingSize} = application:get_env(riak_core, ring_creation_size),
+    case net_adm:ping(Node) of
+        pong ->
+            case rpc:call(Node,
+                          application,
+                          get_env, 
+                          [riak_core, ring_creation_size]) of
+                {ok, OurRingSize} ->
+                    riak_core_gossip:send_ring(Node, node());
+                _ -> 
+                    {error, different_ring_sizes}
+            end;
+        pang ->
+            {error, not_reachable}
+    end.
+
+%% @spec remove_from_cluster(ExitingNode :: atom()) -> term()
+%% @doc Cause all partitions owned by ExitingNode to be taken over
+%%      by other nodes.
+remove_from_cluster(ExitingNode) when is_atom(ExitingNode) ->
+    riak_core_gossip:remove_from_cluster(ExitingNode).
 
 vnode_modules() ->
     case application:get_env(riak_core, vnode_modules) of

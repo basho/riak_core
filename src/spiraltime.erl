@@ -29,6 +29,14 @@
 
 -module(spiraltime).
 -author('Justin Sheehy <justin@basho.com>').
+
+-ifdef(TEST).
+-ifdef(EQC).
+-include_lib("eqc/include/eqc.hrl").
+-endif.
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -export([fresh/0,fresh/1,n/0,incr/2,incr/3,
          rep_second/1,rep_minute/1,
          test_spiraltime/0]).
@@ -84,7 +92,7 @@ incr(N, Moment, Spiral) when Spiral#spiral.moment =:= Moment ->
     % common case -- updates for "now"
     Spiral#spiral{seconds=[hd(Spiral#spiral.seconds)+N|
                            tl(Spiral#spiral.seconds)]};
-incr(_N, Moment, Spiral) when Spiral#spiral.moment - Moment > 60 ->
+incr(_N, Moment, Spiral) when Spiral#spiral.moment - Moment > 59 ->
     Spiral; % updates more than a minute old are dropped! whee!
 incr(N, Moment, Spiral) ->
     S1 = update_moment(Moment, Spiral),
@@ -125,4 +133,29 @@ test_spiraltime() ->
     S2 = incr(3, PlusOne, S1),
     {PlusOne, 3} = rep_second(S2),
     {PlusOne, 20} = rep_minute(S2),
+    %% Drops items 60 seconds or older
+    S2 = incr(1, PlusOne-60, S2),
     true.
+
+-ifdef(TEST).
+
+all_test() ->
+    true = test_spiraltime().
+
+-ifdef(EQC).
+
+prop_dontcrash() ->
+    ?FORALL(Mods, list({choose(0, 65), choose(-10, 10)}),
+            begin
+                Start = n(),
+                lists:foldl(fun({When, Amt}, Sp) ->
+                                    incr(Amt, Start + When, Sp)
+                            end, fresh(Start), Mods),
+                true
+            end).
+
+eqc_test() ->
+    eqc:quickcheck(eqc:numtests(5*1000, prop_dontcrash())).
+
+-endif.
+-endif.
