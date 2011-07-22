@@ -137,14 +137,10 @@ vnode_command(Sender, Request, State=#state{mod=Mod, modstate=ModState}) ->
             {stop, Reason, State#state{modstate=NewModState}}
     end.
 
-vnode_coverage(Sender, Request, KeySpaces, State=#state{index=Index, mod=Mod, modstate=ModState}) ->
-    ReplyFun = 
-        fun(CoverageReply) ->
-                reply(Sender, {{Index, node()}, CoverageReply})
-        end,
-    case Mod:handle_coverage(Request, KeySpaces, ReplyFun, ModState) of
+vnode_coverage(Sender, Request, KeySpaces, State=#state{mod=Mod, modstate=ModState}) ->
+    case Mod:handle_coverage(Request, KeySpaces, Sender, ModState) of
         {reply, Reply, NewModState} ->
-            ReplyFun(Reply),
+            reply(Sender, Reply),
             continue(State, NewModState);
         {noreply, NewModState} ->
             continue(State, NewModState);

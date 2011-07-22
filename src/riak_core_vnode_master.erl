@@ -77,11 +77,11 @@ command({Index,Node}, Msg, Sender, VMaster) ->
     gen_server:cast({VMaster, Node}, make_request(Msg, Sender, Index)).
 
 %% Send a command to a covering set of vnodes
-coverage(Msg, CoverageVNodes, Keyspaces, Sender, VMaster) ->
+coverage(Msg, CoverageVNodes, Keyspaces, {Type, Ref, From}, VMaster) ->
     [gen_server:cast({VMaster, Node}, 
                      make_coverage_request(Msg,
                                            Keyspaces, 
-                                           Sender,
+                                           {Type, {Ref, {Index, Node}}, From},
                                            Index)) ||
         {Index, Node} <- CoverageVNodes].
 

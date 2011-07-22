@@ -112,7 +112,6 @@ behaviour_info(_) ->
                 req_id :: req_id(),
                 required_responses :: pos_integer(),
                 response_count=0 :: non_neg_integer(),
-                sender :: {fsm, req_id(), pid()},
                 timeout :: timeout(),
                 vnode_master :: atom()
                }).
@@ -136,7 +135,6 @@ start_link(Mod, From, RequestArgs) ->
 %% Create a coverage FSM for testing.
 test_link(Mod, From, RequestArgs, _Options, StateProps) ->
     Timeout = 60000,
-    ClientType = plain,
     gen_fsm:start_link(?MODULE,
                        {test,
                         [Mod,
@@ -156,7 +154,6 @@ test_link(Mod, From, RequestArgs, _Options, StateProps) ->
 init([Mod,
       From={_, ReqId, _},
       RequestArgs]) ->
-    Sender = {fsm, ReqId, self()},
     {Request, VNodeSelector, NVal, PrimaryVNodeCoverage,
      NodeCheckService, VNodeMaster, Timeout, ModState} =
         Mod:init(From, RequestArgs),
@@ -168,7 +165,6 @@ init([Mod,
                        pvc = PrimaryVNodeCoverage,
                        request=Request,
                        req_id=ReqId,
-                       sender=Sender,
                        timeout=Timeout,
                        vnode_master=VNodeMaster},
     {ok, initialize, StateData, 0};
@@ -198,7 +194,6 @@ initialize(timeout, StateData0=#state{mod=Mod,
                                       pvc=PVC,
                                       request=Request,
                                       req_id=ReqId,
-                                      sender=Sender,
                                       timeout=Timeout,
                                       vnode_master=VNodeMaster}) ->
     CoveragePlan = riak_core_coverage_plan:create_plan(VNodeSelector,
@@ -210,6 +205,7 @@ initialize(timeout, StateData0=#state{mod=Mod,
         {error, Reason} ->
             Mod:finish({error, Reason}, ModState);
         {CoverageVNodes, FilterVNodes} ->
+            Sender = {fsm, ReqId, self()},
             riak_core_vnode_master:coverage(Request,
                                             CoverageVNodes,
                                             FilterVNodes,
@@ -220,7 +216,7 @@ initialize(timeout, StateData0=#state{mod=Mod,
     end.
 
 %% @private
-waiting_results({ReqId, {VNode, Results}},
+waiting_results({{ReqId, VNode}, Results},
                 StateData=#state{coverage_vnodes=CoverageVNodes,
                                  mod=Mod,
                                  mod_state=ModState,
