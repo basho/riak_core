@@ -99,7 +99,7 @@ behaviour_info(_) ->
     undefined.
 
 -type req_id() :: non_neg_integer().
--type from() :: {raw, req_id(), pid()}.
+-type from() :: {atom(), req_id(), pid()}.
 
 -record(state, {coverage_vnodes :: [{non_neg_integer(), node()}],
                 mod :: atom(),
@@ -154,9 +154,10 @@ test_link(Mod, From, RequestArgs, _Options, StateProps) ->
 
 %% @private
 init([Mod,
-      From={raw, ReqId, _},
+      From={_, ReqId, _},
       RequestArgs]) ->
-    {Request, Sender, VNodeSelector, NVal, PrimaryVNodeCoverage,
+    Sender = {fsm, ReqId, self()},
+    {Request, VNodeSelector, NVal, PrimaryVNodeCoverage,
      NodeCheckService, VNodeMaster, Timeout, ModState} =
         Mod:init(From, RequestArgs),
     StateData = #state{mod=Mod,
