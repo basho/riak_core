@@ -232,7 +232,7 @@ handle_sync_event({handoff_data,BinObj}, _From, StateName,
             {reply, ok, StateName, State#state{modstate=NewModState},
              State#state.inactivity_timeout};
         {reply, {error, Err}, NewModState} ->
-            error_logger:error_msg("Error storing handoff obj: ~p~n", [Err]),            
+            lager:error("~p failed to store handoff obj: ~p", [Mod, Err]),
             {reply, {error, Err}, StateName, State#state{modstate=NewModState}, 
              State#state.inactivity_timeout}
     end.

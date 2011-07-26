@@ -118,12 +118,15 @@ find_latest_ringfile() ->
             {error, Reason}
     end.
 
-%% @spec read_ringfile(string()) -> riak_core_ring:riak_core_ring()
+%% @spec read_ringfile(string()) -> riak_core_ring:riak_core_ring() | {error, any()}
 read_ringfile(RingFile) ->
-    {ok, Binary} = file:read_file(RingFile),
-    binary_to_term(Binary).
+    case file:read_file(RingFile) of
+        {ok, Binary} ->
+            binary_to_term(Binary);
+        {error, Reason} -> {error, Reason}
+    end.
 
-%% @spec prune_ringfiles() -> ok
+%% @spec prune_ringfiles() -> ok | {error, Reason}
 prune_ringfiles() ->
     case app_helper:get_env(riak_core, ring_state_dir) of
         "<nostore>" -> ok;
@@ -131,6 +134,8 @@ prune_ringfiles() ->
             Cluster = app_helper:get_env(riak_core, cluster_name),
             case file:list_dir(Dir) of
                 {error,enoent} -> ok;
+                {error, Reason} ->
+                    {error, Reason};
                 {ok, []} -> ok;
                 {ok, Filenames} ->
                     Timestamps = [TS || {"riak_core_ring", C1, TS} <- 
@@ -219,7 +224,7 @@ handle_call({ring_trans, Fun, Args}, _From, State) ->
         ignore ->
             {reply, not_changed, State};
         Other ->
-            error_logger:error_msg("ring_trans: invalid return value: ~p~n", 
+            lager:error("ring_trans: invalid return value: ~p", 
                                    [Other]),
             {reply, not_changed, State}
     end.
