@@ -46,13 +46,13 @@ old_binding() ->
           app_helper:get_env(riak_core, web_port)} of
         {IP, Port} when IP /= undefined,
                         Port /= undefined ->
-            error_logger:warning_msg(
+            lager:warning(
               "app.config is using old-style {web_ip, ~p} and"
-              " {web_port, ~p} settings in its riak_core configuration.~n"
-              "These are now deprecated, and will be removed in a"
-              " future version of Riak.~n"
-              "Please migrate to the new-style riak_core configuration"
-              " of {http, [{~p, ~p}]}.~n",
+              " {web_port, ~p} settings in its riak_core configuration."
+              " These are now deprecated, and will be removed in a"
+              " future version of Riak."
+              " Please migrate to the new-style riak_core configuration"
+              " of {http, [{~p, ~p}]}.",
               [IP, Port, IP, Port]),
             [binding_config(http, {IP, Port})];
         _ ->
