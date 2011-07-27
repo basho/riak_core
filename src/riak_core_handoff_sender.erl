@@ -36,8 +36,8 @@ start_link(TargetNode, Module, Partition) ->
 
 start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
      try
-         lager:info("Starting handoff of partition ~p ~p to ~p", 
-                               [Module, Partition, TargetNode]),
+         lager:info("Starting handoff of partition ~p ~p from ~p to ~p",
+                               [Module, Partition, node(), TargetNode]),
          [_Name,Host] = string:tokens(atom_to_list(TargetNode), "@"),
          {ok, Port} = get_handoff_port(TargetNode),
          SockOpts = [binary, {packet, 4}, {header,1}, {active, false}],
@@ -74,27 +74,26 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
          FoldTimeDiff = timer:now_diff(EndFoldTime, StartFoldTime) / 1000000,
          case ErrStatus of
              ok ->
-                 lager:info("Handoff of partition ~p ~p to ~p "
+                 lager:info("Handoff of partition ~p ~p from ~p to ~p "
                                        "completed: sent ~p objects in ~.2f "
                                        "seconds", 
-                                       [Module, Partition, TargetNode, 
-                                        SentCount,
-                                        FoldTimeDiff]),
+                                       [Module, Partition, node(), TargetNode,
+                                        SentCount, FoldTimeDiff]),
                  gen_fsm:send_event(ParentPid, handoff_complete);
              {error, ErrReason} ->
-                 lager:error("Handoff of partition ~p ~p to ~p "
+                 lager:error("Handoff of partition ~p ~p from ~p to ~p "
                                         "FAILED after sending ~p objects "
                                         "in ~.2f seconds: ~p", 
-                                        [Module, Partition, TargetNode, 
-                                         SentCount, FoldTimeDiff,
-                                         ErrReason]),
+                                        [Module, Partition, node(), TargetNode,
+                                         SentCount, FoldTimeDiff, ErrReason]),
                  gen_fsm:send_event(ParentPid, {handoff_error, 
                                                 fold_error, ErrReason})
          end
      catch
          Err:Reason ->
-             lager:error("Handoff sender ~p ~p failed ~p:~p", 
-                                    [Module, Partition, Err,Reason]),
+             lager:error("Handoff of partition ~p ~p from ~p to ~p failed ~p:~p",
+                                    [Module, Partition, node(), TargetNode,
+                                     Err, Reason]),
              gen_fsm:send_event(ParentPid, {handoff_error, Err, Reason})
      end.
 
