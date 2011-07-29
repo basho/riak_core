@@ -62,7 +62,23 @@ ensure_vnodes_started(Ring) ->
             ok;
         AppMods ->            
             case ensure_vnodes_started(AppMods, Ring, []) of
-                [] -> riak_core_ring_manager:refresh_my_ring();
+                [] -> 
+                    case riak_core_ring:member_status(Ring, node()) of
+                        leaving ->
+                            Ring2 = riak_core_ring:exit_member(node(), Ring, node()),
+                            riak_core_ring_manager:set_my_ring(Ring2),
+                            case riak_core_ring:random_other_member(Ring2) of
+                                no_node ->
+                                    riak_core_ring_manager:refresh_my_ring();
+                                RandomNode ->
+                                    riak_core_gossip:send_ring(node(), RandomNode)
+                            end;
+                        exiting ->
+                            %% Deliberately do nothing.
+                            ok;
+                        invalid ->
+                            riak_core_ring_manager:refresh_my_ring()
+                    end;
                 _ -> ok
             end
     end.

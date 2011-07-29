@@ -36,7 +36,8 @@
 -export([start_link/0, stop/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
--export ([distribute_ring/1, send_ring/1, send_ring/2, remove_from_cluster/1]).
+-export ([distribute_ring/1, send_ring/1, send_ring/2, remove_from_cluster/1,
+          finish_handoff/3, claim_until_balanced/1]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -69,6 +70,8 @@ start_link() ->
 stop() ->
     gen_server:cast(?MODULE, stop).
 
+finish_handoff(Idx, Prev, New) ->
+    gen_server:call(?MODULE, {finish_handoff, Idx, Prev, New}).
 
 %% ===================================================================
 %% gen_server behaviour
@@ -81,6 +84,27 @@ init(_State) ->
 
 
 %% @private
+handle_call({finish_handoff, Idx, Prev, New}, _From, State) ->
+    {ok, PrevCS1} = riak_core_ring_manager:get_my_ring(),
+    Owner = riak_core_ring:index_owner(PrevCS1, Idx),
+    {NextOwner, Status} = riak_core_ring:get_next_owner(PrevCS1, Idx),
+
+    case {Owner, NextOwner, Status} of
+        {Prev, New, awaiting} ->
+            %% TODO: Decide if we want to delete existing vnodes/data here.
+            PrevCS2 = riak_core_ring:handoff_complete(PrevCS1, Idx),
+            riak_core_ring_manager:set_my_ring(PrevCS2),
+            {reply, forward, State};
+        {Prev, New, complete} ->
+            %% Do nothing
+            {reply, continue, State};
+        {Prev, _, _} ->
+            %% Handoff wasn't to node that is scheduled in next, so no change.
+            {reply, continue, State};
+        {_, _, _} ->
+            {reply, shutdown, State}
+    end;
+
 handle_call(_, _From, State) ->
     {reply, ok, State}.
 
@@ -100,17 +124,14 @@ handle_cast({reconcile_ring, OtherRing}, RingChanged) ->
     % Compare the two rings, see if there is anything that
     % must be done to make them equal...
     {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
-    case riak_core_ring:reconcile(OtherRing, MyRing) of
+    case reconcile(OtherRing, MyRing) of
         {no_change, _} ->
             {noreply, RingChanged};
 
         {new_ring, ReconciledRing} ->
-            % Rebalance the new ring and save it
-            BalancedRing = claim_until_balanced(ReconciledRing),
-            riak_core_ring_manager:set_my_ring(BalancedRing),
-
+            riak_core_ring_manager:set_my_ring(ReconciledRing),
             % Finally, push it out to another node - expect at least two nodes now
-            RandomNode = riak_core_ring:random_other_node(BalancedRing),
+            RandomNode = riak_core_ring:random_other_member(ReconciledRing),
             send_ring(node(), RandomNode),
             {noreply, true}
     end;
@@ -121,7 +142,7 @@ handle_cast(gossip_ring, _RingChanged) ->
 
     % Gossip the ring to some random other node...
     {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
-    case riak_core_ring:random_other_node(MyRing) of
+    case riak_core_ring:random_other_member(MyRing) of
         no_node -> % must be single node cluster
             ok;
         RandomNode ->
@@ -152,6 +173,40 @@ schedule_next_gossip() ->
     MaxInterval = app_helper:get_env(riak_core, gossip_interval),
     Interval = random:uniform(MaxInterval),
     timer:apply_after(Interval, gen_server, cast, [?MODULE, gossip_ring]).
+
+reconcile(OtherCS, CState) ->
+    Node = node(),
+    OtherNode = riak_core_ring:owner_node(OtherCS),
+    Members = riak_core_ring:reconcile_members(CState, OtherCS),
+    WrongCluster = (riak_core_ring:cluster_name(CState) /=
+                    riak_core_ring:cluster_name(OtherCS)),
+    PreStatus = riak_core_ring:member_status(Members, OtherNode),
+    IgnoreGossip = (WrongCluster or (PreStatus =:= invalid)),
+    case IgnoreGossip of
+        true ->
+            CState2 = CState,
+            InvalidNode = true,
+            Changed = false;
+        false ->
+            {Changed, CState2} =
+                riak_core_ring:merge_cstate(Node, CState, OtherCS),
+            InvalidNode =
+                (riak_core_ring:member_status(CState2, OtherNode) =:= invalid)
+    end,
+    case {WrongCluster, InvalidNode, Changed} of
+        {true, _, _} ->
+            %% TODO: Tell other node to stop gossiping to this node.
+            {no_change, CState2};
+        {_, false, true} ->
+            CState3 = riak_core_ring:ring_changed(Node, CState2),
+            {new_ring, CState3};
+        {_, true, _} ->
+            %% Exiting/Removed node never saw shutdown cast, re-send.
+            riak_core_ring_manager:refresh_ring(OtherNode),
+            {no_change, CState2};
+        {_, _, _} ->
+            {no_change, CState2}
+    end.
 
 claim_until_balanced(Ring) ->
     {WMod, WFun} = app_helper:get_env(riak_core, wants_claim_fun),

@@ -55,6 +55,7 @@
 -export([default_wants_claim/1, default_choose_claim/1,
          never_wants_claim/1, random_choose_claim/1]).
 -export([default_choose_claim/2,
+         default_wants_claim/2,
          claim_rebalance_n/2]).
 
 -ifdef(TEST).

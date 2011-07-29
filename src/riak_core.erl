@@ -20,7 +20,7 @@
 %%
 %% -------------------------------------------------------------------
 -module(riak_core).
--export([stop/0, stop/1, join/1, remove_from_cluster/1]).
+-export([stop/0, stop/1, join/1, remove/1, leave/0, remove_from_cluster/1]).
 -export([register_vnode_module/1, vnode_modules/0]).
 -export([add_guarded_event_handler/3, add_guarded_event_handler/4]).
 -export([delete_guarded_event_handler/3]).
@@ -49,20 +49,55 @@ stop(Reason) ->
 join(NodeStr) when is_list(NodeStr) ->
     join(riak_core_util:str_to_node(NodeStr));
 join(Node) when is_atom(Node) ->
-    {ok, OurRingSize} = application:get_env(riak_core, ring_creation_size),
     case net_adm:ping(Node) of
         pong ->
-            case rpc:call(Node,
-                          application,
-                          get_env, 
-                          [riak_core, ring_creation_size]) of
-                {ok, OurRingSize} ->
+            case rpc:call(Node, riak_core_ring_manager, get_my_ring, []) of
+                {ok, JoinCS} ->
+                    JoinCS2 = riak_core_ring:add_member(node(), JoinCS, node()),
+                    JoinCS3 = riak_core_ring:set_owner(JoinCS2, node()),
+                    riak_core_ring_manager:set_my_ring(JoinCS3),
                     riak_core_gossip:send_ring(Node, node());
                 _ -> 
-                    {error, different_ring_sizes}
+                    {error, unable_to_get_join_ring}
             end;
         pang ->
             {error, not_reachable}
+    end.
+
+remove(Node) ->
+    {ok, PNodeCS} = riak_core_ring_manager:get_my_ring(),
+    case riak_core_ring:member_status(PNodeCS, Node) of
+        invalid ->
+            io:format("~p isn't a member of the cluster.~n", [Node]),
+            ok;
+        _ ->
+            PNodeCS2 = riak_core_ring:remove_member(node(), PNodeCS, Node),
+            PNodeCS3 = riak_core_ring:update_seen(node(), PNodeCS2),
+            PNodeCS4 = riak_core_ring:ring_changed(node(), PNodeCS3),
+            riak_core_ring_manager:set_my_ring(PNodeCS4),
+            case riak_core_ring:random_other_member(PNodeCS4) of
+                no_node ->
+                    ok;
+                RandomNode ->
+                    riak_core_gossip:send_ring(node(), RandomNode),
+                    ok
+            end
+    end.
+
+leave() ->
+    Node = node(),
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    case riak_core_ring:member_status(Ring, Node) of
+        valid ->
+            Ring2 = riak_core_ring:leave_member(Node, Ring, Node),
+            riak_core_ring_manager:set_my_ring(Ring2),
+            case riak_core_ring:random_other_member(Ring2) of
+                no_node ->
+                    ok;
+                RandomNode ->
+                    riak_core_gossip:send_ring(Node, RandomNode),
+                    ok
+            end
     end.
 
 %% @spec remove_from_cluster(ExitingNode :: atom()) -> term()
