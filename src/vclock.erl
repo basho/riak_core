@@ -136,25 +136,25 @@ increment(Node, IncTs, VClock) ->
 all_nodes(VClock) ->
     [X || {X,{_,_}} <- VClock].
 
+-define(DAYS_FROM_GREGORIAN_BASE_TO_EPOCH, (1970*365+478)).
+-define(SECONDS_FROM_GREGORIAN_BASE_TO_EPOCH,
+	(?DAYS_FROM_GREGORIAN_BASE_TO_EPOCH * 24*60*60)
+	%% == calendar:datetime_to_gregorian_seconds({{1970,1,1},{0,0,0}})
+       ).
+
 % @doc Return a timestamp for a vector clock
 -spec timestamp() -> timestamp().
 timestamp() ->
-    calendar:datetime_to_gregorian_seconds(erlang:universaltime()).
+    %% Same as calendar:datetime_to_gregorian_seconds(erlang:universaltime()),
+    %% but significantly faster.
+    %% Assumes that less than a million now() calls are done per second.
+    {MegaSeconds, Seconds, _} = now(),
+    ?SECONDS_FROM_GREGORIAN_BASE_TO_EPOCH + MegaSeconds*1000000 + Seconds.
 
 % @doc Compares two VClocks for equality.
-%      Not very fast.
 -spec equal(VClockA :: vclock(), VClockB :: vclock()) -> boolean().
 equal(VA,VB) ->
-    VSet1 = sets:from_list(VA),
-    VSet2 = sets:from_list(VB),
-    case sets:size(sets:subtract(VSet1,VSet2)) > 0 of
-        true -> false;
-        false ->
-            case sets:size(sets:subtract(VSet2,VSet1)) > 0 of
-                true -> false;
-                false -> true
-            end
-    end.
+    lists:sort(VA) =:= lists:sort(VB).
 
 % @doc Possibly shrink the size of a vclock, depending on current age and size.
 -spec prune(V::vclock(), Now::integer(), BucketProps::term()) -> vclock().
@@ -177,13 +177,12 @@ prune_vclock1(V,Now,BProps) ->
 % @private
 prune_vclock1(V,Now,BProps,HeadTime) ->
     % has a precondition that V is longer than small and older than young
-    case length(V) > get_property(big_vclock,BProps) of
+    case (length(V) > get_property(big_vclock,BProps))
+	orelse
+	((Now - HeadTime) > get_property(old_vclock,BProps))
+	of
         true -> prune_vclock1(tl(V),Now,BProps);
-        false ->
-            case (Now - HeadTime) > get_property(old_vclock,BProps) of
-                true -> prune_vclock1(tl(V),Now,BProps);
-                false -> V
-            end
+        false -> V
     end.
 
 get_property(Key, PairList) ->
