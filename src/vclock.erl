@@ -147,8 +147,7 @@ all_nodes(VClock) ->
 timestamp() ->
     %% Same as calendar:datetime_to_gregorian_seconds(erlang:universaltime()),
     %% but significantly faster.
-    %% Assumes that less than a million now() calls are done per second.
-    {MegaSeconds, Seconds, _} = now(),
+    {MegaSeconds, Seconds, _} = os:timestamp(),
     ?SECONDS_FROM_GREGORIAN_BASE_TO_EPOCH + MegaSeconds*1000000 + Seconds.
 
 % @doc Compares two VClocks for equality.
@@ -177,10 +176,8 @@ prune_vclock1(V,Now,BProps) ->
 % @private
 prune_vclock1(V,Now,BProps,HeadTime) ->
     % has a precondition that V is longer than small and older than young
-    case (length(V) > get_property(big_vclock,BProps))
-	orelse
-	((Now - HeadTime) > get_property(old_vclock,BProps))
-	of
+    case (length(V) > get_property(big_vclock,BProps)) orelse
+         ((Now - HeadTime) > get_property(old_vclock,BProps)) of
         true -> prune_vclock1(tl(V),Now,BProps);
         false -> V
     end.
