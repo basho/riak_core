@@ -37,7 +37,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 -export ([distribute_ring/1, send_ring/1, send_ring/2, remove_from_cluster/1,
-          finish_handoff/3, claim_until_balanced/1]).
+          finish_handoff/4, claim_until_balanced/1]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -70,8 +70,8 @@ start_link() ->
 stop() ->
     gen_server:cast(?MODULE, stop).
 
-finish_handoff(Idx, Prev, New) ->
-    gen_server:call(?MODULE, {finish_handoff, Idx, Prev, New}).
+finish_handoff(Idx, Prev, New, Mod) ->
+    gen_server:call(?MODULE, {finish_handoff, Idx, Prev, New, Mod}).
 
 %% ===================================================================
 %% gen_server behaviour
@@ -84,15 +84,15 @@ init(_State) ->
 
 
 %% @private
-handle_call({finish_handoff, Idx, Prev, New}, _From, State) ->
+handle_call({finish_handoff, Idx, Prev, New, Mod}, _From, State) ->
     {ok, PrevCS1} = riak_core_ring_manager:get_my_ring(),
     Owner = riak_core_ring:index_owner(PrevCS1, Idx),
-    {NextOwner, Status} = riak_core_ring:get_next_owner(PrevCS1, Idx),
+    {NextOwner, Status} = riak_core_ring:get_next_owner(PrevCS1, Idx, Mod),
 
     case {Owner, NextOwner, Status} of
         {Prev, New, awaiting} ->
             %% TODO: Decide if we want to delete existing vnodes/data here.
-            PrevCS2 = riak_core_ring:handoff_complete(PrevCS1, Idx),
+            PrevCS2 = riak_core_ring:handoff_complete(PrevCS1, Idx, Mod),
             riak_core_ring_manager:set_my_ring(PrevCS2),
             {reply, forward, State};
         {Prev, New, complete} ->

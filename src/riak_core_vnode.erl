@@ -16,7 +16,7 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
--module(riak_core_vnode).
+-module('riak_core_vnode').
 -behaviour(gen_fsm).
 -include_lib("riak_core_vnode.hrl").
 -export([behaviour_info/1]).
@@ -132,7 +132,7 @@ vnode_command(Sender, Request, State=#state{index=Index,
     %% Check if we should forward
     Node = node(),
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    case riak_core_ring:get_next(Ring, Index) of
+    case riak_core_ring:get_next(Ring, Index, Mod) of
         {Node, NextOwner, complete} ->
             %%io:format("Forwarding ~p -> ~p: ~p~n", [node(), NextOwner, Index]),
             riak_core_vnode_master:command({Index, NextOwner}, Request, Sender,
@@ -233,7 +233,7 @@ finish_handoff(State=#state{mod=Mod,
                             modstate=ModState,
                             index=Idx, 
                             handoff_node=HN}) ->
-    case riak_core_gossip:finish_handoff(Idx, node(), HN) of
+    case riak_core_gossip:finish_handoff(Idx, node(), HN, Mod) of
         forward ->
             {ok, NewModState} = Mod:delete(ModState),
             {stop, normal, State#state{modstate=NewModState, 

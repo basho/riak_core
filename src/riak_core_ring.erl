@@ -54,7 +54,7 @@
          cluster_name/1, member_status/2, get_members/2, random_other_member/1,
          add_member/3, remove_member/3, leave_member/3, exit_member/3,
          all_valid_members/1, all_members2/1, set_owner/2, indices/2,
-         get_next/2, get_next_owner/2, next_owner/2, handoff_complete/2,
+         get_next/3, get_next_owner/2, get_next_owner/3, next_owner/2, handoff_complete/3,
          ring_ready/1, ring_changed/2, reconcile_members/2, merge_cstate/3]).
 
 -export_type([riak_core_ring/0]).
@@ -75,7 +75,7 @@
                                  % bucket N-value, etc)
 
     clustername :: node(),
-    next     :: [{integer(), node(), node(), awaiting | complete}],
+    next     :: [{integer(), node(), node(), [module()], awaiting | complete}],
     members  :: [{node(), {member_status(), vclock:vclock()}}],
     claimant :: node(),
     seen     :: [{node(), vclock:vclock()}],
@@ -396,30 +396,32 @@ reconcile_seen(CS1, CS2) ->
                           vclock:merge([VC1, VC2])
                   end, CS1#chstate.seen, CS2#chstate.seen).
 
+merge_next_status(complete, _) ->
+    complete;
+merge_next_status(_, complete) ->
+    complete;
+merge_next_status(awaiting, awaiting) ->
+    awaiting.
+
 reconcile_next(Next1, Next2) ->
-    lists:zipwith(fun({Idx, Owner, Node, Status1}, {Idx, Owner, Node, Status2}) ->
-                          case {Status1, Status2} of
-                              {complete, _} ->
-                                  {Idx, Owner, Node, complete};
-                              {_, complete} ->
-                                  {Idx, Owner, Node, complete};
-                              {awaiting, awaiting} ->
-                                  {Idx, Owner, Node, awaiting}
-                          end
+    lists:zipwith(fun({Idx, Owner, Node, Transfers1, Status1},
+                      {Idx, Owner, Node, Transfers2, Status2}) ->
+                          {Idx, Owner, Node,
+                           ordsets:union(Transfers1, Transfers2),
+                           merge_next_status(Status1, Status2)}
                   end, Next1, Next2).
 
 reconcile_next2(Next1, Next2) ->
-    lists:zipwith(fun({Idx, Owner1, Node1, Status1}, {Idx, Owner2, Node2, Status2}) ->
+    lists:zipwith(fun({Idx, Owner1, Node1, Transfers1, Status1},
+                      {Idx, Owner2, Node2, Transfers2, Status2}) ->
                           Same = ({Owner1, Node1} =:= {Owner2, Node2}),
                           case {Same, Status1, Status2} of
                               {false, _, _} ->
-                                  {Idx, Owner1, Node1, Status1};
-                              {_, complete, _} ->
-                                  {Idx, Owner1, Node1, complete};
-                              {_, _, complete} ->
-                                  {Idx, Owner1, Node1, complete};
-                              {_, awaiting, awaiting} ->
-                                  {Idx, Owner1, Node1, awaiting}
+                                  {Idx, Owner1, Node1, Transfers1, Status1};
+                              _ ->
+                                  {Idx, Owner1, Node1,
+                                   ordsets:union(Transfers1, Transfers2),
+                                   merge_next_status(Status1, Status2)}
                           end
                   end, Next1, Next2).
 
@@ -561,11 +563,12 @@ indices(CState, Node) ->
     AllOwners = all_owners(CState),
     [Idx || {Idx, Owner} <- AllOwners, Owner =:= Node].
 
-get_next(CState, Idx) ->
+get_next(CState, Idx, Mod) ->
     case lists:keyfind(Idx, 1, CState#chstate.next) of
         false ->
             undefined;
-        {_, Owner, NextOwner, Status} ->
+        {_, Owner, _, _, _} ->
+            {NextOwner, Status} = get_next_owner(CState, Idx, Mod),
             {Owner, NextOwner, Status}
     end.
 
@@ -573,21 +576,49 @@ get_next_owner(CState, Idx) ->
     case lists:keyfind(Idx, 1, CState#chstate.next) of
         false ->
             {undefined, undefined};
-        {_, _Owner, NextOwner, Status} ->
-            {NextOwner, Status}
+        NInfo ->
+            get_next_owner(NInfo)
+    end.
+
+get_next_owner({_, _Owner, NextOwner, _Transfers, Status}) ->
+    {NextOwner, Status}.
+
+get_next_owner(CState, Idx, Mod) ->
+    case lists:keyfind(Idx, 1, CState#chstate.next) of
+        false ->
+            {undefined, undefined};
+        {_, _Owner, NextOwner, _Transfers, complete} ->
+            {NextOwner, complete};
+        {_, _Owner, NextOwner, Transfers, _Status} ->
+            case ordsets:is_element(Mod, Transfers) of
+                true ->
+                    {NextOwner, complete};
+                false ->
+                    {NextOwner, awaiting}
+            end
     end.
 
 next_owner(CState, Idx) ->
     case lists:keyfind(Idx, 1, CState#chstate.next) of
         false ->
             undefined;
-        {_, _Owner, NextOwner, _Status} ->
+        {_, _Owner, NextOwner, _Transfers, _Status} ->
             NextOwner
     end.
 
-handoff_complete(CState=#chstate{next=Next, vclock=VClock}, Idx) ->
-    {Idx, Owner, NextOwner, _} = lists:keyfind(Idx, 1, Next),
-    Next2 = lists:keyreplace(Idx, 1, Next, {Idx, Owner, NextOwner, complete}),
+handoff_complete(CState=#chstate{next=Next, vclock=VClock}, Idx, Mod) ->
+    {Idx, Owner, NextOwner, Transfers, Status} = lists:keyfind(Idx, 1, Next),
+    Transfers2 = ordsets:add_element(Mod, Transfers),
+    VNodeMods = ordsets:from_list([VMod || {_, VMod} <- riak_core:vnode_modules()]),
+    Status2 = case {Status, Transfers2} of
+                  {complete, _} ->
+                      complete;
+                  {awaiting, VNodeMods} ->
+                      complete;
+                  _ ->
+                      awaiting
+              end,
+    Next2 = lists:keyreplace(Idx, 1, Next, {Idx, Owner, NextOwner, Transfers2, Status2}),
     VClock2 = vclock:increment(Owner, VClock),
     CState#chstate{next=Next2, vclock=VClock2}.
 
@@ -699,9 +730,11 @@ update_ring(Active, CNode, CState) ->
 
     %% Remove tuples from next for removed nodes
     InvalidMembers = get_members(CState#chstate.members, [invalid]),
-    Next2 = [Elem || Elem={_, _, NextOwner, Status} <- Next0,
-                     (Status =:= complete) or
-                         not lists:member(NextOwner, InvalidMembers)],
+    Next2 = lists:filter(fun(NInfo) ->
+                                 {NextOwner, Status} = get_next_owner(NInfo),
+                                 (Status =:= complete) or
+                                     not lists:member(NextOwner, InvalidMembers)
+                         end, Next0),
     CState2 = CState#chstate{next=Next2},
 
     %% Transfer ownership after completed handoff
@@ -726,15 +759,19 @@ update_ring(Active, CNode, CState) ->
 
 transfer_ownership(CState=#chstate{next=Next}) ->
     %% Remove already completed and transfered changes
-    Next2 = lists:filter(fun({Idx, _, NewOwner, S}) ->
+    Next2 = lists:filter(fun(NInfo={Idx, _, _, _, _}) ->
+                                 {NewOwner, S} = get_next_owner(NInfo),
                                  not ((S == complete) and
                                       (index_owner(CState, Idx) =:= NewOwner))
                          end, Next),
 
-    CState2 = lists:foldl(fun({Idx, _, Node, complete}, CState0) ->
-                                  riak_core_ring:transfer_node(Idx, Node, CState0);
-                             (_, CState0) ->
-                                  CState0
+    CState2 = lists:foldl(fun(NInfo={Idx, _, _, _, _}, CState0) ->
+                                  case get_next_owner(NInfo) of
+                                      {Node, complete} ->
+                                          riak_core_ring:transfer_node(Idx, Node, CState0);
+                                      _ ->
+                                          CState0
+                                  end
                           end, CState, Next2),
 
     NextChanged = (Next2 /= Next),
@@ -772,7 +809,7 @@ rebalance_ring(_Active, _CNode, CState=#chstate{next=[]}) ->
     Owners1 = all_owners(CState),
     Owners2 = all_owners(CState2),
     Owners3 = lists:zip(Owners1, Owners2),
-    Next = [{Idx, PrevOwner, NewOwner, awaiting}
+    Next = [{Idx, PrevOwner, NewOwner, [], awaiting}
             || {{Idx, PrevOwner}, {Idx, NewOwner}} <- Owners3,
                PrevOwner /= NewOwner],
     Next;
@@ -798,7 +835,7 @@ remove_node(CState, Node, Status) ->
     remove_node(CState, Node, Status, Indices).
 
 next_owners(#chstate{next=Next}) ->
-    [{Idx, NextOwner} || {Idx, _, NextOwner, _} <- Next].
+    [{Idx, NextOwner} || {Idx, _, NextOwner, _, _} <- Next].
 
 change_owners(CState, Reassign) ->
     lists:foldl(fun({Idx, NewOwner}, CState0) ->
@@ -822,7 +859,7 @@ remove_node(CState, Node, Status, Indices) ->
                      end,
     Reassign = [{Idx, NewOwner} || {Idx, NewOwner} <- Owners2,
                                    lists:member(Idx, RemovedIndices)],
-    Next = [{Idx, PrevOwner, NewOwner, awaiting}
+    Next = [{Idx, PrevOwner, NewOwner, [], awaiting}
             || {{Idx, PrevOwner}, {Idx, NewOwner}} <- Owners3,
                PrevOwner /= NewOwner,
                not lists:member(Idx, RemovedIndices)],
