@@ -49,14 +49,21 @@ stop(Reason) ->
 join(NodeStr) when is_list(NodeStr) ->
     join(riak_core_util:str_to_node(NodeStr));
 join(Node) when is_atom(Node) ->
+    {ok, OurRingSize} = application:get_env(riak_core, ring_creation_size),
     case net_adm:ping(Node) of
         pong ->
             case rpc:call(Node, riak_core_ring_manager, get_my_ring, []) of
-                {ok, JoinCS} ->
-                    JoinCS2 = riak_core_ring:add_member(node(), JoinCS, node()),
-                    JoinCS3 = riak_core_ring:set_owner(JoinCS2, node()),
-                    riak_core_ring_manager:set_my_ring(JoinCS3),
-                    riak_core_gossip:send_ring(Node, node());
+                {ok, Ring} ->
+                    case riak_core_ring:num_partitions(Ring) of
+                        OurRingSize ->
+                            Ring2 = riak_core_ring:add_member(node(), Ring,
+                                                              node()),
+                            Ring3 = riak_core_ring:set_owner(Ring2, node()),
+                            riak_core_ring_manager:set_my_ring(Ring3),
+                            riak_core_gossip:send_ring(Node, node());
+                        _ ->
+                            {error, different_ring_sizes}
+                    end;
                 _ -> 
                     {error, unable_to_get_join_ring}
             end;
@@ -65,17 +72,16 @@ join(Node) when is_atom(Node) ->
     end.
 
 remove(Node) ->
-    {ok, PNodeCS} = riak_core_ring_manager:get_my_ring(),
-    case riak_core_ring:member_status(PNodeCS, Node) of
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    case riak_core_ring:member_status(Ring, Node) of
         invalid ->
             io:format("~p isn't a member of the cluster.~n", [Node]),
             ok;
         _ ->
-            PNodeCS2 = riak_core_ring:remove_member(node(), PNodeCS, Node),
-            PNodeCS3 = riak_core_ring:update_seen(node(), PNodeCS2),
-            PNodeCS4 = riak_core_ring:ring_changed(node(), PNodeCS3),
-            riak_core_ring_manager:set_my_ring(PNodeCS4),
-            case riak_core_ring:random_other_member(PNodeCS4) of
+            Ring2 = riak_core_ring:remove_member(node(), Ring, Node),
+            Ring3 = riak_core_ring:ring_changed(node(), Ring2),
+            riak_core_ring_manager:set_my_ring(Ring3),
+            case riak_core_ring:random_other_node(Ring3) of
                 no_node ->
                     ok;
                 RandomNode ->
@@ -91,20 +97,27 @@ leave() ->
         valid ->
             Ring2 = riak_core_ring:leave_member(Node, Ring, Node),
             riak_core_ring_manager:set_my_ring(Ring2),
-            case riak_core_ring:random_other_member(Ring2) of
+            case riak_core_ring:random_other_node(Ring2) of
                 no_node ->
                     ok;
                 RandomNode ->
                     riak_core_gossip:send_ring(Node, RandomNode),
                     ok
-            end
+            end;
+        invalid ->
+            io:format("~p isn't a member of the cluster.~n", [Node]),
+            ok;
+        _ ->
+            io:format("~p is in the process of leaving the cluster.~n",
+                      [Node]),
+            ok
     end.
 
 %% @spec remove_from_cluster(ExitingNode :: atom()) -> term()
 %% @doc Cause all partitions owned by ExitingNode to be taken over
 %%      by other nodes.
 remove_from_cluster(ExitingNode) when is_atom(ExitingNode) ->
-    riak_core_gossip:remove_from_cluster(ExitingNode).
+    remove(ExitingNode).
 
 vnode_modules() ->
     case application:get_env(riak_core, vnode_modules) of

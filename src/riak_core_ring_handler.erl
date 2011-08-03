@@ -67,17 +67,20 @@ ensure_vnodes_started(Ring) ->
                         leaving ->
                             Ring2 = riak_core_ring:exit_member(node(), Ring, node()),
                             riak_core_ring_manager:set_my_ring(Ring2),
-                            case riak_core_ring:random_other_member(Ring2) of
+                            case riak_core_ring:random_other_node(Ring2) of
                                 no_node ->
                                     riak_core_ring_manager:refresh_my_ring();
                                 RandomNode ->
                                     riak_core_gossip:send_ring(node(), RandomNode)
                             end;
+                        invalid ->
+                            riak_core_ring_manager:refresh_my_ring();
                         exiting ->
                             %% Deliberately do nothing.
                             ok;
-                        invalid ->
-                            riak_core_ring_manager:refresh_my_ring()
+                        valid ->
+                            %% Deliberately do nothing.
+                            ok
                     end;
                 _ -> ok
             end
