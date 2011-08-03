@@ -157,7 +157,7 @@ handle_call({node_status, Status}, _From, State) ->
 handle_cast({ring_update, R}, State) ->
     %% Ring has changed; determine what peers are new to us
     %% and broadcast out current status to those peers.
-    Peers0 = ordsets:from_list(riak_core_ring:all_members2(R)),
+    Peers0 = ordsets:from_list(riak_core_ring:all_members(R)),
     Peers = ordsets:del_element(node(), Peers0),
 
     S2 = peers_update(Peers, State),

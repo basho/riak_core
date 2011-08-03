@@ -132,7 +132,7 @@ vnode_command(Sender, Request, State=#state{index=Index,
     %% Check if we should forward
     Node = node(),
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    case riak_core_ring:get_next(Ring, Index, Mod) of
+    case riak_core_ring:next_owner(Ring, Index, Mod) of
         {Node, NextOwner, complete} ->
             %%io:format("Forwarding ~p -> ~p: ~p~n", [node(), NextOwner, Index]),
             riak_core_vnode_master:command({Index, NextOwner}, Request, Sender,
@@ -313,7 +313,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 should_handoff(#state{index=Idx, mod=Mod}) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Me = node(),
-    NextOwner = riak_core_ring:next_owner(Ring, Idx),
+    {_, NextOwner, _} = riak_core_ring:next_owner(Ring, Idx),
     Owner = riak_core_ring:index_owner(Ring, Idx),
     %% TODO: Do we really need to wait for ring_ready?
     %%Ready = riak_core_ring:ring_ready(Ring),
