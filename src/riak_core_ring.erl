@@ -495,7 +495,8 @@ maybe_remove_exiting(Node, CState) ->
                 lists:foldl(fun(ENode, CState0) ->
                                     %% Tell exiting node to shutdown.
                                     riak_core_ring_manager:refresh_ring(ENode),
-                                    set_member(Node, CState0, ENode, invalid)
+                                    set_member(Node, CState0, ENode,
+                                               invalid, same_vclock)
                             end, CState, Exiting),
             {Changed, CState2};
         _ ->
@@ -738,7 +739,8 @@ reconcile_next(Next1, Next2) ->
                   end, Next1, Next2).
 
 %% @private
-reconcile_next2(Next1, Next2) ->
+reconcile_divergent_next(BaseNext, OtherNext) ->
+    MergedNext = substitute(1, BaseNext, OtherNext),
     lists:zipwith(fun({Idx, Owner1, Node1, Transfers1, Status1},
                       {Idx, Owner2, Node2, Transfers2, Status2}) ->
                           Same = ({Owner1, Node1} =:= {Owner2, Node2}),
@@ -750,7 +752,7 @@ reconcile_next2(Next1, Next2) ->
                                    ordsets:union(Transfers1, Transfers2),
                                    merge_next_status(Status1, Status2)}
                           end
-                  end, Next1, Next2).
+                  end, BaseNext, MergedNext).
 
 %% @private
 substitute(Idx, TL1, TL2) ->
@@ -777,24 +779,20 @@ reconcile_ring(StateA=#chstate{claimant=Claimant1, rvsn=VC1, next=Next1},
             Next = reconcile_next(Next1, Next2),
             StateA#chstate{next=Next};
         {_, true, false} ->
-            MergedNext = substitute(1, Next1, Next2),
-            Next = reconcile_next2(Next1, MergedNext),
+            Next = reconcile_divergent_next(Next1, Next2),
             StateA#chstate{next=Next};
         {_, false, true} ->
-            MergedNext = substitute(1, Next2, Next1),
-            Next = reconcile_next2(Next2, MergedNext),
+            Next = reconcile_divergent_next(Next2, Next1),
             StateB#chstate{next=Next};
         {_, _, _} ->
             CValid1 = lists:member(Claimant1, Members),
             CValid2 = lists:member(Claimant2, Members),
             case {CValid1, CValid2} of
                 {true, false} ->
-                    MergedNext = substitute(1, Next1, Next2),
-                    Next = reconcile_next2(Next1, MergedNext),
+                    Next = reconcile_divergent_next(Next1, Next2),
                     StateA#chstate{next=Next};
                 {false, true} ->
-                    MergedNext = substitute(1, Next2, Next1),
-                    Next = reconcile_next2(Next2, MergedNext),
+                    Next = reconcile_divergent_next(Next2, Next1),
                     StateB#chstate{next=Next};
                 {false, false} ->
                     throw("Neither claimant valid");
@@ -803,12 +801,10 @@ reconcile_ring(StateA=#chstate{claimant=Claimant1, rvsn=VC1, next=Next1},
                     %% But, we need to handle it for exceptional cases.
                     case Claimant1 < Claimant2 of
                         true ->
-                            MNext = substitute(1, Next1, Next2),
-                            Next = reconcile_next2(Next1, MNext),
+                            Next = reconcile_divergent_next(Next1, Next2),
                             StateA#chstate{next=Next};
                         false ->
-                            MNext = substitute(1, Next2, Next1),
-                            Next = reconcile_next2(Next2, MNext),
+                            Next = reconcile_divergent_next(Next2, Next1),
                             StateB#chstate{next=Next}
                     end
             end
@@ -867,6 +863,12 @@ get_members(Members, Types) ->
 
 %% @private
 set_member(Node, CState, Member, Status) ->
+    VClock = vclock:increment(Node, CState#chstate.vclock),
+    CState2 = set_member(Node, CState, Member, Status, same_vclock),
+    CState2#chstate{vclock=VClock}.
+
+%% @private
+set_member(Node, CState, Member, Status, same_vclock) ->
     Members2 = orddict:update(Member,
                               fun({_, VC}) ->
                                       {Status, vclock:increment(Node, VC)}
@@ -874,8 +876,7 @@ set_member(Node, CState, Member, Status) ->
                               {Status, vclock:increment(Node,
                                                         vclock:fresh())},
                               CState#chstate.members),
-    VClock = vclock:increment(Node, CState#chstate.vclock),
-    CState#chstate{members=Members2, vclock=VClock}.
+    CState#chstate{members=Members2}.
 
 %% @private
 update_seen(Node, CState=#chstate{vclock=VClock, seen=Seen}) ->

@@ -49,14 +49,21 @@ stop(Reason) ->
 join(NodeStr) when is_list(NodeStr) ->
     join(riak_core_util:str_to_node(NodeStr));
 join(Node) when is_atom(Node) ->
+    {ok, OurRingSize} = application:get_env(riak_core, ring_creation_size),
     case net_adm:ping(Node) of
         pong ->
             case rpc:call(Node, riak_core_ring_manager, get_my_ring, []) of
                 {ok, Ring} ->
-                    Ring2 = riak_core_ring:add_member(node(), Ring, node()),
-                    Ring3 = riak_core_ring:set_owner(Ring2, node()),
-                    riak_core_ring_manager:set_my_ring(Ring3),
-                    riak_core_gossip:send_ring(Node, node());
+                    case riak_core_ring:num_partitions(Ring) of
+                        OurRingSize ->
+                            Ring2 = riak_core_ring:add_member(node(), Ring,
+                                                              node()),
+                            Ring3 = riak_core_ring:set_owner(Ring2, node()),
+                            riak_core_ring_manager:set_my_ring(Ring3),
+                            riak_core_gossip:send_ring(Node, node());
+                        _ ->
+                            {error, different_ring_sizes}
+                    end;
                 _ -> 
                     {error, unable_to_get_join_ring}
             end;
@@ -96,7 +103,14 @@ leave() ->
                 RandomNode ->
                     riak_core_gossip:send_ring(Node, RandomNode),
                     ok
-            end
+            end;
+        invalid ->
+            io:format("~p isn't a member of the cluster.~n", [Node]),
+            ok;
+        _ ->
+            io:format("~p is in the process of leaving the cluster.~n",
+                      [Node]),
+            ok
     end.
 
 %% @spec remove_from_cluster(ExitingNode :: atom()) -> term()
