@@ -73,7 +73,7 @@ default_wants_claim(Ring) ->
 default_wants_claim(Ring, Node) ->
     %% Determine how many nodes are involved with the ring; if the requested
     %% node is not yet part of the ring, include it in the count.
-    AllMembers = riak_core_ring:all_members(Ring),
+    AllMembers = riak_core_ring:claiming_members(Ring),
     case lists:member(Node, AllMembers) of
         true ->
             Mval = length(AllMembers);
@@ -149,7 +149,7 @@ meets_target_n([], TargetN, Index, First, Last) ->
 
 claim_with_n_met(Ring, TailViolations, Node) ->
     CurrentOwners = lists:keysort(1, riak_core_ring:all_owners(Ring)),
-    Nodes = lists:usort([Node|riak_core_ring:all_members(Ring)]),
+    Nodes = lists:usort([Node|riak_core_ring:claiming_members(Ring)]),
     case lists:sort([ I || {I, N} <- CurrentOwners, N == Node ]) of
         [] ->
             %% node hasn't claimed anything yet - just claim stuff
@@ -232,7 +232,7 @@ find_biggest_hole(Mine) ->
 
 claim_rebalance_n(Ring, Node) ->
     %% diagonal stripes guarantee most disperse data
-    Nodes = lists:usort([Node|riak_core_ring:all_members(Ring)]),
+    Nodes = lists:usort([Node|riak_core_ring:claiming_members(Ring)]),
     Partitions = lists:sort([ I || {I, _} <- riak_core_ring:all_owners(Ring) ]),
     Zipped = lists:zip(Partitions,
                        lists:sublist(

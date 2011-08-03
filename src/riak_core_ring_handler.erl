@@ -73,11 +73,14 @@ ensure_vnodes_started(Ring) ->
                                 RandomNode ->
                                     riak_core_gossip:send_ring(node(), RandomNode)
                             end;
+                        invalid ->
+                            riak_core_ring_manager:refresh_my_ring();
                         exiting ->
                             %% Deliberately do nothing.
                             ok;
-                        invalid ->
-                            riak_core_ring_manager:refresh_my_ring()
+                        valid ->
+                            %% Deliberately do nothing.
+                            ok
                     end;
                 _ -> ok
             end
