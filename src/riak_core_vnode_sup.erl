@@ -35,8 +35,10 @@ start_link() ->
 
 %% @private
 init([]) ->
-    {ok, 
-     {{simple_one_for_one, 10, 10}, 
-      [{undefined,
-        {riak_core_vnode, start_link, []},
-      temporary, brutal_kill, worker, dynamic}]}}.
+  Config = app_helper:get_env(riak_core_vnode_sup, lifecycle_options, {
+    {simple_one_for_one, 10, 10}, 
+    [
+      {undefined, {riak_core_vnode, start_link, []}, temporary, brutal_kill, worker, dynamic}
+    ]
+  }),
+  {ok, Config}.
