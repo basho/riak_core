@@ -65,5 +65,26 @@ listify(IoList) -> binary_to_list(list_to_binary(IoList)).
 test() ->
     J1 = listify(mochijson:encode(test_data())),
     io:format("~s~n", [listify(print(J1))]).
-    
-    
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+basic_test() ->
+    J1 = listify(mochijson:encode(test_data())),
+    L1 =
+        "{\n"
+        "    \"foo\": true,\n"
+        "    \"bar\": false,\n"
+        "    \"baz\": [\n"
+        "        1,\n"
+        "        2,\n"
+        "        3,\n"
+        "        4\n"
+        "    ],\n"
+        "    \"fiz:f\": null,\n"
+        "    \"fozzer\\\"\": 5\n"
+        "}",
+    ?assertEqual(L1, listify(print(J1))),
+    ok.
+
+-endif.

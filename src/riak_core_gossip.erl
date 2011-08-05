@@ -501,3 +501,31 @@ attempt_simple_transfer(Seed, Ring, [{_, N}|Rest], TargetN, Exit, Idx, Last) ->
                             lists:keyreplace(N, 1, Last, {N, Idx}));
 attempt_simple_transfer(_, Ring, [], _, _, _, _) ->
     {ok, Ring}.
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+owners(Ring) ->
+    lists:usort([Owner || {_, Owner} <- riak_core_ring:all_owners(Ring)]).
+    
+removal_test() ->
+    application:set_env(riak_core, target_n_val, 3),
+
+    Ring1 = riak_core_ring:fresh(64, n1),
+    ?assertEqual([n1], owners(Ring1)),
+
+    {_, Indices} = lists:foldl(fun({Idx, _}, {true, L}) ->
+                                       {false, [Idx|L]};
+                                  ({_, _}, {false, L}) ->
+                                       {true, L}
+                               end, {true, []}, riak_core_ring:all_owners(Ring1)),
+    Ring2 = lists:foldl(fun(Idx, Ring) ->
+                                riak_core_ring:transfer_node(Idx, n2, Ring)
+                        end, Ring1, Indices),
+    ?assertEqual([n1, n2], owners(Ring2)),
+
+    Ring3 = reassign_indices(Ring2, n2),
+    ?assertEqual([n1], owners(Ring3)),
+    ok.
+
+-endif.
