@@ -396,10 +396,13 @@ next_owner(State, Idx, Mod) ->
 
 %% @doc Returns true if all cluster members have seen the current ring.
 -spec ring_ready(State :: chstate()) -> boolean().
-ring_ready(State) ->
+ring_ready(State0) ->
+    Owner = owner_node(State0),
+    State = update_seen(Owner, State0),
     Seen = State#chstate.seen,
     Members = get_members(State#chstate.members),
-    VClock = State#chstate.vclock,
+    SeenVC = orddict:fetch(Owner, Seen),
+    VClock = vclock:merge([State#chstate.vclock, SeenVC]),
     R = [begin
              case orddict:find(Node, Seen) of
                  error ->
@@ -427,7 +430,7 @@ ring_changed(Node, State) ->
 
 %% @private
 internal_ring_changed(Node, CState0) ->
-    CState = update_seen(node(), CState0),
+    CState = update_seen(Node, CState0),
     case ring_ready(CState) of
         false ->
             CState;
@@ -639,8 +642,11 @@ remove_node(CState, Node, Status, Indices) ->
                PrevOwner /= NewOwner,
                not lists:member(Idx, RemovedIndices)],
 
+    %% Unlike rebalance_ring, remove_node can be called when Next is non-empty,
+    %% therefore we need to merge the values. Original Next has priority.
+    Next2 = substitute(1, Next, CState#chstate.next),
     CState2 = change_owners(CState, Reassign),
-    CState2#chstate{next=Next}.
+    CState2#chstate{next=Next2}.
 
 %% ====================================================================
 %% Internal functions

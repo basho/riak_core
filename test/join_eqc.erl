@@ -67,10 +67,12 @@ eqc_test_() ->
      [{setup,
        fun setup/0,
        fun cleanup/1,
-       [{inorder, [manual_test_list(),
-        %% Run the quickcheck tests
-        {timeout, 60000, % timeout is in msec
-         ?_assertEqual(true, quickcheck(numtests(?TEST_ITERATIONS, ?QC_OUT(prop_join()))))}]}
+       [{inorder,
+         [manual_test_list(),
+          %% Run the quickcheck tests
+          {timeout, 60000, % timeout is in msec
+           ?_assertEqual(true, catch quickcheck(numtests(?TEST_ITERATIONS, ?QC_OUT(prop_join()))))}
+         ]}
        ]
       }
      ]
@@ -178,7 +180,8 @@ do_converge_ring(State, {RC, true}) ->
           {hd(Nodes), false, State},
           tl(Nodes)),
     %% Nodes may shutdown due to gossip
-    Nodes2 = get_members(State2#state.members, [valid, leaving]),
+    %%Nodes2 = get_members(State2#state.members, [valid, leaving]),
+    Nodes2 = State2#state.primary,
     N1 = hd(lists:reverse(Nodes2)),
     {Changed2, State3} =
         lists:foldl(
@@ -754,9 +757,10 @@ s_join(State, Node, NState, PNode) ->
             %% ?debugFmt("J: ~p~n", [JoinCS2#chstate.members]),
             JoinCS3 = JoinCS2#chstate{nodename=Node},
             State2 = update_cstate(State, PNode, JoinCS2),
+            Partitions = start_vnodes(State, Node, []),
             State3 = update_nstate(State2, Node,
                                    NState#nstate{chstate=JoinCS3,
-                                                 partitions=[],
+                                                 partitions=Partitions,
                                                  has_data=[],
                                                  joined_to=PNode}),
             State3#state{primary=Primary2, others=Others2, rejoin=Rejoin2}
@@ -1272,12 +1276,13 @@ save_cstate(State, Node, CState) ->
                      State#state.nstates),
     State#state{nstates=NS}.
 
-ring_ready(CState) ->
+ring_ready(CState0) ->
+    Owner = owner_node(CState0),
+    CState = update_seen(Owner, CState0),
     Seen = CState#chstate.seen,
     Members = get_members(CState#chstate.members),
-    VClock = CState#chstate.vclock,
-    %% ?debugFmt("M: ~p~nS: ~p~n", [Members, Seen]),
-    ?OUT("M: ~p~nS: ~p~n", [Members, Seen]),
+    SeenVC = orddict:fetch(Owner, Seen),
+    VClock = vclock:merge([CState#chstate.vclock, SeenVC]),
     R = [begin
              case orddict:find(Node, Seen) of
                  error ->
@@ -1312,7 +1317,7 @@ save_random() ->
     Seed.
 
 ring_changed(State, _RRing, {Node, _NState}, CState0) ->
-    CState = update_seen(node(), CState0),
+    CState = update_seen(Node, CState0),
     case ring_ready(CState) of
         false ->
             update_cstate(State, Node, CState);
@@ -1538,9 +1543,12 @@ remove_node(CState, Node, Status, Indices) ->
             || {{Idx, PrevOwner}, {Idx, NewOwner}} <- Owners3,
                PrevOwner /= NewOwner,
                not lists:member(Idx, RemovedIndices)],
-    
+
+    %% Unlike rebalance_ring, remove_node can be called when Next is non-empty,
+    %% therefore we need to merge the values. Original Next has priority.
+    Next2 = substitute(1, Next, CState#chstate.next),
     CState2 = change_owners(CState, Reassign),
-    CState2#chstate{next=Next}.
+    CState2#chstate{next=Next2}.
 
 remove_from_cluster(Ring, ExitingNode) ->
     %% % Set the remote node to stop claiming.

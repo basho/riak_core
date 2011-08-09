@@ -315,9 +315,7 @@ should_handoff(#state{index=Idx, mod=Mod}) ->
     Me = node(),
     {_, NextOwner, _} = riak_core_ring:next_owner(Ring, Idx),
     Owner = riak_core_ring:index_owner(Ring, Idx),
-    %% TODO: Do we really need to wait for ring_ready?
-    %%Ready = riak_core_ring:ring_ready(Ring),
-    Ready = true,
+    Ready = riak_core_ring:ring_ready(Ring),
     %% io:format("Owner/Next/Ready: ~p / ~p / ~p~n", [Owner, NextOwner, Ready]),
     TargetNode = case {Ready, Owner, NextOwner} of
                      {_, _, Me} ->
