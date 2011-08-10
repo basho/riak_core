@@ -141,6 +141,15 @@ handle_cast(gossip_ring, _RingChanged) ->
 
     % Gossip the ring to some random other node...
     {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
+
+    %% Ensure vnodes necessary for ownership change are running
+    case riak_core_ring:disowning_indices(MyRing, node()) of
+        [] ->
+            ok;
+        _ ->
+            riak_core_ring_events:force_update()
+    end,
+
     case riak_core_ring:random_other_node(MyRing) of
         no_node -> % must be single node cluster
             ok;

@@ -120,7 +120,8 @@ startable_vnodes(Mod, Ring) ->
         {1, true} ->
             riak_core_ring:my_indices(Ring);
         _ ->
-            {ok, Excl} = riak_core_handoff_manager:get_exclusions(Mod),
+            {ok, ModExcl} = riak_core_handoff_manager:get_exclusions(Mod),
+            Excl = ModExcl -- riak_core_ring:disowning_indices(Ring, node()),
             case riak_core_ring:random_other_index(Ring, Excl) of
                 no_indices ->
                     case length(Excl) =:= riak_core_ring:num_partitions(Ring) of

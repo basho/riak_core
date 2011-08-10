@@ -61,6 +61,7 @@
          claiming_members/1,
          set_owner/2,
          indices/2,
+         disowning_indices/2,
          next_owner/2,
          next_owner/3,
          handoff_complete/3,
@@ -366,6 +367,11 @@ indices(State, Node) ->
     AllOwners = all_owners(State),
     [Idx || {Idx, Owner} <- AllOwners, Owner =:= Node].
 
+%% @doc Return all indices that a node is scheduled to give to another.
+disowning_indices(State, Node) ->
+    [Idx || {Idx, Owner, _NextOwner, _Mods, _Status} <- State#chstate.next,
+            Owner =:= Node].
+    
 %% @doc Return details for a pending partition ownership change.
 -spec next_owner(State :: chstate(), Idx :: integer()) -> pending_change().
 next_owner(State, Idx) ->
