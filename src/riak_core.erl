@@ -73,10 +73,12 @@ join(Node) when is_atom(Node) ->
 
 remove(Node) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    case riak_core_ring:member_status(Ring, Node) of
-        invalid ->
-            io:format("~p isn't a member of the cluster.~n", [Node]),
-            ok;
+    case {riak_core_ring:all_members(Ring),
+          riak_core_ring:member_status(Ring, Node)} of
+        {_, invalid} ->
+            {error, not_member};
+        {[Node], _} ->
+            {error, only_member};
         _ ->
             Ring2 = riak_core_ring:remove_member(node(), Ring, Node),
             Ring3 = riak_core_ring:ring_changed(node(), Ring2),
@@ -93,8 +95,13 @@ remove(Node) ->
 leave() ->
     Node = node(),
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    case riak_core_ring:member_status(Ring, Node) of
-        valid ->
+    case {riak_core_ring:all_members(Ring),
+          riak_core_ring:member_status(Ring, Node)} of
+        {_, invalid} ->
+            {error, not_member};
+        {[Node], _} ->
+            {error, only_member};
+        {_, valid} ->
             Ring2 = riak_core_ring:leave_member(Node, Ring, Node),
             riak_core_ring_manager:set_my_ring(Ring2),
             case riak_core_ring:random_other_node(Ring2) of
@@ -104,13 +111,8 @@ leave() ->
                     riak_core_gossip:send_ring(Node, RandomNode),
                     ok
             end;
-        invalid ->
-            io:format("~p isn't a member of the cluster.~n", [Node]),
-            ok;
-        _ ->
-            io:format("~p is in the process of leaving the cluster.~n",
-                      [Node]),
-            ok
+        {_, _} ->
+            {error, already_leaving}
     end.
 
 %% @spec remove_from_cluster(ExitingNode :: atom()) -> term()
