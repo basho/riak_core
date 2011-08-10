@@ -319,9 +319,13 @@ set_my_ring_test() ->
     ?assertEqual({ok, Ring}, get_my_ring()).
 
 refresh_my_ring_test() ->
-    application:set_env(riak_core, ring_creation_size, 4),
-    application:set_env(riak_core, ring_state_dir, "/tmp"),
-    application:set_env(riak_core, cluster_name, "test"),
+    Core_Settings = [{ring_creation_size, 4},
+                     {ring_state_dir, "/tmp"},
+                     {cluster_name, "test"}],
+    [begin
+         put({?MODULE,AppKey}, app_helper:get_env(riak_core, AppKey)),
+         ok = application:set_env(riak_core, AppKey, Val)
+     end || {AppKey, Val} <- Core_Settings],
     riak_core_ring_events:start_link(),
     riak_core_ring_manager:start_link(test),
     riak_core_vnode_sup:start_link(),
@@ -331,7 +335,10 @@ refresh_my_ring_test() ->
     riak_core_ring_manager:stop(),
     %% Cleanup the ring file created for this test
     {ok, RingFile} = find_latest_ringfile(),
-    file:delete(RingFile).
+    file:delete(RingFile),
+    [ok = application:set_env(riak_core, AppKey, get({?MODULE, AppKey}))
+     || {AppKey, _Val} <- Core_Settings],
+    ok.
 
 -endif.
 
