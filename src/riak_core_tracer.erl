@@ -139,7 +139,10 @@ handle_call({collect, Duration, Nodes}, _From, State) ->
     {reply, ok, State#state{trace=[], stop_tref = Tref, tracing = true}};
 handle_call(stop_collect, From, State = #state{tracing = true}) ->
     %% Trigger the sentinel so that we wait for the trace buffer to flush
+    erlang:system_flag(multi_scheduling, block),
+    timer:sleep(100),
     ?MODULE:trigger_sentinel(),
+    erlang:system_flag(multi_scheduling, unblock),
     {noreply, State#state{stop_from = From, tracing = stopping}};
 handle_call(stop_collect, _From, State) ->
     {reply, State#state.tracing, State};
