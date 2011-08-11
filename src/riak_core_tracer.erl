@@ -140,10 +140,6 @@ handle_call({collect, Duration, Nodes}, _From, State) ->
 handle_call(stop_collect, From, State = #state{tracing = true}) ->
     %% Trigger the sentinel so that we wait for the trace buffer to flush
     ?MODULE:trigger_sentinel(),
-    [spawn(fun() -> timer:sleep(1),
-                    ?MODULE:trigger_sentinel()
-           end) || _ <- lists:seq(1, 20)],
-    timer:sleep(100),
     {noreply, State#state{stop_from = From, tracing = stopping}};
 handle_call(stop_collect, _From, State) ->
     {reply, State#state.tracing, State};
