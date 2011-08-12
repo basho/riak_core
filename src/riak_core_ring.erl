@@ -120,7 +120,7 @@
 %% @doc Produce a list of all nodes that are members of the cluster
 -spec all_members(State :: chstate()) -> [Node :: term()].
 all_members(#chstate{members=Members}) ->
-    get_members(Members, [valid, leaving, exiting]).
+    get_members(Members).
 
 %% @doc Provide all ownership information in the form of {Index,Node} pairs.
 -spec all_owners(State :: chstate()) -> [{Index :: integer(), Node :: term()}].
@@ -407,8 +407,7 @@ ring_ready(State0) ->
     State = update_seen(Owner, State0),
     Seen = State#chstate.seen,
     Members = get_members(State#chstate.members),
-    SeenVC = orddict:fetch(Owner, Seen),
-    VClock = vclock:merge([State#chstate.vclock, SeenVC]),
+    VClock = State#chstate.vclock,
     R = [begin
              case orddict:find(Node, Seen) of
                  error ->
@@ -681,17 +680,18 @@ internal_reconcile(State, OtherState) ->
 
     VC1 = State3#chstate.vclock,
     VC2 = OtherState3#chstate.vclock,
+    VC3 = vclock:merge([VC1, VC2]),
     %%io:format("V1: ~p~nV2: ~p~n", [VC1, VC2]),
     Newer = vclock:descends(VC1, VC2),
     Older = vclock:descends(VC2, VC1),
     Equal = equal_cstate(State3, OtherState3),
     case {Equal, Newer, Older} of
         {_, true, false} ->
-            {SeenChanged, State3};
+            {SeenChanged, State3#chstate{vclock=VC3}};
         {_, false, true} ->
-            {true, OtherState3#chstate{nodename=VNode}};
+            {true, OtherState3#chstate{nodename=VNode, vclock=VC3}};
         {true, _, _} ->
-            {SeenChanged, State3};
+            {SeenChanged, State3#chstate{vclock=VC3}};
         {_, true, true} ->
             throw("Equal vclocks, but cstate unequal");
         {_, false, false} ->

@@ -1023,6 +1023,7 @@ reconcile(State, CS01, CS02) ->
 
     VC1 = CS1#chstate.vclock,
     VC2 = CS2#chstate.vclock,
+    VC3 = vclock:merge([VC1, VC2]),
     %%io:format("V1: ~p~nV2: ~p~n", [VC1, VC2]),
     Newer = vclock:descends(VC1, VC2),
     Older = vclock:descends(VC2, VC1),
@@ -1030,12 +1031,12 @@ reconcile(State, CS01, CS02) ->
     case {Equal, Newer, Older} of
         {_, true, false} ->
             %%io:format("CS1: ~p~n", [CS1]),
-            {SeenChanged, CS1};
+            {SeenChanged, CS1#chstate{vclock=VC3}};
         {_, false, true} ->
             %%io:format("CS2: ~p~n", [CS2]),
-            {true, CS2#chstate{nodename=VNode}};
+            {true, CS2#chstate{nodename=VNode, vclock=VC3}};
         {true, _, _} ->
-            {SeenChanged, CS1};
+            {SeenChanged, CS1#chstate{vclock=VC3}};
         {_, true, true} ->
             io:format("C1: ~p~nC2: ~p~n", [CS1, CS2]),
             throw("Equal vclocks, but cstate unequal");
@@ -1281,8 +1282,7 @@ ring_ready(CState0) ->
     CState = update_seen(Owner, CState0),
     Seen = CState#chstate.seen,
     Members = get_members(CState#chstate.members),
-    SeenVC = orddict:fetch(Owner, Seen),
-    VClock = vclock:merge([CState#chstate.vclock, SeenVC]),
+    VClock = CState#chstate.vclock,
     R = [begin
              case orddict:find(Node, Seen) of
                  error ->
