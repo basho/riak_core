@@ -91,8 +91,11 @@ handle_call({finish_handoff, Idx, Prev, New, Mod}, _From, State) ->
 
     case {Owner, NextOwner, Status} of
         {Prev, New, awaiting} ->
-            Ring2 = riak_core_ring:handoff_complete(Ring, Idx, Mod),
-            riak_core_ring_manager:set_my_ring(Ring2),
+            riak_core_ring_manager:ring_trans(
+              fun(Ring2, _) -> 
+                      Ring3 = riak_core_ring:handoff_complete(Ring2, Idx, Mod),
+                      {new_ring, Ring3}
+              end, []),
             {reply, forward, State};
         {Prev, New, complete} ->
             %% Do nothing

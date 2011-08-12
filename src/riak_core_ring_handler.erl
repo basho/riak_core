@@ -65,13 +65,17 @@ ensure_vnodes_started(Ring) ->
                 [] -> 
                     case riak_core_ring:member_status(Ring, node()) of
                         leaving ->
-                            Ring2 = riak_core_ring:exit_member(node(), Ring, node()),
-                            riak_core_ring_manager:set_my_ring(Ring2),
-                            case riak_core_ring:random_other_node(Ring2) of
+                            riak_core_ring_manager:ring_trans(
+                              fun(Ring2, _) -> 
+                                      Ring3 = riak_core_ring:exit_member(node(), Ring2, node()),
+                                      {new_ring, Ring3}
+                              end, []),
+                            %% Shutdown if we are the only node in the cluster
+                            case riak_core_ring:random_other_node(Ring) of
                                 no_node ->
                                     riak_core_ring_manager:refresh_my_ring();
-                                RandomNode ->
-                                    riak_core_gossip:send_ring(node(), RandomNode)
+                                _ ->
+                                    ok
                             end;
                         invalid ->
                             riak_core_ring_manager:refresh_my_ring();

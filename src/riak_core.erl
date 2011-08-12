@@ -80,16 +80,13 @@ remove(Node) ->
         {[Node], _} ->
             {error, only_member};
         _ ->
-            Ring2 = riak_core_ring:remove_member(node(), Ring, Node),
-            Ring3 = riak_core_ring:ring_changed(node(), Ring2),
-            riak_core_ring_manager:set_my_ring(Ring3),
-            case riak_core_ring:random_other_node(Ring3) of
-                no_node ->
-                    ok;
-                RandomNode ->
-                    riak_core_gossip:send_ring(node(), RandomNode),
-                    ok
-            end
+            riak_core_ring_manager:ring_trans(
+              fun(Ring2, _) -> 
+                      Ring3 = riak_core_ring:remove_member(node(), Ring2, Node),
+                      Ring4 = riak_core_ring:ring_changed(node(), Ring3),
+                      {new_ring, Ring4}
+              end, []),
+            ok
     end.
 
 leave() ->
@@ -102,15 +99,12 @@ leave() ->
         {[Node], _} ->
             {error, only_member};
         {_, valid} ->
-            Ring2 = riak_core_ring:leave_member(Node, Ring, Node),
-            riak_core_ring_manager:set_my_ring(Ring2),
-            case riak_core_ring:random_other_node(Ring2) of
-                no_node ->
-                    ok;
-                RandomNode ->
-                    riak_core_gossip:send_ring(Node, RandomNode),
-                    ok
-            end;
+            riak_core_ring_manager:ring_trans(
+              fun(Ring2, _) -> 
+                      Ring3 = riak_core_ring:leave_member(Node, Ring2, Node),
+                      {new_ring, Ring3}
+              end, []),
+            ok;
         {_, _} ->
             {error, already_leaving}
     end.
