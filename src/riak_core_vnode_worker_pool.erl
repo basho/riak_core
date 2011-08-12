@@ -28,7 +28,7 @@
 -export([ready/2, queueing/2, ready/3, queueing/3]).
 
 %% API
--export([start_link/5]).
+-export([start_link/5, handle_work/3]).
 
 -record(state, {
         queue = queue:new(),
@@ -39,8 +39,11 @@
 start_link(WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps) ->
     gen_fsm:start_link(?MODULE, [WorkerMod, PoolSize,  VNodeIndex, WorkerArgs, WorkerProps], []).
 
+handle_work(Pid, Work, From) ->
+    gen_fsm:send_event(Pid, {work, Work, From}).
+
 init([WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps]) ->
-    %io:format("~p starting worker pool with module ~p size ~p~n", [self(), WorkerMod,
+    io:format("~p starting worker pool with module ~p size ~p~n", [self(), WorkerMod,
             PoolSize]),
     {ok, Pid} = poolboy:start_link([{worker_module, riak_core_vnode_worker},
             {worker_args, [VNodeIndex, WorkerArgs, WorkerProps]},

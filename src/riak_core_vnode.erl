@@ -139,23 +139,35 @@ continue(State, NewModState) ->
     continue(State#state{modstate=NewModState}).
     
 
-vnode_command(Sender, Request, State=#state{mod=Mod, modstate=ModState}) ->
+vnode_command(Sender, Request, State=#state{mod=Mod, modstate=ModState,
+        pool_pid=Pool}) ->
     case Mod:handle_command(Request, Sender, ModState) of
         {reply, Reply, NewModState} ->
             reply(Sender, Reply),
             continue(State, NewModState);
         {noreply, NewModState} ->
             continue(State, NewModState);
+        {async, Work, From, NewModState} ->
+            %% dispatch some work to the vnode worker pool
+            %% the result is sent back to 'From'
+            riak_core_vnode_worker_pool:handle_work(Pool, Work, From),
+            continue(State, NewModState);
         {stop, Reason, NewModState} ->
             {stop, Reason, State#state{modstate=NewModState}}
     end.
 
-vnode_coverage(Sender, Request, KeySpaces, State=#state{mod=Mod, modstate=ModState}) ->
+vnode_coverage(Sender, Request, KeySpaces, State=#state{mod=Mod,
+        modstate=ModState, pool_pid=Pool}) ->
     case Mod:handle_coverage(Request, KeySpaces, Sender, ModState) of
         {reply, Reply, NewModState} ->
             reply(Sender, Reply),
             continue(State, NewModState);
         {noreply, NewModState} ->
+            continue(State, NewModState);
+        {async, Work, From, NewModState} ->
+            %% dispatch some work to the vnode worker pool
+            %% the result is sent back to 'From'
+            riak_core_vnode_worker_pool:handle_work(Pool, Work, From),
             continue(State, NewModState);
         {stop, Reason, NewModState} ->
             {stop, Reason, State#state{modstate=NewModState}}
