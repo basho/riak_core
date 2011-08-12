@@ -40,7 +40,7 @@ behaviour_info(_Other) ->
 start_link(Args) ->
     WorkerMod = proplists:get_value(worker_callback_mod, Args),
     [VNodeIndex, WorkerArgs, WorkerProps] = proplists:get_value(worker_args, Args),
-    gen_server:start(?MODULE, [WorkerMod, VNodeIndex, WorkerArgs, WorkerProps], []).
+    gen_server:start_link(?MODULE, [WorkerMod, VNodeIndex, WorkerArgs, WorkerProps], []).
 
 handle_work(Pid, Pool, Work, From) ->
     gen_server:call(Pid, {work, Pool, Work, From}).
