@@ -53,7 +53,9 @@
          update_meta/3]).
 
 -export([cluster_name/1,
+         claimant/1,
          member_status/2,
+         all_member_status/1,
          add_member/3,
          remove_member/3,
          leave_member/3,
@@ -62,9 +64,11 @@
          set_owner/2,
          indices/2,
          disowning_indices/2,
+         pending_changes/1,
          next_owner/2,
          next_owner/3,
          handoff_complete/3,
+         ring_ready/0,
          ring_ready/1,
          ring_changed/2,
          reconcile_members/2]).
@@ -321,6 +325,11 @@ update_meta(Key, Val, State) ->
             State
     end.
 
+%% @doc Return the current claimant.
+-spec claimant(State :: chstate()) -> node().
+claimant(#chstate{claimant=Claimant}) ->
+    Claimant.
+
 %% @doc Returns the unique identifer for this cluster.
 -spec cluster_name(State :: chstate()) -> term().
 cluster_name(State) ->
@@ -338,6 +347,11 @@ member_status(Members, Node) ->
             invalid
     end.
 
+%% @doc Returns the current membership status for all nodes in the cluster.
+-spec all_member_status(State :: chstate()) -> [{node(), member_status()}].
+all_member_status(#chstate{members=Members}) ->
+    [{Node, Status} || {Node, {Status, _VC}} <- Members, Status /= invalid].
+    
 add_member(PNode, State, Node) ->
     set_member(PNode, State, Node, valid).
 
@@ -371,7 +385,12 @@ indices(State, Node) ->
 disowning_indices(State, Node) ->
     [Idx || {Idx, Owner, _NextOwner, _Mods, _Status} <- State#chstate.next,
             Owner =:= Node].
-    
+
+%% @doc Returns a list of all pending ownership transfers.
+pending_changes(State) ->
+    %% For now, just return next directly.
+    State#chstate.next.
+
 %% @doc Return details for a pending partition ownership change.
 -spec next_owner(State :: chstate(), Idx :: integer()) -> pending_change().
 next_owner(State, Idx) ->
@@ -418,6 +437,10 @@ ring_ready(State0) ->
          end || Node <- Members],
     Ready = lists:all(fun(X) -> X =:= true end, R),
     Ready.
+
+ring_ready() ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    ring_ready(Ring).
 
 %% @doc Marks a pending transfer as completed.
 -spec handoff_complete(State :: chstate(), Idx :: integer(),
