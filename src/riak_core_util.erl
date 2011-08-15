@@ -35,7 +35,8 @@
          chash_bucketonly_keyfun/1,
          mkclientid/1,
          start_app_deps/1,
-         rpc_every_member/4]).
+         rpc_every_member/4,
+         rpc_every_member_ann/4]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -223,6 +224,18 @@ rpc_every_member(Module, Function, Args, Timeout) ->
     {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
     Nodes = riak_core_ring:all_members(MyRing),
     rpc:multicall(Nodes, Module, Function, Args, Timeout).
+
+%% @doc Same as rpc_every_member/4, but annotate the result set with
+%%      the name of the node returning the result.
+-spec rpc_every_member_ann(module(), atom(), [term()], integer()|infinity)
+                          -> {Results::[{node(), term()}], Down::[node()]}.
+rpc_every_member_ann(Module, Function, Args, Timeout) ->
+    {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
+    Nodes = riak_core_ring:all_members(MyRing),
+    {Results, Down} = rpc:multicall(Nodes, Module, Function, Args, Timeout),
+    Up = Nodes -- Down,
+    TaggedResults = lists:zip(Up, Results),
+    {TaggedResults, Down}.
 
 %% ===================================================================
 %% EUnit tests
