@@ -132,6 +132,7 @@ handle_cast({reconcile_ring, OtherRing}, RingChanged) ->
 
         {new_ring, ReconciledRing} ->
             riak_core_ring_manager:set_my_ring(ReconciledRing),
+            log_membership_changes(MyRing, ReconciledRing),
             % Finally, push it out to another node - expect at least two nodes now
             RandomNode = riak_core_ring:random_other_node(ReconciledRing),
             send_ring(node(), RandomNode),
@@ -219,6 +220,36 @@ reconcile(OtherRing, Ring) ->
             {no_change, Ring2}
     end.
 
+log_membership_changes(OldRing, NewRing) ->
+    OldStatus = orddict:from_list(riak_core_ring:all_member_status(OldRing)),
+    NewStatus = orddict:from_list(riak_core_ring:all_member_status(NewRing)),
+
+    %% Pad both old and new status to the same length
+    OldDummyStatus = [{Node, undefined} || {Node, _} <- NewStatus],
+    OldStatus2 = orddict:merge(fun(_, Status, _) ->
+                                       Status
+                               end, OldStatus, OldDummyStatus),
+
+    NewDummyStatus = [{Node, undefined} || {Node, _} <- OldStatus],
+    NewStatus2 = orddict:merge(fun(_, Status, _) ->
+                                       Status
+                               end, NewStatus, NewDummyStatus),
+
+    %% Merge again to determine changed status
+    orddict:merge(fun(_, Same, Same) ->
+                          Same;
+                     (Node, undefined, New) ->
+                          lager:info("'~s' joined cluster with status '~s'~n",
+                                     [Node, New]);
+                     (Node, Old, undefined) ->
+                          lager:info("'~s' removed from cluster (previously: "
+                                     "'~s')~n", [Node, Old]);
+                     (Node, Old, New) ->
+                          lager:info("'~s' changed from '~s' to '~s'~n",
+                                     [Node, Old, New])
+                  end, OldStatus2, NewStatus2),
+    ok.
+    
 claim_until_balanced(Ring, Node) ->
     {WMod, WFun} = app_helper:get_env(riak_core, wants_claim_fun),
     NeedsIndexes = apply(WMod, WFun, [Ring, Node]),
