@@ -135,6 +135,7 @@ vnode_command(Sender, Request, State=#state{index=Index,
     case riak_core_ring:next_owner(Ring, Index, Mod) of
         {Node, NextOwner, complete} ->
             %%io:format("Forwarding ~p -> ~p: ~p~n", [node(), NextOwner, Index]),
+            lager:debug("Forwarding ~p -> ~p: ~p~n", [node(), NextOwner, Index]),
             riak_core_vnode_master:command({Index, NextOwner}, Request, Sender,
                                            riak_core_vnode_master:reg_name(Mod)),
             Action = continue;

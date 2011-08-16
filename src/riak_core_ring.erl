@@ -81,6 +81,7 @@
 
 -define(ROUT(S,A),ok).
 %%-define(ROUT(S,A),?debugFmt(S,A)).
+%%-define(ROUT(S,A),io:format(S,A)).
 
 -record(chstate, {
     nodename :: node(),          % the Node responsible for this chstate
@@ -563,6 +564,10 @@ update_ring(CNode, CState) ->
     Changed = (NextChanged or RingChanged1 or RingChanged2),
     case Changed of
         true ->
+            OldS = ordsets:from_list([{Idx,O,NO} || {Idx,O,NO,_,_} <- Next0]),
+            NewS = ordsets:from_list([{Idx,O,NO} || {Idx,O,NO,_,_} <- Next3]),
+            Diff = ordsets:subtract(NewS, OldS),
+            [log(next, NChange) || NChange <- Diff],
             RVsn2 = vclock:increment(CNode, CState4#chstate.rvsn),
             ?ROUT("Updating ring :: next3 : ~p~n", [Next3]),
             {true, CState4#chstate{next=Next3, rvsn=RVsn2}};
@@ -583,6 +588,7 @@ transfer_ownership(CState=#chstate{next=Next}) ->
                 fun(NInfo={Idx, _, _, _, _}, CState0) ->
                         case next_owner(NInfo) of
                             {_, Node, complete} ->
+                                log(ownership, {Idx, Node, CState0}),
                                 riak_core_ring:transfer_node(Idx, Node, CState0);
                             _ ->
                                 CState0
@@ -669,6 +675,8 @@ remove_node(CState, Node, Status, Indices) ->
             || {{Idx, PrevOwner}, {Idx, NewOwner}} <- Owners3,
                PrevOwner /= NewOwner,
                not lists:member(Idx, RemovedIndices)],
+
+    [log(reassign, {Idx, NewOwner, CState}) || {Idx, NewOwner} <- Reassign],
 
     %% Unlike rebalance_ring, remove_node can be called when Next is non-empty,
     %% therefore we need to merge the values. Original Next has priority.
@@ -964,6 +972,17 @@ filtered_seen(State=#chstate{seen=Seen}) ->
         Members ->
             orddict:filter(fun(N, _) -> lists:member(N, Members) end, Seen)
     end.
+
+log(ownership, {Idx, NewOwner, CState}) ->
+    Owner = index_owner(CState, Idx),
+    lager:debug("(new-owner) ~b :: ~p -> ~p~n", [Idx, Owner, NewOwner]);
+log(reassign, {Idx, NewOwner, CState}) ->
+    Owner = index_owner(CState, Idx),
+    lager:debug("(reassign) ~b :: ~p -> ~p~n", [Idx, Owner, NewOwner]);
+log(next, {Idx, Owner, NewOwner}) ->
+    lager:debug("(pending) ~b :: ~p -> ~p~n", [Idx, Owner, NewOwner]);
+log(_, _) ->
+    ok.
 
 %% ===================================================================
 %% EUnit tests
