@@ -125,6 +125,7 @@ handle_cast({distribute_ring, Ring}, RingChanged) ->
 handle_cast({reconcile_ring, OtherRing}, RingChanged) ->
     % Compare the two rings, see if there is anything that
     % must be done to make them equal...
+    riak_core_stat:update(gossip_received),
     {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
     case reconcile(OtherRing, MyRing) of
         {no_change, _} ->
@@ -132,6 +133,7 @@ handle_cast({reconcile_ring, OtherRing}, RingChanged) ->
 
         {new_ring, ReconciledRing} ->
             riak_core_ring_manager:set_my_ring(ReconciledRing),
+            riak_core_stat:update(rings_reconciled),
             log_membership_changes(MyRing, ReconciledRing),
             % Finally, push it out to another node - expect at least two nodes now
             RandomNode = riak_core_ring:random_other_node(ReconciledRing),
@@ -208,6 +210,7 @@ reconcile(OtherRing, Ring) ->
     case {WrongCluster, InvalidNode, Changed} of
         {true, _, _} ->
             %% TODO: Tell other node to stop gossiping to this node.
+            riak_core_stat:update(ignored_gossip),
             {no_change, Ring2};
         {_, false, new_ring} ->
             Ring3 = riak_core_ring:ring_changed(Node, Ring2),

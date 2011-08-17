@@ -39,6 +39,7 @@
              riak_core_ring_handler,
              riak_core_ring_manager,
              riak_core_ring_util,
+             riak_core_stat,
              riak_core_status,
              riak_core_sup,
              riak_core_sysmon_handler,

@@ -468,7 +468,40 @@ internal_ring_changed(Node, CState0) ->
             {C2, CState3} = maybe_update_ring(Node, CState2),
             {C3, CState4} = maybe_remove_exiting(Node, CState3),
 
-            case (C1 or C2 or C3) of
+            %% Start/stop converge and rebalance delay timers
+            %% (converge delay)
+            %%   -- Starts when claimant changes the ring
+            %%   -- Stops when the ring converges (ring_ready)
+            %% (rebalance delay)
+            %%   -- Starts when next changes from empty to non-empty
+            %%   -- Stops when next changes from non-empty to empty
+            %%
+            Changed    = (C1 or C2 or C3),
+            IsClaimant = (CState4#chstate.claimant =:= Node),
+            WasPending = ([] /= pending_changes(CState)),
+            IsPending  = ([] /= pending_changes(CState4)),
+
+            %% Outer case statement already checks for ring_ready
+            case {IsClaimant, Changed} of
+                {true, true} ->
+                    riak_core_stat:update(converge_timer_end),
+                    riak_core_stat:update(converge_timer_begin);
+                {true, false} ->
+                    riak_core_stat:update(converge_timer_end);
+                _ ->
+                    ok
+            end,
+
+            case {IsClaimant, WasPending, IsPending} of
+                {true, false, true} ->
+                    riak_core_stat:update(rebalance_timer_begin);
+                {true, true, false} ->
+                    riak_core_stat:update(rebalance_timer_end);
+                _ ->
+                    ok
+            end,
+
+            case Changed of
                 true ->
                     VClock = vclock:increment(Node, CState4#chstate.vclock),
                     CState4#chstate{vclock=VClock};
