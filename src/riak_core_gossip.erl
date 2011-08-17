@@ -37,7 +37,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 -export ([distribute_ring/1, send_ring/1, send_ring/2, remove_from_cluster/2,
-          finish_handoff/4, claim_until_balanced/2]).
+          finish_handoff/4, claim_until_balanced/2, random_gossip/1,
+          recursive_gossip/1]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -72,6 +73,24 @@ stop() ->
 
 finish_handoff(Idx, Prev, New, Mod) ->
     gen_server:call(?MODULE, {finish_handoff, Idx, Prev, New, Mod}).
+
+%% @doc Gossip state to a random node in the ring.
+random_gossip(Ring) ->
+    case riak_core_ring:random_other_node(Ring) of
+        no_node -> % must be single node cluster
+            ok;
+        RandomNode ->
+            send_ring(node(), RandomNode)
+    end.
+
+%% @doc Gossip state to a fixed set of nodes determined from a binary
+%%      tree decomposition of the membership state.
+recursive_gossip(Ring) ->
+    Nodes = riak_core_ring:all_members(Ring),
+    Tree = riak_core_util:build_tree(2, Nodes, [cycles]),
+    Children = orddict:fetch(node(), Tree),
+    [send_ring(node(), OtherNode) || OtherNode <- Children],
+    ok.
 
 %% ===================================================================
 %% gen_server behaviour
@@ -135,9 +154,7 @@ handle_cast({reconcile_ring, OtherRing}, RingChanged) ->
             riak_core_ring_manager:set_my_ring(ReconciledRing),
             riak_core_stat:update(rings_reconciled),
             log_membership_changes(MyRing, ReconciledRing),
-            % Finally, push it out to another node - expect at least two nodes now
-            RandomNode = riak_core_ring:random_other_node(ReconciledRing),
-            send_ring(node(), RandomNode),
+            recursive_gossip(ReconciledRing),
             {noreply, true}
     end;
 
@@ -156,12 +173,7 @@ handle_cast(gossip_ring, _RingChanged) ->
             riak_core_ring_events:force_update()
     end,
 
-    case riak_core_ring:random_other_node(MyRing) of
-        no_node -> % must be single node cluster
-            ok;
-        RandomNode ->
-            send_ring(node(), RandomNode)
-    end,
+    random_gossip(MyRing),
     {noreply, false};
 
 handle_cast(_, State) ->
