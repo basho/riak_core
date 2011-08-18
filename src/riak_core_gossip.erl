@@ -38,7 +38,7 @@
          terminate/2, code_change/3]).
 -export ([distribute_ring/1, send_ring/1, send_ring/2, remove_from_cluster/2,
           finish_handoff/4, claim_until_balanced/2, random_gossip/1,
-          recursive_gossip/1]).
+          recursive_gossip/1, random_recursive_gossip/1]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -85,12 +85,18 @@ random_gossip(Ring) ->
 
 %% @doc Gossip state to a fixed set of nodes determined from a binary
 %%      tree decomposition of the membership state.
-recursive_gossip(Ring) ->
+recursive_gossip(Ring, Node) ->
     Nodes = riak_core_ring:all_members(Ring),
     Tree = riak_core_util:build_tree(2, Nodes, [cycles]),
-    Children = orddict:fetch(node(), Tree),
+    Children = orddict:fetch(Node, Tree),
     [send_ring(node(), OtherNode) || OtherNode <- Children],
     ok.
+recursive_gossip(Ring) ->
+    recursive_gossip(Ring, node()).
+
+random_recursive_gossip(Ring) ->
+    RNode = riak_core_ring:random_node(Ring),
+    recursive_gossip(Ring, RNode).
 
 %% ===================================================================
 %% gen_server behaviour

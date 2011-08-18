@@ -218,7 +218,7 @@ handle_call({ring_trans, Fun, Args}, _From, State) ->
     case catch Fun(Ring, Args) of
         {new_ring, NewRing} ->
             prune_write_notify_ring(NewRing),
-            riak_core_gossip:recursive_gossip(NewRing),
+            riak_core_gossip:random_recursive_gossip(NewRing),
             {reply, {ok, NewRing}, State};
         ignore ->
             {reply, not_changed, State};

@@ -70,6 +70,7 @@
          handoff_complete/3,
          ring_ready/0,
          ring_ready/1,
+         ring_ready_info/1,
          ring_changed/2,
          reconcile_members/2]).
 
@@ -443,6 +444,26 @@ ring_ready() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     ring_ready(Ring).
 
+ring_ready_info(State0) ->
+    Owner = owner_node(State0),
+    State = update_seen(Owner, State0),
+    Seen = State#chstate.seen,
+    Members = get_members(State#chstate.members),
+    RecentVC =
+        orddict:fold(fun(_, VC, Recent) ->
+                             case vclock:descends(VC, Recent) of
+                                 true ->
+                                     VC;
+                                 false ->
+                                     Recent
+                             end
+                     end, State#chstate.vclock, Seen),
+    Outdated =
+        orddict:filter(fun(_, VC) ->
+                               not vclock:equal(VC, RecentVC)
+                       end, Seen),
+    Outdated.
+    
 %% @doc Marks a pending transfer as completed.
 -spec handoff_complete(State :: chstate(), Idx :: integer(),
                        Mod :: module()) -> chstate().
