@@ -1,5 +1,6 @@
 -module(join_eqc).
 
+-ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -2125,3 +2126,5 @@ test_rejoin() ->
               {set,{var,95},{call,join_eqc2,join,[3,0]}},
               {set,{var,99},{call,join_eqc2,remove,[3,0,true]}}]),
     ok.
+
+-endif.

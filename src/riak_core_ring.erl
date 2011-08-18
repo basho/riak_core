@@ -270,7 +270,8 @@ reconcile(ExternState, MyState) ->
 %% @doc  Rename OldNode to NewNode in a Riak ring.
 -spec rename_node(State :: chstate(), OldNode :: atom(), NewNode :: atom()) ->
             chstate().
-rename_node(State=#chstate{chring=Ring, nodename=ThisNode}, OldNode, NewNode) 
+rename_node(State=#chstate{chring=Ring, nodename=ThisNode, members=Members,
+                           seen=Seen}, OldNode, NewNode) 
   when is_atom(OldNode), is_atom(NewNode)  ->
     State#chstate{
       chring=lists:foldl(
@@ -281,6 +282,8 @@ rename_node(State=#chstate{chring=Ring, nodename=ThisNode}, OldNode, NewNode)
                            _ -> AccIn
                        end
                end, Ring, riak_core_ring:all_owners(State)),
+      members=proplists:substitute_aliases([{OldNode, NewNode}], Members),
+      seen=proplists:substitute_aliases([{OldNode, NewNode}], Seen),
       nodename=case ThisNode of OldNode -> NewNode; _ -> ThisNode end,
       vclock=vclock:increment(NewNode, State#chstate.vclock)}.
 
@@ -643,7 +646,8 @@ transfer_ownership(CState=#chstate{next=Next}) ->
                         case next_owner(NInfo) of
                             {_, Node, complete} ->
                                 log(ownership, {Idx, Node, CState0}),
-                                riak_core_ring:transfer_node(Idx, Node, CState0);
+                                riak_core_ring:transfer_node(Idx, Node,
+                                                             CState0);
                             _ ->
                                 CState0
                         end
@@ -680,7 +684,8 @@ reassign_indices(CState=#chstate{next=Next}) ->
 rebalance_ring(_CNode, CState=#chstate{next=[]}) ->
     Members = claiming_members(CState),
     CState2 = lists:foldl(fun(Node, Ring0) ->
-                                  riak_core_gossip:claim_until_balanced(Ring0, Node)
+                                  riak_core_gossip:claim_until_balanced(Ring0,
+                                                                        Node)
                           end, CState, Members),
     Owners1 = all_owners(CState),
     Owners2 = all_owners(CState2),
@@ -763,10 +768,10 @@ internal_reconcile(State, OtherState) ->
     OtherState3 = OtherState2#chstate{seen=Seen},
     SeenChanged = not equal_seen(State, State3),
 
+    %% Try to reconcile based on vector clock, chosing the most recent state.
     VC1 = State3#chstate.vclock,
     VC2 = OtherState3#chstate.vclock,
     VC3 = vclock:merge([VC1, VC2]),
-    %%io:format("V1: ~p~nV2: ~p~n", [VC1, VC2]),
     Newer = vclock:descends(VC1, VC2),
     Older = vclock:descends(VC2, VC1),
     Equal = equal_cstate(State3, OtherState3),
@@ -780,6 +785,7 @@ internal_reconcile(State, OtherState) ->
         {_, true, true} ->
             throw("Equal vclocks, but cstate unequal");
         {_, false, false} ->
+            %% Unable to reconcile based on vector clock, merge rings.
             State4 = reconcile_divergent(VNode, State3, OtherState3),
             {true, State4#chstate{nodename=VNode}}
     end.
@@ -794,6 +800,8 @@ reconcile_divergent(VNode, StateA, StateB) ->
     NewState#chstate{vclock=VClock, members=Members, meta=Meta}.
 
 %% @private
+%% @doc Merge two members list using status vector clocks when possible,
+%%      and falling back to manual merge for divergent cases.
 reconcile_members(StateA, StateB) ->
     orddict:merge(
       fun(_K, {Valid1, VC1}, {Valid2, VC2}) ->
@@ -827,6 +835,8 @@ merge_next_status(awaiting, awaiting) ->
     awaiting.
 
 %% @private
+%% @doc Merge two next lists that must be of the same size and have
+%%      the same Idx/Owner pair.
 reconcile_next(Next1, Next2) ->
     lists:zipwith(fun({Idx, Owner, Node, Transfers1, Status1},
                       {Idx, Owner, Node, Transfers2, Status2}) ->
@@ -836,6 +846,10 @@ reconcile_next(Next1, Next2) ->
                   end, Next1, Next2).
 
 %% @private
+%% @doc Merge two next lists that may be of different sizes and
+%%      may have different Idx/Owner pairs. When different, the
+%%      pair associated with BaseNext is chosen. When equal,
+%%      the merge is the same as in reconcile_next/2.
 reconcile_divergent_next(BaseNext, OtherNext) ->
     MergedNext = substitute(1, BaseNext, OtherNext),
     lists:zipwith(fun({Idx, Owner1, Node1, Transfers1, Status1},
@@ -867,6 +881,7 @@ substitute(Idx, TL1, TL2) ->
 reconcile_ring(StateA=#chstate{claimant=Claimant1, rvsn=VC1, next=Next1},
                StateB=#chstate{claimant=Claimant2, rvsn=VC2, next=Next2},
                Members) ->
+    %% Try to reconcile based on the ring version (rvsn) vector clock.
     V1Newer = vclock:descends(VC1, VC2),
     V2Newer = vclock:descends(VC2, VC1),
     EqualVC = (vclock:equal(VC1, VC2) and (Claimant1 =:= Claimant2)),
@@ -882,6 +897,12 @@ reconcile_ring(StateA=#chstate{claimant=Claimant1, rvsn=VC1, next=Next1},
             Next = reconcile_divergent_next(Next2, Next1),
             StateB#chstate{next=Next};
         {_, _, _} ->
+            %% Ring versions were divergent, so fall back to reconciling based
+            %% on claimant. Under normal operation, divergent ring versions
+            %% should only occur if there are two different claimants, and one
+            %% claimant is invalid. For example, when a claimant is removed and
+            %% a new claimant has just taken over. We therefore chose the ring
+            %% with the valid claimant.
             CValid1 = lists:member(Claimant1, Members),
             CValid2 = lists:member(Claimant2, Members),
             case {CValid1, CValid2} of
@@ -986,18 +1007,35 @@ update_seen(Node, CState=#chstate{vclock=VClock, seen=Seen}) ->
 
 %% @private
 equal_cstate(StateA, StateB) ->
+    equal_cstate(StateA, StateB, false).
+
+equal_cstate(StateA, StateB, Verbose) ->
     T1 = equal_members(StateA#chstate.members, StateB#chstate.members),
     T2 = vclock:equal(StateA#chstate.rvsn, StateB#chstate.rvsn),
     T3 = equal_seen(StateA, StateB),
     T4 = equal_rings(StateA, StateB),
 
     %% Clear fields checked manually and test remaining through equality.
+    %% Note: We do not consider cluster name in equality.
     StateA2=StateA#chstate{nodename=ok, members=ok, vclock=ok, rvsn=ok,
-                           seen=ok, chring=ok, meta=ok},
+                           seen=ok, chring=ok, meta=ok, clustername=ok},
     StateB2=StateB#chstate{nodename=ok, members=ok, vclock=ok, rvsn=ok,
-                           seen=ok, chring=ok, meta=ok},
+                           seen=ok, chring=ok, meta=ok, clustername=ok},
     T5 = (StateA2 =:= StateB2),
-    T1 and T2 and T3 and T4 and T5.
+
+    case Verbose of
+        false ->
+            T1 and T2 and T3 and T4 and T5;
+        true ->
+            Failed =
+                lists:filter(fun({Test,_}) -> Test =:= false end,
+                             [{T1, members},
+                              {T2, vclock},
+                              {T3, seen},
+                              {T4, ring},
+                              {T5, other}]),
+            Failed
+    end.
 
 %% @private
 equal_members(M1, M2) ->
@@ -1050,7 +1088,7 @@ sequence_test() ->
     B1 = A#chstate{nodename=b},
     B2 = transfer_node(I1, b, B1),
     ?assertEqual(B2, transfer_node(I1, b, B2)),
-    {new_ring, A1} = reconcile(B1,A),
+    {no_change, A1} = reconcile(B1,A),
     C1 = A#chstate{nodename=c},
     C2 = transfer_node(I1, c, C1),
     {new_ring, A2} = reconcile(C2,A1),
@@ -1064,7 +1102,7 @@ sequence_test() ->
 
 param_fresh_test() ->
     application:set_env(riak_core,ring_creation_size,4),
-    ?assertEqual(fresh(), fresh(4,node())),
+    ?assert(equal_cstate(fresh(), fresh(4, node()))),
     ?assertEqual(owner_node(fresh()),node()).
 
 index_test() ->
@@ -1079,11 +1117,16 @@ index_test() ->
 reconcile_test() ->
     Ring0 = fresh(2,node()),
     Ring1 = transfer_node(0,x,Ring0),
-    ?assertEqual({no_change,Ring1},reconcile(fresh(2,someone_else),Ring1)),
+    %% Only members and seen should have changed
+    {new_ring, Ring2} = reconcile(fresh(2,someone_else),Ring1),
+    ?assertMatch([{false, members}, {false, seen}],
+                 equal_cstate(Ring1, Ring2, true)),
     RingB0 = fresh(2,node()),
     RingB1 = transfer_node(0,x,RingB0),
     RingB2 = RingB1#chstate{nodename=b},
-    ?assertEqual({no_change,RingB2},reconcile(Ring1,RingB2)).
+    ?assertMatch({no_change,_},reconcile(Ring1,RingB2)),
+    {no_change, RingB3} = reconcile(Ring1,RingB2),
+    ?assert(equal_cstate(RingB2, RingB3)).
 
 metadata_inequality_test() ->
     Ring0 = fresh(2,node()),
@@ -1118,7 +1161,128 @@ exclusion_test() ->
 random_other_node_test() ->
     Ring0 = fresh(2, node()),
     ?assertEqual(no_node, random_other_node(Ring0)),
-    Ring1 = transfer_node(0, 'new@new', Ring0),
-    ?assertEqual('new@new', random_other_node(Ring1)).
+    Ring1 = add_member(node(), Ring0, 'new@new'),
+    Ring2 = transfer_node(0, 'new@new', Ring1),
+    ?assertEqual('new@new', random_other_node(Ring2)).
 
+membership_test() ->
+    RingA1 = fresh(nodeA),
+    ?assertEqual([nodeA], all_members(RingA1)),
+
+    RingA2 = add_member(nodeA, RingA1, nodeB),
+    RingA3 = add_member(nodeA, RingA2, nodeC),
+    ?assertEqual([nodeA, nodeB, nodeC], all_members(RingA3)),
+
+    RingA4 = remove_member(nodeA, RingA3, nodeC),
+    ?assertEqual([nodeA, nodeB], all_members(RingA4)),
+    
+    %% Node should stay removed
+    {_, RingA5} = reconcile(RingA3, RingA4),
+    ?assertEqual([nodeA, nodeB], all_members(RingA5)),
+
+    %% Add node in parallel, check node stays removed
+    RingB1 = add_member(nodeB, RingA3, nodeC),
+    {_, RingA6} = reconcile(RingB1, RingA5),
+    ?assertEqual([nodeA, nodeB], all_members(RingA6)),
+
+    %% Add node as parallel descendent, check node is added
+    RingB2 = add_member(nodeB, RingA6, nodeC),
+    {_, RingA7} = reconcile(RingB2, RingA6),
+    ?assertEqual([nodeA, nodeB, nodeC], all_members(RingA7)),
+
+    Priority = [{invalid,1}, {valid,2}, {exiting,3}, {leaving,4}],
+    RingX1 = fresh(nodeA),
+    RingX2 = add_member(nodeA, RingX1, nodeB),
+    RingX3 = add_member(nodeA, RingX2, nodeC),
+    ?assertEqual(valid, member_status(RingX3, nodeC)),
+
+    %% Parallel/sibling status changes merge based on priority
+    [begin
+         RingT1 = set_member(nodeA, RingX3, nodeC, StatusA),
+         ?assertEqual(StatusA, member_status(RingT1, nodeC)),
+         RingT2 = set_member(nodeB, RingX3, nodeC, StatusB),
+         ?assertEqual(StatusB, member_status(RingT2, nodeC)),
+         StatusC = case PriorityA < PriorityB of
+                       true -> StatusA;
+                       false -> StatusB
+                   end,
+         {_, RingT3} = reconcile(RingT2, RingT1),
+         ?assertEqual(StatusC, member_status(RingT3, nodeC))
+     end || {StatusA, PriorityA} <- Priority,
+            {StatusB, PriorityB} <- Priority],
+
+    %% Related status changes merge to descendant
+    [begin
+         RingT1 = set_member(nodeA, RingX3, nodeC, StatusA),
+         ?assertEqual(StatusA, member_status(RingT1, nodeC)),
+         RingT2 = set_member(nodeB, RingT1, nodeC, StatusB),
+         ?assertEqual(StatusB, member_status(RingT2, nodeC)),
+         RingT3 = set_member(nodeA, RingT1, nodeA, valid),
+         {_, RingT4} = reconcile(RingT2, RingT3),
+         ?assertEqual(StatusB, member_status(RingT4, nodeC))
+     end || {StatusA, _} <- Priority,
+            {StatusB, _} <- Priority],
+    ok.
+    
+ring_version_test() ->
+    Ring1 = fresh(nodeA),
+    Ring2 = add_member(node(), Ring1, nodeA),
+    Ring3 = add_member(node(), Ring2, nodeB),
+    ?assertEqual(nodeA, claimant(Ring3)),
+    #chstate{rvsn=RVsn, vclock=VClock} = Ring3,
+
+    RingA1 = transfer_node(0, nodeA, Ring3),
+    RingA2 = RingA1#chstate{vclock=vclock:increment(nodeA, VClock)},
+    RingB1 = transfer_node(0, nodeB, Ring3),
+    RingB2 = RingB1#chstate{vclock=vclock:increment(nodeB, VClock)},
+
+    %% RingA1 has most recent ring version
+    {_, RingT1} = reconcile(RingA2#chstate{rvsn=vclock:increment(nodeA, RVsn)},
+                            RingB2),
+    ?assertEqual(nodeA, index_owner(RingT1,0)),
+
+    %% RingB1 has most recent ring version
+    {_, RingT2} = reconcile(RingA2,
+                            RingB2#chstate{rvsn=vclock:increment(nodeB, RVsn)}),
+    ?assertEqual(nodeB, index_owner(RingT2,0)),
+
+    %% Divergent ring versions, merge based on claimant
+    {_, RingT3} = reconcile(RingA2#chstate{rvsn=vclock:increment(nodeA, RVsn)},
+                            RingB2#chstate{rvsn=vclock:increment(nodeB, RVsn)}),
+    ?assertEqual(nodeA, index_owner(RingT3,0)),
+
+    %% Divergent ring versions, one valid claimant. Merge on claimant.
+    RingA3 = RingA2#chstate{claimant=nodeA},
+    RingA4 = remove_member(nodeA, RingA3, nodeB),
+    RingB3 = RingB2#chstate{claimant=nodeB},
+    RingB4 = remove_member(nodeB, RingB3, nodeA),
+    {_, RingT4} = reconcile(RingA4#chstate{rvsn=vclock:increment(nodeA, RVsn)},
+                            RingB3#chstate{rvsn=vclock:increment(nodeB, RVsn)}),
+    ?assertEqual(nodeA, index_owner(RingT4,0)),
+    {_, RingT5} = reconcile(RingA3#chstate{rvsn=vclock:increment(nodeA, RVsn)},
+                            RingB4#chstate{rvsn=vclock:increment(nodeB, RVsn)}),
+    ?assertEqual(nodeB, index_owner(RingT5,0)).
+
+reconcile_next_test() ->
+    Next1 = [{0, nodeA, nodeB, [riak_pipe_vnode], awaiting},
+             {1, nodeA, nodeB, [riak_pipe_vnode], awaiting},
+             {2, nodeA, nodeB, [riak_pipe_vnode], complete}],
+    Next2 = [{0, nodeA, nodeB, [riak_kv_vnode], complete},
+             {1, nodeA, nodeB, [], awaiting},
+             {2, nodeA, nodeB, [], awaiting}],
+    Next3 = [{0, nodeA, nodeB, [riak_kv_vnode, riak_pipe_vnode], complete},
+             {1, nodeA, nodeB, [riak_pipe_vnode], awaiting},
+             {2, nodeA, nodeB, [riak_pipe_vnode], complete}],
+    ?assertEqual(Next3, reconcile_next(Next1, Next2)),
+
+    Next4 = [{0, nodeA, nodeB, [riak_pipe_vnode], awaiting},
+             {1, nodeA, nodeB, [], awaiting},
+             {2, nodeA, nodeB, [riak_pipe_vnode], awaiting}],
+    Next5 = [{0, nodeA, nodeC, [riak_kv_vnode], complete},
+             {2, nodeA, nodeB, [riak_kv_vnode], complete}],
+    Next6 = [{0, nodeA, nodeB, [riak_pipe_vnode], awaiting},
+             {1, nodeA, nodeB, [], awaiting},
+             {2, nodeA, nodeB, [riak_kv_vnode, riak_pipe_vnode], complete}],
+    ?assertEqual(Next6, reconcile_divergent_next(Next4, Next5)).
+    
 -endif.
