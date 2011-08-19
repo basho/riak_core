@@ -32,8 +32,8 @@
 
 -record(state, {
         queue = queue:new(),
-        pool :: pid()
-        %remaining = 0 :: non_neg_integer()
+        pool :: pid(),
+        monitors = [] :: list()
     }).
 
 start_link(WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps) ->
@@ -55,15 +55,16 @@ init([WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps]) ->
 ready(_Event, _From, State) ->
     {reply, ok, ready, State}.
 
-ready({work, Work, From} = Msg, #state{pool=Pool, queue=Q} = State) ->
+ready({work, Work, From} = Msg, #state{pool=Pool, queue=Q, monitors=Monitors} = State) ->
     case poolboy:checkout(Pool) of
         full ->
             %io:format("queued work~n"),
             {next_state, queueing, State#state{queue=queue:in(Msg, Q)}};
         Pid when is_pid(Pid) ->
             %io:format("offloading work to worker ~p~n", [Pid]),
+            NewMonitors = monitor_worker(Pid, From, Work, Monitors),
             ok = riak_core_vnode_worker:handle_work(Pid, Pool, Work, From),
-            {next_state, ready, State}
+            {next_state, ready, State#state{monitors=NewMonitors}}
     end;
 ready(_Event, State) ->
     {next_state, ready, State}.
@@ -83,20 +84,35 @@ handle_event(_Event, StateName, State) ->
 handle_sync_event(_Event, _From, StateName, State) ->
     {reply, {error, unknown_message}, StateName, State}.
 
-handle_info(checkin, _, #state{pool = Pool, queue=Q} = State) ->
+handle_info(checkin, _, #state{pool = Pool, queue=Q, monitors=Monitors} = State) ->
     %io:format("checkin -- switching back to ready~n"),
     case queue:out(Q) of
         {{value, {work, Work, From}}, Rem} ->
             case poolboy:checkout(Pool) of
                 full ->
+                    %io:format("pool full while getting checkin~n"),
                     {next_state, queueing, State#state{queue=Q}};
                 Pid when is_pid(Pid) ->
                     %io:format("offloading work to worker ~p~n", [Pid]),
+                    NewMonitors = monitor_worker(Pid, From, Work, Monitors),
                     ok = riak_core_vnode_worker:handle_work(Pid, Pool, Work, From),
-                    {next_state, queueing, State#state{queue=Rem}}
+                    {next_state, queueing, State#state{queue=Rem,
+                            monitors=NewMonitors}}
             end;
         {empty, Empty} ->
             {next_state, ready, State#state{queue=Empty}}
+    end;
+handle_info({'DOWN', _Ref, _, Pid, Info}, StateName, #state{monitors=Monitors} = State) ->
+    %% remove the listing for the dead worker
+    case lists:keyfind(Pid, 1, Monitors) of
+        {Pid, _, From, Work} ->
+            riak_core_vnode:reply(From, {error, {worker_crash, Info, Work}}),
+            NewMonitors = lists:keydelete(Pid, 1, Monitors),
+            self() ! checkin, %% pretend a worker just checked in
+            {next_state, StateName, State#state{monitors=NewMonitors}};
+        false ->
+            %io:format("unknown DOWN received~n"),
+            {next_state, StateName, State}
     end;
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
@@ -106,3 +122,17 @@ terminate(_Reason, _StateName, _State) ->
 
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
+
+%% Keep track of which worker we pair with what work/from and monitor the
+%% worker. Dead workers are removed from the list but successful ones aren't,
+%% the data in the list is just updated when the worker is reused.
+%% This should be fine because the worker shouldn't crash while not in use.
+monitor_worker(Worker, From, Work, Monitors) ->
+    case lists:keyfind(Worker, 1, Monitors) of
+        {Worker, Ref, _OldFrom, _OldWork} ->
+            %% reuse old monitor and just update the from & work
+            lists:keyreplace(Worker, 1, Monitors, {Worker, Ref, From, Work});
+        false ->
+            Ref = erlang:monitor(process, Worker),
+            [{Worker, Ref, From, Work} | Monitors]
+    end.
