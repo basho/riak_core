@@ -583,7 +583,9 @@ maybe_remove_exiting(Node, CState) ->
             CState2 =
                 lists:foldl(fun(ENode, CState0) ->
                                     %% Tell exiting node to shutdown.
-                                    riak_core_ring_manager:refresh_ring(ENode),
+                                    CName = cluster_name(CState),
+                                    riak_core_ring_manager:refresh_ring(ENode,
+                                                                        CName),
                                     set_member(Node, CState0, ENode,
                                                invalid, same_vclock)
                             end, CState, Exiting),

@@ -31,7 +31,7 @@
          start_link/1,
          get_my_ring/0,
          refresh_my_ring/0,
-         refresh_ring/1,
+         refresh_ring/2,
          set_my_ring/1,
          write_ringfile/0,
          prune_ringfiles/0,
@@ -73,8 +73,8 @@ get_my_ring() ->
 refresh_my_ring() ->
     gen_server2:call(?MODULE, refresh_my_ring, infinity).
 
-refresh_ring(Node) ->
-    gen_server2:cast({?MODULE, Node}, refresh_my_ring).
+refresh_ring(Node, ClusterName) ->
+    gen_server2:cast({?MODULE, Node}, {refresh_my_ring, ClusterName}).
 
 %% @spec set_my_ring(riak_core_ring:riak_core_ring()) -> ok
 set_my_ring(Ring) ->
@@ -220,6 +220,10 @@ handle_call({ring_trans, Fun, Args}, _From, State) ->
             prune_write_notify_ring(NewRing),
             riak_core_gossip:random_recursive_gossip(NewRing),
             {reply, {ok, NewRing}, State};
+        {reconciled_ring, NewRing} ->
+            prune_write_notify_ring(NewRing),
+            riak_core_gossip:recursive_gossip(NewRing),
+            {reply, {ok, NewRing}, State};
         ignore ->
             {reply, not_changed, State};
         Other ->
@@ -230,6 +234,14 @@ handle_call({ring_trans, Fun, Args}, _From, State) ->
 handle_cast(stop, State) ->
     {stop,normal,State};
 
+handle_cast({refresh_my_ring, ClusterName}, State) ->
+    {ok, Ring} = get_my_ring(),
+    case riak_core_ring:cluster_name(Ring) of
+        ClusterName ->
+            handle_cast(refresh_my_ring, State);
+        _ ->
+            {noreply, ok, State}
+    end;
 handle_cast(refresh_my_ring, State) ->
     {_, _, State2} = handle_call(refresh_my_ring, undefined, State),
     {noreply, State2};

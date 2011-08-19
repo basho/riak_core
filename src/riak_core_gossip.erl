@@ -151,18 +151,8 @@ handle_cast({reconcile_ring, OtherRing}, RingChanged) ->
     % Compare the two rings, see if there is anything that
     % must be done to make them equal...
     riak_core_stat:update(gossip_received),
-    {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
-    case reconcile(OtherRing, MyRing) of
-        {no_change, _} ->
-            {noreply, RingChanged};
-
-        {new_ring, ReconciledRing} ->
-            riak_core_ring_manager:set_my_ring(ReconciledRing),
-            riak_core_stat:update(rings_reconciled),
-            log_membership_changes(MyRing, ReconciledRing),
-            recursive_gossip(ReconciledRing),
-            {noreply, true}
-    end;
+    riak_core_ring_manager:ring_trans(fun reconcile/2, [OtherRing]),
+    {noreply, RingChanged};
 
 handle_cast(gossip_ring, _RingChanged) ->
     % First, schedule the next round of gossip...
@@ -206,7 +196,7 @@ schedule_next_gossip() ->
     Interval = random:uniform(MaxInterval),
     timer:apply_after(Interval, gen_server, cast, [?MODULE, gossip_ring]).
 
-reconcile(OtherRing, Ring) ->
+reconcile(Ring, [OtherRing]) ->
     Node = node(),
     OtherNode = riak_core_ring:owner_node(OtherRing),
     Members = riak_core_ring:reconcile_members(Ring, OtherRing),
@@ -229,16 +219,19 @@ reconcile(OtherRing, Ring) ->
         {true, _, _} ->
             %% TODO: Tell other node to stop gossiping to this node.
             riak_core_stat:update(ignored_gossip),
-            {no_change, Ring2};
+            ignore;
         {_, false, new_ring} ->
             Ring3 = riak_core_ring:ring_changed(Node, Ring2),
-            {new_ring, Ring3};
+            riak_core_stat:update(rings_reconciled),
+            log_membership_changes(Ring, Ring3),
+            {reconciled_ring, Ring3};
         {_, true, _} ->
             %% Exiting/Removed node never saw shutdown cast, re-send.
-            riak_core_ring_manager:refresh_ring(OtherNode),
-            {no_change, Ring2};
+            ClusterName = riak_core_ring:cluster_name(Ring),
+            riak_core_ring_manager:refresh_ring(OtherNode, ClusterName),
+            ignore;
         {_, _, _} ->
-            {no_change, Ring2}
+            ignore
     end.
 
 log_membership_changes(OldRing, NewRing) ->
