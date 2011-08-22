@@ -62,7 +62,6 @@ handle_call({work, Pool, Work, WorkFrom}, {Pid, _} = From, #state{module = Mod,
             %???
     end,
     %% check the worker back into the pool
-    %io:format("returning worker to the pool~n"),
     poolboy:checkin(Pool, self()),
     Pid ! checkin,
     {noreply, State#state{modstate=NewModState}};

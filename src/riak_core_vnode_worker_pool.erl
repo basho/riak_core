@@ -43,8 +43,6 @@ handle_work(Pid, Work, From) ->
     gen_fsm:send_event(Pid, {work, Work, From}).
 
 init([WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps]) ->
-    io:format("~p starting worker pool with module ~p size ~p~n", [self(), WorkerMod,
-            PoolSize]),
     {ok, Pid} = poolboy:start_link([{worker_module, riak_core_vnode_worker},
             {worker_args, [VNodeIndex, WorkerArgs, WorkerProps]},
             {worker_callback_mod, WorkerMod},
@@ -58,10 +56,8 @@ ready(_Event, _From, State) ->
 ready({work, Work, From} = Msg, #state{pool=Pool, queue=Q, monitors=Monitors} = State) ->
     case poolboy:checkout(Pool) of
         full ->
-            %io:format("queued work~n"),
             {next_state, queueing, State#state{queue=queue:in(Msg, Q)}};
         Pid when is_pid(Pid) ->
-            %io:format("offloading work to worker ~p~n", [Pid]),
             NewMonitors = monitor_worker(Pid, From, Work, Monitors),
             ok = riak_core_vnode_worker:handle_work(Pid, Pool, Work, From),
             {next_state, ready, State#state{monitors=NewMonitors}}
@@ -73,7 +69,6 @@ queueing(_Event, _From, State) ->
     {reply, ok, queueing, State}.
 
 queueing({work, _Work, _From} = Msg, #state{queue=Q} = State) ->
-    %io:format("queued work~n"),
     {next_state, queueing, State#state{queue=queue:in(Msg, Q)}};
 queueing(_Event, State) ->
     {next_state, queueing, State}.
@@ -85,15 +80,12 @@ handle_sync_event(_Event, _From, StateName, State) ->
     {reply, {error, unknown_message}, StateName, State}.
 
 handle_info(checkin, _, #state{pool = Pool, queue=Q, monitors=Monitors} = State) ->
-    %io:format("checkin -- switching back to ready~n"),
     case queue:out(Q) of
         {{value, {work, Work, From}}, Rem} ->
             case poolboy:checkout(Pool) of
                 full ->
-                    %io:format("pool full while getting checkin~n"),
                     {next_state, queueing, State#state{queue=Q}};
                 Pid when is_pid(Pid) ->
-                    %io:format("offloading work to worker ~p~n", [Pid]),
                     NewMonitors = monitor_worker(Pid, From, Work, Monitors),
                     ok = riak_core_vnode_worker:handle_work(Pid, Pool, Work, From),
                     {next_state, queueing, State#state{queue=Rem,
@@ -111,7 +103,6 @@ handle_info({'DOWN', _Ref, _, Pid, Info}, StateName, #state{monitors=Monitors} =
             self() ! checkin, %% pretend a worker just checked in
             {next_state, StateName, State#state{monitors=NewMonitors}};
         false ->
-            %io:format("unknown DOWN received~n"),
             {next_state, StateName, State}
     end;
 handle_info(_Info, StateName, State) ->
