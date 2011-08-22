@@ -63,6 +63,7 @@
          claiming_members/1,
          set_owner/2,
          indices/2,
+         future_indices/2,
          disowning_indices/2,
          pending_changes/1,
          next_owner/2,
@@ -386,6 +387,13 @@ indices(State, Node) ->
     AllOwners = all_owners(State),
     [Idx || {Idx, Owner} <- AllOwners, Owner =:= Node].
 
+%% @doc Return all partition indices that will be owned by a node after all
+%%      pending ownership transfers have completed.
+-spec future_indices(State :: chstate(), Node :: node()) -> [integer()].
+future_indices(State, Node) ->
+    FutureState = change_owners(State, all_next_owners(State)),
+    indices(FutureState, Node).
+
 %% @doc Return all indices that a node is scheduled to give to another.
 disowning_indices(State, Node) ->
     [Idx || {Idx, Owner, _NextOwner, _Mods, _Status} <- State#chstate.next,
@@ -462,8 +470,9 @@ ring_ready_info(State0) ->
                              end
                      end, State#chstate.vclock, Seen),
     Outdated =
-        orddict:filter(fun(_, VC) ->
-                               not vclock:equal(VC, RecentVC)
+        orddict:filter(fun(Node, VC) ->
+                               (not vclock:equal(VC, RecentVC))
+                                   and lists:member(Node, Members)
                        end, Seen),
     Outdated.
     

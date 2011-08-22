@@ -23,19 +23,30 @@
 
 member_status() ->
     io:format("~33..=s Membership ~34..=s~n", ["", ""]),
-    io:format("Status     Ring    Node~n"),
+    io:format("Status     Ring    Pending    Node~n"),
     io:format("~79..-s~n", [""]),
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     AllStatus = lists:keysort(2, riak_core_ring:all_member_status(Ring)),
     RingSize = riak_core_ring:num_partitions(Ring),
+    IsPending = ([] /= riak_core_ring:pending_changes(Ring)),
 
     {Valid, Leaving, Exiting} =
         lists:foldl(fun({Node, Status}, {Valid0, Leaving0, Exiting0}) ->
                             Indices = riak_core_ring:indices(Ring, Node),
+                            NextIndices =
+                                riak_core_ring:future_indices(Ring, Node),
                             RingPercent = length(Indices) * 100 / RingSize,
- 
-                            io:format("~-7s  ~5.1f%    ~p~n",
-                                      [Status, RingPercent, Node]),
+                            NextPercent = length(NextIndices) * 100 / RingSize,
+
+                            case IsPending of
+                                true ->
+                                    io:format("~-7s  ~5.1f%    ~5.1f%    ~p~n",
+                                              [Status, RingPercent,
+                                               NextPercent, Node]);
+                                false ->
+                                    io:format("~-7s  ~5.1f%      --      ~p~n",
+                                              [Status, RingPercent, Node])
+                            end,
                             case Status of
                                 valid ->
                                     {Valid0 + 1, Leaving0, Exiting0};
