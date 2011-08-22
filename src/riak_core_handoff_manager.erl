@@ -21,13 +21,17 @@
 -export([add_exclusion/2, get_handoff_lock/1, get_exclusions/1]).
 -export([remove_exclusion/2]).
 -export([release_handoff_lock/2]).
--record(state, {excl}).
+-export([add_handoff/3]).
+-export([remove_handoff/2]).
+-export([get_handoff/2]).
+-export([all_handoffs/0]).
+-record(state, {excl, handoffs}).
 
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 init([]) ->
-    {ok, #state{excl=ordsets:new()}}.
+    {ok, #state{excl=ordsets:new(), handoffs=dict:new()}}.
 
 add_exclusion(Module, Index) ->
     gen_server:cast(?MODULE, {add_exclusion, {Module, Index}}).
@@ -37,6 +41,18 @@ remove_exclusion(Module, Index) ->
 
 get_exclusions(Module) ->
     gen_server:call(?MODULE, {get_exclusions, Module}, infinity).
+
+add_handoff(Module, Index, TargetHost) ->
+    gen_server:cast(?MODULE, {add_handoff, {Module, Index, TargetHost}}).
+
+remove_handoff(Module, Index) ->
+    gen_server:cast(?MODULE, {del_handoff, {Module, Index}}).
+
+get_handoff(Module, Index) ->
+    gen_server:call(?MODULE, {get_handoff, {Module, Index}}).
+
+all_handoffs() ->
+    gen_server:call(?MODULE, all_handoffs).
 
 get_handoff_lock(LockId) ->
     TokenCount = app_helper:get_env(riak_core, handoff_concurrency, 4),
@@ -57,14 +73,22 @@ release_handoff_lock(LockId, Token) ->
     
 handle_call({get_exclusions, Module}, _From, State=#state{excl=Excl}) ->
     Reply =  [I || {M, I} <- ordsets:to_list(Excl), M =:= Module],
-    {reply, {ok, Reply}, State}.
+    {reply, {ok, Reply}, State};
+handle_call({get_handoff, HandOff}, _From, State=#state{handoffs=HandOffs}) ->
+    {reply, {ok, dict:find(HandOff, HandOffs)}, State};
+handle_call(all_handoffs, _From, State=#state{handoffs=HandOffs}) ->
+    {reply, dict:to_list(HandOffs), State}.
 
 handle_cast({del_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
     {noreply, State#state{excl=ordsets:del_element({Mod, Idx}, Excl)}};
 handle_cast({add_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     riak_core_ring_events:ring_update(Ring),
-    {noreply, State#state{excl=ordsets:add_element({Mod, Idx}, Excl)}}.    
+    {noreply, State#state{excl=ordsets:add_element({Mod, Idx}, Excl)}};
+handle_cast({add_handoff, {Mod, Idx, TargetNode}}, State=#state{handoffs=HandOffs}) ->
+    {noreply, State#state{handoffs=dict:append({Mod, Idx}, TargetNode, HandOffs)}};
+handle_cast({del_handoff, HandOff}, State=#state{handoffs=HandOffs}) ->
+    {noreply, State#state{handoffs=dict:erase(HandOff, HandOffs)}}.
 
 handle_info(_Info, State) ->
     {noreply, State}.
