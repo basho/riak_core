@@ -73,13 +73,7 @@ queueing({work, _Work, _From} = Msg, #state{queue=Q} = State) ->
 queueing(_Event, State) ->
     {next_state, queueing, State}.
 
-handle_event(_Event, StateName, State) ->
-    {next_state, StateName, State}.
-
-handle_sync_event(_Event, _From, StateName, State) ->
-    {reply, {error, unknown_message}, StateName, State}.
-
-handle_info(checkin, _, #state{pool = Pool, queue=Q, monitors=Monitors} = State) ->
+handle_event(checkin, _, #state{pool = Pool, queue=Q, monitors=Monitors} = State) ->
     case queue:out(Q) of
         {{value, {work, Work, From}}, Rem} ->
             case poolboy:checkout(Pool) of
@@ -94,6 +88,12 @@ handle_info(checkin, _, #state{pool = Pool, queue=Q, monitors=Monitors} = State)
         {empty, Empty} ->
             {next_state, ready, State#state{queue=Empty}}
     end;
+handle_event(_Event, StateName, State) ->
+    {next_state, StateName, State}.
+
+handle_sync_event(_Event, _From, StateName, State) ->
+    {reply, {error, unknown_message}, StateName, State}.
+
 handle_info({'DOWN', _Ref, _, Pid, Info}, StateName, #state{monitors=Monitors} = State) ->
     %% remove the listing for the dead worker
     case lists:keyfind(Pid, 1, Monitors) of

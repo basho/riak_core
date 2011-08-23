@@ -63,7 +63,7 @@ handle_call({work, Pool, Work, WorkFrom}, {Pid, _} = From, #state{module = Mod,
     end,
     %% check the worker back into the pool
     poolboy:checkin(Pool, self()),
-    Pid ! checkin,
+    gen_fsm:send_all_state_event(Pid, checkin),
     {noreply, State#state{modstate=NewModState}};
 handle_call(_Event, _From, State) ->
     {reply, ok, State}.
