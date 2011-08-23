@@ -35,7 +35,9 @@
          chash_bucketonly_keyfun/1,
          mkclientid/1,
          start_app_deps/1,
-         rpc_every_member/4]).
+         build_tree/3,
+         rpc_every_member/4,
+         rpc_every_member_ann/4]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -224,6 +226,37 @@ rpc_every_member(Module, Function, Args, Timeout) ->
     Nodes = riak_core_ring:all_members(MyRing),
     rpc:multicall(Nodes, Module, Function, Args, Timeout).
 
+%% @doc Same as rpc_every_member/4, but annotate the result set with
+%%      the name of the node returning the result.
+-spec rpc_every_member_ann(module(), atom(), [term()], integer()|infinity)
+                          -> {Results::[{node(), term()}], Down::[node()]}.
+rpc_every_member_ann(Module, Function, Args, Timeout) ->
+    {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
+    Nodes = riak_core_ring:all_members(MyRing),
+    {Results, Down} = rpc:multicall(Nodes, Module, Function, Args, Timeout),
+    Up = Nodes -- Down,
+    TaggedResults = lists:zip(Up, Results),
+    {TaggedResults, Down}.
+
+%% @doc Convert a list of elements into an N-ary tree.
+-spec build_tree(N :: integer(), Nodes :: [term()], Opts :: [term()])
+                -> orddict:orddict(Node :: term(), Children :: [term()]).
+build_tree(N, Nodes, Opts) ->
+    case lists:member(cycles, Opts) of
+        true -> 
+            Expand = lists:flatten(lists:duplicate(N+1, Nodes));
+        false ->
+            Expand = Nodes
+    end,
+    {Tree, _} =
+        lists:foldl(fun(Elm, {Result, Worklist}) ->
+                            Len = erlang:min(N, length(Worklist)),
+                            {Children, Rest} = lists:split(Len, Worklist),
+                            NewResult = [{Elm, Children} | Result],
+                            {NewResult, Rest}
+                    end, {[], tl(Expand)}, Nodes),
+    orddict:from_list(Tree).
+
 %% ===================================================================
 %% EUnit tests
 %% ===================================================================
@@ -237,6 +270,50 @@ moment_test() ->
 clientid_uniqueness_test() ->
     ClientIds = [mkclientid('somenode@somehost') || _I <- lists:seq(0, 10000)],
     length(ClientIds) =:= length(sets:to_list(sets:from_list(ClientIds))).
+
+build_tree_test() ->
+    Flat = [1,
+            11, 12,
+            111, 112, 121, 122,
+            1111, 1112, 1121, 1122, 1211, 1212, 1221, 1222],
+
+    %% 2-ary tree decomposition
+    ATree = [{1,    [  11,   12]},
+             {11,   [ 111,  112]},
+             {12,   [ 121,  122]},
+             {111,  [1111, 1112]},
+             {112,  [1121, 1122]},
+             {121,  [1211, 1212]},
+             {122,  [1221, 1222]},
+             {1111, []},
+             {1112, []},
+             {1121, []},
+             {1122, []},
+             {1211, []},
+             {1212, []},
+             {1221, []},
+             {1222, []}],
+
+    %% 2-ary tree decomposition with cyclic wrap-around
+    CTree = [{1,    [  11,   12]},
+             {11,   [ 111,  112]},
+             {12,   [ 121,  122]},
+             {111,  [1111, 1112]},
+             {112,  [1121, 1122]},
+             {121,  [1211, 1212]},
+             {122,  [1221, 1222]},
+             {1111, [   1,   11]},
+             {1112, [  12,  111]},
+             {1121, [ 112,  121]},
+             {1122, [ 122, 1111]},
+             {1211, [1112, 1121]},
+             {1212, [1122, 1211]},
+             {1221, [1212, 1221]},
+             {1222, [1222,    1]}],
+
+    ?assertEqual(ATree, build_tree(2, Flat, [])),
+    ?assertEqual(CTree, build_tree(2, Flat, [cycles])),
+    ok.
 
 -endif.
 

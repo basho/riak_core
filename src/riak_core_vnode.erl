@@ -16,7 +16,7 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
--module(riak_core_vnode).
+-module('riak_core_vnode').
 -behaviour(gen_fsm).
 -include_lib("riak_core_vnode.hrl").
 -export([behaviour_info/1]).
@@ -126,8 +126,25 @@ continue(State, NewModState) ->
     continue(State#state{modstate=NewModState}).
     
 
-vnode_command(Sender, Request, State=#state{mod=Mod, modstate=ModState}) ->
-    case Mod:handle_command(Request, Sender, ModState) of
+vnode_command(Sender, Request, State=#state{index=Index,
+                                            mod=Mod,
+                                            modstate=ModState}) ->
+    %% Check if we should forward
+    Node = node(),
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    case riak_core_ring:next_owner(Ring, Index, Mod) of
+        {Node, NextOwner, complete} ->
+            %%io:format("Forwarding ~p -> ~p: ~p~n", [node(), NextOwner, Index]),
+            lager:debug("Forwarding ~p -> ~p: ~p~n", [node(), NextOwner, Index]),
+            riak_core_vnode_master:command({Index, NextOwner}, Request, Sender,
+                                           riak_core_vnode_master:reg_name(Mod)),
+            Action = continue;
+        _ ->
+            Action = Mod:handle_command(Request, Sender, ModState)
+    end,
+    case Action of
+        continue ->
+            continue(State, ModState);
         {reply, Reply, NewModState} ->
             reply(Sender, Reply),
             continue(State, NewModState);
@@ -195,13 +212,10 @@ active(handoff_complete, State=#state{mod=Mod,
                                       index=Idx, 
                                       handoff_node=HN,
                                       handoff_token=HT}) ->
+    %% ?debugFmt("Finished HO: ~p :: ~p -> ~p~n", [Idx, Prev, New]),
     riak_core_handoff_manager:release_handoff_lock({Mod, Idx}, HT),
     Mod:handoff_finished(HN, ModState),
-    {ok, NewModState} = Mod:delete(ModState),
-    riak_core_handoff_manager:add_exclusion(Mod, Idx),
-    {stop, normal, State#state{modstate=NewModState, 
-                               handoff_node=none, 
-                               handoff_pid=undefined}};
+    finish_handoff(State);
 active({handoff_error, _Err, _Reason}, State=#state{mod=Mod, 
                                                     modstate=ModState,
                                                     index=Idx, 
@@ -215,6 +229,27 @@ active({handoff_error, _Err, _Reason}, State=#state{mod=Mod,
 active(_Event, _From, State) ->
     Reply = ok,
     {reply, Reply, active, State, State#state.inactivity_timeout}.
+
+finish_handoff(State=#state{mod=Mod, 
+                            modstate=ModState,
+                            index=Idx, 
+                            handoff_node=HN}) ->
+    case riak_core_gossip:finish_handoff(Idx, node(), HN, Mod) of
+        forward ->
+            {ok, NewModState} = Mod:delete(ModState),
+            {stop, normal, State#state{modstate=NewModState, 
+                                       handoff_node=none, 
+                                       handoff_pid=undefined}};
+        continue ->
+            continue(State#state{handoff_node=none,
+                                 handoff_pid=undefined});
+        shutdown ->
+            {ok, NewModState} = Mod:delete(ModState),
+            riak_core_handoff_manager:add_exclusion(Mod, Idx),
+            {stop, normal, State#state{modstate=NewModState, 
+                                       handoff_node=none, 
+                                       handoff_pid=undefined}}
+    end.
 
 handle_event(R=?VNODE_REQ{}, _StateName, State) ->
     active(R, State);
@@ -279,10 +314,26 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 should_handoff(#state{index=Idx, mod=Mod}) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Me = node(),
-    case riak_core_ring:index_owner(Ring, Idx) of
+    {_, NextOwner, _} = riak_core_ring:next_owner(Ring, Idx),
+    Owner = riak_core_ring:index_owner(Ring, Idx),
+    Ready = riak_core_ring:ring_ready(Ring),
+    %% io:format("Owner/Next/Ready: ~p / ~p / ~p~n", [Owner, NextOwner, Ready]),
+    TargetNode = case {Ready, Owner, NextOwner} of
+                     {_, _, Me} ->
+                         Me;
+                     {_, Me, undefined} ->
+                         Me;
+                     {true, Me, _} ->
+                         NextOwner;
+                     {_, _, undefined} ->
+                         Owner;
+                     {_, _, _} ->
+                         Me
+                 end,
+    case TargetNode of
         Me ->
             false;
-        TargetNode ->
+        _ ->
             case app_for_vnode_module(Mod) of
                 undefined -> false;
                 {ok, App} ->
@@ -297,9 +348,8 @@ should_handoff(#state{index=Idx, mod=Mod}) ->
 start_handoff(State=#state{index=Idx, mod=Mod, modstate=ModState}, TargetNode) ->
     case Mod:is_empty(ModState) of
         {true, NewModState} ->
-            {ok, NewModState1} = Mod:delete(NewModState),
-            riak_core_handoff_manager:add_exclusion(Mod, Idx),
-            {stop, normal, State#state{modstate=NewModState1}};
+            finish_handoff(State#state{modstate=NewModState,
+                                       handoff_node=TargetNode});
         {false, NewModState} ->  
             case riak_core_handoff_manager:get_handoff_lock({Mod, Idx}) of
                 {error, max_concurrency} ->
