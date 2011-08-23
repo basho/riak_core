@@ -58,8 +58,6 @@ handle_call({work, Pool, Work, WorkFrom}, {Pid, _} = From, #state{module = Mod,
             NS;
         {noreply, NS} ->
             NS
-        %{stop, NS} ->
-            %???
     end,
     %% check the worker back into the pool
     poolboy:checkin(Pool, self()),

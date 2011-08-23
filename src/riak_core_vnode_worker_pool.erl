@@ -100,7 +100,9 @@ handle_info({'DOWN', _Ref, _, Pid, Info}, StateName, #state{monitors=Monitors} =
         {Pid, _, From, Work} ->
             riak_core_vnode:reply(From, {error, {worker_crash, Info, Work}}),
             NewMonitors = lists:keydelete(Pid, 1, Monitors),
-            self() ! checkin, %% pretend a worker just checked in
+            %% pretend a worker just checked in so that any queued work can
+            %% sent to the new worker just started to replace this dead one
+            gen_fsm:send_all_state_event(self(), checkin),
             {next_state, StateName, State#state{monitors=NewMonitors}};
         false ->
             {next_state, StateName, State}
