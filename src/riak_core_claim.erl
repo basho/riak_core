@@ -60,6 +60,7 @@
 
 -ifdef(TEST).
 -ifdef(EQC).
+-export([prop_claim_ensures_unique_nodes/0]).
 -include_lib("eqc/include/eqc.hrl").
 -endif.
 -include_lib("eunit/include/eunit.hrl").
@@ -320,7 +321,8 @@ prop_claim_ensures_unique_nodes() ->
 
                 R0 = riak_core_ring:fresh(Partitions, Node0),
                 Rfinal = lists:foldl(fun(Node, Racc) ->
-                                             default_choose_claim(Racc, Node)
+                                             Racc0 = riak_core_ring:add_member(Node0, Racc, Node),
+                                             default_choose_claim(Racc0, Node)
                                      end, R0, RestNodes),
 
                 Preflists = riak_core_ring:all_preflists(Rfinal, Nval),
