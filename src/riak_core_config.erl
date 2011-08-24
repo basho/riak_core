@@ -170,6 +170,6 @@ setup() ->
     application:load(riak_core).
 
 cleanup(_Pid) ->
-    application:unload(riak_core).
+    application:stop(riak_core).
     
 -endif.
