@@ -37,10 +37,10 @@
          fresh/1,
          fresh/2,
          get_meta/2, 
-	 index_owner/2,
+         index_owner/2,
          my_indices/1,
          num_partitions/1,
-	 owner_node/1,
+         owner_node/1,
          preflist/2,
          random_node/1,
          random_other_index/1,
@@ -50,7 +50,7 @@
          rename_node/3, 
          responsible_index/2,
          transfer_node/3, 
-         update_meta/3]).	 
+         update_meta/3]). 
 
 -export_type([riak_core_ring/0]).
 
@@ -132,8 +132,8 @@ fresh(NodeName) ->
 -spec fresh(RingSize :: integer(), NodeName :: term()) -> chstate().
 fresh(RingSize, NodeName) ->
     #chstate{nodename=NodeName,
-	    vclock=vclock:fresh(),
-	    chring=chash:fresh(RingSize, NodeName),
+        vclock=vclock:fresh(),
+        chring=chash:fresh(RingSize, NodeName),
             meta=dict:new()}.
 
 % @doc Return a value from the cluster metadata dict
@@ -267,14 +267,14 @@ responsible_index(ChashKey, #chstate{chring=Ring}) ->
            chstate().
 transfer_node(Idx, Node, MyState) ->
     case chash:lookup(Idx, MyState#chstate.chring) of
-	Node ->
-	    MyState;
-	_ ->
-	    Me = MyState#chstate.nodename,
-	    VClock = vclock:increment(Me, MyState#chstate.vclock),
-	    CHRing = chash:update(Idx, Node, MyState#chstate.chring),
-	    #chstate{nodename=Me,vclock=VClock,chring=CHRing,
-                    meta=MyState#chstate.meta}
+        Node ->
+            MyState;
+        _ ->
+            Me = MyState#chstate.nodename,
+            VClock = vclock:increment(Me, MyState#chstate.vclock),
+            CHRing = chash:update(Idx, Node, MyState#chstate.chring),
+            #chstate{nodename=Me,vclock=VClock,chring=CHRing,
+                meta=MyState#chstate.meta}
     end.
 
 % @doc Set a key in the cluster metadata dict
@@ -309,7 +309,7 @@ ancestors(RingStates) ->
     Ancest = [[O2 || O2 <- RingStates,
      vclock:descends(O1#chstate.vclock,O2#chstate.vclock),
      (vclock:descends(O2#chstate.vclock,O1#chstate.vclock) == false)]
-		|| O1 <- RingStates],
+ || O1 <- RingStates],
     lists:flatten(Ancest).
 
 %% @private
@@ -332,8 +332,8 @@ pick_val(M1,M2) ->
 reconcile(MyNodeName, StateA, StateB) ->
     % take two states (non-descendant) and merge them
     VClock = vclock:increment(MyNodeName,
-				 vclock:merge([StateA#chstate.vclock,
-					       StateB#chstate.vclock])),
+        vclock:merge([StateA#chstate.vclock,
+                StateB#chstate.vclock])),
     CHRing = chash:merge_rings(StateA#chstate.chring,StateB#chstate.chring),
     Meta = merge_meta(StateA#chstate.meta, StateB#chstate.meta),
     #chstate{nodename=MyNodeName,
