@@ -62,7 +62,30 @@ ensure_vnodes_started(Ring) ->
             ok;
         AppMods ->            
             case ensure_vnodes_started(AppMods, Ring, []) of
-                [] -> riak_core_ring_manager:refresh_my_ring();
+                [] -> 
+                    case riak_core_ring:member_status(Ring, node()) of
+                        leaving ->
+                            riak_core_ring_manager:ring_trans(
+                              fun(Ring2, _) -> 
+                                      Ring3 = riak_core_ring:exit_member(node(), Ring2, node()),
+                                      {new_ring, Ring3}
+                              end, []),
+                            %% Shutdown if we are the only node in the cluster
+                            case riak_core_ring:random_other_node(Ring) of
+                                no_node ->
+                                    riak_core_ring_manager:refresh_my_ring();
+                                _ ->
+                                    ok
+                            end;
+                        invalid ->
+                            riak_core_ring_manager:refresh_my_ring();
+                        exiting ->
+                            %% Deliberately do nothing.
+                            ok;
+                        valid ->
+                            %% Deliberately do nothing.
+                            ok
+                    end;
                 _ -> ok
             end
     end.
@@ -101,7 +124,8 @@ startable_vnodes(Mod, Ring) ->
         {1, true} ->
             riak_core_ring:my_indices(Ring);
         _ ->
-            {ok, Excl} = riak_core_handoff_manager:get_exclusions(Mod),
+            {ok, ModExcl} = riak_core_handoff_manager:get_exclusions(Mod),
+            Excl = ModExcl -- riak_core_ring:disowning_indices(Ring, node()),
             case riak_core_ring:random_other_index(Ring, Excl) of
                 no_indices ->
                     case length(Excl) =:= riak_core_ring:num_partitions(Ring) of

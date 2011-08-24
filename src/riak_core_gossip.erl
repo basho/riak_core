@@ -36,7 +36,9 @@
 -export([start_link/0, stop/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
--export ([distribute_ring/1, send_ring/1, send_ring/2, remove_from_cluster/1]).
+-export ([distribute_ring/1, send_ring/1, send_ring/2, remove_from_cluster/2,
+          finish_handoff/4, claim_until_balanced/2, random_gossip/1,
+          recursive_gossip/1, random_recursive_gossip/1]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -69,6 +71,32 @@ start_link() ->
 stop() ->
     gen_server:cast(?MODULE, stop).
 
+finish_handoff(Idx, Prev, New, Mod) ->
+    gen_server:call(?MODULE, {finish_handoff, Idx, Prev, New, Mod}).
+
+%% @doc Gossip state to a random node in the ring.
+random_gossip(Ring) ->
+    case riak_core_ring:random_other_node(Ring) of
+        no_node -> % must be single node cluster
+            ok;
+        RandomNode ->
+            send_ring(node(), RandomNode)
+    end.
+
+%% @doc Gossip state to a fixed set of nodes determined from a binary
+%%      tree decomposition of the membership state.
+recursive_gossip(Ring, Node) ->
+    Nodes = riak_core_ring:all_members(Ring),
+    Tree = riak_core_util:build_tree(2, Nodes, [cycles]),
+    Children = orddict:fetch(Node, Tree),
+    [send_ring(node(), OtherNode) || OtherNode <- Children],
+    ok.
+recursive_gossip(Ring) ->
+    recursive_gossip(Ring, node()).
+
+random_recursive_gossip(Ring) ->
+    RNode = riak_core_ring:random_node(Ring),
+    recursive_gossip(Ring, RNode).
 
 %% ===================================================================
 %% gen_server behaviour
@@ -81,6 +109,29 @@ init(_State) ->
 
 
 %% @private
+handle_call({finish_handoff, Idx, Prev, New, Mod}, _From, State) ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    Owner = riak_core_ring:index_owner(Ring, Idx),
+    {_, NextOwner, Status} = riak_core_ring:next_owner(Ring, Idx, Mod),
+
+    case {Owner, NextOwner, Status} of
+        {Prev, New, awaiting} ->
+            riak_core_ring_manager:ring_trans(
+              fun(Ring2, _) -> 
+                      Ring3 = riak_core_ring:handoff_complete(Ring2, Idx, Mod),
+                      {new_ring, Ring3}
+              end, []),
+            {reply, forward, State};
+        {Prev, New, complete} ->
+            %% Do nothing
+            {reply, continue, State};
+        {Prev, _, _} ->
+            %% Handoff wasn't to node that is scheduled in next, so no change.
+            {reply, continue, State};
+        {_, _, _} ->
+            {reply, shutdown, State}
+    end;
+
 handle_call(_, _From, State) ->
     {reply, ok, State}.
 
@@ -99,21 +150,9 @@ handle_cast({distribute_ring, Ring}, RingChanged) ->
 handle_cast({reconcile_ring, OtherRing}, RingChanged) ->
     % Compare the two rings, see if there is anything that
     % must be done to make them equal...
-    {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
-    case riak_core_ring:reconcile(OtherRing, MyRing) of
-        {no_change, _} ->
-            {noreply, RingChanged};
-
-        {new_ring, ReconciledRing} ->
-            % Rebalance the new ring and save it
-            BalancedRing = claim_until_balanced(ReconciledRing),
-            riak_core_ring_manager:set_my_ring(BalancedRing),
-
-            % Finally, push it out to another node - expect at least two nodes now
-            RandomNode = riak_core_ring:random_other_node(BalancedRing),
-            send_ring(node(), RandomNode),
-            {noreply, true}
-    end;
+    riak_core_stat:update(gossip_received),
+    riak_core_ring_manager:ring_trans(fun reconcile/2, [OtherRing]),
+    {noreply, RingChanged};
 
 handle_cast(gossip_ring, _RingChanged) ->
     % First, schedule the next round of gossip...
@@ -121,12 +160,16 @@ handle_cast(gossip_ring, _RingChanged) ->
 
     % Gossip the ring to some random other node...
     {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
-    case riak_core_ring:random_other_node(MyRing) of
-        no_node -> % must be single node cluster
+
+    %% Ensure vnodes necessary for ownership change are running
+    case riak_core_ring:disowning_indices(MyRing, node()) of
+        [] ->
             ok;
-        RandomNode ->
-            send_ring(node(), RandomNode)
+        _ ->
+            riak_core_ring_events:force_update()
     end,
+
+    random_gossip(MyRing),
     {noreply, false};
 
 handle_cast(_, State) ->
@@ -153,27 +196,88 @@ schedule_next_gossip() ->
     Interval = random:uniform(MaxInterval),
     timer:apply_after(Interval, gen_server, cast, [?MODULE, gossip_ring]).
 
-claim_until_balanced(Ring) ->
+reconcile(Ring, [OtherRing]) ->
+    Node = node(),
+    OtherNode = riak_core_ring:owner_node(OtherRing),
+    Members = riak_core_ring:reconcile_members(Ring, OtherRing),
+    WrongCluster = (riak_core_ring:cluster_name(Ring) /=
+                    riak_core_ring:cluster_name(OtherRing)),
+    PreStatus = riak_core_ring:member_status(Members, OtherNode),
+    IgnoreGossip = (WrongCluster or (PreStatus =:= invalid)),
+    case IgnoreGossip of
+        true ->
+            Ring2 = Ring,
+            InvalidNode = true,
+            Changed = false;
+        false ->
+            {Changed, Ring2} =
+                riak_core_ring:reconcile(OtherRing, Ring),
+            InvalidNode =
+                (riak_core_ring:member_status(Ring2, OtherNode) =:= invalid)
+    end,
+    case {WrongCluster, InvalidNode, Changed} of
+        {true, _, _} ->
+            %% TODO: Tell other node to stop gossiping to this node.
+            riak_core_stat:update(ignored_gossip),
+            ignore;
+        {_, false, new_ring} ->
+            Ring3 = riak_core_ring:ring_changed(Node, Ring2),
+            riak_core_stat:update(rings_reconciled),
+            log_membership_changes(Ring, Ring3),
+            {reconciled_ring, Ring3};
+        {_, true, _} ->
+            %% Exiting/Removed node never saw shutdown cast, re-send.
+            ClusterName = riak_core_ring:cluster_name(Ring),
+            riak_core_ring_manager:refresh_ring(OtherNode, ClusterName),
+            ignore;
+        {_, _, _} ->
+            ignore
+    end.
+
+log_membership_changes(OldRing, NewRing) ->
+    OldStatus = orddict:from_list(riak_core_ring:all_member_status(OldRing)),
+    NewStatus = orddict:from_list(riak_core_ring:all_member_status(NewRing)),
+
+    %% Pad both old and new status to the same length
+    OldDummyStatus = [{Node, undefined} || {Node, _} <- NewStatus],
+    OldStatus2 = orddict:merge(fun(_, Status, _) ->
+                                       Status
+                               end, OldStatus, OldDummyStatus),
+
+    NewDummyStatus = [{Node, undefined} || {Node, _} <- OldStatus],
+    NewStatus2 = orddict:merge(fun(_, Status, _) ->
+                                       Status
+                               end, NewStatus, NewDummyStatus),
+
+    %% Merge again to determine changed status
+    orddict:merge(fun(_, Same, Same) ->
+                          Same;
+                     (Node, undefined, New) ->
+                          lager:info("'~s' joined cluster with status '~s'~n",
+                                     [Node, New]);
+                     (Node, Old, undefined) ->
+                          lager:info("'~s' removed from cluster (previously: "
+                                     "'~s')~n", [Node, Old]);
+                     (Node, Old, New) ->
+                          lager:info("'~s' changed from '~s' to '~s'~n",
+                                     [Node, Old, New])
+                  end, OldStatus2, NewStatus2),
+    ok.
+    
+claim_until_balanced(Ring, Node) ->
     {WMod, WFun} = app_helper:get_env(riak_core, wants_claim_fun),
-    NeedsIndexes = apply(WMod, WFun, [Ring]),
+    NeedsIndexes = apply(WMod, WFun, [Ring, Node]),
     case NeedsIndexes of
         no ->
             Ring;
         {yes, _NumToClaim} ->
             {CMod, CFun} = app_helper:get_env(riak_core, choose_claim_fun),
-            NewRing = CMod:CFun(Ring),
-            claim_until_balanced(NewRing)
+            NewRing = CMod:CFun(Ring, Node),
+            claim_until_balanced(NewRing, Node)
     end.
 
-
-remove_from_cluster(ExitingNode) ->
-    % Set the remote node to stop claiming.
-    % Ignore return of rpc as this should succeed even if node is offline
-    rpc:call(ExitingNode, application, set_env,
-             [riak_core, wants_claim_fun, {riak_core_claim, never_wants_claim}]),
-
+remove_from_cluster(Ring, ExitingNode) ->
     % Get a list of indices owned by the ExitingNode...
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     AllOwners = riak_core_ring:all_owners(Ring),
 
     % Transfer indexes to other nodes...
@@ -185,7 +289,7 @@ remove_from_cluster(ExitingNode) ->
                 %% re-diagonalize
                 %% first hand off all claims to *any* one else,
                 %% just so rebalance doesn't include exiting node
-                Members = riak_core_ring:all_members(Ring),
+                Members = riak_core_ring:claiming_members(Ring),
                 Other = hd(lists:delete(ExitingNode, Members)),
                 TempRing = lists:foldl(
                              fun({I,N}, R) when N == ExitingNode ->
@@ -196,21 +300,14 @@ remove_from_cluster(ExitingNode) ->
                              AllOwners),
                 riak_core_claim:claim_rebalance_n(TempRing, Other)
         end,
-
-    % Send the new ring to all nodes except the exiting node
-    distribute_ring(ExitRing),
-
-    % Set the new ring on the exiting node. This will trigger
-    % it to begin handoff and cleanly leave the cluster.
-    rpc:call(ExitingNode, riak_core_ring_manager, set_my_ring, [ExitRing]).
-
+    ExitRing.
 
 attempt_simple_transfer(Ring, Owners, ExitingNode) ->
     TargetN = app_helper:get_env(riak_core, target_n_val),
     attempt_simple_transfer(Ring, Owners,
                             TargetN,
                             ExitingNode, 0,
-                            [{O,-TargetN} || O <- riak_core_ring:all_members(Ring),
+                            [{O,-TargetN} || O <- riak_core_ring:claiming_members(Ring),
                                              O /= ExitingNode]).
 attempt_simple_transfer(Ring, [{P, Exit}|Rest], TargetN, Exit, Idx, Last) ->
     %% handoff

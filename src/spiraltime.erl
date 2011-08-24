@@ -41,6 +41,8 @@
          rep_second/1,rep_minute/1,
          test_spiraltime/0]).
 
+-export_type([spiral/0]).
+
 %% @type moment() = integer().
 %% This is a number of seconds, as produced by
 %% calendar:datetime_to_gregorian_seconds(calendar:universal_time())
@@ -51,6 +53,8 @@
 -record(spiral, {moment :: integer(),
                  seconds :: [integer()]
                 }).
+
+-type spiral() :: #spiral{}.
 
 n() ->
     calendar:datetime_to_gregorian_seconds(calendar:universal_time()).
