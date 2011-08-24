@@ -1,7 +1,5 @@
 %% -------------------------------------------------------------------
 %%
-%% test_guarded_event_handler
-%%
 %% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
