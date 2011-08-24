@@ -86,6 +86,7 @@ behaviour_info(_Other) ->
           handoff_token :: non_neg_integer(),
           handoff_node=none :: none | node(),
           handoff_pid :: pid(),
+          pool_pid :: pid() | undefined,
           inactivity_timeout}).
 
 start_link(Mod, Index) ->
@@ -110,11 +111,23 @@ send_command_after(Time, Request) ->
 init([Mod, Index, InitialInactivityTimeout]) ->
     %%TODO: Should init args really be an array if it just gets Init?
     process_flag(trap_exit, true),
-    {ok, ModState} = Mod:init([Index]),
+    {ModState, Props} = case Mod:init([Index]) of
+        {ok, MS} -> {MS, []};
+        {ok, MS, P} -> {MS, P}
+    end,
+    PoolPid = case lists:keyfind(pool, 1, Props) of
+        {pool, WorkerModule, PoolSize, WorkerArgs} ->
+            lager:notice("starting worker pool ~p with size of ~p~n",
+                [WorkerModule, PoolSize]),
+            {ok, Pid} = riak_core_vnode_worker_pool:start_link(WorkerModule,
+                PoolSize, Index, WorkerArgs, worker_props),
+            Pid;
+        _ -> undefined
+    end,
     riak_core_handoff_manager:remove_exclusion(Mod, Index),
     Timeout = app_helper:get_env(riak_core, vnode_inactivity_timeout, ?DEFAULT_TIMEOUT),
     {ok, active, #state{index=Index, mod=Mod, modstate=ModState,
-                        inactivity_timeout=Timeout}, InitialInactivityTimeout}.
+                        inactivity_timeout=Timeout, pool_pid=PoolPid}, InitialInactivityTimeout}.
 
 get_mod_index(VNode) ->
     gen_fsm:sync_send_all_state_event(VNode, get_mod_index).
@@ -126,23 +139,35 @@ continue(State, NewModState) ->
     continue(State#state{modstate=NewModState}).
     
 
-vnode_command(Sender, Request, State=#state{mod=Mod, modstate=ModState}) ->
+vnode_command(Sender, Request, State=#state{mod=Mod, modstate=ModState,
+        pool_pid=Pool}) ->
     case Mod:handle_command(Request, Sender, ModState) of
         {reply, Reply, NewModState} ->
             reply(Sender, Reply),
             continue(State, NewModState);
         {noreply, NewModState} ->
             continue(State, NewModState);
+        {async, Work, From, NewModState} ->
+            %% dispatch some work to the vnode worker pool
+            %% the result is sent back to 'From'
+            riak_core_vnode_worker_pool:handle_work(Pool, Work, From),
+            continue(State, NewModState);
         {stop, Reason, NewModState} ->
             {stop, Reason, State#state{modstate=NewModState}}
     end.
 
-vnode_coverage(Sender, Request, KeySpaces, State=#state{mod=Mod, modstate=ModState}) ->
+vnode_coverage(Sender, Request, KeySpaces, State=#state{mod=Mod,
+        modstate=ModState, pool_pid=Pool}) ->
     case Mod:handle_coverage(Request, KeySpaces, Sender, ModState) of
         {reply, Reply, NewModState} ->
             reply(Sender, Reply),
             continue(State, NewModState);
         {noreply, NewModState} ->
+            continue(State, NewModState);
+        {async, Work, From, NewModState} ->
+            %% dispatch some work to the vnode worker pool
+            %% the result is sent back to 'From'
+            riak_core_vnode_worker_pool:handle_work(Pool, Work, From),
             continue(State, NewModState);
         {stop, Reason, NewModState} ->
             {stop, Reason, State#state{modstate=NewModState}}
