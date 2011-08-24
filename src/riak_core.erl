@@ -22,6 +22,7 @@
 -module(riak_core).
 -export([stop/0, stop/1, join/1, remove_from_cluster/1]).
 -export([register_vnode_module/1, vnode_modules/0]).
+-export([register_application/1, bucket_fixups/0]).
 -export([add_guarded_event_handler/3, add_guarded_event_handler/4]).
 -export([delete_guarded_event_handler/3]).
 
@@ -77,19 +78,38 @@ vnode_modules() ->
         {ok, Mods} -> Mods
     end.
 
+bucket_fixups() ->
+     case application:get_env(riak_core, bucket_fixups) of
+        undefined -> [];
+        {ok, Mods} -> Mods
+    end.
+
+%% @doc Register a riak_core application.
+register_application([]) ->
+    ok;
+register_application([{bucket_fixup, FixupMod}|T]) ->
+    register_riak_core_application_module(FixupMod, bucket_fixups),
+    register_application(T);
+register_application([{vnode_module, VNodeMod}|T]) ->
+    register_riak_core_application_module(VNodeMod, vnode_modules),
+    register_application(T).
+
 register_vnode_module(VNodeMod) when is_atom(VNodeMod)  ->
+    register_riak_core_application_module(VNodeMod, vnode_modules).
+
+register_riak_core_application_module(Module, Key) when is_atom(Module), is_atom(Key) ->
     {ok, App} = case application:get_application(self()) of
         {ok, AppName} -> {ok, AppName};
-        undefined -> app_for_module(VNodeMod)                        
+        undefined -> app_for_module(Module)
     end,
-    case application:get_env(riak_core, vnode_modules) of
+    case application:get_env(riak_core, Key) of
         undefined ->
-            application:set_env(riak_core, vnode_modules, [{App,VNodeMod}]);
+            application:set_env(riak_core, Key, [{App,Module}]);
         {ok, Mods} ->
-            application:set_env(riak_core, vnode_modules, [{App,VNodeMod}|Mods])
+            application:set_env(riak_core, Key, [{App,Module}|Mods])
     end,
     riak_core_ring_events:force_sync_update().
-    
+
 %% @spec add_guarded_event_handler(HandlerMod, Handler, Args) -> AddResult
 %%       HandlerMod = module()
 %%       Handler = module() | {module(), term()}
