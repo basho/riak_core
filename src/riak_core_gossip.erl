@@ -38,7 +38,7 @@
          terminate/2, code_change/3]).
 -export ([distribute_ring/1, send_ring/1, send_ring/2, remove_from_cluster/2,
           finish_handoff/4, claim_until_balanced/2, random_gossip/1,
-          recursive_gossip/1, random_recursive_gossip/1]).
+          recursive_gossip/1, random_recursive_gossip/1, rejoin/2]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -74,9 +74,12 @@ stop() ->
 finish_handoff(Idx, Prev, New, Mod) ->
     gen_server:call(?MODULE, {finish_handoff, Idx, Prev, New, Mod}).
 
+rejoin(Node, Ring) ->
+    gen_server:cast({?MODULE, Node}, {rejoin, Ring}).
+
 %% @doc Gossip state to a random node in the ring.
 random_gossip(Ring) ->
-    case riak_core_ring:random_other_node(Ring) of
+    case riak_core_ring:random_other_active_node(Ring) of
         no_node -> % must be single node cluster
             ok;
         RandomNode ->
@@ -86,7 +89,7 @@ random_gossip(Ring) ->
 %% @doc Gossip state to a fixed set of nodes determined from a binary
 %%      tree decomposition of the membership state.
 recursive_gossip(Ring, Node) ->
-    Nodes = riak_core_ring:all_members(Ring),
+    Nodes = riak_core_ring:active_members(Ring),
     Tree = riak_core_util:build_tree(2, Nodes, [cycles]),
     Children = orddict:fetch(Node, Tree),
     [send_ring(node(), OtherNode) || OtherNode <- Children],
@@ -95,7 +98,8 @@ recursive_gossip(Ring) ->
     recursive_gossip(Ring, node()).
 
 random_recursive_gossip(Ring) ->
-    RNode = riak_core_ring:random_node(Ring),
+    Active = riak_core_ring:active_members(Ring),
+    RNode = lists:nth(random:uniform(length(Active)), Active),
     recursive_gossip(Ring, RNode).
 
 %% ===================================================================
@@ -113,22 +117,26 @@ handle_call({finish_handoff, Idx, Prev, New, Mod}, _From, State) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Owner = riak_core_ring:index_owner(Ring, Idx),
     {_, NextOwner, Status} = riak_core_ring:next_owner(Ring, Idx, Mod),
+    NewStatus = riak_core_ring:member_status(Ring, New),
 
-    case {Owner, NextOwner, Status} of
-        {Prev, New, awaiting} ->
+    case {Owner, NextOwner, NewStatus, Status} of
+        {_, _, invalid, _} ->
+            %% Handing off to invalid node, don't give-up data.
+            {reply, continue, State};
+        {Prev, New, _, awaiting} ->
             riak_core_ring_manager:ring_trans(
               fun(Ring2, _) -> 
                       Ring3 = riak_core_ring:handoff_complete(Ring2, Idx, Mod),
                       {new_ring, Ring3}
               end, []),
             {reply, forward, State};
-        {Prev, New, complete} ->
+        {Prev, New, _, complete} ->
             %% Do nothing
             {reply, continue, State};
-        {Prev, _, _} ->
+        {Prev, _, _, _} ->
             %% Handoff wasn't to node that is scheduled in next, so no change.
             {reply, continue, State};
-        {_, _, _} ->
+        {_, _, _, _} ->
             {reply, shutdown, State}
     end;
 
@@ -143,7 +151,7 @@ handle_cast({send_ring_to, Node}, RingChanged) ->
     {noreply, RingChanged};
 
 handle_cast({distribute_ring, Ring}, RingChanged) ->
-    Nodes = riak_core_ring:all_members(Ring),
+    Nodes = riak_core_ring:active_members(Ring),
     gen_server:abcast(Nodes, ?MODULE, {reconcile_ring, Ring}),
     {noreply, RingChanged};
 
@@ -171,6 +179,18 @@ handle_cast(gossip_ring, _RingChanged) ->
 
     random_gossip(MyRing),
     {noreply, false};
+
+handle_cast({rejoin, OtherRing}, State) ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    SameCluster = (riak_core_ring:cluster_name(Ring) =:= 
+                       riak_core_ring:cluster_name(OtherRing)),
+    case SameCluster of
+        true ->
+            riak_core:join(riak_core_ring:owner_node(OtherRing)),
+            {noreply, State};
+        false ->
+            {noreply, State}
+    end;
 
 handle_cast(_, State) ->
     {noreply, State}.
@@ -203,33 +223,37 @@ reconcile(Ring, [OtherRing]) ->
     WrongCluster = (riak_core_ring:cluster_name(Ring) /=
                     riak_core_ring:cluster_name(OtherRing)),
     PreStatus = riak_core_ring:member_status(Members, OtherNode),
-    IgnoreGossip = (WrongCluster or (PreStatus =:= invalid)),
+    IgnoreGossip = (WrongCluster or
+                    (PreStatus =:= invalid) or
+                    (PreStatus =:= down)),
     case IgnoreGossip of
         true ->
             Ring2 = Ring,
-            InvalidNode = true,
             Changed = false;
         false ->
             {Changed, Ring2} =
-                riak_core_ring:reconcile(OtherRing, Ring),
-            InvalidNode =
-                (riak_core_ring:member_status(Ring2, OtherNode) =:= invalid)
+                riak_core_ring:reconcile(OtherRing, Ring)
     end,
-    case {WrongCluster, InvalidNode, Changed} of
+    OtherStatus = riak_core_ring:member_status(Ring2, OtherNode),
+    case {WrongCluster, OtherStatus, Changed} of
         {true, _, _} ->
             %% TODO: Tell other node to stop gossiping to this node.
             riak_core_stat:update(ignored_gossip),
             ignore;
-        {_, false, new_ring} ->
-            Ring3 = riak_core_ring:ring_changed(Node, Ring2),
-            riak_core_stat:update(rings_reconciled),
-            log_membership_changes(Ring, Ring3),
-            {reconciled_ring, Ring3};
-        {_, true, _} ->
+        {_, down, _} ->
+            %% Tell other node to rejoin the cluster.
+            riak_core_gossip:rejoin(OtherNode, Ring2),
+            ignore;
+        {_, invalid, _} ->
             %% Exiting/Removed node never saw shutdown cast, re-send.
             ClusterName = riak_core_ring:cluster_name(Ring),
             riak_core_ring_manager:refresh_ring(OtherNode, ClusterName),
             ignore;
+        {_, _, new_ring} ->
+            Ring3 = riak_core_ring:ring_changed(Node, Ring2),
+            riak_core_stat:update(rings_reconciled),
+            log_membership_changes(Ring, Ring3),
+            {reconciled_ring, Ring3};
         {_, _, _} ->
             ignore
     end.
