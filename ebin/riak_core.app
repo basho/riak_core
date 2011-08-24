@@ -48,6 +48,8 @@
              riak_core_vnode,
              riak_core_vnode_master,
              riak_core_vnode_sup,
+             riak_core_vnode_worker,
+             riak_core_vnode_worker_pool,
              riak_core_web,
              riak_core_wm_urlmap,
              slide,
