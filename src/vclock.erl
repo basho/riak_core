@@ -98,11 +98,11 @@ merge(V=[{Node1,{Ctr1,TS1}}|VClock],
     end.
 
 % @doc Get the counter value in VClock set from Node.
--spec get_counter(Node :: vclock_node(), VClock :: vclock()) -> counter() | undefined.
+-spec get_counter(Node :: vclock_node(), VClock :: vclock()) -> counter().
 get_counter(Node, VClock) ->
     case lists:keyfind(Node, 1, VClock) of
 	{_, {Ctr, _TS}} -> Ctr;
-	false           -> undefined
+	false           -> 0
     end.
 
 % @doc Get the timestamp value in a VClock set from Node.
@@ -277,7 +277,7 @@ accessor_test() ->
     ?assertEqual(1, get_timestamp(<<"1">>, VC)),
     ?assertEqual(2, get_counter(<<"2">>, VC)),
     ?assertEqual(2, get_timestamp(<<"2">>, VC)),
-    ?assertEqual(undefined, get_counter(<<"3">>, VC)),
+    ?assertEqual(0, get_counter(<<"3">>, VC)),
     ?assertEqual(undefined, get_timestamp(<<"3">>, VC)),
     ?assertEqual([<<"1">>, <<"2">>], all_nodes(VC)).
 
