@@ -75,7 +75,7 @@ get_my_ring() ->
     end.
 
 get_raw_ring() ->
-    gen_server2:call(?MODULE, get_my_ring, infinity).
+    gen_server2:call(?MODULE, get_raw_ring, infinity).
 
 %% @spec refresh_my_ring() -> ok
 refresh_my_ring() ->
