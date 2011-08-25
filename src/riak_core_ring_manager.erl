@@ -304,6 +304,12 @@ run_fixups([{App, Fixup}|T], BucketName, BucketProps) ->
 %% to make test setup simpler - no need to spin up a riak_core_ring_manager
 %% process.
 set_ring_global(Ring) ->
+    DefaultProps = case application:get_env(riak_core, default_bucket_props) of
+        {ok, Val} ->
+            Val;
+        _ ->
+            []
+    end,
     %% run fixups on the ring before storing it in mochiglobal
     FixedRing = case riak_core:bucket_fixups() of
         [] -> Ring;
@@ -312,8 +318,16 @@ set_ring_global(Ring) ->
             lists:foldl(
                 fun(Bucket, AccRing) ->
                         BucketProps = riak_core_bucket:get_bucket(Bucket, Ring),
+                        %% Merge anything in the default properties but not in
+                        %% the bucket's properties. This is to ensure default
+                        %% properties added after the bucket is created are
+                        %% inherited to the bucket.
+                        MergedProps = lists:ukeymerge(1,
+                            lists:ukeysort(1,BucketProps),
+                            lists:ukeysort(1, DefaultProps)),
+
                         %% fixup the ring
-                        NewBucketProps = run_fixups(Fixups, Bucket, BucketProps),
+                        NewBucketProps = run_fixups(Fixups, Bucket, MergedProps),
                         %% update the bucket in the ring
                         riak_core_ring:update_meta({bucket,Bucket},
                             NewBucketProps,
