@@ -32,6 +32,7 @@
              riak_core_handoff_manager,
              riak_core_handoff_receiver,
              riak_core_handoff_sender,
+             riak_core_nodeid,
              riak_core_node_watcher,
              riak_core_node_watcher_events,
              riak_core_pb,
