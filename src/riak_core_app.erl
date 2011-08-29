@@ -77,7 +77,9 @@ start(_StartType, _StartArgs) ->
                             lager:critical("Failed to read ring file: ~p",
                                 [lager:posix_error(Reason)]),
                             throw({error, Reason});
-                        Ring ->
+                        Ring0 ->
+                            %% Upgrade the ring data structure if necessary.
+                            Ring = riak_core_ring:upgrade(Ring0),
                             riak_core_ring_manager:set_my_ring(Ring)
                     end;
                 {error, not_found} ->

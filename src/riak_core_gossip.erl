@@ -38,11 +38,16 @@
          terminate/2, code_change/3]).
 -export ([distribute_ring/1, send_ring/1, send_ring/2, remove_from_cluster/2,
           finish_handoff/4, claim_until_balanced/2, random_gossip/1,
-          recursive_gossip/1, random_recursive_gossip/1, rejoin/2]).
+          recursive_gossip/1, random_recursive_gossip/1, rejoin/2,
+          gossip_version/0, legacy_gossip/0, legacy_gossip/1]).
+
+-include_lib("riak_core_ring.hrl").
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
+
+-record(state, {gossip_versions}).
 
 %% ===================================================================
 %% Public API
@@ -76,6 +81,12 @@ finish_handoff(Idx, Prev, New, Mod) ->
 
 rejoin(Node, Ring) ->
     gen_server:cast({?MODULE, Node}, {rejoin, Ring}).
+
+legacy_gossip() ->
+    gen_server:call(?MODULE, legacy_gossip).
+
+legacy_gossip(Node) ->
+    gen_server:call(?MODULE, {legacy_gossip, Node}).
 
 %% @doc Gossip state to a random node in the ring.
 random_gossip(Ring) ->
@@ -117,7 +128,10 @@ random_recursive_gossip(Ring) ->
 %% @private
 init(_State) ->
     schedule_next_gossip(),
-    {ok, true}.
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    State = update_known_versions(Ring,
+                                  #state{gossip_versions=orddict:new()}),
+    {ok, State}.
 
 
 %% @private
@@ -148,29 +162,142 @@ handle_call({finish_handoff, Idx, Prev, New, Mod}, _From, State) ->
             {reply, shutdown, State}
     end;
 
+handle_call(legacy_gossip, _From, State) ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    Reply = check_legacy_gossip(Ring, State),
+    {reply, Reply, State};
+
+handle_call({legacy_gossip, Node}, _From, State) ->
+    {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
+    State2 = update_known_versions(MyRing, State),
+    Reply = known_legacy_gossip(Node, State2),
+    {reply, Reply, State2};
+
 handle_call(_, _From, State) ->
     {reply, ok, State}.
 
+update_gossip_version(Ring) ->
+    CurrentVsn = riak_core_ring:get_member_meta(Ring, node(), gossip_vsn),
+    DesiredVsn = gossip_version(),
+    case CurrentVsn of
+        DesiredVsn ->
+            Ring;
+        _ ->
+            Ring2 = riak_core_ring:update_member_meta(node(), Ring, node(),
+                                                      gossip_vsn, DesiredVsn),
+            Ring2
+    end.
+
+   
+known_legacy_gossip(Node, State) ->
+    case orddict:find(Node, State#state.gossip_versions) of
+        error ->
+            true;
+        {ok, ?LEGACY_RING_VSN} ->
+            true;
+        _ ->
+            false
+    end.
+
+check_legacy_gossip(Ring, State) ->
+    {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
+    State2 = update_known_versions(MyRing, State),
+    case riak_core_ring:legacy_ring(Ring) of
+        true ->
+            true;
+        false ->
+            %% If any member is using legacy gossip, then we use legacy gossip.
+            Members = riak_core_ring:all_members(Ring),
+            Legacy = [known_legacy_gossip(Node, State2) || Node <- Members],
+            Result = lists:any(fun(E) -> E =:= true end, Legacy),
+            Result
+    end.
+
+update_known_version(Node, {OtherRing, GVsns}) ->
+    case riak_core_ring:get_member_meta(OtherRing, Node, gossip_vsn) of
+        undefined ->
+            case riak_core_ring:owner_node(OtherRing) of
+                Node ->
+                    %% Ring owner defaults to legacy gossip if unspecified.
+                    {OtherRing, orddict:store(Node, ?LEGACY_RING_VSN, GVsns)};
+                _ ->
+                    {OtherRing, GVsns}
+            end;
+        GossipVsn ->
+            {OtherRing, orddict:store(Node, GossipVsn, GVsns)}
+    end.
+
+update_known_versions(OtherRing, State=#state{gossip_versions=GVsns}) ->
+    {_, GVsns2} = lists:foldl(fun update_known_version/2,
+                              {OtherRing, GVsns},
+                              riak_core_ring:all_members(OtherRing)),
+    State#state{gossip_versions=GVsns2}.
+    
+gossip_version() ->
+    case app_helper:get_env(riak_core, legacy_gossip) of
+        true ->
+            ?LEGACY_RING_VSN;
+        _ ->
+            ?CURRENT_RING_VSN
+    end.
+
+rpc_gossip_version(Ring, Node) ->
+    GossipVsn = riak_core_ring:get_member_meta(Ring, Node, gossip_vsn),
+    case GossipVsn of
+        undefined ->
+            case rpc:call(Node, riak_core_gossip, gossip_version, [], 1000) of
+                {badrpc, _} ->
+                    ?LEGACY_RING_VSN;
+                Vsn ->
+                    Vsn
+            end;
+        _ ->
+            GossipVsn
+    end.
 
 %% @private
-handle_cast({send_ring_to, Node}, RingChanged) ->
-    {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
-    gen_server:cast({?MODULE, Node}, {reconcile_ring, MyRing}),
-    {noreply, RingChanged};
+handle_cast({send_ring_to, Node}, State) ->
+    {ok, MyRing0} = riak_core_ring_manager:get_my_ring(),
+    MyRing = update_gossip_version(MyRing0),
+    GossipVsn = case gossip_version() of
+                    ?LEGACY_RING_VSN ->
+                        ?LEGACY_RING_VSN;
+                    _ ->
+                        rpc_gossip_version(MyRing, Node)
+                end,
+    RingOut = riak_core_ring:downgrade(GossipVsn, MyRing),
+    gen_server:cast({?MODULE, Node}, {reconcile_ring, RingOut}),
+    {noreply, State};
 
-handle_cast({distribute_ring, Ring}, RingChanged) ->
+handle_cast({distribute_ring, Ring}, State) ->
+    RingOut = case check_legacy_gossip(Ring, State) of
+                  true ->
+                      riak_core_ring:downgrade(?LEGACY_RING_VSN, Ring);
+                  false ->
+                      Ring
+              end,
     Nodes = riak_core_ring:active_members(Ring),
-    gen_server:abcast(Nodes, ?MODULE, {reconcile_ring, Ring}),
-    {noreply, RingChanged};
+    gen_server:abcast(Nodes, ?MODULE, {reconcile_ring, RingOut}),
+    {noreply, State};
 
-handle_cast({reconcile_ring, OtherRing}, RingChanged) ->
-    % Compare the two rings, see if there is anything that
-    % must be done to make them equal...
-    riak_core_stat:update(gossip_received),
-    riak_core_ring_manager:ring_trans(fun reconcile/2, [OtherRing]),
-    {noreply, RingChanged};
+handle_cast({reconcile_ring, RingIn}, State) ->
+    OtherRing = riak_core_ring:upgrade(RingIn),
+    State2 = update_known_versions(OtherRing, State),
+    case check_legacy_gossip(RingIn, State2) of
+        true ->
+            LegacyRing = riak_core_ring:downgrade(?LEGACY_RING_VSN, OtherRing),
+            riak_core_gossip_legacy:handle_cast({reconcile_ring, LegacyRing},
+                                                State2),
+            {noreply, State2};
+        false ->
+            %% Compare the two rings, see if there is anything that
+            %% must be done to make them equal...
+            riak_core_stat:update(gossip_received),
+            riak_core_ring_manager:ring_trans(fun reconcile/2, [OtherRing]),
+            {noreply, State2}
+    end;
 
-handle_cast(gossip_ring, _RingChanged) ->
+handle_cast(gossip_ring, State) ->
     % First, schedule the next round of gossip...
     schedule_next_gossip(),
 
@@ -186,9 +313,10 @@ handle_cast(gossip_ring, _RingChanged) ->
     end,
 
     random_gossip(MyRing),
-    {noreply, false};
+    {noreply, State};
 
-handle_cast({rejoin, OtherRing}, State) ->
+handle_cast({rejoin, RingIn}, State) ->
+    OtherRing = riak_core_ring:upgrade(RingIn),
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     SameCluster = (riak_core_ring:cluster_name(Ring) =:= 
                        riak_core_ring:cluster_name(OtherRing)),
@@ -224,7 +352,10 @@ schedule_next_gossip() ->
     Interval = random:uniform(MaxInterval),
     timer:apply_after(Interval, gen_server, cast, [?MODULE, gossip_ring]).
 
-reconcile(Ring, [OtherRing]) ->
+reconcile(Ring0, [OtherRing0]) ->
+    %% Due to rolling upgrades and legacy gossip, a ring's cluster name
+    %% may be temporarily undefined. This is eventually fixed by the claimant.
+    {Ring, OtherRing} = riak_core_ring:reconcile_names(Ring0, OtherRing0),
     Node = node(),
     OtherNode = riak_core_ring:owner_node(OtherRing),
     Members = riak_core_ring:reconcile_members(Ring, OtherRing),
