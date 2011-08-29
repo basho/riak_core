@@ -95,7 +95,15 @@ recursive_gossip(Ring, Node) ->
     [send_ring(node(), OtherNode) || OtherNode <- Children],
     ok.
 recursive_gossip(Ring) ->
-    recursive_gossip(Ring, node()).
+    %% A non-active member will not show-up in the tree decomposition
+    %% and therefore we fallback to random_recursive_gossip as necessary.
+    Active = riak_core_ring:active_members(Ring),
+    case lists:member(node(), Active) of
+        true ->
+            recursive_gossip(Ring, node());
+        false ->
+            random_recursive_gossip(Ring)
+    end.
 
 random_recursive_gossip(Ring) ->
     Active = riak_core_ring:active_members(Ring),
