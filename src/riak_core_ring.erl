@@ -464,7 +464,7 @@ ring_ready(State0) ->
     Owner = owner_node(State0),
     State = update_seen(Owner, State0),
     Seen = State#chstate.seen,
-    Members = get_members(State#chstate.members, [valid, leaving, exiting]),
+    Members = get_members(State#chstate.members, [valid, leaving]),
     VClock = State#chstate.vclock,
     R = [begin
              case orddict:find(Node, Seen) of
@@ -485,7 +485,7 @@ ring_ready_info(State0) ->
     Owner = owner_node(State0),
     State = update_seen(Owner, State0),
     Seen = State#chstate.seen,
-    Members = get_members(State#chstate.members),
+    Members = get_members(State#chstate.members, [valid, leaving]),
     RecentVC =
         orddict:fold(fun(_, VC, Recent) ->
                              case vclock:descends(VC, Recent) of

@@ -1372,7 +1372,7 @@ ring_ready(CState0) ->
     Seen = CState#chstate.seen,
     %% TODO: Should we add joining here?
     %%Members = get_members(CState#chstate.members, [joining, valid, leaving, exiting]),
-    Members = get_members(CState#chstate.members, [valid, leaving, exiting]),
+    Members = get_members(CState#chstate.members, [valid, leaving]),
     VClock = CState#chstate.vclock,
     R = [begin
              case orddict:find(Node, Seen) of
