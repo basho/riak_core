@@ -92,20 +92,25 @@ remove(Node) ->
 
 down(Node) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    case {riak_core_ring:all_members(Ring),
-          riak_core_ring:member_status(Ring, Node)} of
-        {_, invalid} ->
-            {error, not_member};
-        {[Node], _} ->
-            {error, only_member};
-        _ ->
-            riak_core_ring_manager:ring_trans(
-              fun(Ring2, _) -> 
-                      Ring3 = riak_core_ring:down_member(node(), Ring2, Node),
-                      Ring4 = riak_core_ring:ring_changed(node(), Ring3),
-                      {new_ring, Ring4}
-              end, []),
-            ok
+    case net_adm:ping(Node) of
+        pong ->
+            {error, is_up};
+        pang ->
+            case {riak_core_ring:all_members(Ring),
+                  riak_core_ring:member_status(Ring, Node)} of
+                {_, invalid} ->
+                    {error, not_member};
+                {[Node], _} ->
+                    {error, only_member};
+                _ ->
+                    riak_core_ring_manager:ring_trans(
+                      fun(Ring2, _) -> 
+                              Ring3 = riak_core_ring:down_member(node(), Ring2, Node),
+                              Ring4 = riak_core_ring:ring_changed(node(), Ring3),
+                              {new_ring, Ring4}
+                      end, []),
+                    ok
+            end
     end.
 
 leave() ->

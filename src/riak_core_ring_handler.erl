@@ -64,7 +64,7 @@ ensure_vnodes_started(Ring) ->
             case ensure_vnodes_started(AppMods, Ring, []) of
                 [] ->
                     Ready = riak_core_ring:ring_ready(Ring),
-                    FutureIndices = riak_core_ring:future_indices(Ring),
+                    FutureIndices = riak_core_ring:future_indices(Ring, node()),
                     Status = riak_core_ring:member_status(Ring, node()),
                     case {Ready, FutureIndices, Status} of
                         {true, [], leaving} ->
