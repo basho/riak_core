@@ -22,7 +22,7 @@
 -module(riak_core).
 -export([stop/0, stop/1, join/1, remove_from_cluster/1]).
 -export([register_vnode_module/1, vnode_modules/0]).
--export([register_application/1, bucket_fixups/0]).
+-export([register/1, bucket_fixups/0]).
 -export([add_guarded_event_handler/3, add_guarded_event_handler/4]).
 -export([delete_guarded_event_handler/3]).
 
@@ -85,14 +85,14 @@ bucket_fixups() ->
     end.
 
 %% @doc Register a riak_core application.
-register_application([]) ->
+register([]) ->
     ok;
-register_application([{bucket_fixup, FixupMod}|T]) ->
+register([{bucket_fixup, FixupMod}|T]) ->
     register_riak_core_application_module(FixupMod, bucket_fixups),
-    register_application(T);
-register_application([{vnode_module, VNodeMod}|T]) ->
+    register(T);
+register([{vnode_module, VNodeMod}|T]) ->
     register_riak_core_application_module(VNodeMod, vnode_modules),
-    register_application(T).
+    register(T).
 
 register_vnode_module(VNodeMod) when is_atom(VNodeMod)  ->
     register_riak_core_application_module(VNodeMod, vnode_modules).

@@ -46,7 +46,7 @@ append_bucket_defaults(Items) when is_list(Items) ->
     FixedDefaults = case riak_core:bucket_fixups() of
         [] -> NewDefaults;
         Fixups ->
-            run_fixups(Fixups, default, NewDefaults)
+            riak_core_ring_manager:run_fixups(Fixups, default, NewDefaults)
     end,
     application:set_env(riak_core, default_bucket_props, FixedDefaults),
     %% do a noop transform on the ring, to make the fixups re-run
@@ -99,29 +99,6 @@ get_bucket(Name, Ring) ->
              |app_helper:get_env(riak_core, default_bucket_props)];
         {ok, Bucket} -> Bucket
     end.
-
-%% Temporarily duplicate here from riak_core_ring_manager until the default
-%% bucket is stored in the ring
-%% @private
-run_fixups([], _Bucket, BucketProps) ->
-    BucketProps;
-run_fixups([{App, Fixup}|T], BucketName, BucketProps) ->
-    BP = try Fixup:fixup(BucketName, BucketProps) of
-        {ok, NewBucketProps} ->
-            NewBucketProps;
-        {error, Reason} ->
-            lager:error("Error while running bucket fixup module "
-                "~p from application ~p on bucket ~p: ~p", [Fixup, App,
-                    BucketName, Reason]),
-            BucketProps
-    catch
-        What:Why ->
-            lager:error("Crash while running bucket fixup module "
-                "~p from application ~p on bucket ~p : ~p:~p", [Fixup, App,
-                    BucketName, What, Why]),
-            BucketProps
-    end,
-    run_fixups(T, BucketName, BP).
 
 
 %% ===================================================================

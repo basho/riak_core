@@ -39,6 +39,7 @@
          find_latest_ringfile/0,
          do_write_ringfile/1,
          ring_trans/2,
+         run_fixups/3,
          stop/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -279,6 +280,7 @@ back(N,X,[H|T]) ->
         false -> [H]
     end.
 
+%% @private
 run_fixups([], _Bucket, BucketProps) ->
     BucketProps;
 run_fixups([{App, Fixup}|T], BucketName, BucketProps) ->
