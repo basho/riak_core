@@ -60,7 +60,11 @@
          remove_member/3,
          leave_member/3,
          exit_member/3,
+         down_member/3,
+         active_members/1,
          claiming_members/1,
+         random_other_active_node/1,
+         down_members/1,
          set_owner/2,
          indices/2,
          future_indices/2,
@@ -128,6 +132,10 @@
 -spec all_members(State :: chstate()) -> [Node :: term()].
 all_members(#chstate{members=Members}) ->
     get_members(Members).
+
+%% @doc Produce a list of all active (not marked as down) cluster members
+active_members(#chstate{members=Members}) ->
+    get_members(Members, [joining, valid, leaving, exiting]).
 
 %% @doc Provide all ownership information in the form of {Index,Node} pairs.
 -spec all_owners(State :: chstate()) -> [{Index :: integer(), Node :: term()}].
@@ -257,6 +265,16 @@ random_other_node(State) ->
             lists:nth(random:uniform(length(L)), L)
     end.
 
+%% @doc Return a randomly-chosen active node other than this one.
+-spec random_other_active_node(State :: chstate()) -> Node :: term() | no_node.
+random_other_active_node(State) ->
+    case lists:delete(node(), active_members(State)) of
+        [] ->
+            no_node;
+        L ->
+            lists:nth(random:uniform(length(L)), L)
+    end.
+
 %% @doc Incorporate another node's state into our view of the Riak world.
 -spec reconcile(ExternState :: chstate(), MyState :: chstate()) ->
         {no_change, chstate()} | {new_ring, chstate()}.
@@ -359,7 +377,7 @@ all_member_status(#chstate{members=Members}) ->
     [{Node, Status} || {Node, {Status, _VC}} <- Members, Status /= invalid].
     
 add_member(PNode, State, Node) ->
-    set_member(PNode, State, Node, valid).
+    set_member(PNode, State, Node, joining).
 
 remove_member(PNode, State, Node) ->
     set_member(PNode, State, Node, invalid).
@@ -370,11 +388,19 @@ leave_member(PNode, State, Node) ->
 exit_member(PNode, State, Node) ->
     set_member(PNode, State, Node, exiting).
 
+down_member(PNode, State, Node) ->
+    set_member(PNode, State, Node, down).
+
 %% @doc Return a list of all members of the cluster that are eligible to
 %%      claim partitions.
 -spec claiming_members(State :: chstate()) -> [Node :: node()].
 claiming_members(#chstate{members=Members}) ->
-    get_members(Members, [valid]).
+    get_members(Members, [joining, valid, down]).
+
+%% @doc Return a list of all members of the cluster that are marked as down.
+-spec down_members(State :: chstate()) -> [Node :: node()].
+down_members(#chstate{members=Members}) ->
+    get_members(Members, [down]).
 
 %% @doc Set the node that is responsible for a given chstate.
 -spec set_owner(State :: chstate(), Node :: node()) -> chstate().
@@ -438,7 +464,7 @@ ring_ready(State0) ->
     Owner = owner_node(State0),
     State = update_seen(Owner, State0),
     Seen = State#chstate.seen,
-    Members = get_members(State#chstate.members),
+    Members = get_members(State#chstate.members, [valid, leaving]),
     VClock = State#chstate.vclock,
     R = [begin
              case orddict:find(Node, Seen) of
@@ -459,7 +485,7 @@ ring_ready_info(State0) ->
     Owner = owner_node(State0),
     State = update_seen(Owner, State0),
     Seen = State#chstate.seen,
-    Members = get_members(State#chstate.members),
+    Members = get_members(State#chstate.members, [valid, leaving]),
     RecentVC =
         orddict:fold(fun(_, VC, Recent) ->
                              case vclock:descends(VC, Recent) of
@@ -498,8 +524,16 @@ internal_ring_changed(Node, CState0) ->
             CState;
         true ->
             {C1, CState2} = maybe_update_claimant(Node, CState),
-            {C2, CState3} = maybe_update_ring(Node, CState2),
-            {C3, CState4} = maybe_remove_exiting(Node, CState3),
+            {C2, CState3} = maybe_handle_joining(Node, CState2),
+            case C2 of
+                true ->
+                    Changed = true,
+                    CState5 = CState3;
+                false ->
+                    {C3, CState4} = maybe_update_ring(Node, CState3),
+                    {C4, CState5} = maybe_remove_exiting(Node, CState4),
+                    Changed = (C1 or C2 or C3 or C4)
+            end,
 
             %% Start/stop converge and rebalance delay timers
             %% (converge delay)
@@ -509,10 +543,9 @@ internal_ring_changed(Node, CState0) ->
             %%   -- Starts when next changes from empty to non-empty
             %%   -- Stops when next changes from non-empty to empty
             %%
-            Changed    = (C1 or C2 or C3),
-            IsClaimant = (CState4#chstate.claimant =:= Node),
+            IsClaimant = (CState5#chstate.claimant =:= Node),
             WasPending = ([] /= pending_changes(CState)),
-            IsPending  = ([] /= pending_changes(CState4)),
+            IsPending  = ([] /= pending_changes(CState5)),
 
             %% Outer case statement already checks for ring_ready
             case {IsClaimant, Changed} of
@@ -536,10 +569,10 @@ internal_ring_changed(Node, CState0) ->
 
             case Changed of
                 true ->
-                    VClock = vclock:increment(Node, CState4#chstate.vclock),
-                    CState4#chstate{vclock=VClock};
+                    VClock = vclock:increment(Node, CState5#chstate.vclock),
+                    CState5#chstate{vclock=VClock};
                 false ->
-                    CState4
+                    CState5
             end
     end.
 
@@ -604,6 +637,23 @@ maybe_remove_exiting(Node, CState) ->
     end.
 
 %% @private
+maybe_handle_joining(Node, CState) ->
+    Claimant = CState#chstate.claimant,
+    case Claimant of
+        Node ->
+            Joining = get_members(CState#chstate.members, [joining]),
+            Changed = (Joining /= []),
+            CState2 =
+                lists:foldl(fun(JNode, CState0) ->
+                                    set_member(Node, CState0, JNode,
+                                               valid, same_vclock)
+                            end, CState, Joining),
+            {Changed, CState2};
+        _ ->
+            {false, CState}
+    end.
+
+%% @private
 update_ring(CNode, CState) ->
     Next0 = CState#chstate.next,
 
@@ -613,9 +663,8 @@ update_ring(CNode, CState) ->
     %% Remove tuples from next for removed nodes
     InvalidMembers = get_members(CState#chstate.members, [invalid]),
     Next2 = lists:filter(fun(NInfo) ->
-                                 {_, NextOwner, Status} = next_owner(NInfo),
-                                 (Status =:= complete) or
-                                     not lists:member(NextOwner, InvalidMembers)
+                                 {_, NextOwner, _} = next_owner(NInfo),
+                                 not lists:member(NextOwner, InvalidMembers)
                          end, Next0),
     CState2 = CState#chstate{next=Next2},
 
@@ -627,18 +676,23 @@ update_ring(CNode, CState) ->
     {RingChanged2, CState4} = reassign_indices(CState3),
     ?ROUT("Updating ring :: next2 : ~p~n", [CState4#chstate.next]),
 
+    %% Rebalance the ring as necessary
     Next3 = rebalance_ring(CNode, CState4),
-    NextChanged = (Next0 /= Next3),
+
+    %% Remove transfers to/from down nodes
+    Next4 = handle_down_nodes(CState4, Next3),
+
+    NextChanged = (Next0 /= Next4),
     Changed = (NextChanged or RingChanged1 or RingChanged2),
     case Changed of
         true ->
             OldS = ordsets:from_list([{Idx,O,NO} || {Idx,O,NO,_,_} <- Next0]),
-            NewS = ordsets:from_list([{Idx,O,NO} || {Idx,O,NO,_,_} <- Next3]),
+            NewS = ordsets:from_list([{Idx,O,NO} || {Idx,O,NO,_,_} <- Next4]),
             Diff = ordsets:subtract(NewS, OldS),
             [log(next, NChange) || NChange <- Diff],
             RVsn2 = vclock:increment(CNode, CState4#chstate.rvsn),
-            ?ROUT("Updating ring :: next3 : ~p~n", [Next3]),
-            {true, CState4#chstate{next=Next3, rvsn=RVsn2}};
+            ?ROUT("Updating ring :: next3 : ~p~n", [Next4]),
+            {true, CState4#chstate{next=Next4, rvsn=RVsn2}};
         false ->
             {false, CState}
     end.
@@ -709,6 +763,28 @@ rebalance_ring(_CNode, _CState=#chstate{next=Next}) ->
     Next.
 
 %% @private
+handle_down_nodes(CState, Next) ->
+    LeavingMembers = get_members(CState#chstate.members, [leaving, invalid]),
+    DownMembers = get_members(CState#chstate.members, [down]),
+    Next2 = [begin
+                 OwnerLeaving = lists:member(O, LeavingMembers),
+                 NextDown = lists:member(NO, DownMembers),
+                 case (OwnerLeaving and NextDown) of
+                     true ->
+                         Active = riak_core_ring:active_members(CState),
+                         RNode = lists:nth(random:uniform(length(Active)),
+                                           Active),
+                         {Idx, O, RNode, Mods, Status};
+                     _ ->
+                         T
+                 end
+             end || T={Idx, O, NO, Mods, Status} <- Next],
+    Next3 = [T || T={_, O, NO, _, _} <- Next2,
+                  not lists:member(O, DownMembers),
+                  not lists:member(NO, DownMembers)],
+    Next3.
+
+%% @private
 all_next_owners(#chstate{next=Next}) ->
     [{Idx, NextOwner} || {Idx, _, NextOwner, _, _} <- Next].
 
@@ -750,7 +826,7 @@ remove_node(CState, Node, Status, Indices) ->
 
     %% Unlike rebalance_ring, remove_node can be called when Next is non-empty,
     %% therefore we need to merge the values. Original Next has priority.
-    Next2 = substitute(1, Next, CState#chstate.next),
+    Next2 = lists:ukeysort(1, CState#chstate.next ++ Next),
     CState2 = change_owners(CState, Reassign),
     CState2#chstate{next=Next2}.
 
@@ -924,7 +1000,19 @@ reconcile_ring(StateA=#chstate{claimant=Claimant1, rvsn=VC1, next=Next1},
                     Next = reconcile_divergent_next(Next2, Next1),
                     StateB#chstate{next=Next};
                 {false, false} ->
-                    throw("Neither claimant valid");
+                    %% This can occur when removed/down nodes are still
+                    %% up and gossip to each other. We need to pick a
+                    %% claimant to handle this case, although the choice
+                    %% is irrelevant as a correct valid claimant will
+                    %% eventually emerge when the ring converges.
+                    case Claimant1 < Claimant2 of
+                        true ->
+                            Next = reconcile_divergent_next(Next1, Next2),
+                            StateA#chstate{next=Next};
+                        false ->
+                            Next = reconcile_divergent_next(Next2, Next1),
+                            StateB#chstate{next=Next}
+                    end;
                 {true, true} ->
                     %% This should never happen in normal practice.
                     %% But, we need to handle it for exceptional cases.
@@ -944,6 +1032,14 @@ merge_status(invalid, _) ->
     invalid;
 merge_status(_, invalid) ->
     invalid;
+merge_status(down, _) ->
+    down;
+merge_status(_, down) ->
+    down;
+merge_status(joining, _) ->
+    joining;
+merge_status(_, joining) ->
+    joining;
 merge_status(valid, _) ->
     valid;
 merge_status(_, valid) ->
@@ -984,7 +1080,7 @@ next_owner({_, Owner, NextOwner, _Transfers, Status}) ->
 
 %% @private
 get_members(Members) ->
-    get_members(Members, [valid, leaving, exiting]).
+    get_members(Members, [joining, valid, leaving, exiting, down]).
 
 %% @private
 get_members(Members, Types) ->

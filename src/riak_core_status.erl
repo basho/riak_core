@@ -110,7 +110,8 @@ ring_status() ->
                   end
           end, Merged),
 
-    {Claimant, RingReady, Down2, TransferStatus}.
+    MarkedDown = riak_core_ring:down_members(Ring),
+    {Claimant, RingReady, Down2, MarkedDown, TransferStatus}.
 
 %% ===================================================================
 %% Internal functions

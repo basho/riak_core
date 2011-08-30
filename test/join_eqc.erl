@@ -55,6 +55,7 @@
           others :: [integer()],
           rejoin :: [{integer(), boolean()}],
           removed :: [integer()],
+          down :: [integer()],
           allowed :: [integer()],
           random_ring :: [integer()],
           active_handoffs :: [{integer(), integer(), integer()}],
@@ -73,6 +74,7 @@ eqc_test_() ->
           %% Run the quickcheck tests
           {timeout, 60000, % timeout is in msec
            ?_assertEqual(true, catch quickcheck(numtests(?TEST_ITERATIONS, ?QC_OUT(prop_join()))))}
+           %%?_assertEqual(true, true)}
          ]}
        ]
       }
@@ -214,10 +216,13 @@ all_owners(#chstate{chring=Ring}) ->
     chash:nodes(Ring).
 
 all_members(#chstate{members=Members}) ->
-    get_members(Members, [valid, leaving, exiting]).
+    get_members(Members).
 
 claiming_members(#chstate{members=Members}) ->
-    get_members(Members, [valid]).
+    get_members(Members, [joining, valid, down]).
+
+gossip_members(#chstate{members=Members}) ->
+    get_members(Members, [joining, valid, leaving, exiting]).
 
 indices(CState, Node) ->
     AllOwners = all_owners(CState),
@@ -260,6 +265,7 @@ initial_state() ->
            others=[],
            rejoin=orddict:new(),
            removed=[],
+           down=[],
            ring_size=?RING,
            members=[],
            allowed=[],
@@ -282,8 +288,11 @@ g_gossip(State, Gossip) ->
 g_random_ring(State) ->
     shuffle(lists:seq(0, State#state.ring_size-1)).
 
+g_posint() ->
+    ?SUCHTHAT(X, largeint(), X > 0).
+
 g_seed() ->
-    {largeint(), largeint(), largeint()}.
+    {g_posint(), g_posint(), g_posint()}.
 
 g_handoff(State, Nodes) ->
     ?LET(Node, elements(Nodes),
@@ -297,12 +306,13 @@ command(State=#state{primary=Primary, others=Others, active_handoffs=Active}) ->
            {call, ?MODULE, maybe_handoff, g_handoff(State, Primary)},
            {call, ?MODULE, comm_split, [elements(Primary), elements(Primary)]},
            {call, ?MODULE, comm_join, [elements(Primary), elements(Primary)]},
+           {call, ?MODULE, down, [elements(Primary), elements(Primary)]},
            {call, ?MODULE, remove, [elements(Primary), elements(Primary),
                                     frequency([{20,false},{80,true}])]},
-           {call, ?MODULE, leave, [elements(Primary), elements(Primary)]}]
+           {call, ?MODULE, leave, [elements(Primary)]}]
           ++ [{call, ?MODULE, join, [elements(Others), elements(Primary)]} || Others /= []]
           ++ [{call, ?MODULE, finish_handoff, [elements(Active)]} || Active /= []]
-          ).
+         ).
 
 %% If the model breaks during test case generation, Quickcheck is unable
 %% provide a command sequence that led to that error. Therefore, we ignore
@@ -333,16 +343,25 @@ precondition2(_State, {call, _, initial_cluster, _}) ->
 precondition2(State, {call, _, join, [Node, PNode]}) ->
     %%(not lists:member(PNode, State#state.removed)) andalso
     lists:member(PNode, State#state.primary) andalso
-    lists:member(Node, State#state.others);
+    lists:member(Node, State#state.others) andalso
+    (not is_joining(PNode, State));
 
-precondition2(State, {call, _, leave, [Node, PNode]}) ->
+precondition2(State, {call, _, leave, [Node]}) ->
+    M = get_members(State#state.members, [valid]),
+    (erlang:length(State#state.primary) > 1) andalso
+        (erlang:length(M) > 1) andalso
+        lists:member(Node, State#state.primary) andalso
+        dict:is_key(Node, State#state.nstates);
+
+precondition2(State, {call, _, down, [Node, PNode]}) ->
     M = get_members(State#state.members, [valid]),
     (Node /= PNode) andalso
         (erlang:length(State#state.primary) > 1) andalso
         (erlang:length(M) > 1) andalso
         lists:member(Node, State#state.primary) andalso
         lists:member(PNode, State#state.primary) andalso
-        dict:is_key(Node, State#state.nstates);
+        dict:is_key(Node, State#state.nstates) andalso
+        (not is_joining(PNode, State));
 
 precondition2(State, {call, _, remove, [Node, PNode, _]}) ->
     M = get_members(State#state.members, [valid]),
@@ -351,15 +370,16 @@ precondition2(State, {call, _, remove, [Node, PNode, _]}) ->
         (erlang:length(M) > 1) andalso
         lists:member(Node, State#state.primary) andalso
         lists:member(PNode, State#state.primary) andalso
-        dict:is_key(Node, State#state.nstates);
-                    
+        dict:is_key(Node, State#state.nstates) andalso
+        (not is_joining(PNode, State));
+
 precondition2(State, {call, _, random_gossip, [Node1, Node2]}) ->
     P1 = lists:member(Node1, State#state.primary),
     P2 = lists:member(Node2, State#state.primary),
     case (P1 and P2) of
         true ->
             CState2 = get_cstate(State, Node2),
-            Members2 = get_members(CState2#chstate.members),
+            Members2 = gossip_members(CState2),
             (Node1 /= Node2) andalso
                 lists:member(Node1, Members2) andalso
                 can_communicate(State, Node1, Node2);
@@ -393,13 +413,18 @@ precondition2(State, {call, _, finish_handoff, [AH={_, _, Prev, New}]}) ->
 precondition2(State, {call, _, read, [Node, _Idx]}) ->
     %% Reads sent to remove nodes are undefined in this model
     (not lists:member(Node, State#state.removed)) andalso
+    (not lists:member(Node, State#state.down)) andalso
         lists:member(Node, State#state.primary) andalso
-        (not maybe_inconsistent(State, Node));
+        (not is_joining(Node, State));
 
 %% All commands other than initial_cluster run after initial_cluster
 precondition2(State,_) ->
     State#state.primary /= [].
 
+is_joining(Node, State) ->
+    CState = get_cstate(State, Node),
+    member_status(CState, Node) =:= joining.
+            
 %% The following is a model hack to deal with the following exceptional
 %% case:
 %%   1. Join A to B
@@ -416,12 +441,16 @@ precondition2(State,_) ->
 maybe_inconsistent(State, Node) ->
     NState = get_nstate(State, Node),
     CState = get_cstate(State, Node),
-    case orddict:fetch(NState#nstate.joined_to, State#state.members) of
-        {invalid, _} ->
+    JoinedTo = NState#nstate.joined_to,
+    JTStatus = (catch orddict:fetch(JoinedTo, State#state.members)),
+    case {JoinedTo, JTStatus} of
+        {undefined, _} ->
+            false;
+        {_, {invalid, _}} ->
             ClaimantCS = get_cstate(State, CState#chstate.claimant),
             not lists:member(Node, get_members(ClaimantCS#chstate.members));
         _ ->
-            JoinCS = get_cstate(State, NState#nstate.joined_to),
+            JoinCS = get_cstate(State, JoinedTo),
             not lists:member(Node, get_members(JoinCS#chstate.members))
     end.
 
@@ -477,8 +506,11 @@ next_state2(State, _Result, {call, _, join, [Node, PNode]}) ->
     NState = get_nstate(State, Node),
     s_join(State, Node, NState, PNode);
 
-next_state2(State, _Result, {call, _, leave, [Node, PNode]}) ->
-    s_leave(State, Node, PNode);
+next_state2(State, _Result, {call, _, leave, [Node]}) ->
+    s_leave(State, Node);
+
+next_state2(State, _Result, {call, _, down, [Node, PNode]}) ->
+    s_down(State, Node, PNode);
 
 next_state2(State, _Result, {call, _, remove, [Node, PNode, Shutdown]}) ->
     s_remove(State, Node, PNode, Shutdown);
@@ -611,7 +643,10 @@ finish_handoff({_Mod, _Idx, _Prev, _New}) ->
 join(_, _) ->
     ok.
 
-leave(_, _) ->
+leave(_) ->
+    ok.
+
+down(_, _) ->
     ok.
 
 remove(_, _, _) ->
@@ -667,32 +702,33 @@ s_gossip(State, {Node, NState}, OtherNode, OtherCS) ->
     Members = reconcile_members(CState, OtherCS),
     WrongCluster = (CState#chstate.clustername /= OtherCS#chstate.clustername),
     {PreStatus, _} = orddict:fetch(OtherNode, Members),
-    IgnoreGossip = (WrongCluster or (PreStatus =:= invalid)),
+    IgnoreGossip = (WrongCluster or
+                    (PreStatus =:= invalid) or
+                    (PreStatus =:= down)),
     case IgnoreGossip of
         true ->
             %% ?debugFmt("Ignoring: ~p~n", [OtherNode]),
             CState2 = CState,
-            InvalidNode = true,
             Changed = false;
         false ->
-            {Changed, CState2} = reconcile(State, CState, OtherCS),
-            InvalidNode = (member_status(CState2, OtherNode) =:= invalid)
+            {Changed, CState2} = reconcile(State, CState, OtherCS)
     end,
-    case {WrongCluster, InvalidNode, Changed} of
+    OtherStatus = member_status(CState2, OtherNode),
+    case {WrongCluster, OtherStatus, Changed} of
         {true, _, _} ->
             %% Tell other node to stop gossiping to this node.
             {_, State2} = cast(State, Node, OtherNode, {remove_member, Node}),
             State3 = maybe_shutdown(State2, Node),
             State3;
-        {_, false, true} ->
-            RRing = State#state.random_ring,
-            State2 = ring_changed(State, RRing, {Node, NState}, CState2),
+        {_, down, _} ->
+            %% Tell other node to rejoin the cluster.
+            {_, State2} = cast(State, Node, OtherNode, {rejoin, CState2}),
             State3 = maybe_shutdown(State2, Node),
             State3;
-        {_, true, _} ->
-            OtherStatus = member_status(OtherCS, OtherNode),
+        {_, invalid, _} ->
+            OtherSelfStatus = member_status(OtherCS, OtherNode),
             OtherRemoved = lists:member(OtherNode, State#state.removed),
-            case {OtherRemoved, OtherStatus} of
+            case {OtherRemoved, OtherSelfStatus} of
                 {_, exiting} ->
                     %% Exiting node never saw shutdown cast, re-send.
                     {_, State2} = cast(State, Node, OtherNode, shutdown),
@@ -722,6 +758,11 @@ s_gossip(State, {Node, NState}, OtherNode, OtherCS) ->
                             State2
                     end
             end;
+        {_, _, true} ->
+            RRing = State#state.random_ring,
+            State2 = ring_changed(State, RRing, {Node, NState}, CState2),
+            State3 = maybe_shutdown(State2, Node),
+            State3;
         {_, _, _} ->
             State2 = maybe_shutdown(State, Node),
             State2
@@ -768,22 +809,27 @@ s_join(State, Node, NState, PNode) ->
     end.
 
 add_member(PNode, CState, Node) ->
-    set_member(PNode, CState, Node, valid).
+    set_member(PNode, CState, Node, joining).
 
-s_leave(State, Node, PNode) ->
-    LeaveCS = get_cstate(State, PNode),
-    case orddict:find(Node, LeaveCS#chstate.members) of
-        {ok, {valid, _}} ->
-            %%Primary2 = State#state.primary -- [Node],
-            Primary2 = State#state.primary,
-            LeaveCS2 = leave_member(PNode, LeaveCS, Node),
-            State2 = update_cstate(State, PNode, LeaveCS2),
-
-            CState = get_cstate(State2, Node),
+s_leave(State, Node) ->
+    CState = get_cstate(State, Node),
+    case member_status(CState, Node) of
+        valid ->
             CState2 = leave_member(Node, CState, Node),
-            State3 = update_cstate(State2, Node, CState2),
+            State2 = update_cstate(State, Node, CState2),
+            State2;
+        _ ->
+            State
+    end.
 
-            State3#state{primary=Primary2};
+s_down(State, Node, PNode) ->
+    DownCS = get_cstate(State, PNode),
+    case orddict:find(Node, DownCS#chstate.members) of
+        {ok, {valid, _}} ->
+            Down2 = [Node|State#state.down],
+            DownCS2 = set_member(PNode, DownCS, Node, down),
+            State2 = update_cstate(State, PNode, DownCS2),
+            State2#state{down=Down2};
         _ ->
             State
     end.
@@ -873,6 +919,18 @@ handle_cast(State=#state{random_ring=RRing, others=Others, nstates=NStates}, _,
     State#state{nstates=NStates2, primary=Primary2, others=Others2,
                 rejoin=Rejoin2};
 
+handle_cast(State, _, Node, {rejoin, OtherCS}) ->
+    CState = get_cstate(State, Node),
+    SameCluster = (CState#chstate.clustername =:= OtherCS#chstate.clustername),
+    case SameCluster of
+        true ->
+            PNode = owner_node(OtherCS),
+            NState = get_nstate(State, Node),
+            s_join(State, Node, NState, PNode);
+        false ->
+            State
+    end;
+
 handle_cast(State, _, Node, {remove_member, OtherNode}) ->
     CState = get_cstate(State, Node),
     CState2 = remove_member(Node, CState, OtherNode),
@@ -944,12 +1002,16 @@ s_finish_handoff(State, AH={Mod, Idx, Prev, New}) ->
     PrevCS1 = get_cstate(State, Prev),
     Owner = owner(PrevCS1, Idx),
     {_, NextOwner, Status} = next_owner(State, PrevCS1, Idx, Mod),
+    NewStatus = member_status(PrevCS1, New),
 
     Active = State#state.active_handoffs -- [AH],
     State2 = State#state{active_handoffs=Active},
 
-    case {Owner, NextOwner, Status} of
-        {Prev, New, awaiting} ->
+    case {Owner, NextOwner, NewStatus, Status} of
+        {_, _, invalid, _} ->
+            %% Handing off to invalid node, don't give-up data.
+            State2;
+        {Prev, New, _, awaiting} ->
             PrevNS1 = get_nstate(State2, Prev),
             PrevNS2 = update_partition_status(Mod, PrevNS1, Idx, true, false),
             PrevCS2 = mark_transfer_complete(State, PrevCS1, Idx, Mod),
@@ -961,10 +1023,10 @@ s_finish_handoff(State, AH={Mod, Idx, Prev, New}) ->
             NewNS2 = update_partition_status(Mod, NewNS, Idx, true, true),
             State4 = update_nstate(State3, New, NewNS2),
             State4;
-        {Prev, New, complete} ->
+        {Prev, New, _, complete} ->
             %% Do nothing
             State2;
-        {Prev, _, _} ->
+        {Prev, _, _, _} ->
             %% This may occur when handing off to a removed node, which we
             %% consider valid in this model.
             case lists:member(New, State#state.removed) of
@@ -975,7 +1037,7 @@ s_finish_handoff(State, AH={Mod, Idx, Prev, New}) ->
             end,
             %% Handoff wasn't to node that is scheduled in next, so no change.
             State2;
-        {_, _, _} ->
+        {_, _, _, _} ->
             PrevCS1 = get_cstate(State2, Prev),
             PrevNS1 = get_nstate(State2, Prev),
             Ready = ring_ready(PrevCS1),
@@ -1000,7 +1062,7 @@ maybe_shutdown(State, Node) ->
     Next = CState#chstate.next,
     NoIndices = (indices(CState, Node) =:= []),
     NoPartitions = (count_vnodes(State, Node) =:= 0),
-    NoPendingIndices = ([] =:= ([Idx || {Idx, _, NextOwner, _} <- Next,
+    NoPendingIndices = ([] =:= ([Idx || {Idx, _, NextOwner, _, _} <- Next,
                                         NextOwner =:= Node])),
     Shutdown = (NoIndices and NoPartitions and NoPendingIndices),
     Status = member_status(CState, Node),
@@ -1148,7 +1210,19 @@ reconcile_ring(_State,
                     Next = reconcile_divergent_next(Next2, Next1),
                     CS2#chstate{next=Next};
                 {false, false} ->
-                    throw("Neither claimant valid");
+                    %% This can occur when removed/down nodes are still
+                    %% up and gossip to each other. We need to pick a
+                    %% claimant to handle this case, although the choice
+                    %% is irrelevant as a correct valid claimant will
+                    %% eventually emerge when the ring converges.
+                    case Claimant1 < Claimant2 of
+                        true ->
+                            Next = reconcile_divergent_next(Next1, Next2),
+                            CS1#chstate{next=Next};
+                        false ->
+                            Next = reconcile_divergent_next(Next2, Next1),
+                            CS2#chstate{next=Next}
+                    end;
                 {true, true} ->
                     %% This should never happen in normal practice.
                     %% But, we need to handle it in case of user error.
@@ -1167,6 +1241,14 @@ merge_status(invalid, _) ->
     invalid;
 merge_status(_, invalid) ->
     invalid;
+merge_status(down, _) ->
+    down;
+merge_status(_, down) ->
+    down;
+merge_status(joining, _) ->
+    joining;
+merge_status(_, joining) ->
+    joining;
 merge_status(valid, _) ->
     valid;
 merge_status(_, valid) ->
@@ -1231,12 +1313,18 @@ update_nstate(State, Node, NState) ->
 get_cstate(State, Node) ->
     (get_nstate(State, Node))#nstate.chstate.
 
-member_status(CState, Node) ->
-    {Status, _} = orddict:fetch(Node, CState#chstate.members),
-    Status.
+member_status(#chstate{members=Members}, Node) ->
+    member_status(Members, Node);
+member_status(Members, Node) ->
+    case orddict:find(Node, Members) of
+        {ok, {Status, _}} ->
+            Status;
+        _ ->
+            invalid
+    end.
 
 get_members(Members) ->
-    get_members(Members, [valid, leaving, exiting]).
+    get_members(Members, [joining, valid, leaving, exiting, down]).
 
 get_members(Members, Types) ->
     [Node || {Node, {V, _}} <- Members, lists:member(V, Types)].
@@ -1282,7 +1370,9 @@ ring_ready(CState0) ->
     Owner = owner_node(CState0),
     CState = update_seen(Owner, CState0),
     Seen = CState#chstate.seen,
-    Members = get_members(CState#chstate.members),
+    %% TODO: Should we add joining here?
+    %%Members = get_members(CState#chstate.members, [joining, valid, leaving, exiting]),
+    Members = get_members(CState#chstate.members, [valid, leaving]),
     VClock = CState#chstate.vclock,
     R = [begin
              case orddict:find(Node, Seen) of
@@ -1324,15 +1414,22 @@ ring_changed(State, _RRing, {Node, _NState}, CState0) ->
             update_cstate(State, Node, CState);
         true ->
             {C1, State2, CState2} = maybe_update_claimant(State, Node, CState),
-            {C2, State3, CState3} = maybe_update_ring(State2, Node, CState2),
-            {C3, State4, CState4} = maybe_remove_exiting(State3, Node, CState3),
-
-            case (C1 or C2 or C3) of
+            {C2, State3, CState3} = maybe_handle_joining(State2, Node, CState2),
+            case C2 of
                 true ->
-                    CState5 = increment_cstate_vclock(Node, CState4),
-                    update_cstate(State4, Node, CState5);
+                    CState4 = increment_cstate_vclock(Node, CState3),
+                    update_cstate(State3, Node, CState4);
                 false ->
-                    update_cstate(State4, Node, CState4)
+                    {C3, State4, CState4} = maybe_update_ring(State3, Node, CState3),
+                    {C4, State5, CState5} = maybe_remove_exiting(State4, Node, CState4),
+
+                    case (C1 or C2 or C3 or C4) of
+                        true ->
+                            CState6 = increment_cstate_vclock(Node, CState5),
+                            update_cstate(State5, Node, CState6);
+                        false ->
+                            update_cstate(State5, Node, CState5)
+                    end
             end
     end.
 
@@ -1388,6 +1485,24 @@ maybe_remove_exiting(State, Node, CState) ->
             {false, State, CState}
     end.
 
+maybe_handle_joining(State, Node, CState) ->
+    Claimant = CState#chstate.claimant,
+    case Claimant of
+        Node ->
+            Joining = get_members(CState#chstate.members, [joining]),
+            %% ?debugFmt("Claimant ~p joining ~p~n", [Node, Joining]),
+            Changed = (Joining /= []),
+            {State2, CState2} =
+                lists:foldl(fun(JNode, {State0, CState0}) ->
+                                    State02 = State0,
+                                    CState02 = set_member(Node, CState0, JNode, valid, same_vclock),
+                                    {State02, CState02}
+                            end, {State, CState}, Joining),
+            {Changed, State2, CState2};
+        _ ->
+            {false, State, CState}
+    end.
+
 get_counts(Nodes, Ring) ->
     Empty = [{Node, 0} || Node <- Nodes],
     Counts = lists:foldl(fun({_Idx, Node}, Counts) ->
@@ -1409,9 +1524,8 @@ update_ring(State, _RRing, CNode, CState) ->
     %% Remove tuples from next for removed nodes
     InvalidMembers = get_members(CState#chstate.members, [invalid]),
     Next2 = lists:filter(fun(NInfo) ->
-                                 {_, NextOwner, Status} = next_owner(State, NInfo),
-                                 (Status =:= complete) or
-                                     not lists:member(NextOwner, InvalidMembers)
+                                 {_, NextOwner, _} = next_owner(State, NInfo),
+                                 not lists:member(NextOwner, InvalidMembers)
                          end, Next0),
     CState2 = CState#chstate{next=Next2},
 
@@ -1423,14 +1537,19 @@ update_ring(State, _RRing, CNode, CState) ->
     {RingChanged2, State2, CState4} = reassign_indices(State, CState3),
     ?ROUT("Updating ring :: next2 : ~p~n", [CState4#chstate.next]),
 
+    %% Rebalance the ring as necessary
     Next3 = rebalance_ring(CNode, CState4),
-    NextChanged = (Next0 /= Next3),
+
+    %% Remove transfers to/from down nodes
+    Next4 = handle_down_nodes(CState4, Next3),
+
+    NextChanged = (Next0 /= Next4),
     Changed = (NextChanged or RingChanged1 or RingChanged2),
     case Changed of
         true ->
             RVsn2 = vclock:increment(CNode, CState4#chstate.rvsn),
-            ?ROUT("Updating ring :: next3 : ~p~n", [Next3]),
-            {true, State2, CState4#chstate{next=Next3, rvsn=RVsn2}};
+            ?ROUT("Updating ring :: next3 : ~p~n", [Next4]),
+            {true, State2, CState4#chstate{next=Next4, rvsn=RVsn2}};
         false ->
             {false, State, CState}
     end.
@@ -1497,6 +1616,27 @@ rebalance_ring(_CNode, CState=#chstate{next=[]}) ->
 rebalance_ring(_CNode, _CState=#chstate{next=Next}) ->
     Next.
 
+handle_down_nodes(CState, Next) ->
+    LeavingMembers = get_members(CState#chstate.members, [leaving, invalid]),
+    DownMembers = get_members(CState#chstate.members, [down]),
+    Next2 = [begin
+                 OwnerLeaving = lists:member(O, LeavingMembers),
+                 NextDown = lists:member(NO, DownMembers),
+                 case (OwnerLeaving and NextDown) of
+                     true ->
+                         Active = riak_core_ring:active_members(CState),
+                         RNode = lists:nth(random:uniform(length(Active)),
+                                           Active),
+                         {Idx, O, RNode, Mods, Status};
+                     _ ->
+                         T
+                 end
+             end || T={Idx, O, NO, Mods, Status} <- Next],
+    Next3 = [T || T={_, O, NO, _, _} <- Next2,
+                  not lists:member(O, DownMembers),
+                  not lists:member(NO, DownMembers)],
+    Next3.
+
 claim_until_balanced(Ring, Node) ->
     %%{WMod, WFun} = app_helper:get_env(riak_core, wants_claim_fun),
     {WMod, WFun} = {riak_core_claim, default_wants_claim},
@@ -1547,7 +1687,7 @@ remove_node(CState, Node, Status, Indices) ->
 
     %% Unlike rebalance_ring, remove_node can be called when Next is non-empty,
     %% therefore we need to merge the values. Original Next has priority.
-    Next2 = substitute(1, Next, CState#chstate.next),
+    Next2 = lists:ukeysort(1, CState#chstate.next ++ Next),
     CState2 = change_owners(CState, Reassign),
     CState2#chstate{next=Next2}.
 
@@ -1745,16 +1885,18 @@ equal_vclock(VC1, VC2) ->
     vclock:equal(VC3, VC4).
 
 check_read(State, Owner, Idx) ->
+    OwnerDown = lists:member(Owner, State#state.down),
     MayFail = lists:member(Idx, State#state.allowed),
-    case MayFail of
+    case (MayFail or OwnerDown) of
         true ->
             true;
         false ->
             check_read2(State, Owner, Idx)
     end.
 
-check_read2(State, Owner, Idx) ->
+check_read2(State, Owner, Idx) -> 
     %%io:format("Checking if ~p has data for ~p~n", [Owner, Idx]),
+    %% ?debugFmt("Checking if ~p has data for ~p~n", [Owner, Idx]),
     NState = get_nstate(State, Owner),
     Data = orddict:fetch(riak_kv, NState#nstate.has_data),
     Found = lists:member(Idx, Data),
@@ -1822,6 +1964,7 @@ run_cmds(RingSize, Cmds) ->
     State2 = test_ring_convergence(State),
     State3 = handoff_all(State2),
     State4 = test_ring_convergence(State3),
+    %%State4 = State,
     Owners2 = all_owners(get_cstate(State4, Member0)),
     CState2 = get_cstate(State4, Member0),
     ?debugFmt("Owners1: ~p~nOwners2: ~p~n", [Owners1, Owners2]),

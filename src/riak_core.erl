@@ -20,7 +20,8 @@
 %%
 %% -------------------------------------------------------------------
 -module(riak_core).
--export([stop/0, stop/1, join/1, remove/1, leave/0, remove_from_cluster/1]).
+-export([stop/0, stop/1, join/1, remove/1, down/1, leave/0,
+         remove_from_cluster/1]).
 -export([register_vnode_module/1, vnode_modules/0]).
 -export([add_guarded_event_handler/3, add_guarded_event_handler/4]).
 -export([delete_guarded_event_handler/3]).
@@ -49,6 +50,11 @@ stop(Reason) ->
 join(NodeStr) when is_list(NodeStr) ->
     join(riak_core_util:str_to_node(NodeStr));
 join(Node) when is_atom(Node) ->
+    join(node(), Node).
+
+join(Node, Node) ->
+    {error, self_join};
+join(_, Node) ->
     {ok, OurRingSize} = application:get_env(riak_core, ring_creation_size),
     case net_adm:ping(Node) of
         pong ->
@@ -87,6 +93,29 @@ remove(Node) ->
                       {new_ring, Ring4}
               end, []),
             ok
+    end.
+
+down(Node) ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    case net_adm:ping(Node) of
+        pong ->
+            {error, is_up};
+        pang ->
+            case {riak_core_ring:all_members(Ring),
+                  riak_core_ring:member_status(Ring, Node)} of
+                {_, invalid} ->
+                    {error, not_member};
+                {[Node], _} ->
+                    {error, only_member};
+                _ ->
+                    riak_core_ring_manager:ring_trans(
+                      fun(Ring2, _) -> 
+                              Ring3 = riak_core_ring:down_member(node(), Ring2, Node),
+                              Ring4 = riak_core_ring:ring_changed(node(), Ring3),
+                              {new_ring, Ring4}
+                      end, []),
+                    ok
+            end
     end.
 
 leave() ->
