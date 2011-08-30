@@ -30,8 +30,9 @@ member_status() ->
     RingSize = riak_core_ring:num_partitions(Ring),
     IsPending = ([] /= riak_core_ring:pending_changes(Ring)),
 
-    {Valid, Leaving, Exiting} =
-        lists:foldl(fun({Node, Status}, {Valid0, Leaving0, Exiting0}) ->
+    {Joining, Valid, Down, Leaving, Exiting} =
+        lists:foldl(fun({Node, Status},
+                        {Joining0, Valid0, Down0, Leaving0, Exiting0}) ->
                             Indices = riak_core_ring:indices(Ring, Node),
                             NextIndices =
                                 riak_core_ring:future_indices(Ring, Node),
@@ -48,24 +49,29 @@ member_status() ->
                                               [Status, RingPercent, Node])
                             end,
                             case Status of
+                                joining ->
+                                    {Joining0 + 1, Valid0, Down0, Leaving0, Exiting0};
                                 valid ->
-                                    {Valid0 + 1, Leaving0, Exiting0};
+                                    {Joining0, Valid0 + 1, Down0, Leaving0, Exiting0};
+                                down ->
+                                    {Joining0, Valid0, Down0 + 1, Leaving0, Exiting0};
                                 leaving ->
-                                    {Valid0, Leaving0 + 1, Exiting0};
+                                    {Joining0, Valid0, Down0, Leaving0 + 1, Exiting0};
                                 exiting ->
-                                    {Valid0, Leaving0, Exiting0 + 1}
+                                    {Joining0, Valid0, Down0, Leaving0, Exiting0 + 1}
                             end
-                    end, {0,0,0}, AllStatus),
+                    end, {0,0,0,0,0}, AllStatus),
     io:format("~79..-s~n", [""]),
-    io:format("Valid:~b / Leaving:~b / Exiting:~b~n",
-              [Valid, Leaving, Exiting]),
+    io:format("Valid:~b / Leaving:~b / Exiting:~b / Joining:~b / Down:~b~n",
+              [Valid, Leaving, Exiting, Joining, Down]),
     ok.
 
 ring_status() ->
-    {Claimant, RingReady, Down, Changes} = riak_core_status:ring_status(),
+    {Claimant, RingReady, Down, MarkedDown, Changes} =
+        riak_core_status:ring_status(),
     claimant_status(Claimant, RingReady),
     ownership_status(Down, Changes),
-    unreachable_status(Down),
+    unreachable_status(Down -- MarkedDown),
     ok.
 
 claimant_status(Claimant, RingReady) ->
@@ -141,11 +147,12 @@ unreachable_status([]) ->
     io:format("~n", []);
 unreachable_status(Down) ->
     io:format("~30..=s Unreachable Nodes ~30..=s~n", ["", ""]),
-    io:format("The following nodes are down/unreachable: ~p~n", [Down]),
+    io:format("The following nodes are unreachable: ~p~n", [Down]),
     io:format("~n", []),
     io:format("WARNING: The cluster state will not converge until all nodes~n"
               "are up. Once the above nodes come back online, convergence~n"
-              "will continue. If the outages are permanent or long-term, you~n"
-              "can forcibly remove the nodes from the cluster (riak-admin~n"
+              "will continue. If the outages are long-term or permanent, you~n"
+              "can either mark the nodes as down (riak-admin down NODE) or~n"
+              "forcibly remove the nodes from the cluster (riak-admin~n"
               "force-remove NODE) to allow the remaining nodes to settle.~n"),
     ok.

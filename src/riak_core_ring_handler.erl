@@ -60,11 +60,14 @@ ensure_vnodes_started(Ring) ->
     case riak_core:vnode_modules() of
         [] ->
             ok;
-        AppMods ->            
+        AppMods ->
             case ensure_vnodes_started(AppMods, Ring, []) of
-                [] -> 
-                    case riak_core_ring:member_status(Ring, node()) of
-                        leaving ->
+                [] ->
+                    Ready = riak_core_ring:ring_ready(Ring),
+                    FutureIndices = riak_core_ring:future_indices(Ring, node()),
+                    Status = riak_core_ring:member_status(Ring, node()),
+                    case {Ready, FutureIndices, Status} of
+                        {true, [], leaving} ->
                             riak_core_ring_manager:ring_trans(
                               fun(Ring2, _) -> 
                                       Ring3 = riak_core_ring:exit_member(node(), Ring2, node()),
@@ -77,13 +80,12 @@ ensure_vnodes_started(Ring) ->
                                 _ ->
                                     ok
                             end;
-                        invalid ->
+                        {_, _, invalid} ->
                             riak_core_ring_manager:refresh_my_ring();
-                        exiting ->
+                        {_, _, exiting} ->
                             %% Deliberately do nothing.
                             ok;
-                        valid ->
-                            %% Deliberately do nothing.
+                        {_, _, _} ->
                             ok
                     end;
                 _ -> ok
