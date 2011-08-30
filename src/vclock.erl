@@ -82,19 +82,21 @@ merge([], NClock) -> NClock;
 merge([AClock|VClocks],NClock) ->
     merge(VClocks, merge(lists:keysort(1, AClock), NClock, [])).
 
+merge([], [], AccClock) -> lists:reverse(AccClock);
 merge([], Left, AccClock) -> lists:reverse(AccClock, Left);
 merge(Left, [], AccClock) -> lists:reverse(AccClock, Left);
-merge(V=[{Node1,{Ctr1,TS1}}|VClock],
-      N=[{Node2,{Ctr2,TS2}}|NClock], AccClock) ->
+merge(V=[{Node1,{Ctr1,TS1}=CT1}|VClock],
+      N=[{Node2,{Ctr2,TS2}=CT2}|NClock], AccClock) ->
     if Node1 < Node2 ->
-            merge(VClock, N, [{Node1,{Ctr1,TS1}}|AccClock]);
+            merge(VClock, N, [{Node1,CT1}|AccClock]);
        Node1 > Node2 ->
-            merge(V, NClock, [{Node2,{Ctr2,TS2}}|AccClock]);
+            merge(V, NClock, [{Node2,CT2}|AccClock]);
        true ->
-            ({_Ctr,_TS} = C1) = if Ctr1 > Ctr2 -> {Ctr1,TS1};
-                          true        -> {Ctr2,TS2}
-                       end,
-            merge(VClock, NClock, [{Node1,C1}|AccClock])
+            ({_Ctr,_TS} = CT) = if Ctr1 > Ctr2 -> CT1;
+                                   Ctr1 < Ctr2 -> CT2;
+                                   true        -> {Ctr1, erlang:max(TS1,TS2)}
+                                end,
+            merge(VClock, NClock, [{Node1,CT}|AccClock])
     end.
 
 % @doc Get the counter value in VClock set from Node.
