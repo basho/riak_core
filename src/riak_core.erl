@@ -50,6 +50,11 @@ stop(Reason) ->
 join(NodeStr) when is_list(NodeStr) ->
     join(riak_core_util:str_to_node(NodeStr));
 join(Node) when is_atom(Node) ->
+    join(node(), Node).
+
+join(Node, Node) ->
+    {error, self_join};
+join(_, Node) ->
     {ok, OurRingSize} = application:get_env(riak_core, ring_creation_size),
     case net_adm:ping(Node) of
         pong ->
