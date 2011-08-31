@@ -88,25 +88,25 @@ bucket_fixups() ->
 register([]) ->
     ok;
 register([{bucket_fixup, FixupMod}|T]) ->
-    register_riak_core_application_module(FixupMod, bucket_fixups),
+    register_mod(FixupMod, bucket_fixups),
     register(T);
 register([{vnode_module, VNodeMod}|T]) ->
-    register_riak_core_application_module(VNodeMod, vnode_modules),
+    register_mod(VNodeMod, vnode_modules),
     register(T).
 
 register_vnode_module(VNodeMod) when is_atom(VNodeMod)  ->
-    register_riak_core_application_module(VNodeMod, vnode_modules).
+    register_mod(VNodeMod, vnode_modules).
 
-register_riak_core_application_module(Module, Key) when is_atom(Module), is_atom(Key) ->
+register_mod(Module, Type) when is_atom(Module), is_atom(Type) ->
     {ok, App} = case application:get_application(self()) of
         {ok, AppName} -> {ok, AppName};
         undefined -> app_for_module(Module)
     end,
-    case application:get_env(riak_core, Key) of
+    case application:get_env(riak_core, Type) of
         undefined ->
-            application:set_env(riak_core, Key, [{App,Module}]);
+            application:set_env(riak_core, Type, [{App,Module}]);
         {ok, Mods} ->
-            application:set_env(riak_core, Key, [{App,Module}|Mods])
+            application:set_env(riak_core, Type, [{App,Module}|Mods])
     end,
     riak_core_ring_events:force_sync_update().
 

@@ -28,7 +28,8 @@
 -export([append_bucket_defaults/1,
          set_bucket/2,
          get_bucket/1,
-         get_bucket/2]).
+         get_bucket/2,
+         merge_props/2]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").

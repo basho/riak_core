@@ -324,9 +324,8 @@ set_ring_global(Ring) ->
                         %% the bucket's properties. This is to ensure default
                         %% properties added after the bucket is created are
                         %% inherited to the bucket.
-                        MergedProps = lists:ukeymerge(1,
-                            lists:ukeysort(1,BucketProps),
-                            lists:ukeysort(1, DefaultProps)),
+                        MergedProps = riak_core_bucket:merge_props(
+                            BucketProps, DefaultProps),
 
                         %% fixup the ring
                         NewBucketProps = run_fixups(Fixups, Bucket, MergedProps),
