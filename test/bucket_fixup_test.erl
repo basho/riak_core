@@ -46,11 +46,13 @@ fixup_test_() ->
     {setup,
         fun() ->
                 application:set_env(riak_core,ring_creation_size, 4),
-                application:set_env(riak_core, bucket_fixups, [{someapp, ?MODULE}])
+                application:set_env(riak_core, bucket_fixups, [{someapp, ?MODULE}]),
+                application:set_env(riak_core, default_bucket_props, [])
         end,
         fun(_) ->
                 application:unset_env(riak_core, ring_creation_size),
-                application:unset_env(riak_core, bucket_fixups)
+                application:unset_env(riak_core, bucket_fixups),
+                application:unset_env(riak_core, default_bucket_props)
         end,
         [
             fun do_no_harm/0,
