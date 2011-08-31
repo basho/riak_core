@@ -87,7 +87,7 @@ handle_call(_, _From, State) ->
 
 %% @private
 handle_cast({send_ring_to, Node}, RingChanged) ->
-    {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
+    {ok, MyRing} = riak_core_ring_manager:get_raw_ring(),
     gen_server:cast({?MODULE, Node}, {reconcile_ring, MyRing}),
     {noreply, RingChanged};
 
@@ -99,7 +99,7 @@ handle_cast({distribute_ring, Ring}, RingChanged) ->
 handle_cast({reconcile_ring, OtherRing}, RingChanged) ->
     % Compare the two rings, see if there is anything that
     % must be done to make them equal...
-    {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
+    {ok, MyRing} = riak_core_ring_manager:get_raw_ring(),
     case riak_core_ring:reconcile(OtherRing, MyRing) of
         {no_change, _} ->
             {noreply, RingChanged};
@@ -120,7 +120,7 @@ handle_cast(gossip_ring, _RingChanged) ->
     schedule_next_gossip(),
 
     % Gossip the ring to some random other node...
-    {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
+    {ok, MyRing} = riak_core_ring_manager:get_raw_ring(),
     case riak_core_ring:random_other_node(MyRing) of
         no_node -> % must be single node cluster
             ok;
@@ -173,7 +173,7 @@ remove_from_cluster(ExitingNode) ->
              [riak_core, wants_claim_fun, {riak_core_claim, never_wants_claim}]),
 
     % Get a list of indices owned by the ExitingNode...
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
     AllOwners = riak_core_ring:all_owners(Ring),
 
     % Transfer indexes to other nodes...

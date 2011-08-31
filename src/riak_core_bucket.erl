@@ -28,7 +28,8 @@
 -export([append_bucket_defaults/1,
          set_bucket/2,
          get_bucket/1,
-         get_bucket/2]).
+         get_bucket/2,
+         merge_props/2]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -43,7 +44,15 @@
 append_bucket_defaults(Items) when is_list(Items) ->
     OldDefaults = app_helper:get_env(riak_core, default_bucket_props, []),
     NewDefaults = merge_props(OldDefaults, Items),
-    application:set_env(riak_core, default_bucket_props, NewDefaults).
+    FixedDefaults = case riak_core:bucket_fixups() of
+        [] -> NewDefaults;
+        Fixups ->
+            riak_core_ring_manager:run_fixups(Fixups, default, NewDefaults)
+    end,
+    application:set_env(riak_core, default_bucket_props, FixedDefaults),
+    %% do a noop transform on the ring, to make the fixups re-run
+    catch(riak_core_ring_manager:ring_trans(fun(Ring, _) ->
+                    {new_ring, Ring} end, undefined)).
 
 
 %% @spec set_bucket(riak_object:bucket(), BucketProps::riak_core_bucketprops()) -> ok
