@@ -82,19 +82,21 @@ merge([], NClock) -> NClock;
 merge([AClock|VClocks],NClock) ->
     merge(VClocks, merge(lists:keysort(1, AClock), NClock, [])).
 
+merge([], [], AccClock) -> lists:reverse(AccClock);
 merge([], Left, AccClock) -> lists:reverse(AccClock, Left);
 merge(Left, [], AccClock) -> lists:reverse(AccClock, Left);
-merge(V=[{Node1,{Ctr1,TS1}}|VClock],
-      N=[{Node2,{Ctr2,TS2}}|NClock], AccClock) ->
+merge(V=[{Node1,{Ctr1,TS1}=CT1}|VClock],
+      N=[{Node2,{Ctr2,TS2}=CT2}|NClock], AccClock) ->
     if Node1 < Node2 ->
-            merge(VClock, N, [{Node1,{Ctr1,TS1}}|AccClock]);
+            merge(VClock, N, [{Node1,CT1}|AccClock]);
        Node1 > Node2 ->
-            merge(V, NClock, [{Node2,{Ctr2,TS2}}|AccClock]);
+            merge(V, NClock, [{Node2,CT2}|AccClock]);
        true ->
-            ({_Ctr,_TS} = C1) = if Ctr1 > Ctr2 -> {Ctr1,TS1};
-                          true        -> {Ctr2,TS2}
-                       end,
-            merge(VClock, NClock, [{Node1,C1}|AccClock])
+            ({_Ctr,_TS} = CT) = if Ctr1 > Ctr2 -> CT1;
+                                   Ctr1 < Ctr2 -> CT2;
+                                   true        -> {Ctr1, erlang:max(TS1,TS2)}
+                                end,
+            merge(VClock, NClock, [{Node1,CT}|AccClock])
     end.
 
 % @doc Get the counter value in VClock set from Node.
@@ -290,5 +292,25 @@ merge_test() ->
     ?assertEqual([], merge(vclock:fresh())),
     ?assertEqual([{<<"1">>,{1,1}},{<<"2">>,{2,2}},{<<"3">>,{3,3}},{<<"4">>,{4,4}}],
                  merge([VC1, VC2])).
+
+merge_less_left_test() ->
+    VC1 = [{<<"5">>, {5, 5}}],
+    VC2 = [{<<"6">>, {6, 6}}, {<<"7">>, {7, 7}}],
+    ?assertEqual([{<<"5">>, {5, 5}},{<<"6">>, {6, 6}}, {<<"7">>, {7, 7}}],
+                 vclock:merge([VC1, VC2])).
+
+merge_less_right_test() ->
+    VC1 = [{<<"6">>, {6, 6}}, {<<"7">>, {7, 7}}],
+    VC2 = [{<<"5">>, {5, 5}}],
+    ?assertEqual([{<<"5">>, {5, 5}},{<<"6">>, {6, 6}}, {<<"7">>, {7, 7}}],
+                 vclock:merge([VC1, VC2])).
+
+
+
+merge_same_id_test() ->
+    VC1 = [{<<"1">>, {1, 2}},{<<"2">>,{1,4}}],
+    VC2 = [{<<"1">>, {1, 3}},{<<"3">>,{1,5}}],
+    ?assertEqual([{<<"1">>, {1, 3}},{<<"2">>,{1,4}},{<<"3">>,{1,5}}],
+                 vclock:merge([VC1, VC2])).
 
 -endif.
