@@ -30,6 +30,7 @@
 -export([start_link/0,
          start_link/1,
          get_my_ring/0,
+         get_raw_ring/0,
          refresh_my_ring/0,
          set_my_ring/1,
          write_ringfile/0,
@@ -38,10 +39,16 @@
          find_latest_ringfile/0,
          do_write_ringfile/1,
          ring_trans/2,
+         run_fixups/3,
          stop/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-	 terminate/2, code_change/3]).
+        terminate/2, code_change/3]).
+
+-record(state, {
+        mode,
+        raw_ring
+    }).
 
 -ifdef(TEST).
 -export([set_ring_global/1]).
@@ -67,6 +74,9 @@ get_my_ring() ->
         Ring when is_tuple(Ring) -> {ok, Ring};
         undefined -> {error, no_ring}
     end.
+
+get_raw_ring() ->
+    gen_server2:call(?MODULE, get_raw_ring, infinity).
 
 %% @spec refresh_my_ring() -> ok
 refresh_my_ring() ->
@@ -191,12 +201,14 @@ init([Mode]) ->
     %% fallback vnodes will be started so they can hand off.
     set_ring_global(Ring),
     riak_core_ring_events:ring_update(Ring),
-    {ok, Mode}.
+    {ok, #state{mode = Mode, raw_ring=Ring}}.
 
 
+handle_call(get_raw_ring, _From, #state{raw_ring=Ring} = State) ->
+    {reply, {ok, Ring}, State};
 handle_call({set_my_ring, Ring}, _From, State) ->
     prune_write_notify_ring(Ring),
-    {reply,ok,State};
+    {reply,ok,State#state{raw_ring=Ring}};
 handle_call(refresh_my_ring, _From, State) ->
     %% This node is leaving the cluster so create a fresh ring file
     FreshRing = riak_core_ring:fresh(),
@@ -208,7 +220,7 @@ handle_call(refresh_my_ring, _From, State) ->
     %% so we can safely stop now.
     riak_core:stop("node removal completed, exiting."),
 
-    {reply,ok,State};
+    {reply,ok,State#state{raw_ring=FreshRing}};
 handle_call({ring_trans, Fun, Args}, _From, State) ->
     {ok, Ring} = get_my_ring(),
     case catch Fun(Ring, Args) of
@@ -220,7 +232,7 @@ handle_call({ring_trans, Fun, Args}, _From, State) ->
                 Node ->
                     riak_core_gossip:send_ring(Node)
             end,
-            {reply, {ok, NewRing}, State};
+            {reply, {ok, NewRing}, State#state{raw_ring=NewRing}};
         ignore ->
             {reply, not_changed, State};
         Other ->
@@ -268,11 +280,63 @@ back(N,X,[H|T]) ->
         false -> [H]
     end.
 
+%% @private
+run_fixups([], _Bucket, BucketProps) ->
+    BucketProps;
+run_fixups([{App, Fixup}|T], BucketName, BucketProps) ->
+    BP = try Fixup:fixup(BucketName, BucketProps) of
+        {ok, NewBucketProps} ->
+            NewBucketProps;
+        {error, Reason} ->
+            lager:error("Error while running bucket fixup module "
+                "~p from application ~p on bucket ~p: ~p", [Fixup, App,
+                    BucketName, Reason]),
+            BucketProps
+    catch
+        What:Why ->
+            lager:error("Crash while running bucket fixup module "
+                "~p from application ~p on bucket ~p : ~p:~p", [Fixup, App,
+                    BucketName, What, Why]),
+            BucketProps
+    end,
+    run_fixups(T, BucketName, BP).
+
+
 %% Set the ring in mochiglobal.  Exported during unit testing
 %% to make test setup simpler - no need to spin up a riak_core_ring_manager
 %% process.
 set_ring_global(Ring) ->
-    mochiglobal:put(?RING_KEY, Ring).
+    DefaultProps = case application:get_env(riak_core, default_bucket_props) of
+        {ok, Val} ->
+            Val;
+        _ ->
+            []
+    end,
+    %% run fixups on the ring before storing it in mochiglobal
+    FixedRing = case riak_core:bucket_fixups() of
+        [] -> Ring;
+        Fixups ->
+            Buckets = riak_core_ring:get_buckets(Ring),
+            lists:foldl(
+                fun(Bucket, AccRing) ->
+                        BucketProps = riak_core_bucket:get_bucket(Bucket, Ring),
+                        %% Merge anything in the default properties but not in
+                        %% the bucket's properties. This is to ensure default
+                        %% properties added after the bucket is created are
+                        %% inherited to the bucket.
+                        MergedProps = riak_core_bucket:merge_props(
+                            BucketProps, DefaultProps),
+
+                        %% fixup the ring
+                        NewBucketProps = run_fixups(Fixups, Bucket, MergedProps),
+                        %% update the bucket in the ring
+                        riak_core_ring:update_meta({bucket,Bucket},
+                            NewBucketProps,
+                            AccRing)
+                end, Ring, Buckets)
+    end,
+    %% store the modified ring in mochiglobal
+    mochiglobal:put(?RING_KEY, FixedRing).
 
 %% Persist a new ring file, set the global value and notify any listeners
 prune_write_notify_ring(Ring) ->

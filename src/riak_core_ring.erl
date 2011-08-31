@@ -36,7 +36,8 @@
          fresh/0,
          fresh/1,
          fresh/2,
-         get_meta/2, 
+         get_meta/2,
+         get_buckets/1,
          index_owner/2,
          my_indices/1,
          num_partitions/1,
@@ -144,6 +145,17 @@ get_meta(Key, State) ->
         error -> undefined;
         {ok, M} -> {ok, M#meta_entry.value}
     end.
+
+%% @doc return the names of all the custom buckets stored in the ring.
+-spec get_buckets(State :: chstate()) -> [term()].
+get_buckets(State) ->
+    Keys = dict:fetch_keys(State#chstate.meta),
+    lists:foldl(
+        fun({bucket, Bucket}, Acc) ->
+                [Bucket|Acc];
+            (_, Acc) ->
+                Acc
+        end, [], Keys).
 
 %% @doc Return the node that owns the given index.
 -spec index_owner(State :: chstate(), Idx :: integer()) -> Node :: term().
