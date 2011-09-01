@@ -20,7 +20,7 @@
 %%
 %% -------------------------------------------------------------------
 -module(riak_core).
--export([stop/0, stop/1, join/1, remove/1, down/1, leave/0,
+-export([stop/0, stop/1, join/1, join/3, remove/1, down/1, leave/0,
          remove_from_cluster/1]).
 -export([register_vnode_module/1, vnode_modules/0]).
 -export([add_guarded_event_handler/3, add_guarded_event_handler/4]).
@@ -55,23 +55,23 @@ join(Node) when is_atom(Node) ->
 join(Node, Node) ->
     {error, self_join};
 join(_, Node) ->
-    case riak_core_gossip:legacy_gossip() of
-        true ->
-            legacy_join(Node);
-        false ->
-            case net_adm:ping(Node) of
-                pang ->
-                    {error, not_reachable};
-                pong ->
-                    case rpc:call(Node, riak_core_gossip, legacy_gossip, []) of
-                        true ->
-                            legacy_join(Node);
-                        _ ->
-                            %% Failure due to trying to join older node that
-                            %% doesn't define legacy_gossip will be handled
-                            %% in standard_join based on seeing a legacy ring.
-                            standard_join(Node)
-                    end
+    join(riak_core_gossip:legacy_gossip(), node(), Node).
+
+join(true, _, Node) ->
+    legacy_join(Node);
+join(false, _, Node) ->
+    case net_adm:ping(Node) of
+        pang ->
+            {error, not_reachable};
+        pong ->
+            case rpc:call(Node, riak_core_gossip, legacy_gossip, []) of
+                true ->
+                    legacy_join(Node);
+                _ ->
+                    %% Failure due to trying to join older node that
+                    %% doesn't define legacy_gossip will be handled
+                    %% in standard_join based on seeing a legacy ring.
+                    standard_join(Node)
             end
     end.
 

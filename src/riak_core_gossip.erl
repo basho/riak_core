@@ -322,7 +322,9 @@ handle_cast({rejoin, RingIn}, State) ->
                        riak_core_ring:cluster_name(OtherRing)),
     case SameCluster of
         true ->
-            riak_core:join(riak_core_ring:owner_node(OtherRing)),
+            Legacy = check_legacy_gossip(Ring, State),
+            OtherNode = riak_core_ring:owner_node(OtherRing),
+            riak_core:join(Legacy, node(), OtherNode),
             {noreply, State};
         false ->
             {noreply, State}
