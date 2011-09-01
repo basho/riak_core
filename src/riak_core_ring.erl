@@ -863,7 +863,8 @@ update_ring(CNode, CState) ->
     %% Remove tuples from next for removed nodes
     InvalidMembers = get_members(CState?CHSTATE.members, [invalid]),
     Next2 = lists:filter(fun(NInfo) ->
-                                 {_, NextOwner, _} = next_owner(NInfo),
+                                 {Owner, NextOwner, _} = next_owner(NInfo),
+                                 not lists:member(Owner, InvalidMembers) and
                                  not lists:member(NextOwner, InvalidMembers)
                          end, Next0),
     CState2 = CState?CHSTATE{next=Next2},
