@@ -34,7 +34,8 @@
          code_change/4]).
 -export([reply/2]).
 -export([get_mod_index/1,
-         update_forwarding/2]).
+         update_forwarding/2,
+         trigger_handoff/1]).
 
 -spec behaviour_info(atom()) -> 'undefined' | [{atom(), arity()}].
 behaviour_info(callbacks) ->
@@ -127,6 +128,9 @@ get_mod_index(VNode) ->
 update_forwarding(VNode, Ring) ->
     gen_fsm:send_all_state_event(VNode, {update_forwarding, Ring}).
 
+trigger_handoff(VNode) ->
+    gen_fsm:send_all_state_event(VNode, trigger_handoff).
+
 continue(State) ->
     {next_state, active, State, State#state.inactivity_timeout}.
 
@@ -202,18 +206,8 @@ vnode_handoff_command(Sender, Request, State=#state{index=Index,
             {stop, Reason, State#state{modstate=NewModState}}
     end.
 
-active(timeout, State=#state{mod=Mod, modstate=ModState}) ->
-    case should_handoff(State) of
-        {true, TargetNode} ->
-            case Mod:handoff_starting(TargetNode, ModState) of
-                {true, NewModState} ->
-                    start_handoff(State#state{modstate=NewModState}, TargetNode);
-                {false, NewModState} ->
-                    continue(State, NewModState)
-            end;
-        false ->
-            continue(State)
-    end;
+active(timeout, State) ->
+    maybe_handoff(State);
 active(?COVERAGE_REQ{keyspaces=KeySpaces, 
                      request=Request,
                      sender=Sender},
@@ -244,7 +238,9 @@ active({handoff_error, _Err, _Reason}, State=#state{mod=Mod,
     continue(State#state{handoff_node=none});
 active({update_forwarding, Ring}, State) ->
     NewState = update_forwarding_mode(Ring, State),
-    continue(NewState).
+    continue(NewState);
+active(trigger_handoff, State) ->
+     maybe_handoff(State).
 
 active(_Event, _From, State) ->
     Reply = ok,
@@ -272,6 +268,8 @@ finish_handoff(State=#state{mod=Mod,
     end.
 
 handle_event(R={update_forwarding, _Ring}, _StateName, State) ->
+    active(R, State);
+handle_event(R=trigger_handoff, _StateName, State) ->
     active(R, State);
 handle_event(R=?VNODE_REQ{}, _StateName, State) ->
     active(R, State);
@@ -333,6 +331,22 @@ terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState}) ->
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
+maybe_handoff(State=#state{mod=Mod, modstate=ModState}) ->
+    case should_handoff(State) of
+        {true, TargetNode} ->
+            case Mod:handoff_starting(TargetNode, ModState) of
+                {true, NewModState} ->
+                    start_handoff(State#state{modstate=NewModState}, TargetNode);
+                {false, NewModState} ->
+                    continue(State, NewModState)
+            end;
+        false ->
+            continue(State)
+    end.
+
+should_handoff(#state{handoff_node=HN}) when HN /= none ->
+    %% Already handing off
+    false;
 should_handoff(#state{index=Idx, mod=Mod}) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Me = node(),
