@@ -1518,11 +1518,12 @@ membership_test() ->
     {_, RingA7} = reconcile(RingB2, RingA6),
     ?assertEqual([nodeA, nodeB, nodeC], all_members(RingA7)),
 
-    Priority = [{invalid,1}, {valid,2}, {exiting,3}, {leaving,4}],
+    Priority = [{invalid,1}, {down,2}, {joining,3}, {valid,4}, {exiting,5},
+                {leaving,6}],
     RingX1 = fresh(nodeA),
     RingX2 = add_member(nodeA, RingX1, nodeB),
     RingX3 = add_member(nodeA, RingX2, nodeC),
-    ?assertEqual(valid, member_status(RingX3, nodeC)),
+    ?assertEqual(joining, member_status(RingX3, nodeC)),
 
     %% Parallel/sibling status changes merge based on priority
     [begin
