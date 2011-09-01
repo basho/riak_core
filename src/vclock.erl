@@ -85,12 +85,12 @@ merge([AClock|VClocks],NClock) ->
 merge([], [], AccClock) -> lists:reverse(AccClock);
 merge([], Left, AccClock) -> lists:reverse(AccClock, Left);
 merge(Left, [], AccClock) -> lists:reverse(AccClock, Left);
-merge(V=[{Node1,{Ctr1,TS1}=CT1}|VClock],
-      N=[{Node2,{Ctr2,TS2}=CT2}|NClock], AccClock) ->
+merge(V=[{Node1,{Ctr1,TS1}=CT1}=NCT1|VClock],
+      N=[{Node2,{Ctr2,TS2}=CT2}=NCT2|NClock], AccClock) ->
     if Node1 < Node2 ->
-            merge(VClock, N, [{Node1,CT1}|AccClock]);
+            merge(VClock, N, [NCT1|AccClock]);
        Node1 > Node2 ->
-            merge(V, NClock, [{Node2,CT2}|AccClock]);
+            merge(V, NClock, [NCT2|AccClock]);
        true ->
             ({_Ctr,_TS} = CT) = if Ctr1 > Ctr2 -> CT1;
                                    Ctr1 < Ctr2 -> CT2;
@@ -304,8 +304,6 @@ merge_less_right_test() ->
     VC2 = [{<<"5">>, {5, 5}}],
     ?assertEqual([{<<"5">>, {5, 5}},{<<"6">>, {6, 6}}, {<<"7">>, {7, 7}}],
                  vclock:merge([VC1, VC2])).
-
-
 
 merge_same_id_test() ->
     VC1 = [{<<"1">>, {1, 2}},{<<"2">>,{1,4}}],
