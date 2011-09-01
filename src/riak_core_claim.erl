@@ -71,7 +71,8 @@
 default_wants_claim(Ring) ->
     default_wants_claim(Ring, node()).
 
-default_wants_claim(Ring, Node) ->
+default_wants_claim(Ring0, Node) ->
+    Ring = riak_core_ring:upgrade(Ring0),
     %% Determine how many nodes are involved with the ring; if the requested
     %% node is not yet part of the ring, include it in the count.
     AllMembers = riak_core_ring:claiming_members(Ring),
@@ -103,7 +104,8 @@ default_wants_claim(Ring, Node) ->
 default_choose_claim(Ring) ->
     default_choose_claim(Ring, node()).
 
-default_choose_claim(Ring, Node) ->
+default_choose_claim(Ring0, Node) ->
+    Ring = riak_core_ring:upgrade(Ring0),
     TargetN = app_helper:get_env(riak_core, target_n_val),
     case meets_target_n(Ring, TargetN) of
         {true, TailViolations} ->
@@ -231,7 +233,8 @@ find_biggest_hole(Mine) ->
                 none,
                 lists:zip(Mine, tl(Mine)++[hd(Mine)])).
 
-claim_rebalance_n(Ring, Node) ->
+claim_rebalance_n(Ring0, Node) ->
+    Ring = riak_core_ring:upgrade(Ring0),
     %% diagonal stripes guarantee most disperse data
     Nodes = lists:usort([Node|riak_core_ring:claiming_members(Ring)]),
     Partitions = lists:sort([ I || {I, _} <- riak_core_ring:all_owners(Ring) ]),
@@ -248,9 +251,10 @@ claim_rebalance_n(Ring, Node) ->
                 Ring,
                 Zipped).
 
-random_choose_claim(Ring) ->
+random_choose_claim(Ring0) ->
+    Ring = riak_core_ring:upgrade(Ring0),
     riak_core_ring:transfer_node(riak_core_ring:random_other_index(Ring),
-                            node(), Ring).
+                                 node(), Ring).
 
 %% @spec never_wants_claim(riak_core_ring()) -> no
 %% @doc For use by nodes that should not claim any partitions.

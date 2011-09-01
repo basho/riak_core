@@ -39,6 +39,7 @@
          find_latest_ringfile/0,
          do_write_ringfile/1,
          ring_trans/2,
+         set_cluster_name/1,
          stop/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -88,6 +89,8 @@ write_ringfile() ->
 ring_trans(Fun, Args) ->
     gen_server2:call(?MODULE, {ring_trans, Fun, Args}, infinity).
 
+set_cluster_name(Name) ->
+    gen_server2:call(?MODULE, {set_cluster_name, Name}, infinity).
 
 do_write_ringfile(Ring) ->
     {{Year, Month, Day},{Hour, Minute, Second}} = calendar:universal_time(),
@@ -198,7 +201,8 @@ init([Mode]) ->
     {ok, Mode}.
 
 
-handle_call({set_my_ring, Ring}, _From, State) ->
+handle_call({set_my_ring, RingIn}, _From, State) ->
+    Ring = riak_core_ring:upgrade(RingIn),
     prune_write_notify_ring(Ring),
     {reply,ok,State};
 handle_call(refresh_my_ring, _From, State) ->
@@ -230,7 +234,13 @@ handle_call({ring_trans, Fun, Args}, _From, State) ->
             lager:error("ring_trans: invalid return value: ~p", 
                                    [Other]),
             {reply, not_changed, State}
-    end.
+    end;
+handle_call({set_cluster_name, Name}, _From, State) ->
+    {ok, Ring} = get_my_ring(),
+    NewRing = riak_core_ring:set_cluster_name(Ring, Name),
+    prune_write_notify_ring(NewRing),
+    {reply, ok, State}.
+
 handle_cast(stop, State) ->
     {stop,normal,State};
 
@@ -295,7 +305,6 @@ prune_write_notify_ring(Ring) ->
     do_write_ringfile(Ring),
     set_ring_global(Ring),
     riak_core_ring_events:ring_update(Ring).
-
 
 %% ===================================================================
 %% Unit tests
