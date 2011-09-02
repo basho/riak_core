@@ -32,7 +32,7 @@
          sync_command/4,
          sync_spawn_command/3, make_request/3,
          make_coverage_request/4,
-         all_nodes/1, reg_name/1]).
+         all_nodes/1, reg_name/1, all_index_pid/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 -record(idxrec, {idx, pid, monref}).
@@ -77,14 +77,18 @@ command({Index,Node}, Msg, Sender, VMaster) ->
     gen_server:cast({VMaster, Node}, make_request(Msg, Sender, Index)).
 
 %% Send a command to a covering set of vnodes
-coverage(Msg, CoverageVNodes, Keyspaces, {Type, Ref, From}, VMaster) ->
+coverage(Msg, CoverageVNodes, Keyspaces, {Type, Ref, From}, VMaster)
+  when is_list(CoverageVNodes) ->
     [gen_server:cast({VMaster, Node}, 
                      make_coverage_request(Msg,
                                            Keyspaces, 
                                            {Type, {Ref, {Index, Node}}, From},
                                            Index)) ||
-        {Index, Node} <- CoverageVNodes].
-
+        {Index, Node} <- CoverageVNodes];
+coverage(Msg, {Index, Node}, Keyspaces, Sender, VMaster) ->
+    gen_server:cast({VMaster, Node}, 
+                    make_coverage_request(Msg, Keyspaces, Sender, Index)).
+    
 %% Send the command to an individual Index/Node combination, but also
 %% return the pid for the vnode handling the request, as `{ok,
 %% VnodePid}'.
@@ -133,6 +137,10 @@ make_coverage_request(Request, KeySpaces, Sender, Index) ->
 all_nodes(VNodeMod) ->
     RegName = reg_name(VNodeMod),
     gen_server:call(RegName, all_nodes, infinity).
+
+all_index_pid(VNodeMod) ->
+    RegName = reg_name(VNodeMod),
+    gen_server:call(RegName, all_index_pid, infinity).
 
 %% @private
 init([VNodeMod, LegacyMod, RegName]) ->
@@ -203,6 +211,10 @@ handle_call({spawn,
     {noreply, State};
 handle_call(all_nodes, _From, State) ->
     {reply, lists:flatten(ets:match(State#state.idxtab, {idxrec, '_', '$1', '_'})), State};
+handle_call(all_index_pid, _From, State) ->
+    Reply = [list_to_tuple(L) 
+             || L <- ets:match(State#state.idxtab, {idxrec, '$1', '$2', '_'})],
+    {reply, Reply, State};
 handle_call({Partition, get_vnode}, _From, State) ->
     Pid = get_vnode(Partition, State),
     {reply, {ok, Pid}, State};
