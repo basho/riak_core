@@ -203,6 +203,10 @@ all_members(?CHSTATE{members=Members}) ->
 active_members(?CHSTATE{members=Members}) ->
     get_members(Members, [joining, valid, leaving, exiting]).
 
+%% @doc Returns a list of members guaranteed safe for requests
+ready_members(?CHSTATE{members=Members}) ->
+    get_members(Members, [valid, leaving]).
+
 %% @doc Provide all ownership information in the form of {Index,Node} pairs.
 -spec all_owners(State :: chstate()) -> [{Index :: integer(), Node :: term()}].
 all_owners(State) ->

@@ -94,9 +94,16 @@ standard_join(Node) when is_atom(Node) ->
     end.
 
 standard_join(Node, Ring) ->
-    {ok, OurRingSize} = application:get_env(riak_core, ring_creation_size),
-    case riak_core_ring:num_partitions(Ring) of
-        OurRingSize ->
+    {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
+    SameSize = (riak_core_ring:num_partitions(MyRing) =:=
+                riak_core_ring:num_partitions(Ring)),
+    Singleton = ([node()] =:= riak_core_ring:all_members(MyRing)),
+    case {Singleton, SameSize} of
+        {false, _} ->
+            {error, not_single_node};
+        {_, false} ->
+            {error, different_ring_sizes};
+        _ ->
             GossipVsn = riak_core_gossip:gossip_version(),
             Ring2 = riak_core_ring:add_member(node(), Ring,
                                               node()),
@@ -108,9 +115,7 @@ standard_join(Node, Ring) ->
                                                   gossip_vsn,
                                                   GossipVsn),
             riak_core_ring_manager:set_my_ring(Ring4),
-            riak_core_gossip:send_ring(Node, node());
-        _ ->
-            {error, different_ring_sizes}
+            riak_core_gossip:send_ring(Node, node())
     end.
 
 legacy_join(Node) when is_atom(Node) ->
@@ -157,6 +162,10 @@ standard_remove(Node) ->
     ok.
 
 down(Node) ->
+    down(riak_core_gossip:legacy_gossip(), Node).
+down(true, _) ->
+    {error, legacy_mode};
+down(false, Node) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     case net_adm:ping(Node) of
         pong ->
