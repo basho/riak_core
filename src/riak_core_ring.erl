@@ -53,9 +53,15 @@
          update_meta/3]).
 
 -export([cluster_name/1,
+         legacy_ring/1,
+         legacy_reconcile/2,
+         upgrade/1,
+         downgrade/2,
          claimant/1,
          member_status/2,
          all_member_status/1,
+         update_member_meta/5,
+         get_member_meta/3,
          add_member/3,
          remove_member/3,
          leave_member/3,
@@ -77,6 +83,8 @@
          ring_ready/1,
          ring_ready_info/1,
          ring_changed/2,
+         set_cluster_name/2,
+         reconcile_names/2,
          reconcile_members/2]).
 
 -export_type([riak_core_ring/0]).
@@ -89,7 +97,8 @@
 %%-define(ROUT(S,A),?debugFmt(S,A)).
 %%-define(ROUT(S,A),io:format(S,A)).
 
--record(chstate, {
+-define(CHSTATE, #chstate_v2).
+-record(chstate_v2, {
     nodename :: node(),          % the Node responsible for this chstate
     vclock   :: vclock:vclock(), % for this chstate object, entries are
                                  % {Node, Ctr}
@@ -99,10 +108,18 @@
 
     clustername :: {node(), term()}, 
     next     :: [{integer(), node(), node(), [module()], awaiting | complete}],
-    members  :: [{node(), {member_status(), vclock:vclock()}}],
+    members  :: [{node(), {member_status(), vclock:vclock(), []}}],
     claimant :: node(),
     seen     :: [{node(), vclock:vclock()}],
     rvsn     :: vclock:vclock()
+}). 
+
+%% Legacy chstate
+-record(chstate, {
+    nodename :: node(), % the Node responsible for this chstate
+    vclock,   % for this chstate object, entries are {Node, Ctr}
+    chring :: chash:chash(),   % chash ring of {IndexAsInt, Node} mappings
+    meta      % dict of cluster-wide other data (primarily bucket N-value, etc)
 }). 
 
 -type member_status() :: valid | invalid | leaving | exiting.
@@ -116,7 +133,7 @@
 }).
 
 %% riak_core_ring() is the opaque data type used for partition ownership
--type riak_core_ring() :: #chstate{}.
+-type riak_core_ring() :: ?CHSTATE{}.
 -type chstate() :: riak_core_ring().
 
 -type pending_change() :: {Owner :: node(),
@@ -128,19 +145,68 @@
 %% Public API
 %% ===================================================================
 
+%% @doc Returns true if the given ring is a legacy ring.
+legacy_ring(#chstate{}) ->
+    true;
+legacy_ring(_) ->
+    false.
+
+%% @doc Upgrade old ring structures to the latest format.
+upgrade(Old=?CHSTATE{}) ->
+    Old;
+upgrade(Old=#chstate{}) ->
+    #chstate{nodename=Node,
+             vclock=VC,
+             chring=Ring,
+             meta=Meta} = Old,
+    New1 = ?CHSTATE{nodename=Node,
+                    vclock=VC,
+                    chring=Ring,
+                    meta=Meta,
+                    clustername=undefined,
+                    next=[],
+                    members=[],
+                    claimant=undefined,
+                    seen=[],
+                    rvsn=VC},
+    MemberVC = vclock:increment(Node, vclock:fresh()),
+    Members = [{Member, {valid, MemberVC, []}}
+               || Member <- chash:members(Ring)],
+    New2 = New1?CHSTATE{members=Members},
+    case node() of
+        Node ->
+            GVsn = riak_core_gossip:gossip_version(),
+            update_member_meta(Node, New2, Node,
+                               gossip_vsn, GVsn, same_vclock);
+        _ ->
+            New2
+    end.
+
+%% @doc Downgrade the latest ring structure to a specified version.
+downgrade(1,?CHSTATE{nodename=Node,
+                     vclock=VC,
+                     chring=Ring,
+                     meta=Meta}) ->
+    #chstate{nodename=Node,
+             vclock=VC,
+             chring=Ring,
+             meta=Meta};
+downgrade(2,State=?CHSTATE{}) ->
+    State.
+
 %% @doc Produce a list of all nodes that are members of the cluster
 -spec all_members(State :: chstate()) -> [Node :: term()].
-all_members(#chstate{members=Members}) ->
+all_members(?CHSTATE{members=Members}) ->
     get_members(Members).
 
 %% @doc Produce a list of all active (not marked as down) cluster members
-active_members(#chstate{members=Members}) ->
+active_members(?CHSTATE{members=Members}) ->
     get_members(Members, [joining, valid, leaving, exiting]).
 
 %% @doc Provide all ownership information in the form of {Index,Node} pairs.
 -spec all_owners(State :: chstate()) -> [{Index :: integer(), Node :: term()}].
 all_owners(State) ->
-    chash:nodes(State#chstate.chring).
+    chash:nodes(State?CHSTATE.chring).
 
 %% @doc Provide every preflist in the ring, truncated at N.
 -spec all_preflists(State :: chstate(), N :: integer()) ->
@@ -158,7 +224,7 @@ diff_nodes(State1,State2) ->
     lists:usort(lists:flatten(AllDiff)).
 
 -spec equal_rings(chstate(), chstate()) -> boolean().
-equal_rings(_A=#chstate{chring=RA,meta=MA},_B=#chstate{chring=RB,meta=MB}) ->
+equal_rings(_A=?CHSTATE{chring=RA,meta=MA},_B=?CHSTATE{chring=RB,meta=MB}) ->
     MDA = lists:sort(dict:to_list(MA)),
     MDB = lists:sort(dict:to_list(MB)),
     case MDA =:= MDB of
@@ -183,9 +249,10 @@ fresh(NodeName) ->
 -spec fresh(RingSize :: integer(), NodeName :: term()) -> chstate().
 fresh(RingSize, NodeName) ->
     VClock=vclock:increment(NodeName, vclock:fresh()),
-    #chstate{nodename=NodeName,
+    GossipVsn = riak_core_gossip:gossip_version(),
+    ?CHSTATE{nodename=NodeName,
              clustername={NodeName, erlang:now()},
-             members=[{NodeName, {valid, VClock}}],
+             members=[{NodeName, {valid, VClock, [{gossip_vsn, GossipVsn}]}}],
              chring=chash:fresh(RingSize, NodeName),
              next=[],
              claimant=NodeName,
@@ -198,7 +265,7 @@ fresh(RingSize, NodeName) ->
 -spec get_meta(Key :: term(), State :: chstate()) -> 
     {ok, term()} | undefined.
 get_meta(Key, State) -> 
-    case dict:find(Key, State#chstate.meta) of
+    case dict:find(Key, State?CHSTATE.meta) of
         error -> undefined;
         {ok, M} -> {ok, M#meta_entry.value}
     end.
@@ -216,18 +283,18 @@ my_indices(State) ->
 %% @doc Return the number of partitions in this Riak ring.
 -spec num_partitions(State :: chstate()) -> integer().
 num_partitions(State) ->
-    chash:size(State#chstate.chring).
+    chash:size(State?CHSTATE.chring).
 
 %% @doc Return the node that is responsible for a given chstate.
 -spec owner_node(State :: chstate()) -> Node :: term().
 owner_node(State) ->
-    State#chstate.nodename.
+    State?CHSTATE.nodename.
 
 %% @doc For a given object key, produce the ordered list of
 %%      {partition,node} pairs that could be responsible for that object.
 -spec preflist(Key :: binary(), State :: chstate()) ->
                                [{Index :: integer(), Node :: term()}].
-preflist(Key, State) -> chash:successors(Key, State#chstate.chring).
+preflist(Key, State) -> chash:successors(Key, State?CHSTATE.chring).
 
 %% @doc Return a randomly-chosen node from amongst the owners.
 -spec random_node(State :: chstate()) -> Node :: term().
@@ -289,10 +356,10 @@ reconcile(ExternState, MyState) ->
 %% @doc  Rename OldNode to NewNode in a Riak ring.
 -spec rename_node(State :: chstate(), OldNode :: atom(), NewNode :: atom()) ->
             chstate().
-rename_node(State=#chstate{chring=Ring, nodename=ThisNode, members=Members,
+rename_node(State=?CHSTATE{chring=Ring, nodename=ThisNode, members=Members,
                            seen=Seen}, OldNode, NewNode) 
   when is_atom(OldNode), is_atom(NewNode)  ->
-    State#chstate{
+    State?CHSTATE{
       chring=lists:foldl(
                fun({Idx, Owner}, AccIn) ->
                        case Owner of
@@ -304,32 +371,32 @@ rename_node(State=#chstate{chring=Ring, nodename=ThisNode, members=Members,
       members=proplists:substitute_aliases([{OldNode, NewNode}], Members),
       seen=proplists:substitute_aliases([{OldNode, NewNode}], Seen),
       nodename=case ThisNode of OldNode -> NewNode; _ -> ThisNode end,
-      vclock=vclock:increment(NewNode, State#chstate.vclock)}.
+      vclock=vclock:increment(NewNode, State?CHSTATE.vclock)}.
 
 %% @doc Determine the integer ring index responsible
 %%      for a chash key.
 -spec responsible_index(chash:index(), chstate()) -> integer().
-responsible_index(ChashKey, #chstate{chring=Ring}) ->
+responsible_index(ChashKey, ?CHSTATE{chring=Ring}) ->
     <<IndexAsInt:160/integer>> = ChashKey,
     chash:next_index(IndexAsInt, Ring).
 
 -spec transfer_node(Idx :: integer(), Node :: term(), MyState :: chstate()) ->
            chstate().
 transfer_node(Idx, Node, MyState) ->
-    case chash:lookup(Idx, MyState#chstate.chring) of
+    case chash:lookup(Idx, MyState?CHSTATE.chring) of
         Node ->
             MyState;
         _ ->
-            Me = MyState#chstate.nodename,
-            VClock = vclock:increment(Me, MyState#chstate.vclock),
-            CHRing = chash:update(Idx, Node, MyState#chstate.chring),
-            MyState#chstate{vclock=VClock,chring=CHRing}
+            Me = MyState?CHSTATE.nodename,
+            VClock = vclock:increment(Me, MyState?CHSTATE.vclock),
+            CHRing = chash:update(Idx, Node, MyState?CHSTATE.chring),
+            MyState?CHSTATE{vclock=VClock,chring=CHRing}
     end.
 
 % @doc Set a key in the cluster metadata dict
 -spec update_meta(Key :: term(), Val :: term(), State :: chstate()) -> chstate().
 update_meta(Key, Val, State) ->
-    Change = case dict:find(Key, State#chstate.meta) of
+    Change = case dict:find(Key, State?CHSTATE.meta) of
                  {ok, OldM} ->
                      Val /= OldM#meta_entry.value;
                  error ->
@@ -341,31 +408,45 @@ update_meta(Key, Val, State) ->
                           calendar:universal_time()),
               value = Val
              },
-            VClock = vclock:increment(State#chstate.nodename,
-                                      State#chstate.vclock),
-            State#chstate{vclock=VClock,
-                          meta=dict:store(Key, M, State#chstate.meta)};
+            VClock = vclock:increment(State?CHSTATE.nodename,
+                                      State?CHSTATE.vclock),
+            State?CHSTATE{vclock=VClock,
+                          meta=dict:store(Key, M, State?CHSTATE.meta)};
        true ->
             State
     end.
 
 %% @doc Return the current claimant.
 -spec claimant(State :: chstate()) -> node().
-claimant(#chstate{claimant=Claimant}) ->
+claimant(?CHSTATE{claimant=Claimant}) ->
     Claimant.
 
 %% @doc Returns the unique identifer for this cluster.
 -spec cluster_name(State :: chstate()) -> term().
 cluster_name(State) ->
-    State#chstate.clustername.
+    State?CHSTATE.clustername.
 
+%% @doc Sets the unique identifer for this cluster.
+set_cluster_name(State, Name) ->
+    State?CHSTATE{clustername=Name}.
+
+reconcile_names(RingA=?CHSTATE{clustername=NameA},
+                RingB=?CHSTATE{clustername=NameB}) ->
+    case (NameA =:= undefined) or (NameB =:= undefined) of
+        true ->
+            {RingA?CHSTATE{clustername=undefined},
+             RingB?CHSTATE{clustername=undefined}};
+        false ->
+            {RingA, RingB}
+    end.
+    
 %% @doc Returns the current membership status for a node in the cluster.
 -spec member_status(State :: chstate(), Node :: node()) -> member_status().
-member_status(#chstate{members=Members}, Node) ->
+member_status(?CHSTATE{members=Members}, Node) ->
     member_status(Members, Node);
 member_status(Members, Node) ->
     case orddict:find(Node, Members) of
-        {ok, {Status, _}} ->
+        {ok, {Status, _, _}} ->
             Status;
         _ ->
             invalid
@@ -373,9 +454,43 @@ member_status(Members, Node) ->
 
 %% @doc Returns the current membership status for all nodes in the cluster.
 -spec all_member_status(State :: chstate()) -> [{node(), member_status()}].
-all_member_status(#chstate{members=Members}) ->
-    [{Node, Status} || {Node, {Status, _VC}} <- Members, Status /= invalid].
+all_member_status(?CHSTATE{members=Members}) ->
+    [{Node, Status} || {Node, {Status, _VC, _}} <- Members, Status /= invalid].
+
+get_member_meta(State, Member, Key) ->
+    case orddict:find(Member, State?CHSTATE.members) of
+        error -> undefined;
+        {ok, {_, _, Meta}} ->
+            case orddict:find(Key, Meta) of
+                error ->
+                    undefined;
+                {ok, Value} ->
+                    Value
+            end
+    end.
     
+%% @doc Set a key in the member metadata orddict
+update_member_meta(Node, State, Member, Key, Val) ->
+    VClock = vclock:increment(Node, State?CHSTATE.vclock),
+    State2 = update_member_meta(Node, State, Member, Key, Val, same_vclock),
+    State2?CHSTATE{vclock=VClock}.
+
+update_member_meta(Node, State, Member, Key, Val, same_vclock) ->
+    Members = State?CHSTATE.members,
+    case orddict:is_key(Member, Members) of
+        true ->
+            Members2 = orddict:update(Member,
+                                      fun({Status, VC, MD}) ->
+                                              {Status,
+                                               vclock:increment(Node, VC),
+                                               orddict:store(Key, Val, MD)}
+                                      end,
+                                      Members),
+            State?CHSTATE{members=Members2};
+        false ->
+            State
+    end.
+
 add_member(PNode, State, Node) ->
     set_member(PNode, State, Node, joining).
 
@@ -394,18 +509,18 @@ down_member(PNode, State, Node) ->
 %% @doc Return a list of all members of the cluster that are eligible to
 %%      claim partitions.
 -spec claiming_members(State :: chstate()) -> [Node :: node()].
-claiming_members(#chstate{members=Members}) ->
+claiming_members(?CHSTATE{members=Members}) ->
     get_members(Members, [joining, valid, down]).
 
 %% @doc Return a list of all members of the cluster that are marked as down.
 -spec down_members(State :: chstate()) -> [Node :: node()].
-down_members(#chstate{members=Members}) ->
+down_members(?CHSTATE{members=Members}) ->
     get_members(Members, [down]).
 
 %% @doc Set the node that is responsible for a given chstate.
 -spec set_owner(State :: chstate(), Node :: node()) -> chstate().
 set_owner(State, Node) ->
-    State#chstate{nodename=Node}.
+    State?CHSTATE{nodename=Node}.
 
 %% @doc Return all partition indices owned by a node.
 -spec indices(State :: chstate(), Node :: node()) -> [integer()].
@@ -422,18 +537,18 @@ future_indices(State, Node) ->
 
 %% @doc Return all indices that a node is scheduled to give to another.
 disowning_indices(State, Node) ->
-    [Idx || {Idx, Owner, _NextOwner, _Mods, _Status} <- State#chstate.next,
+    [Idx || {Idx, Owner, _NextOwner, _Mods, _Status} <- State?CHSTATE.next,
             Owner =:= Node].
 
 %% @doc Returns a list of all pending ownership transfers.
 pending_changes(State) ->
     %% For now, just return next directly.
-    State#chstate.next.
+    State?CHSTATE.next.
 
 %% @doc Return details for a pending partition ownership change.
 -spec next_owner(State :: chstate(), Idx :: integer()) -> pending_change().
 next_owner(State, Idx) ->
-    case lists:keyfind(Idx, 1, State#chstate.next) of
+    case lists:keyfind(Idx, 1, State?CHSTATE.next) of
         false ->
             {undefined, undefined, undefined};
         NInfo ->
@@ -444,7 +559,7 @@ next_owner(State, Idx) ->
 -spec next_owner(State :: chstate(), Idx :: integer(),
                  Mod :: module()) -> pending_change().
 next_owner(State, Idx, Mod) ->
-    case lists:keyfind(Idx, 1, State#chstate.next) of
+    case lists:keyfind(Idx, 1, State?CHSTATE.next) of
         false ->
             {undefined, undefined, undefined};
         {_, Owner, NextOwner, _Transfers, complete} ->
@@ -463,9 +578,9 @@ next_owner(State, Idx, Mod) ->
 ring_ready(State0) ->
     Owner = owner_node(State0),
     State = update_seen(Owner, State0),
-    Seen = State#chstate.seen,
-    Members = get_members(State#chstate.members, [valid, leaving]),
-    VClock = State#chstate.vclock,
+    Seen = State?CHSTATE.seen,
+    Members = get_members(State?CHSTATE.members, [valid, leaving]),
+    VClock = State?CHSTATE.vclock,
     R = [begin
              case orddict:find(Node, Seen) of
                  error ->
@@ -484,8 +599,8 @@ ring_ready() ->
 ring_ready_info(State0) ->
     Owner = owner_node(State0),
     State = update_seen(Owner, State0),
-    Seen = State#chstate.seen,
-    Members = get_members(State#chstate.members, [valid, leaving]),
+    Seen = State?CHSTATE.seen,
+    Members = get_members(State?CHSTATE.members, [valid, leaving]),
     RecentVC =
         orddict:fold(fun(_, VC, Recent) ->
                              case vclock:descends(VC, Recent) of
@@ -494,7 +609,7 @@ ring_ready_info(State0) ->
                                  false ->
                                      Recent
                              end
-                     end, State#chstate.vclock, Seen),
+                     end, State?CHSTATE.vclock, Seen),
     Outdated =
         orddict:filter(fun(Node, VC) ->
                                (not vclock:equal(VC, RecentVC))
@@ -510,6 +625,77 @@ handoff_complete(State, Idx, Mod) ->
 
 ring_changed(Node, State) ->
     internal_ring_changed(Node, State).
+
+%% ===================================================================
+%% Legacy reconciliation
+%% ===================================================================
+
+%% @doc Incorporate another node's state into our view of the Riak world.
+legacy_reconcile(ExternState, MyState) ->
+    case vclock:equal(MyState#chstate.vclock, vclock:fresh()) of
+        true -> 
+            {new_ring, #chstate{nodename=MyState#chstate.nodename,
+                                vclock=ExternState#chstate.vclock,
+                                chring=ExternState#chstate.chring,
+                                meta=ExternState#chstate.meta}};
+        false ->
+            case ancestors([ExternState, MyState]) of
+                [OlderState] ->
+                    case vclock:equal(OlderState#chstate.vclock,
+                                      MyState#chstate.vclock) of
+                        true ->
+                            {new_ring,
+                             #chstate{nodename=MyState#chstate.nodename,
+                                      vclock=ExternState#chstate.vclock,
+                                      chring=ExternState#chstate.chring,
+                                      meta=ExternState#chstate.meta}};
+                        false -> {no_change, MyState}
+                    end;
+                [] -> 
+                    case legacy_equal_rings(ExternState,MyState) of
+                        true -> {no_change, MyState};
+                        false -> {new_ring,
+                                  legacy_reconcile(MyState#chstate.nodename,
+                                                   ExternState, MyState)}
+                    end
+            end
+    end.
+
+%% @private
+ancestors(RingStates) ->
+    Ancest = [[O2 || O2 <- RingStates,
+     vclock:descends(O1#chstate.vclock,O2#chstate.vclock),
+     (vclock:descends(O2#chstate.vclock,O1#chstate.vclock) == false)]
+ || O1 <- RingStates],
+    lists:flatten(Ancest).
+
+%% @private
+legacy_equal_rings(_A=#chstate{chring=RA,meta=MA},
+                   _B=#chstate{chring=RB,meta=MB}) ->
+    MDA = lists:sort(dict:to_list(MA)),
+    MDB = lists:sort(dict:to_list(MB)),
+    case MDA =:= MDB of
+        false -> false;
+        true -> RA =:= RB
+    end.
+
+%% @private
+% @doc If two states are mutually non-descendant, merge them anyway.
+%      This can cause a bit of churn, but should converge.
+% @spec reconcile(MyNodeName :: term(),
+%                 StateA :: chstate(), StateB :: chstate())
+%              -> chstate()
+legacy_reconcile(MyNodeName, StateA, StateB) ->
+    % take two states (non-descendant) and merge them
+    VClock = vclock:increment(MyNodeName,
+        vclock:merge([StateA#chstate.vclock,
+                StateB#chstate.vclock])),
+    CHRing = chash:merge_rings(StateA#chstate.chring,StateB#chstate.chring),
+    Meta = merge_meta(StateA#chstate.meta, StateB#chstate.meta),
+    #chstate{nodename=MyNodeName,
+             vclock=VClock,
+             chring=CHRing,
+             meta=Meta}.
 
 %% =========================================================================
 %% Claimant rebalance/reassign logic
@@ -543,7 +729,7 @@ internal_ring_changed(Node, CState0) ->
             %%   -- Starts when next changes from empty to non-empty
             %%   -- Stops when next changes from non-empty to empty
             %%
-            IsClaimant = (CState5#chstate.claimant =:= Node),
+            IsClaimant = (CState5?CHSTATE.claimant =:= Node),
             WasPending = ([] /= pending_changes(CState)),
             IsPending  = ([] /= pending_changes(CState5)),
 
@@ -567,10 +753,24 @@ internal_ring_changed(Node, CState0) ->
                     ok
             end,
 
+            %% Set cluster name if it is undefined
+            case {IsClaimant, cluster_name(CState5)} of
+                {true, undefined} ->
+                    ClusterName = {Node, erlang:now()},
+                    riak_core_util:rpc_every_member(riak_core_ring_manager,
+                                                    set_cluster_name,
+                                                    [ClusterName],
+                                                    1000),
+                    ok;
+                _ ->
+                    ClusterName = cluster_name(CState5),
+                    ok
+            end,
+
             case Changed of
                 true ->
-                    VClock = vclock:increment(Node, CState5#chstate.vclock),
-                    CState5#chstate{vclock=VClock};
+                    VClock = vclock:increment(Node, CState5?CHSTATE.vclock),
+                    CState5?CHSTATE{vclock=VClock, clustername=ClusterName};
                 false ->
                     CState5
             end
@@ -578,9 +778,9 @@ internal_ring_changed(Node, CState0) ->
 
 %% @private
 maybe_update_claimant(Node, CState) ->
-    Members = get_members(CState#chstate.members, [valid, leaving]),
-    Claimant = CState#chstate.claimant,
-    RVsn = CState#chstate.rvsn,
+    Members = get_members(CState?CHSTATE.members, [valid, leaving]),
+    Claimant = CState?CHSTATE.claimant,
+    RVsn = CState?CHSTATE.rvsn,
     NextClaimant = hd(Members ++ [undefined]),
     ClaimantMissing = not lists:member(Claimant, Members),
 
@@ -589,7 +789,7 @@ maybe_update_claimant(Node, CState) ->
             %% Become claimant
             %%?assert(Node /= Claimant),
             RVsn2 = vclock:increment(Claimant, RVsn),
-            CState2 = CState#chstate{claimant=Node, rvsn=RVsn2},
+            CState2 = CState?CHSTATE{claimant=Node, rvsn=RVsn2},
             {true, CState2};
         _ ->
             {false, CState}
@@ -597,7 +797,7 @@ maybe_update_claimant(Node, CState) ->
 
 %% @private
 maybe_update_ring(Node, CState) ->
-    Claimant = CState#chstate.claimant,
+    Claimant = CState?CHSTATE.claimant,
     case Claimant of
         Node ->
             case claiming_members(CState) of
@@ -617,10 +817,10 @@ maybe_update_ring(Node, CState) ->
 
 %% @private
 maybe_remove_exiting(Node, CState) ->
-    Claimant = CState#chstate.claimant,
+    Claimant = CState?CHSTATE.claimant,
     case Claimant of
         Node ->
-            Exiting = get_members(CState#chstate.members, [exiting]),
+            Exiting = get_members(CState?CHSTATE.members, [exiting]),
             Changed = (Exiting /= []),
             CState2 =
                 lists:foldl(fun(ENode, CState0) ->
@@ -638,10 +838,10 @@ maybe_remove_exiting(Node, CState) ->
 
 %% @private
 maybe_handle_joining(Node, CState) ->
-    Claimant = CState#chstate.claimant,
+    Claimant = CState?CHSTATE.claimant,
     case Claimant of
         Node ->
-            Joining = get_members(CState#chstate.members, [joining]),
+            Joining = get_members(CState?CHSTATE.members, [joining]),
             Changed = (Joining /= []),
             CState2 =
                 lists:foldl(fun(JNode, CState0) ->
@@ -655,26 +855,27 @@ maybe_handle_joining(Node, CState) ->
 
 %% @private
 update_ring(CNode, CState) ->
-    Next0 = CState#chstate.next,
+    Next0 = CState?CHSTATE.next,
 
-    ?ROUT("Members: ~p~n", [CState#chstate.members]),
+    ?ROUT("Members: ~p~n", [CState?CHSTATE.members]),
     ?ROUT("Updating ring :: next0 : ~p~n", [Next0]),
 
     %% Remove tuples from next for removed nodes
-    InvalidMembers = get_members(CState#chstate.members, [invalid]),
+    InvalidMembers = get_members(CState?CHSTATE.members, [invalid]),
     Next2 = lists:filter(fun(NInfo) ->
-                                 {_, NextOwner, _} = next_owner(NInfo),
+                                 {Owner, NextOwner, _} = next_owner(NInfo),
+                                 not lists:member(Owner, InvalidMembers) and
                                  not lists:member(NextOwner, InvalidMembers)
                          end, Next0),
-    CState2 = CState#chstate{next=Next2},
+    CState2 = CState?CHSTATE{next=Next2},
 
     %% Transfer ownership after completed handoff
     {RingChanged1, CState3} = transfer_ownership(CState2),
-    ?ROUT("Updating ring :: next1 : ~p~n", [CState3#chstate.next]),
+    ?ROUT("Updating ring :: next1 : ~p~n", [CState3?CHSTATE.next]),
 
     %% Ressign leaving/inactive indices
     {RingChanged2, CState4} = reassign_indices(CState3),
-    ?ROUT("Updating ring :: next2 : ~p~n", [CState4#chstate.next]),
+    ?ROUT("Updating ring :: next2 : ~p~n", [CState4?CHSTATE.next]),
 
     %% Rebalance the ring as necessary
     Next3 = rebalance_ring(CNode, CState4),
@@ -690,15 +891,15 @@ update_ring(CNode, CState) ->
             NewS = ordsets:from_list([{Idx,O,NO} || {Idx,O,NO,_,_} <- Next4]),
             Diff = ordsets:subtract(NewS, OldS),
             [log(next, NChange) || NChange <- Diff],
-            RVsn2 = vclock:increment(CNode, CState4#chstate.rvsn),
+            RVsn2 = vclock:increment(CNode, CState4?CHSTATE.rvsn),
             ?ROUT("Updating ring :: next3 : ~p~n", [Next4]),
-            {true, CState4#chstate{next=Next4, rvsn=RVsn2}};
+            {true, CState4?CHSTATE{next=Next4, rvsn=RVsn2}};
         false ->
             {false, CState}
     end.
 
 %% @private
-transfer_ownership(CState=#chstate{next=Next}) ->
+transfer_ownership(CState=?CHSTATE{next=Next}) ->
     %% Remove already completed and transfered changes
     Next2 = lists:filter(fun(NInfo={Idx, _, _, _, _}) ->
                                  {_, NewOwner, S} = next_owner(NInfo),
@@ -721,18 +922,18 @@ transfer_ownership(CState=#chstate{next=Next}) ->
     NextChanged = (Next2 /= Next),
     RingChanged = (all_owners(CState) /= all_owners(CState2)),
     Changed = (NextChanged or RingChanged),
-    {Changed, CState2#chstate{next=Next2}}.
+    {Changed, CState2?CHSTATE{next=Next2}}.
 
 %% @private
-reassign_indices(CState=#chstate{next=Next}) ->
-    Invalid = get_members(CState#chstate.members, [invalid]),
+reassign_indices(CState=?CHSTATE{next=Next}) ->
+    Invalid = get_members(CState?CHSTATE.members, [invalid]),
     CState2 =
         lists:foldl(fun(Node, CState0) ->
                             remove_node(CState0, Node, invalid)
                     end, CState, Invalid),
     CState3 = case Next of
                   [] ->
-                      Leaving = get_members(CState#chstate.members, [leaving]),
+                      Leaving = get_members(CState?CHSTATE.members, [leaving]),
                       lists:foldl(fun(Node, CState0) ->
                                           remove_node(CState0, Node, leaving)
                                   end, CState2, Leaving);
@@ -742,11 +943,11 @@ reassign_indices(CState=#chstate{next=Next}) ->
     Owners1 = all_owners(CState),
     Owners2 = all_owners(CState3),
     RingChanged = (Owners1 /= Owners2),
-    NextChanged = (Next /= CState3#chstate.next),
+    NextChanged = (Next /= CState3?CHSTATE.next),
     {RingChanged or NextChanged, CState3}.
 
 %% @private
-rebalance_ring(_CNode, CState=#chstate{next=[]}) ->
+rebalance_ring(_CNode, CState=?CHSTATE{next=[]}) ->
     Members = claiming_members(CState),
     CState2 = lists:foldl(fun(Node, Ring0) ->
                                   riak_core_gossip:claim_until_balanced(Ring0,
@@ -759,13 +960,13 @@ rebalance_ring(_CNode, CState=#chstate{next=[]}) ->
             || {{Idx, PrevOwner}, {Idx, NewOwner}} <- Owners3,
                PrevOwner /= NewOwner],
     Next;
-rebalance_ring(_CNode, _CState=#chstate{next=Next}) ->
+rebalance_ring(_CNode, _CState=?CHSTATE{next=Next}) ->
     Next.
 
 %% @private
 handle_down_nodes(CState, Next) ->
-    LeavingMembers = get_members(CState#chstate.members, [leaving, invalid]),
-    DownMembers = get_members(CState#chstate.members, [down]),
+    LeavingMembers = get_members(CState?CHSTATE.members, [leaving, invalid]),
+    DownMembers = get_members(CState?CHSTATE.members, [down]),
     Next2 = [begin
                  OwnerLeaving = lists:member(O, LeavingMembers),
                  NextDown = lists:member(NO, DownMembers),
@@ -785,7 +986,7 @@ handle_down_nodes(CState, Next) ->
     Next3.
 
 %% @private
-all_next_owners(#chstate{next=Next}) ->
+all_next_owners(?CHSTATE{next=Next}) ->
     [{Idx, NextOwner} || {Idx, _, NextOwner, _, _} <- Next].
 
 %% @private
@@ -826,9 +1027,9 @@ remove_node(CState, Node, Status, Indices) ->
 
     %% Unlike rebalance_ring, remove_node can be called when Next is non-empty,
     %% therefore we need to merge the values. Original Next has priority.
-    Next2 = lists:ukeysort(1, CState#chstate.next ++ Next),
+    Next2 = lists:ukeysort(1, CState?CHSTATE.next ++ Next),
     CState2 = change_owners(CState, Reassign),
-    CState2#chstate{next=Next2}.
+    CState2?CHSTATE{next=Next2}.
 
 %% ====================================================================
 %% Internal functions
@@ -851,67 +1052,87 @@ internal_reconcile(State, OtherState) ->
     State2 = update_seen(VNode, State),
     OtherState2 = update_seen(VNode, OtherState),
     Seen = reconcile_seen(State2, OtherState2),
-    State3 = State2#chstate{seen=Seen},
-    OtherState3 = OtherState2#chstate{seen=Seen},
+    State3 = State2?CHSTATE{seen=Seen},
+    OtherState3 = OtherState2?CHSTATE{seen=Seen},
     SeenChanged = not equal_seen(State, State3),
 
     %% Try to reconcile based on vector clock, chosing the most recent state.
-    VC1 = State3#chstate.vclock,
-    VC2 = OtherState3#chstate.vclock,
-    VC3 = vclock:merge([VC1, VC2]),
+    VC1 = State3?CHSTATE.vclock,
+    VC2 = OtherState3?CHSTATE.vclock,
+    %% vclock:merge has different results depending on order of input vclocks
+    %% when input vclocks have same counter but different timestamps. We need
+    %% merge to be deterministic here, hence the additional logic.
+    VMerge1 = vclock:merge([VC1, VC2]),
+    VMerge2 = vclock:merge([VC2, VC1]),
+    case {vclock:equal(VMerge1, VMerge2), VMerge1 < VMerge2} of
+        {true, _} ->
+            VC3 = VMerge1;
+        {_, true} ->
+            VC3 = VMerge1;
+        {_, false} ->
+            VC3 = VMerge2
+    end,
+
     Newer = vclock:descends(VC1, VC2),
     Older = vclock:descends(VC2, VC1),
     Equal = equal_cstate(State3, OtherState3),
     case {Equal, Newer, Older} of
         {_, true, false} ->
-            {SeenChanged, State3#chstate{vclock=VC3}};
+            {SeenChanged, State3?CHSTATE{vclock=VC3}};
         {_, false, true} ->
-            {true, OtherState3#chstate{nodename=VNode, vclock=VC3}};
+            {true, OtherState3?CHSTATE{nodename=VNode, vclock=VC3}};
         {true, _, _} ->
-            {SeenChanged, State3#chstate{vclock=VC3}};
+            {SeenChanged, State3?CHSTATE{vclock=VC3}};
         {_, true, true} ->
-            throw("Equal vclocks, but cstate unequal");
+            %% Exceptional condition that should only occur during
+            %% rolling upgrades and manual setting of the ring.
+            %% Merge as a divergent case.
+            State4 = reconcile_divergent(VNode, State3, OtherState3),
+            {true, State4?CHSTATE{nodename=VNode}};
         {_, false, false} ->
             %% Unable to reconcile based on vector clock, merge rings.
             State4 = reconcile_divergent(VNode, State3, OtherState3),
-            {true, State4#chstate{nodename=VNode}}
+            {true, State4?CHSTATE{nodename=VNode}}
     end.
 
 %% @private
 reconcile_divergent(VNode, StateA, StateB) ->
-    VClock = vclock:increment(VNode, vclock:merge([StateA#chstate.vclock,
-                                                   StateB#chstate.vclock])),
+    VClock = vclock:increment(VNode, vclock:merge([StateA?CHSTATE.vclock,
+                                                   StateB?CHSTATE.vclock])),
     Members = reconcile_members(StateA, StateB),
-    Meta = merge_meta(StateA#chstate.meta, StateB#chstate.meta),
+    Meta = merge_meta(StateA?CHSTATE.meta, StateB?CHSTATE.meta),
     NewState = reconcile_ring(StateA, StateB, get_members(Members)),
-    NewState#chstate{vclock=VClock, members=Members, meta=Meta}.
+    NewState?CHSTATE{vclock=VClock, members=Members, meta=Meta}.
 
 %% @private
 %% @doc Merge two members list using status vector clocks when possible,
 %%      and falling back to manual merge for divergent cases.
 reconcile_members(StateA, StateB) ->
     orddict:merge(
-      fun(_K, {Valid1, VC1}, {Valid2, VC2}) ->
+      fun(_K, {Valid1, VC1, Meta1}, {Valid2, VC2, Meta2}) ->
               New1 = vclock:descends(VC1, VC2),
               New2 = vclock:descends(VC2, VC1),
               MergeVC = vclock:merge([VC1, VC2]),
               case {New1, New2} of
                   {true, false} ->
-                      {Valid1, MergeVC};
+                      MergeMeta = lists:ukeysort(1, Meta1 ++ Meta2),
+                      {Valid1, MergeVC, MergeMeta};
                   {false, true} ->
-                      {Valid2, MergeVC};
+                      MergeMeta = lists:ukeysort(1, Meta2 ++ Meta1),
+                      {Valid2, MergeVC, MergeMeta};
                   {_, _} ->
-                      {merge_status(Valid1, Valid2), MergeVC}
+                      MergeMeta = lists:ukeysort(1, Meta1 ++ Meta2),
+                      {merge_status(Valid1, Valid2), MergeVC, MergeMeta}
               end
       end,
-      StateA#chstate.members,
-      StateB#chstate.members).
+      StateA?CHSTATE.members,
+      StateB?CHSTATE.members).
 
 %% @private
 reconcile_seen(StateA, StateB) ->
     orddict:merge(fun(_, VC1, VC2) ->
                           vclock:merge([VC1, VC2])
-                  end, StateA#chstate.seen, StateB#chstate.seen).
+                  end, StateA?CHSTATE.seen, StateB?CHSTATE.seen).
 
 %% @private
 merge_next_status(complete, _) ->
@@ -965,8 +1186,8 @@ substitute(Idx, TL1, TL2) ->
               end, TL1).
 
 %% @private
-reconcile_ring(StateA=#chstate{claimant=Claimant1, rvsn=VC1, next=Next1},
-               StateB=#chstate{claimant=Claimant2, rvsn=VC2, next=Next2},
+reconcile_ring(StateA=?CHSTATE{claimant=Claimant1, rvsn=VC1, next=Next1},
+               StateB=?CHSTATE{claimant=Claimant2, rvsn=VC2, next=Next2},
                Members) ->
     %% Try to reconcile based on the ring version (rvsn) vector clock.
     V1Newer = vclock:descends(VC1, VC2),
@@ -974,15 +1195,14 @@ reconcile_ring(StateA=#chstate{claimant=Claimant1, rvsn=VC1, next=Next1},
     EqualVC = (vclock:equal(VC1, VC2) and (Claimant1 =:= Claimant2)),
     case {EqualVC, V1Newer, V2Newer} of
         {true, _, _} ->
-            %%?assertEqual(StateA#chstate.chring, StateB#chstate.chring),
             Next = reconcile_next(Next1, Next2),
-            StateA#chstate{next=Next};
+            StateA?CHSTATE{next=Next};
         {_, true, false} ->
             Next = reconcile_divergent_next(Next1, Next2),
-            StateA#chstate{next=Next};
+            StateA?CHSTATE{next=Next};
         {_, false, true} ->
             Next = reconcile_divergent_next(Next2, Next1),
-            StateB#chstate{next=Next};
+            StateB?CHSTATE{next=Next};
         {_, _, _} ->
             %% Ring versions were divergent, so fall back to reconciling based
             %% on claimant. Under normal operation, divergent ring versions
@@ -995,10 +1215,10 @@ reconcile_ring(StateA=#chstate{claimant=Claimant1, rvsn=VC1, next=Next1},
             case {CValid1, CValid2} of
                 {true, false} ->
                     Next = reconcile_divergent_next(Next1, Next2),
-                    StateA#chstate{next=Next};
+                    StateA?CHSTATE{next=Next};
                 {false, true} ->
                     Next = reconcile_divergent_next(Next2, Next1),
-                    StateB#chstate{next=Next};
+                    StateB?CHSTATE{next=Next};
                 {false, false} ->
                     %% This can occur when removed/down nodes are still
                     %% up and gossip to each other. We need to pick a
@@ -1008,10 +1228,10 @@ reconcile_ring(StateA=#chstate{claimant=Claimant1, rvsn=VC1, next=Next1},
                     case Claimant1 < Claimant2 of
                         true ->
                             Next = reconcile_divergent_next(Next1, Next2),
-                            StateA#chstate{next=Next};
+                            StateA?CHSTATE{next=Next};
                         false ->
                             Next = reconcile_divergent_next(Next2, Next1),
-                            StateB#chstate{next=Next}
+                            StateB?CHSTATE{next=Next}
                     end;
                 {true, true} ->
                     %% This should never happen in normal practice.
@@ -1019,10 +1239,10 @@ reconcile_ring(StateA=#chstate{claimant=Claimant1, rvsn=VC1, next=Next1},
                     case Claimant1 < Claimant2 of
                         true ->
                             Next = reconcile_divergent_next(Next1, Next2),
-                            StateA#chstate{next=Next};
+                            StateA?CHSTATE{next=Next};
                         false ->
                             Next = reconcile_divergent_next(Next2, Next1),
-                            StateB#chstate{next=Next}
+                            StateB?CHSTATE{next=Next}
                     end
             end
     end.
@@ -1056,7 +1276,7 @@ merge_status(_, _) ->
     invalid.
 
 %% @private
-transfer_complete(CState=#chstate{next=Next, vclock=VClock}, Idx, Mod) ->
+transfer_complete(CState=?CHSTATE{next=Next, vclock=VClock}, Idx, Mod) ->
     {Idx, Owner, NextOwner, Transfers, Status} = lists:keyfind(Idx, 1, Next),
     Transfers2 = ordsets:add_element(Mod, Transfers),
     VNodeMods =
@@ -1072,7 +1292,7 @@ transfer_complete(CState=#chstate{next=Next, vclock=VClock}, Idx, Mod) ->
     Next2 = lists:keyreplace(Idx, 1, Next,
                              {Idx, Owner, NextOwner, Transfers2, Status2}),
     VClock2 = vclock:increment(Owner, VClock),
-    CState#chstate{next=Next2, vclock=VClock2}.
+    CState?CHSTATE{next=Next2, vclock=VClock2}.
 
 %% @private
 next_owner({_, Owner, NextOwner, _Transfers, Status}) ->
@@ -1084,49 +1304,49 @@ get_members(Members) ->
 
 %% @private
 get_members(Members, Types) ->
-    [Node || {Node, {V, _}} <- Members, lists:member(V, Types)].
+    [Node || {Node, {V, _, _}} <- Members, lists:member(V, Types)].
 
 %% @private
 set_member(Node, CState, Member, Status) ->
-    VClock = vclock:increment(Node, CState#chstate.vclock),
+    VClock = vclock:increment(Node, CState?CHSTATE.vclock),
     CState2 = set_member(Node, CState, Member, Status, same_vclock),
-    CState2#chstate{vclock=VClock}.
+    CState2?CHSTATE{vclock=VClock}.
 
 %% @private
 set_member(Node, CState, Member, Status, same_vclock) ->
     Members2 = orddict:update(Member,
-                              fun({_, VC}) ->
-                                      {Status, vclock:increment(Node, VC)}
+                              fun({_, VC, MD}) ->
+                                      {Status, vclock:increment(Node, VC), MD}
                               end,
                               {Status, vclock:increment(Node,
-                                                        vclock:fresh())},
-                              CState#chstate.members),
-    CState#chstate{members=Members2}.
+                                                        vclock:fresh()), []},
+                              CState?CHSTATE.members),
+    CState?CHSTATE{members=Members2}.
 
 %% @private
-update_seen(Node, CState=#chstate{vclock=VClock, seen=Seen}) ->
+update_seen(Node, CState=?CHSTATE{vclock=VClock, seen=Seen}) ->
     Seen2 = orddict:update(Node,
                            fun(SeenVC) ->
                                    vclock:merge([SeenVC, VClock])
                            end,
                            VClock, Seen),
-    CState#chstate{seen=Seen2}.
+    CState?CHSTATE{seen=Seen2}.
 
 %% @private
 equal_cstate(StateA, StateB) ->
     equal_cstate(StateA, StateB, false).
 
 equal_cstate(StateA, StateB, Verbose) ->
-    T1 = equal_members(StateA#chstate.members, StateB#chstate.members),
-    T2 = vclock:equal(StateA#chstate.rvsn, StateB#chstate.rvsn),
+    T1 = equal_members(StateA?CHSTATE.members, StateB?CHSTATE.members),
+    T2 = vclock:equal(StateA?CHSTATE.rvsn, StateB?CHSTATE.rvsn),
     T3 = equal_seen(StateA, StateB),
     T4 = equal_rings(StateA, StateB),
 
     %% Clear fields checked manually and test remaining through equality.
     %% Note: We do not consider cluster name in equality.
-    StateA2=StateA#chstate{nodename=ok, members=ok, vclock=ok, rvsn=ok,
+    StateA2=StateA?CHSTATE{nodename=ok, members=ok, vclock=ok, rvsn=ok,
                            seen=ok, chring=ok, meta=ok, clustername=ok},
-    StateB2=StateB#chstate{nodename=ok, members=ok, vclock=ok, rvsn=ok,
+    StateB2=StateB?CHSTATE{nodename=ok, members=ok, vclock=ok, rvsn=ok,
                            seen=ok, chring=ok, meta=ok, clustername=ok},
     T5 = (StateA2 =:= StateB2),
 
@@ -1137,7 +1357,7 @@ equal_cstate(StateA, StateB, Verbose) ->
             Failed =
                 lists:filter(fun({Test,_}) -> Test =:= false end,
                              [{T1, members},
-                              {T2, vclock},
+                              {T2, rvsn},
                               {T3, seen},
                               {T4, ring},
                               {T5, other}]),
@@ -1146,9 +1366,10 @@ equal_cstate(StateA, StateB, Verbose) ->
 
 %% @private
 equal_members(M1, M2) ->
-    L = orddict:merge(fun(_, {Status1, VC1}, {Status2, VC2}) ->
+    L = orddict:merge(fun(_, {Status1, VC1, Meta1}, {Status2, VC2, Meta2}) ->
                               (Status1 =:= Status2) andalso
-                                  vclock:equal(VC1, VC2)
+                                  vclock:equal(VC1, VC2) andalso
+                                  (Meta1 =:= Meta2)
                       end, M1, M2),
     {_, R} = lists:unzip(L),
     lists:all(fun(X) -> X =:= true end, R).
@@ -1164,8 +1385,8 @@ equal_seen(StateA, StateB) ->
     lists:all(fun(X) -> X =:= true end, R).
 
 %% @private
-filtered_seen(State=#chstate{seen=Seen}) ->
-    case get_members(State#chstate.members) of
+filtered_seen(State=?CHSTATE{seen=Seen}) ->
+    case get_members(State?CHSTATE.members) of
         [] ->
             Seen;
         Members ->
@@ -1192,11 +1413,11 @@ sequence_test() ->
     I1 = 365375409332725729550921208179070754913983135744,
     I2 = 730750818665451459101842416358141509827966271488,
     A = fresh(4,a),
-    B1 = A#chstate{nodename=b},
+    B1 = A?CHSTATE{nodename=b},
     B2 = transfer_node(I1, b, B1),
     ?assertEqual(B2, transfer_node(I1, b, B2)),
     {no_change, A1} = reconcile(B1,A),
-    C1 = A#chstate{nodename=c},
+    C1 = A?CHSTATE{nodename=c},
     C2 = transfer_node(I1, c, C1),
     {new_ring, A2} = reconcile(C2,A1),
     {new_ring, A3} = reconcile(B2,A2),
@@ -1204,8 +1425,8 @@ sequence_test() ->
     {new_ring, C4} = reconcile(A3,C3),
     {new_ring, A4} = reconcile(C4,A3),
     {new_ring, B3} = reconcile(A4,B2),
-    ?assertEqual(A4#chstate.chring, B3#chstate.chring),
-    ?assertEqual(B3#chstate.chring, C4#chstate.chring).
+    ?assertEqual(A4?CHSTATE.chring, B3?CHSTATE.chring),
+    ?assertEqual(B3?CHSTATE.chring, C4?CHSTATE.chring).
 
 param_fresh_test() ->
     application:set_env(riak_core,ring_creation_size,4),
@@ -1230,7 +1451,7 @@ reconcile_test() ->
                  equal_cstate(Ring1, Ring2, true)),
     RingB0 = fresh(2,node()),
     RingB1 = transfer_node(0,x,RingB0),
-    RingB2 = RingB1#chstate{nodename=b},
+    RingB2 = RingB1?CHSTATE{nodename=b},
     ?assertMatch({no_change,_},reconcile(Ring1,RingB2)),
     {no_change, RingB3} = reconcile(Ring1,RingB2),
     ?assert(equal_cstate(RingB2, RingB3)).
@@ -1239,18 +1460,18 @@ metadata_inequality_test() ->
     Ring0 = fresh(2,node()),
     Ring1 = update_meta(key,val,Ring0),
     ?assertNot(equal_rings(Ring0,Ring1)),
-    ?assertEqual(Ring1#chstate.meta,
-                 merge_meta(Ring0#chstate.meta,Ring1#chstate.meta)),
+    ?assertEqual(Ring1?CHSTATE.meta,
+                 merge_meta(Ring0?CHSTATE.meta,Ring1?CHSTATE.meta)),
     timer:sleep(1001), % ensure that lastmod is at least a second later
     Ring2 = update_meta(key,val2,Ring1),
     ?assertEqual(get_meta(key,Ring2),
-                 get_meta(key,#chstate{meta=
-                            merge_meta(Ring1#chstate.meta,
-                                       Ring2#chstate.meta)})),
+                 get_meta(key,?CHSTATE{meta=
+                            merge_meta(Ring1?CHSTATE.meta,
+                                       Ring2?CHSTATE.meta)})),
     ?assertEqual(get_meta(key,Ring2),
-                 get_meta(key,#chstate{meta=
-                            merge_meta(Ring2#chstate.meta,
-                                       Ring1#chstate.meta)})).
+                 get_meta(key,?CHSTATE{meta=
+                            merge_meta(Ring2?CHSTATE.meta,
+                                       Ring1?CHSTATE.meta)})).
 rename_test() ->
     Ring0 = fresh(2, node()),
     Ring = rename_node(Ring0, node(), 'new@new'),
@@ -1297,11 +1518,12 @@ membership_test() ->
     {_, RingA7} = reconcile(RingB2, RingA6),
     ?assertEqual([nodeA, nodeB, nodeC], all_members(RingA7)),
 
-    Priority = [{invalid,1}, {valid,2}, {exiting,3}, {leaving,4}],
+    Priority = [{invalid,1}, {down,2}, {joining,3}, {valid,4}, {exiting,5},
+                {leaving,6}],
     RingX1 = fresh(nodeA),
     RingX2 = add_member(nodeA, RingX1, nodeB),
     RingX3 = add_member(nodeA, RingX2, nodeC),
-    ?assertEqual(valid, member_status(RingX3, nodeC)),
+    ?assertEqual(joining, member_status(RingX3, nodeC)),
 
     %% Parallel/sibling status changes merge based on priority
     [begin
@@ -1336,38 +1558,38 @@ ring_version_test() ->
     Ring2 = add_member(node(), Ring1, nodeA),
     Ring3 = add_member(node(), Ring2, nodeB),
     ?assertEqual(nodeA, claimant(Ring3)),
-    #chstate{rvsn=RVsn, vclock=VClock} = Ring3,
+    ?CHSTATE{rvsn=RVsn, vclock=VClock} = Ring3,
 
     RingA1 = transfer_node(0, nodeA, Ring3),
-    RingA2 = RingA1#chstate{vclock=vclock:increment(nodeA, VClock)},
+    RingA2 = RingA1?CHSTATE{vclock=vclock:increment(nodeA, VClock)},
     RingB1 = transfer_node(0, nodeB, Ring3),
-    RingB2 = RingB1#chstate{vclock=vclock:increment(nodeB, VClock)},
+    RingB2 = RingB1?CHSTATE{vclock=vclock:increment(nodeB, VClock)},
 
     %% RingA1 has most recent ring version
-    {_, RingT1} = reconcile(RingA2#chstate{rvsn=vclock:increment(nodeA, RVsn)},
+    {_, RingT1} = reconcile(RingA2?CHSTATE{rvsn=vclock:increment(nodeA, RVsn)},
                             RingB2),
     ?assertEqual(nodeA, index_owner(RingT1,0)),
 
     %% RingB1 has most recent ring version
     {_, RingT2} = reconcile(RingA2,
-                            RingB2#chstate{rvsn=vclock:increment(nodeB, RVsn)}),
+                            RingB2?CHSTATE{rvsn=vclock:increment(nodeB, RVsn)}),
     ?assertEqual(nodeB, index_owner(RingT2,0)),
 
     %% Divergent ring versions, merge based on claimant
-    {_, RingT3} = reconcile(RingA2#chstate{rvsn=vclock:increment(nodeA, RVsn)},
-                            RingB2#chstate{rvsn=vclock:increment(nodeB, RVsn)}),
+    {_, RingT3} = reconcile(RingA2?CHSTATE{rvsn=vclock:increment(nodeA, RVsn)},
+                            RingB2?CHSTATE{rvsn=vclock:increment(nodeB, RVsn)}),
     ?assertEqual(nodeA, index_owner(RingT3,0)),
 
     %% Divergent ring versions, one valid claimant. Merge on claimant.
-    RingA3 = RingA2#chstate{claimant=nodeA},
+    RingA3 = RingA2?CHSTATE{claimant=nodeA},
     RingA4 = remove_member(nodeA, RingA3, nodeB),
-    RingB3 = RingB2#chstate{claimant=nodeB},
+    RingB3 = RingB2?CHSTATE{claimant=nodeB},
     RingB4 = remove_member(nodeB, RingB3, nodeA),
-    {_, RingT4} = reconcile(RingA4#chstate{rvsn=vclock:increment(nodeA, RVsn)},
-                            RingB3#chstate{rvsn=vclock:increment(nodeB, RVsn)}),
+    {_, RingT4} = reconcile(RingA4?CHSTATE{rvsn=vclock:increment(nodeA, RVsn)},
+                            RingB3?CHSTATE{rvsn=vclock:increment(nodeB, RVsn)}),
     ?assertEqual(nodeA, index_owner(RingT4,0)),
-    {_, RingT5} = reconcile(RingA3#chstate{rvsn=vclock:increment(nodeA, RVsn)},
-                            RingB4#chstate{rvsn=vclock:increment(nodeB, RVsn)}),
+    {_, RingT5} = reconcile(RingA3?CHSTATE{rvsn=vclock:increment(nodeA, RVsn)},
+                            RingB4?CHSTATE{rvsn=vclock:increment(nodeB, RVsn)}),
     ?assertEqual(nodeB, index_owner(RingT5,0)).
 
 reconcile_next_test() ->
@@ -1391,5 +1613,5 @@ reconcile_next_test() ->
              {1, nodeA, nodeB, [], awaiting},
              {2, nodeA, nodeB, [riak_kv_vnode, riak_pipe_vnode], complete}],
     ?assertEqual(Next6, reconcile_divergent_next(Next4, Next5)).
-    
+
 -endif.

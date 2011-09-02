@@ -39,14 +39,20 @@ member_status() ->
                             RingPercent = length(Indices) * 100 / RingSize,
                             NextPercent = length(NextIndices) * 100 / RingSize,
 
+                            StatusOut =
+                                case riak_core_gossip:legacy_gossip(Node) of
+                                    true -> "(legacy)";
+                                    false -> Status
+                                end,
+                            
                             case IsPending of
                                 true ->
-                                    io:format("~-7s  ~5.1f%    ~5.1f%    ~p~n",
-                                              [Status, RingPercent,
+                                    io:format("~-8s  ~5.1f%    ~5.1f%    ~p~n",
+                                              [StatusOut, RingPercent,
                                                NextPercent, Node]);
                                 false ->
-                                    io:format("~-7s  ~5.1f%      --      ~p~n",
-                                              [Status, RingPercent, Node])
+                                    io:format("~-8s  ~5.1f%      --      ~p~n",
+                                              [StatusOut, RingPercent, Node])
                             end,
                             case Status of
                                 joining ->
@@ -67,12 +73,18 @@ member_status() ->
     ok.
 
 ring_status() ->
-    {Claimant, RingReady, Down, MarkedDown, Changes} =
-        riak_core_status:ring_status(),
-    claimant_status(Claimant, RingReady),
-    ownership_status(Down, Changes),
-    unreachable_status(Down -- MarkedDown),
-    ok.
+    case riak_core_gossip:legacy_gossip() of
+        true ->
+            io:format("Currently in legacy gossip mode.~n"),
+            ok;
+        false ->
+            {Claimant, RingReady, Down, MarkedDown, Changes} =
+                riak_core_status:ring_status(),
+            claimant_status(Claimant, RingReady),
+            ownership_status(Down, Changes),
+            unreachable_status(Down -- MarkedDown),
+            ok
+    end.
 
 claimant_status(Claimant, RingReady) ->
     io:format("~34..=s Claimant ~35..=s~n", ["", ""]),

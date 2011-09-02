@@ -14,6 +14,7 @@
              merkerl,
              priority_queue,
              process_proxy,
+             riak_core_gossip_legacy,
              riak_core,
              riak_core_apl,
              riak_core_app,
