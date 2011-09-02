@@ -129,8 +129,10 @@ http_ip_and_port_test_case() ->
     ?assertEqual({"127.0.0.1", 8098}, http_ip_and_port()),
     %% Test the config for 0.14 and later
     application:set_env(riak_core, http, [{"localhost", 9000}]),
-    ?assertEqual({"localhost", 9000}, http_ip_and_port()).
+    ?assertEqual({"localhost", 9000}, http_ip_and_port()),
 
+    [application:unset_env(riak_core, K) || K <- [web_ip, web_port, http]],
+    ok.
 
 default_bucket_props_test_case() ->
     DefaultBucketProps = [{allow_mult,false},
