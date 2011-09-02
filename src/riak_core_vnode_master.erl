@@ -77,14 +77,18 @@ command({Index,Node}, Msg, Sender, VMaster) ->
     gen_server:cast({VMaster, Node}, make_request(Msg, Sender, Index)).
 
 %% Send a command to a covering set of vnodes
-coverage(Msg, CoverageVNodes, Keyspaces, {Type, Ref, From}, VMaster) ->
+coverage(Msg, CoverageVNodes, Keyspaces, {Type, Ref, From}, VMaster)
+  when is_list(CoverageVNodes) ->
     [gen_server:cast({VMaster, Node}, 
                      make_coverage_request(Msg,
                                            Keyspaces, 
                                            {Type, {Ref, {Index, Node}}, From},
                                            Index)) ||
-        {Index, Node} <- CoverageVNodes].
-
+        {Index, Node} <- CoverageVNodes];
+coverage(Msg, {Index, Node}, Keyspaces, Sender, VMaster) ->
+    gen_server:cast({VMaster, Node}, 
+                    make_coverage_request(Msg, Keyspaces, Sender, Index)).
+    
 %% Send the command to an individual Index/Node combination, but also
 %% return the pid for the vnode handling the request, as `{ok,
 %% VnodePid}'.

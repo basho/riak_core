@@ -175,8 +175,24 @@ vnode_command(Sender, Request, State=#state{index=Index,
             {stop, Reason, State#state{modstate=NewModState}}
     end.
 
-vnode_coverage(Sender, Request, KeySpaces, State=#state{mod=Mod, modstate=ModState}) ->
-    case Mod:handle_coverage(Request, KeySpaces, Sender, ModState) of
+vnode_coverage(Sender, Request, KeySpaces, State=#state{index=Index,
+                                                        mod=Mod,
+                                                        modstate=ModState,
+                                                        forward=Forward}) ->
+    %% Check if we should forward
+    case Forward of
+        undefined ->
+            Action = Mod:handle_coverage(Request, KeySpaces, Sender, ModState);
+        NextOwner ->
+            lager:debug("Forwarding coverage ~p -> ~p: ~p~n", [node(), NextOwner, Index]),
+            riak_core_vnode_master:coverage(Request, {Index, NextOwner},
+                                            KeySpaces, Sender,
+                                            riak_core_vnode_master:reg_name(Mod)),
+            Action = continue
+    end,
+    case Action of
+        continue ->
+            continue(State, ModState);
         {reply, Reply, NewModState} ->
             reply(Sender, Reply),
             continue(State, NewModState);
