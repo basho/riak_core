@@ -37,6 +37,7 @@
          prune_ringfiles/0,
          read_ringfile/1,
          find_latest_ringfile/0,
+         force_update/0,
          do_write_ringfile/1,
          ring_trans/2,
          set_cluster_name/1,
@@ -91,6 +92,17 @@ ring_trans(Fun, Args) ->
 
 set_cluster_name(Name) ->
     gen_server2:call(?MODULE, {set_cluster_name, Name}, infinity).
+
+%% @doc Exposed for support/debug purposes. Forces the node to change its
+%%      ring in a manner that will trigger reconciliation on gossip.
+force_update() ->
+    ring_trans(
+      fun(Ring, _) ->
+              NewRing = riak_core_ring:update_member_meta(node(), Ring, node(),
+                                                          unused, now()),
+              {new_ring, NewRing}
+      end, []),
+    ok.
 
 do_write_ringfile(Ring) ->
     {{Year, Month, Day},{Hour, Minute, Second}} = calendar:universal_time(),
