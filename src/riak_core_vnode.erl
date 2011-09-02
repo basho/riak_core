@@ -136,7 +136,27 @@ continue(State) ->
 
 continue(State, NewModState) ->
     continue(State#state{modstate=NewModState}).
-    
+
+%% Active vnodes operate in three states: normal, handoff, and forwarding.
+%%
+%% In the normal state, vnode commands are passed to handle_command. When
+%% a handoff is trigger, handoff_node is set to the target node and the vode
+%% is said to be in the handoff state.
+%%
+%% In the handoff state, vnode commands are passed to handle_handoff_command.
+%% However, a vnode may be blocked during handoff (and therefore not servicing
+%% commands) if the handoff procedure is non-blocking (eg. in riak_kv when not
+%% using async fold).
+%%
+%% After handoff, a vnode may move into forwarding state. The forwarding state
+%% is a product of the new gossip/membership code and will not occur if the
+%% node is running in legacy mode. The forwarding state represents the case
+%% where the vnode has already handed its data off to the new owner, but the
+%% new owner is not yet listed as the current owner in the ring. This may occur
+%% because additional vnodes are still waiting to handoff their data to the
+%% new owner, or simply because the ring has yet to converge on the new owner.
+%% In the forwarding state, all vnode commands and coverage commands are
+%% forwarded to the new owner for processing.
 
 update_forwarding_mode(Ring, State=#state{index=Index, mod=Mod}) ->
     Node = node(),
