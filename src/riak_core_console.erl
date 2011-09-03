@@ -19,9 +19,9 @@
 %% -------------------------------------------------------------------
 
 -module(riak_core_console).
--export([member_status/0, ring_status/0]).
+-export([member_status/1, ring_status/1]).
 
-member_status() ->
+member_status([]) ->
     io:format("~33..=s Membership ~34..=s~n", ["", ""]),
     io:format("Status     Ring    Pending    Node~n"),
     io:format("~79..-s~n", [""]),
@@ -72,7 +72,7 @@ member_status() ->
               [Valid, Leaving, Exiting, Joining, Down]),
     ok.
 
-ring_status() ->
+ring_status([]) ->
     case riak_core_gossip:legacy_gossip() of
         true ->
             io:format("Currently in legacy gossip mode.~n"),
