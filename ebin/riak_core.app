@@ -67,7 +67,8 @@
                   sasl,
                   crypto,
                   riak_sysmon,
-                  webmachine
+                  webmachine,
+                  os_mon
                  ]},
   {mod, { riak_core_app, []}},
   {env, [

@@ -46,14 +46,8 @@
          }).
 
 %% @spec start_link() -> {ok,Pid} | ignore | {error,Error}
-%% @doc Start the server.  Also start the os_mon application, if it's
-%%      not already running.
+%% @doc Start the server.
 start_link() ->
-    case application:start(os_mon) of
-        ok -> ok;
-        {error, {already_started, os_mon}} -> ok
-    %% die if os_mon doesn't start
-    end,
     gen_server2:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 %% @spec get_stats() -> proplist()
