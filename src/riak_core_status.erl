@@ -20,7 +20,7 @@
 %%
 %% -------------------------------------------------------------------
 -module(riak_core_status).
--export([ringready/0, transfers/0]).
+-export([ringready/0, transfers/0, ring_status/0]).
 
 -spec(ringready() -> {ok, [atom()]} | {error, any()}).
 ringready() ->
@@ -64,6 +64,54 @@ transfers() ->
         end,
     {Down, lists:foldl(F, [], Rings)}.
 
+ring_status() ->
+    %% Determine which nodes are reachable as well as what vnode modules
+    %% are running on each node.
+    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
+    {AllMods, Down} =
+        riak_core_util:rpc_every_member_ann(riak_core, vnode_modules, [], 1000),
+
+    %% Check if the claimant is running and if it believes the ring is ready
+    Claimant = riak_core_ring:claimant(Ring),
+    case rpc:call(Claimant, riak_core_ring, ring_ready, [], 5000) of
+        {badrpc, _} ->
+            Down2 = lists:usort([Claimant|Down]),
+            RingReady = undefined;
+        RingReady ->
+            Down2 = Down,
+            RingReady = RingReady
+    end,
+
+    %% Get the list of pending ownership changes
+    Changes = riak_core_ring:pending_changes(Ring),
+    %% Group pending changes by (Owner, NextOwner)
+    Merged = lists:foldl(
+               fun({Idx, Owner, NextOwner, Mods, Status}, Acc) ->
+                       orddict:append({Owner, NextOwner},
+                                      {Idx, Mods, Status},
+                                      Acc)
+               end, [], Changes),
+
+    %% For each pending transfer, determine which vnode modules have completed
+    %% handoff and which we are still waiting on.
+    %% Final result is of the form:
+    %%   [{Owner, NextOwner}, [{Index, WaitingMods, CompletedMods, Status}]]
+    TransferStatus =
+        orddict:map(
+          fun({Owner, _}, Transfers) ->
+                  case orddict:find(Owner, AllMods) of
+                      error ->
+                          [{Idx, down, Mods, Status}
+                           || {Idx, Mods, Status} <- Transfers];
+                      {ok, OwnerMods} ->
+                          NodeMods = [Mod || {_App, Mod} <- OwnerMods],
+                          [{Idx, NodeMods -- Mods, Mods, Status}
+                           || {Idx, Mods, Status} <- Transfers]
+                  end
+          end, Merged),
+
+    MarkedDown = riak_core_ring:down_members(Ring),
+    {Claimant, RingReady, Down2, MarkedDown, TransferStatus}.
 
 %% ===================================================================
 %% Internal functions
@@ -72,8 +120,9 @@ transfers() ->
 %% Retrieve the rings for all other nodes by RPC
 get_rings() ->
     {RawRings, Down} = riak_core_util:rpc_every_member(
-                         riak_core_ring_manager, get_my_ring, [], 30000),
-    Rings = orddict:from_list([{riak_core_ring:owner_node(R), R} || {ok, R} <- RawRings]),
+                         riak_core_ring_manager, get_raw_ring, [], 30000),
+    RawRings2 = [riak_core_ring:upgrade(R) || {ok, R} <- RawRings],
+    Rings = orddict:from_list([{riak_core_ring:owner_node(R), R} || R <- RawRings2]),
     {lists:sort(Down), Rings}.
 
 %% Produce a hash of the 'chash' portion of the ring

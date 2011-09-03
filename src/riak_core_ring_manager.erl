@@ -32,14 +32,17 @@
          get_my_ring/0,
          get_raw_ring/0,
          refresh_my_ring/0,
+         refresh_ring/2,
          set_my_ring/1,
          write_ringfile/0,
          prune_ringfiles/0,
          read_ringfile/1,
          find_latest_ringfile/0,
+         force_update/0,
          do_write_ringfile/1,
          ring_trans/2,
          run_fixups/3,
+         set_cluster_name/1,
          stop/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -82,6 +85,9 @@ get_raw_ring() ->
 refresh_my_ring() ->
     gen_server2:call(?MODULE, refresh_my_ring, infinity).
 
+refresh_ring(Node, ClusterName) ->
+    gen_server2:cast({?MODULE, Node}, {refresh_my_ring, ClusterName}).
+
 %% @spec set_my_ring(riak_core_ring:riak_core_ring()) -> ok
 set_my_ring(Ring) ->
     gen_server2:call(?MODULE, {set_my_ring, Ring}, infinity).
@@ -94,6 +100,19 @@ write_ringfile() ->
 ring_trans(Fun, Args) ->
     gen_server2:call(?MODULE, {ring_trans, Fun, Args}, infinity).
 
+set_cluster_name(Name) ->
+    gen_server2:call(?MODULE, {set_cluster_name, Name}, infinity).
+
+%% @doc Exposed for support/debug purposes. Forces the node to change its
+%%      ring in a manner that will trigger reconciliation on gossip.
+force_update() ->
+    ring_trans(
+      fun(Ring, _) ->
+              NewRing = riak_core_ring:update_member_meta(node(), Ring, node(),
+                                                          unused, now()),
+              {new_ring, NewRing}
+      end, []),
+    ok.
 
 do_write_ringfile(Ring) ->
     {{Year, Month, Day},{Hour, Minute, Second}} = calendar:universal_time(),
@@ -206,7 +225,8 @@ init([Mode]) ->
 
 handle_call(get_raw_ring, _From, #state{raw_ring=Ring} = State) ->
     {reply, {ok, Ring}, State};
-handle_call({set_my_ring, Ring}, _From, State) ->
+handle_call({set_my_ring, RingIn}, _From, State) ->
+    Ring = riak_core_ring:upgrade(RingIn),
     prune_write_notify_ring(Ring),
     {reply,ok,State#state{raw_ring=Ring}};
 handle_call(refresh_my_ring, _From, State) ->
@@ -221,17 +241,15 @@ handle_call(refresh_my_ring, _From, State) ->
     riak_core:stop("node removal completed, exiting."),
 
     {reply,ok,State#state{raw_ring=FreshRing}};
-handle_call({ring_trans, Fun, Args}, _From, State) ->
-    {ok, Ring} = get_my_ring(),
+handle_call({ring_trans, Fun, Args}, _From, State=#state{raw_ring=Ring}) ->
     case catch Fun(Ring, Args) of
         {new_ring, NewRing} ->
             prune_write_notify_ring(NewRing),
-            case riak_core_ring:random_other_node(NewRing) of
-                no_node ->
-                    ignore;
-                Node ->
-                    riak_core_gossip:send_ring(Node)
-            end,
+            riak_core_gossip:random_recursive_gossip(NewRing),
+            {reply, {ok, NewRing}, State#state{raw_ring=NewRing}};
+        {reconciled_ring, NewRing} ->
+            prune_write_notify_ring(NewRing),
+            riak_core_gossip:recursive_gossip(NewRing),
             {reply, {ok, NewRing}, State#state{raw_ring=NewRing}};
         ignore ->
             {reply, not_changed, State};
@@ -239,9 +257,27 @@ handle_call({ring_trans, Fun, Args}, _From, State) ->
             lager:error("ring_trans: invalid return value: ~p", 
                                    [Other]),
             {reply, not_changed, State}
-    end.
+    end;
+handle_call({set_cluster_name, Name}, _From, State) ->
+    {ok, Ring} = get_my_ring(),
+    NewRing = riak_core_ring:set_cluster_name(Ring, Name),
+    prune_write_notify_ring(NewRing),
+    {reply, ok, State#state{raw_ring=NewRing}}.
+
 handle_cast(stop, State) ->
     {stop,normal,State};
+
+handle_cast({refresh_my_ring, ClusterName}, State) ->
+    {ok, Ring} = get_my_ring(),
+    case riak_core_ring:cluster_name(Ring) of
+        ClusterName ->
+            handle_cast(refresh_my_ring, State);
+        _ ->
+            {noreply, ok, State}
+    end;
+handle_cast(refresh_my_ring, State) ->
+    {_, _, State2} = handle_call(refresh_my_ring, undefined, State),
+    {noreply, State2};
 
 handle_cast(write_ringfile, test) ->
     {noreply,test};
@@ -344,7 +380,6 @@ prune_write_notify_ring(Ring) ->
     do_write_ringfile(Ring),
     set_ring_global(Ring),
     riak_core_ring_events:ring_update(Ring).
-
 
 %% ===================================================================
 %% Unit tests
