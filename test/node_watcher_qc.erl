@@ -455,7 +455,8 @@ build_ring([Node | Rest]) ->
 build_ring([], _Id, _Inc, R) ->
     R;
 build_ring([Node | Rest], Id, Inc, R) ->
-    R2 = riak_core_ring:transfer_node(Id+Inc, Node, R),
+    R1 = riak_core_ring:add_member(node(), R, Node),
+    R2 = riak_core_ring:transfer_node(Id+Inc, Node, R1),
     build_ring(Rest, Id+Inc, Inc, R2).
 
 -endif.
