@@ -129,7 +129,7 @@ init([Mod, Index, InitialInactivityTimeout]) ->
     end,
     riak_core_handoff_manager:remove_exclusion(Mod, Index),
     Timeout = app_helper:get_env(riak_core, vnode_inactivity_timeout, ?DEFAULT_TIMEOUT),
-    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     State = #state{index=Index, mod=Mod, modstate=ModState,
                    inactivity_timeout=Timeout, pool_pid=PoolPid},
     State2 = update_forwarding_mode(Ring, State),
