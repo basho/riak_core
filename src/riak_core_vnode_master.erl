@@ -73,6 +73,8 @@ command([{Index,Node}|Rest], Msg, Sender, VMaster) ->
     command(Rest, Msg, Sender, VMaster);
 
 %% Send the command to an individual Index/Node combination
+command({Index, Pid}, Msg, Sender, _VMaster) when is_pid(Pid) ->
+    gen_fsm:send_event(Pid, make_request(Msg, Sender, Index));
 command({Index,Node}, Msg, Sender, VMaster) ->
     gen_server:cast({VMaster, Node}, make_request(Msg, Sender, Index)).
 
