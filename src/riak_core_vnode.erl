@@ -262,7 +262,7 @@ vnode_handoff_command(Sender, Request, State=#state{index=Index,
             %% dispatch some work to the vnode worker pool
             %% the result is sent back to 'From'
             riak_core_vnode_worker_pool:handle_work(Pool, Work, From),
-            continue(State, NewModState)
+            continue(State, NewModState);
         {forward, NewModState} ->
             riak_core_vnode_master:command({Index, HN}, Request, Sender, 
                                            riak_core_vnode_master:reg_name(Mod)),
