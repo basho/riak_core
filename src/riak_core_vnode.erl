@@ -250,12 +250,18 @@ vnode_coverage(Sender, Request, KeySpaces, State=#state{index=Index,
 vnode_handoff_command(Sender, Request, State=#state{index=Index,
                                                     mod=Mod, 
                                                     modstate=ModState, 
-                                                    handoff_node=HN}) ->
+                                                    handoff_node=HN,
+                                                    pool_pid=Pool}) ->
     case Mod:handle_handoff_command(Request, Sender, ModState) of
         {reply, Reply, NewModState} ->
             reply(Sender, Reply),
             continue(State, NewModState);
         {noreply, NewModState} ->
+            continue(State, NewModState);
+        {async, Work, From, NewModState} ->
+            %% dispatch some work to the vnode worker pool
+            %% the result is sent back to 'From'
+            riak_core_vnode_worker_pool:handle_work(Pool, Work, From),
             continue(State, NewModState);
         {forward, NewModState} ->
             riak_core_vnode_master:command({Index, HN}, Request, Sender, 
