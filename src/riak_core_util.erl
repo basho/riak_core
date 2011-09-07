@@ -37,7 +37,8 @@
          start_app_deps/1,
          build_tree/3,
          rpc_every_member/4,
-         rpc_every_member_ann/4]).
+         rpc_every_member_ann/4,
+	 is_arch/1]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -261,6 +262,19 @@ build_tree(N, Nodes, Opts) ->
                             {NewResult, Rest}
                     end, {[], tl(Expand)}, Nodes),
     orddict:from_list(Tree).
+
+%% Returns a forced-lowercase architecture for this node
+-spec get_arch () -> string().
+get_arch () -> string:to_lower(erlang:system_info(system_architecture)).
+
+%% Checks if this node is of a given architecture
+-spec is_arch (atom()) -> boolean().
+is_arch (linux) -> string:str(get_arch(),"linux") > 0;
+is_arch (darwin) -> string:str(get_arch(),"darwin") > 0;
+is_arch (sunos) -> string:str(get_arch(),"sunos") > 0;
+is_arch (osx) -> is_arch(darwin);
+is_arch (solaris) -> is_arch(sunos);
+is_arch (_) -> false.
 
 %% ===================================================================
 %% EUnit tests
