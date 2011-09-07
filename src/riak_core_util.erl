@@ -38,7 +38,7 @@
          build_tree/3,
          rpc_every_member/4,
          rpc_every_member_ann/4,
-	 is_arch/1]).
+         is_arch/1]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -274,7 +274,7 @@ is_arch (darwin) -> string:str(get_arch(),"darwin") > 0;
 is_arch (sunos) -> string:str(get_arch(),"sunos") > 0;
 is_arch (osx) -> is_arch(darwin);
 is_arch (solaris) -> is_arch(sunos);
-is_arch (_) -> false.
+is_arch (Arch) -> throw({unsupported_architecture,Arch}).
 
 %% ===================================================================
 %% EUnit tests
