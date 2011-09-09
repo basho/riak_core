@@ -265,6 +265,11 @@ register(Props) ->
 
 %% @doc Register a named riak_core application.
 register(_App, []) ->
+    %% Once the app is registered, do a no-op ring trans
+    %% to ensure the new fixups are run against
+    %% the ring.
+    {ok, _R} = riak_core_ring_manager:ring_trans(fun(R,_A) -> {new_ring, R} end,
+                                                 undefined),
     ok;
 register(App, [{bucket_fixup, FixupMod}|T]) ->
     register_mod(get_app(App, FixupMod), FixupMod, bucket_fixups),
@@ -282,8 +287,7 @@ register_mod(App, Module, Type) when is_atom(Module), is_atom(Type) ->
             application:set_env(riak_core, Type, [{App,Module}]);
         {ok, Mods} ->
             application:set_env(riak_core, Type, [{App,Module}|Mods])
-    end,
-    riak_core_ring_events:force_sync_update().
+    end.
 
 %% @spec add_guarded_event_handler(HandlerMod, Handler, Args) -> AddResult
 %%       HandlerMod = module()
