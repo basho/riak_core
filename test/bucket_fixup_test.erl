@@ -100,7 +100,8 @@ load_test_() ->
      fun(Pid) ->
              riak_core_ring_manager:stop(),
              Pid ! done,
-             application:unload(riak_core),
+             application:unset_env(riak_core, bucket_fixups),
+             application:unset_env(riak_core, default_bucket_props),
              exit(Pid, kill)
      end,
      [
