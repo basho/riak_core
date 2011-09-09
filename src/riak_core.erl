@@ -23,10 +23,10 @@
 -export([stop/0, stop/1, join/1, join/3, remove/1, down/1, leave/0,
          remove_from_cluster/1]).
 -export([register_vnode_module/1, vnode_modules/0]).
--export([register/1, bucket_fixups/0]).
+-export([register/1, register/2, bucket_fixups/0]).
 -export([add_guarded_event_handler/3, add_guarded_event_handler/4]).
 -export([delete_guarded_event_handler/3]).
-
+-compile({no_auto_import,[register/2]}).
 %% @spec stop() -> ok
 %% @doc Stop the riak application and the calling process.
 stop() -> stop("riak stop requested").
@@ -248,31 +248,46 @@ bucket_fixups() ->
         {ok, Mods} -> Mods
     end.
 
+%% Get the application name if not supplied, first by get_application
+%% then by searching by module name
+get_app(undefined, Module) ->
+    {ok, App} = case application:get_application(self()) of
+                    {ok, AppName} -> {ok, AppName};
+                    undefined -> app_for_module(Module)
+                end,
+    App;
+get_app(App, _Module) ->
+    App.
+
 %% @doc Register a riak_core application.
-register([]) ->
+register(Props) ->
+    register(undefined, Props).
+
+%% @doc Register a named riak_core application.
+register(_App, []) ->
+    %% Once the app is registered, do a no-op ring trans
+    %% to ensure the new fixups are run against
+    %% the ring.
+    {ok, _R} = riak_core_ring_manager:ring_trans(fun(R,_A) -> {new_ring, R} end,
+                                                 undefined),
     ok;
-register([{bucket_fixup, FixupMod}|T]) ->
-    register_mod(FixupMod, bucket_fixups),
-    register(T);
-register([{vnode_module, VNodeMod}|T]) ->
-    register_mod(VNodeMod, vnode_modules),
-    register(T).
+register(App, [{bucket_fixup, FixupMod}|T]) ->
+    register_mod(get_app(App, FixupMod), FixupMod, bucket_fixups),
+    register(App, T);
+register(App, [{vnode_module, VNodeMod}|T]) ->
+    register_mod(get_app(App, VNodeMod), VNodeMod, vnode_modules),
+    register(App, T).
 
 register_vnode_module(VNodeMod) when is_atom(VNodeMod)  ->
-    register_mod(VNodeMod, vnode_modules).
+    register_mod(get_app(undefined, VNodeMod), VNodeMod, vnode_modules).
 
-register_mod(Module, Type) when is_atom(Module), is_atom(Type) ->
-    {ok, App} = case application:get_application(self()) of
-        {ok, AppName} -> {ok, AppName};
-        undefined -> app_for_module(Module)
-    end,
+register_mod(App, Module, Type) when is_atom(Module), is_atom(Type) ->
     case application:get_env(riak_core, Type) of
         undefined ->
             application:set_env(riak_core, Type, [{App,Module}]);
         {ok, Mods} ->
             application:set_env(riak_core, Type, [{App,Module}|Mods])
-    end,
-    riak_core_ring_events:force_sync_update().
+    end.
 
 %% @spec add_guarded_event_handler(HandlerMod, Handler, Args) -> AddResult
 %%       HandlerMod = module()

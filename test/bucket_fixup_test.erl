@@ -64,6 +64,61 @@ fixup_test_() ->
         ]
     }.
 
+load_test_() ->
+    {setup,
+     fun() ->
+             %% catch(riak_core_ring_manager:stop()),
+             %% catch(exit(whereis(riak_core_ring_events), shutdown)),
+             application:load(riak_core),
+             application:set_env(riak_core, bucket_fixups, []),
+             application:set_env(riak_core, default_bucket_props, []),
+
+                 %% dbgh:start(),
+                 %% dbgh:trace(riak_core),
+                 %% dbgh:trace(riak_core_ring_events),
+                 %% dbgh:trace(riak_core_ring_manager),
+                 %% dbgh:trace(riak_core_bucket),
+
+             Me = self(),
+             Pid = proc_lib:spawn(
+                     fun() ->
+                             {ok, _RingEvt} = riak_core_ring_events:start_link(),
+                             {ok, _RingMgr} = riak_core_ring_manager:start_link(),
+                             %% ok = riak_core_ring_manager:set_my_ring(riak_core_ring:fresh()),
+                             %% io:format(user, "=== Set ring\n", []),
+                             Me ! ready,
+                             receive
+                                 done ->
+                                     ok
+                             end
+                     end),
+             receive
+                 ready -> ok
+             end,
+             Pid
+     end,
+     fun(Pid) ->
+             riak_core_ring_manager:stop(),
+             Pid ! done,
+             application:unset_env(riak_core, bucket_fixups),
+             application:unset_env(riak_core, default_bucket_props),
+             exit(Pid, kill)
+     end,
+     [
+      ?_test(begin
+                 {ok, _R} = riak_core_ring_manager:get_my_ring(),
+                 riak_core_bucket:set_bucket(test1, []),
+                 ?assertEqual([{name, test1}],
+                              riak_core_bucket:get_bucket(test1)),
+                 riak_core:register(loadtestapp, [{bucket_fixup, ?MODULE}]),
+                 ?assertEqual([{test, 1}, {name, test1}],
+                              riak_core_bucket:get_bucket(test1)),
+                 ok
+             end)
+     ]
+    }.
+
+
 do_no_harm() ->
     Ring = riak_core_ring:update_meta({bucket,test0},
         [],
