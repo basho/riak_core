@@ -81,7 +81,7 @@ load_test_() ->
 
              Me = self(),
 io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
-             Pid = proc_lib:spawn(
+             Pid = proc_lib:spawn_link(
                      fun() ->
 io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
                              {ok, _RingEvt} = riak_core_ring_events:start_link(),
@@ -115,6 +115,7 @@ io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
 io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
              application:unset_env(riak_core, default_bucket_props),
 io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
+             unlink(Pid),
              exit(Pid, kill)
      end,
      [
