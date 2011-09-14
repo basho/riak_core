@@ -28,10 +28,10 @@
 -export([start_vnode/2]).
 
 start_vnode(Mod, Index) when is_integer(Index) -> 
-    supervisor:start_child(?MODULE, [Mod, Index]).
+    supervisor_pre_r14b04:start_child(?MODULE, [Mod, Index]).
 
 start_link() ->
-    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
+    supervisor_pre_r14b04:start_link({local, ?MODULE}, ?MODULE, []).
 
 %% @private
 init([]) ->
@@ -39,4 +39,4 @@ init([]) ->
      {{simple_one_for_one, 10, 10}, 
       [{undefined,
         {riak_core_vnode, start_link, []},
-      temporary, brutal_kill, worker, dynamic}]}}.
+      temporary, 300000, worker, dynamic}]}}.

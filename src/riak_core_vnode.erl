@@ -120,7 +120,7 @@ init([Mod, Index, InitialInactivityTimeout]) ->
     end,
     PoolPid = case lists:keyfind(pool, 1, Props) of
         {pool, WorkerModule, PoolSize, WorkerArgs} ->
-            lager:notice("starting worker pool ~p with size of ~p~n",
+            lager:debug("starting worker pool ~p with size of ~p~n",
                 [WorkerModule, PoolSize]),
             {ok, Pid} = riak_core_vnode_worker_pool:start_link(WorkerModule,
                 PoolSize, Index, WorkerArgs, worker_props),
@@ -314,22 +314,37 @@ active(_Event, _From, State) ->
 
 finish_handoff(State=#state{mod=Mod, 
                             modstate=ModState,
-                            index=Idx, 
+                            index=Idx,
+                            pool_pid=Pool,
                             handoff_node=HN}) ->
     case riak_core_gossip:finish_handoff(Idx, node(), HN, Mod) of
         forward ->
+            case is_pid(Pool) of
+                true ->
+                    riak_core_vnode_worker_pool:shutdown_pool(Pool, 60000);
+                _ ->
+                    ok
+            end,
             {ok, NewModState} = Mod:delete(ModState),
             {stop, normal, State#state{modstate=NewModState,
                                        handoff_node=none,
+                                       pool_pid=undefined,
                                        handoff_pid=undefined}};
         continue ->
             continue(State#state{handoff_node=none,
                                  handoff_pid=undefined});
         shutdown ->
+            case is_pid(Pool) of
+                true ->
+                    riak_core_vnode_worker_pool:shutdown_pool(Pool, 60000);
+                _ ->
+                    ok
+            end,
             {ok, NewModState} = Mod:delete(ModState),
             riak_core_handoff_manager:add_exclusion(Mod, Idx),
             {stop, normal, State#state{modstate=NewModState,
                                        handoff_node=none,
+                                       pool_pid=undefined,
                                        handoff_pid=undefined}}
     end.
 
@@ -390,9 +405,14 @@ handle_info(Info, StateName, State=#state{mod=Mod,modstate=ModState}) ->
             {next_state, StateName, State, State#state.inactivity_timeout}
     end.
 
-terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState}) ->
-    Mod:terminate(Reason, ModState),
-    ok.
+terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState, pool_pid=Pool}) ->
+    case is_pid(Pool) of
+        true ->
+            riak_core_vnode_worker_pool:shutdown_pool(Pool, 60000);
+        _ ->
+            ok
+    end,
+    Mod:terminate(Reason, ModState).
 
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
