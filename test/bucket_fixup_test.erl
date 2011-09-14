@@ -68,16 +68,11 @@ load_test_() ->
     {setup,
      fun() ->
              {_, Ls} = process_info(self(), links),
-io:format(user, "BBOT DBG: ~p ~p ~p\n", [?MODULE, ?LINE, Ls]),
-[io:format(user, "BBOT DBG: ~p ~p\n", [Pid, catch process_info(Pid)]) || Pid <- Ls],
              [unlink(whereis(Name)) ||
                  Pid <- Ls,
                  is_pid(Pid),
                  {registered_name, Name} <- [process_info(Pid,
                                                           registered_name)]],
-{_, Ls2} = process_info(self(), links),
-io:format(user, "BBOT DBG: ~p ~p ~p\n", [?MODULE, ?LINE, Ls2]),
-[io:format(user, "BBOT DBG: ~p ~p\n", [Pid, catch process_info(Pid)]) || Pid <- Ls2],
              catch application:stop(riak_core),
              catch(riak_core_ring_manager:stop()),
              catch(exit(whereis(riak_core_ring_events), shutdown)),
@@ -94,61 +89,40 @@ io:format(user, "BBOT DBG: ~p ~p ~p\n", [?MODULE, ?LINE, Ls2]),
                  %% dbgh:trace(riak_core_bucket),
 
              Me = self(),
-io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
              Pid = proc_lib:spawn(
                      fun() ->
                              process_flag(trap_exit, true),
-io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
-                             XX1 = (catch riak_core_ring_events:start_link()),
-                             %%{ok, _RingEvt} = riak_core_ring_events:start_link(),
-io:format(user, "BBOT DBG: ~p ~p ~p\n", [?MODULE, ?LINE, XX1]),
-                             XX2 = (catch riak_core_ring_manager:start_link()),
-                             %%{ok, _RingMgr} = riak_core_ring_manager:start_link(),
-io:format(user, "BBOT DBG: ~p ~p ~p\n", [?MODULE, ?LINE, XX2]),
-io:format(user, "BBOT DBG: ~p ~p ~p\n", [?MODULE, ?LINE, receive MM1 -> MM1 after 0 -> no_message end]),
+                             {ok, _RingEvt} = riak_core_ring_events:start_link(),
+                             {ok, _RingMgr} = riak_core_ring_manager:start_link(),
                              %% ok = riak_core_ring_manager:set_my_ring(riak_core_ring:fresh()),
-io:format(user, "=== Set ring\n", []),
+                             %% io:format(user, "=== Set ring\n", []),
                              Me ! ready,
-io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
                              receive
                                  done ->
-io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
                                      ok
                              end
                      end),
-io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
              receive
                  ready -> ok
              end,
-io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
              Pid
      end,
      fun(Pid) ->
-io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
              riak_core_ring_manager:stop(),
-io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
              Pid ! done,
-io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
              application:unset_env(riak_core, bucket_fixups),
-io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
              application:unset_env(riak_core, default_bucket_props),
              application:unset_env(riak_core, ring_creation_size),
-io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
              unlink(Pid),
              exit(Pid, kill)
      end,
      [
       ?_test(begin
-io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
                  {ok, _R} = riak_core_ring_manager:get_my_ring(),
-io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
                  riak_core_bucket:set_bucket(test1, []),
-io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
                  ?assertEqual([{name, test1}],
                               riak_core_bucket:get_bucket(test1)),
-io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
                  riak_core:register(loadtestapp, [{bucket_fixup, ?MODULE}]),
-io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
                  ?assertEqual([{test, 1}, {name, test1}],
                               riak_core_bucket:get_bucket(test1)),
                  ok
@@ -210,18 +184,13 @@ fixup_error() ->
     ok.
 
 fixup_crash() ->
-io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
     Ring = riak_core_ring:update_meta({bucket,test5},
         [{foo, bar}],
         riak_core_ring:fresh()),
-io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
     riak_core_ring_manager:set_ring_global(Ring),
-io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
     ?assertEqual([test5], riak_core_ring:get_buckets(Ring)),
-io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
     ?assertMatch([{foo, bar}],
         riak_core_bucket:get_bucket(test5)),
-io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
     ok.
 
 
