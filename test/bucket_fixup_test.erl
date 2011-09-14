@@ -67,9 +67,17 @@ fixup_test_() ->
 load_test_() ->
     {setup,
      fun() ->
-{_, Ls} = process_info(self(), links),
+             {_, Ls} = process_info(self(), links),
 io:format(user, "BBOT DBG: ~p ~p ~p\n", [?MODULE, ?LINE, Ls]),
-[io:format(user, "BBOT DBG: ~p ~p\n", [Pid, process_info(Pid)]) || Pid <- Ls],
+[io:format(user, "BBOT DBG: ~p ~p\n", [Pid, catch process_info(Pid)]) || Pid <- Ls],
+             [unlink(whereis(Name)) ||
+                 Pid <- Ls,
+                 is_pid(Pid),
+                 {registered_name, Name} <- [process_info(Pid,
+                                                          registered_name)]],
+{_, Ls2} = process_info(self(), links),
+io:format(user, "BBOT DBG: ~p ~p ~p\n", [?MODULE, ?LINE, Ls2]),
+[io:format(user, "BBOT DBG: ~p ~p\n", [Pid, catch process_info(Pid)]) || Pid <- Ls2],
              catch application:stop(riak_core),
              catch(riak_core_ring_manager:stop()),
              catch(exit(whereis(riak_core_ring_events), shutdown)),
