@@ -83,7 +83,7 @@ load_test_() ->
 
              Me = self(),
 io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
-             Pid = proc_lib:spawn_link(
+             Pid = proc_lib:spawn(
                      fun() ->
 io:format(user, "BBOT DBG: ~p ~p\n", [?MODULE, ?LINE]),
                              XX1 = (catch riak_core_ring_events:start_link()),
