@@ -67,11 +67,20 @@ fixup_test_() ->
 load_test_() ->
     {setup,
      fun() ->
-             %% catch(riak_core_ring_manager:stop()),
-             %% catch(exit(whereis(riak_core_ring_events), shutdown)),
+             {_, Ls} = process_info(self(), links),
+             [unlink(whereis(Name)) ||
+                 Pid <- Ls,
+                 is_pid(Pid),
+                 {registered_name, Name} <- [process_info(Pid,
+                                                          registered_name)]],
+             catch application:stop(riak_core),
+             catch(riak_core_ring_manager:stop()),
+             catch(exit(whereis(riak_core_ring_events), shutdown)),
+             timer:sleep(1000),
              application:load(riak_core),
              application:set_env(riak_core, bucket_fixups, []),
              application:set_env(riak_core, default_bucket_props, []),
+             application:set_env(riak_core, ring_creation_size, 64),
 
                  %% dbgh:start(),
                  %% dbgh:trace(riak_core),
@@ -82,6 +91,7 @@ load_test_() ->
              Me = self(),
              Pid = proc_lib:spawn(
                      fun() ->
+                             process_flag(trap_exit, true),
                              {ok, _RingEvt} = riak_core_ring_events:start_link(),
                              {ok, _RingMgr} = riak_core_ring_manager:start_link(),
                              %% ok = riak_core_ring_manager:set_my_ring(riak_core_ring:fresh()),
@@ -102,6 +112,8 @@ load_test_() ->
              Pid ! done,
              application:unset_env(riak_core, bucket_fixups),
              application:unset_env(riak_core, default_bucket_props),
+             application:unset_env(riak_core, ring_creation_size),
+             unlink(Pid),
              exit(Pid, kill)
      end,
      [
