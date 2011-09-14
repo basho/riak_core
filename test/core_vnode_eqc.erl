@@ -34,31 +34,46 @@
 -include_lib("riak_core_vnode.hrl").
 -compile([export_all]).
 
+-define(QC_OUT(P),
+        eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
+
 -record(qcst, {started,
                counters, % Dict of counters for each index
+               asyncdone_pid, % Collector process for async workers
                indices,
-               crash_reasons}).
+               crash_reasons,
+               async_enabled = false,
+               async_size = 0,
+               async_work=[]}). % {Index, AsyncRef} async work submitted to each vnode
                
-simple_test() ->
-    simple_test(100).
+simple_test_() ->
+    {timeout, 60, ?_assertEqual(true, quickcheck(?QC_OUT(numtests(100, prop_simple()))))}.
 
-simple_test(N) ->
-    ?assertEqual(true, quickcheck(numtests(N, prop_simple()))).
+test(N) ->
+    quickcheck(numtests(N, prop_simple())).
 
 prop_simple() ->
-    ?FORALL(Cmds, commands(?MODULE, {stopped, initial_state_data()}),
+    ?FORALL(Cmds, commands(?MODULE, {setup, initial_state_data()}),
             aggregate(command_names(Cmds),
                       begin
-                          start_servers(),
-                          {H,S,Res} = run_commands(?MODULE, Cmds),
-                          stop_servers(),            
+                          {H,{_SN,S},Res} = run_commands(?MODULE, Cmds),
+                          timer:sleep(100), %% Adjust this to make shutdown sensitive stuff pass/fail
+                          %% Do a sync operation on all the started vnodes
+                          %% to ensure any of the noreply commands have executed before
+                          %% stopping.
+                          get_all_counters(S#qcst.started),
+                          stop_servers(),       
+                          %% Check results
                           ?WHENFAIL(
                              begin
-                                 io:format("History: ~p\n", [H]),
-                                 io:format("State: ~p\n", [S]),
-                                 io:format("Result: ~p\n", [Res])
+                                 io:format(user, "History: ~p\n", [H]),
+                                 io:format(user, "State: ~p\n", [S]),
+                                 io:format(user, "Result: ~p\n", [Res])
                              end,
-                             Res =:= ok)
+                             conjunction([{res, equals(Res, ok)},
+                                          {async, 
+                                           equals(lists:sort(async_work(S#qcst.asyncdone_pid)),
+                                                  lists:sort(S#qcst.async_work))}]))
                       end)).
 
 active_index(#qcst{started=Started}) ->
@@ -70,7 +85,11 @@ active_preflist1(S) ->
 
 %% Generate a preflist - making sure the partitions are unique
 active_preflist(S) ->
-    ?SUCHTHAT(Xs,list(active_preflist1(S)),lists:sort(Xs)==lists:usort(Xs)).
+    non_empty(?SUCHTHAT(Xs,list(active_preflist1(S)),lists:sort(Xs)==lists:usort(Xs))).
+
+%% Generate the async pool size
+gen_async_pool() ->
+    oneof([0, 1, 10]).
 
 initial_state() ->
     stopped.
@@ -87,6 +106,15 @@ initial_state_data() ->
           indices=[I || {I,_N} <- riak_core_ring:all_owners(Ring)]
          }.
 
+%% Setup new test run - start new async work collector and set the async pool size
+next_state_data(_From,_To,S,_R,
+                {call,?MODULE,enable_async,[AsyncSize]}) ->
+    S#qcst{async_enabled = true,
+           async_size = AsyncSize};
+%% Setup new test run - start new async work collector and set the async pool size
+next_state_data(_From,_To,S,AsyncDonePid,
+                {call,?MODULE,prepare,[_AsyncSize]}) ->
+    S#qcst{asyncdone_pid = AsyncDonePid};
 %% Mark the vnode as started
 next_state_data(_From,_To,S=#qcst{started=Started,
                                   counters=Counters,
@@ -95,11 +123,12 @@ next_state_data(_From,_To,S=#qcst{started=Started,
     S#qcst{started=[Index|Started],
            counters=orddict:store(Index, 0, Counters),
            crash_reasons=orddict:store(Index, undefined, CRs)};
-next_state_data(_From,_To,S=#qcst{counters=Counters, crash_reasons=CRs},_R,
+next_state_data(_From,_To,S=#qcst{started=Started, counters=Counters, crash_reasons=CRs},_R,
                 {call,mock_vnode,stop,[{Index,_Node}]}) ->
     %% If a node is stopped, reset the counter ready for next
     %% time it is called which should start it
-    S#qcst{counters=orddict:store(Index, 0, Counters),
+    S#qcst{started=Started -- [Index],
+           counters=orddict:store(Index, 0, Counters),
            crash_reasons=orddict:store(Index, undefined, CRs)};
 %% Update the counters for the index if a command that changes them
 next_state_data(_From,_To,S=#qcst{counters=Counters},_R,
@@ -112,9 +141,25 @@ next_state_data(_From,_To,S=#qcst{counters=Counters},_R,
 next_state_data(_From,_To,S=#qcst{crash_reasons=CRs},_R,
                 {call,mock_vnode,crash,[{Index,_Node}]}) ->
     S#qcst{crash_reasons=orddict:store(Index, Index, CRs)};
+%% Update the expected async work
+next_state_data(_From,_To,S=#qcst{counters=Counters,
+                                  async_work=Work}, R,
+                {call,_Mod,Func,[Preflist, _AsyncDonePid]})
+  when Func =:= asyncnoreply; Func =:= asyncreply; Func =:= asynccrash ->
+    NewWork = [{Idx, R} || {Idx, _N} <- Preflist],
+    S2=S#qcst{async_work=Work ++ NewWork,
+           counters=lists:foldl(fun({I, _N}, C) ->
+                                        orddict:update_counter(I, 1, C)
+                                end, Counters, Preflist)},
+    %% io:format(user, "S2=~p\n", [S2]),
+    S2;
 next_state_data(_From,_To,S,_R,_C) ->
     S.
 % 
+
+setup(S) ->
+    [{setup,   {call,?MODULE,enable_async,[gen_async_pool()]}},
+     {stopped, {call,?MODULE,prepare,[S#qcst.async_size]}}].
 
 stopped(S) ->
     [{running, {call,?MODULE,start_vnode,[index(S)]}}].
@@ -129,6 +174,12 @@ running(S) ->
      {history, {call,mock_vnode,neverreply,[active_preflist(S)]}},
      {history, {call,?MODULE,returnreply,[active_preflist(S)]}},
      {history, {call,?MODULE,latereply,[active_preflist(S)]}},
+     {history, {call,mock_vnode,asyncnoreply,[active_preflist(S),
+                                              S#qcst.asyncdone_pid]}},
+     {history, {call,?MODULE,asyncreply,[active_preflist(S),
+                                         S#qcst.asyncdone_pid]}},
+     {history, {call,?MODULE,asynccrash,[active_preflist(S),
+                                         S#qcst.asyncdone_pid]}},
      {history, {call,?MODULE,restart_master,[]}},
      {history, {call,mock_vnode,stop,[active_preflist1(S)]}},
      {history, {call,riak_core_vnode_master,all_nodes,[mock_vnode]}}
@@ -140,6 +191,10 @@ precondition(_From,_To,#qcst{started=Started},{call,_Mod,Func,[Preflist]})
   when Func =:= get_index; Func =:= get_counter; Func =:= neverreply; Func =:= returnreply;
        Func =:= latereply; Func =:= crash; Func =:= get_crash_reason ->
     preflist_is_active(Preflist, Started);
+precondition(_From,_To,#qcst{started=Started,async_size=AsyncSize},
+             {call,_Mod,Func,[Preflist, _DonePid]}) 
+  when Func =:= asyncnoreply; Func =:= asyncreply; Func =:= asynccrash ->
+    preflist_is_active(Preflist, Started) andalso AsyncSize > 0;
 precondition(_From,_To,_S,_C) ->
     true.
 
@@ -174,8 +229,27 @@ preflist_is_active({Index,_Node}, Started) ->
 preflist_is_active(Preflist, Started) ->
     lists:all(fun({Index,_Node}) -> lists:member(Index, Started) end, Preflist).
 
+%% Get the counters from running vnodes
+get_all_counters(Started) ->
+    [{I, mock_vnode:get_counter({I, node()})} || I <- Started].
 
 %% Local versions of commands
+
+%% Enable async tests, triggers state change in next_state so precondition can test
+enable_async(_AsyncSize) ->
+    ok.
+
+%% Prepare to run vnode tests, do any setup needed
+prepare(AsyncSize) ->
+    application:set_env(riak_core, core_vnode_eqc_pool_size, AsyncSize),
+    start_servers(),
+    proc_lib:spawn_link(
+      fun() -> 
+              %% io:format(user, "Starting async work collector ~p\n", [self()]),
+              async_work_proc([]) 
+      end).
+
+
 start_vnode(I) ->
     ok = mock_vnode:start_vnode(I).
 
@@ -186,8 +260,18 @@ returnreply(Preflist) ->
 latereply(Preflist) ->
     {ok, Ref} = mock_vnode:latereply(Preflist),
     check_receive(length(Preflist), latereply, Ref).
-
-                 
+    
+asyncreply(Preflist, AsyncDonePid) ->
+    {ok, Ref} = mock_vnode:asyncreply(Preflist, AsyncDonePid),
+    check_receive(length(Preflist), asyncreply, Ref),
+    {ok, Ref}.
+asynccrash(Preflist, AsyncDonePid) ->
+    {ok, Ref} = mock_vnode:asynccrash(Preflist, AsyncDonePid),
+    check_receive(length(Preflist), 
+                  {worker_crash, deliberate_async_crash, {crash, AsyncDonePid}}, 
+                  Ref),
+    {ok, Ref}.
+           
 check_receive(0, _Msg, _Ref) ->
     ok;
 check_receive(Replies, Msg, Ref) ->
@@ -238,6 +322,30 @@ wait_for_pid(Pid) ->
     after
         5000 ->
             {error, didnotexit}
+    end.
+
+%% Async work collector process - collect all messages until work requested
+async_work_proc(AsyncWork) ->
+    receive
+        {get, Pid} ->
+            Pid ! {work, lists:reverse(AsyncWork)};
+        Work ->
+            async_work_proc([Work | AsyncWork])
+    end.
+
+%% Request async work completed
+async_work(undefined) ->
+%%    io:format(user, "Did not get as far as setting up async worker\n", []),
+    [];
+async_work(Pid) ->
+%%    io:format(user, "Getting async work from ~p\n", [Pid]),
+    Pid ! {get, self()},
+    receive
+        {work, Work} ->
+            Work
+    after
+        1000 ->
+            throw(async_work_timeout)
     end.
 
 -endif.
