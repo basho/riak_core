@@ -120,7 +120,7 @@ init([Mod, Index, InitialInactivityTimeout]) ->
     end,
     PoolPid = case lists:keyfind(pool, 1, Props) of
         {pool, WorkerModule, PoolSize, WorkerArgs} ->
-            lager:notice("starting worker pool ~p with size of ~p~n",
+            lager:debug("starting worker pool ~p with size of ~p~n",
                 [WorkerModule, PoolSize]),
             {ok, Pid} = riak_core_vnode_worker_pool:start_link(WorkerModule,
                 PoolSize, Index, WorkerArgs, worker_props),
