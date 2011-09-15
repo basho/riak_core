@@ -48,7 +48,7 @@ stop(Pid, Reason) ->
 
 %% wait for all the workers to finish any current work
 shutdown_pool(Pid, Wait) ->
-    gen_fsm:sync_send_all_state_event(Pid, {shutdown, Wait}).
+    gen_fsm:sync_send_all_state_event(Pid, {shutdown, Wait}, infinity).
 
 init([WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps]) ->
     {ok, Pid} = poolboy:start_link([{worker_module, riak_core_vnode_worker},
@@ -133,7 +133,7 @@ handle_sync_event({shutdown, Time}, From, _StateName, #state{queue=Q,
                 _ when is_integer(Time) ->
                     erlang:send_after(Time, self(), shutdown)
             end,
-            {noreply, shutdown, State#state{shutdown=From}}
+            {next_state, shutdown, State#state{shutdown=From}}
     end;
 handle_sync_event(_Event, _From, StateName, State) ->
     {reply, {error, unknown_message}, StateName, State}.
