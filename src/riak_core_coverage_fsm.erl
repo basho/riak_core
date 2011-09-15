@@ -238,7 +238,8 @@ waiting_results({{ReqId, VNode}, Results},
                     {next_state, waiting_results, UpdStateData, Timeout}
             end;
         Error ->
-            Mod:finish(Error, ModState)
+            Mod:finish(Error, ModState),
+            {stop, Error, StateData}
     end;
 waiting_results(timeout, #state{mod=Mod, mod_state=ModState}) ->
     Mod:finish({error, timeout}, ModState).
