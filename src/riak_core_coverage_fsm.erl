@@ -230,7 +230,7 @@ waiting_results({{ReqId, VNode}, Results},
             UpdatedVNodes = lists:delete(VNode, CoverageVNodes),
             case UpdatedVNodes of
                 [] ->
-                    Mod:finish(clean, ModState);
+                    Mod:finish(clean, UpdModState);
                 _ ->
                     UpdStateData =
                         StateData#state{coverage_vnodes=UpdatedVNodes,
