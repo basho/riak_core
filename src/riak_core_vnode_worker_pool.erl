@@ -105,7 +105,8 @@ handle_event({checkin, Pid}, _, #state{pool = Pool, queue=Q, monitors=Monitors0}
         {{value, {work, Work, From}}, Rem} ->
             case poolboy:checkout(Pool) of
                 full ->
-                    {next_state, queueing, State#state{queue=Q}};
+                    {next_state, queueing, State#state{queue=Q,
+                            monitors=Monitors}};
                 Pid when is_pid(Pid) ->
                     NewMonitors = monitor_worker(Pid, From, Work, Monitors),
                     ok = riak_core_vnode_worker:handle_work(Pid, Pool, Work, From),
@@ -113,7 +114,7 @@ handle_event({checkin, Pid}, _, #state{pool = Pool, queue=Q, monitors=Monitors0}
                             monitors=NewMonitors}}
             end;
         {empty, Empty} ->
-            {next_state, ready, State#state{queue=Empty}}
+            {next_state, ready, State#state{queue=Empty, monitors=Monitors}}
     end;
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
