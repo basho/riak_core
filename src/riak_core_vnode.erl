@@ -405,7 +405,10 @@ handle_info(Info, StateName, State=#state{mod=Mod,modstate=ModState}) ->
             {next_state, StateName, State, State#state.inactivity_timeout}
     end.
 
-terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState, pool_pid=Pool}) ->
+terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState,
+        pool_pid=Pool,index=Index}) ->
+    riak_core_vnode_master:unregister_vnode(Index,
+        riak_core_vnode_master:reg_name(Mod)),
     case is_pid(Pool) of
         true ->
             riak_core_vnode_worker_pool:shutdown_pool(Pool, 60000);
