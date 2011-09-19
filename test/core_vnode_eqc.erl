@@ -57,12 +57,12 @@ prop_simple() ->
             aggregate(command_names(Cmds),
                       begin
                           {H,{_SN,S},Res} = run_commands(?MODULE, Cmds),
-                          timer:sleep(100), %% Adjust this to make shutdown sensitive stuff pass/fail
+                          %timer:sleep(100), %% Adjust this to make shutdown sensitive stuff pass/fail
                           %% Do a sync operation on all the started vnodes
                           %% to ensure any of the noreply commands have executed before
                           %% stopping.
                           get_all_counters(S#qcst.started),
-                          stop_servers(),       
+                          stop_servers(),
                           %% Check results
                           ?WHENFAIL(
                              begin
@@ -73,7 +73,8 @@ prop_simple() ->
                              conjunction([{res, equals(Res, ok)},
                                           {async, 
                                            equals(lists:sort(async_work(S#qcst.asyncdone_pid)),
-                                                  lists:sort(S#qcst.async_work))}]))
+                                                  lists:sort(filter_work(S#qcst.async_work,
+                                                      S#qcst.asyncdone_pid)))}]))
                       end)).
 
 active_index(#qcst{started=Started}) ->
@@ -127,6 +128,10 @@ next_state_data(_From,_To,S=#qcst{started=Started, counters=Counters, crash_reas
                 {call,mock_vnode,stop,[{Index,_Node}]}) ->
     %% If a node is stopped, reset the counter ready for next
     %% time it is called which should start it
+
+    %% give the vnode a chance to shut down so that the index isn't present
+    %% if the next command is to list the vnodes
+    timer:sleep(10),
     S#qcst{started=Started -- [Index],
            counters=orddict:store(Index, 0, Counters),
            crash_reasons=orddict:store(Index, undefined, CRs)};
@@ -246,7 +251,7 @@ prepare(AsyncSize) ->
     proc_lib:spawn_link(
       fun() -> 
               %% io:format(user, "Starting async work collector ~p\n", [self()]),
-              async_work_proc([]) 
+              async_work_proc([], []) 
       end).
 
 
@@ -325,12 +330,21 @@ wait_for_pid(Pid) ->
     end.
 
 %% Async work collector process - collect all messages until work requested
-async_work_proc(AsyncWork) ->
+async_work_proc(AsyncWork, Crashes) ->
     receive
+        {crashes, Pid} ->
+            Pid ! {crashes, Crashes},
+            async_work_proc(AsyncWork, Crashes);
         {get, Pid} ->
-            Pid ! {work, lists:reverse(AsyncWork)};
+            Pid ! {work, lists:reverse(AsyncWork)},
+            async_work_proc(AsyncWork, Crashes);
+        {_, {error, _}} = Crash ->
+            async_work_proc(AsyncWork, [Crash|Crashes]);
+        {_, asyncreply} ->
+            %% this is a legitimate reply, ignore it
+            async_work_proc(AsyncWork, Crashes);
         Work ->
-            async_work_proc([Work | AsyncWork])
+            async_work_proc([Work | AsyncWork], Crashes)
     end.
 
 %% Request async work completed
@@ -347,6 +361,44 @@ async_work(Pid) ->
         1000 ->
             throw(async_work_timeout)
     end.
+
+%% Request async work crashes
+async_crashes(undefined) ->
+%%    io:format(user, "Did not get as far as setting up async worker\n", []),
+    [];
+async_crashes(Pid) ->
+%%    io:format(user, "Getting async crashes from ~p\n", [Pid]),
+    Pid ! {crashes, self()},
+    receive
+        {crashes, Crashes} ->
+            Crashes
+    after
+        1000 ->
+            throw(async_crashes_timeout)
+    end.
+
+
+filter_work(Work, Pid) ->
+    Crashes = async_crashes(Pid),
+    CompletedWork = async_work(Pid),
+    CrashRefs = lists:map(fun({Tag, _error}) -> Tag end, Crashes),
+    case Pid of
+        undefined -> ok;
+        _ ->
+            unlink(Pid),
+            exit(Pid, kill)
+    end,
+    lists:filter(fun({_Index, {_Reply, Tag}}=WorkItem) ->
+                case lists:member(Tag, CrashRefs) of
+                    true ->
+                        %% this isn't quite straightforward as a request can
+                        %% apparently go to multiple vnodes. We have to make
+                        %% sure we're only removing crashes from vnodes that
+                        %% didn't reply
+                        lists:member(WorkItem, CompletedWork);
+                    _ -> true
+                end
+        end, Work).
 
 -endif.
 

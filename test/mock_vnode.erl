@@ -77,19 +77,19 @@ latereply(Preflist) ->
 asyncnoreply(Preflist, AsyncDonePid) ->
     Ref = {asyncnoreply, make_ref()},
     riak_core_vnode_master:command(Preflist, {asyncnoreply, AsyncDonePid}, 
-                                   {raw, Ref, self()}, ?MASTER),
+                                   {raw, Ref, AsyncDonePid}, ?MASTER),
     {ok, Ref}.
 
 asyncreply(Preflist, AsyncDonePid) ->
     Ref = {asyncreply, make_ref()},
     riak_core_vnode_master:command(Preflist, {asyncreply, AsyncDonePid},
-                                   {raw, Ref, self()}, ?MASTER),
+                                   {raw, Ref, AsyncDonePid}, ?MASTER),
     {ok, Ref}.
 
 asynccrash(Preflist, AsyncDonePid) ->
     Ref = {asyncreply, make_ref()},
     riak_core_vnode_master:command(Preflist, {asynccrash, AsyncDonePid},
-                                   {raw, Ref, self()}, ?MASTER),
+                                   {raw, Ref, AsyncDonePid}, ?MASTER),
     {ok, Ref}.
 
 crash(Preflist) ->
@@ -171,6 +171,6 @@ handle_work({reply, DonePid},  {raw, Ref, _EqcPid} = _Sender, State = #wstate{in
     {reply, asyncreply, State};
 handle_work({crash, DonePid},  {raw, Ref, _EqcPid} = _Sender, _State = #wstate{index=I}) ->
     timer:sleep(1), % slow things down enough to cause issue on stops
-    DonePid ! {I, {ok, Ref}},
+    %DonePid ! {I, {ok, Ref}},
     throw(deliberate_async_crash).
 

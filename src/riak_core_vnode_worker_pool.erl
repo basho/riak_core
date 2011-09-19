@@ -134,7 +134,7 @@ handle_sync_event({shutdown, Time}, From, _StateName, #state{queue=Q,
                 _ when is_integer(Time) ->
                     erlang:send_after(Time, self(), shutdown)
             end,
-            {next_state, shutdown, State#state{shutdown=From}}
+            {next_state, shutdown, State#state{shutdown=From, queue=queue:new()}}
     end;
 handle_sync_event(_Event, _From, StateName, State) ->
     {reply, {error, unknown_message}, StateName, State}.
