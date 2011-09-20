@@ -99,8 +99,8 @@ handle_event({checkin, Pid}, shutdown, #state{monitors=Monitors0} = State) ->
         _ ->
             {next_state, shutdown, State#state{monitors=Monitors}}
     end;
-handle_event({checkin, Pid}, _, #state{pool = Pool, queue=Q, monitors=Monitors0} = State) ->
-    Monitors = lists:keydelete(Pid, 1, Monitors0),
+handle_event({checkin, Worker}, _, #state{pool = Pool, queue=Q, monitors=Monitors0} = State) ->
+    Monitors = lists:keydelete(Worker, 1, Monitors0),
     case queue:out(Q) of
         {{value, {work, Work, From}}, Rem} ->
             case poolboy:checkout(Pool) of
