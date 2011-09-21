@@ -24,7 +24,7 @@
 -module(claim_simulation).
 -compile(export_all).
 
--define(SIMULATE,1).
+%%-define(SIMULATE,1).
 -ifdef(SIMULATE).
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -33,14 +33,24 @@
 -define(get(K, PL, D), proplists:get_value(K, PL, D)).
 
 basic_test_() ->
-    {timeout, 60000, fun basic/0}.
+    {timeout, 60000, [fun basic_default/0,
+                      fun basic_new/0]}.
 
-basic() ->
-    Opts = [
-            %%{wc_mf, {riak_core_claim, default_wants_claim}},
-            %%{cc_mf, {riak_core_claim, default_choose_claim}},
+basic_default() ->
+    Opts = [{suffix, "_default"},
+            {wc_mf, {riak_core_claim, default_wants_claim}},
+            {cc_mf, {riak_core_claim, default_choose_claim}},
+            {target_n_val, 4},
+            {ring_size, 32},
+            {node_count, 8},
+            {node_capacity, 24}
+           ],
+    run(Opts).
+
+basic_new() ->
+    Opts = [{suffix, "_new"},
             {wc_mf, {riak_core_new_claim, new_wants_claim}},
-            {cc_mf, {riak_core_new_claim, new_claim}},
+            {cc_mf, {riak_core_new_claim, new_choose_claim}},
             {target_n_val, 4},
             {ring_size, 32},
             {node_count, 8},
@@ -54,6 +64,8 @@ run(Opts) ->
     WCMod = ?get(wc_mf, Opts, {riak_core_claim, default_wants_claim}),
     CCMod = ?get(cc_mf, Opts, {riak_core_claim, default_choose_claim}),
     TargetN = ?get(target_n_val, Opts, 4),
+    Suffix = ?get(suffix, Opts, ""),
+
     application:set_env(riak_core, wants_claim_fun, WCMod),
     application:set_env(riak_core, choose_claim_fun, CCMod),
     application:set_env(riak_core, target_n_val, TargetN),
@@ -86,7 +98,8 @@ run(Opts) ->
 
     MeetTargetN = [riak_core_claim:meets_target_n(R, TargetN) || R <- Rings],
 
-    FName = io_lib:format("/tmp/rings_~w_~w.txt", [RingSize, NodeCount]),
+    FName = io_lib:format("/tmp/rings_~w_~w~s.txt",
+                          [RingSize, NodeCount, Suffix]),
     {ok, Out} = file:open(FName, [write]),
     [print_info(Out, O, N, M, lists:nth(N - 1, MeetTargetN),
                 RingSize, NodeCapacity)

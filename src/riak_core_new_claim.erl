@@ -21,7 +21,7 @@
 %% -------------------------------------------------------------------
 
 -module(riak_core_new_claim).
--export([new_wants_claim/2, new_claim/2]).
+-export([new_wants_claim/2, new_choose_claim/2]).
 
 new_wants_claim(Ring, Node) ->
     Active = riak_core_ring:claiming_members(Ring),
@@ -38,7 +38,7 @@ new_wants_claim(Ring, Node) ->
             {yes, Avg - Count}
     end.
     
-new_claim(Ring, Node) ->
+new_choose_claim(Ring, Node) ->
     Active = riak_core_ring:claiming_members(Ring),
     Owners = riak_core_ring:all_owners(Ring),
     Counts = get_counts(Active, Owners),
@@ -95,14 +95,17 @@ new_claim(Ring, Node) ->
                                   riak_core_ring:transfer_node(Idx, Node, Ring0)
                           end, Ring, Claim2),
 
-    case {EnoughNodes, riak_core_claim:meets_target_n(NewRing, TargetN)} of
-        {false, _} ->
-            NewRing;
-        {true, {true, _}} ->
-            NewRing;
-        {true, false} ->
-            %% Last resort, fallback to re-diagonalization
-            riak_core_claim:claim_rebalance_n(Ring, Node)
+    RingChanged = ([] /= Claim2),
+    RingMeetsTargetN = riak_core_claim:meets_target_n(NewRing, TargetN),
+    case {RingChanged, EnoughNodes, RingMeetsTargetN} of
+        {false, _, _} ->
+            %% Unable to claim, fallback to re-diagonalization
+            riak_core_claim:claim_rebalance_n(Ring, Node);
+        {_, true, false} ->
+            %% Failed to meet target_n, fallback to re-diagonalization
+            riak_core_claim:claim_rebalance_n(Ring, Node);
+        _ ->
+            NewRing
     end.
 
 %% Counts up the number of partitions owned by each node
@@ -124,7 +127,7 @@ prefilter_violations(Ring, Node, AllIndices, Indices, TargetN, RingSize) ->
     CurrentIndices = riak_core_ring:indices(Ring, Node),
     CurrentNth = [lists:keyfind(Idx, 2, AllIndices) || Idx <- CurrentIndices],
     [{Nth, Idx} || {Nth, Idx} <- Indices,
-                   lists:all(fun(CNth) ->
+                   lists:all(fun({CNth, _}) ->
                                      spaced_by_n(CNth, Nth, TargetN, RingSize)
                              end, CurrentNth)].
 
@@ -136,6 +139,8 @@ prefilter_violations(Ring, Node, AllIndices, Indices, TargetN, RingSize) ->
 %%    expected ownership. In other words, if A owns 5 partitions and
 %%    the desired ownership is 3, then we try to claim at most 2 partitions
 %%    from A.
+select_indices(_Owners, _Deltas, [], _TargetN, _RingSize) ->
+    [];
 select_indices(Owners, Deltas, Indices, TargetN, RingSize) ->
     OwnerDT = dict:from_list(Owners),
     {FirstNth, _} = hd(Indices),
