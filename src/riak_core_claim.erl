@@ -56,7 +56,9 @@
          never_wants_claim/1, random_choose_claim/1]).
 -export([default_choose_claim/2,
          default_wants_claim/2,
-         claim_rebalance_n/2]).
+         claim_rebalance_n/2,
+         meets_target_n/2,
+         diagonal_stripe/2]).
 
 -ifdef(TEST).
 -ifdef(EQC).
@@ -71,22 +73,26 @@
 default_wants_claim(Ring) ->
     default_wants_claim(Ring, node()).
 
-default_wants_claim(Ring0, Node) ->
-    Ring = riak_core_ring:upgrade(Ring0),
+get_member_count(Ring, Node) ->
     %% Determine how many nodes are involved with the ring; if the requested
     %% node is not yet part of the ring, include it in the count.
     AllMembers = riak_core_ring:claiming_members(Ring),
     case lists:member(Node, AllMembers) of
         true ->
-            Mval = length(AllMembers);
+            length(AllMembers);
         false ->
-            Mval = length(AllMembers) + 1
-    end,
+            length(AllMembers) + 1
+    end.
 
+get_expected_partitions(Ring, Node) ->
+    riak_core_ring:num_partitions(Ring) div get_member_count(Ring, Node).
+
+default_wants_claim(Ring0, Node) ->
+    Ring = riak_core_ring:upgrade(Ring0),
     %% Calculate the expected # of partitions for a perfectly balanced ring. Use
     %% this expectation to determine the relative balance of the ring. If the
     %% ring isn't within +-2 partitions on all nodes, we need to rebalance.
-    ExpParts = riak_core_ring:num_partitions(Ring) div Mval,
+    ExpParts = get_expected_partitions(Ring, Node),
     PCounts = lists:foldl(fun({_Index, ANode}, Acc) ->
                                   orddict:update_counter(ANode, 1, Acc)
                           end, [{Node, 0}], riak_core_ring:all_owners(Ring)),
@@ -235,8 +241,16 @@ find_biggest_hole(Mine) ->
 
 claim_rebalance_n(Ring0, Node) ->
     Ring = riak_core_ring:upgrade(Ring0),
-    %% diagonal stripes guarantee most disperse data
     Nodes = lists:usort([Node|riak_core_ring:claiming_members(Ring)]),
+    Zipped = diagonal_stripe(Ring, Nodes),
+    lists:foldl(fun({P, N}, Acc) ->
+                        riak_core_ring:transfer_node(P, N, Acc)
+                end,
+                Ring,
+                Zipped).
+
+diagonal_stripe(Ring, Nodes) ->
+    %% diagonal stripes guarantee most disperse data
     Partitions = lists:sort([ I || {I, _} <- riak_core_ring:all_owners(Ring) ]),
     Zipped = lists:zip(Partitions,
                        lists:sublist(
@@ -245,16 +259,15 @@ claim_rebalance_n(Ring0, Node) ->
                              1+(length(Partitions) div length(Nodes)),
                              Nodes)),
                          1, length(Partitions))),
-    lists:foldl(fun({P, N}, Acc) ->
-                        riak_core_ring:transfer_node(P, N, Acc)
-                end,
-                Ring,
-                Zipped).
+    Zipped.
 
-random_choose_claim(Ring0) ->
+random_choose_claim(Ring) ->
+    random_choose_claim(Ring, node()).
+
+random_choose_claim(Ring0, Node) ->
     Ring = riak_core_ring:upgrade(Ring0),
     riak_core_ring:transfer_node(riak_core_ring:random_other_index(Ring),
-                                 node(), Ring).
+                                 Node, Ring).
 
 %% @spec never_wants_claim(riak_core_ring()) -> no
 %% @doc For use by nodes that should not claim any partitions.
