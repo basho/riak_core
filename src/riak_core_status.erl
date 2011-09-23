@@ -120,7 +120,7 @@ ring_status() ->
 %% Retrieve the rings for all other nodes by RPC
 get_rings() ->
     {RawRings, Down} = riak_core_util:rpc_every_member(
-                         riak_core_ring_manager, get_raw_ring, [], 30000),
+                         riak_core_ring_manager, get_my_ring, [], 30000),
     RawRings2 = [riak_core_ring:upgrade(R) || {ok, R} <- RawRings],
     Rings = orddict:from_list([{riak_core_ring:owner_node(R), R} || R <- RawRings2]),
     {lists:sort(Down), Rings}.
