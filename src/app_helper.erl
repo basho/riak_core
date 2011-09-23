@@ -94,28 +94,27 @@ app_helper_test_() ->
     }.
 
 setup() ->
-    application:load(riak_core),
     application:set_env(bogus_app, envkeyone, value),
     application:set_env(bogus_app, envkeytwo, valuetwo).
 
 cleanup(_Ctx) ->
-    application:stop(riak_core).
+    ok.
 
 get_prop_or_env_default_value_test_case() ->
-    ?assert(get_prop_or_env(key, [], bogus, default) =:= default).
+    ?assertEqual(default, get_prop_or_env(key, [], bogus, default)).
 
 get_prop_or_env_undefined_value_test_case() ->
-    ?assert(get_prop_or_env(key, [], bogus) =:= undefined).
+    ?assertEqual(undefined, get_prop_or_env(key, [], bogus)).
 
 get_prop_or_env_from_env_test_case() ->
-    ?assert(get_prop_or_env(envkeyone, [], bogus_app) =:= value).
+    ?assertEqual(value, get_prop_or_env(envkeyone, [], bogus_app)).
 
 get_prop_or_env_from_prop_test_case() ->
     Properties = [{envkeyone, propvalue}],
-    ?assert(get_prop_or_env(envkeyone, Properties, bogus_app) =:= propvalue).
+    ?assertEqual(propvalue, get_prop_or_env(envkeyone, Properties, bogus_app)).
 
 get_prop_or_env_from_prop_with_default_test_case() ->
     Properties = [{envkeyone, propvalue}],
-    ?assert(get_prop_or_env(envkeyone, Properties, bogus_app, default) =:= propvalue).
+    ?assertEqual(propvalue, get_prop_or_env(envkeyone, Properties, bogus_app, default)).
 
 -endif.
