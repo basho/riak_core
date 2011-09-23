@@ -171,6 +171,11 @@ continue(State, NewModState) ->
 %% In the forwarding state, all vnode commands and coverage commands are
 %% forwarded to the new owner for processing.
 
+update_forwarding_mode(_Ring, State=#state{modstate={deleted, _ModState}}) ->
+    %% awaiting unregistered message from the vnode master.  The
+    %% vnode has been deleted so cannot handle messages even if 
+    %% we wanted to.
+    continue(State);
 update_forwarding_mode(Ring, State=#state{index=Index, mod=Mod}) ->
     Node = node(),
     case riak_core_ring:next_owner(Ring, Index, Mod) of
@@ -346,7 +351,7 @@ finish_handoff(State=#state{mod=Mod,
                         [Idx, Mod]),
             riak_core_vnode_master:unregister_vnode(Idx, Mod),
             riak_core_vnode_manager:set_not_forwarding(self(), false),
-            continue(State#state{modstate=NewModState,
+            continue(State#state{modstate={deleted,NewModState}, % like to fail if used
                                  handoff_node=none,
                                  forward=HN})
     end.
@@ -435,7 +440,13 @@ terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState,
         _ ->
             ok
     end,
-    Mod:terminate(Reason, ModState).
+    case ModState of
+        %% Handoff completed, Mod:delete has been called, now terminate.
+        {deleted, ModState1} ->
+            Mod:terminate(Reason, ModState1);
+        _ ->
+            Mod:terminate(Reason, ModState)
+    end.
 
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
