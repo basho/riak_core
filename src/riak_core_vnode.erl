@@ -306,46 +306,35 @@ active({update_forwarding, Ring}, State) ->
     NewState = update_forwarding_mode(Ring, State),
     continue(NewState);
 active(trigger_handoff, State) ->
-     maybe_handoff(State).
+     maybe_handoff(State);
+active(unregistered, State=#state{mod=Mod, modstate=ModState, index=Index}) ->
+    lager:debug("~p ~p vnode completed handoff and unregistered.  Cleaning up.",
+                [Index, Mod]),
+    {ok, NewModState} = Mod:delete(ModState),
+    {stop, normal, State#state{modstate=NewModState,
+                               handoff_node=none,
+                               pool_pid=undefined,
+                               handoff_pid=undefined}}.
 
 active(_Event, _From, State) ->
     Reply = ok,
     {reply, Reply, active, State, State#state.inactivity_timeout}.
 
 finish_handoff(State=#state{mod=Mod, 
-                            modstate=ModState,
                             index=Idx,
-                            pool_pid=Pool,
                             handoff_node=HN}) ->
     case riak_core_gossip:finish_handoff(Idx, node(), HN, Mod) of
         forward ->
-            case is_pid(Pool) of
-                true ->
-                    riak_core_vnode_worker_pool:shutdown_pool(Pool, 60000);
-                _ ->
-                    ok
-            end,
-            {ok, NewModState} = Mod:delete(ModState),
-            {stop, normal, State#state{modstate=NewModState,
-                                       handoff_node=none,
-                                       pool_pid=undefined,
-                                       handoff_pid=undefined}};
+            riak_core_vnode_master:unregister_vnode(Idx, Mod),
+            riak_core_vnode_manager:set_not_forwarding(self(), false),
+            continue(State#state{forward=HN});
         continue ->
-            continue(State#state{handoff_node=none,
-                                 handoff_pid=undefined});
+            continue(State#state{handoff_node=none});
         shutdown ->
-            case is_pid(Pool) of
-                true ->
-                    riak_core_vnode_worker_pool:shutdown_pool(Pool, 60000);
-                _ ->
-                    ok
-            end,
-            {ok, NewModState} = Mod:delete(ModState),
             riak_core_handoff_manager:add_exclusion(Mod, Idx),
-            {stop, normal, State#state{modstate=NewModState,
-                                       handoff_node=none,
-                                       pool_pid=undefined,
-                                       handoff_pid=undefined}}
+            riak_core_vnode_master:unregister_vnode(Idx, Mod),
+            riak_core_vnode_manager:set_not_forwarding(self(), false),
+            continue(State#state{forward=HN})
     end.
 
 handle_event(R={update_forwarding, _Ring}, _StateName, State) ->
@@ -373,7 +362,14 @@ handle_sync_event({handoff_data,BinObj}, _From, StateName,
              State#state.inactivity_timeout}
     end.
 
-handle_info({'EXIT', Pid, _Reason}, _StateName, State=#state{handoff_pid=Pid}) ->
+handle_info({'EXIT', Pid, Reason}, _StateName,
+            State=#state{mod=Mod, index=Index, handoff_pid=Pid}) ->
+    case Reason of
+        normal ->
+            ok;
+        _ ->
+            lager:error("~p ~p handoff crashed ~p\n", [Index, Mod, Reason])
+    end,
     continue(State#state{handoff_pid=undefined});
 
 handle_info({'EXIT', Pid, Reason}, StateName, State=#state{mod=Mod,modstate=ModState}) ->
@@ -406,9 +402,7 @@ handle_info(Info, StateName, State=#state{mod=Mod,modstate=ModState}) ->
     end.
 
 terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState,
-        pool_pid=Pool,index=Index}) ->
-    riak_core_vnode_master:unregister_vnode(Index,
-        riak_core_vnode_master:reg_name(Mod)),
+        pool_pid=Pool}) ->
     case is_pid(Pool) of
         true ->
             riak_core_vnode_worker_pool:shutdown_pool(Pool, 60000);
