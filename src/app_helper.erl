@@ -22,7 +22,11 @@
 
 -module(app_helper).
 
--export([get_env/1, get_env/2, get_env/3, get_prop_or_env/3, get_prop_or_env/4]).
+-export([get_env/1,
+         get_env/2,
+         get_env/3,
+         get_prop_or_env/3,
+         get_prop_or_env/4]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
