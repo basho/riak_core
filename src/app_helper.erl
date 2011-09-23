@@ -24,6 +24,10 @@
 
 -export([get_env/1, get_env/2, get_env/3, get_prop_or_env/3, get_prop_or_env/4]).
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 %% ===================================================================
 %% Public API
 %% ===================================================================
@@ -66,3 +70,48 @@ get_prop_or_env(Key, Properties, App, Default) ->
         Value ->
             Value
     end.
+
+%% ===================================================================
+%% EUnit tests
+%% ===================================================================
+-ifdef(TEST).
+
+app_helper_test_() ->
+    { setup,
+      fun setup/0,
+      fun cleanup/1,
+      [
+       fun get_prop_or_env_default_value_test_case/0,
+       fun get_prop_or_env_undefined_value_test_case/0,
+       fun get_prop_or_env_from_env_test_case/0,
+       fun get_prop_or_env_from_prop_test_case/0,
+       fun get_prop_or_env_from_prop_with_default_test_case/0
+      ]
+    }.
+
+setup() ->
+    application:load(riak_core),
+    application:set_env(bogus_app, envkeyone, value),
+    application:set_env(bogus_app, envkeytwo, valuetwo).
+
+cleanup(_Ctx) ->
+    application:stop(riak_core).
+
+get_prop_or_env_default_value_test_case() ->
+    ?assert(get_prop_or_env(key, [], bogus, default) =:= default).
+
+get_prop_or_env_undefined_value_test_case() ->
+    ?assert(get_prop_or_env(key, [], bogus) =:= undefined).
+
+get_prop_or_env_from_env_test_case() ->
+    ?assert(get_prop_or_env(envkeyone, [], bogus_app) =:= value).
+
+get_prop_or_env_from_prop_test_case() ->
+    Properties = [{envkeyone, propvalue}],
+    ?assert(get_prop_or_env(envkeyone, Properties, bogus_app) =:= propvalue).
+
+get_prop_or_env_from_prop_with_default_test_case() ->
+    Properties = [{envkeyone, propvalue}],
+    ?assert(get_prop_or_env(envkeyone, Properties, bogus_app, default) =:= propvalue).
+
+-endif.
