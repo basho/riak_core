@@ -324,13 +324,23 @@ active(_Event, _From, State) ->
 finish_handoff(State=#state{mod=Mod, 
                             modstate=ModState,
                             index=Idx,
-                            handoff_node=HN}) ->
+                            handoff_node=HN,
+                            pool_pid=Pool}) ->
     case riak_core_gossip:finish_handoff(Idx, node(), HN, Mod) of
         continue ->
             continue(State#state{handoff_node=none});
         Res when Res == forward; Res == shutdown ->
             %% Have to issue the delete now.  Once unregistered the
-            %% vnode master will spin up a new vnode on demand.  
+            %% vnode master will spin up a new vnode on demand.
+            %% Shutdown the async pool beforehand, don't want callbacks
+            %% running on non-existant data.
+            case is_pid(Pool) of
+                true ->
+                    %% state.pool_pid will be cleaned up by handle_info message.
+                    riak_core_vnode_worker_pool:shutdown_pool(Pool, 60000);
+                _ ->
+                    ok
+            end,
             {ok, NewModState} = Mod:delete(ModState),
             lager:debug("~p ~p vnode finished handoff and deleted.",
                         [Idx, Mod]),
@@ -375,6 +385,15 @@ handle_info({'EXIT', Pid, Reason}, _StateName,
             lager:error("~p ~p handoff crashed ~p\n", [Index, Mod, Reason])
     end,
     continue(State#state{handoff_pid=undefined});
+handle_info({'EXIT', Pid, Reason}, _StateName,
+            State=#state{mod=Mod, index=Index, pool_pid=Pid}) ->
+    case Reason of
+        Reason when Reason == normal; Reason == shutdown ->
+            ok;
+        _ ->
+            lager:error("~p ~p worker pool crashed ~p\n", [Index, Mod, Reason])
+    end,
+    continue(State#state{pool_pid=undefined});
 
 handle_info({'EXIT', Pid, Reason}, StateName, State=#state{mod=Mod,modstate=ModState}) ->
     %% A linked processes has died so use the
@@ -387,8 +406,8 @@ handle_info({'EXIT', Pid, Reason}, StateName, State=#state{mod=Mod,modstate=ModS
             {noreply,NewModState} ->
                 {next_state, StateName, State#state{modstate=NewModState},
                     State#state.inactivity_timeout};
-            {stop, Reason, NewModState} ->
-                 {stop, Reason, State#state{modstate=NewModState}}
+            {stop, Reason1, NewModState} ->
+                 {stop, Reason1, State#state{modstate=NewModState}}
         end
     catch
         _ErrorType:undef ->
@@ -407,7 +426,10 @@ handle_info(Info, StateName, State=#state{mod=Mod,modstate=ModState}) ->
 
 terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState,
         pool_pid=Pool}) ->
-    case is_pid(Pool) of
+    %% Shutdown if the pool is still alive - there could be a race on
+    %% delivery of the unregistered event and successfully shutting
+    %% down the pool.
+    case is_pid(Pool) andalso is_process_alive(Pool) of
         true ->
             riak_core_vnode_worker_pool:shutdown_pool(Pool, 60000);
         _ ->
