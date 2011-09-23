@@ -277,8 +277,8 @@ active(timeout, State) ->
     maybe_handoff(State);
 active(?COVERAGE_REQ{keyspaces=KeySpaces, 
                      request=Request,
-                     sender=Sender},
-       State=#state{handoff_node=HN}) when HN =:= none ->
+                     sender=Sender}, State) ->
+    %% Coverage request handled in handoff and non-handoff.  Will be forwarded if set.
     vnode_coverage(Sender, Request, KeySpaces, State);
 active(?VNODE_REQ{sender=Sender, request=Request},
        State=#state{handoff_node=HN}) when HN =:= none ->
@@ -307,12 +307,13 @@ active({update_forwarding, Ring}, State) ->
     continue(NewState);
 active(trigger_handoff, State) ->
      maybe_handoff(State);
-active(unregistered, State=#state{mod=Mod, modstate=ModState, index=Index}) ->
-    lager:debug("~p ~p vnode completed handoff and unregistered.  Cleaning up.",
+active(unregistered, State=#state{mod=Mod, index=Index}) ->
+    %% Add exclusion so the ring handler will not try to spin this vnode
+    %% up until it receives traffic.
+    riak_core_handoff_manager:add_exclusion(Mod, Index),
+    lager:debug("~p ~p vnode excluded and unregistered.",
                 [Index, Mod]),
-    {ok, NewModState} = Mod:delete(ModState),
-    {stop, normal, State#state{modstate=NewModState,
-                               handoff_node=none,
+    {stop, normal, State#state{handoff_node=none,
                                pool_pid=undefined,
                                handoff_pid=undefined}}.
 
@@ -321,20 +322,23 @@ active(_Event, _From, State) ->
     {reply, Reply, active, State, State#state.inactivity_timeout}.
 
 finish_handoff(State=#state{mod=Mod, 
+                            modstate=ModState,
                             index=Idx,
                             handoff_node=HN}) ->
     case riak_core_gossip:finish_handoff(Idx, node(), HN, Mod) of
-        forward ->
-            riak_core_vnode_master:unregister_vnode(Idx, Mod),
-            riak_core_vnode_manager:set_not_forwarding(self(), false),
-            continue(State#state{forward=HN});
         continue ->
             continue(State#state{handoff_node=none});
-        shutdown ->
-            riak_core_handoff_manager:add_exclusion(Mod, Idx),
+        Res when Res == forward; Res == shutdown ->
+            %% Have to issue the delete now.  Once unregistered the
+            %% vnode master will spin up a new vnode on demand.  
+            {ok, NewModState} = Mod:delete(ModState),
+            lager:debug("~p ~p vnode finished handoff and deleted.",
+                        [Idx, Mod]),
             riak_core_vnode_master:unregister_vnode(Idx, Mod),
             riak_core_vnode_manager:set_not_forwarding(self(), false),
-            continue(State#state{forward=HN})
+            continue(State#state{modstate=NewModState,
+                                 handoff_node=none,
+                                 forward=HN})
     end.
 
 handle_event(R={update_forwarding, _Ring}, _StateName, State) ->
