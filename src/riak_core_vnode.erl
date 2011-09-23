@@ -175,7 +175,7 @@ update_forwarding_mode(_Ring, State=#state{modstate={deleted, _ModState}}) ->
     %% awaiting unregistered message from the vnode master.  The
     %% vnode has been deleted so cannot handle messages even if 
     %% we wanted to.
-    continue(State);
+    State;
 update_forwarding_mode(Ring, State=#state{index=Index, mod=Mod}) ->
     Node = node(),
     case riak_core_ring:next_owner(Ring, Index, Mod) of
