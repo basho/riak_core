@@ -77,7 +77,7 @@ stop() ->
     gen_server:cast(?MODULE, stop).
 
 finish_handoff(Idx, Prev, New, Mod) ->
-    gen_server:call(?MODULE, {finish_handoff, Idx, Prev, New, Mod}).
+    gen_server:call(?MODULE, {finish_handoff, Idx, Prev, New, Mod}, infinity).
 
 rejoin(Node, Ring) ->
     gen_server:cast({?MODULE, Node}, {rejoin, Ring}).
