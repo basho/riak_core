@@ -597,7 +597,7 @@ ring_ready(State0) ->
     Owner = owner_node(State0),
     State = update_seen(Owner, State0),
     Seen = State?CHSTATE.seen,
-    Members = get_members(State?CHSTATE.members, [valid, leaving]),
+    Members = get_members(State?CHSTATE.members, [valid, leaving, exiting]),
     VClock = State?CHSTATE.vclock,
     R = [begin
              case orddict:find(Node, Seen) of
@@ -618,7 +618,7 @@ ring_ready_info(State0) ->
     Owner = owner_node(State0),
     State = update_seen(Owner, State0),
     Seen = State?CHSTATE.seen,
-    Members = get_members(State?CHSTATE.members, [valid, leaving]),
+    Members = get_members(State?CHSTATE.members, [valid, leaving, exiting]),
     RecentVC =
         orddict:fold(fun(_, VC, Recent) ->
                              case vclock:descends(VC, Recent) of
@@ -889,7 +889,8 @@ maybe_remove_exiting(Node, CState) ->
     Claimant = CState?CHSTATE.claimant,
     case Claimant of
         Node ->
-            Exiting = get_members(CState?CHSTATE.members, [exiting]),
+            %% Change exiting nodes to invalid, skipping this node.
+            Exiting = get_members(CState?CHSTATE.members, [exiting]) -- [Node],
             Changed = (Exiting /= []),
             CState2 =
                 lists:foldl(fun(ENode, CState0) ->
