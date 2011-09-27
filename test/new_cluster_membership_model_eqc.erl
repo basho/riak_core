@@ -134,9 +134,9 @@ handoff_all(State) ->
     State3.
 
 do_maybe(State, Cmd, Args) ->
-    case precondition(State, {call,join_eqc,Cmd,Args}) of
+    case precondition(State, {call,?MODULE,Cmd,Args}) of
         true ->
-            run(State, {call,join_eqc,Cmd,Args});
+            run(State, {call,?MODULE,Cmd,Args});
         false ->
             State
     end.
@@ -155,9 +155,9 @@ test_ring_convergence(State) ->
     end.
 
 do_gossip(State, N2, N1) ->
-    case precondition(State, {call,join_eqc,random_gossip,[N2,N1]}) of
+    case precondition(State, {call,?MODULE,random_gossip,[N2,N1]}) of
         true ->
-            {true, run(State, {call,join_eqc,random_gossip,[N2,N1]})};
+            {true, run(State, {call,?MODULE,random_gossip,[N2,N1]})};
         false ->
             {false, State}
     end.
@@ -1355,7 +1355,7 @@ ring_ready(CState0) ->
     Seen = CState?CHSTATE.seen,
     %% TODO: Should we add joining here?
     %%Members = get_members(CState?CHSTATE.members, [joining, valid, leaving, exiting]),
-    Members = get_members(CState?CHSTATE.members, [valid, leaving]),
+    Members = get_members(CState?CHSTATE.members, [valid, leaving, exiting]),
     VClock = CState?CHSTATE.vclock,
     R = [begin
              case orddict:find(Node, Seen) of
@@ -1454,7 +1454,7 @@ maybe_remove_exiting(State, Node, CState) ->
     Claimant = CState?CHSTATE.claimant,
     case Claimant of
         Node ->
-            Exiting = get_members(CState?CHSTATE.members, [exiting]),
+            Exiting = get_members(CState?CHSTATE.members, [exiting]) -- [Node],
             %%io:format("Claimant ~p removing exiting ~p~n", [Node, Exiting]),
             Changed = (Exiting /= []),
             {State2, CState2} =
