@@ -70,6 +70,16 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
                                                     foldfun=fun visit_item/3,
                                                     acc0={Socket,ParentPid,Module,TcpMod,0,0,ok}},
                                                  VMaster, infinity),
+         %% One last sync to make sure the message has been received.
+         %% post-0.14 vnodes switch to handoff to forwarding immediately
+         %% so handoff_complete can only be sent once all of the data is
+         %% written.  handle_handoff_data is a sync call, so once
+         %% we receive the sync the remote side will be up to date.
+         lager:debug("~p ~p Sending final sync", [Partition, Module]),
+         ok = TcpMod:send(Socket, <<?PT_MSG_SYNC:8>>),
+         {ok,[?PT_MSG_SYNC|<<"sync">>]} = TcpMod:recv(Socket, 0),
+         lager:debug("~p ~p Final sync received", [Partition, Module]),
+
          EndFoldTime = now(),
          FoldTimeDiff = timer:now_diff(EndFoldTime, StartFoldTime) / 1000000,
          case ErrStatus of
