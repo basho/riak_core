@@ -60,6 +60,7 @@
          downgrade/2,
          claimant/1,
          member_status/2,
+         pretty_print/2,
          all_member_status/1,
          update_member_meta/5,
          get_member_meta/3,
@@ -596,7 +597,7 @@ ring_ready(State0) ->
     Owner = owner_node(State0),
     State = update_seen(Owner, State0),
     Seen = State?CHSTATE.seen,
-    Members = get_members(State?CHSTATE.members, [valid, leaving]),
+    Members = get_members(State?CHSTATE.members, [valid, leaving, exiting]),
     VClock = State?CHSTATE.vclock,
     R = [begin
              case orddict:find(Node, Seen) of
@@ -617,7 +618,7 @@ ring_ready_info(State0) ->
     Owner = owner_node(State0),
     State = update_seen(Owner, State0),
     Seen = State?CHSTATE.seen,
-    Members = get_members(State?CHSTATE.members, [valid, leaving]),
+    Members = get_members(State?CHSTATE.members, [valid, leaving, exiting]),
     RecentVC =
         orddict:fold(fun(_, VC, Recent) ->
                              case vclock:descends(VC, Recent) of
@@ -642,6 +643,58 @@ handoff_complete(State, Idx, Mod) ->
 
 ring_changed(Node, State) ->
     internal_ring_changed(Node, State).
+
+pretty_print(Ring, Opts) ->
+    OptNumeric = lists:member(numeric, Opts),
+    OptLegend = lists:member(legend, Opts),
+    Out = proplists:get_value(out, Opts, standard_io),
+    TargetN = proplists:get_value(target_n, Opts,
+                                  app_helper:get_env(riak_core, target_n_val)),
+
+    Owners = riak_core_ring:all_members(Ring),
+    Indices = riak_core_ring:all_owners(Ring),
+    RingSize = length(Indices),
+    Numeric = OptNumeric or (length(Owners) > 26),
+    case Numeric of
+        true ->
+            Ids = [integer_to_list(N) || N <- lists:seq(1, length(Owners))];
+        false ->
+            Ids = [[Letter] || Letter <- lists:seq(97, 96+length(Owners))]
+    end,
+    Names = lists:zip(Owners, Ids),
+    case OptLegend of
+        true ->
+            io:format(Out, "~36..=s Nodes ~36..=s~n", ["", ""]),
+            [begin
+                 NodeIndices = [Idx || {Idx,Owner} <- Indices,
+                                       Owner =:= Node],
+                 RingPercent = length(NodeIndices) * 100 / RingSize,
+                 io:format(Out, "Node ~s: ~5.1f% ~s~n",
+                           [Name, RingPercent, Node])
+             end || {Node, Name} <- Names],
+            io:format(Out, "~36..=s Ring ~37..=s~n", ["", ""]);
+        false ->
+            ok
+    end,
+
+    case Numeric of
+        true ->
+            Ownership =
+                [orddict:fetch(Owner, Names) || {_Idx, Owner} <- Indices],
+            io:format(Out, "~p~n", [Ownership]);
+        false ->
+            lists:foldl(fun({_, Owner}, N) ->
+                                Name = orddict:fetch(Owner, Names),
+                                case N rem TargetN of
+                                    0 ->
+                                        io:format(Out, "~s|", [[Name]]);
+                                    _ ->
+                                        io:format(Out, "~s", [[Name]])
+                                end,
+                                N+1
+                        end, 1, Indices),
+            io:format(Out, "~n", [])
+    end.
 
 %% ===================================================================
 %% Legacy reconciliation
@@ -836,7 +889,8 @@ maybe_remove_exiting(Node, CState) ->
     Claimant = CState?CHSTATE.claimant,
     case Claimant of
         Node ->
-            Exiting = get_members(CState?CHSTATE.members, [exiting]),
+            %% Change exiting nodes to invalid, skipping this node.
+            Exiting = get_members(CState?CHSTATE.members, [exiting]) -- [Node],
             Changed = (Exiting /= []),
             CState2 =
                 lists:foldl(fun(ENode, CState0) ->
@@ -895,7 +949,9 @@ update_ring(CNode, CState) ->
 
     %% Rebalance the ring as necessary
     Next3 = rebalance_ring(CNode, CState4),
-
+    lager:debug("Pending ownership transfers: ~b~n",
+                [length(pending_changes(CState4))]),
+    
     %% Remove transfers to/from down nodes
     Next4 = handle_down_nodes(CState4, Next3),
 

@@ -32,7 +32,7 @@
          sync_command/4,
          sync_spawn_command/3, make_request/3,
          make_coverage_request/4,
-         unregister_vnode/2,
+         unregister_vnode/2, unregister_vnode/3,
          all_nodes/1, reg_name/1, all_index_pid/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
@@ -136,8 +136,12 @@ make_coverage_request(Request, KeySpaces, Sender, Index) ->
                           sender=Sender,
                           request=Request}.
 
-unregister_vnode(Index, VMaster) ->
-    gen_server:cast(VMaster, {unregister, Index}).
+unregister_vnode(Index, VNodeMod) ->
+    unregister_vnode(Index, self(), VNodeMod).
+
+unregister_vnode(Index, Pid, VNodeMod) ->
+    RegName = reg_name(VNodeMod),
+    gen_server:cast(RegName, {unregister, Index, Pid}).
 
 %% Request a list of Pids for all vnodes
 all_nodes(VNodeMod) ->
@@ -192,8 +196,9 @@ handle_cast(Req=?COVERAGE_REQ{index=Idx}, State) ->
     Pid = get_vnode(Idx, State),
     gen_fsm:send_event(Pid, Req),
     {noreply, State};
-handle_cast({unregister, Index}, #state{idxtab=T} = State) ->
-    ets:match_delete(T, {idxrec, Index, '_', '_'}),
+handle_cast({unregister, Index, Pid}, #state{idxtab=T} = State) ->
+    ets:match_delete(T, {idxrec, Index, Pid, '_'}),
+    gen_fsm:send_event(Pid, unregistered),
     {noreply, State};
 handle_cast(Other, State=#state{legacy=Legacy}) when Legacy =/= undefined ->
     case catch Legacy:rewrite_cast(Other) of
