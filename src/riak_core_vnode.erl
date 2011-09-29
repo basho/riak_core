@@ -400,6 +400,11 @@ handle_info({'EXIT', Pid, Reason}, _StateName,
     end,
     continue(State#state{pool_pid=undefined});
 
+handle_info(Info, _StateName, 
+            State=#state{mod=Mod,modstate={deleted, _},index=Index}) ->
+    lager:info("~p ~p ignored handle_info ~p - vnode unregistering\n", 
+               [Index, Mod, Info]),
+    {noreply, State};
 handle_info({'EXIT', Pid, Reason}, StateName, State=#state{mod=Mod,modstate=ModState}) ->
     %% A linked processes has died so use the
     %% handle_exit callback to allow the vnode 
@@ -451,6 +456,9 @@ terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState,
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
+maybe_handoff(State=#state{modstate={deleted, _}}) ->
+    %% Modstate has been deleted, waiting for unregistered.  No handoff.
+    continue(State);
 maybe_handoff(State=#state{mod=Mod, modstate=ModState}) ->
     case should_handoff(State) of
         {true, TargetNode} ->
