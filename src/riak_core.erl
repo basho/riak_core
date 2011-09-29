@@ -20,7 +20,7 @@
 %%
 %% -------------------------------------------------------------------
 -module(riak_core).
--export([stop/0, stop/1, join/1, join/3, remove/1, down/1, leave/0,
+-export([stop/0, stop/1, join/1, join/4, remove/1, down/1, leave/0,
          remove_from_cluster/1]).
 -export([register_vnode_module/1, vnode_modules/0]).
 -export([register/1, register/2, bucket_fixups/0]).
@@ -56,11 +56,11 @@ join(Node) when is_atom(Node) ->
 join(Node, Node) ->
     {error, self_join};
 join(_, Node) ->
-    join(riak_core_gossip:legacy_gossip(), node(), Node).
+    join(riak_core_gossip:legacy_gossip(), node(), Node, false).
 
-join(true, _, Node) ->
+join(true, _, Node, _Rejoin) ->
     legacy_join(Node);
-join(false, _, Node) ->
+join(false, _, Node, Rejoin) ->
     case net_adm:ping(Node) of
         pang ->
             {error, not_reachable};
@@ -72,11 +72,11 @@ join(false, _, Node) ->
                     %% Failure due to trying to join older node that
                     %% doesn't define legacy_gossip will be handled
                     %% in standard_join based on seeing a legacy ring.
-                    standard_join(Node)
+                    standard_join(Node, Rejoin)
             end
     end.
 
-standard_join(Node) when is_atom(Node) ->
+standard_join(Node, Rejoin) when is_atom(Node) ->
     case net_adm:ping(Node) of
         pong ->
             case rpc:call(Node, riak_core_ring_manager, get_my_ring, []) of
@@ -85,7 +85,7 @@ standard_join(Node) when is_atom(Node) ->
                         true ->
                             legacy_join(Node);
                         false ->
-                            standard_join(Node, Ring)
+                            standard_join(Node, Ring, Rejoin)
                     end;
                 _ -> 
                     {error, unable_to_get_join_ring}
@@ -94,12 +94,12 @@ standard_join(Node) when is_atom(Node) ->
             {error, not_reachable}
     end.
 
-standard_join(Node, Ring) ->
+standard_join(Node, Ring, Rejoin) ->
     {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
     SameSize = (riak_core_ring:num_partitions(MyRing) =:=
                 riak_core_ring:num_partitions(Ring)),
     Singleton = ([node()] =:= riak_core_ring:all_members(MyRing)),
-    case {Singleton, SameSize} of
+    case {Rejoin or Singleton, SameSize} of
         {false, _} ->
             {error, not_single_node};
         {_, false} ->
