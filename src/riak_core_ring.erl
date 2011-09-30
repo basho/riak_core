@@ -1044,7 +1044,7 @@ handle_down_nodes(CState, Next) ->
                  NextDown = lists:member(NO, DownMembers),
                  case (OwnerLeaving and NextDown) of
                      true ->
-                         Active = riak_core_ring:active_members(CState),
+                         Active = riak_core_ring:active_members(CState) -- [O],
                          RNode = lists:nth(random:uniform(length(Active)),
                                            Active),
                          {Idx, O, RNode, Mods, Status};
