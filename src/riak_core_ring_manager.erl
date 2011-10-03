@@ -273,7 +273,7 @@ handle_cast({refresh_my_ring, ClusterName}, State) ->
         ClusterName ->
             handle_cast(refresh_my_ring, State);
         _ ->
-            {noreply, ok, State}
+            {noreply, State}
     end;
 handle_cast(refresh_my_ring, State) ->
     {_, _, State2} = handle_call(refresh_my_ring, undefined, State),
