@@ -47,7 +47,27 @@
                async_work=[]}). % {Index, AsyncRef} async work submitted to each vnode
                
 simple_test_() ->
-    {timeout, 60, ?_assertEqual(true, quickcheck(?QC_OUT(numtests(100, prop_simple()))))}.
+    {setup,
+     fun() ->
+             Vars = [{ring_creation_size, 8},
+                     {ring_state_dir, "<nostore>"},
+                     {cluster_name, "test"}],
+             OldVars = [begin
+                            Old = app_helper:get_env(riak_core, AppKey),
+                            ok = application:set_env(riak_core, AppKey, Val),
+                            {AppKey, Old}
+                        end || {AppKey, Val} <- Vars],
+             riak_core_ring_events:start_link(),
+             riak_core_ring_manager:start_link(test),
+             OldVars
+     end,
+     fun(OldVars) ->
+             riak_core_ring_manager:stop(),
+             [ok = application:set_env(riak_core, K, V) || {K,V} <- OldVars],
+             ok
+     end,
+     {timeout, 120,
+      ?_assertEqual(true, quickcheck(?QC_OUT(numtests(100, prop_simple()))))}}.
 
 test(N) ->
     quickcheck(numtests(N, prop_simple())).
@@ -100,7 +120,7 @@ index(S) ->
 
 initial_state_data() ->
     Ring = riak_core_ring:fresh(8, node()),
-    riak_core_ring_manager:set_ring_global(Ring),
+    riak_core_ring_manager:set_my_ring(Ring),
     #qcst{started=[],
           counters=orddict:new(),
           crash_reasons=orddict:new(),
