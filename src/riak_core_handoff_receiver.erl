@@ -106,7 +106,7 @@ process_message(?PT_MSG_OBJ, MsgData, State=#state{vnode=VNode, count=Count}) ->
     case gen_fsm:sync_send_all_state_event(VNode, Msg, 60000) of
         ok ->
             State#state{count=Count+1};
-        E={error, Err} ->
+        E={error, _} ->
             exit(E)
     end;
 process_message(?PT_MSG_OLDSYNC, MsgData, State=#state{sock=Socket,
