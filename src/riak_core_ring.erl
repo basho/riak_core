@@ -397,8 +397,12 @@ random_other_active_node(State) ->
 -spec reconcile(ExternState :: chstate(), MyState :: chstate()) ->
         {no_change, chstate()} | {new_ring, chstate()}.
 reconcile(ExternState, MyState) ->
-    check_tainted(ExternState, "Error: reconciling a tainted ring"),
-    check_tainted(MyState, "Error: reconciling a tainted ring"),
+    check_tainted(ExternState,
+                  "Error: riak_core_ring/reconcile :: "
+                  "reconciling tainted external ring"),
+    check_tainted(MyState, 
+                  "Error: riak_core_ring/reconcile :: "
+                  "reconciling tainted internal ring"),
     case internal_reconcile(MyState, ExternState) of
         {false, State} ->
             {no_change, State};
@@ -629,7 +633,8 @@ next_owner(State, Idx, Mod) ->
 %% @doc Returns true if all cluster members have seen the current ring.
 -spec ring_ready(State :: chstate()) -> boolean().
 ring_ready(State0) ->
-    check_tainted(State0, "Error: ring_ready called on tainted ring"),
+    check_tainted(State0,
+                  "Error: riak_core_ring/ring_ready called on tainted ring"),
     Owner = owner_node(State0),
     State = update_seen(Owner, State0),
     Seen = State?CHSTATE.seen,
@@ -678,7 +683,8 @@ handoff_complete(State, Idx, Mod) ->
     transfer_complete(State, Idx, Mod).
 
 ring_changed(Node, State) ->
-    check_tainted(State, "Error: ring_changed called with tainted ring"),
+    check_tainted(State,
+                  "Error: riak_core_ring/ring_changed called on tainted ring"),
     internal_ring_changed(Node, State).
 
 pretty_print(Ring, Opts) ->
