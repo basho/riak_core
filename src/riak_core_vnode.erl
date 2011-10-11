@@ -369,6 +369,10 @@ handle_event(R=?COVERAGE_REQ{}, _StateName, State) ->
 handle_sync_event(get_mod_index, _From, StateName,
                   State=#state{index=Idx,mod=Mod}) ->
     {reply, {Mod, Idx}, StateName, State, State#state.inactivity_timeout};
+handle_sync_event({handoff_data,_BinObj}, _From, StateName, 
+                  State=#state{modstate={deleted, _ModState}}) ->
+    {reply, {error, vnode_exiting}, StateName, State,
+     State#state.inactivity_timeout};
 handle_sync_event({handoff_data,BinObj}, _From, StateName, 
                   State=#state{mod=Mod, modstate=ModState}) ->
     case Mod:handle_handoff_data(BinObj, ModState) of
