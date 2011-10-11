@@ -76,10 +76,23 @@ join(false, _, Node, Rejoin) ->
             end
     end.
 
+get_other_ring(Node) ->
+    case rpc:call(Node, riak_core_ring_manager, get_my_ring, []) of
+        {ok, Ring} ->
+            case riak_core_ring:legacy_ring(Ring) of
+                true ->
+                    {ok, Ring};
+                false ->
+                    rpc:call(Node, riak_core_ring_manager, get_raw_ring, [])
+            end;
+        Error ->
+            Error
+    end.
+
 standard_join(Node, Rejoin) when is_atom(Node) ->
     case net_adm:ping(Node) of
         pong ->
-            case rpc:call(Node, riak_core_ring_manager, get_my_ring, []) of
+            case get_other_ring(Node) of
                 {ok, Ring} ->
                     case riak_core_ring:legacy_ring(Ring) of
                         true ->
@@ -95,7 +108,7 @@ standard_join(Node, Rejoin) when is_atom(Node) ->
     end.
 
 standard_join(Node, Ring, Rejoin) ->
-    {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
+    {ok, MyRing} = riak_core_ring_manager:get_raw_ring(),
     SameSize = (riak_core_ring:num_partitions(MyRing) =:=
                 riak_core_ring:num_partitions(Ring)),
     Singleton = ([node()] =:= riak_core_ring:all_members(MyRing)),
@@ -137,7 +150,7 @@ legacy_join(Node) when is_atom(Node) ->
     end.
 
 remove(Node) ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
     case {riak_core_ring:all_members(Ring),
           riak_core_ring:member_status(Ring, Node)} of
         {_, invalid} ->
@@ -167,7 +180,7 @@ down(Node) ->
 down(true, _) ->
     {error, legacy_mode};
 down(false, Node) ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
     case net_adm:ping(Node) of
         pong ->
             {error, is_up};
@@ -191,7 +204,7 @@ down(false, Node) ->
 
 leave() ->
     Node = node(),
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
     case {riak_core_ring:all_members(Ring),
           riak_core_ring:member_status(Ring, Node)} of
         {_, invalid} ->
