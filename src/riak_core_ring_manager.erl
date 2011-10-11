@@ -258,8 +258,7 @@ handle_call({ring_trans, Fun, Args}, _From, State=#state{raw_ring=Ring}) ->
                                    [Other]),
             {reply, not_changed, State}
     end;
-handle_call({set_cluster_name, Name}, _From, State) ->
-    {ok, Ring} = get_my_ring(),
+handle_call({set_cluster_name, Name}, _From, State=#state{raw_ring=Ring}) ->
     NewRing = riak_core_ring:set_cluster_name(Ring, Name),
     prune_write_notify_ring(NewRing),
     {reply, ok, State#state{raw_ring=NewRing}}.
@@ -282,8 +281,7 @@ handle_cast(refresh_my_ring, State) ->
 handle_cast(write_ringfile, test) ->
     {noreply,test};
 
-handle_cast(write_ringfile, State) ->
-    {ok, Ring} = get_my_ring(),
+handle_cast(write_ringfile, State=#state{raw_ring=Ring}) ->
     do_write_ringfile(Ring),
     {noreply,State}.
 
