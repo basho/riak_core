@@ -371,11 +371,15 @@ set_ring_global(Ring) ->
                             AccRing)
                 end, Ring, Buckets)
     end,
+    %% Mark ring as tainted to check if it is ever leaked over gossip or
+    %% relied upon for any non-local ring operations.
+    TaintedRing = riak_core_ring:set_tainted(FixedRing),
     %% store the modified ring in mochiglobal
-    mochiglobal:put(?RING_KEY, FixedRing).
+    mochiglobal:put(?RING_KEY, TaintedRing).
 
 %% Persist a new ring file, set the global value and notify any listeners
 prune_write_notify_ring(Ring) ->
+    riak_core_ring:check_tainted(Ring, "Error: Persisting tainted ring"),
     riak_core_ring_manager:prune_ringfiles(),
     do_write_ringfile(Ring),
     set_ring_global(Ring),

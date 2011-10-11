@@ -272,6 +272,8 @@ handle_cast({send_ring_to, Node}, State) ->
                         rpc_gossip_version(MyRing, Node)
                 end,
     RingOut = riak_core_ring:downgrade(GossipVsn, MyRing),
+    riak_core_ring:check_tainted(RingOut,
+                                 "Error: Sending tainted ring over gossip"),
     gen_server:cast({?MODULE, Node}, {reconcile_ring, RingOut}),
     {noreply, State};
 
@@ -283,6 +285,8 @@ handle_cast({distribute_ring, Ring}, State) ->
                       Ring
               end,
     Nodes = riak_core_ring:active_members(Ring),
+    riak_core_ring:check_tainted(RingOut,
+                                 "Error: Sending tainted ring over gossip"),
     gen_server:abcast(Nodes, ?MODULE, {reconcile_ring, RingOut}),
     {noreply, State};
 
