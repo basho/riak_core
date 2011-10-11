@@ -411,13 +411,14 @@ set_ring_global_test() ->
     application:set_env(riak_core,ring_creation_size, 4),
     Ring = riak_core_ring:fresh(),
     set_ring_global(Ring),
-    ?assertEqual(Ring, mochiglobal:get(?RING_KEY)).
+    ?assert(riak_core_ring:nearly_equal(Ring, mochiglobal:get(?RING_KEY))).
 
 set_my_ring_test() ->
     application:set_env(riak_core,ring_creation_size, 4),
     Ring = riak_core_ring:fresh(),
     set_ring_global(Ring),
-    ?assertEqual({ok, Ring}, get_my_ring()).
+    {ok, MyRing} = get_my_ring(),
+    ?assert(riak_core_ring:nearly_equal(Ring, MyRing)).
 
 refresh_my_ring_test() ->
     Core_Settings = [{ring_creation_size, 4},

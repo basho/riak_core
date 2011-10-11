@@ -60,6 +60,7 @@
          downgrade/2,
          set_tainted/1,
          check_tainted/2,
+         nearly_equal/2,
          claimant/1,
          member_status/2,
          pretty_print/2,
@@ -217,6 +218,17 @@ check_tainted(Ring=?CHSTATE{}, Msg) ->
         _ ->
             ok
     end.
+
+%% @doc Verify that the two rings are identical expect that metadata can
+%%      differ and RingB's vclock is allowed to be equal or a direct
+%%      descendant of RingA's vclock. This matches the changes that the
+%%      fix-up logic may make to a ring.
+nearly_equal(RingA, RingB) ->
+    TestVC = vclock:descends(RingB?CHSTATE.vclock, RingA?CHSTATE.vclock),
+    RingA2 = RingA?CHSTATE{vclock=[], meta=[]},
+    RingB2 = RingB?CHSTATE{vclock=[], meta=[]},
+    TestRing = (RingA2 =:= RingB2),
+    TestVC and TestRing.
 
 %% @doc Produce a list of all nodes that are members of the cluster
 -spec all_members(State :: chstate()) -> [Node :: term()].
