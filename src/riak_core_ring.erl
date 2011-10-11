@@ -58,6 +58,9 @@
          legacy_reconcile/2,
          upgrade/1,
          downgrade/2,
+         set_tainted/1,
+         check_tainted/2,
+         nearly_equal/2,
          claimant/1,
          member_status/2,
          pretty_print/2,
@@ -196,6 +199,36 @@ downgrade(1,?CHSTATE{nodename=Node,
              meta=Meta};
 downgrade(2,State=?CHSTATE{}) ->
     State.
+
+set_tainted(Ring) ->
+    update_meta(riak_core_ring_tainted, true, Ring).
+
+check_tainted(#chstate{}, _Msg) ->
+    %% Legacy ring is never tainted
+    ok;
+check_tainted(Ring=?CHSTATE{}, Msg) ->
+    Exit = app_helper:get_env(riak_core, exit_when_tainted, false),
+    case {get_meta(riak_core_ring_tainted, Ring), Exit} of
+        {{ok, true}, true} ->
+            riak_core:stop(Msg),
+            ok;
+        {{ok, true}, false} ->
+            lager:error(Msg),
+            ok;
+        _ ->
+            ok
+    end.
+
+%% @doc Verify that the two rings are identical expect that metadata can
+%%      differ and RingB's vclock is allowed to be equal or a direct
+%%      descendant of RingA's vclock. This matches the changes that the
+%%      fix-up logic may make to a ring.
+nearly_equal(RingA, RingB) ->
+    TestVC = vclock:descends(RingB?CHSTATE.vclock, RingA?CHSTATE.vclock),
+    RingA2 = RingA?CHSTATE{vclock=[], meta=[]},
+    RingB2 = RingB?CHSTATE{vclock=[], meta=[]},
+    TestRing = (RingA2 =:= RingB2),
+    TestVC and TestRing.
 
 %% @doc Produce a list of all nodes that are members of the cluster
 -spec all_members(State :: chstate()) -> [Node :: term()].
@@ -364,6 +397,12 @@ random_other_active_node(State) ->
 -spec reconcile(ExternState :: chstate(), MyState :: chstate()) ->
         {no_change, chstate()} | {new_ring, chstate()}.
 reconcile(ExternState, MyState) ->
+    check_tainted(ExternState,
+                  "Error: riak_core_ring/reconcile :: "
+                  "reconciling tainted external ring"),
+    check_tainted(MyState, 
+                  "Error: riak_core_ring/reconcile :: "
+                  "reconciling tainted internal ring"),
     case internal_reconcile(MyState, ExternState) of
         {false, State} ->
             {no_change, State};
@@ -594,6 +633,8 @@ next_owner(State, Idx, Mod) ->
 %% @doc Returns true if all cluster members have seen the current ring.
 -spec ring_ready(State :: chstate()) -> boolean().
 ring_ready(State0) ->
+    check_tainted(State0,
+                  "Error: riak_core_ring/ring_ready called on tainted ring"),
     Owner = owner_node(State0),
     State = update_seen(Owner, State0),
     Seen = State?CHSTATE.seen,
@@ -642,6 +683,8 @@ handoff_complete(State, Idx, Mod) ->
     transfer_complete(State, Idx, Mod).
 
 ring_changed(Node, State) ->
+    check_tainted(State,
+                  "Error: riak_core_ring/ring_changed called on tainted ring"),
     internal_ring_changed(Node, State).
 
 pretty_print(Ring, Opts) ->
