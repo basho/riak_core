@@ -295,6 +295,12 @@ register_vnode_module(VNodeMod) when is_atom(VNodeMod)  ->
     register_mod(get_app(undefined, VNodeMod), VNodeMod, vnode_modules).
 
 register_mod(App, Module, Type) when is_atom(Module), is_atom(Type) ->
+    case Type of
+        vnode_modules ->
+            riak_core_vnode_proxy_sup:start_proxies(Module);
+        _ ->
+            ok
+    end,
     case application:get_env(riak_core, Type) of
         undefined ->
             application:set_env(riak_core, Type, [{App,Module}]);

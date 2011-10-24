@@ -349,7 +349,7 @@ finish_handoff(State=#state{mod=Mod,
             {ok, NewModState} = Mod:delete(ModState),
             lager:debug("~p ~p vnode finished handoff and deleted.",
                         [Idx, Mod]),
-            riak_core_vnode_master:unregister_vnode(Idx, Mod),
+            riak_core_vnode_manager:unregister_vnode(Idx, Mod),
             riak_core_vnode_manager:set_not_forwarding(self(), false),
             continue(State#state{modstate={deleted,NewModState}, % like to fail if used
                                  handoff_node=none,
