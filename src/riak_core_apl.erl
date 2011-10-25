@@ -80,13 +80,13 @@ get_apl_ann(DocIdx, N, Ring, UpNodes) ->
     Up ++ find_fallbacks(Pangs, Fallbacks, UpNodes1, []).
 
 %% Same as get_apl, but returns only the primaries.
--spec get_primary_apl(binary(), n_val(), atom()) -> preflist().
+-spec get_primary_apl(binary(), n_val(), atom()) -> preflist2().
 get_primary_apl(DocIdx, N, Service) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     get_primary_apl(DocIdx, N, Ring, riak_core_node_watcher:nodes(Service)).
 
 %% Same as get_apl, but returns only the primaries.
--spec get_primary_apl(binary(), n_val(), ring(), [node()]) -> preflist().
+-spec get_primary_apl(binary(), n_val(), ring(), [node()]) -> preflist2().
 get_primary_apl(DocIdx, N, Ring, UpNodes) ->
     UpNodes1 = ordsets:from_list(UpNodes),
     Preflist = riak_core_ring:preflist(DocIdx, Ring),
