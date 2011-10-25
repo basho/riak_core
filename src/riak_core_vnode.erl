@@ -539,7 +539,7 @@ start_handoff(State=#state{index=Idx, mod=Mod, modstate=ModState}, TargetNode) -
 %%      If Ref is defined, send it along with the
 %%      reply.
 %%      
--spec reply(sender(), term()) -> true.
+-spec reply(sender(), term()) -> any().
 reply({fsm, undefined, From}, Reply) ->
     gen_fsm:send_event(From, Reply);
 reply({fsm, Ref, From}, Reply) ->
