@@ -50,7 +50,7 @@
 -export([sum/1, sum/2, sum/3]).
 -export([mean/1, mean/2, mean/3]).
 -export([nines/1, nines/2, nines/3]).
--export([mean_and_nines/2]).
+-export([mean_and_nines/2, mean_and_nines/5]).
 -export([private_dir/0, sync/1]).
 
 -include_lib("kernel/include/file.hrl").
@@ -161,7 +161,10 @@ private_dir() ->
 sync(_S) ->
     todo.
 
-mean_and_nines(#slide{dir=Dir, window = Window}, _Moment) ->
+mean_and_nines(Slide, Moment) ->
+    mean_and_nines(Slide, Moment, 0, 500000, 20000).
+
+mean_and_nines(#slide{dir=Dir, window = Window}, _Moment, HistMin, HistMax, HistBins) ->
     Now = moment(),
     Names = filelib:wildcard("*", Dir),
     ModTime = fun(Name) ->
@@ -172,11 +175,11 @@ mean_and_nines(#slide{dir=Dir, window = Window}, _Moment) ->
                       Now - ModTime(Name) =< Window],
     Blobs = [element(2, file:read_file(filename:join(Dir, Name))) ||
                         Name <- ToScan],
-    compute_quantiles(Blobs).
+    compute_quantiles(Blobs, HistMin, HistMax, HistBins).
 
-compute_quantiles(Blobs) ->
+compute_quantiles(Blobs, HistMin, HistMax, HistBins) ->
     {H, Count} = compute_quantiles(
-                   Blobs, basho_stats_histogram:new(0, 5000000, 20000), 0),
+                   Blobs, basho_stats_histogram:new(HistMin, HistMax, HistBins), 0),
     {_Min, Mean, Max, _Var, _SDev} = basho_stats_histogram:summary_stats(H),
     P50 = basho_stats_histogram:quantile(0.50, H),
     P95 = basho_stats_histogram:quantile(0.95, H),
