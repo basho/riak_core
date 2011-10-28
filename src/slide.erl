@@ -50,7 +50,7 @@
 -export([sum/1, sum/2, sum/3]).
 -export([mean/1, mean/2, mean/3]).
 -export([nines/1, nines/2, nines/3]).
--export([mean_and_nines/2]).
+-export([mean_and_nines/2, mean_and_nines/6]).
 -export([private_dir/0, sync/1]).
 
 -include_lib("kernel/include/file.hrl").
@@ -161,7 +161,10 @@ private_dir() ->
 sync(_S) ->
     todo.
 
-mean_and_nines(#slide{dir=Dir, window = Window}, _Moment) ->
+mean_and_nines(Slide, Moment) ->
+    mean_and_nines(Slide, Moment, 0, 500000, 20000, down).
+
+mean_and_nines(#slide{dir=Dir, window = Window}, _Moment, HistMin, HistMax, HistBins, RoundingMode) ->
     Now = moment(),
     Names = filelib:wildcard("*", Dir),
     ModTime = fun(Name) ->
@@ -172,17 +175,44 @@ mean_and_nines(#slide{dir=Dir, window = Window}, _Moment) ->
                       Now - ModTime(Name) =< Window],
     Blobs = [element(2, file:read_file(filename:join(Dir, Name))) ||
                         Name <- ToScan],
-    compute_quantiles(Blobs).
+    compute_quantiles(Blobs, HistMin, HistMax, HistBins, RoundingMode).
 
-compute_quantiles(Blobs) ->
+compute_quantiles(Blobs, HistMin, HistMax, HistBins, RoundingMode) ->
     {H, Count} = compute_quantiles(
-                   Blobs, basho_stats_histogram:new(0, 5000000, 20000), 0),
+                   Blobs, basho_stats_histogram:new(HistMin, HistMax, HistBins), 0),
     {_Min, Mean, Max, _Var, _SDev} = basho_stats_histogram:summary_stats(H),
     P50 = basho_stats_histogram:quantile(0.50, H),
     P95 = basho_stats_histogram:quantile(0.95, H),
     P99 = basho_stats_histogram:quantile(0.99, H),
-    {Count, my_trunc(Mean),
-     {my_trunc(P50), my_trunc(P95), my_trunc(P99), my_trunc(Max)}}.
+
+    %% RoundingMode allows the caller to decide whether to round up or
+    %% down to the nearest integer. This is useful in cases where we
+    %% measure very small, but non-zero integer values where rounding
+    %% down would give a zero rather than a one.
+
+    %% The calls to erlang:min/N exist because the histogram estimates
+    %% percentiles. Depending on the sample size or distribution, it
+    %% is possible that the estimated percentile is larger than the
+    %% max, which is foolish. If that happens, then we ignore the
+    %% estimate and use the value of max instead.
+    case RoundingMode of
+        up ->
+            RMax = my_ceil(Max),
+            {Count, my_ceil(Mean), {
+                              erlang:min(my_ceil(P50), RMax),
+                              erlang:min(my_ceil(P95), RMax),
+                              erlang:min(my_ceil(P99), RMax),
+                              erlang:min(my_ceil(Max), RMax)
+                            }};
+        _ -> %% 'down'
+            RMax = my_trunc(Max),
+            {Count, my_trunc(Mean), {
+                              erlang:min(my_trunc(P50), RMax),
+                              erlang:min(my_trunc(P95), RMax),
+                              erlang:min(my_trunc(P99), RMax),
+                              erlang:min(my_trunc(Max), RMax)
+                            }}
+    end.
 
 compute_quantiles([Blob|Blobs], H, Count) ->
     Ns = [binary_to_term(Bin) || <<_Hdr:32, Bin:8/binary>> <= Blob],
@@ -195,6 +225,16 @@ my_trunc(X) when is_atom(X) ->
     0;
 my_trunc(N) ->
     trunc(N).
+
+my_ceil(X) when is_atom(X) ->
+    0;
+my_ceil(X) ->
+    T = erlang:trunc(X),
+    case (X - T) of
+        Neg when Neg < 0 -> T;
+        Pos when Pos > 0 -> T + 1;
+        _ -> T
+    end.
 
 %% @spec mean(slide()) -> {Count::integer(), Mean::number()}
 %% @doc Mean of readings from now through Window seconds ago.  Return is
