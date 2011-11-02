@@ -162,7 +162,7 @@ sync(_S) ->
     todo.
 
 mean_and_nines(Slide, Moment) ->
-    mean_and_nines(Slide, Moment, 0, 500000, 20000, down).
+    mean_and_nines(Slide, Moment, 0, 5000000, 20000, down).
 
 mean_and_nines(#slide{dir=Dir, window = Window}, _Moment, HistMin, HistMax, HistBins, RoundingMode) ->
     Now = moment(),
