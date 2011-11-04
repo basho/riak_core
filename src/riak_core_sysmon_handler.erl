@@ -174,12 +174,13 @@ get_pretty_proc_info(Pid) ->
     get_pretty_proc_info(Pid, current_function).
 
 get_pretty_proc_info(Pid, Acf) ->
-    case process_info(Pid, [registered_name, initial_call, current_function]) of
+    case process_info(Pid, [registered_name, initial_call, current_function,
+                            message_queue_len]) of
         undefined ->
             undefined;
         [] ->
             undefined;
-        [{registered_name, RN0}, ICT1, {_, CF}] ->
+        [{registered_name, RN0}, ICT1, {_, CF}, {_, MQL}] ->
             ICT = case proc_lib:translate_initial_call(Pid) of
                      {proc_lib, init_p, 5} ->   % not by proc_lib, see docs
                          ICT1;
@@ -189,5 +190,5 @@ get_pretty_proc_info(Pid, Acf) ->
             RNL = if RN0 == [] -> [];
                      true      -> [{name, RN0}]
                   end,
-            RNL ++ [ICT, {Acf, CF}]
+            RNL ++ [ICT, {Acf, CF}, {message_queue_len, MQL}]
     end.
