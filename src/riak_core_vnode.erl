@@ -408,7 +408,7 @@ handle_info(Info, _StateName,
             State=#state{mod=Mod,modstate={deleted, _},index=Index}) ->
     lager:info("~p ~p ignored handle_info ~p - vnode unregistering\n", 
                [Index, Mod, Info]),
-    {noreply, State};
+    continue(State);
 handle_info({'EXIT', Pid, Reason}, StateName, State=#state{mod=Mod,modstate=ModState}) ->
     %% A linked processes has died so use the
     %% handle_exit callback to allow the vnode 
