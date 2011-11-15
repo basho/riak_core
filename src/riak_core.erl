@@ -354,7 +354,7 @@ app_for_module(Mod) ->
     app_for_module(application:which_applications(), Mod).
 
 app_for_module([], _Mod) ->
-    undefined;
+    {ok, undefined};
 app_for_module([{App,_,_}|T], Mod) ->
     {ok, Mods} = application:get_key(App, modules),
     case lists:member(Mod, Mods) of
