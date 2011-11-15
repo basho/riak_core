@@ -110,10 +110,11 @@ find_vnodes(State) ->
                             <- supervisor:which_children(riak_core_vnode_sup)],
     IdxTable = ets:new(ets_vnodes, [{keypos, 2}]),
 
-    %% In case this the vnode master is being restarted, scan the existing
-    %% vnode children and work out which module and index they are responsible
-    %% for.  During startup it is possible that these vnodes may be shutting
-    %% down as we check them if there are several types of vnodes active.
+    %% If the vnode manager is being restarted, scan the existing
+    %% vnode children and work out which module and index they are
+    %% responsible for.  During startup it is possible that these
+    %% vnodes may be shutting down as we check them if there are
+    %% several types of vnodes active.
     PidIdxs = lists:flatten(
                 [try
                      [{Pid, riak_core_vnode:get_mod_index(Pid)}]
