@@ -46,7 +46,7 @@ add_exclusion(Module, Index) ->
     gen_server:cast(?MODULE, {add_exclusion, {Module, Index}}).
 
 remove_exclusion(Module, Index) ->
-    gen_server:cast(?MODULE, {del_exclusion, {Module, Index}}).    
+    gen_server:cast(?MODULE, {del_exclusion, {Module, Index}}).
 
 get_exclusions(Module) ->
     gen_server:call(?MODULE, {get_exclusions, Module}, infinity).
@@ -63,23 +63,25 @@ get_handoff_lock(LockId, Count) ->
             {ok, {handoff_token, Count}};
         false ->
             get_handoff_lock(LockId, Count-1)
-    end.    
+    end.
 
 release_handoff_lock(LockId, Token) ->
     global:del_lock({{handoff_token,Token}, {node(), LockId}}, [node()]).
-    
+
 handle_call({get_exclusions, Module}, _From, State=#state{excl=Excl}) ->
     Reply =  [I || {M, I} <- ordsets:to_list(Excl), M =:= Module],
     {reply, {ok, Reply}, State};
 handle_call(all_handoffs, _From, State=#state{handoffs=Hoffs}) ->
     {reply, {ok, Hoffs}, State};
 handle_call({get_handoffs, Idx}, _From, State=#state{handoffs=Hoffs}) ->
-    All=[{Mod,dict:find(Idx,ModHoffs)} || {Mod,ModHoffs} <- Hoffs],
-    Filtered=lists:filter(fun ({_,{ok,_}}) -> true;
-                              (_) -> false
-                          end,
-                          All),
-    {reply, {ok, [{Mod,Value} || {Mod,{ok,Value}} <- Filtered]}, State}.
+    Filtered=lists:foldl(fun ({Mod,ModHoffs},Acc) ->
+                                 case dict:find(Idx,ModHoffs) of
+                                     {ok,Value} -> [{Mod,Value}|Acc];
+                                     _ -> Acc
+                                 end
+                         end,
+                         Hoffs),
+    {reply, {ok, Filtered}, State}.
 
 handle_cast({add_handoff, {Mod, Idx, Node}}, State=#state{handoffs=Hoffs}) ->
     ModHoffs=proplists:get_value(Mod,Hoffs,dict:new()),
@@ -96,7 +98,7 @@ handle_cast({del_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
 handle_cast({add_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
     riak_core_ring_events:ring_update(Ring),
-    {noreply, State#state{excl=ordsets:add_element({Mod, Idx}, Excl)}}.    
+    {noreply, State#state{excl=ordsets:add_element({Mod, Idx}, Excl)}}.
 
 handle_info(_Info, State) ->
     {noreply, State}.
