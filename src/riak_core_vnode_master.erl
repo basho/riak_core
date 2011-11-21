@@ -31,18 +31,20 @@
          command_return_vnode/4,
          sync_command/4,
          sync_spawn_command/3, make_request/3,
-         make_coverage_request/4,
-         unregister_vnode/2, unregister_vnode/3,
-         all_nodes/1, reg_name/1, all_index_pid/1]).
+         make_coverage_request/4, reg_name/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
--record(idxrec, {idx, pid, monref}).
 -record(state, {idxtab, sup_name, vnode_mod, legacy}).
 
 -define(DEFAULT_TIMEOUT, 5000).
 
 make_name(VNodeMod,Suffix) -> list_to_atom(atom_to_list(VNodeMod)++Suffix).
 reg_name(VNodeMod) ->  make_name(VNodeMod, "_master").
+
+%% Given atom 'riak_kv_vnode_master', return 'riak_kv_vnode'.
+vmaster_to_vmod(VMaster) ->
+    L = atom_to_list(VMaster),
+    list_to_atom(lists:sublist(L,length(L)-7)).
 
 start_link(VNodeMod) ->
     start_link(VNodeMod, undefined).
@@ -53,12 +55,10 @@ start_link(VNodeMod, LegacyMod) ->
                           [VNodeMod,LegacyMod,RegName], []).
 
 start_vnode(Index, VNodeMod) ->
-    RegName = reg_name(VNodeMod),
-    gen_server:cast(RegName, {Index, start_vnode}).
+    riak_core_vnode_manager:start_vnode(Index, VNodeMod).
 
 get_vnode_pid(Index, VNodeMod) ->
-    RegName = reg_name(VNodeMod),
-    gen_server:call(RegName, {Index, get_vnode}, infinity).
+    riak_core_vnode_manager:get_vnode_pid(Index, VNodeMod).
 
 command(Preflist, Msg, VMaster) ->
     command(Preflist, Msg, ignore, VMaster).
@@ -70,34 +70,35 @@ command([{Index, Pid}|Rest], Msg, Sender, VMaster) when is_pid(Pid) ->
     gen_fsm:send_event(Pid, make_request(Msg, Sender, Index)),
     command(Rest, Msg, Sender, VMaster);
 command([{Index,Node}|Rest], Msg, Sender, VMaster) ->
-    gen_server:cast({VMaster, Node}, make_request(Msg, Sender, Index)),
+    proxy_cast({VMaster, Node}, make_request(Msg, Sender, Index)),
     command(Rest, Msg, Sender, VMaster);
 
 %% Send the command to an individual Index/Node combination
 command({Index, Pid}, Msg, Sender, _VMaster) when is_pid(Pid) ->
     gen_fsm:send_event(Pid, make_request(Msg, Sender, Index));
 command({Index,Node}, Msg, Sender, VMaster) ->
-    gen_server:cast({VMaster, Node}, make_request(Msg, Sender, Index)).
+    proxy_cast({VMaster, Node}, make_request(Msg, Sender, Index)).
 
 %% Send a command to a covering set of vnodes
 coverage(Msg, CoverageVNodes, Keyspaces, {Type, Ref, From}, VMaster)
   when is_list(CoverageVNodes) ->
-    [gen_server:cast({VMaster, Node}, 
-                     make_coverage_request(Msg,
-                                           Keyspaces, 
-                                           {Type, {Ref, {Index, Node}}, From},
-                                           Index)) ||
+    [proxy_cast({VMaster, Node},
+                make_coverage_request(Msg,
+                                      Keyspaces, 
+                                      {Type, {Ref, {Index, Node}}, From},
+                                      Index)) ||
         {Index, Node} <- CoverageVNodes];
 coverage(Msg, {Index, Node}, Keyspaces, Sender, VMaster) ->
-    gen_server:cast({VMaster, Node}, 
-                    make_coverage_request(Msg, Keyspaces, Sender, Index)).
+    proxy_cast({VMaster, Node},
+               make_coverage_request(Msg, Keyspaces, Sender, Index)).
     
 %% Send the command to an individual Index/Node combination, but also
 %% return the pid for the vnode handling the request, as `{ok,
 %% VnodePid}'.
 command_return_vnode({Index,Node}, Msg, Sender, VMaster) ->
-    gen_server:call({VMaster, Node},
-                    {return_vnode, make_request(Msg, Sender, Index)}).
+    Mod = vmaster_to_vmod(VMaster),
+    Req = make_request(Msg, Sender, Index),
+    riak_core_vnode_proxy:command_return_vnode({Mod,Index,Node}, Req).
 
 %% Send a synchronous command to an individual Index/Node combination.
 %% Will not return until the vnode has returned
@@ -136,69 +137,40 @@ make_coverage_request(Request, KeySpaces, Sender, Index) ->
                           sender=Sender,
                           request=Request}.
 
-unregister_vnode(Index, VNodeMod) ->
-    unregister_vnode(Index, self(), VNodeMod).
-
-unregister_vnode(Index, Pid, VNodeMod) ->
-    RegName = reg_name(VNodeMod),
-    gen_server:cast(RegName, {unregister, Index, Pid}).
-
-%% Request a list of Pids for all vnodes
-all_nodes(VNodeMod) ->
-    RegName = reg_name(VNodeMod),
-    gen_server:call(RegName, all_nodes, infinity).
-
-all_index_pid(VNodeMod) ->
-    RegName = reg_name(VNodeMod),
-    gen_server:call(RegName, all_index_pid, infinity).
-
 %% @private
-init([VNodeMod, LegacyMod, RegName]) ->
-    %% Get the current list of vnodes running in the supervisor. We use this
-    %% to rebuild our ETS table for routing messages to the appropriate
-    %% vnode.
-    VnodePids = [Pid || {_, Pid, worker, _}
-                            <- supervisor:which_children(riak_core_vnode_sup)],
-    IdxTable = ets:new(RegName, [{keypos, 2}]),
-
-    %% In case this the vnode master is being restarted, scan the existing
-    %% vnode children and work out which module and index they are responsible
-    %% for.  During startup it is possible that these vnodes may be shutting
-    %% down as we check them if there are several types of vnodes active.
-    PidIdxs = lists:flatten(
-                [try
-                     [{Pid, riak_core_vnode:get_mod_index(Pid)}]
-                 catch
-                     _:_Err ->
-                         []
-                 end || Pid <- VnodePids]),
-
-    %% Populate the ETS table with processes running this VNodeMod (filtered
-    %% in the list comprehension)
-    F = fun(Pid, Idx) ->
-                Mref = erlang:monitor(process, Pid),
-                #idxrec { idx = Idx, pid = Pid, monref = Mref }
-        end,
-    IdxRecs = [F(Pid, Idx) || {Pid, {Mod, Idx}} <- PidIdxs, Mod =:= VNodeMod],
-    true = ets:insert_new(IdxTable, IdxRecs),
-    {ok, #state{idxtab=IdxTable,
+init([VNodeMod, LegacyMod, _RegName]) ->
+    {ok, #state{idxtab=undefined,
                 vnode_mod=VNodeMod,
                 legacy=LegacyMod}}.
 
-handle_cast({Partition, start_vnode}, State) ->
-    get_vnode(Partition, State),
+proxy_cast({VMaster, Node}, Req) ->
+    case app_helper:get_env(riak_core, legacy_vnode_routing, true) of
+        true ->
+            gen_server:cast({VMaster, Node}, Req);
+        false ->
+            do_proxy_cast({VMaster, Node}, Req)
+    end.
+
+do_proxy_cast({VMaster, Node}, Req=?VNODE_REQ{index=Idx}) ->
+    Mod = vmaster_to_vmod(VMaster),
+    Proxy = riak_core_vnode_proxy:reg_name(Mod, Idx, Node),
+    gen_fsm:send_event(Proxy, Req),
+    ok;
+do_proxy_cast({VMaster, Node}, Req=?COVERAGE_REQ{index=Idx}) ->
+    Mod = vmaster_to_vmod(VMaster),
+    Proxy = riak_core_vnode_proxy:reg_name(Mod, Idx, Node),
+    gen_fsm:send_event(Proxy, Req),
+    ok;
+do_proxy_cast({VMaster, Node}, Other) ->
+    gen_server:cast({VMaster, Node}, Other).
+
+handle_cast(Req=?VNODE_REQ{index=Idx}, State=#state{vnode_mod=Mod}) ->
+    Proxy = riak_core_vnode_proxy:reg_name(Mod, Idx),
+    gen_fsm:send_event(Proxy, Req),
     {noreply, State};
-handle_cast(Req=?VNODE_REQ{index=Idx}, State) ->
-    Pid = get_vnode(Idx, State),
-    gen_fsm:send_event(Pid, Req),
-    {noreply, State};
-handle_cast(Req=?COVERAGE_REQ{index=Idx}, State) ->
-    Pid = get_vnode(Idx, State),
-    gen_fsm:send_event(Pid, Req),
-    {noreply, State};
-handle_cast({unregister, Index, Pid}, #state{idxtab=T} = State) ->
-    ets:match_delete(T, {idxrec, Index, Pid, '_'}),
-    gen_fsm:send_event(Pid, unregistered),
+handle_cast(Req=?COVERAGE_REQ{index=Idx}, State=#state{vnode_mod=Mod}) ->
+    Proxy = riak_core_vnode_proxy:reg_name(Mod, Idx),
+    gen_fsm:send_event(Proxy, Req),
     {noreply, State};
 handle_cast(Other, State=#state{legacy=Legacy}) when Legacy =/= undefined ->
     case catch Legacy:rewrite_cast(Other) of
@@ -208,30 +180,19 @@ handle_cast(Other, State=#state{legacy=Legacy}) when Legacy =/= undefined ->
             {noreply, State}
     end.
 
-handle_call({return_vnode, Req=?VNODE_REQ{index=Idx}}, _From, State) ->
-    Pid = get_vnode(Idx, State),
-    gen_fsm:send_event(Pid, Req),
-    {reply, {ok, Pid}, State};
-handle_call(Req=?VNODE_REQ{index=Idx, sender={server, undefined, undefined}}, From, State) ->
-    Pid = get_vnode(Idx, State),
-    gen_fsm:send_event(Pid, Req?VNODE_REQ{sender={server, undefined, From}}),
+handle_call(Req=?VNODE_REQ{index=Idx, sender={server, undefined, undefined}},
+            From, State=#state{vnode_mod=Mod}) ->
+    Proxy = riak_core_vnode_proxy:reg_name(Mod, Idx),
+    gen_fsm:send_event(Proxy, Req?VNODE_REQ{sender={server, undefined, From}}),
     {noreply, State};
 handle_call({spawn,
-             Req=?VNODE_REQ{index=Idx, sender={server, undefined, undefined}}}, From, State) ->
-    Pid = get_vnode(Idx, State),
+             Req=?VNODE_REQ{index=Idx, sender={server, undefined, undefined}}},
+            From, State=#state{vnode_mod=Mod}) ->
+    Proxy = riak_core_vnode_proxy:reg_name(Mod, Idx),
     Sender = {server, undefined, From},
     spawn_link(
-      fun() -> gen_fsm:send_all_state_event(Pid, Req?VNODE_REQ{sender=Sender}) end),
+      fun() -> gen_fsm:send_all_state_event(Proxy, Req?VNODE_REQ{sender=Sender}) end),
     {noreply, State};
-handle_call(all_nodes, _From, State) ->
-    {reply, lists:flatten(ets:match(State#state.idxtab, {idxrec, '_', '$1', '_'})), State};
-handle_call(all_index_pid, _From, State) ->
-    Reply = [list_to_tuple(L) 
-             || L <- ets:match(State#state.idxtab, {idxrec, '$1', '$2', '_'})],
-    {reply, Reply, State};
-handle_call({Partition, get_vnode}, _From, State) ->
-    Pid = get_vnode(Partition, State),
-    {reply, {ok, Pid}, State};
 handle_call(Other, From, State=#state{legacy=Legacy}) when Legacy =/= undefined ->
     case catch Legacy:rewrite_call(Other, From) of
         {ok, ?VNODE_REQ{}=Req} ->
@@ -240,8 +201,7 @@ handle_call(Other, From, State=#state{legacy=Legacy}) when Legacy =/= undefined 
             {noreply, State}
     end.
 
-handle_info({'DOWN', MonRef, process, _P, _I}, State) ->
-    delmon(MonRef, State),
+handle_info(_Info, State) ->
     {noreply, State}.
 
 %% @private
@@ -250,28 +210,3 @@ terminate(_Reason, _State) ->
 
 %% @private
 code_change(_OldVsn, State, _Extra) ->  {ok, State}.
-
-%% @private
-idx2vnode(Idx, _State=#state{idxtab=T}) ->
-    case ets:match(T, {idxrec, Idx, '$1', '_'}) of
-        [[VNodePid]] -> VNodePid;
-        [] -> no_match
-    end.
-
-%% @private
-delmon(MonRef, _State=#state{idxtab=T}) ->
-    ets:match_delete(T, {idxrec, '_', '_', MonRef}).
-
-%% @private
-add_vnode_rec(I,  _State=#state{idxtab=T}) -> ets:insert(T,I).
-
-%% @private
-get_vnode(Idx, State=#state{vnode_mod=Mod}) ->
-    case idx2vnode(Idx, State) of
-        no_match ->
-            {ok, Pid} = riak_core_vnode_sup:start_vnode(Mod, Idx),
-            MonRef = erlang:monitor(process, Pid),
-            add_vnode_rec(#idxrec{idx=Idx,pid=Pid,monref=MonRef}, State),
-            Pid;
-        X -> X
-    end.

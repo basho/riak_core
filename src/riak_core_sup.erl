@@ -65,6 +65,7 @@ init([]) ->
                   ?CHILD(riak_core_handoff_listener, worker),
                   ?CHILD(riak_core_ring_events, worker),
                   ?CHILD(riak_core_ring_manager, worker),
+                  ?CHILD(riak_core_vnode_proxy_sup, supervisor),
                   ?CHILD(riak_core_node_watcher_events, worker),
                   ?CHILD(riak_core_node_watcher, worker),
                   ?CHILD(riak_core_vnode_manager, worker),

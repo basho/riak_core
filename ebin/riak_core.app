@@ -53,6 +53,8 @@
              riak_core_vnode,
              riak_core_vnode_manager,
              riak_core_vnode_master,
+             riak_core_vnode_proxy,
+             riak_core_vnode_proxy_sup,
              riak_core_vnode_sup,
              riak_core_vnode_worker,
              riak_core_vnode_worker_pool,

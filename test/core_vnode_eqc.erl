@@ -22,10 +22,6 @@
 
 %% @doc  QuickCheck tests for riak_core_vnode code
 
-%% Things to test...
-%% riak_core_vnode_master:command gets delivered to the right node
-%% riak_core_vnode_master:sync_command works
-
 -module(core_vnode_eqc).
 -ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
@@ -45,22 +41,10 @@
                async_enabled = false,
                async_size = 0,
                async_work=[]}). % {Index, AsyncRef} async work submitted to each vnode
-               
+
 simple_test_() ->
     {setup,
-     fun() ->
-             Vars = [{ring_creation_size, 8},
-                     {ring_state_dir, "<nostore>"},
-                     {cluster_name, "test"}],
-             OldVars = [begin
-                            Old = app_helper:get_env(riak_core, AppKey),
-                            ok = application:set_env(riak_core, AppKey, Val),
-                            {AppKey, Old}
-                        end || {AppKey, Val} <- Vars],
-             riak_core_ring_events:start_link(),
-             riak_core_ring_manager:start_link(test),
-             OldVars
-     end,
+     fun setup_simple/0,
      fun(OldVars) ->
              riak_core_ring_manager:stop(),
              [ok = application:set_env(riak_core, K, V) || {K,V} <- OldVars],
@@ -68,6 +52,21 @@ simple_test_() ->
      end,
      {timeout, 120,
       ?_assertEqual(true, quickcheck(?QC_OUT(numtests(100, prop_simple()))))}}.
+
+setup_simple() ->
+    Vars = [{ring_creation_size, 8},
+            {ring_state_dir, "<nostore>"},
+            {cluster_name, "test"}],
+    OldVars = [begin
+                   Old = app_helper:get_env(riak_core, AppKey),
+                   ok = application:set_env(riak_core, AppKey, Val),
+                   {AppKey, Old}
+               end || {AppKey, Val} <- Vars],
+    riak_core_ring_events:start_link(),
+    riak_core_ring_manager:start_link(test),
+    riak_core_vnode_proxy_sup:start_link(),
+    riak_core:register_vnode_module(mock_vnode),
+    OldVars.
 
 test(N) ->
     quickcheck(numtests(N, prop_simple())).
@@ -207,7 +206,7 @@ running(S) ->
                                          S#qcst.asyncdone_pid]}},
      {history, {call,?MODULE,restart_master,[]}},
      {history, {call,mock_vnode,stop,[active_preflist1(S)]}},
-     {history, {call,riak_core_vnode_master,all_nodes,[mock_vnode]}}
+     {history, {call,riak_core_vnode_manager,all_nodes,[mock_vnode]}}
     ].
 
 precondition(_From,_To,#qcst{started=Started},{call,?MODULE,start_vnode,[Index]}) ->
@@ -241,7 +240,7 @@ postcondition(_From,_To,_S,
   when Func =:= neverreply; Func =:= returnreply; Func =:= latereply ->
     Result =:= ok;
 postcondition(_From,_To,_S,
-              {call,riak_core_vnode_master,all_nodes,[mock_vnode]},Result) ->
+              {call,riak_core_vnode_manager,all_nodes,[mock_vnode]},Result) ->
     Pids = [Pid || {_,Pid,_,_} <- supervisor:which_children(riak_core_vnode_sup)],
     lists:sort(Result) =:= lists:sort(Pids);
 postcondition(_From,_To,_S,_C,_R) ->
@@ -315,12 +314,14 @@ check_receive(Replies, Msg, Ref) ->
 start_servers() ->
     stop_servers(),
     {ok, _Sup} = riak_core_vnode_sup:start_link(),
+    {ok, _} = riak_core_vnode_manager:start_link(),
     {ok, _VMaster} = riak_core_vnode_master:start_link(mock_vnode).
 
 stop_servers() ->
     %% Make sure VMaster is killed before sup as start_vnode is a cast
     %% and there may be a pending request to start the vnode.
     stop_pid(whereis(mock_vnode_master)),
+    stop_pid(whereis(riak_core_vnode_manager)),
     stop_pid(whereis(riak_core_vnode_sup)).
 
 restart_master() ->
