@@ -24,7 +24,10 @@
 -record(state, {mod, index, vnode_pid, vnode_mref}).
 
 reg_name(Mod, Index) ->
-    list_to_atom(lists:flatten(io_lib:format("proxy_~s_~b", [Mod, Index]))).
+    ModBin = atom_to_binary(Mod, latin1),
+    IdxBin = list_to_binary(integer_to_list(Index)),
+    AllBin = <<$p,$r,$o,$x,$y,$_, ModBin/binary, $_, IdxBin/binary>>,
+    binary_to_atom(AllBin, latin1).
 
 reg_name(Mod, Index, Node) ->
     {reg_name(Mod, Index), Node}.
