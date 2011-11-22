@@ -80,6 +80,7 @@ handle_call({get_handoffs, Idx}, _From, State=#state{handoffs=Hoffs}) ->
                                      _ -> Acc
                                  end
                          end,
+                         [],
                          Hoffs),
     {reply, {ok, Filtered}, State}.
 
