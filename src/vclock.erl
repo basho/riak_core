@@ -197,7 +197,7 @@ get_property(Key, PairList) ->
 %% ===================================================================
 -ifdef(TEST).
 
-% @doc Serves as both a trivial test and some example code.
+% doc Serves as both a trivial test and some example code.
 example_test() ->
     A = vclock:fresh(),
     B = vclock:fresh(),

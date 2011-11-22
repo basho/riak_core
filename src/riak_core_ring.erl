@@ -795,7 +795,7 @@ legacy_equal_rings(_A=#chstate{chring=RA,meta=MA},
 %% @private
 % @doc If two states are mutually non-descendant, merge them anyway.
 %      This can cause a bit of churn, but should converge.
-% @spec reconcile(MyNodeName :: term(),
+% @spec legacy_reconcile(MyNodeName :: term(),
 %                 StateA :: chstate(), StateB :: chstate())
 %              -> chstate()
 legacy_reconcile(MyNodeName, StateA, StateB) ->
