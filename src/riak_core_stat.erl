@@ -176,7 +176,7 @@ spiral_minute(_Moment, Elt, State) ->
     {_,Count} = spiraltime:rep_minute(element(Elt, State)),
     Count.
 
-%% @spec node_stats(integer(), state()) -> proplist()
+%% @spec gossip_stats(integer(), state()) -> proplist()
 %% @doc Get the gossip stats proplist.
 gossip_stats(Moment, State=#state{converge_delay=CDelay,
                                   rebalance_delay=RDelay}) ->
