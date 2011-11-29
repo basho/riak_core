@@ -128,7 +128,7 @@ simple_handoff () ->
     ?assertEqual({ok,[{riak_kv_vnode,'node@nohost'}]},get_handoffs(0)),
 
     %% remove the handoff and make sure it's gone
-    remove_handoff(riak_kv,0),
+    remove_handoff(riak_kv_vnode,0),
     ?assertEqual({ok,[]},all_handoffs()),
     ?assertEqual({ok,[]},get_handoffs(0)),
 
