@@ -99,10 +99,13 @@ terminate(_Reason, _State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
+%%
+%% EUNIT tests...
+%%
 
 -ifdef (EUNIT).
 
-handoff_tests_ () ->
+handoff_test_ () ->
     {spawn
      {setup,
 
@@ -111,16 +114,16 @@ handoff_tests_ () ->
       fun (Pid) -> exit(Pid,kill) end,
 
       %% actual list of test
-      [ ?_test(simple_handoff())
+      [?_test(simple_handoff())
       ]}}.
 
 simple_handoff () ->
     ?assertEqual({ok,[]},all_handoffs()),
 
     %% add a handoff and confirm that it's there
-    add_handoff(riak_kv,0,'node@nohost'),
-    ?assertEqual({ok,[{{riak_kv,0},'node@nohost'}]},all_handoffs()),
-    ?assertEqual({ok,[{riak_kv,'node@nohost'}]},get_handoffs(0)),
+    add_handoff(riak_kv_vnode,0,'node@nohost'),
+    ?assertEqual({ok,[{{riak_kv_vnode,0},'node@nohost'}]},all_handoffs()),
+    ?assertEqual({ok,[{riak_kv_vnode,'node@nohost'}]},get_handoffs(0)),
 
     %% remove the handoff and make sure it's gone
     remove_handoff(riak_kv,0),
