@@ -108,7 +108,7 @@ code_change(_OldVsn, State, _Extra) ->
 -ifdef (TEST).
 
 handoff_test_ () ->
-    {spawn
+    {spawn,
      {setup,
 
       %% called when the tests start and complete...
