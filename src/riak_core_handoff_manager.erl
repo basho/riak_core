@@ -24,6 +24,8 @@
 -export([add_handoff/3,remove_handoff/2,all_handoffs/0,get_handoffs/1]).
 -record(state, {excl,handoffs}).
 
+-include_lib("eunit/include/eunit.hrl").
+
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
@@ -103,7 +105,7 @@ code_change(_OldVsn, State, _Extra) ->
 %% EUNIT tests...
 %%
 
--ifdef (EUNIT).
+-ifdef (TEST).
 
 handoff_test_ () ->
     {spawn
