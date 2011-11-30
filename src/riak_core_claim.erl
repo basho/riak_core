@@ -52,9 +52,12 @@
 %% default is 3.
 
 -module(riak_core_claim).
--export([default_wants_claim/1, default_choose_claim/1,
+-export([default_wants_claim/1, default_wants_claim/2,
+         default_choose_claim/1, default_choose_claim/2,
          never_wants_claim/1, random_choose_claim/1]).
--export([claim_rebalance_n/2,
+-export([wants_claim_v1/1, wants_claim_v1/2,
+         choose_claim_v1/1, choose_claim_v1/2,
+         claim_rebalance_n/2,
          meets_target_n/2,
          diagonal_stripe/2]).
 
@@ -69,7 +72,10 @@
 %% @spec default_wants_claim(riak_core_ring()) -> {yes, integer()} | no
 %% @doc Want a partition if we currently have less than floor(ringsize/nodes).
 default_wants_claim(Ring) ->
-    wants_claim_v1(Ring, node()).
+    default_wants_claim(Ring, node()).
+
+default_wants_claim(Ring, Node) ->
+    wants_claim_v1(Ring, Node).
 
 get_member_count(Ring, Node) ->
     %% Determine how many nodes are involved with the ring; if the requested
@@ -84,6 +90,9 @@ get_member_count(Ring, Node) ->
 
 get_expected_partitions(Ring, Node) ->
     riak_core_ring:num_partitions(Ring) div get_member_count(Ring, Node).
+
+wants_claim_v1(Ring) ->
+    wants_claim_v1(Ring, node()).
 
 wants_claim_v1(Ring0, Node) ->
     Ring = riak_core_ring:upgrade(Ring0),
@@ -106,6 +115,12 @@ wants_claim_v1(Ring0, Node) ->
 %% @spec default_choose_claim(riak_core_ring()) -> riak_core_ring()
 %% @doc Choose a partition at random.
 default_choose_claim(Ring) ->
+    default_choose_claim(Ring, node()).
+
+default_choose_claim(Ring, Node) ->
+    choose_claim_v1(Ring, Node).
+
+choose_claim_v1(Ring) ->
     choose_claim_v1(Ring, node()).
 
 choose_claim_v1(Ring0, Node) ->
