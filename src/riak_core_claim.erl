@@ -54,9 +54,7 @@
 -module(riak_core_claim).
 -export([default_wants_claim/1, default_choose_claim/1,
          never_wants_claim/1, random_choose_claim/1]).
--export([default_choose_claim/2,
-         default_wants_claim/2,
-         claim_rebalance_n/2,
+-export([claim_rebalance_n/2,
          meets_target_n/2,
          diagonal_stripe/2]).
 
@@ -71,7 +69,7 @@
 %% @spec default_wants_claim(riak_core_ring()) -> {yes, integer()} | no
 %% @doc Want a partition if we currently have less than floor(ringsize/nodes).
 default_wants_claim(Ring) ->
-    default_wants_claim(Ring, node()).
+    wants_claim_v1(Ring, node()).
 
 get_member_count(Ring, Node) ->
     %% Determine how many nodes are involved with the ring; if the requested
@@ -87,7 +85,7 @@ get_member_count(Ring, Node) ->
 get_expected_partitions(Ring, Node) ->
     riak_core_ring:num_partitions(Ring) div get_member_count(Ring, Node).
 
-default_wants_claim(Ring0, Node) ->
+wants_claim_v1(Ring0, Node) ->
     Ring = riak_core_ring:upgrade(Ring0),
     %% Calculate the expected # of partitions for a perfectly balanced ring. Use
     %% this expectation to determine the relative balance of the ring. If the
@@ -108,9 +106,9 @@ default_wants_claim(Ring0, Node) ->
 %% @spec default_choose_claim(riak_core_ring()) -> riak_core_ring()
 %% @doc Choose a partition at random.
 default_choose_claim(Ring) ->
-    default_choose_claim(Ring, node()).
+    choose_claim_v1(Ring, node()).
 
-default_choose_claim(Ring0, Node) ->
+choose_claim_v1(Ring0, Node) ->
     Ring = riak_core_ring:upgrade(Ring0),
     TargetN = app_helper:get_env(riak_core, target_n_val),
     case meets_target_n(Ring, TargetN) of
@@ -339,7 +337,7 @@ prop_claim_ensures_unique_nodes() ->
                 R0 = riak_core_ring:fresh(Partitions, Node0),
                 Rfinal = lists:foldl(fun(Node, Racc) ->
                                              Racc0 = riak_core_ring:add_member(Node0, Racc, Node),
-                                             default_choose_claim(Racc0, Node)
+                                             choose_claim_v1(Racc0, Node)
                                      end, R0, RestNodes),
 
                 Preflists = riak_core_ring:all_preflists(Rfinal, Nval),
