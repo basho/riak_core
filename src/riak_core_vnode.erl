@@ -20,8 +20,8 @@
 -behaviour(gen_fsm).
 -include_lib("riak_core_vnode.hrl").
 -export([behaviour_info/1]).
--export([start_link/2,
-         start_link/3,
+-export([start_link/3,
+         start_link/4,
          send_command/2,
          send_command_after/2]).
 -export([init/1,
@@ -34,8 +34,8 @@
          code_change/4]).
 -export([reply/2]).
 -export([get_mod_index/1,
-         update_forwarding/2,
-         trigger_handoff/1]).
+         set_forwarding/2,
+         trigger_handoff/2]).
 
 -spec behaviour_info(atom()) -> 'undefined' | [{atom(), arity()}].
 behaviour_info(callbacks) ->
@@ -90,13 +90,15 @@ behaviour_info(_Other) ->
           handoff_node=none :: none | node(),
           handoff_pid :: pid(),
           pool_pid :: pid() | undefined,
+          event_timer :: reference(),
           inactivity_timeout}).
 
-start_link(Mod, Index) ->
-    start_link(Mod, Index, 0).
+start_link(Mod, Index, Forward) ->
+    start_link(Mod, Index, 0, Forward).
 
-start_link(Mod, Index, InitialInactivityTimeout) ->
-    gen_fsm:start_link(?MODULE, [Mod, Index, InitialInactivityTimeout], []).
+start_link(Mod, Index, InitialInactivityTimeout, Forward) ->
+    gen_fsm:start_link(?MODULE,
+                       [Mod, Index, InitialInactivityTimeout, Forward], []).
 
 %% Send a command message for the vnode module by Pid -
 %% typically to do some deferred processing after returning yourself
@@ -111,7 +113,7 @@ send_command_after(Time, Request) ->
     gen_fsm:send_event_after(Time, ?VNODE_REQ{request=Request}).
 
 
-init([Mod, Index, InitialInactivityTimeout]) ->
+init([Mod, Index, InitialInactivityTimeout, Forward]) ->
     %%TODO: Should init args really be an array if it just gets Init?
     process_flag(trap_exit, true),
     {ModState, Props} = case Mod:init([Index]) of
@@ -129,20 +131,19 @@ init([Mod, Index, InitialInactivityTimeout]) ->
     end,
     riak_core_handoff_manager:remove_exclusion(Mod, Index),
     Timeout = app_helper:get_env(riak_core, vnode_inactivity_timeout, ?DEFAULT_TIMEOUT),
-    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
-    State = #state{index=Index, mod=Mod, modstate=ModState,
+    State = #state{index=Index, mod=Mod, modstate=ModState, forward=Forward,
                    inactivity_timeout=Timeout, pool_pid=PoolPid},
-    State2 = update_forwarding_mode(Ring, State),
-    {ok, active, State2, InitialInactivityTimeout}.
+    lager:debug("vnode :: ~p/~p :: ~p~n", [Mod, Index, Forward]),
+    {ok, active, State, InitialInactivityTimeout}.
 
 get_mod_index(VNode) ->
     gen_fsm:sync_send_all_state_event(VNode, get_mod_index).
 
-update_forwarding(VNode, Ring) ->
-    gen_fsm:send_all_state_event(VNode, {update_forwarding, Ring}).
+set_forwarding(VNode, ForwardTo) ->
+    gen_fsm:send_all_state_event(VNode, {set_forwarding, ForwardTo}).
 
-trigger_handoff(VNode) ->
-    gen_fsm:send_all_state_event(VNode, trigger_handoff).
+trigger_handoff(VNode, TargetNode) ->
+    gen_fsm:send_all_state_event(VNode, {trigger_handoff, TargetNode}).
 
 continue(State) ->
     {next_state, active, State, State#state.inactivity_timeout}.
@@ -170,22 +171,6 @@ continue(State, NewModState) ->
 %% new owner, or simply because the ring has yet to converge on the new owner.
 %% In the forwarding state, all vnode commands and coverage commands are
 %% forwarded to the new owner for processing.
-
-update_forwarding_mode(_Ring, State=#state{modstate={deleted, _ModState}}) ->
-    %% awaiting unregistered message from the vnode master.  The
-    %% vnode has been deleted so cannot handle messages even if
-    %% we wanted to.
-    State;
-update_forwarding_mode(Ring, State=#state{index=Index, mod=Mod}) ->
-    Node = node(),
-    case riak_core_ring:next_owner(Ring, Index, Mod) of
-        {Node, NextOwner, complete} ->
-            riak_core_vnode_manager:set_not_forwarding(self(), false),
-            State#state{forward=NextOwner};
-        _ ->
-            riak_core_vnode_manager:set_not_forwarding(self(), true),
-            State#state{forward=undefined}
-    end.
 
 vnode_command(Sender, Request, State=#state{index=Index,
                                             mod=Mod,
@@ -278,8 +263,9 @@ vnode_handoff_command(Sender, Request, State=#state{index=Index,
             {stop, Reason, State#state{modstate=NewModState}}
     end.
 
-active(timeout, State) ->
-    maybe_handoff(State);
+active(timeout, State=#state{mod=Mod, index=Idx}) ->
+    riak_core_vnode_manager:vnode_event(Mod, Idx, self(), inactive),
+    continue(State);
 active(?COVERAGE_REQ{keyspaces=KeySpaces,
                      request=Request,
                      sender=Sender}, State) ->
@@ -290,28 +276,23 @@ active(?VNODE_REQ{sender=Sender, request=Request},
     vnode_command(Sender, Request, State);
 active(?VNODE_REQ{sender=Sender, request=Request},State) ->
     vnode_handoff_command(Sender, Request, State);
-active(handoff_complete, State=#state{mod=Mod,
-                                      modstate=ModState,
-                                      index=Idx,
-                                      handoff_node=HN,
+active(handoff_complete, State=#state{mod=Mod, 
+                                      index=Idx, 
                                       handoff_token=HT}) ->
     riak_core_handoff_manager:release_handoff_lock({Mod, Idx}, HT),
-    Mod:handoff_finished(HN, ModState),
-    finish_handoff(State);
-active({handoff_error, _Err, _Reason}, State=#state{mod=Mod,
-                                                    modstate=ModState,
-                                                    index=Idx,
+    State2 = start_event_timer(handoff_complete, State),
+    continue(State2);
+active({handoff_error, _Err, _Reason}, State=#state{mod=Mod, 
+                                                    index=Idx, 
                                                     handoff_token=HT}) ->
     riak_core_handoff_manager:release_handoff_lock({Mod, Idx}, HT),
-    %% it would be nice to pass {Err, Reason} to the vnode but the
-    %% API doesn't currently allow for that.
-    Mod:handoff_cancelled(ModState),
-    continue(State#state{handoff_node=none});
-active({update_forwarding, Ring}, State) ->
-    NewState = update_forwarding_mode(Ring, State),
-    continue(NewState);
-active(trigger_handoff, State) ->
-     maybe_handoff(State);
+    State2 = start_event_timer(handoff_error, State),
+    continue(State2);
+active({send_event, Event}, State) ->
+    State2 = start_event_timer(Event, State),
+    continue(State2);
+active({trigger_handoff, TargetNode}, State) ->
+     maybe_handoff(State, TargetNode);
 active(unregistered, State=#state{mod=Mod, index=Index}) ->
     %% Add exclusion so the ring handler will not try to spin this vnode
     %% up until it receives traffic.
@@ -326,12 +307,58 @@ active(_Event, _From, State) ->
     Reply = ok,
     {reply, Reply, active, State, State#state.inactivity_timeout}.
 
+mark_handoff_complete(Idx, Prev, New, Mod) ->
+    Result = riak_core_ring_manager:ring_trans(
+      fun(Ring, _) ->
+              Owner = riak_core_ring:index_owner(Ring, Idx),
+              {_, NextOwner, Status} = riak_core_ring:next_owner(Ring, Idx, Mod),
+              NewStatus = riak_core_ring:member_status(Ring, New),
+
+              case {Owner, NextOwner, NewStatus, Status} of
+                  {Prev, New, _, awaiting} ->
+                      Ring2 = riak_core_ring:handoff_complete(Ring, Idx, Mod),
+                      %% Optimization. Only alter the local ring without
+                      %% triggering a gossip, thus implicitly coalescing
+                      %% multiple vnode handoff completion events. In the
+                      %% future we should decouple vnode handoff state from
+                      %% the ring structure in order to make gossip independent
+                      %% of ring size.
+                      {set_only, Ring2};
+                  _ ->
+                      ignore
+              end
+      end, []),
+
+    case Result of
+        {ok, NewRing} ->
+            NewRing = NewRing;
+        _ ->
+            {ok, NewRing} = riak_core_ring_manager:get_my_ring()
+    end,
+
+    Owner = riak_core_ring:index_owner(NewRing, Idx),
+    {_, NextOwner, Status} = riak_core_ring:next_owner(NewRing, Idx, Mod),
+    NewStatus = riak_core_ring:member_status(NewRing, New),
+
+    case {Owner, NextOwner, NewStatus, Status} of
+        {_, _, invalid, _} ->
+            %% Handing off to invalid node, don't give-up data.
+            continue;
+        {Prev, New, _, _} ->
+            forward;
+        {Prev, _, _, _} ->
+            %% Handoff wasn't to node that is scheduled in next, so no change.
+            continue;
+        {_, _, _, _} ->
+            shutdown
+    end.
+
 finish_handoff(State=#state{mod=Mod,
                             modstate=ModState,
                             index=Idx,
                             handoff_node=HN,
                             pool_pid=Pool}) ->
-    case riak_core_gossip:finish_handoff(Idx, node(), HN, Mod) of
+    case mark_handoff_complete(Idx, node(), HN, Mod) of
         continue ->
             continue(State#state{handoff_node=none});
         Res when Res == forward; Res == shutdown ->
@@ -350,16 +377,42 @@ finish_handoff(State=#state{mod=Mod,
             lager:debug("~p ~p vnode finished handoff and deleted.",
                         [Idx, Mod]),
             riak_core_handoff_manager:remove_handoff(Mod, Idx),
-            riak_core_vnode_master:unregister_vnode(Idx, Mod),
-            riak_core_vnode_manager:set_not_forwarding(self(), false),
+            riak_core_vnode_manager:unregister_vnode(Idx, Mod),
+            lager:debug("vnode hn/fwd :: ~p/~p :: ~p -> ~p~n",
+                        [State#state.mod, State#state.index, State#state.forward, HN]),
             continue(State#state{modstate={deleted,NewModState}, % like to fail if used
                                  handoff_node=none,
                                  forward=HN})
     end.
 
-handle_event(R={update_forwarding, _Ring}, _StateName, State) ->
-    active(R, State);
-handle_event(R=trigger_handoff, _StateName, State) ->
+handle_event({set_forwarding, ForwardTo}, _StateName, State) ->
+    lager:debug("vnode fwd :: ~p/~p :: ~p -> ~p~n",
+                [State#state.mod, State#state.index, State#state.forward, ForwardTo]),
+    continue(State#state{forward=ForwardTo});
+handle_event(finish_handoff, _StateName, State=#state{mod=Mod,
+                                                      modstate=ModState,
+                                                      handoff_node=HN}) ->
+    stop_event_timer(State),
+    case HN of
+        none ->
+            continue(State);
+        _ ->
+            Mod:handoff_finished(HN, ModState),
+            finish_handoff(State)
+    end;
+handle_event(cancel_handoff, _StateName, State=#state{mod=Mod,
+                                                      modstate=ModState}) ->
+    %% it would be nice to pass {Err, Reason} to the vnode but the 
+    %% API doesn't currently allow for that.
+    stop_event_timer(State),
+    case State#state.handoff_node of
+        none ->
+            continue(State);
+        _ ->
+            Mod:handoff_cancelled(ModState),
+            continue(State#state{handoff_node=none})
+    end;
+handle_event(R={trigger_handoff, _TargetNode}, _StateName, State) ->
     active(R, State);
 handle_event(R=?VNODE_REQ{}, _StateName, State) ->
     active(R, State);
@@ -461,56 +514,18 @@ terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState,
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
-maybe_handoff(State=#state{modstate={deleted, _}}) ->
+maybe_handoff(State=#state{modstate={deleted, _}}, _TargetNode) ->
     %% Modstate has been deleted, waiting for unregistered.  No handoff.
     continue(State);
-maybe_handoff(State=#state{mod=Mod, modstate=ModState}) ->
-    case should_handoff(State) of
-        {true, TargetNode} ->
-            case Mod:handoff_starting(TargetNode, ModState) of
-                {true, NewModState} ->
-                    start_handoff(State#state{modstate=NewModState}, TargetNode);
-                {false, NewModState} ->
-                    continue(State, NewModState)
-            end;
-        false ->
-            continue(State)
-    end.
-
-should_handoff(#state{handoff_node=HN}) when HN /= none ->
+maybe_handoff(State=#state{handoff_node=HN}, _TargetNode) when HN /= none ->
     %% Already handing off
-    false;
-should_handoff(#state{index=Idx, mod=Mod}) ->
-    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
-    Me = node(),
-    {_, NextOwner, _} = riak_core_ring:next_owner(Ring, Idx),
-    Owner = riak_core_ring:index_owner(Ring, Idx),
-    Ready = riak_core_ring:ring_ready(Ring),
-    TargetNode = case {Ready, Owner, NextOwner} of
-                     {_, _, Me} ->
-                         Me;
-                     {_, Me, undefined} ->
-                         Me;
-                     {true, Me, _} ->
-                         NextOwner;
-                     {_, _, undefined} ->
-                         Owner;
-                     {_, _, _} ->
-                         Me
-                 end,
-    case TargetNode of
-        Me ->
-            false;
-        _ ->
-            case app_for_vnode_module(Mod) of
-                undefined -> false;
-                {ok, App} ->
-                    case lists:member(TargetNode,
-                                      riak_core_node_watcher:nodes(App)) of
-                        false  -> false;
-                        true -> {true, TargetNode}
-                    end
-            end
+    continue(State);
+maybe_handoff(State=#state{mod=Mod, modstate=ModState}, TargetNode) ->
+    case Mod:handoff_starting(TargetNode, ModState) of
+        {true, NewModState} ->
+            start_handoff(State#state{modstate=NewModState}, TargetNode);
+        {false, NewModState} ->
+            continue(State, NewModState)
     end.
 
 start_handoff(State=#state{index=Idx, mod=Mod, modstate=ModState}, TargetNode) ->
@@ -555,14 +570,21 @@ reply({raw, Ref, From}, Reply) ->
 reply(ignore, _Reply) ->
     ok.
 
-app_for_vnode_module(Mod) when is_atom(Mod) ->
-    case application:get_env(riak_core, vnode_modules) of
-        {ok, Mods} ->
-            case lists:keysearch(Mod, 2, Mods) of
-                {value, {App, Mod}} ->
-                    {ok, App};
-                false ->
-                    undefined
-            end;
-        undefined -> undefined
-    end.
+%% Individual vnode processes and the vnode manager are tightly coupled. When
+%% vnode events occur, the vnode must ensure that the events are forwarded to
+%% the vnode manager, which will make a state change decision and send an
+%% appropriate message back to the vnode. To minimize blocking, asynchronous
+%% messaging is used. It is possible for the vnode manager to crash and miss
+%% messages sent by the vnode. Therefore, the vnode periodically resends event
+%% messages until an appropriate message is received back from the vnode
+%% manager. The event timer functions below implement this logic.
+start_event_timer(Event, State=#state{mod=Mod, index=Idx}) ->
+    riak_core_vnode_manager:vnode_event(Mod, Idx, self(), Event),
+    stop_event_timer(State),
+    T2 = gen_fsm:send_event_after(30000, {send_event, Event}),
+    State#state{event_timer=T2}.
+
+stop_event_timer(#state{event_timer=undefined}) ->
+    ok;
+stop_event_timer(#state{event_timer=T}) ->
+    gen_fsm:cancel_timer(T).
