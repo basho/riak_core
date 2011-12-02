@@ -247,6 +247,9 @@ handle_call({ring_trans, Fun, Args}, _From, State=#state{raw_ring=Ring}) ->
             prune_write_notify_ring(NewRing),
             riak_core_gossip:random_recursive_gossip(NewRing),
             {reply, {ok, NewRing}, State#state{raw_ring=NewRing}};
+        {set_only, NewRing} ->
+            prune_write_ring(NewRing),
+            {reply, {ok, NewRing}, State#state{raw_ring=NewRing}};
         {reconciled_ring, NewRing} ->
             prune_write_notify_ring(NewRing),
             riak_core_gossip:recursive_gossip(NewRing),
@@ -377,11 +380,14 @@ set_ring_global(Ring) ->
 
 %% Persist a new ring file, set the global value and notify any listeners
 prune_write_notify_ring(Ring) ->
+    prune_write_ring(Ring),
+    riak_core_ring_events:ring_update(Ring).
+
+prune_write_ring(Ring) ->
     riak_core_ring:check_tainted(Ring, "Error: Persisting tainted ring"),
     riak_core_ring_manager:prune_ringfiles(),
     do_write_ringfile(Ring),
-    set_ring_global(Ring),
-    riak_core_ring_events:ring_update(Ring).
+    set_ring_global(Ring).
 
 %% ===================================================================
 %% Unit tests
