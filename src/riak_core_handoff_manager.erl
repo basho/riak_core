@@ -24,6 +24,8 @@
 -export([add_handoff/3,remove_handoff/2,all_handoffs/0,get_handoffs/1]).
 -record(state, {excl,handoffs}).
 
+-include_lib("eunit/include/eunit.hrl").
+
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
@@ -74,25 +76,14 @@ handle_call({get_exclusions, Module}, _From, State=#state{excl=Excl}) ->
 handle_call(all_handoffs, _From, State=#state{handoffs=Hoffs}) ->
     {reply, {ok, Hoffs}, State};
 handle_call({get_handoffs, Idx}, _From, State=#state{handoffs=Hoffs}) ->
-    Filtered=lists:foldl(fun ({Mod,ModHoffs},Acc) ->
-                                 case dict:find(Idx,ModHoffs) of
-                                     {ok,Value} -> [{Mod,Value}|Acc];
-                                     _ -> Acc
-                                 end
-                         end,
-                         [],
-                         Hoffs),
+    Filtered=[{Mod,TargetNode} || {{Mod,I},TargetNode} <- Hoffs, I == Idx],
     {reply, {ok, Filtered}, State}.
 
 handle_cast({add_handoff, {Mod, Idx, Node}}, State=#state{handoffs=Hoffs}) ->
-    ModHoffs=proplists:get_value(Mod,Hoffs,dict:new()),
-    NewModHoffs=dict:store(Idx,Node,ModHoffs),
-    NewHoffs=lists:keystore(Mod,1,Hoffs,{Mod,NewModHoffs}),
+    NewHoffs=[{{Mod,Idx},Node}|Hoffs],
     {noreply, State#state{handoffs=NewHoffs}};
-handle_cast({remove_handoff, {Mod, Idx}}, State=#state{handoffs=Hoffs}) ->
-    ModHoffs=proplists:get_value(Mod,Hoffs,dict:new()),
-    NewModHoffs=dict:erase(Idx,ModHoffs),
-    NewHoffs=lists:keystore(Mod,1,Hoffs,{Mod,NewModHoffs}),
+handle_cast({remove_handoff,Hoff={_Mod,_Idx}}, State=#state{handoffs=Hoffs}) ->
+    NewHoffs=lists:keydelete(Hoff,1,Hoffs),
     {noreply, State#state{handoffs=NewHoffs}};
 handle_cast({del_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
     {noreply, State#state{excl=ordsets:del_element({Mod, Idx}, Excl)}};
@@ -110,3 +101,38 @@ terminate(_Reason, _State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
+%%
+%% EUNIT tests...
+%%
+
+-ifdef (TEST).
+
+handoff_test_ () ->
+    {spawn,
+     {setup,
+
+      %% called when the tests start and complete...
+      fun () -> {ok,Pid}=start_link(), Pid end,
+      fun (Pid) -> exit(Pid,kill) end,
+
+      %% actual list of test
+      [?_test(simple_handoff())
+      ]}}.
+
+simple_handoff () ->
+    ?assertEqual({ok,[]},all_handoffs()),
+
+    %% add a handoff and confirm that it's there
+    add_handoff(riak_kv_vnode,0,'node@nohost'),
+    ?assertEqual({ok,[{{riak_kv_vnode,0},'node@nohost'}]},all_handoffs()),
+    ?assertEqual({ok,[{riak_kv_vnode,'node@nohost'}]},get_handoffs(0)),
+
+    %% remove the handoff and make sure it's gone
+    remove_handoff(riak_kv_vnode,0),
+    ?assertEqual({ok,[]},all_handoffs()),
+    ?assertEqual({ok,[]},get_handoffs(0)),
+
+    %% done
+    ok.
+
+-endif.
