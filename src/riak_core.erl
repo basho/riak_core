@@ -23,7 +23,7 @@
 -export([stop/0, stop/1, join/1, join/4, remove/1, down/1, leave/0,
          remove_from_cluster/1]).
 -export([register_vnode_module/1, vnode_modules/0]).
--export([register/1, register/2, bucket_fixups/0]).
+-export([register/1, register/2, bucket_fixups/0, bucket_validators/0]).
 -export([add_guarded_event_handler/3, add_guarded_event_handler/4]).
 -export([delete_guarded_event_handler/3]).
 -compile({no_auto_import,[register/2]}).
@@ -261,6 +261,12 @@ bucket_fixups() ->
         {ok, Mods} -> Mods
     end.
 
+bucket_validators() ->
+    case application:get_env(riak_core, bucket_validators) of
+        undefined -> [];
+        {ok, Mods} -> Mods
+    end.
+
 %% Get the application name if not supplied, first by get_application
 %% then by searching by module name
 get_app(undefined, Module) ->
@@ -289,6 +295,9 @@ register(App, [{bucket_fixup, FixupMod}|T]) ->
     register(App, T);
 register(App, [{vnode_module, VNodeMod}|T]) ->
     register_mod(get_app(App, VNodeMod), VNodeMod, vnode_modules),
+    register(App, T);
+register(App, [{bucket_validator, ValidationMod}|T]) ->
+    register_mod(get_app(App, ValidationMod), ValidationMod, bucket_validators),
     register(App, T).
 
 register_vnode_module(VNodeMod) when is_atom(VNodeMod)  ->
