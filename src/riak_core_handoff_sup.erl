@@ -26,10 +26,6 @@
          init/1
         ]).
 
-%% public functions
--export([start_sender/0
-        ]).
-
 -define(CHILD(I,Type), {I,{I,start_link,[]},permanent,brutal_kill,Type,[I]}).
 
 %% begins the supervisor, init/1 will be called
@@ -44,7 +40,3 @@ init ([]) ->
           ?CHILD(riak_core_handoff_listener_sup,supervisor),
           ?CHILD(riak_core_handoff_manager,worker)
          ]}}.
-
-%% start a sender process
-start_sender () ->
-    supervisor:start_child(?MODULE,[]).

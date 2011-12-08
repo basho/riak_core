@@ -34,6 +34,6 @@ start_link () ->
 
 %% @private
 init ([]) ->
-    {ok,{{simple_one_for_one,10,10},
+    {ok,{{one_for_one,10,10},
          [?CHILD(riak_core_handoff_listener,worker)
          ]}}.
