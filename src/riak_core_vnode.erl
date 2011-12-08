@@ -528,7 +528,9 @@ start_handoff(State=#state{index=Idx, mod=Mod, modstate=ModState}, TargetNode) -
                     NewState = State#state{modstate=NewModState,
                                            handoff_token=HandoffToken,
                                            handoff_node=TargetNode},
-                    {ok, HandoffPid} = riak_core_handoff_sender:start_link(TargetNode, Mod, Idx),
+                    {ok, HandoffPid} = riak_core_handoff_sender_sup:start_sender(TargetNode, Mod, Idx),
+                    io:format(">>>>> ~w~n", [HandoffPid]),
+                    %{ok, HandoffPid} = riak_core_handoff_sender:start_link(TargetNode, Mod, Idx),
                     riak_core_handoff_manager:add_handoff(Mod, Idx, TargetNode),
                     continue(NewState#state{handoff_pid=HandoffPid})
             end
