@@ -1,7 +1,5 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_handoff_sender: send a partition's data via TCP-based handoff
-%%
 %% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
@@ -19,8 +17,8 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
-
-%% @doc send a partition's data via TCP-based handoff
+%%
+%% @doc Handoff partition data.
 
 -module(riak_core_handoff_sender).
 -export([start_link/4, get_handoff_ssl_options/0]).
