@@ -21,8 +21,8 @@
 -export([add_exclusion/2, get_handoff_lock/1, get_exclusions/1]).
 -export([remove_exclusion/2]).
 -export([release_handoff_lock/2]).
--export([add_handoff/3,remove_handoff/2,all_handoffs/0,get_handoffs/1]).
--record(state, {excl,handoffs}).
+-export([add_outbound/3,clear_queue/0,all_handoffs/0]).
+-record(state, {excl,handoffs,handoff_queue}).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -30,19 +30,21 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 init([]) ->
-    {ok, #state{excl=ordsets:new(), handoffs=[]}}.
+    {ok, #state{excl=ordsets:new(), handoffs=[], handoff_queue=queue:new()}}.
 
-add_handoff(Module, Idx, Node) ->
-    gen_server:cast(?MODULE, {add_handoff, {Module, Idx, Node}}).
 
-remove_handoff(Module, Idx) ->
-    gen_server:cast(?MODULE, {remove_handoff, {Module, Idx}}).
+%% enqueue a handoffs to happen at a later point
+add_outbound(Module, Idx, Node) ->
+    ok=gen_server:call(?MODULE,{add_outbound,Module,Idx,Node}),
+    gen_server:cast(?MODULE,process_handoff_queue).
 
+%% cancel all pending handoffs
+clear_queue() ->
+    gen_server:cast(?MODULE, cancel_pending_handoffs).
+
+%% get a pair of all currently active and pending handoffs
 all_handoffs() ->
     gen_server:call(?MODULE, all_handoffs).
-
-get_handoffs(Idx) ->
-    gen_server:call(?MODULE, {get_handoffs, Idx}).
 
 add_exclusion(Module, Index) ->
     gen_server:cast(?MODULE, {add_exclusion, {Module, Index}}).
@@ -70,21 +72,26 @@ get_handoff_lock(LockId, Count) ->
 release_handoff_lock(LockId, Token) ->
     global:del_lock({{handoff_token,Token}, {node(), LockId}}, [node()]).
 
+
 handle_call({get_exclusions, Module}, _From, State=#state{excl=Excl}) ->
     Reply =  [I || {M, I} <- ordsets:to_list(Excl), M =:= Module],
     {reply, {ok, Reply}, State};
-handle_call(all_handoffs, _From, State=#state{handoffs=Hoffs}) ->
-    {reply, {ok, Hoffs}, State};
-handle_call({get_handoffs, Idx}, _From, State=#state{handoffs=Hoffs}) ->
-    Filtered=[{Mod,TargetNode} || {{Mod,I},TargetNode} <- Hoffs, I == Idx],
-    {reply, {ok, Filtered}, State}.
+handle_call(all_handoffs, _From, State=#state{handoff_queue=Q}) ->
+    Active=[Handoff || {_Pid,Handoff} <- State#state.handoffs],
+    Pending=queue:to_list(Q),
+    {reply, {ok, Active, Pending}, State};
+handle_call({add_outbound,Mod,Idx,Node},_From,State=#state{handoff_queue=Q}) ->
+    Handoff={{Mod,Idx},Node},
+    case queue:member(Handoff,Q) of
+        false -> {reply,ok,State#state{handoff_queue=queue:in(Handoff,Q)}};
+        true -> {reply,ok,State}
+    end.
 
-handle_cast({add_handoff, {Mod, Idx, Node}}, State=#state{handoffs=Hoffs}) ->
-    NewHoffs=[{{Mod,Idx},Node}|Hoffs],
-    {noreply, State#state{handoffs=NewHoffs}};
-handle_cast({remove_handoff,Hoff={_Mod,_Idx}}, State=#state{handoffs=Hoffs}) ->
-    NewHoffs=lists:keydelete(Hoff,1,Hoffs),
-    {noreply, State#state{handoffs=NewHoffs}};
+
+handle_cast(process_handoff_queue, State) ->
+    {noreply,process_handoff_queue(State)};
+handle_cast(cancel_pending_handoffs, State) ->
+    {noreply,State#state{handoff_queue=queue:new()}};
 handle_cast({del_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
     {noreply, State#state{excl=ordsets:del_element({Mod, Idx}, Excl)}};
 handle_cast({add_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
@@ -92,14 +99,44 @@ handle_cast({add_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
     riak_core_ring_events:ring_update(Ring),
     {noreply, State#state{excl=ordsets:add_element({Mod, Idx}, Excl)}}.
 
+
+%% we monitor sender processes, when one goes down, we can start another
+handle_info({'DOWN',_Ref,process,Pid,_Reason},State=#state{handoffs=HS}) ->
+    NewHS=lists:keydelete(Pid,1,HS),
+    {noreply,process_handoff_queue(State#state{handoffs=NewHS})};
 handle_info(_Info, State) ->
     {noreply, State}.
 
+%% stop the gen_server
 terminate(_Reason, _State) ->
     ok.
 
+%% hot-swap code
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+%% @private - shared gen_server functionality
+
+%% pop a handoff off the queue and start it up
+process_handoff_queue(State) ->
+    NumSenders=riak_core_handoff_sender_sup:active_senders(),
+    NumReceivers=riak_core_handoff_receiver_sup:active_receivers(),
+    MaxHandoffs=app_helper:get_env(riak_core,max_handoffs,1),
+    process_handoff_queue((NumSenders + NumReceivers) < MaxHandoffs,State).
+
+%% only pop a handoff and start it if we're under our limit
+process_handoff_queue(false,State) ->
+    State;
+process_handoff_queue(true,State=#state{handoffs=Handoffs,handoff_queue=Q}) ->
+    case queue:out(Q) of
+        {{value,Handoff={{Mod,Idx},Node}},Q2} ->
+            {ok,Pid}=riak_core_handoff_sender_sup:start_sender(Node,Mod,Idx),
+            erlang:monitor(process,Pid),
+            NewHoffs=[{Pid,Handoff}|Handoffs],
+            State#state{handoffs=NewHoffs,handoff_queue=Q2};
+        {empty,_} ->
+            State
+    end.
 
 %%
 %% EUNIT tests...
@@ -123,14 +160,14 @@ simple_handoff () ->
     ?assertEqual({ok,[]},all_handoffs()),
 
     %% add a handoff and confirm that it's there
-    add_handoff(riak_kv_vnode,0,'node@nohost'),
-    ?assertEqual({ok,[{{riak_kv_vnode,0},'node@nohost'}]},all_handoffs()),
-    ?assertEqual({ok,[{riak_kv_vnode,'node@nohost'}]},get_handoffs(0)),
+    %%add_handoff(riak_kv_vnode,0,'node@nohost'),
+    %?assertEqual({ok,[{{riak_kv_vnode,0},'node@nohost'}]},all_handoffs()),
+    %?assertEqual({ok,[{riak_kv_vnode,'node@nohost'}]},get_handoffs(0)),
 
     %% remove the handoff and make sure it's gone
-    remove_handoff(riak_kv_vnode,0),
-    ?assertEqual({ok,[]},all_handoffs()),
-    ?assertEqual({ok,[]},get_handoffs(0)),
+    %%remove_handoff(riak_kv_vnode,0),
+    %?assertEqual({ok,[]},all_handoffs()),
+    %?assertEqual({ok,[]},get_handoffs(0)),
 
     %% done
     ok.

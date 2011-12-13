@@ -349,7 +349,6 @@ finish_handoff(State=#state{mod=Mod,
             {ok, NewModState} = Mod:delete(ModState),
             lager:debug("~p ~p vnode finished handoff and deleted.",
                         [Idx, Mod]),
-            riak_core_handoff_manager:remove_handoff(Mod, Idx),
             riak_core_vnode_manager:unregister_vnode(Idx, Mod),
             riak_core_vnode_manager:set_not_forwarding(self(), false),
             continue(State#state{modstate={deleted,NewModState}, % like to fail if used
@@ -528,9 +527,8 @@ start_handoff(State=#state{index=Idx, mod=Mod, modstate=ModState}, TargetNode) -
                     NewState = State#state{modstate=NewModState,
                                            handoff_token=HandoffToken,
                                            handoff_node=TargetNode},
-                    {ok, HandoffPid} = riak_core_handoff_sender_sup:start_sender(TargetNode, Mod, Idx),
-                    riak_core_handoff_manager:add_handoff(Mod, Idx, TargetNode),
-                    continue(NewState#state{handoff_pid=HandoffPid})
+                    ok=riak_core_handoff_manager:add_outbound(Mod, Idx, TargetNode),
+                    continue(NewState)
             end
     end.
 

@@ -23,7 +23,8 @@
 
 %% beahvior functions
 -export([start_link/0,
-         init/1
+         init/1,
+         active_senders/0
         ]).
 
 %% public functions
@@ -45,3 +46,7 @@ init ([]) ->
 %% start a sender process
 start_sender (TargetNode,Module,Partition) ->
     supervisor:start_child(?MODULE,[TargetNode,Module,Partition,self()]).
+
+%% return the number of active senders
+active_senders () ->
+    erlang:length(supervisor:which_children(?MODULE)).

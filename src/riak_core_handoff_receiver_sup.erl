@@ -23,7 +23,8 @@
 
 %% beahvior functions
 -export([start_link/0,
-         init/1
+         init/1,
+         active_receivers/0
         ]).
 
 %% public functions
@@ -45,3 +46,7 @@ init ([]) ->
 %% start a sender process
 start_receiver (SSLOpts) ->
     supervisor:start_child(?MODULE,[SSLOpts]).
+
+%% return the number of active receivers
+active_receivers () ->
+    erlang:length(supervisor:which_children(?MODULE)).
