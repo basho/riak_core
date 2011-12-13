@@ -30,9 +30,13 @@
              riak_core_eventhandler_sup,
              riak_core_gossip,
              riak_core_handoff_listener,
+             riak_core_handoff_listener_sup,
              riak_core_handoff_manager,
              riak_core_handoff_receiver,
+             riak_core_handoff_receiver_sup,
              riak_core_handoff_sender,
+             riak_core_handoff_sender_sup,
+             riak_core_handoff_sup,
              riak_core_nodeid,
              riak_core_node_watcher,
              riak_core_node_watcher_events,
@@ -100,7 +104,7 @@
          %% Vnode inactivity timeout (how often to check if fallback vnodes
          %% should return their data) in ms.
          {vnode_inactivity_timeout, 60000},
-         
+
          %% Number of VNodes allowed to do handoff concurrently.
          {handoff_concurrency, 4},
 

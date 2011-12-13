@@ -23,15 +23,19 @@
 %% @doc send a partition's data via TCP-based handoff
 
 -module(riak_core_handoff_sender).
--export([start_link/3, get_handoff_ssl_options/0]).
+-export([start_link/4, get_handoff_ssl_options/0]).
 -include_lib("riak_core_vnode.hrl").
 -include_lib("riak_core_handoff.hrl").
 -define(ACK_COUNT, 1000).
 
-start_link(TargetNode, Module, Partition) ->
-    Self = self(),
+start_link(TargetNode, Module, Partition, VnodePid) ->
     SslOpts = get_handoff_ssl_options(),
-    Pid = spawn_link(fun()->start_fold(TargetNode, Module,Partition, Self, SslOpts) end),
+    Pid = spawn_link(fun()->start_fold(TargetNode,
+                                       Module,
+                                       Partition,
+                                       VnodePid,
+                                       SslOpts)
+                     end),
     {ok, Pid}.
 
 start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
@@ -86,17 +90,17 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
              ok ->
                  lager:info("Handoff of partition ~p ~p from ~p to ~p "
                                        "completed: sent ~p objects in ~.2f "
-                                       "seconds", 
+                                       "seconds",
                                        [Module, Partition, node(), TargetNode,
                                         SentCount, FoldTimeDiff]),
                  gen_fsm:send_event(ParentPid, handoff_complete);
              {error, ErrReason} ->
                  lager:error("Handoff of partition ~p ~p from ~p to ~p "
                                         "FAILED after sending ~p objects "
-                                        "in ~.2f seconds: ~p", 
+                                        "in ~.2f seconds: ~p",
                                         [Module, Partition, node(), TargetNode,
                                          SentCount, FoldTimeDiff, ErrReason]),
-                 gen_fsm:send_event(ParentPid, {handoff_error, 
+                 gen_fsm:send_event(ParentPid, {handoff_error,
                                                 fold_error, ErrReason})
          end
      catch
