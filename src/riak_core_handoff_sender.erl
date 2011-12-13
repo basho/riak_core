@@ -100,6 +100,21 @@ handle_info(timeout, State=#state{target=Target, mod=Mod, partition=Partition,
 				  vnode=VNode, ssl_opts=SSLOpts}) ->
     start_fold(Target, Mod, Partition, VNode, SSLOpts),
     {stop, normal, State};
+handle_info({Err=tcp_error, _Sock, Reason},
+	    State=#state{target=Target, mod=Mod, partition=Partition,
+			 vnode=VNode}) ->
+    lager:error("Handoff of partition ~p ~p from ~p to ~p failed ~p:~p",
+		[Mod, Partition, node(), Target, Err, Reason]),
+    gen_fsm:send_event(VNode, {handoff_error, Err, Reason}),
+    {stop, {Err, Reason}, State};
+handle_info({tcp_closed, _Sock},
+	    State=#state{target=Target, mod=Mod, partition=Partition,
+			 vnode=VNode}) ->
+    lager:error("Handoff of partition ~p ~p from ~p to ~p failed, "
+		"the receiver unexpectedly closed the socket",
+		[Mod, Partition, node(), Target]),
+    gen_fsm:send_event(VNode, {handoff_error, tcp_closed, unexpected_close}),
+    {stop, {tcp_closed, unexpected_close}, State};
 handle_info(Req, State) ->
     lager:error("Unexpected info ~p", [Req]),
     {noreply, State}.
