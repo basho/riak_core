@@ -21,11 +21,24 @@
 %% @doc Handoff partition data.
 
 -module(riak_core_handoff_sender).
+-behavior(gen_server).
+
+%% API
 -export([get_handoff_ssl_options/0,
          start_link/4]).
+
+%% Callbacks
+-export([init/1,
+	 handle_call/3,
+	 handle_cast/2,
+	 handle_info/2,
+	 code_change/3,
+	 terminate/2]).
+
 -include_lib("riak_core_vnode.hrl").
 -include_lib("riak_core_handoff.hrl").
 -define(ACK_COUNT, 1000).
+-record(state, {target, mod, partition, vnode, ssl_opts}).
 
 %% -------------------------------------------------------------------
 %% API
@@ -59,15 +72,41 @@ get_handoff_ssl_options() ->
             end
     end.
 
-start_link(TargetNode, Module, Partition, VnodePid) ->
-    SslOpts = get_handoff_ssl_options(),
-    Pid = spawn_link(fun()->start_fold(TargetNode,
-                                       Module,
-                                       Partition,
-                                       VnodePid,
-                                       SslOpts)
-                     end),
-    {ok, Pid}.
+start_link(Target, Mod, Partition, VNode) ->
+    SSLOpts = get_handoff_ssl_options(),
+    gen_server:start_link(?MODULE, [Target, Mod, Partition, VNode, SSLOpts], []).
+
+%% -------------------------------------------------------------------
+%% Callbacks
+%% -------------------------------------------------------------------
+
+init([Target, Mod, Partition, VNode, SSLOpts]) ->
+    State = #state{target=Target,
+		   mod=Mod,
+		   partition=Partition,
+		   vnode=VNode,
+		   ssl_opts=SSLOpts},
+    {ok, State, 0}.
+
+handle_call(Req, _From, State) ->
+    lager:error("Unexpected call ~p", Req),
+    {noreply, State}.
+
+handle_cast(Req, State) ->
+    lager:error("Unexpected cast ~p", Req),
+    {noreply, State}.
+
+handle_info(timeout, State=#state{target=Target, mod=Mod, partition=Partition,
+				  vnode=VNode, ssl_opts=SSLOpts}) ->
+    start_fold(Target, Mod, Partition, VNode, SSLOpts),
+    {stop, normal, State};
+handle_info(Req, State) ->
+    lager:error("Unexpected info ~p", [Req]),
+    {noreply, State}.
+
+terminate(_Reason, _State) -> ignore.
+
+code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 %% -------------------------------------------------------------------
 %% Private
