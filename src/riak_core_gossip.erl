@@ -37,7 +37,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 -export ([distribute_ring/1, send_ring/1, send_ring/2, remove_from_cluster/2,
-          finish_handoff/4, claim_until_balanced/2, random_gossip/1,
+          claim_until_balanced/2, random_gossip/1,
           recursive_gossip/1, random_recursive_gossip/1, rejoin/2,
           gossip_version/0, legacy_gossip/0, legacy_gossip/1]).
 
@@ -79,9 +79,6 @@ start_link() ->
 
 stop() ->
     gen_server:cast(?MODULE, stop).
-
-finish_handoff(Idx, Prev, New, Mod) ->
-    gen_server:call(?MODULE, {finish_handoff, Idx, Prev, New, Mod}, infinity).
 
 rejoin(Node, Ring) ->
     gen_server:cast({?MODULE, Node}, {rejoin, Ring}).
@@ -137,7 +134,6 @@ random_recursive_gossip(Ring) ->
 
 %% @private
 init(_State) ->
-    schedule_next_gossip(),
     schedule_next_reset(),
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
     {Tokens, _} = app_helper:get_env(riak_core, gossip_limit, ?DEFAULT_LIMIT),
@@ -145,35 +141,6 @@ init(_State) ->
                                   #state{gossip_versions=orddict:new(),
                                          gossip_tokens=Tokens}),
     {ok, State}.
-
-
-%% @private
-handle_call({finish_handoff, Idx, Prev, New, Mod}, _From, State) ->
-    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
-    Owner = riak_core_ring:index_owner(Ring, Idx),
-    {_, NextOwner, Status} = riak_core_ring:next_owner(Ring, Idx, Mod),
-    NewStatus = riak_core_ring:member_status(Ring, New),
-
-    case {Owner, NextOwner, NewStatus, Status} of
-        {_, _, invalid, _} ->
-            %% Handing off to invalid node, don't give-up data.
-            {reply, continue, State};
-        {Prev, New, _, awaiting} ->
-            riak_core_ring_manager:ring_trans(
-              fun(Ring2, _) -> 
-                      Ring3 = riak_core_ring:handoff_complete(Ring2, Idx, Mod),
-                      {new_ring, Ring3}
-              end, []),
-            {reply, forward, State};
-        {Prev, New, _, complete} ->
-            %% Do nothing
-            {reply, continue, State};
-        {Prev, _, _, _} ->
-            %% Handoff wasn't to node that is scheduled in next, so no change.
-            {reply, continue, State};
-        {_, _, _, _} ->
-            {reply, shutdown, State}
-    end;
 
 handle_call(legacy_gossip, _From, State) ->
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
@@ -201,7 +168,6 @@ update_gossip_version(Ring) ->
             Ring2
     end.
 
-   
 known_legacy_gossip(Node, State) ->
     case orddict:find(Node, State#state.gossip_versions) of
         error ->
@@ -272,9 +238,7 @@ rpc_gossip_version(Ring, Node) ->
 handle_cast({send_ring_to, _Node}, State=#state{gossip_tokens=0}) ->
     %% Out of gossip tokens, ignore the send request
     {noreply, State};
-
 handle_cast({send_ring_to, Node}, State) ->
-    lager:debug("Sending ring to ~p~n", [Node]),
     {ok, MyRing0} = riak_core_ring_manager:get_raw_ring(),
     MyRing = update_gossip_version(MyRing0),
     GossipVsn = case gossip_version() of
@@ -324,23 +288,13 @@ handle_cast({reconcile_ring, RingIn}, State) ->
 
 handle_cast(reset_tokens, State) ->
     schedule_next_reset(),
+    gen_server:cast(?MODULE, gossip_ring),
     {Tokens, _} = app_helper:get_env(riak_core, gossip_limit, ?DEFAULT_LIMIT),
     {noreply, State#state{gossip_tokens=Tokens}};
 
 handle_cast(gossip_ring, State) ->
-    % First, schedule the next round of gossip...
-    schedule_next_gossip(),
-
     % Gossip the ring to some random other node...
     {ok, MyRing} = riak_core_ring_manager:get_raw_ring(),
-
-    %% Ensure vnodes necessary for ownership change are running
-    case riak_core_ring:disowning_indices(MyRing, node()) of
-        [] ->
-            ok;
-        _ ->
-            riak_core_ring_events:force_update()
-    end,
 
     random_gossip(MyRing),
     {noreply, State};
@@ -378,11 +332,6 @@ code_change(_OldVsn, State, _Extra) ->
 %% ===================================================================
 %% Internal functions
 %% ===================================================================
-
-schedule_next_gossip() ->
-    MaxInterval = app_helper:get_env(riak_core, gossip_interval),
-    Interval = random:uniform(MaxInterval),
-    timer:apply_after(Interval, gen_server, cast, [?MODULE, gossip_ring]).
 
 schedule_next_reset() ->
     {_, Reset} = app_helper:get_env(riak_core, gossip_limit, ?DEFAULT_LIMIT),
