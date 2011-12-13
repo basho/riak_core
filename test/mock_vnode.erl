@@ -52,7 +52,6 @@
 
 %% API
 start_vnode(I) ->
-%    io:format("Starting vnode ~p\n", [I]),
     riak_core_vnode_master:start_vnode(I, ?MODULE).
 
 get_index(Preflist) ->
