@@ -21,10 +21,43 @@
 %% @doc Handoff partition data.
 
 -module(riak_core_handoff_sender).
--export([start_link/4, get_handoff_ssl_options/0]).
+-export([get_handoff_ssl_options/0,
+         start_link/4]).
 -include_lib("riak_core_vnode.hrl").
 -include_lib("riak_core_handoff.hrl").
 -define(ACK_COUNT, 1000).
+
+%% -------------------------------------------------------------------
+%% API
+%% -------------------------------------------------------------------
+
+get_handoff_ssl_options() ->
+    case app_helper:get_env(riak_core, handoff_ssl_options, []) of
+        [] ->
+            [];
+        Props ->
+            try
+                %% We'll check if the file(s) exist but won't check
+                %% file contents' sanity.
+                ZZ = [{_, {ok, _}} = {ToCheck, file:read_file(Path)} ||
+                         ToCheck <- [certfile, keyfile, cacertfile, dhfile],
+                         Path <- [proplists:get_value(ToCheck, Props)],
+                         Path /= undefined],
+                spawn(fun() -> self() ! ZZ end), % Avoid term...never used err
+                %% Props are OK
+                Props
+            catch
+                error:{badmatch, {FailProp, BadMat}} ->
+                    lager:error("SSL handoff config error: property ~p: ~p.",
+                                [FailProp, BadMat]),
+                    [];
+                X:Y ->
+                    lager:error("Failure processing SSL handoff config "
+                                "~p: ~p:~p",
+                                [Props, X, Y]),
+                    []
+            end
+    end.
 
 start_link(TargetNode, Module, Partition, VnodePid) ->
     SslOpts = get_handoff_ssl_options(),
@@ -35,6 +68,18 @@ start_link(TargetNode, Module, Partition, VnodePid) ->
                                        SslOpts)
                      end),
     {ok, Pid}.
+
+%% -------------------------------------------------------------------
+%% Private
+%% -------------------------------------------------------------------
+
+get_handoff_port(Node) when is_atom(Node) ->
+    case catch(gen_server2:call({riak_core_handoff_listener, Node}, handoff_port, infinity)) of
+        {'EXIT', _}  ->
+            %% Check old location from previous release
+            gen_server2:call({riak_kv_handoff_listener, Node}, handoff_port, infinity);
+        Other -> Other
+    end.
 
 start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
      try
@@ -135,40 +180,4 @@ visit_item(K, V, {Socket, ParentPid, Module, TcpMod, Ack, Total, _ErrStatus}) ->
             {Socket, ParentPid, Module, TcpMod, Ack+1, Total+1, ok};
         {error, Reason} ->
             {Socket, ParentPid, Module, TcpMod, Ack, Total, {error, Reason}}
-    end.
-
-get_handoff_port(Node) when is_atom(Node) ->
-    case catch(gen_server2:call({riak_core_handoff_listener, Node}, handoff_port, infinity)) of
-        {'EXIT', _}  ->
-            %% Check old location from previous release
-            gen_server2:call({riak_kv_handoff_listener, Node}, handoff_port, infinity);
-        Other -> Other
-    end.
-
-get_handoff_ssl_options() ->
-    case app_helper:get_env(riak_core, handoff_ssl_options, []) of
-        [] ->
-            [];
-        Props ->
-            try
-                %% We'll check if the file(s) exist but won't check
-                %% file contents' sanity.
-                ZZ = [{_, {ok, _}} = {ToCheck, file:read_file(Path)} ||
-                         ToCheck <- [certfile, keyfile, cacertfile, dhfile],
-                         Path <- [proplists:get_value(ToCheck, Props)],
-                         Path /= undefined],
-                spawn(fun() -> self() ! ZZ end), % Avoid term...never used err
-                %% Props are OK
-                Props
-            catch
-                error:{badmatch, {FailProp, BadMat}} ->
-                    lager:error("SSL handoff config error: property ~p: ~p.",
-                                [FailProp, BadMat]),
-                    [];
-                X:Y ->
-                    lager:error("Failure processing SSL handoff config "
-                                "~p: ~p:~p",
-                                [Props, X, Y]),
-                    []
-            end
     end.
