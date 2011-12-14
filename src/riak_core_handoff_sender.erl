@@ -135,6 +135,61 @@ get_handoff_port(Node) when is_atom(Node) ->
         Other -> Other
     end.
 
+%% @private
+%%
+%% @doc Complete the handoff.
+-spec complete(pos_integer(), module(), port(), proplists:proplist()) -> ok.
+complete(1, TcpMod, Socket, Cfg) ->
+    Mod = proplists:get_value(vnode_mod, Cfg),
+    Partition = proplists:get_value(partition, Cfg),
+    %% Send last sync to verify that all data has been written.  The
+    %% contract assumed here is that the receiver cannot respond to
+    %% this sync until it has handled all previous msgs.
+    lager:debug("~p ~p Sending final sync", [Partition, Mod]),
+    ok = TcpMod:send(Socket, <<?PT_MSG_SYNC:8>>),
+    {ok,[?PT_MSG_SYNC|<<"sync">>]} = TcpMod:recv(Socket, 0),
+    lager:debug("~p ~p Final sync received", [Partition, Mod]);
+
+complete(2, TcpMod, Socket, _Cfg) ->
+    ok = TcpMod:send(Socket, <<?PT_MSG_COMPLETE:8>>),
+    %% Wait for reply to verify receiver has handled all msgs.
+    {ok,[?PT_MSG_COMPLETE|<<>>]} = TcpMod:recv(Socket, 0).
+
+%% @private
+%%
+%% @doc Get the handoff protocol version being used.
+-spec get_proto_version(module(), port()) -> pos_integer().
+get_proto_version(Mod, Sock) ->
+    ok = Mod:send(Sock, <<?PT_MSG_VSN:8>>),
+    case Mod:recv(Sock, 0) of
+        {ok, [?PT_MSG_VSN|Vsn]} -> binary_to_term(Vsn);
+        {ok, [?PT_MSG_UNKNOWN|<<"unknown_msg">>]} -> 1
+    end.
+
+%% @private
+%%
+%% @doc Perform handshake with receiver.
+handshake(1, TcpMod, Socket, Cfg) ->
+    Mod = proplists:get_value(vnode_mod, Cfg),
+    Partition = proplists:get_value(partition, Cfg),
+    ModBin = atom_to_binary(Mod, utf8),
+    Msg1 = <<?PT_MSG_OLDSYNC:8,ModBin/binary>>,
+    Msg2 = <<?PT_MSG_INIT:8,Partition:160/integer>>,
+
+    ok = TcpMod:send(Socket, Msg1),
+    {ok,[?PT_MSG_OLDSYNC|<<"sync">>]} = TcpMod:recv(Socket, 0),
+    ok = TcpMod:send(Socket, Msg2);
+
+handshake(?PROTO_VSN, TcpMod, Socket, Cfg) ->
+    Data = term_to_binary(Cfg),
+    Msg = <<?PT_MSG_CONFIGURE:8,Data/binary>>,
+    ok = TcpMod:send(Socket, Msg),
+    {ok,[?PT_MSG_CONFIGURE|_RecvCfg]} = TcpMod:recv(Socket, 0);
+
+handshake(Vsn, _, _, _) ->
+    lager:error("Unknown handoff protocol version ~p", [Vsn]),
+    throw({unknown_handoff_protocol, Vsn}).
+
 start_fold(Target, Mod, Partition, VNode, SSLOpts) ->
      try
          lager:info("Starting handoff of partition ~p ~p from ~p to ~p",
@@ -152,18 +207,12 @@ start_fold(Target, Mod, Partition, VNode, SSLOpts) ->
                      {Skt, gen_tcp}
              end,
 
-         %% Piggyback the sync command from previous releases to send
-         %% the vnode type across.  If talking to older nodes they'll
-         %% just do a sync, newer nodes will decode the module name.
-         %% After 0.12.0 the calls can be switched to use PT_MSG_SYNC
-         %% and PT_MSG_CONFIGURE
          VMaster = list_to_atom(atom_to_list(Mod) ++ "_master"),
-         ModBin = atom_to_binary(Mod, utf8),
-         Msg = <<?PT_MSG_OLDSYNC:8,ModBin/binary>>,
-         ok = TcpMod:send(Socket, Msg),
-         {ok,[?PT_MSG_OLDSYNC|<<"sync">>]} = TcpMod:recv(Socket, 0),
-         M = <<?PT_MSG_INIT:8,Partition:160/integer>>,
-         ok = TcpMod:send(Socket, M),
+         ReceiverVsn = get_proto_version(TcpMod, Socket),
+         Cfg = [{vnode_mod, Mod},
+                {partition, Partition}],
+         handshake(ReceiverVsn, TcpMod, Socket, Cfg),
+
          StartFoldTime = now(),
          {Socket,VNode,Mod,TcpMod,_Ack,SentCount,ErrStatus} =
              riak_core_vnode_master:sync_command({Partition, node()},
@@ -171,15 +220,7 @@ start_fold(Target, Mod, Partition, VNode, SSLOpts) ->
                                                     foldfun=fun visit_item/3,
                                                     acc0={Socket,VNode,Mod,TcpMod,0,0,ok}},
                                                  VMaster, infinity),
-         %% One last sync to make sure the message has been received.
-         %% post-0.14 vnodes switch to handoff to forwarding immediately
-         %% so handoff_complete can only be sent once all of the data is
-         %% written.  handle_handoff_data is a sync call, so once
-         %% we receive the sync the remote side will be up to date.
-         lager:debug("~p ~p Sending final sync", [Partition, Mod]),
-         ok = TcpMod:send(Socket, <<?PT_MSG_SYNC:8>>),
-         {ok,[?PT_MSG_SYNC|<<"sync">>]} = TcpMod:recv(Socket, 0),
-         lager:debug("~p ~p Final sync received", [Partition, Mod]),
+         complete(ReceiverVsn, TcpMod, Socket, Cfg),
 
          EndFoldTime = now(),
          FoldTimeDiff = timer:now_diff(EndFoldTime, StartFoldTime) / 1000000,
@@ -202,9 +243,10 @@ start_fold(Target, Mod, Partition, VNode, SSLOpts) ->
          end
      catch
          Err:Reason ->
-             lager:error("Handoff of partition ~p ~p from ~p to ~p failed ~p:~p",
+             Trace = erlang:get_stacktrace(),
+             lager:error("Handoff of partition ~p ~p from ~p to ~p failed ~p:~p ~p",
                                     [Mod, Partition, node(), Target,
-                                     Err, Reason]),
+                                     Err, Reason, Trace]),
              gen_fsm:send_event(VNode, {handoff_error, Err, Reason})
      end.
 
@@ -214,11 +256,10 @@ visit_item(_K, _V, {Socket, VNode, Mod, TcpMod, Ack, Total,
                     {error, Reason}}) ->
     {Socket, VNode, Mod, TcpMod, Ack, Total, {error, Reason}};
 visit_item(K, V, {Socket, VNode, Mod, TcpMod, ?ACK_COUNT, Total, _Err}) ->
-    M = <<?PT_MSG_OLDSYNC:8,"sync">>,
-    case TcpMod:send(Socket, M) of
+    case TcpMod:send(Socket, <<?PT_MSG_SYNC:8>>) of
         ok ->
             case TcpMod:recv(Socket, 0) of
-                {ok,[?PT_MSG_OLDSYNC|<<"sync">>]} ->
+                {ok,[?PT_MSG_SYNC|<<"sync">>]} ->
                     visit_item(K, V, {Socket, VNode, Mod, TcpMod, 0, Total, ok});
                 {error, Reason} ->
                     {Socket, VNode, Mod, TcpMod, 0, Total, {error, Reason}}

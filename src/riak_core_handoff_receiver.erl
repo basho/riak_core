@@ -77,15 +77,19 @@ handle_call({set_socket, Socket0}, _From, State = #state{ssl_opts = SslOpts}) ->
     {reply, ok, State#state { sock = Socket }}.
 
 handle_info({tcp_closed,_Socket},State=#state{partition=Partition,
-                                              count=Count}) ->
-    lager:info("Handoff receiver for partition ~p exited after processing ~p"
-               " objects", [Partition, Count]),
-    {stop, normal, State};
+                                              count=Count,
+                                              vnode_mod=Mod}) ->
+    lager:error("socket unexpectedly closed by sender for partition"
+                "~p ~p after ~p msgs", [Mod, Partition, Count]),
+    {stop, {tcp_closed, unexpected_close}, State};
+
 handle_info({tcp_error, _Socket, _Reason}, State=#state{partition=Partition,
-                                                        count=Count}) ->
-    lager:info("Handoff receiver for partition ~p exited after processing ~p"
-               " objects", [Partition, Count]),
-    {stop, normal, State};
+                                                        count=Count,
+                                                        vnode_mod=Mod}) ->
+    lager:error("socket error for partition ~p ~p after ~p msgs objects",
+                [Mod, Partition, Count]),
+    {stop, {tcp_error, socket_error}, State};
+
 handle_info({tcp, Socket, Data}, State) ->
     [MsgType|MsgData] = Data,
     case catch(process_message(MsgType, MsgData, State)) of
@@ -108,7 +112,11 @@ handle_info({ssl_error, Socket, Reason}, State) ->
 handle_info({ssl, Socket, Data}, State) ->
     handle_info({tcp, Socket, Data}, State).
 
-handle_cast(_Msg, State) -> {noreply, State}.
+handle_cast(complete, State=#state{partition=Partition, count=Count,
+                                   vnode_mod=Mod}) ->
+    lager:info("handoff completed for partition ~p ~p after processing ~p msgs",
+               [Mod, Partition, Count]),
+    {stop, normal, State}.
 
 terminate(_Reason, _State) -> ok.
 
@@ -142,11 +150,30 @@ process_message(?PT_MSG_SYNC, _MsgData, State=#state{sock=Socket,
                                                      tcp_mod=TcpMod}) ->
     TcpMod:send(Socket, <<?PT_MSG_SYNC:8, "sync">>),
     State;
-process_message(?PT_MSG_CONFIGURE, MsgData, State) ->
+process_message(?PT_MSG_CONFIGURE, MsgData, State=#state{sock=Socket,
+                                                         tcp_mod=TcpMod}) ->
     ConfProps = binary_to_term(MsgData),
-    State#state{vnode_mod=proplists:get_value(vnode_mod, ConfProps),
-                partition=proplists:get_value(partition, ConfProps)};
+    Mod = proplists:get_value(vnode_mod, ConfProps),
+    Partition = proplists:get_value(partition, ConfProps),
+    {ok, VNode} = riak_core_vnode_master:get_vnode_pid(Partition, Mod),
+    %% TODO The reply is empty but in future might be used for
+    %% negotiation between sender/receiver.
+    Reply = term_to_binary([]),
+    ok = TcpMod:send(Socket, <<?PT_MSG_CONFIGURE, Reply/binary>>),
+    State#state{vnode_mod=Mod, partition=Partition, vnode=VNode};
+
+process_message(?PT_MSG_COMPLETE, _MsgData, State=#state{sock=Socket,
+                                                         tcp_mod=TcpMod}) ->
+    ok = TcpMod:send(Socket, <<?PT_MSG_COMPLETE:8>>),
+    gen_server:cast(self(), complete),
+    State;
+
+process_message(?PT_MSG_VSN, _MsgData, State=#state{sock=Socket,
+                                                    tcp_mod=TcpMod}) ->
+    Data = term_to_binary(?PROTO_VSN),
+    TcpMod:send(Socket, <<?PT_MSG_VSN:8,Data/binary>>),
+    State;
 process_message(_, _MsgData, State=#state{sock=Socket,
                                           tcp_mod=TcpMod}) ->
-    TcpMod:send(Socket, <<255:8,"unknown_msg">>),
+    TcpMod:send(Socket, <<?PT_MSG_UNKNOWN:8,"unknown_msg">>),
     State.
