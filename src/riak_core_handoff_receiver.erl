@@ -130,8 +130,9 @@ process_message(?PT_MSG_INIT, MsgData, State=#state{vnode_mod=VNodeMod}) ->
     <<Partition:160/integer>> = MsgData,
     lager:info("Receiving handoff data for partition ~p:~p",
                [VNodeMod, Partition]),
-    {ok, VNode} = riak_core_vnode_master:get_vnode_pid(Partition, VNodeMod),
+    {ok, VNode} = riak_core_vnode_manager:get_vnode_pid(Partition, VNodeMod),
     State#state{partition=Partition, vnode=VNode};
+
 process_message(?PT_MSG_OBJ, MsgData, State=#state{vnode=VNode, count=Count}) ->
     Msg = {handoff_data, MsgData},
     case gen_fsm:sync_send_all_state_event(VNode, Msg, 60000) of
@@ -140,6 +141,7 @@ process_message(?PT_MSG_OBJ, MsgData, State=#state{vnode=VNode, count=Count}) ->
         E={error, _} ->
             exit(E)
     end;
+
 process_message(?PT_MSG_OLDSYNC, MsgData, State=#state{sock=Socket,
                                                        tcp_mod=TcpMod}) ->
     TcpMod:send(Socket, <<?PT_MSG_OLDSYNC:8,"sync">>),
@@ -155,7 +157,7 @@ process_message(?PT_MSG_CONFIGURE, MsgData, State=#state{sock=Socket,
     ConfProps = binary_to_term(MsgData),
     Mod = proplists:get_value(vnode_mod, ConfProps),
     Partition = proplists:get_value(partition, ConfProps),
-    {ok, VNode} = riak_core_vnode_master:get_vnode_pid(Partition, Mod),
+    {ok, VNode} = riak_core_vnode_manager:get_vnode_pid(Partition, Mod),
     %% TODO The reply is empty but in future might be used for
     %% negotiation between sender/receiver.
     Reply = term_to_binary([]),
