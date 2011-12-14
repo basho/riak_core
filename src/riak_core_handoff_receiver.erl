@@ -133,7 +133,7 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 process_message(?PT_MSG_INIT, MsgData, State=#state{vnode_mod=VNodeMod}) ->
     <<Partition:160/integer>> = MsgData,
-    lager:info("Receiving handoff data for partition ~p:~p",
+    lager:info("receiving handoff data for partition ~p:~p",
                [VNodeMod, Partition]),
     {ok, VNode} = riak_core_vnode_manager:get_vnode_pid(Partition, VNodeMod),
     {ok, State#state{partition=Partition, vnode=VNode}};

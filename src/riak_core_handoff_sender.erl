@@ -65,7 +65,7 @@ get_handoff_ssl_options() ->
                                 [FailProp, BadMat]),
                     [];
                 X:Y ->
-                    lager:error("Failure processing SSL handoff config "
+                    lager:error("failure processing SSL handoff config "
                                 "~p: ~p:~p",
                                 [Props, X, Y]),
                     []
@@ -89,11 +89,11 @@ init([Target, Mod, Partition, VNode, SSLOpts]) ->
     {ok, State, 0}.
 
 handle_call(Req, _From, State) ->
-    lager:error("Unexpected call ~p", Req),
+    lager:error("unexpected call ~p", Req),
     {noreply, State}.
 
 handle_cast(Req, State) ->
-    lager:error("Unexpected cast ~p", Req),
+    lager:error("unexpected cast ~p", Req),
     {noreply, State}.
 
 handle_info(timeout, State=#state{target=Target, mod=Mod, partition=Partition,
@@ -103,20 +103,21 @@ handle_info(timeout, State=#state{target=Target, mod=Mod, partition=Partition,
 handle_info({Err=tcp_error, _Sock, Reason},
             State=#state{target=Target, mod=Mod, partition=Partition,
                          vnode=VNode}) ->
-    lager:error("Handoff of partition ~p ~p from ~p to ~p failed ~p:~p",
+    lager:error("socket error for partition ~p ~p transferring "
+                "from ~p to ~p failed ~p:~p",
                 [Mod, Partition, node(), Target, Err, Reason]),
     gen_fsm:send_event(VNode, {handoff_error, Err, Reason}),
     {stop, {Err, Reason}, State};
 handle_info({tcp_closed, _Sock},
             State=#state{target=Target, mod=Mod, partition=Partition,
                          vnode=VNode}) ->
-    lager:error("Handoff of partition ~p ~p from ~p to ~p failed, "
-                "the receiver unexpectedly closed the socket",
+    lager:error("socket unexpectedly closed by receiver for partition ~p ~p "
+                "from ~p to ~p ",
                 [Mod, Partition, node(), Target]),
     gen_fsm:send_event(VNode, {handoff_error, tcp_closed, unexpected_close}),
     {stop, {tcp_closed, unexpected_close}, State};
 handle_info(Req, State) ->
-    lager:error("Unexpected info ~p", [Req]),
+    lager:error("unexpected info ~p", [Req]),
     {noreply, State}.
 
 terminate(_Reason, _State) -> ignore.
@@ -145,10 +146,10 @@ complete(1, TcpMod, Socket, Cfg) ->
     %% Send last sync to verify that all data has been written.  The
     %% contract assumed here is that the receiver cannot respond to
     %% this sync until it has handled all previous msgs.
-    lager:debug("~p ~p Sending final sync", [Partition, Mod]),
+    lager:debug("~p ~p sending final sync", [Partition, Mod]),
     ok = TcpMod:send(Socket, <<?PT_MSG_SYNC:8>>),
     {ok,[?PT_MSG_SYNC|<<"sync">>]} = TcpMod:recv(Socket, 0),
-    lager:debug("~p ~p Final sync received", [Partition, Mod]);
+    lager:debug("~p ~p final sync received", [Partition, Mod]);
 
 complete(2, TcpMod, Socket, _Cfg) ->
     ok = TcpMod:send(Socket, <<?PT_MSG_COMPLETE:8>>),
@@ -187,13 +188,13 @@ handshake(?PROTO_VSN, TcpMod, Socket, Cfg) ->
     {ok,[?PT_MSG_CONFIGURE|_RecvCfg]} = TcpMod:recv(Socket, 0);
 
 handshake(Vsn, _, _, _) ->
-    lager:error("Unknown handoff protocol version ~p", [Vsn]),
+    lager:error("unknown handoff protocol version ~p", [Vsn]),
     throw({unknown_handoff_protocol, Vsn}).
 
 start_fold(Target, Mod, Partition, VNode, SSLOpts) ->
      try
-         lager:info("Starting handoff of partition ~p ~p from ~p to ~p",
-                               [Mod, Partition, node(), Target]),
+         lager:info("starting handoff of partition ~p ~p from ~p to ~p",
+                    [Mod, Partition, node(), Target]),
          [_Name,Host] = string:tokens(atom_to_list(Target), "@"),
          {ok, Port} = get_handoff_port(Target),
          SockOpts = [binary, {packet, 4}, {header,1}, {active, false}],
@@ -226,27 +227,26 @@ start_fold(Target, Mod, Partition, VNode, SSLOpts) ->
          FoldTimeDiff = timer:now_diff(EndFoldTime, StartFoldTime) / 1000000,
          case ErrStatus of
              ok ->
-                 lager:info("Handoff of partition ~p ~p from ~p to ~p "
-                                       "completed: sent ~p objects in ~.2f "
-                                       "seconds",
-                                       [Mod, Partition, node(), Target,
-                                        SentCount, FoldTimeDiff]),
+                 lager:info("handoff of partition ~p ~p from ~p to ~p "
+                            "completed: sent ~p objects in ~.2f seconds",
+                            [Mod, Partition, node(), Target, SentCount,
+                             FoldTimeDiff]),
                  gen_fsm:send_event(VNode, handoff_complete);
              {error, ErrReason} ->
-                 lager:error("Handoff of partition ~p ~p from ~p to ~p "
-                                        "FAILED after sending ~p objects "
-                                        "in ~.2f seconds: ~p",
-                                        [Mod, Partition, node(), Target,
-                                         SentCount, FoldTimeDiff, ErrReason]),
+                 lager:error("handoff of partition ~p ~p from ~p to ~p "
+                             "FAILED after sending ~p objects in ~.2f "
+                             "seconds: ~p",
+                             [Mod, Partition, node(), Target,
+                              SentCount, FoldTimeDiff, ErrReason]),
                  gen_fsm:send_event(VNode, {handoff_error,
                                                 fold_error, ErrReason})
          end
      catch
          Err:Reason ->
              Trace = erlang:get_stacktrace(),
-             lager:error("Handoff of partition ~p ~p from ~p to ~p failed ~p:~p ~p",
-                                    [Mod, Partition, node(), Target,
-                                     Err, Reason, Trace]),
+             lager:error("handoff of partition ~p ~p from ~p to ~p "
+                         "failed ~p:~p ~p",
+                         [Mod, Partition, node(), Target, Err, Reason, Trace]),
              gen_fsm:send_event(VNode, {handoff_error, Err, Reason})
      end.
 
