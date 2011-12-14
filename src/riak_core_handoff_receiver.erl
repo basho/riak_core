@@ -90,20 +90,25 @@ handle_info({tcp_error, _Socket, _Reason}, State=#state{partition=Partition,
                 [Mod, Partition, Count]),
     {stop, {tcp_error, socket_error}, State};
 
-handle_info({tcp, Socket, Data}, State) ->
+handle_info({tcp, Socket, Data}, State=#state{vnode_mod=Mod,
+                                              partition=Partition,
+                                              count=Count}) ->
     [MsgType|MsgData] = Data,
-    case catch(process_message(MsgType, MsgData, State)) of
-        {'EXIT', Reason} ->
-            lager:error("Handoff receiver for partition ~p exited abnormally "
-                        "after processing ~p objects: ~p",
-                        [State#state.partition, State#state.count, Reason]),
-            {stop, normal, State};
-        NewState when is_record(NewState, state) ->
+    case process_message(MsgType, MsgData, State) of
+        {ok, NewState} ->
             InetMod = if NewState#state.ssl_opts /= [] -> ssl;
                          true                          -> inet
                       end,
             InetMod:setopts(Socket, [{active, once}]),
-            {noreply, NewState}
+            {noreply, NewState};
+        error ->
+            %% TODO Aborting entire process for failure to process one
+            %% msg is extreme.  In future we should be smarting about
+            %% retrying msgs.
+            lager:error("unable to process msg for partition ~p ~p, "
+                        "aborting handoff after processing ~p msgs",
+                        [Mod, Partition, Count]),
+            {stop, msg_processing_error, State}
     end;
 handle_info({ssl_closed, Socket}, State) ->
     handle_info({tcp_closed, Socket}, State);
@@ -131,15 +136,15 @@ process_message(?PT_MSG_INIT, MsgData, State=#state{vnode_mod=VNodeMod}) ->
     lager:info("Receiving handoff data for partition ~p:~p",
                [VNodeMod, Partition]),
     {ok, VNode} = riak_core_vnode_manager:get_vnode_pid(Partition, VNodeMod),
-    State#state{partition=Partition, vnode=VNode};
+    {ok, State#state{partition=Partition, vnode=VNode}};
 
 process_message(?PT_MSG_OBJ, MsgData, State=#state{vnode=VNode, count=Count}) ->
     Msg = {handoff_data, MsgData},
     case gen_fsm:sync_send_all_state_event(VNode, Msg, 60000) of
-        ok ->
-            State#state{count=Count+1};
-        E={error, _} ->
-            exit(E)
+        ok -> {ok, State#state{count=Count+1}};
+        {error, Reason} ->
+            lager:error("error while processing msg ~p", [Reason]),
+            error
     end;
 
 process_message(?PT_MSG_OLDSYNC, MsgData, State=#state{sock=Socket,
@@ -147,11 +152,13 @@ process_message(?PT_MSG_OLDSYNC, MsgData, State=#state{sock=Socket,
     TcpMod:send(Socket, <<?PT_MSG_OLDSYNC:8,"sync">>),
     <<VNodeModBin/binary>> = MsgData,
     VNodeMod = binary_to_atom(VNodeModBin, utf8),
-    State#state{vnode_mod=VNodeMod};
+    {ok, State#state{vnode_mod=VNodeMod}};
+
 process_message(?PT_MSG_SYNC, _MsgData, State=#state{sock=Socket,
                                                      tcp_mod=TcpMod}) ->
     TcpMod:send(Socket, <<?PT_MSG_SYNC:8, "sync">>),
-    State;
+    {ok, State};
+
 process_message(?PT_MSG_CONFIGURE, MsgData, State=#state{sock=Socket,
                                                          tcp_mod=TcpMod}) ->
     ConfProps = binary_to_term(MsgData),
@@ -162,20 +169,21 @@ process_message(?PT_MSG_CONFIGURE, MsgData, State=#state{sock=Socket,
     %% negotiation between sender/receiver.
     Reply = term_to_binary([]),
     ok = TcpMod:send(Socket, <<?PT_MSG_CONFIGURE, Reply/binary>>),
-    State#state{vnode_mod=Mod, partition=Partition, vnode=VNode};
+    {ok, State#state{vnode_mod=Mod, partition=Partition, vnode=VNode}};
 
 process_message(?PT_MSG_COMPLETE, _MsgData, State=#state{sock=Socket,
                                                          tcp_mod=TcpMod}) ->
     ok = TcpMod:send(Socket, <<?PT_MSG_COMPLETE:8>>),
     gen_server:cast(self(), complete),
-    State;
+    {ok, State};
 
 process_message(?PT_MSG_VSN, _MsgData, State=#state{sock=Socket,
                                                     tcp_mod=TcpMod}) ->
     Data = term_to_binary(?PROTO_VSN),
     TcpMod:send(Socket, <<?PT_MSG_VSN:8,Data/binary>>),
-    State;
+    {ok, State};
+
 process_message(_, _MsgData, State=#state{sock=Socket,
                                           tcp_mod=TcpMod}) ->
     TcpMod:send(Socket, <<?PT_MSG_UNKNOWN:8,"unknown_msg">>),
-    State.
+    {ok, State}.
