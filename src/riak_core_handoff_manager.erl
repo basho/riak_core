@@ -19,7 +19,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 -export([add_exclusion/2, get_exclusions/1, remove_exclusion/2]).
--export([add_outbound/3,clear_queue/0,all_handoffs/0]).
+-export([add_outbound/3, clear_queue/0, all_handoffs/0]).
 -record(state, {excl,handoffs,handoff_queue}).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -33,8 +33,7 @@ init([]) ->
 
 %% enqueue a handoffs to happen at a later point
 add_outbound(Module, Idx, Node) ->
-    ok=gen_server:call(?MODULE,{add_outbound,Module,Idx,Node}),
-    gen_server:cast(?MODULE,process_handoff_queue).
+    gen_server:cast(?MODULE,{add_outbound,Module,Idx,Node}).
 
 %% cancel all pending handoffs
 clear_queue() ->
@@ -61,15 +60,16 @@ handle_call({get_exclusions, Module}, _From, State=#state{excl=Excl}) ->
 handle_call(all_handoffs, _From, State=#state{handoff_queue=Q}) ->
     Active=[Handoff || {_Pid,Handoff} <- State#state.handoffs],
     Pending=queue:to_list(Q),
-    {reply, {ok, Active, Pending}, State};
-handle_call({add_outbound,Mod,Idx,Node},_From,State=#state{handoff_queue=Q}) ->
+    {reply, {ok, Active, Pending}, State}.
+
+
+handle_cast({add_outbound,Mod,Idx,Node},State=#state{handoff_queue=Q}) ->
     Handoff={{Mod,Idx},Node},
-    case queue:member(Handoff,Q) of
-        false -> {reply,ok,State#state{handoff_queue=queue:in(Handoff,Q)}};
-        true -> {reply,ok,State}
-    end.
-
-
+    State2=case queue:member(Handoff,Q) of
+               false -> io:format(">>>>> HANDOFF ADDED!~n"), State#state{handoff_queue=queue:in(Handoff,Q)};
+               true -> State
+           end,
+    {noreply,process_handoff_queue(State2)};
 handle_cast(process_handoff_queue, State) ->
     {noreply,process_handoff_queue(State)};
 handle_cast(cancel_pending_handoffs, State) ->

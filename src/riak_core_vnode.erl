@@ -479,6 +479,7 @@ should_handoff(#state{index=Idx, mod=Mod}) ->
                      {_, _, _} ->
                          Me
                  end,
+    lager:info(">>>>> HANDOFF TARGET NODE: ~w (~w)~n", [TargetNode,Me]),
     case TargetNode of
         Me ->
             false;
@@ -488,13 +489,14 @@ should_handoff(#state{index=Idx, mod=Mod}) ->
                 {ok, App} ->
                     case lists:member(TargetNode,
                                       riak_core_node_watcher:nodes(App)) of
-                        false  -> false;
+                        false  -> lager:info(">>>>> FAILED~n"), false;
                         true -> {true, TargetNode}
                     end
             end
     end.
 
 start_handoff(State=#state{index=Idx, mod=Mod, modstate=ModState}, TargetNode) ->
+    lager:info(">>>>> start_handoff~n"),
     case Mod:is_empty(ModState) of
         {true, NewModState} ->
             finish_handoff(State#state{modstate=NewModState,
@@ -502,7 +504,7 @@ start_handoff(State=#state{index=Idx, mod=Mod, modstate=ModState}, TargetNode) -
         {false, NewModState} ->
             NewState = State#state{modstate=NewModState,
                                    handoff_node=TargetNode},
-            ok=riak_core_handoff_manager:add_outbound(Mod, Idx, TargetNode),
+            riak_core_handoff_manager:add_outbound(Mod, Idx, TargetNode),
             continue(NewState)
     end.
 
