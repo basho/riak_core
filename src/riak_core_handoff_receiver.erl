@@ -1,8 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_handoff_receiver: incoming data handler for TCP-based handoff
-%%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -19,15 +17,19 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
-
-%% @doc incoming data handler for TCP-based handoff
+%%
+%% @doc Handle incoming handoff data for a partition.
 
 -module(riak_core_handoff_receiver).
 -include_lib("riak_core_handoff.hrl").
--behaviour(gen_server2).
+-behaviour(gen_server).
+
+%% API
 -export([start_link/0,                          % Don't use SSL
          start_link/1,                          % SSL options list, empty=no SSL
          set_socket/2]).
+
+%% Callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
@@ -39,15 +41,22 @@
                 vnode :: pid(), 
                 count = 0 :: non_neg_integer()}).
 
+%% -------------------------------------------------------------------
+%% API
+%% -------------------------------------------------------------------
 
 start_link() ->
     start_link([]).
 
 start_link(SslOpts) ->
-    gen_server2:start_link(?MODULE, [SslOpts], []).
+    gen_server:start_link(?MODULE, [SslOpts], []).
 
 set_socket(Pid, Socket) ->
-    gen_server2:call(Pid, {set_socket, Socket}).
+    gen_server:call(Pid, {set_socket, Socket}).
+
+%% -------------------------------------------------------------------
+%% Callbacks
+%% -------------------------------------------------------------------
 
 init([SslOpts]) -> 
     {ok, #state{ssl_opts = SslOpts,
@@ -96,6 +105,16 @@ handle_info({ssl_error, Socket, Reason}, State) ->
 handle_info({ssl, Socket, Data}, State) ->
     handle_info({tcp, Socket, Data}, State).
 
+handle_cast(_Msg, State) -> {noreply, State}.
+
+terminate(_Reason, _State) -> ok.
+
+code_change(_OldVsn, State, _Extra) -> {ok, State}.
+
+%% -------------------------------------------------------------------
+%% Private
+%% -------------------------------------------------------------------
+
 process_message(?PT_MSG_INIT, MsgData, State=#state{vnode_mod=VNodeMod}) ->
     <<Partition:160/integer>> = MsgData,
     lager:info("Receiving handoff data for partition ~p:~p", [VNodeMod, Partition]),
@@ -127,10 +146,3 @@ process_message(_, _MsgData, State=#state{sock=Socket,
                                           tcp_mod=TcpMod}) ->
     TcpMod:send(Socket, <<255:8,"unknown_msg">>),
     State.
-
-handle_cast(_Msg, State) -> {noreply, State}.
-
-terminate(_Reason, _State) -> ok.
-
-code_change(_OldVsn, State, _Extra) -> {ok, State}.
-
