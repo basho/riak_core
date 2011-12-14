@@ -19,7 +19,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 -export([add_exclusion/2, get_exclusions/1, remove_exclusion/2]).
--export([add_outbound/3, clear_queue/0, all_handoffs/0]).
+-export([add_outbound/4, clear_queue/0, all_handoffs/0]).
 -record(state, {excl,handoffs,handoff_queue}).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -32,8 +32,8 @@ init([]) ->
 
 
 %% enqueue a handoffs to happen at a later point
-add_outbound(Module, Idx, Node) ->
-    gen_server:cast(?MODULE,{add_outbound,Module,Idx,Node}).
+add_outbound(VnodePid, Module, Idx, Node) ->
+    gen_server:cast(?MODULE,{add_outbound,VnodePid,Module,Idx,Node}).
 
 %% cancel all pending handoffs
 clear_queue() ->
@@ -63,10 +63,10 @@ handle_call(all_handoffs, _From, State=#state{handoff_queue=Q}) ->
     {reply, {ok, Active, Pending}, State}.
 
 
-handle_cast({add_outbound,Mod,Idx,Node},State=#state{handoff_queue=Q}) ->
-    Handoff={{Mod,Idx},Node},
+handle_cast({add_outbound,Pid,Mod,Idx,Node},State=#state{handoff_queue=Q}) ->
+    Handoff={{Mod,Idx},Node,Pid},
     State2=case queue:member(Handoff,Q) of
-               false -> io:format(">>>>> HANDOFF ADDED!~n"), State#state{handoff_queue=queue:in(Handoff,Q)};
+               false -> State#state{handoff_queue=queue:in(Handoff,Q)};
                true -> State
            end,
     {noreply,process_handoff_queue(State2)};
@@ -103,7 +103,7 @@ code_change(_OldVsn, State, _Extra) ->
 process_handoff_queue(State) ->
     NumSenders=riak_core_handoff_sender_sup:active_senders(),
     NumReceivers=riak_core_handoff_receiver_sup:active_receivers(),
-    MaxHandoffs=app_helper:get_env(riak_core,max_handoffs,1),
+    MaxHandoffs=app_helper:get_env(riak_core,handoff_concurrency,1),
     process_handoff_queue((NumSenders + NumReceivers) < MaxHandoffs,State).
 
 %% only pop a handoff and start it if we're under our limit
@@ -111,10 +111,10 @@ process_handoff_queue(false,State) ->
     State;
 process_handoff_queue(true,State=#state{handoffs=Handoffs,handoff_queue=Q}) ->
     case queue:out(Q) of
-        {{value,Handoff={{Mod,Idx},Node}},Q2} ->
-            {ok,Pid}=riak_core_handoff_sender_sup:start_sender(Node,Mod,Idx),
-            erlang:monitor(process,Pid),
-            NewHoffs=[{Pid,Handoff}|Handoffs],
+        {{value,Handoff={{Mod,Idx},Node,Pid}},Q2} ->
+            {ok,P}=riak_core_handoff_sender_sup:start_sender(Pid,Node,Mod,Idx),
+            erlang:monitor(process,P),
+            NewHoffs=[{P,Handoff}|Handoffs],
             State#state{handoffs=NewHoffs,handoff_queue=Q2};
         {empty,_} ->
             State

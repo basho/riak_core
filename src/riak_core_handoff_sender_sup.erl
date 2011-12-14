@@ -28,7 +28,7 @@
         ]).
 
 %% public functions
--export([start_sender/3
+-export([start_sender/4
         ]).
 
 -define(CHILD(I,Type), {I,{I,start_link,[]},temporary,brutal_kill,Type,[I]}).
@@ -44,8 +44,8 @@ init ([]) ->
          ]}}.
 
 %% start a sender process
-start_sender (TargetNode,Module,Partition) ->
-    supervisor:start_child(?MODULE,[TargetNode,Module,Partition,self()]).
+start_sender (VnodePid,TargetNode,Module,Partition) ->
+    supervisor:start_child(?MODULE,[TargetNode,Module,Partition,VnodePid]).
 
 %% return the number of active senders
 active_senders () ->
