@@ -135,16 +135,16 @@ get_handoff_port(Node) when is_atom(Node) ->
         Other -> Other
     end.
 
-start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
+start_fold(Target, Mod, Partition, VNode, SSLOpts) ->
      try
          lager:info("Starting handoff of partition ~p ~p from ~p to ~p",
-                               [Module, Partition, node(), TargetNode]),
-         [_Name,Host] = string:tokens(atom_to_list(TargetNode), "@"),
-         {ok, Port} = get_handoff_port(TargetNode),
+                               [Mod, Partition, node(), Target]),
+         [_Name,Host] = string:tokens(atom_to_list(Target), "@"),
+         {ok, Port} = get_handoff_port(Target),
          SockOpts = [binary, {packet, 4}, {header,1}, {active, false}],
          {Socket, TcpMod} =
-             if SslOpts /= [] ->
-                     {ok, Skt} = ssl:connect(Host, Port, SslOpts ++ SockOpts,
+             if SSLOpts /= [] ->
+                     {ok, Skt} = ssl:connect(Host, Port, SSLOpts ++ SockOpts,
                                              15000),
                      {Skt, ssl};
                 true ->
@@ -157,29 +157,29 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
          %% just do a sync, newer nodes will decode the module name.
          %% After 0.12.0 the calls can be switched to use PT_MSG_SYNC
          %% and PT_MSG_CONFIGURE
-         VMaster = list_to_atom(atom_to_list(Module) ++ "_master"),
-         ModBin = atom_to_binary(Module, utf8),
+         VMaster = list_to_atom(atom_to_list(Mod) ++ "_master"),
+         ModBin = atom_to_binary(Mod, utf8),
          Msg = <<?PT_MSG_OLDSYNC:8,ModBin/binary>>,
          ok = TcpMod:send(Socket, Msg),
          {ok,[?PT_MSG_OLDSYNC|<<"sync">>]} = TcpMod:recv(Socket, 0),
          M = <<?PT_MSG_INIT:8,Partition:160/integer>>,
          ok = TcpMod:send(Socket, M),
          StartFoldTime = now(),
-         {Socket,ParentPid,Module,TcpMod,_Ack,SentCount,ErrStatus} =
+         {Socket,VNode,Mod,TcpMod,_Ack,SentCount,ErrStatus} =
              riak_core_vnode_master:sync_command({Partition, node()},
                                                  ?FOLD_REQ{
                                                     foldfun=fun visit_item/3,
-                                                    acc0={Socket,ParentPid,Module,TcpMod,0,0,ok}},
+                                                    acc0={Socket,VNode,Mod,TcpMod,0,0,ok}},
                                                  VMaster, infinity),
          %% One last sync to make sure the message has been received.
          %% post-0.14 vnodes switch to handoff to forwarding immediately
          %% so handoff_complete can only be sent once all of the data is
          %% written.  handle_handoff_data is a sync call, so once
          %% we receive the sync the remote side will be up to date.
-         lager:debug("~p ~p Sending final sync", [Partition, Module]),
+         lager:debug("~p ~p Sending final sync", [Partition, Mod]),
          ok = TcpMod:send(Socket, <<?PT_MSG_SYNC:8>>),
          {ok,[?PT_MSG_SYNC|<<"sync">>]} = TcpMod:recv(Socket, 0),
-         lager:debug("~p ~p Final sync received", [Partition, Module]),
+         lager:debug("~p ~p Final sync received", [Partition, Mod]),
 
          EndFoldTime = now(),
          FoldTimeDiff = timer:now_diff(EndFoldTime, StartFoldTime) / 1000000,
@@ -188,50 +188,50 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
                  lager:info("Handoff of partition ~p ~p from ~p to ~p "
                                        "completed: sent ~p objects in ~.2f "
                                        "seconds",
-                                       [Module, Partition, node(), TargetNode,
+                                       [Mod, Partition, node(), Target,
                                         SentCount, FoldTimeDiff]),
-                 gen_fsm:send_event(ParentPid, handoff_complete);
+                 gen_fsm:send_event(VNode, handoff_complete);
              {error, ErrReason} ->
                  lager:error("Handoff of partition ~p ~p from ~p to ~p "
                                         "FAILED after sending ~p objects "
                                         "in ~.2f seconds: ~p",
-                                        [Module, Partition, node(), TargetNode,
+                                        [Mod, Partition, node(), Target,
                                          SentCount, FoldTimeDiff, ErrReason]),
-                 gen_fsm:send_event(ParentPid, {handoff_error,
+                 gen_fsm:send_event(VNode, {handoff_error,
                                                 fold_error, ErrReason})
          end
      catch
          Err:Reason ->
              lager:error("Handoff of partition ~p ~p from ~p to ~p failed ~p:~p",
-                                    [Module, Partition, node(), TargetNode,
+                                    [Mod, Partition, node(), Target,
                                      Err, Reason]),
-             gen_fsm:send_event(ParentPid, {handoff_error, Err, Reason})
+             gen_fsm:send_event(VNode, {handoff_error, Err, Reason})
      end.
 
 %% When a tcp error occurs, the ErrStatus argument is set to {error, Reason}.
 %% Since we can't abort the fold, this clause is just a no-op.
-visit_item(_K, _V, {Socket, ParentPid, Module, TcpMod, Ack, Total,
+visit_item(_K, _V, {Socket, VNode, Mod, TcpMod, Ack, Total,
                     {error, Reason}}) ->
-    {Socket, ParentPid, Module, TcpMod, Ack, Total, {error, Reason}};
-visit_item(K, V, {Socket, ParentPid, Module, TcpMod, ?ACK_COUNT, Total, _Err}) ->
+    {Socket, VNode, Mod, TcpMod, Ack, Total, {error, Reason}};
+visit_item(K, V, {Socket, VNode, Mod, TcpMod, ?ACK_COUNT, Total, _Err}) ->
     M = <<?PT_MSG_OLDSYNC:8,"sync">>,
     case TcpMod:send(Socket, M) of
         ok ->
             case TcpMod:recv(Socket, 0) of
                 {ok,[?PT_MSG_OLDSYNC|<<"sync">>]} ->
-                    visit_item(K, V, {Socket, ParentPid, Module, TcpMod, 0, Total, ok});
+                    visit_item(K, V, {Socket, VNode, Mod, TcpMod, 0, Total, ok});
                 {error, Reason} ->
-                    {Socket, ParentPid, Module, TcpMod, 0, Total, {error, Reason}}
+                    {Socket, VNode, Mod, TcpMod, 0, Total, {error, Reason}}
             end;
         {error, Reason} ->
-            {Socket, ParentPid, Module, TcpMod, 0, Total, {error, Reason}}
+            {Socket, VNode, Mod, TcpMod, 0, Total, {error, Reason}}
     end;
-visit_item(K, V, {Socket, ParentPid, Module, TcpMod, Ack, Total, _ErrStatus}) ->
-    BinObj = Module:encode_handoff_item(K, V),
+visit_item(K, V, {Socket, VNode, Mod, TcpMod, Ack, Total, _ErrStatus}) ->
+    BinObj = Mod:encode_handoff_item(K, V),
     M = <<?PT_MSG_OBJ:8,BinObj/binary>>,
     case TcpMod:send(Socket, M) of
         ok ->
-            {Socket, ParentPid, Module, TcpMod, Ack+1, Total+1, ok};
+            {Socket, VNode, Mod, TcpMod, Ack+1, Total+1, ok};
         {error, Reason} ->
-            {Socket, ParentPid, Module, TcpMod, Ack, Total, {error, Reason}}
+            {Socket, VNode, Mod, TcpMod, Ack, Total, {error, Reason}}
     end.
