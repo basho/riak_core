@@ -18,9 +18,7 @@
 -export([start_link/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
--export([add_exclusion/2, get_handoff_lock/1, get_exclusions/1]).
--export([remove_exclusion/2]).
--export([release_handoff_lock/2]).
+-export([add_exclusion/2, get_exclusions/1, remove_exclusion/2]).
 -export([add_outbound/3,clear_queue/0,all_handoffs/0]).
 -record(state, {excl,handoffs,handoff_queue}).
 
@@ -55,22 +53,6 @@ remove_exclusion(Module, Index) ->
 get_exclusions(Module) ->
     gen_server:call(?MODULE, {get_exclusions, Module}, infinity).
 
-get_handoff_lock(LockId) ->
-    TokenCount = app_helper:get_env(riak_core, handoff_concurrency, 1),
-    get_handoff_lock(LockId, TokenCount).
-
-get_handoff_lock(_LockId, 0) ->
-    {error, max_concurrency};
-get_handoff_lock(LockId, Count) ->
-    case global:set_lock({{handoff_token, Count}, {node(), LockId}}, [node()], 0) of
-        true ->
-            {ok, {handoff_token, Count}};
-        false ->
-            get_handoff_lock(LockId, Count-1)
-    end.
-
-release_handoff_lock(LockId, Token) ->
-    global:del_lock({{handoff_token,Token}, {node(), LockId}}, [node()]).
 
 
 handle_call({get_exclusions, Module}, _From, State=#state{excl=Excl}) ->

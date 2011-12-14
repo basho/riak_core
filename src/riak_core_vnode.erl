@@ -86,9 +86,7 @@ behaviour_info(_Other) ->
           mod :: module(),
           modstate :: term(),
           forward :: node(),
-          handoff_token :: non_neg_integer(),
           handoff_node=none :: none | node(),
-          handoff_pid :: pid(),
           pool_pid :: pid() | undefined,
           inactivity_timeout}).
 
@@ -292,17 +290,11 @@ active(?VNODE_REQ{sender=Sender, request=Request},State) ->
     vnode_handoff_command(Sender, Request, State);
 active(handoff_complete, State=#state{mod=Mod,
                                       modstate=ModState,
-                                      index=Idx,
-                                      handoff_node=HN,
-                                      handoff_token=HT}) ->
-    riak_core_handoff_manager:release_handoff_lock({Mod, Idx}, HT),
+                                      handoff_node=HN}) ->
     Mod:handoff_finished(HN, ModState),
     finish_handoff(State);
 active({handoff_error, _Err, _Reason}, State=#state{mod=Mod,
-                                                    modstate=ModState,
-                                                    index=Idx,
-                                                    handoff_token=HT}) ->
-    riak_core_handoff_manager:release_handoff_lock({Mod, Idx}, HT),
+                                                    modstate=ModState}) ->
     %% it would be nice to pass {Err, Reason} to the vnode but the
     %% API doesn't currently allow for that.
     Mod:handoff_cancelled(ModState),
@@ -319,8 +311,7 @@ active(unregistered, State=#state{mod=Mod, index=Index}) ->
     lager:debug("~p ~p vnode excluded and unregistered.",
                 [Index, Mod]),
     {stop, normal, State#state{handoff_node=none,
-                               pool_pid=undefined,
-                               handoff_pid=undefined}}.
+                               pool_pid=undefined}}.
 
 active(_Event, _From, State) ->
     Reply = ok,
@@ -385,15 +376,6 @@ handle_sync_event({handoff_data,BinObj}, _From, StateName,
              State#state.inactivity_timeout}
     end.
 
-handle_info({'EXIT', Pid, Reason}, _StateName,
-            State=#state{mod=Mod, index=Index, handoff_pid=Pid}) ->
-    case Reason of
-        normal ->
-            ok;
-        _ ->
-            lager:error("~p ~p handoff crashed ~p\n", [Index, Mod, Reason])
-    end,
-    continue(State#state{handoff_pid=undefined});
 handle_info({'EXIT', Pid, Reason}, _StateName,
             State=#state{mod=Mod, index=Index, pool_pid=Pid}) ->
     case Reason of
@@ -518,18 +500,10 @@ start_handoff(State=#state{index=Idx, mod=Mod, modstate=ModState}, TargetNode) -
             finish_handoff(State#state{modstate=NewModState,
                                        handoff_node=TargetNode});
         {false, NewModState} ->
-            case riak_core_handoff_manager:get_handoff_lock({Mod, Idx}) of
-                {error, max_concurrency} ->
-                    {ok, NewModState1} = Mod:handoff_cancelled(NewModState),
-                    NewState = State#state{modstate=NewModState1},
-                    {next_state, active, NewState, ?LOCK_RETRY_TIMEOUT};
-                {ok, {handoff_token, HandoffToken}} ->
-                    NewState = State#state{modstate=NewModState,
-                                           handoff_token=HandoffToken,
-                                           handoff_node=TargetNode},
-                    ok=riak_core_handoff_manager:add_outbound(Mod, Idx, TargetNode),
-                    continue(NewState)
-            end
+            NewState = State#state{modstate=NewModState,
+                                   handoff_node=TargetNode},
+            ok=riak_core_handoff_manager:add_outbound(Mod, Idx, TargetNode),
+            continue(NewState)
     end.
 
 
