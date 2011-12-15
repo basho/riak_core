@@ -83,8 +83,9 @@ wait_for_socket({sock, Sock}, Ctx=#ctx{ssl_opts=SSLOpts}) ->
 
 handshake([?PT_MSG_VSN|Vsn], Ctx=#ctx{sock=Sock, tcp_mod=TcpMod}) ->
     Data = term_to_binary(?PROTO_VSN),
+    Vsn2 = binary_to_term(Vsn),
     TcpMod:send(Sock, <<?PT_MSG_VSN:8,Data/binary>>),
-    Ctx2 = Ctx#ctx{proto_vsn=Vsn},
+    Ctx2 = Ctx#ctx{proto_vsn=Vsn2},
     {next_state, negotiate, Ctx2};
 
 handshake([?PT_MSG_OLDSYNC|VNodeModBin], Ctx=#ctx{sock=Sock, tcp_mod=TcpMod}) ->
@@ -98,7 +99,7 @@ handshake([?PT_MSG_INIT|<<Partition:160/integer>>],
     lager:info("receiving handoff data for partition ~p:~p",
                [VNodeMod, Partition]),
     {ok, VNode} = riak_core_vnode_manager:get_vnode_pid(Partition, VNodeMod),
-    Ctx2 = Ctx#ctx{partition=Partition, vnode=VNode},
+    Ctx2 = Ctx#ctx{partition=Partition, vnode=VNode, proto_vsn=1},
     {next_state, receiving, Ctx2}.
 
 negotiate([?PT_MSG_CONFIGURE|Cfg], Ctx=#ctx{sock=Sock,
