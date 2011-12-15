@@ -364,7 +364,10 @@ wait_for_application(App) ->
     wait_for_application(App, 0).
 wait_for_application(App, Elapsed) ->
     case lists:keymember(App, 1, application:which_applications()) of
-        true ->
+        true when Elapsed == 0 ->
+            ok;
+        true when Elapsed > 0 ->
+            lager:info("Wait complete for application ~p (~p seconds)", [App, Elapsed div 1000]),
             ok;
         false ->
             %% Possibly print a notice.
@@ -381,7 +384,10 @@ wait_for_service(Service) ->
     wait_for_service(Service, 0).
 wait_for_service(Service, Elapsed) ->
     case lists:member(Service, riak_core_node_watcher:services(node())) of
-        true ->
+        true when Elapsed == 0 ->
+            ok;
+        true when Elapsed > 0 ->
+            lager:info("Wait complete for service ~p (~p seconds)", [Service, Elapsed div 1000]),
             ok;
         false ->
             %% Possibly print a notice.
