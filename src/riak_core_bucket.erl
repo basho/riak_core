@@ -57,16 +57,22 @@ append_bucket_defaults(Items) when is_list(Items) ->
 
 %% @spec set_bucket(riak_object:bucket(), BucketProps::riak_core_bucketprops()) -> ok
 %% @doc Set the given BucketProps in Bucket.
-set_bucket(Name, BucketProps) ->
-    F = fun(Ring, _Args) ->
-            OldBucket = get_bucket(Name),
-            NewBucket = merge_props(BucketProps, OldBucket),
-            {new_ring, riak_core_ring:update_meta({bucket,Name},
-                                                  NewBucket,
-                                                  Ring)}
-        end,
-    {ok, _NewRing} = riak_core_ring_manager:ring_trans(F, undefined),
-    ok.
+set_bucket(Name, BucketProps0) ->
+    case validate_props(BucketProps0, riak_core:bucket_validators(), []) of
+        {ok, BucketProps} ->
+            F = fun(Ring, _Args) ->
+                        OldBucket = get_bucket(Name),
+                        NewBucket = merge_props(BucketProps, OldBucket),
+                        {new_ring, riak_core_ring:update_meta({bucket,Name},
+                                                              NewBucket,
+                                                              Ring)}
+                end,
+            {ok, _NewRing} = riak_core_ring_manager:ring_trans(F, undefined),
+            ok;
+        {error, Details} ->
+            lager:error("Bucket validation failed ~p~n", [Details]),
+            {error, Details}
+    end.
 
 %% @spec merge_props(list(), list()) -> list()
 %% @doc Merge two sets of bucket props.  If duplicates exist, the
@@ -101,6 +107,19 @@ get_bucket(Name, Ring) ->
         {ok, Bucket} -> Bucket
     end.
 
+%% @private
+-spec validate_props(BucketProps::list({PropName::atom(), Value::any()}),
+                     Validators::list(module()),
+                     Errors::list({PropName::atom(), Error::atom()})) ->
+                            {ok, BucketProps::list({PropName::atom(), Value::any()})} |
+                            {error,  Errors::list({PropName::atom(), Error::atom()})}.
+validate_props(BucketProps, [], []) ->
+    {ok, BucketProps};
+validate_props(_, [], Errors) ->
+    {error, Errors};
+validate_props(BucketProps0, [{_App, Validator}|T], Errors0) ->
+    {BucketProps, Errors} = Validator:validate(BucketProps0),
+    validate_props(BucketProps, T, lists:flatten([Errors|Errors0])).
 
 %% ===================================================================
 %% EUnit tests
