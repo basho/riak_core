@@ -120,7 +120,7 @@ ensure_vnodes_started({App,Mod}, Ring) ->
                        end,
 
                        %% Let the app finish starting...
-                       case wait_for_app(App, 1000, 100) of
+                       case riak_core:wait_for_application(App) of
                            ok ->
                                %% Start the vnodes.
                                [Mod:start_vnode(I) || I <- Startable],
@@ -157,15 +157,4 @@ startable_vnodes(Mod, Ring) ->
                 RO ->
                     [RO | riak_core_ring:my_indices(Ring)]
             end
-    end.
-
-wait_for_app(App, 0, _) ->
-    {error, {timeout, App}};
-wait_for_app(App, Count, Sleep) ->
-    case lists:keymember(App, 1, application:which_applications()) of
-        true ->
-            ok;
-        false ->
-            timer:sleep(Sleep),
-            wait_for_app(App, Count - 1, Sleep)
     end.
