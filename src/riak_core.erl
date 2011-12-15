@@ -22,7 +22,7 @@
 -module(riak_core).
 -export([stop/0, stop/1, join/1, join/4, remove/1, down/1, leave/0,
          remove_from_cluster/1]).
--export([register_vnode_module/1, vnode_modules/0]).
+-export([vnode_modules/0]).
 -export([register/1, register/2, bucket_fixups/0]).
 -export([add_guarded_event_handler/3, add_guarded_event_handler/4]).
 -export([delete_guarded_event_handler/3]).
@@ -296,9 +296,6 @@ register(App, [{bucket_fixup, FixupMod}|T]) ->
 register(App, [{vnode_module, VNodeMod}|T]) ->
     register_mod(get_app(App, VNodeMod), VNodeMod, vnode_modules),
     register(App, T).
-
-register_vnode_module(VNodeMod) when is_atom(VNodeMod)  ->
-    register_mod(get_app(undefined, VNodeMod), VNodeMod, vnode_modules).
 
 register_mod(App, Module, Type) when is_atom(Module), is_atom(Type) ->
     case application:get_env(riak_core, Type) of
