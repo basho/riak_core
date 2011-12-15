@@ -85,7 +85,7 @@ handshake([?PT_MSG_VSN|Vsn], Ctx=#ctx{sock=Sock, tcp_mod=TcpMod}) ->
     Data = term_to_binary(?PROTO_VSN),
     TcpMod:send(Sock, <<?PT_MSG_VSN:8,Data/binary>>),
     Ctx2 = Ctx#ctx{proto_vsn=Vsn},
-    {next_state, negotiate, Ctx2, 0};
+    {next_state, negotiate, Ctx2};
 
 handshake([?PT_MSG_OLDSYNC|VNodeModBin], Ctx=#ctx{sock=Sock, tcp_mod=TcpMod}) ->
     TcpMod:send(Sock, <<?PT_MSG_OLDSYNC:8,"sync">>),
