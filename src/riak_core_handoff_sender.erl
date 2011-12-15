@@ -112,7 +112,8 @@ handshake(timeout, Ctx=#ctx{target=Target,
                 {ok, Skt} = gen_tcp:connect(Host, Port, SockOpts, 15000),
                 {Skt, gen_tcp, inet}
         end,
-    ok = TcpMod:send(Sock, <<?PT_MSG_VSN:8>>),
+    Data = term_to_binary(?PROTO_VSN),
+    ok = TcpMod:send(Sock, <<?PT_MSG_VSN:8,Data/binary>>),
     Ctx2 = Ctx#ctx{inet_mod=InetMod, tcp_mod=TcpMod, sock=Sock},
     {next_state, handshake, Ctx2};
 
