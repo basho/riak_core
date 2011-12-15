@@ -100,7 +100,7 @@
          {vnode_inactivity_timeout, 60000},
          
          %% Number of VNodes allowed to do handoff concurrently.
-         {handoff_concurrency, 4},
+         {handoff_concurrency, 1},
 
          %% Disable Nagle on HTTP sockets
          {disable_http_nagle, false},
