@@ -62,7 +62,7 @@ start_link(SslOpts) ->
     gen_fsm:start_link(?MODULE, [SslOpts], []).
 
 set_socket(Recv, Sock) ->
-    gen_fsm:send_event(Recv, {set_socket, Sock}),
+    gen_fsm:send_event(Recv, {sock, Sock}),
     ok.
 
 %% -------------------------------------------------------------------
