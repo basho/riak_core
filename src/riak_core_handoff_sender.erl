@@ -100,7 +100,7 @@ handshake(timeout, Ctx=#ctx{target=Target,
                             ssl_opts=SSLOpts}) ->
     lager:info("starting handoff of partition ~p ~p from ~p to ~p",
                [VNodeMod, Partition, node(), Target]),
-    [_Name,Host] = string:tokens(atom_to_list(Target), "@"),
+    Host = riak_core_util:node_hostname(Target),
     {ok, Port} = get_handoff_port(Target),
     SockOpts = [binary, {packet, 4}, {header,1}, {active, once}],
     {Sock, TcpMod, InetMod} =
