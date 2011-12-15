@@ -114,15 +114,29 @@ ensure_vnodes_started({App,Mod}, Ring) ->
                        RegName = list_to_atom(
                                    "riak_core_ring_handler_ensure_"
                                    ++ atom_to_list(Mod)),
-                       try register(RegName, self())
+                       try erlang:register(RegName, self())
                        catch error:badarg ->
                                exit(normal)
                        end,
-                       wait_for_app(App, 100, 100),
-                       [Mod:start_vnode(I) || I <- Startable],
-                       exit(normal)
+
+                       %% Let the app finish starting...
+                       case riak_core:wait_for_application(App) of
+                           ok ->
+                               %% Start the vnodes.
+                               [Mod:start_vnode(I) || I <- Startable],
+
+                               %% Mark the service as up.
+                               SupName = list_to_atom(atom_to_list(App) ++ "_sup"),
+                               SupPid = erlang:whereis(SupName),
+                               riak_core_node_watcher:service_up(App, SupPid),
+                               exit(normal);
+                           {error, Reason} ->
+                               lager:critical("Failed to start application: ~p", [App]),
+                               throw({error, Reason})
+                       end
                end),
     Startable.
+
 
 startable_vnodes(Mod, Ring) ->
     AllMembers = riak_core_ring:all_members(Ring),
@@ -143,15 +157,4 @@ startable_vnodes(Mod, Ring) ->
                 RO ->
                     [RO | riak_core_ring:my_indices(Ring)]
             end
-    end.
-
-wait_for_app(_, 0, _) ->
-    bummer;
-wait_for_app(App, Count, Sleep) ->
-    case lists:keymember(App, 1, application:which_applications()) of
-        true ->
-            ok;
-        false ->
-            timer:sleep(Sleep),
-            wait_for_app(App, Count - 1, Sleep)
     end.
