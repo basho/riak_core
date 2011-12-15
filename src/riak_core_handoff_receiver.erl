@@ -169,10 +169,11 @@ finalize(timeout, Ctx=#ctx{count=Count,
 %% -------------------------------------------------------------------
 
 init([SslOpts]) ->
-    {ok, #ctx{ssl_opts = SslOpts,
-              tcp_mod  = if SslOpts /= [] -> ssl;
-                            true          -> gen_tcp
-                         end}}.
+    {ok, wait_for_socket,
+     #ctx{ssl_opts = SslOpts,
+          tcp_mod  = if SslOpts /= [] -> ssl;
+                        true          -> gen_tcp
+                     end}}.
 
 handle_info({tcp_closed,_Sock}, _StateName,
             Ctx=#ctx{partition=Partition, count=Count, vnode_mod=VNodeMod}) ->
