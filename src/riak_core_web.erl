@@ -68,7 +68,7 @@ binding_config(Scheme, Binding) ->
   
   {Name,
     {webmachine_mochiweb, start, [Config]},
-      permanent, 5000, worker, dynamic}.
+      permanent, 5000, worker, [mochiweb_socket_server]}.
   
 spec_from_binding(http, Name, Binding) ->
   {Ip, Port} = Binding,
