@@ -168,12 +168,13 @@ process_message(?PT_MSG_CONFIGURE, MsgData, State=#state{sock=Socket,
     %% TODO The reply is empty but in future might be used for
     %% negotiation between sender/receiver.
     Reply = term_to_binary([]),
-    ok = TcpMod:send(Socket, <<?PT_MSG_CONFIGURE, Reply/binary>>),
+    ok = TcpMod:send(Socket, <<?PT_MSG_CONFIGURE:8, Reply/binary>>),
+    ok = TcpMod:send(Socket, <<?PT_MSG_START:8>>),
     {ok, State#state{vnode_mod=Mod, partition=Partition, vnode=VNode}};
 
-process_message(?PT_MSG_COMPLETE, _MsgData, State=#state{sock=Socket,
+process_message(?PT_MSG_FINALIZE, _MsgData, State=#state{sock=Socket,
                                                          tcp_mod=TcpMod}) ->
-    ok = TcpMod:send(Socket, <<?PT_MSG_COMPLETE:8>>),
+    ok = TcpMod:send(Socket, <<?PT_MSG_FINALIZE:8>>),
     gen_server:cast(self(), complete),
     {ok, State};
 

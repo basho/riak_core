@@ -6,5 +6,6 @@
 -define(PT_MSG_SYNC, 3).
 -define(PT_MSG_CONFIGURE, 4).
 -define(PT_MSG_VSN, 5).
--define(PT_MSG_COMPLETE, 6).
+-define(PT_MSG_START, 6).
+-define(PT_MSG_FINALIZE, 7).
 -define(PT_MSG_UNKNOWN, 255).

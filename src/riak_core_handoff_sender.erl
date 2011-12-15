@@ -21,24 +21,38 @@
 %% @doc Handoff partition data.
 
 -module(riak_core_handoff_sender).
--behavior(gen_server).
+-behavior(gen_fsm).
 
 %% API
 -export([get_handoff_ssl_options/0,
          start_link/4]).
 
+%% States
+-export([handshake/2,
+         negotiate/2,
+         sending/2,
+         finalize/2]).
+
 %% Callbacks
 -export([init/1,
-         handle_call/3,
-         handle_cast/2,
-         handle_info/2,
-         code_change/3,
-         terminate/2]).
+         %% handle_event/3,
+         %% handle_sync_event/4,
+         handle_info/3,
+         code_change/4,
+         terminate/3]).
 
 -include_lib("riak_core_vnode.hrl").
 -include_lib("riak_core_handoff.hrl").
 -define(ACK_COUNT, 1000).
--record(state, {target, mod, partition, vnode, ssl_opts}).
+-record(ctx, {target,
+              vnode_mod,
+              partition,
+              vnode,
+              proto_vsn,
+              sock,
+              tcp_mod,
+              inet_mod,
+              ssl_opts}).
 
 %% -------------------------------------------------------------------
 %% API
@@ -74,55 +88,155 @@ get_handoff_ssl_options() ->
 
 start_link(Target, Mod, Partition, VNode) ->
     SSLOpts = get_handoff_ssl_options(),
-    gen_server:start_link(?MODULE, [Target, Mod, Partition, VNode, SSLOpts], []).
+    gen_fsm:start_link(?MODULE, [Target, Mod, Partition, VNode, SSLOpts], []).
+
+%% -------------------------------------------------------------------
+%% States
+%% -------------------------------------------------------------------
+
+handshake(timeout, Ctx=#ctx{target=Target,
+                            vnode_mod=VNodeMod,
+                            partition=Partition,
+                            ssl_opts=SSLOpts}) ->
+    lager:info("starting handoff of partition ~p ~p from ~p to ~p",
+               [VNodeMod, Partition, node(), Target]),
+    [_Name,Host] = string:tokens(atom_to_list(Target), "@"),
+    {ok, Port} = get_handoff_port(Target),
+    SockOpts = [binary, {packet, 4}, {header,1}, {active, once}],
+    {Sock, TcpMod, InetMod} =
+        if SSLOpts /= [] ->
+                {ok, Skt} = ssl:connect(Host, Port, SSLOpts ++ SockOpts,
+                                        15000),
+                {Skt, ssl, ssl};
+           true ->
+                {ok, Skt} = gen_tcp:connect(Host, Port, SockOpts, 15000),
+                {Skt, gen_tcp, inet}
+        end,
+    ok = TcpMod:send(Sock, <<?PT_MSG_VSN:8>>),
+    Ctx2 = Ctx#ctx{inet_mod=InetMod, tcp_mod=TcpMod, sock=Sock},
+    {next_state, handshake, Ctx2};
+
+handshake([?PT_MSG_VSN|Vsn], Ctx) ->
+    Ctx2 = Ctx#ctx{proto_vsn=binary_to_term(Vsn)},
+    {next_state, negotiate, Ctx2, 0};
+
+handshake([?PT_MSG_UNKNOWN|<<"unknown_msg">>], Ctx) ->
+    %% legacy handshake
+    Ctx2 = Ctx#ctx{proto_vsn=1},
+    {next_state, negotiate, Ctx2, 0}.
+
+negotiate(timeout, Ctx=#ctx{proto_vsn=Vsn,
+                            vnode_mod=VNodeMod,
+                            partition=Partition,
+                            sock=Sock,
+                            tcp_mod=TcpMod}) ->
+    Msg =
+        case Vsn of
+            1 ->
+                %% legacy negotiate
+                Data = atom_to_binary(VNodeMod, utf8),
+                <<?PT_MSG_OLDSYNC:8,Data/binary>>;
+            2 ->
+                Cfg = [{vnode_mod, VNodeMod},
+                       {partition, Partition}],
+                Data = term_to_binary(Cfg),
+                <<?PT_MSG_CONFIGURE:8,Data/binary>>
+        end,
+    ok = TcpMod:send(Sock, Msg),
+    {next_state, negotiate, Ctx};
+
+negotiate([?PT_MSG_CONFIGURE|_Cfg], Ctx) ->
+    %% TODO Currently there is nothing for sender/recv to negotiate
+    %% but leave this here so that they may in future release.
+    {next_state, negotiate, Ctx};
+
+negotiate([?PT_MSG_OLDSYNC|<<"sync">>],
+          Ctx=#ctx{partition=Partition,
+                   sock=Sock,
+                   tcp_mod=TcpMod}) ->
+    %% legacy negotiation
+    Msg = <<?PT_MSG_INIT:8,Partition:160/integer>>,
+    ok = TcpMod:send(Sock, Msg),
+    {next_state, negotiate, Ctx};
+
+negotiate([?PT_MSG_START|<<>>], Ctx) ->
+    %% TODO Verify ctx?
+    {next_state, sending, Ctx, 0}.
+
+sending(timeout, Ctx=#ctx{vnode_mod=VNodeMod,
+                          vnode=VNode,
+                          partition=Partition,
+                          sock=Sock,
+                          tcp_mod=TcpMod,
+                          target=Target}) ->
+    start_fold(Target, VNodeMod, Partition, VNode, TcpMod, Sock),
+    {next_state, finalize, Ctx, 0}.
+
+finalize(timeout, Ctx=#ctx{proto_vsn=Vsn,
+                           sock=Sock,
+                           tcp_mod=TcpMod}) ->
+    case Vsn of
+        1 ->
+            %% Send last sync to verify that all data has been written.  The
+            %% contract assumed here is that the receiver cannot respond to
+            %% this sync until it has handled all previous msgs.
+            ok = TcpMod:send(Sock, <<?PT_MSG_SYNC:8>>);
+        2 ->
+            ok = TcpMod:send(Sock, <<?PT_MSG_FINALIZE:8>>)
+    end,
+    {next_state, finalize, Ctx};
+
+finalize([?PT_MSG_SYNC|<<"sync">>], Ctx) ->
+    {stop, normal, Ctx};
+
+finalize([?PT_MSG_FINALIZE|<<>>], Ctx) ->
+    {stop, normal, Ctx}.
 
 %% -------------------------------------------------------------------
 %% Callbacks
 %% -------------------------------------------------------------------
 
-init([Target, Mod, Partition, VNode, SSLOpts]) ->
-    State = #state{target=Target,
-                   mod=Mod,
-                   partition=Partition,
-                   vnode=VNode,
-                   ssl_opts=SSLOpts},
-    {ok, State, 0}.
+init([Target, VNodeMod, Partition, VNode, SSLOpts]) ->
+    Ctx = #ctx{target=Target,
+               vnode_mod=VNodeMod,
+               partition=Partition,
+               vnode=VNode,
+               ssl_opts=SSLOpts},
+    {ok, handshake, Ctx, 0}.
 
-handle_call(Req, _From, State) ->
-    lager:error("unexpected call ~p", Req),
-    {noreply, State}.
 
-handle_cast(Req, State) ->
-    lager:error("unexpected cast ~p", Req),
-    {noreply, State}.
+handle_info({tcp, Sock, Data}, StateName, Ctx=#ctx{inet_mod=InetMod}) ->
+    InetMod:setopts(Sock, [{active, once}]),
+    gen_fsm:send_event(self(), Data),
+    {next_state, StateName, Ctx};
 
-handle_info(timeout, State=#state{target=Target, mod=Mod, partition=Partition,
-                                  vnode=VNode, ssl_opts=SSLOpts}) ->
-    start_fold(Target, Mod, Partition, VNode, SSLOpts),
-    {stop, normal, State};
 handle_info({Err=tcp_error, _Sock, Reason},
-            State=#state{target=Target, mod=Mod, partition=Partition,
-                         vnode=VNode}) ->
+            _StateName,
+            Ctx=#ctx{target=Target, vnode_mod=VNodeMod, partition=Partition,
+                     vnode=VNode}) ->
     lager:error("socket error for partition ~p ~p transferring "
                 "from ~p to ~p failed ~p:~p",
-                [Mod, Partition, node(), Target, Err, Reason]),
+                [VNodeMod, Partition, node(), Target, Err, Reason]),
     gen_fsm:send_event(VNode, {handoff_error, Err, Reason}),
-    {stop, {Err, Reason}, State};
+    {stop, {Err, Reason}, Ctx};
+
 handle_info({tcp_closed, _Sock},
-            State=#state{target=Target, mod=Mod, partition=Partition,
-                         vnode=VNode}) ->
+            _StateName,
+            Ctx=#ctx{target=Target, vnode_mod=VNodeMod, partition=Partition,
+                     vnode=VNode}) ->
     lager:error("socket unexpectedly closed by receiver for partition ~p ~p "
                 "from ~p to ~p ",
-                [Mod, Partition, node(), Target]),
+                [VNodeMod, Partition, node(), Target]),
     gen_fsm:send_event(VNode, {handoff_error, tcp_closed, unexpected_close}),
-    {stop, {tcp_closed, unexpected_close}, State};
-handle_info(Req, State) ->
+    {stop, {tcp_closed, unexpected_close}, Ctx};
+
+handle_info(Req, _StateName, Ctx) ->
     lager:error("unexpected info ~p", [Req]),
-    {noreply, State}.
+    {noreply, Ctx}.
 
-terminate(_Reason, _State) -> ignore.
+terminate(_Reason, _StateName, _Ctx) -> ignore.
 
-code_change(_OldVsn, State, _Extra) -> {ok, State}.
+code_change(_OldVsn, _StateName, Ctx, _Extra) -> {ok, Ctx}.
 
 %% -------------------------------------------------------------------
 %% Private
@@ -136,93 +250,17 @@ get_handoff_port(Node) when is_atom(Node) ->
         Other -> Other
     end.
 
-%% @private
-%%
-%% @doc Complete the handoff.
--spec complete(pos_integer(), module(), port(), proplists:proplist()) -> ok.
-complete(1, TcpMod, Socket, Cfg) ->
-    Mod = proplists:get_value(vnode_mod, Cfg),
-    Partition = proplists:get_value(partition, Cfg),
-    %% Send last sync to verify that all data has been written.  The
-    %% contract assumed here is that the receiver cannot respond to
-    %% this sync until it has handled all previous msgs.
-    lager:debug("~p ~p sending final sync", [Partition, Mod]),
-    ok = TcpMod:send(Socket, <<?PT_MSG_SYNC:8>>),
-    {ok,[?PT_MSG_SYNC|<<"sync">>]} = TcpMod:recv(Socket, 0),
-    lager:debug("~p ~p final sync received", [Partition, Mod]);
-
-complete(2, TcpMod, Socket, _Cfg) ->
-    ok = TcpMod:send(Socket, <<?PT_MSG_COMPLETE:8>>),
-    %% Wait for reply to verify receiver has handled all msgs.
-    {ok,[?PT_MSG_COMPLETE|<<>>]} = TcpMod:recv(Socket, 0).
-
-%% @private
-%%
-%% @doc Get the handoff protocol version being used.
--spec get_proto_version(module(), port()) -> pos_integer().
-get_proto_version(Mod, Sock) ->
-    ok = Mod:send(Sock, <<?PT_MSG_VSN:8>>),
-    case Mod:recv(Sock, 0) of
-        {ok, [?PT_MSG_VSN|Vsn]} -> binary_to_term(Vsn);
-        {ok, [?PT_MSG_UNKNOWN|<<"unknown_msg">>]} -> 1
-    end.
-
-%% @private
-%%
-%% @doc Perform handshake with receiver.
-handshake(1, TcpMod, Socket, Cfg) ->
-    Mod = proplists:get_value(vnode_mod, Cfg),
-    Partition = proplists:get_value(partition, Cfg),
-    ModBin = atom_to_binary(Mod, utf8),
-    Msg1 = <<?PT_MSG_OLDSYNC:8,ModBin/binary>>,
-    Msg2 = <<?PT_MSG_INIT:8,Partition:160/integer>>,
-
-    ok = TcpMod:send(Socket, Msg1),
-    {ok,[?PT_MSG_OLDSYNC|<<"sync">>]} = TcpMod:recv(Socket, 0),
-    ok = TcpMod:send(Socket, Msg2);
-
-handshake(?PROTO_VSN, TcpMod, Socket, Cfg) ->
-    Data = term_to_binary(Cfg),
-    Msg = <<?PT_MSG_CONFIGURE:8,Data/binary>>,
-    ok = TcpMod:send(Socket, Msg),
-    {ok,[?PT_MSG_CONFIGURE|_RecvCfg]} = TcpMod:recv(Socket, 0);
-
-handshake(Vsn, _, _, _) ->
-    lager:error("unknown handoff protocol version ~p", [Vsn]),
-    throw({unknown_handoff_protocol, Vsn}).
-
-start_fold(Target, Mod, Partition, VNode, SSLOpts) ->
+start_fold(Target, Mod, Partition, VNode, TcpMod, Sock) ->
      try
-         lager:info("starting handoff of partition ~p ~p from ~p to ~p",
-                    [Mod, Partition, node(), Target]),
-         [_Name,Host] = string:tokens(atom_to_list(Target), "@"),
-         {ok, Port} = get_handoff_port(Target),
-         SockOpts = [binary, {packet, 4}, {header,1}, {active, false}],
-         {Socket, TcpMod} =
-             if SSLOpts /= [] ->
-                     {ok, Skt} = ssl:connect(Host, Port, SSLOpts ++ SockOpts,
-                                             15000),
-                     {Skt, ssl};
-                true ->
-                     {ok, Skt} = gen_tcp:connect(Host, Port, SockOpts, 15000),
-                     {Skt, gen_tcp}
-             end,
-
          VMaster = list_to_atom(atom_to_list(Mod) ++ "_master"),
-         ReceiverVsn = get_proto_version(TcpMod, Socket),
-         Cfg = [{vnode_mod, Mod},
-                {partition, Partition}],
-         handshake(ReceiverVsn, TcpMod, Socket, Cfg),
 
          StartFoldTime = now(),
-         {Socket,VNode,Mod,TcpMod,_Ack,SentCount,ErrStatus} =
+         {Sock,VNode,Mod,TcpMod,_Ack,SentCount,ErrStatus} =
              riak_core_vnode_master:sync_command({Partition, node()},
                                                  ?FOLD_REQ{
                                                     foldfun=fun visit_item/3,
-                                                    acc0={Socket,VNode,Mod,TcpMod,0,0,ok}},
+                                                    acc0={Sock,VNode,Mod,TcpMod,0,0,ok}},
                                                  VMaster, infinity),
-         complete(ReceiverVsn, TcpMod, Socket, Cfg),
-
          EndFoldTime = now(),
          FoldTimeDiff = timer:now_diff(EndFoldTime, StartFoldTime) / 1000000,
          case ErrStatus of
@@ -252,27 +290,27 @@ start_fold(Target, Mod, Partition, VNode, SSLOpts) ->
 
 %% When a tcp error occurs, the ErrStatus argument is set to {error, Reason}.
 %% Since we can't abort the fold, this clause is just a no-op.
-visit_item(_K, _V, {Socket, VNode, Mod, TcpMod, Ack, Total,
+visit_item(_K, _V, {Sock, VNode, Mod, TcpMod, Ack, Total,
                     {error, Reason}}) ->
-    {Socket, VNode, Mod, TcpMod, Ack, Total, {error, Reason}};
-visit_item(K, V, {Socket, VNode, Mod, TcpMod, ?ACK_COUNT, Total, _Err}) ->
-    case TcpMod:send(Socket, <<?PT_MSG_SYNC:8>>) of
+    {Sock, VNode, Mod, TcpMod, Ack, Total, {error, Reason}};
+visit_item(K, V, {Sock, VNode, Mod, TcpMod, ?ACK_COUNT, Total, _Err}) ->
+    case TcpMod:send(Sock, <<?PT_MSG_SYNC:8>>) of
         ok ->
-            case TcpMod:recv(Socket, 0) of
+            case TcpMod:recv(Sock, 0) of
                 {ok,[?PT_MSG_SYNC|<<"sync">>]} ->
-                    visit_item(K, V, {Socket, VNode, Mod, TcpMod, 0, Total, ok});
+                    visit_item(K, V, {Sock, VNode, Mod, TcpMod, 0, Total, ok});
                 {error, Reason} ->
-                    {Socket, VNode, Mod, TcpMod, 0, Total, {error, Reason}}
+                    {Sock, VNode, Mod, TcpMod, 0, Total, {error, Reason}}
             end;
         {error, Reason} ->
-            {Socket, VNode, Mod, TcpMod, 0, Total, {error, Reason}}
+            {Sock, VNode, Mod, TcpMod, 0, Total, {error, Reason}}
     end;
-visit_item(K, V, {Socket, VNode, Mod, TcpMod, Ack, Total, _ErrStatus}) ->
+visit_item(K, V, {Sock, VNode, Mod, TcpMod, Ack, Total, _ErrStatus}) ->
     BinObj = Mod:encode_handoff_item(K, V),
     M = <<?PT_MSG_OBJ:8,BinObj/binary>>,
-    case TcpMod:send(Socket, M) of
+    case TcpMod:send(Sock, M) of
         ok ->
-            {Socket, VNode, Mod, TcpMod, Ack+1, Total+1, ok};
+            {Sock, VNode, Mod, TcpMod, Ack+1, Total+1, ok};
         {error, Reason} ->
-            {Socket, VNode, Mod, TcpMod, Ack, Total, {error, Reason}}
+            {Sock, VNode, Mod, TcpMod, Ack, Total, {error, Reason}}
     end.
