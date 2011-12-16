@@ -36,7 +36,8 @@
 -export([add_outbound/4,
          clear_queue/0,
          handoff_status/0,
-         set_concurrency/1
+         set_concurrency/1,
+         update_status/2
         ]).
 
 -include_lib("riak_core/include/riak_core_handoff.hrl").
@@ -71,6 +72,9 @@ set_concurrency(Limit) ->
     %% TODO: if Limit < CurrentLimit, kill old handoffs?
     application:set_env(riak_core,handoff_concurrency,Limit).
 
+update_status(SenderPid, Status) ->
+    gen_server:call(?MODULE, {update_status, SenderPid, Status}).
+
 add_exclusion(Module, Index) ->
     gen_server:cast(?MODULE, {add_exclusion, {Module, Index}}).
 
@@ -89,10 +93,18 @@ handle_call(handoff_status, _From, State) ->
     Status=[{active,State#state.handoffs},{pending,State#state.handoff_queue}],
     {reply, {ok, Status}, State};
 handle_call({add_outbound,Pid,M,I,N}, _From, State=#state{handoff_queue=Q}) ->
-    {reply, ok, State#state{handoff_queue=enqueue_handoff(M,I,N,Pid,Q)}};
+    NewState=State#state{handoff_queue=enqueue_handoff(M,I,N,Pid,Q)},
+    {reply, ok, process_handoff_queue(NewState)};
 handle_call(cancel_pending_handoffs, _From, State) ->
-    {noreply,State#state{handoff_queue=[]}}.
-
+    {reply, ok, State#state{handoff_queue=[]}};
+handle_call({update_status,SenderPid,Status},_From,State=#state{handoffs=HS}) ->
+    case lists:keytake(SenderPid,#handoff.sender_pid,HS) of
+        {value,H,NewHS} ->
+            Handoff=H#handoff{status=Status},
+            {reply, ok, State#state{handoffs=[Handoff|NewHS]}};
+        _ ->
+            {reply, {error, not_found}, State}
+    end.
 
 %% fire and forget events
 handle_cast(process_handoff_queue, State) ->
@@ -106,9 +118,18 @@ handle_cast({add_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
 
 
 %% we monitor sender processes, when one goes down, we can start another
-handle_info({'DOWN',_Ref,process,Pid,_Reason},State=#state{handoffs=HS}) ->
-    NewHS=lists:keydelete(Pid,1,HS),
-    {noreply,process_handoff_queue(State#state{handoffs=NewHS})};
+handle_info({'DOWN',_Ref,process,Pid,Reason},State=#state{handoffs=HS,
+                                                          handoff_queue=Q}) ->
+    {value,_Handoff,NewHS}=lists:keytake(Pid,#handoff.sender_pid,HS),
+    case Reason of
+        normal ->
+            NewState=process_handoff_queue(State#state{handoffs=NewHS});
+        _ ->
+            %% requeue the failed attempt (TODO:)
+            NewState=process_handoff_queue(State#state{handoffs=NewHS,
+                                                       handoff_queue=Q})
+    end,
+    {noreply,NewState};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -133,12 +154,12 @@ enqueue_handoff(Mod,Idx,Node,VnodePid,Q) ->
                             true ->
                                 %% or if the same node and pid, keep it
                                 case (N==Node) and (P==VnodePid) of
-                                    true -> {[H | NewQ],Flag};
-                                    false -> {NewQ,true}
+                                    true -> {[H | NewQ],false};
+                                    false -> {NewQ,Flag}
                                 end
                         end
                 end,
-                {[],false},
+                {[],true},
                 Q),
 
     %% the predicate indicates whether or not a new handoff should be added
@@ -156,12 +177,16 @@ enqueue_handoff(Mod,Idx,Node,VnodePid,Q) ->
             Q2
     end.
 
+%% true if handoff_concurrency (inbound + outbound) hasn't yet been reached
+handoff_concurrency_limit_reached() ->
+    Receivers=supervisor:count_children(riak_core_handoff_receiver_sup),
+    Senders=supervisor:count_children(riak_core_handoff_sender_sup),
+    Limit=app_helper:get_env(riak_core,handoff_concurrency,1),
+    Limit =< (Receivers + Senders).
+
 %% pop a handoff off the queue and start it up
 process_handoff_queue(State) ->
-    NumSenders=riak_core_handoff_sender_sup:active_senders(),
-    NumReceivers=riak_core_handoff_receiver_sup:active_receivers(),
-    MaxHandoffs=app_helper:get_env(riak_core,handoff_concurrency,1),
-    process_handoff_queue((NumSenders + NumReceivers) < MaxHandoffs,State).
+    process_handoff_queue(handoff_concurrency_limit_reached(),State).
 
 %% only pop a handoff and start it if we're under our limit
 process_handoff_queue(false,State) ->
