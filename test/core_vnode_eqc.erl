@@ -65,7 +65,7 @@ setup_simple() ->
     riak_core_ring_events:start_link(),
     riak_core_ring_manager:start_link(test),
     riak_core_vnode_proxy_sup:start_link(),
-    riak_core:register_vnode_module(mock_vnode),
+    riak_core:register([{vnode_module, mock_vnode}]),
     OldVars.
 
 test(N) ->
