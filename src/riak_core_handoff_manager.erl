@@ -15,33 +15,61 @@
 %% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
 -module(riak_core_handoff_manager).
 -behaviour(gen_server).
--export([start_link/0]).
--export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-         terminate/2, code_change/3]).
--export([add_exclusion/2, get_exclusions/1, remove_exclusion/2]).
--export([add_outbound/4, clear_queue/0, all_handoffs/0]).
--record(state, {excl,handoffs,handoff_queue}).
 
+%% gen_server api
+-export([start_link/0,
+         init/1,
+         handle_call/3,
+         handle_cast/2,
+         handle_info/2,
+         terminate/2,
+         code_change/3
+        ]).
+
+%% exclusion api
+-export([add_exclusion/2,
+         get_exclusions/1,
+         remove_exclusion/2
+        ]).
+
+%% handoff api
+-export([add_outbound/4,
+         clear_queue/0,
+         handoff_status/0,
+         set_concurrency/1
+        ]).
+
+-include_lib("riak_core/include/riak_core_handoff.hrl").
 -include_lib("eunit/include/eunit.hrl").
+
+-record(state, { excl,
+                 handoffs        :: [#handoff{}],
+                 handoff_queue   :: [#handoff{}]
+               }).
 
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 init([]) ->
-    {ok, #state{excl=ordsets:new(), handoffs=[], handoff_queue=queue:new()}}.
+    {ok, #state{excl=ordsets:new(), handoffs=[], handoff_queue=[]}}.
 
 
 %% enqueue a handoffs to happen at a later point
 add_outbound(VnodePid, Module, Idx, Node) ->
-    gen_server:cast(?MODULE,{add_outbound,VnodePid,Module,Idx,Node}).
+    gen_server:call(?MODULE,{add_outbound,VnodePid,Module,Idx,Node}).
 
 %% cancel all pending handoffs
 clear_queue() ->
-    gen_server:cast(?MODULE, cancel_pending_handoffs).
+    gen_server:call(?MODULE, cancel_pending_handoffs).
 
 %% get a pair of all currently active and pending handoffs
-all_handoffs() ->
-    gen_server:call(?MODULE, all_handoffs).
+handoff_status() ->
+    gen_server:call(?MODULE, handoff_status).
+
+%% change the limit of concurrent handoffs (outbound and inbound)
+set_concurrency(Limit) ->
+    %% TODO: if Limit < CurrentLimit, kill old handoffs?
+    application:set_env(riak_core,handoff_concurrency,Limit).
 
 add_exclusion(Module, Index) ->
     gen_server:cast(?MODULE, {add_exclusion, {Module, Index}}).
@@ -53,27 +81,22 @@ get_exclusions(Module) ->
     gen_server:call(?MODULE, {get_exclusions, Module}, infinity).
 
 
-
+%% synchronous events
 handle_call({get_exclusions, Module}, _From, State=#state{excl=Excl}) ->
     Reply =  [I || {M, I} <- ordsets:to_list(Excl), M =:= Module],
     {reply, {ok, Reply}, State};
-handle_call(all_handoffs, _From, State=#state{handoff_queue=Q}) ->
-    Active=[Handoff || {_Pid,Handoff} <- State#state.handoffs],
-    Pending=queue:to_list(Q),
-    {reply, {ok, Active, Pending}, State}.
+handle_call(handoff_status, _From, State) ->
+    Status=[{active,State#state.handoffs},{pending,State#state.handoff_queue}],
+    {reply, {ok, Status}, State};
+handle_call({add_outbound,Pid,M,I,N}, _From, State=#state{handoff_queue=Q}) ->
+    {reply, ok, State#state{handoff_queue=enqueue_handoff(M,I,N,Pid,Q)}};
+handle_call(cancel_pending_handoffs, _From, State) ->
+    {noreply,State#state{handoff_queue=[]}}.
 
 
-handle_cast({add_outbound,Pid,Mod,Idx,Node},State=#state{handoff_queue=Q}) ->
-    Handoff={{Mod,Idx},Node,Pid},
-    State2=case queue:member(Handoff,Q) of
-               false -> State#state{handoff_queue=queue:in(Handoff,Q)};
-               true -> State
-           end,
-    {noreply,process_handoff_queue(State2)};
+%% fire and forget events
 handle_cast(process_handoff_queue, State) ->
     {noreply,process_handoff_queue(State)};
-handle_cast(cancel_pending_handoffs, State) ->
-    {noreply,State#state{handoff_queue=queue:new()}};
 handle_cast({del_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
     {noreply, State#state{excl=ordsets:del_element({Mod, Idx}, Excl)}};
 handle_cast({add_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
@@ -99,6 +122,40 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% @private - shared gen_server functionality
 
+%% add a handoff to a queue, return a new queue
+enqueue_handoff(Mod,Idx,Node,VnodePid,Q) ->
+    {Q2,Pred}=lists:foldl(
+                fun (H=#handoff{module=M,index=I,target_node=N,vnode_pid=P},
+                     {NewQ,Flag}) ->
+                        %% a different module or index, keep it
+                        case (M==Mod) and (I==Idx) of
+                            false -> {[H | NewQ], Flag};
+                            true ->
+                                %% or if the same node and pid, keep it
+                                case (N==Node) and (P==VnodePid) of
+                                    true -> {[H | NewQ],Flag};
+                                    false -> {NewQ,true}
+                                end
+                        end
+                end,
+                {[],false},
+                Q),
+
+    %% the predicate indicates whether or not a new handoff should be added
+    case Pred of
+        true ->
+            Handoff=#handoff{ module=Mod,
+                              index=Idx,
+                              target_node=Node,
+                              restarts=0,
+                              timestamp=now(),
+                              vnode_pid=VnodePid
+                            },
+            Q2 ++ [Handoff];
+        false ->
+            Q2
+    end.
+
 %% pop a handoff off the queue and start it up
 process_handoff_queue(State) ->
     NumSenders=riak_core_handoff_sender_sup:active_senders(),
@@ -109,14 +166,14 @@ process_handoff_queue(State) ->
 %% only pop a handoff and start it if we're under our limit
 process_handoff_queue(false,State) ->
     State;
-process_handoff_queue(true,State=#state{handoffs=Handoffs,handoff_queue=Q}) ->
-    case queue:out(Q) of
-        {{value,Handoff={{Mod,Idx},Node,Pid}},Q2} ->
-            {ok,P}=riak_core_handoff_sender_sup:start_sender(Pid,Node,Mod,Idx),
-            erlang:monitor(process,P),
-            NewHoffs=[{P,Handoff}|Handoffs],
-            State#state{handoffs=NewHoffs,handoff_queue=Q2};
-        {empty,_} ->
+process_handoff_queue(true,State=#state{handoffs=HS,handoff_queue=Q}) ->
+    case Q of
+        [H=#handoff{module=M,index=I,target_node=N,vnode_pid=Pid}|QS] ->
+            {ok,Sender}=riak_core_handoff_sender_sup:start_sender(Pid,N,M,I),
+            erlang:monitor(process,Sender),
+            NewHS=[H#handoff{sender_pid=Sender,timestamp=now()}|HS],
+            State#state{handoffs=NewHS,handoff_queue=QS};
+        [] ->
             State
     end.
 
@@ -139,7 +196,7 @@ handoff_test_ () ->
       ]}}.
 
 simple_handoff () ->
-    ?assertEqual({ok,[]},all_handoffs()),
+    ?assertEqual({ok,[{active,[]},{pending,[]}]},handoff_status()),
 
     %% add a handoff and confirm that it's there
     %%add_handoff(riak_kv_vnode,0,'node@nohost'),
