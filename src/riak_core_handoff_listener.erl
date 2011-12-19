@@ -67,7 +67,7 @@ terminate(_Reason, _State) -> ok.
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 new_connection(Socket, State = #state{ssl_opts = SslOpts}) ->
-    {ok, Pid} = riak_core_handoff_receiver_sup:start_receiver(SslOpts),
+    {ok, Pid} = riak_core_handoff_manager:add_inbound(SslOpts),
     gen_tcp:controlling_process(Socket, Pid),
     ok = riak_core_handoff_receiver:set_socket(Pid, Socket),
     {ok, State}.

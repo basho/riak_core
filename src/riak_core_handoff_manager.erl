@@ -15,16 +15,35 @@
 %% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
 -module(riak_core_handoff_manager).
 -behaviour(gen_server).
--export([start_link/0]).
--export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-         terminate/2, code_change/3]).
--export([add_exclusion/2, get_handoff_lock/1, get_exclusions/1]).
--export([remove_exclusion/2]).
--export([release_handoff_lock/2]).
--export([add_handoff/3,remove_handoff/2,all_handoffs/0,get_handoffs/1]).
--record(state, {excl,handoffs}).
 
+%% gen_server api
+-export([start_link/0,
+         init/1,
+         handle_call/3,
+         handle_cast/2,
+         handle_info/2,
+         terminate/2,
+         code_change/3
+        ]).
+
+%% exclusion api
+-export([add_exclusion/2,
+         get_exclusions/1,
+         remove_exclusion/2
+        ]).
+
+%% handoff api
+-export([add_outbound/4,
+         add_inbound/1,
+         handoff_status/0,
+         set_concurrency/1,
+         kill_handoffs/0
+        ]).
+
+-include_lib("riak_core/include/riak_core_handoff.hrl").
 -include_lib("eunit/include/eunit.hrl").
+
+-record(state, { excl, handoffs :: [#handoff{}] }).
 
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
@@ -32,17 +51,23 @@ start_link() ->
 init([]) ->
     {ok, #state{excl=ordsets:new(), handoffs=[]}}.
 
-add_handoff(Module, Idx, Node) ->
-    gen_server:cast(?MODULE, {add_handoff, {Module, Idx, Node}}).
+%% handoff_manager API
 
-remove_handoff(Module, Idx) ->
-    gen_server:cast(?MODULE, {remove_handoff, {Module, Idx}}).
+add_outbound(Module,Idx,Node,VnodePid) ->
+    gen_server:call(?MODULE,{add_outbound,Module,Idx,Node,VnodePid}).
 
-all_handoffs() ->
-    gen_server:call(?MODULE, all_handoffs).
+add_inbound(SSLOpts) ->
+    gen_server:call(?MODULE,{add_inbound,SSLOpts}).
 
-get_handoffs(Idx) ->
-    gen_server:call(?MODULE, {get_handoffs, Idx}).
+handoff_status() ->
+    gen_server:call(?MODULE,handoff_status).
+
+set_concurrency(Limit) ->
+    %% TODO: if Limit < CurrentLimit, kill old handoffs?
+    application:set_env(riak_core,handoff_concurrency,Limit).
+
+kill_handoffs() ->
+    gen_server:call(?MODULE,kill_handoffs).
 
 add_exclusion(Module, Index) ->
     gen_server:cast(?MODULE, {add_exclusion, {Module, Index}}).
@@ -53,38 +78,34 @@ remove_exclusion(Module, Index) ->
 get_exclusions(Module) ->
     gen_server:call(?MODULE, {get_exclusions, Module}, infinity).
 
-get_handoff_lock(LockId) ->
-    TokenCount = app_helper:get_env(riak_core, handoff_concurrency, 1),
-    get_handoff_lock(LockId, TokenCount).
-
-get_handoff_lock(_LockId, 0) ->
-    {error, max_concurrency};
-get_handoff_lock(LockId, Count) ->
-    case global:set_lock({{handoff_token, Count}, {node(), LockId}}, [node()], 0) of
-        true ->
-            {ok, {handoff_token, Count}};
-        false ->
-            get_handoff_lock(LockId, Count-1)
-    end.
-
-release_handoff_lock(LockId, Token) ->
-    global:del_lock({{handoff_token,Token}, {node(), LockId}}, [node()]).
+%% gen_server API
 
 handle_call({get_exclusions, Module}, _From, State=#state{excl=Excl}) ->
     Reply =  [I || {M, I} <- ordsets:to_list(Excl), M =:= Module],
     {reply, {ok, Reply}, State};
-handle_call(all_handoffs, _From, State=#state{handoffs=Hoffs}) ->
-    {reply, {ok, Hoffs}, State};
-handle_call({get_handoffs, Idx}, _From, State=#state{handoffs=Hoffs}) ->
-    Filtered=[{Mod,TargetNode} || {{Mod,I},TargetNode} <- Hoffs, I == Idx],
-    {reply, {ok, Filtered}, State}.
+handle_call({add_outbound,Mod,Idx,Node,Pid},_From,State=#state{handoffs=HS}) ->
+    case send_handoff(Mod,Idx,Node,Pid) of
+        {ok,Handoff} ->
+            {reply,{ok,Handoff#handoff.pid},State#state{handoffs=[Handoff|HS]}};
+        Error ->
+            {reply,Error,State}
+    end;
+handle_call({add_inbound,SSLOpts},_From,State=#state{handoffs=HS}) ->
+    case receive_handoff(SSLOpts) of
+        {ok,Handoff} ->
+            {reply,{ok,Handoff#handoff.pid},State#state{handoffs=[Handoff|HS]}};
+        Error ->
+            {reply,Error,State}
+    end;
+handle_call(handoff_status,_From,State=#state{handoffs=HS}) ->
+    Senders=[H || H=#handoff{sender=Sender} <- HS, Sender =/= undefined],
+    Receivers=[H || H=#handoff{receiver=Recv} <- HS, Recv =/= undefined],
+    {reply, {ok, [{senders,Senders},{receivers,Receivers}]}, State};
+handle_call(kill_handoffs,_From,State=#state{handoffs=HS}) ->
+    [erlang:exit(Pid) || #handoff{pid=Pid} <- HS],
+    {reply, ok, State}.
 
-handle_cast({add_handoff, {Mod, Idx, Node}}, State=#state{handoffs=Hoffs}) ->
-    NewHoffs=[{{Mod,Idx},Node}|Hoffs],
-    {noreply, State#state{handoffs=NewHoffs}};
-handle_cast({remove_handoff,Hoff={_Mod,_Idx}}, State=#state{handoffs=Hoffs}) ->
-    NewHoffs=lists:keydelete(Hoff,1,Hoffs),
-    {noreply, State#state{handoffs=NewHoffs}};
+
 handle_cast({del_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
     {noreply, State#state{excl=ordsets:del_element({Mod, Idx}, Excl)}};
 handle_cast({add_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
@@ -92,14 +113,74 @@ handle_cast({add_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
     riak_core_ring_events:ring_update(Ring),
     {noreply, State#state{excl=ordsets:add_element({Mod, Idx}, Excl)}}.
 
+
+handle_info({'DOWN',_Ref,process,Pid,_Reason},State=#state{handoffs=HS}) ->
+    {noreply, State#state{handoffs=lists:keydelete(Pid,#handoff.pid,HS)}};
 handle_info(_Info, State) ->
     {noreply, State}.
+
 
 terminate(_Reason, _State) ->
     ok.
 
+
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+%%
+%% @private functions
+%%
+
+%% true if handoff_concurrency (inbound + outbound) hasn't yet been reached
+handoff_concurrency_limit_reached () ->
+    Receivers=supervisor:count_children(riak_core_handoff_receiver_sup),
+    Senders=supervisor:count_children(riak_core_handoff_sender_sup),
+    ActiveReceivers=proplists:get_value(active,Receivers),
+    ActiveSenders=proplists:get_value(active,Senders),
+    Limit=app_helper:get_env(riak_core,handoff_concurrency,1),
+    Limit =< (ActiveReceivers + ActiveSenders).
+
+%% spawn a sender process
+send_handoff (Module,Index,TargetNode,VnodePid) ->
+    case handoff_concurrency_limit_reached() of
+        true ->
+            {error, max_concurrency};
+        false ->
+            {ok,Pid}=riak_core_handoff_sender_sup:start_sender(TargetNode,
+                                                               Module,
+                                                               Index,
+                                                               VnodePid),
+            erlang:monitor(process,Pid),
+
+            %% successfully started up a new sender handoff
+            {ok, #handoff{ pid=Pid,
+                           timestamp=now(),
+                           sender=#sender{ module=Module,
+                                           index=Index,
+                                           target_node=TargetNode,
+                                           vnode_pid=VnodePid
+                                         }
+                         }
+            }
+    end.
+
+%% spawn a receiver process
+receive_handoff (SSLOpts) ->
+    case handoff_concurrency_limit_reached() of
+        true ->
+            {error, max_concurrency};
+        false ->
+            {ok,Pid}=riak_core_handoff_receiver_sup:start_receiver(SSLOpts),
+            erlang:monitor(process,Pid),
+
+            %% successfully started up a new receiver
+            {ok, #handoff{ pid=Pid,
+                           timestamp=now(),
+                           receiver=#receiver{ ssl_opts=SSLOpts
+                                             }
+                         }
+            }
+    end.
 
 %%
 %% EUNIT tests...
@@ -120,17 +201,7 @@ handoff_test_ () ->
       ]}}.
 
 simple_handoff () ->
-    ?assertEqual({ok,[]},all_handoffs()),
-
-    %% add a handoff and confirm that it's there
-    add_handoff(riak_kv_vnode,0,'node@nohost'),
-    ?assertEqual({ok,[{{riak_kv_vnode,0},'node@nohost'}]},all_handoffs()),
-    ?assertEqual({ok,[{riak_kv_vnode,'node@nohost'}]},get_handoffs(0)),
-
-    %% remove the handoff and make sure it's gone
-    remove_handoff(riak_kv_vnode,0),
-    ?assertEqual({ok,[]},all_handoffs()),
-    ?assertEqual({ok,[]},get_handoffs(0)),
+    ?assertEqual({ok,[{active,[]},{pending,[]}]},handoff_status()),
 
     %% done
     ok.
