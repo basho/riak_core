@@ -68,46 +68,78 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
          M = <<?PT_MSG_INIT:8,Partition:160/integer>>,
          ok = TcpMod:send(Socket, M),
          StartFoldTime = now(),
-         {Socket,ParentPid,Module,TcpMod,_Ack,SentCount,ErrStatus} =
-             riak_core_vnode_master:sync_command({Partition, node()},
-                                                 ?FOLD_REQ{
-                                                    foldfun=fun visit_item/3,
-                                                    acc0={Socket,ParentPid,Module,TcpMod,0,0,ok}},
-                                                 VMaster, infinity),
-         %% One last sync to make sure the message has been received.
-         %% post-0.14 vnodes switch to handoff to forwarding immediately
-         %% so handoff_complete can only be sent once all of the data is
-         %% written.  handle_handoff_data is a sync call, so once
-         %% we receive the sync the remote side will be up to date.
-         lager:debug("~p ~p Sending final sync", [Partition, Module]),
-         ok = TcpMod:send(Socket, <<?PT_MSG_SYNC:8>>),
-         {ok,[?PT_MSG_SYNC|<<"sync">>]} = TcpMod:recv(Socket, 0),
-         lager:debug("~p ~p Final sync received", [Partition, Module]),
 
-         EndFoldTime = now(),
-         FoldTimeDiff = timer:now_diff(EndFoldTime, StartFoldTime) / 1000000,
-         case ErrStatus of
-             ok ->
-                 lager:info("Handoff of partition ~p ~p from ~p to ~p "
-                                       "completed: sent ~p objects in ~.2f "
-                                       "seconds",
-                                       [Module, Partition, node(), TargetNode,
-                                        SentCount, FoldTimeDiff]),
-                 gen_fsm:send_event(ParentPid, handoff_complete);
-             {error, ErrReason} ->
-                 lager:error("Handoff of partition ~p ~p from ~p to ~p "
-                                        "FAILED after sending ~p objects "
-                                        "in ~.2f seconds: ~p",
-                                        [Module, Partition, node(), TargetNode,
-                                         SentCount, FoldTimeDiff, ErrReason]),
-                 gen_fsm:send_event(ParentPid, {handoff_error,
-                                                fold_error, ErrReason})
+         MRef = monitor(process, ParentPid),
+         process_flag(trap_exit, true),
+         SPid = self(),
+         Req = ?FOLD_REQ{foldfun=fun visit_item/3,
+                         acc0={Socket, ParentPid, Module, TcpMod, 0,0, ok}},
+
+         HPid =
+             spawn_link(
+               fun() ->
+                       %% match structure here because otherwise
+                       %% you'll end up in infinite loop below if you
+                       %% return something other than what it expects.
+                       R = {Socket,ParentPid,Module,TcpMod,_Ack,_,_} =
+                           riak_core_vnode_master:sync_command({Partition, node()},
+                                                               Req,
+                                                               VMaster, infinity),
+                       SPid ! {MRef, R}
+               end),
+
+         receive
+             {'DOWN', MRef, process, ParentPid, _Info} ->
+                 exit(HPid, kill),
+                 lager:error("Handoff of partition ~p ~p from ~p to ~p failed "
+                             " because vnode died",
+                             [Module, Partition, node(), TargetNode]),
+
+                 error;
+
+             {'EXIT', From, E} ->
+                 lager:error("Handoff of partition ~p ~p from ~p to ~p failed "
+                             " because ~p died with reason ~p",
+                             [Module, Partition, node(), TargetNode, From, E]),
+                 error;
+
+             {MRef, {Socket,ParentPid,Module,TcpMod,_Ack,SentCount,ErrStatus}} ->
+
+                 %% One last sync to make sure the message has been received.
+                 %% post-0.14 vnodes switch to handoff to forwarding immediately
+                 %% so handoff_complete can only be sent once all of the data is
+                 %% written.  handle_handoff_data is a sync call, so once
+                 %% we receive the sync the remote side will be up to date.
+                 lager:debug("~p ~p Sending final sync", [Partition, Module]),
+                 ok = TcpMod:send(Socket, <<?PT_MSG_SYNC:8>>),
+                 {ok,[?PT_MSG_SYNC|<<"sync">>]} = TcpMod:recv(Socket, 0),
+                 lager:debug("~p ~p Final sync received", [Partition, Module]),
+
+                 EndFoldTime = now(),
+                 FoldTimeDiff = timer:now_diff(EndFoldTime, StartFoldTime) / 1000000,
+                 case ErrStatus of
+                     ok ->
+                         lager:info("Handoff of partition ~p ~p from ~p to ~p "
+                                    "completed: sent ~p objects in ~.2f "
+                                    "seconds",
+                                    [Module, Partition, node(), TargetNode,
+                                     SentCount, FoldTimeDiff]),
+                         gen_fsm:send_event(ParentPid, handoff_complete);
+                     {error, ErrReason} ->
+                         lager:error("Handoff of partition ~p ~p from ~p to ~p "
+                                     "FAILED after sending ~p objects "
+                                     "in ~.2f seconds: ~p",
+                                     [Module, Partition, node(), TargetNode,
+                                      SentCount, FoldTimeDiff, ErrReason]),
+                         gen_fsm:send_event(ParentPid, {handoff_error,
+                                                        fold_error, ErrReason})
+                 end
          end
      catch
          Err:Reason ->
              lager:error("Handoff of partition ~p ~p from ~p to ~p failed ~p:~p",
-                                    [Module, Partition, node(), TargetNode,
-                                     Err, Reason]),
+                         [Module, Partition, node(), TargetNode,
+                          Err, Reason]),
              gen_fsm:send_event(ParentPid, {handoff_error, Err, Reason})
      end.
 
