@@ -32,7 +32,8 @@
          handle_info/3,
          terminate/3,
          code_change/4]).
--export([reply/2]).
+-export([reply/2,
+         monitor/1]).
 -export([get_mod_index/1,
          update_forwarding/2,
          trigger_handoff/1]).
@@ -554,6 +555,20 @@ reply({raw, Ref, From}, Reply) ->
     From ! {Ref, Reply};
 reply(ignore, _Reply) ->
     ok.
+
+%% @doc Set up a monitor for the pid named by a {@type sender()} vnode
+%% argument.  If `Sender' was the atom `ignore', this function sets up
+%% a monitor on `self()' in order to return a valid (if useless)
+%% monitor reference.
+-spec monitor(Sender::sender()) -> Monitor::reference().
+monitor({fsm, _, From}) ->
+    erlang:monitor(process, From);
+monitor({server, _, {Pid, _Ref}}) ->
+    erlang:monitor(process, Pid);
+monitor({raw, _, From}) ->
+    erlang:monitor(process, From);
+monitor(ignore) ->
+    erlang:monitor(process, self()).
 
 app_for_vnode_module(Mod) when is_atom(Mod) ->
     case application:get_env(riak_core, vnode_modules) of
