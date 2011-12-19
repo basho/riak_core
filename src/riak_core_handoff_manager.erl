@@ -181,8 +181,10 @@ enqueue_handoff(Mod,Idx,Node,VnodePid,Q) ->
 handoff_concurrency_limit_reached() ->
     Receivers=supervisor:count_children(riak_core_handoff_receiver_sup),
     Senders=supervisor:count_children(riak_core_handoff_sender_sup),
+    ActiveReceivers=proplists:get_value(active,Receivers),
+    ActiveSenders=proplists:get_value(active,Senders),
     Limit=app_helper:get_env(riak_core,handoff_concurrency,1),
-    Limit =< (Receivers + Senders).
+    Limit =< (ActiveReceivers + ActiveSenders).
 
 %% pop a handoff off the queue and start it up
 process_handoff_queue(State) ->
