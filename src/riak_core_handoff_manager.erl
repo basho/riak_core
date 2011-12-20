@@ -43,7 +43,18 @@
 -include_lib("riak_core/include/riak_core_handoff.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--record(state, { excl, handoffs :: [#handoff{}] }).
+-record(handoff_status,
+        { handoff       :: #handoff{},
+          direction     :: inbound | outbound,
+          transport_pid :: pid(),
+          timestamp     :: tuple(),
+          status        :: any()
+        }).
+
+-record(state,
+        { excl,
+          handoffs :: [#handoff_status{}]
+        }).
 
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
@@ -85,24 +96,23 @@ handle_call({get_exclusions, Module}, _From, State=#state{excl=Excl}) ->
     {reply, {ok, Reply}, State};
 handle_call({add_outbound,Mod,Idx,Node,Pid},_From,State=#state{handoffs=HS}) ->
     case send_handoff(Mod,Idx,Node,Pid) of
-        {ok,Handoff} ->
-            {reply,{ok,Handoff#handoff.pid},State#state{handoffs=[Handoff|HS]}};
+        {ok,Handoff=#handoff_status{transport_pid=Sender}} ->
+            {reply,{ok,Sender},State#state{handoffs=[Handoff|HS]}};
         Error ->
             {reply,Error,State}
     end;
 handle_call({add_inbound,SSLOpts},_From,State=#state{handoffs=HS}) ->
     case receive_handoff(SSLOpts) of
-        {ok,Handoff} ->
-            {reply,{ok,Handoff#handoff.pid},State#state{handoffs=[Handoff|HS]}};
+        {ok,Handoff=#handoff_status{transport_pid=Receiver}} ->
+            {reply,{ok,Receiver},State#state{handoffs=[Handoff|HS]}};
         Error ->
             {reply,Error,State}
     end;
 handle_call(handoff_status,_From,State=#state{handoffs=HS}) ->
-    Senders=[H || H=#handoff{sender=Sender} <- HS, Sender =/= undefined],
-    Receivers=[H || H=#handoff{receiver=Recv} <- HS, Recv =/= undefined],
-    {reply, {ok, [{senders,Senders},{receivers,Receivers}]}, State};
+    Handoffs=[{H,D,active,S} || #handoff_status{ handoff=H,direction=D,status=S } <- HS],
+    {reply, {ok, Handoffs}, State};
 handle_call(kill_handoffs,_From,State=#state{handoffs=HS}) ->
-    [erlang:exit(Pid) || #handoff{pid=Pid} <- HS],
+    [erlang:exit(Pid) || #handoff_status{transport_pid=Pid} <- HS],
     {reply, ok, State}.
 
 
@@ -115,7 +125,8 @@ handle_cast({add_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
 
 
 handle_info({'DOWN',_Ref,process,Pid,_Reason},State=#state{handoffs=HS}) ->
-    {noreply, State#state{handoffs=lists:keydelete(Pid,#handoff.pid,HS)}};
+    NewHS=lists:keydelete(Pid,#handoff_status.transport_pid,HS),
+    {noreply, State#state{handoffs=NewHS}};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -153,14 +164,15 @@ send_handoff (Module,Index,TargetNode,VnodePid) ->
             erlang:monitor(process,Pid),
 
             %% successfully started up a new sender handoff
-            {ok, #handoff{ pid=Pid,
-                           timestamp=now(),
-                           sender=#sender{ module=Module,
-                                           index=Index,
-                                           target_node=TargetNode,
-                                           vnode_pid=VnodePid
-                                         }
-                         }
+            {ok, #handoff_status{ transport_pid=Pid,
+                                  direction=outbound,
+                                  timestamp=now(),
+                                  handoff=#handoff{ module=Module,
+                                                    index=Index,
+                                                    node=TargetNode,
+                                                    type=undefined
+                                                  }
+                                }
             }
     end.
 
@@ -174,11 +186,12 @@ receive_handoff (SSLOpts) ->
             erlang:monitor(process,Pid),
 
             %% successfully started up a new receiver
-            {ok, #handoff{ pid=Pid,
-                           timestamp=now(),
-                           receiver=#receiver{ ssl_opts=SSLOpts
-                                             }
-                         }
+            {ok, #handoff_status{ transport_pid=Pid,
+                                  direction=inbound,
+                                  timestamp=now(),
+                                  handoff=#handoff{ type=undefined
+                                                  }
+                                }
             }
     end.
 
