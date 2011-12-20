@@ -56,6 +56,8 @@
           handoffs :: [#handoff_status{}]
         }).
 
+-define(CONCURRENCY_LIMIT,1).
+
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
@@ -74,8 +76,12 @@ handoff_status() ->
     gen_server:call(?MODULE,handoff_status).
 
 set_concurrency(Limit) ->
-    %% TODO: if Limit < CurrentLimit, kill old handoffs?
-    application:set_env(riak_core,handoff_concurrency,Limit).
+    CurrentLimit=get_concurrency_limit(),
+    application:set_env(riak_core,handoff_concurrency,Limit),
+    case Limit < CurrentLimit of
+        true -> gen_server:call(?MODULE,kill_old_handoffs);
+        false -> ok
+    end.
 
 kill_handoffs() ->
     gen_server:call(?MODULE,kill_handoffs).
@@ -112,8 +118,18 @@ handle_call(handoff_status,_From,State=#state{handoffs=HS}) ->
     Handoffs=[{H,D,active,S} || #handoff_status{ handoff=H,direction=D,status=S } <- HS],
     {reply, {ok, Handoffs}, State};
 handle_call(kill_handoffs,_From,State=#state{handoffs=HS}) ->
-    [erlang:exit(Pid) || #handoff_status{transport_pid=Pid} <- HS],
-    {reply, ok, State}.
+    [erlang:exit(Pid,kill) || #handoff_status{transport_pid=Pid} <- HS],
+    {reply, ok, State};
+handle_call(kill_old_handoffs,_From,State=#state{handoffs=HS}) ->
+    Limit=get_concurrency_limit(),
+    case length(HS) < Limit of
+        true -> {reply, ok, State};
+        false ->
+            {Keep,Discard}=lists:split(Limit,HS),
+            [erlang:exit(Pid,max_concurrency) ||
+                #handoff_status{transport_pid=Pid} <- Discard],
+            {reply, ok, State#state{handoffs=Keep}}
+    end.
 
 
 handle_cast({del_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
@@ -142,14 +158,16 @@ code_change(_OldVsn, State, _Extra) ->
 %% @private functions
 %%
 
+get_concurrency_limit () ->
+    app_helper:get_env(riak_core,handoff_concurrency,?CONCURRENCY_LIMIT).
+
 %% true if handoff_concurrency (inbound + outbound) hasn't yet been reached
 handoff_concurrency_limit_reached () ->
     Receivers=supervisor:count_children(riak_core_handoff_receiver_sup),
     Senders=supervisor:count_children(riak_core_handoff_sender_sup),
     ActiveReceivers=proplists:get_value(active,Receivers),
     ActiveSenders=proplists:get_value(active,Senders),
-    Limit=app_helper:get_env(riak_core,handoff_concurrency,1),
-    Limit =< (ActiveReceivers + ActiveSenders).
+    get_concurrency_limit() =< (ActiveReceivers + ActiveSenders).
 
 %% spawn a sender process
 send_handoff (Module,Index,TargetNode,VnodePid) ->
