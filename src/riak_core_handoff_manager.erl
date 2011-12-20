@@ -201,7 +201,15 @@ handoff_test_ () ->
       ]}}.
 
 simple_handoff () ->
-    ?assertEqual({ok,[{active,[]},{pending,[]}]},handoff_status()),
+    ?assertEqual({ok,[{senders,[]},{receivers,[]}]},handoff_status()),
+
+    %% clear handoff_concurrency and make sure a handoff fails
+    ?assertEqual(ok,set_concurrency(0)),
+    ?assertEqual({error,max_concurrency},add_inbound([])),
+    ?assertEqual({error,max_concurrency},add_outbound(riak_kv,0,node(),self())),
+
+    %% allow for a single handoff
+    ?assertEqual(ok,set_concurrency(1)),
 
     %% done
     ok.
