@@ -17,7 +17,7 @@
 %%
 %% -------------------------------------------------------------------
 -module(riak_core_vnode_proxy).
--export([start_link/2, init/1, reg_name/2, reg_name/3, call/2, cast/2,
+-export([start_link/2, init/1, reg_name/2, reg_name/3, call/2, call/3, cast/2,
          unregister_vnode/2, command_return_vnode/2]).
 -export([system_continue/3, system_terminate/4, system_code_change/4]).
 
@@ -43,13 +43,17 @@ init([Parent, RegName, Mod, Index]) ->
     loop(Parent, State).
 
 unregister_vnode(Mod, Index) ->
-    call(reg_name(Mod, Index), unregister_vnode).
+    call(reg_name(Mod, Index), unregister_vnode, infinity).
 
 command_return_vnode({Mod,Index,Node}, Req) ->
     call(reg_name(Mod, Index, Node), {return_vnode, Req}).
 
 call(Name, Msg) ->
     {ok,Res} = (catch gen:call(Name, '$vnode_proxy_call', Msg)),
+    Res.
+
+call(Name, Msg, Timeout) ->
+    {ok,Res} = (catch gen:call(Name, '$vnode_proxy_call', Msg, Timeout)),
     Res.
 
 cast(Name, Msg) ->

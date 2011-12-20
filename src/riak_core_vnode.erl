@@ -385,6 +385,11 @@ finish_handoff(State=#state{mod=Mod,
                                  forward=HN})
     end.
 
+handle_event({set_forwarding, undefined}, _StateName,
+             State=#state{modstate={deleted, _ModState}}) ->
+    %% The vnode must forward requests when in the deleted state, therefore
+    %% ignore requests to stop forwarding.
+    continue(State);
 handle_event({set_forwarding, ForwardTo}, _StateName, State) ->
     lager:debug("vnode fwd :: ~p/~p :: ~p -> ~p~n",
                 [State#state.mod, State#state.index, State#state.forward, ForwardTo]),
