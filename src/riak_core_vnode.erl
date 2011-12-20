@@ -166,12 +166,12 @@ continue(State, NewModState) ->
 %% Active vnodes operate in three states: normal, handoff, and forwarding.
 %%
 %% In the normal state, vnode commands are passed to handle_command. When
-%% a handoff is trigger, handoff_node is set to the target node and the vode
+%% a handoff is triggered, handoff_node is set to the target node and the vnode
 %% is said to be in the handoff state.
 %%
 %% In the handoff state, vnode commands are passed to handle_handoff_command.
 %% However, a vnode may be blocked during handoff (and therefore not servicing
-%% commands) if the handoff procedure is non-blocking (eg. in riak_kv when not
+%% commands) if the handoff procedure is blocking (eg. in riak_kv when not
 %% using async fold).
 %%
 %% After handoff, a vnode may move into forwarding state. The forwarding state
