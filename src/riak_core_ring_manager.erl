@@ -380,10 +380,7 @@ set_ring_global(Ring) ->
 
 %% Persist a new ring file, set the global value and notify any listeners
 prune_write_notify_ring(Ring) ->
-    riak_core_ring:check_tainted(Ring, "Error: Persisting tainted ring"),
-    riak_core_ring_manager:prune_ringfiles(),
-    do_write_ringfile(Ring),
-    set_ring_global(Ring),
+    prune_write_ring(Ring),
     riak_core_ring_events:ring_update(Ring).
 
 prune_write_ring(Ring) ->

@@ -31,7 +31,7 @@
          command_return_vnode/4,
          sync_command/4,
          sync_spawn_command/3, make_request/3,
-         make_coverage_request/4, reg_name/1]).
+         make_coverage_request/4, all_nodes/1, reg_name/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 -record(state, {idxtab, sup_name, vnode_mod, legacy}).
@@ -136,6 +136,15 @@ make_coverage_request(Request, KeySpaces, Sender, Index) ->
                           keyspaces=KeySpaces,
                           sender=Sender,
                           request=Request}.
+
+%% Request a list of Pids for all vnodes
+%% @deprecated
+%% Provided for compatibility with older vnode master API. New code should
+%% use riak_core_vnode_manager:all_vnode/1 which returns a mod/index/pid
+%% list rather than just a pid list.
+all_nodes(VNodeMod) ->
+    VNodes = riak_core_vnode_manager:all_vnodes(VNodeMod),
+    [Pid || {_Mod, _Idx, Pid} <- VNodes].
 
 %% @private
 init([VNodeMod, LegacyMod, _RegName]) ->

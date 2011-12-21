@@ -90,7 +90,7 @@ behaviour_info(_Other) ->
           handoff_node=none :: none | node(),
           handoff_pid :: pid(),
           pool_pid :: pid() | undefined,
-          event_timer :: reference(),
+          manager_event_timer :: reference(),
           inactivity_timeout}).
 
 start_link(Mod, Index, Forward) ->
@@ -114,7 +114,6 @@ send_command_after(Time, Request) ->
 
 
 init([Mod, Index, InitialInactivityTimeout, Forward]) ->
-    %%TODO: Should init args really be an array if it just gets Init?
     process_flag(trap_exit, true),
     {ModState, Props} = case Mod:init([Index]) of
         {ok, MS} -> {MS, []};
@@ -280,16 +279,16 @@ active(handoff_complete, State=#state{mod=Mod,
                                       index=Idx, 
                                       handoff_token=HT}) ->
     riak_core_handoff_manager:release_handoff_lock({Mod, Idx}, HT),
-    State2 = start_event_timer(handoff_complete, State),
+    State2 = start_manager_event_timer(handoff_complete, State),
     continue(State2);
 active({handoff_error, _Err, _Reason}, State=#state{mod=Mod, 
                                                     index=Idx, 
                                                     handoff_token=HT}) ->
     riak_core_handoff_manager:release_handoff_lock({Mod, Idx}, HT),
-    State2 = start_event_timer(handoff_error, State),
+    State2 = start_manager_event_timer(handoff_error, State),
     continue(State2);
-active({send_event, Event}, State) ->
-    State2 = start_event_timer(Event, State),
+active({send_manager_event, Event}, State) ->
+    State2 = start_manager_event_timer(Event, State),
     continue(State2);
 active({trigger_handoff, TargetNode}, State) ->
      maybe_handoff(State, TargetNode);
@@ -307,6 +306,12 @@ active(_Event, _From, State) ->
     Reply = ok,
     {reply, Reply, active, State, State#state.inactivity_timeout}.
 
+%% This code lives in riak_core_vnode rather than riak_core_vnode_manager
+%% because the ring_trans call is a synchronous call to the ring manager,
+%% and it is better to block an individual vnode rather than the vnode
+%% manager. Blocking the manager can impact all vnodes. This code is safe
+%% to execute on multiple parallel vnodes because of the synchronization
+%% afforded by having all ring changes go through the single ring manager.
 mark_handoff_complete(Idx, Prev, New, Mod) ->
     Result = riak_core_ring_manager:ring_trans(
       fun(Ring, _) ->
@@ -397,7 +402,7 @@ handle_event({set_forwarding, ForwardTo}, _StateName, State) ->
 handle_event(finish_handoff, _StateName, State=#state{mod=Mod,
                                                       modstate=ModState,
                                                       handoff_node=HN}) ->
-    stop_event_timer(State),
+    stop_manager_event_timer(State),
     case HN of
         none ->
             continue(State);
@@ -409,7 +414,7 @@ handle_event(cancel_handoff, _StateName, State=#state{mod=Mod,
                                                       modstate=ModState}) ->
     %% it would be nice to pass {Err, Reason} to the vnode but the 
     %% API doesn't currently allow for that.
-    stop_event_timer(State),
+    stop_manager_event_timer(State),
     case State#state.handoff_node of
         none ->
             continue(State);
@@ -522,8 +527,16 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 maybe_handoff(State=#state{modstate={deleted, _}}, _TargetNode) ->
     %% Modstate has been deleted, waiting for unregistered.  No handoff.
     continue(State);
-maybe_handoff(State=#state{handoff_node=HN}, _TargetNode) when HN /= none ->
+maybe_handoff(State=#state{index=Idx, mod=Mod, handoff_node=HN},
+              TargetNode) when HN /= none ->
     %% Already handing off
+    case HN of
+        TargetNode ->
+            ok;
+        _ ->
+            lager:info("~s/~b: ignoring handoff request to ~p, already "
+                       "handing off to ~p", [Mod, Idx, TargetNode, HN])
+    end,
     continue(State);
 maybe_handoff(State=#state{mod=Mod, modstate=ModState}, TargetNode) ->
     case Mod:handoff_starting(TargetNode, ModState) of
@@ -583,13 +596,13 @@ reply(ignore, _Reply) ->
 %% messages sent by the vnode. Therefore, the vnode periodically resends event
 %% messages until an appropriate message is received back from the vnode
 %% manager. The event timer functions below implement this logic.
-start_event_timer(Event, State=#state{mod=Mod, index=Idx}) ->
+start_manager_event_timer(Event, State=#state{mod=Mod, index=Idx}) ->
     riak_core_vnode_manager:vnode_event(Mod, Idx, self(), Event),
-    stop_event_timer(State),
-    T2 = gen_fsm:send_event_after(30000, {send_event, Event}),
-    State#state{event_timer=T2}.
+    stop_manager_event_timer(State),
+    T2 = gen_fsm:send_event_after(30000, {send_manager_event, Event}),
+    State#state{manager_event_timer=T2}.
 
-stop_event_timer(#state{event_timer=undefined}) ->
+stop_manager_event_timer(#state{manager_event_timer=undefined}) ->
     ok;
-stop_event_timer(#state{event_timer=T}) ->
+stop_manager_event_timer(#state{manager_event_timer=T}) ->
     gen_fsm:cancel_timer(T).

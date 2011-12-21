@@ -28,7 +28,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 -export([all_vnodes/0, all_vnodes/1, ring_changed/1, force_handoffs/0]).
--export([all_nodes/1, all_index_pid/1, get_vnode_pid/2, start_vnode/2,
+-export([all_index_pid/1, get_vnode_pid/2, start_vnode/2,
          unregister_vnode/2, unregister_vnode/3, vnode_event/4]).
 
 -ifdef(TEST).
@@ -78,10 +78,6 @@ unregister_vnode(Index, VNodeMod) ->
 unregister_vnode(Index, Pid, VNodeMod) ->
     gen_server:cast(?MODULE, {unregister, Index, VNodeMod, Pid}).
 
-%% Request a list of Pids for all vnodes
-all_nodes(VNodeMod) ->
-    gen_server:call(?MODULE, {all_nodes, VNodeMod}, infinity).
-
 all_index_pid(VNodeMod) ->
     gen_server:call(?MODULE, {all_index_pid, VNodeMod}, infinity).
 
@@ -115,7 +111,8 @@ find_vnodes(State) ->
     %% to rebuild our ETS table for routing messages to the appropriate
     %% vnode.
     VnodePids = [Pid || {_, Pid, worker, _}
-                            <- supervisor:which_children(riak_core_vnode_sup)],
+                            <- supervisor:which_children(riak_core_vnode_sup),
+                        is_pid(Pid) andalso is_process_alive(Pid)],
     IdxTable = ets:new(ets_vnodes, [{keypos, 2}]),
 
     %% If the vnode manager is being restarted, scan the existing
@@ -143,8 +140,6 @@ find_vnodes(State) ->
     State#state{idxtab=IdxTable}.
 
 %% @private
-handle_call({all_nodes, Mod}, _From, State) ->
-    {reply, lists:flatten(ets:match(State#state.idxtab, {idxrec, '_', '_', Mod, '$1', '_'})), State};
 handle_call(all_vnodes, _From, State) ->
     Reply = get_all_vnodes(State),
     {reply, Reply, State};
@@ -323,17 +318,8 @@ change_forward(VNodes, Mod, Idx, ForwardTo) ->
         error ->
             ok;
         {ok, Pid} ->
-            %% Changing the forwarding state of a vnode FSM that is
-            %% concurrently shutting down may result in an error,
-            %% which we can safely ignore. Same with a noproc error
-            %% occuring if the Pid for this Mod/Index is now stale.
-            try
-                riak_core_vnode:set_forwarding(Pid, ForwardTo),
-                ok
-            catch
-                _:_ ->
-                    ok
-            end
+            riak_core_vnode:set_forwarding(Pid, ForwardTo),
+            ok
     end.
 
 update_handoff(AllVNodes, Ring, State) ->
@@ -351,10 +337,26 @@ update_handoff(AllVNodes, Ring, State) ->
     end.
 
 should_handoff(Ring, Mod, Idx) ->
-    Me = node(),
     {_, NextOwner, _} = riak_core_ring:next_owner(Ring, Idx),
     Owner = riak_core_ring:index_owner(Ring, Idx),
     Ready = riak_core_ring:ring_ready(Ring),
+    case determine_handoff_target(Ready, Owner, NextOwner) of
+        undefined ->
+            false;
+        TargetNode ->
+            case app_for_vnode_module(Mod) of
+                undefined -> false;
+                {ok, App} ->
+                    case lists:member(TargetNode, 
+                                      riak_core_node_watcher:nodes(App)) of
+                        false  -> false;
+                        true -> {true, TargetNode}
+                    end
+            end
+    end.
+
+determine_handoff_target(Ready, Owner, NextOwner) ->
+    Me = node(),
     TargetNode = case {Ready, Owner, NextOwner} of
                      {_, _, Me} ->
                          Me;
@@ -369,17 +371,9 @@ should_handoff(Ring, Mod, Idx) ->
                  end,
     case TargetNode of
         Me ->
-            false;
+            undefined;
         _ ->
-            case app_for_vnode_module(Mod) of
-                undefined -> false;
-                {ok, App} ->
-                    case lists:member(TargetNode, 
-                                      riak_core_node_watcher:nodes(App)) of
-                        false  -> false;
-                        true -> {true, TargetNode}
-                    end
-            end
+            TargetNode
     end.
 
 app_for_vnode_module(Mod) when is_atom(Mod) ->
@@ -401,13 +395,8 @@ maybe_trigger_handoff(Mod, Idx, State) ->
 maybe_trigger_handoff(Mod, Idx, Pid, _State=#state{handoff=HO}) ->
     case orddict:find({Mod, Idx}, HO) of
         {ok, TargetNode} ->
-            try
-                riak_core_vnode:trigger_handoff(Pid, TargetNode),
-                ok
-            catch
-                _:_ ->
-                    ok
-            end;
+            riak_core_vnode:trigger_handoff(Pid, TargetNode),
+            ok;
         error ->
             ok
     end.
