@@ -64,7 +64,19 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
          ModBin = atom_to_binary(Module, utf8),
          Msg = <<?PT_MSG_OLDSYNC:8,ModBin/binary>>,
          ok = TcpMod:send(Socket, Msg),
-         {ok,[?PT_MSG_OLDSYNC|<<"sync">>]} = TcpMod:recv(Socket, 0),
+
+         %% Now that handoff_concurrency applies to both outbound and
+         %% inbound conns there is a chance that the receiver may
+         %% decide to reject the senders attempt to start a handoff.
+         %% In the future this will be part of the actual wire
+         %% protocol but for now the sender must assume that a closed
+         %% socket at this point is a rejection by the receiver to
+         %% enforce handoff_concurrency.
+         case TcpMod:recv(Socket, 0) of
+             {ok,[?PT_MSG_OLDSYNC|<<"sync">>]} -> ok;
+             {error, closed} -> exit({shutdown, max_concurrency})
+         end,
+
          M = <<?PT_MSG_INIT:8,Partition:160/integer>>,
          ok = TcpMod:send(Socket, M),
          StartFoldTime = now(),
@@ -136,6 +148,11 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
                  end
          end
      catch
+         exit:{shutdown,max_concurrency} ->
+             %% In this case the receiver hungup on the sender because
+             %% of handoff_concurrency.  You don't want to log
+             %% anything because this is normal.
+             ok;
          Err:Reason ->
              lager:error("Handoff of partition ~p ~p from ~p to ~p failed ~p:~p",
                          [Module, Partition, node(), TargetNode,
