@@ -35,7 +35,8 @@
 -export([reply/2]).
 -export([get_mod_index/1,
          update_forwarding/2,
-         trigger_handoff/1]).
+         trigger_handoff/1,
+         core_status/1]).
 
 -spec behaviour_info(atom()) -> 'undefined' | [{atom(), arity()}].
 behaviour_info(callbacks) ->
@@ -141,6 +142,9 @@ update_forwarding(VNode, Ring) ->
 
 trigger_handoff(VNode) ->
     gen_fsm:send_all_state_event(VNode, trigger_handoff).
+
+core_status(VNode) ->
+    gen_fsm:sync_send_all_state_event(VNode, core_status).
 
 continue(State) ->
     {next_state, active, State, State#state.inactivity_timeout}.
@@ -374,7 +378,43 @@ handle_sync_event({handoff_data,BinObj}, _From, StateName,
             lager:error("~p failed to store handoff obj: ~p", [Mod, Err]),
             {reply, {error, Err}, StateName, State#state{modstate=NewModState},
              State#state.inactivity_timeout}
-    end.
+    end;
+handle_sync_event(core_status, _From, StateName, State=#state{index=Index,
+                                                              mod=Mod,
+                                                              modstate=ModState,
+                                                              handoff_node=HN,
+                                                              forward=FN}) ->
+    Mode = case {FN, HN} of
+               {undefined, none} ->
+                   active;
+               {undefined, HN} ->
+                   handoff;
+               {FN, none} ->
+                   forward;
+               _ ->
+                   undefined
+           end,
+    Status = [{index, Index}, {mod, Mod}] ++
+        case FN of
+            undefined ->
+                [];
+            _ ->
+                [{forward, FN}]
+        end++
+        case HN of
+            none ->
+                [];
+            _ ->
+                [{handoff_node, HN}]
+        end ++
+        case ModState of
+            {deleted, _} ->
+                [deleted];
+            _ ->
+                []
+        end,
+    {reply, {Mode, Status}, StateName, State, State#state.inactivity_timeout}.
+
 
 handle_info({'EXIT', Pid, Reason}, _StateName,
             State=#state{mod=Mod, index=Index, pool_pid=Pid}) ->
