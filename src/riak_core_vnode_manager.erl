@@ -162,8 +162,7 @@ handle_cast({Partition, Mod, start_vnode}, State) ->
     {noreply, State};
 handle_cast({unregister, Index, Mod, Pid}, #state{idxtab=T} = State) ->
     ets:match_delete(T, {idxrec, {Index, Mod}, Index, Mod, Pid, '_'}),
-    riak_core_vnode_proxy:unregister_vnode(Mod, Index),
-    gen_fsm:send_event(Pid, unregistered),
+    riak_core_vnode_proxy:unregister_vnode(Mod, Index, Pid),
     {noreply, State};
 handle_cast({vnode_event, Mod, Idx, Pid, Event}, State) ->
     handle_vnode_event(Event, Mod, Idx, Pid, State);

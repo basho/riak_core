@@ -18,7 +18,7 @@
 %% -------------------------------------------------------------------
 -module(riak_core_vnode_proxy).
 -export([start_link/2, init/1, reg_name/2, reg_name/3, call/2, call/3, cast/2,
-         unregister_vnode/2, command_return_vnode/2]).
+         unregister_vnode/3, command_return_vnode/2]).
 -export([system_continue/3, system_terminate/4, system_code_change/4]).
 
 -record(state, {mod, index, vnode_pid, vnode_mref}).
@@ -42,8 +42,8 @@ init([Parent, RegName, Mod, Index]) ->
     State = #state{mod=Mod, index=Index},
     loop(Parent, State).
 
-unregister_vnode(Mod, Index) ->
-    call(reg_name(Mod, Index), unregister_vnode, infinity).
+unregister_vnode(Mod, Index, Pid) ->
+    cast(reg_name(Mod, Index), {unregister_vnode, Pid}).
 
 command_return_vnode({Mod,Index,Node}, Req) ->
     call(reg_name(Mod, Index, Node), {return_vnode, Req}).
@@ -90,10 +90,6 @@ loop(Parent, State) ->
     end.
 
 %% @private
-handle_call(unregister_vnode, _From, State) ->
-    catch demonitor(State#state.vnode_mref, [flush]),
-    NewState = State#state{vnode_pid=undefined, vnode_mref=undefined},
-    {reply, ok, NewState};
 handle_call({return_vnode, Req}, _From, State) ->
     {Pid, NewState} = get_vnode_pid(State),
     gen_fsm:send_event(Pid, Req),
@@ -103,6 +99,13 @@ handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
 
 %% @private
+handle_cast({unregister_vnode, Pid}, State) ->
+    %% The pid may not match the vnode_pid in the state, but we must send the
+    %% unregister event anyway -- the vnode manager requires it.
+    gen_fsm:send_event(Pid, unregistered),
+    catch demonitor(State#state.vnode_mref, [flush]),
+    NewState = State#state{vnode_pid=undefined, vnode_mref=undefined},
+    {noreply, NewState};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
