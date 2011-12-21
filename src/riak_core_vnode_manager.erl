@@ -100,10 +100,14 @@ vnode_event(Mod, Idx, Pid, Event) ->
 
 %% @private
 init(_State) ->
+    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
+    Mods = [Mod || {_, Mod} <- riak_core:vnode_modules()],
     State = #state{forwarding=[], handoff=[]},
-    State2 = update_forwarding(State),
-    State3 = find_vnodes(State2),
-    {ok, State3}.
+    State2 = find_vnodes(State),
+    AllVNodes = get_all_vnodes(Mods, State2),
+    State3 = update_forwarding(AllVNodes, Mods, Ring, State2),
+    State4 = update_handoff(AllVNodes, Ring, State3),
+    {ok, State4}.
 
 %% @private
 find_vnodes(State) ->
@@ -239,8 +243,10 @@ get_all_index_pid(Mod, State) ->
 
 get_all_vnodes(State) ->
     Mods = [Mod || {_App, Mod} <- riak_core:vnode_modules()],
-    lists:flatmap(fun(Mod) -> get_all_vnodes(Mod, State) end, Mods).
+    get_all_vnodes(Mods, State).
 
+get_all_vnodes(Mods, State) when is_list(Mods) ->
+    lists:flatmap(fun(Mod) -> get_all_vnodes(Mod, State) end, Mods);
 get_all_vnodes(Mod, State) ->
     try get_all_index_pid(Mod, State) of
         IdxPids ->
@@ -294,20 +300,18 @@ check_forward(Ring, Mod, Index) ->
             {{Mod, Index}, undefined}
     end.
 
-update_forwarding(State) ->
-    AllVNodes = get_all_vnodes(State),
-    Mods = [Mod || {_, Mod} <- riak_core:vnode_modules()],
-    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
-    update_forwarding(AllVNodes, Mods, Ring, State).
+compute_forwarding(Mods, Ring) ->
+    {AllIndices, _} = lists:unzip(riak_core_ring:all_owners(Ring)),
+    Forwarding = [check_forward(Ring, Mod, Index) || Index <- AllIndices,
+                                                     Mod <- Mods],
+    Forwarding.
 
 update_forwarding(AllVNodes, Mods, Ring,
                   State=#state{forwarding=Forwarding}) ->
-    VNodes = lists:sort([{{Mod, Idx}, Pid} || {Mod, Idx, Pid} <- AllVNodes]),
-    {AllIndices, _} = lists:unzip(riak_core_ring:all_owners(Ring)),
-    NewForwarding = [check_forward(Ring, Mod, Index) || Index <- AllIndices,
-                                                        Mod <- Mods],
+    NewForwarding = compute_forwarding(Mods, Ring),
 
     %% Inform vnodes that have changed forwarding status
+    VNodes = lists:sort([{{Mod, Idx}, Pid} || {Mod, Idx, Pid} <- AllVNodes]),
     Diff = NewForwarding -- Forwarding,
     [change_forward(VNodes, Mod, Idx, ForwardTo)
      || {{Mod, Idx}, ForwardTo} <- Diff],
