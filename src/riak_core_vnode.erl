@@ -426,6 +426,9 @@ handle_info({'EXIT', Pid, Reason}, _StateName,
     end,
     continue(State#state{pool_pid=undefined});
 
+handle_info({handoff_exit,_Reason}, _StateName, State) ->
+    continue(State#state{handoff_node=none});
+
 handle_info(Info, _StateName,
             State=#state{mod=Mod,modstate={deleted, _},index=Index}) ->
     lager:info("~p ~p ignored handle_info ~p - vnode unregistering\n",

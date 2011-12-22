@@ -52,7 +52,8 @@
           direction     :: inbound | outbound,
           transport_pid :: pid(),
           timestamp     :: tuple(),
-          status        :: any()
+          status        :: any(),
+          vnode_pid     :: pid() | undefined
         }).
 
 -record(state,
@@ -142,13 +143,28 @@ handle_cast({add_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
     {noreply, State#state{excl=ordsets:add_element({Mod, Idx}, Excl)}}.
 
 
-handle_info({'DOWN',_Ref,process,Pid,normal},State=#state{handoffs=HS}) ->
-    NewHS=lists:keydelete(Pid,#handoff_status.transport_pid,HS),
-    {noreply, State#state{handoffs=NewHS}};
 handle_info({'DOWN',_Ref,process,Pid,Reason},State=#state{handoffs=HS}) ->
     case lists:keytake(Pid,#handoff_status.transport_pid,HS) of
-        {value,#handoff_status{handoff={Mod,Index,_},direction=Dir},NewHS} ->
-            lager:error("An ~w handoff of partition ~w ~w was terminated for reason: ~w~n", [Dir,Mod,Index,Reason]),
+        {value,H=#handoff_status{handoff={Mod,Index,_},direction=Dir},NewHS} ->
+            if
+                %% if the reason the handoff process died was anything other
+                %% than 'normal' we should log the reason why as an error
+                Reason =/= normal ->
+                    lager:error("An ~w handoff of partition ~w ~w was terminated for reason: ~w~n", [Dir,Mod,Index,Reason]);
+                true ->
+                    ok
+            end,
+
+            %% if we have the vnode process pid, tell the vnode why the
+            %% handoff stopped so it can clean up its state
+            case H#handoff_status.vnode_pid of
+                VnodePid when is_pid(VnodePid) ->
+                    VnodePid ! {handoff_exit,Reason};
+                _ ->
+                    ok
+            end,
+
+            %% removed the handoff from the list of active handoffs
             {noreply, State#state{handoffs=NewHS}};
         false ->
             {noreply, State}
@@ -195,7 +211,8 @@ send_handoff (Module,Index,TargetNode,VnodePid) ->
             {ok, #handoff_status{ transport_pid=Pid,
                                   direction=outbound,
                                   timestamp=now(),
-                                  handoff={Module,Index,TargetNode}
+                                  handoff={Module,Index,TargetNode},
+                                  vnode_pid=VnodePid
                                 }
             }
     end.
