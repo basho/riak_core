@@ -105,6 +105,8 @@ handle_call({add_outbound,Mod,Idx,Node,Pid},_From,State=#state{handoffs=HS}) ->
     case send_handoff(Mod,Idx,Node,Pid,HS) of
         {ok,Handoff=#handoff_status{transport_pid=Sender}} ->
             {reply,{ok,Sender},State#state{handoffs=HS ++ [Handoff]}};
+        {false,_ExistingHandoff=#handoff_status{transport_pid=Sender}} ->
+            {reply,{ok,Sender},State};
         Error ->
             {reply,Error,State}
     end;
@@ -178,7 +180,8 @@ handle_info({'DOWN',_Ref,process,Pid,Reason},State=#state{handoffs=HS}) ->
         false ->
             {noreply, State}
     end;
-handle_info(_Info, State) ->
+handle_info(Info, State) ->
+    io:format(">>>>> ~w~n", [Info]),
     {noreply, State}.
 
 
@@ -242,9 +245,10 @@ send_handoff (Mod,Idx,Node,Vnode,HS) ->
                                           vnode_pid=Vnode
                                         }
                     };
-                {false,CurrentHandoff} ->
-                    %% handoff already going, just return it
-                    {ok, CurrentHandoff}
+
+                %% handoff already going, just return it
+                AlreadyExists={false,_CurrentHandoff} ->
+                    AlreadyExists
             end
     end.
 
