@@ -88,8 +88,6 @@ handle_cast({remove_handoff,Hoff={_Mod,_Idx}}, State=#state{handoffs=Hoffs}) ->
 handle_cast({del_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
     {noreply, State#state{excl=ordsets:del_element({Mod, Idx}, Excl)}};
 handle_cast({add_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
-    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
-    riak_core_ring_events:ring_update(Ring),
     {noreply, State#state{excl=ordsets:add_element({Mod, Idx}, Excl)}}.
 
 handle_info(_Info, State) ->
