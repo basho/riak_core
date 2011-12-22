@@ -30,6 +30,7 @@
          integer_to_list/2,
          unique_id_62/0,
          str_to_node/1,
+         node_hostname/1,
          chash_key/1,
          chash_std_keyfun/1,
          chash_bucketonly_keyfun/1,
@@ -191,7 +192,10 @@ str_to_node(NodeStr) ->
     end.
 
 node_hostname() ->
-    NodeStr = atom_to_list(node()),
+    node_hostname(node()).
+
+node_hostname(Node) ->
+    NodeStr = atom_to_list(Node),
     case string:tokens(NodeStr, "@") of
         [_NodeName, Hostname] ->
             Hostname;
