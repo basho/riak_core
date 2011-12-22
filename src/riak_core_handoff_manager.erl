@@ -150,17 +150,17 @@ handle_info({'DOWN',_Ref,process,Pid,Reason},State=#state{handoffs=HS}) ->
                 %% if the reason the handoff process died was anything other
                 %% than 'normal' we should log the reason why as an error
                 Reason =/= normal ->
-                    lager:error("An ~w handoff of partition ~w ~w was terminated for reason: ~w~n", [Dir,Mod,Index,Reason]);
-                true ->
-                    ok
-            end,
+                    lager:error("An ~w handoff of partition ~w ~w was terminated for reason: ~w~n", [Dir,Mod,Index,Reason]),
 
-            %% if we have the vnode process pid, tell the vnode why the
-            %% handoff stopped so it can clean up its state
-            case H#handoff_status.vnode_pid of
-                VnodePid when is_pid(VnodePid) ->
-                    VnodePid ! {handoff_exit,Reason};
-                _ ->
+                    %% if we have the vnode process pid, tell the vnode why the
+                    %% handoff stopped so it can clean up its state
+                    case H#handoff_status.vnode_pid of
+                        Vnode when is_pid(Vnode) ->
+                            riak_core_vnode:handoff_error(Vnode,'DOWN',Reason);
+                        _ ->
+                            ok
+                    end;
+                true ->
                     ok
             end,
 

@@ -36,7 +36,8 @@
 -export([get_mod_index/1,
          update_forwarding/2,
          trigger_handoff/1,
-         core_status/1]).
+         core_status/1,
+         handoff_error/3]).
 
 -spec behaviour_info(atom()) -> 'undefined' | [{atom(), arity()}].
 behaviour_info(callbacks) ->
@@ -133,6 +134,9 @@ init([Mod, Index, InitialInactivityTimeout]) ->
                    inactivity_timeout=Timeout, pool_pid=PoolPid},
     State2 = update_forwarding_mode(Ring, State),
     {ok, active, State2, InitialInactivityTimeout}.
+
+handoff_error(Vnode, Err, Reason) ->
+    gen_fsm:send_all_state_event(Vnode, {handoff_error, Err, Reason}).
 
 get_mod_index(VNode) ->
     gen_fsm:sync_send_all_state_event(VNode, get_mod_index).
@@ -425,9 +429,6 @@ handle_info({'EXIT', Pid, Reason}, _StateName,
             lager:error("~p ~p worker pool crashed ~p\n", [Index, Mod, Reason])
     end,
     continue(State#state{pool_pid=undefined});
-
-handle_info({handoff_exit,_Reason}, _StateName, State) ->
-    continue(State#state{handoff_node=none});
 
 handle_info(Info, _StateName,
             State=#state{mod=Mod,modstate={deleted, _},index=Index}) ->
