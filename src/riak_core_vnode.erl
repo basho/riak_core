@@ -136,7 +136,7 @@ init([Mod, Index, InitialInactivityTimeout]) ->
     {ok, active, State2, InitialInactivityTimeout}.
 
 handoff_error(Vnode, Err, Reason) ->
-    gen_fsm:send_all_state_event(Vnode, {handoff_error, Err, Reason}).
+    gen_fsm:send_event(Vnode, {handoff_error, Err, Reason}).
 
 get_mod_index(VNode) ->
     gen_fsm:sync_send_all_state_event(VNode, get_mod_index).
