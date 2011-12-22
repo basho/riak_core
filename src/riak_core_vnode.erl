@@ -502,9 +502,9 @@ maybe_handoff(State=#state{mod=Mod, modstate=ModState}) ->
             continue(State)
     end.
 
-should_handoff(#state{handoff_node=HN}) when HN /= none ->
-    %% Already handing off
-    false;
+%should_handoff(#state{handoff_node=HN}) when HN /= none ->
+%    %% Already handing off
+%    false;
 should_handoff(#state{index=Idx, mod=Mod}) ->
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
     Me = node(),

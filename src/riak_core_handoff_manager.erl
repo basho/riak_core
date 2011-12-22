@@ -102,7 +102,8 @@ handle_call({get_exclusions, Module}, _From, State=#state{excl=Excl}) ->
     Reply =  [I || {M, I} <- ordsets:to_list(Excl), M =:= Module],
     {reply, {ok, Reply}, State};
 handle_call({add_outbound,Mod,Idx,Node,Pid},_From,State=#state{handoffs=HS}) ->
-    case send_handoff(Mod,Idx,Node,Pid) of
+    ShouldStart=enqueue_handoff(Mod,Idx,Node,Pid,HS),
+    case ShouldStart andalso send_handoff(Mod,Idx,Node,Pid) of
         {ok,Handoff=#handoff_status{transport_pid=Sender}} ->
             {reply,{ok,Sender},State#state{handoffs=HS ++ [Handoff]}};
         Error ->
@@ -146,21 +147,26 @@ handle_cast({add_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
 handle_info({'DOWN',_Ref,process,Pid,Reason},State=#state{handoffs=HS}) ->
     case lists:keytake(Pid,#handoff_status.transport_pid,HS) of
         {value,H=#handoff_status{handoff={Mod,Index,_},direction=Dir},NewHS} ->
-            if
-                %% if the reason the handoff process died was anything other
-                %% than 'normal' we should log the reason why as an error
-                Reason =/= normal ->
-                    lager:error("An ~w handoff of partition ~w ~w was terminated for reason: ~w~n", [Dir,Mod,Index,Reason]),
+            WarnVnode =
+                case Reason of
+                    %% if the reason the handoff process died was anything other
+                    %% than 'normal' we should log the reason why as an error
+                    normal ->
+                        false;
+                    max_concurrency ->
+                        lager:info("An ~w handoff of partition ~w ~w was terminated for reason: ~w~n", [Dir,Mod,Index,Reason]),
+                        true;
+                    _ ->
+                        lager:error("An ~w handoff of partition ~w ~w was terminated for reason: ~w~n", [Dir,Mod,Index,Reason]),
+                        true
+                end,
 
-                    %% if we have the vnode process pid, tell the vnode why the
-                    %% handoff stopped so it can clean up its state
-                    case H#handoff_status.vnode_pid of
-                        Vnode when is_pid(Vnode) ->
-                            riak_core_vnode:handoff_error(Vnode,'DOWN',Reason);
-                        _ ->
-                            ok
-                    end;
-                true ->
+            %% if we have the vnode process pid, tell the vnode why the
+            %% handoff stopped so it can clean up its state
+            case WarnVnode andalso H#handoff_status.vnode_pid of
+                Vnode when is_pid(Vnode) ->
+                    riak_core_vnode:handoff_error(Vnode,'DOWN',Reason);
+                _ ->
                     ok
             end,
 
@@ -194,6 +200,32 @@ handoff_concurrency_limit_reached () ->
     ActiveReceivers=proplists:get_value(active,Receivers),
     ActiveSenders=proplists:get_value(active,Senders),
     get_concurrency_limit() =< (ActiveReceivers + ActiveSenders).
+
+%% checks to see if the handoff is already off to the races, or changed
+enqueue_handoff(Mod,Idx,Node,VnodePid,Handoffs) ->
+    lists:foldl(
+      fun (#handoff_status{direction=inbound},Flag) ->
+              Flag;
+          (H=#handoff_status{handoff={M,I,N},vnode_pid=Pid},Flag) ->
+              %% a different module or index, add it
+              case (M==Mod) and (I==Idx) of
+                  false ->
+                      Flag;
+                  true ->
+                      %% or if the same target and vnode, keep it
+                      case (N==Node) and (Pid==VnodePid) of
+                          true ->
+                              false;
+                          false ->
+                              %% kill the old one
+                              erlang:exit(H#handoff_status.transport_pid,
+                                          resubmit_handoff_change),
+                              true
+                      end
+              end
+      end,
+      true,
+      Handoffs).
 
 %% spawn a sender process
 send_handoff (Module,Index,TargetNode,VnodePid) ->
