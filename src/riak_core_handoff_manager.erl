@@ -35,7 +35,7 @@
 %% handoff api
 -export([add_outbound/4,
          add_inbound/1,
-         handoff_status/0,
+         status/0,
          set_concurrency/1,
          kill_handoffs/0
         ]).
@@ -78,8 +78,8 @@ add_outbound(Module,Idx,Node,VnodePid) ->
 add_inbound(SSLOpts) ->
     gen_server:call(?MODULE,{add_inbound,SSLOpts}).
 
-handoff_status() ->
-    gen_server:call(?MODULE,handoff_status).
+status() ->
+    gen_server:call(?MODULE,status).
 
 set_concurrency(Limit) ->
     gen_server:call(?MODULE,{set_concurrency,Limit}).
@@ -117,10 +117,10 @@ handle_call({add_inbound,SSLOpts},_From,State=#state{handoffs=HS}) ->
         Error ->
             {reply,Error,State}
     end;
-handle_call(handoff_status,_From,State=#state{handoffs=HS}) ->
-    Handoffs=[{{M,I,N},D,active,S} ||
-                 #handoff_status{modindex={M,I},node=N,direction=D,status=S} <- HS],
-    {reply, {ok, Handoffs}, State};
+handle_call(status,_From,State=#state{handoffs=HS}) ->
+    Handoffs=[{M,N,D,active,S} ||
+                 #handoff_status{modindex=M,node=N,direction=D,status=S} <- HS],
+    {reply, Handoffs, State};
 handle_call({set_concurrency,Limit},_From,State=#state{handoffs=HS}) ->
     application:set_env(riak_core,handoff_concurrency,Limit),
     case Limit < erlang:length(HS) of
@@ -242,7 +242,8 @@ send_handoff (Mod,Idx,Node,Vnode,HS) ->
                                           timestamp=now(),
                                           node=Node,
                                           modindex={Mod,Idx},
-                                          vnode_pid=Vnode
+                                          vnode_pid=Vnode,
+                                          status=[]
                                         }
                     };
 
@@ -266,7 +267,8 @@ receive_handoff (SSLOpts) ->
                                   direction=inbound,
                                   timestamp=now(),
                                   modindex={undefined,undefined},
-                                  node=undefined
+                                  node=undefined,
+                                  status=[]
                                 }
             }
     end.
@@ -290,7 +292,7 @@ handoff_test_ () ->
       ]}}.
 
 simple_handoff () ->
-    ?assertEqual({ok,[{senders,[]},{receivers,[]}]},handoff_status()),
+    ?assertEqual({ok,[]},status()),
 
     %% clear handoff_concurrency and make sure a handoff fails
     ?assertEqual(ok,set_concurrency(0)),
