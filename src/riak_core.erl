@@ -300,6 +300,9 @@ register(_App, []) ->
 register(App, [{bucket_fixup, FixupMod}|T]) ->
     register_mod(get_app(App, FixupMod), FixupMod, bucket_fixups),
     register(App, T);
+register(App, [{repl_helper, FixupMod}|T]) ->
+    register_mod(get_app(App, FixupMod), FixupMod, repl_helper),
+    register(App, T);
 register(App, [{vnode_module, VNodeMod}|T]) ->
     register_mod(get_app(App, VNodeMod), VNodeMod, vnode_modules),
     register(App, T);
