@@ -27,7 +27,8 @@
 -export([start_link/0, stop/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
--export([all_vnodes/0, all_vnodes/1, ring_changed/1, force_handoffs/0]).
+-export([all_vnodes/0, all_vnodes/1, all_vnodes_status/0, ring_changed/1,
+         force_handoffs/0]).
 -export([all_index_pid/1, get_vnode_pid/2, start_vnode/2,
          unregister_vnode/2, unregister_vnode/3, vnode_event/4]).
 
@@ -58,6 +59,9 @@ all_vnodes() ->
 
 all_vnodes(Mod) ->
     gen_server:call(?MODULE, {all_vnodes, Mod}).
+
+all_vnodes_status() ->
+    gen_server:call(?MODULE, all_vnodes_status).
 
 ring_changed(_TaintedRing) ->
     %% The ring passed into ring events is the locally modified tainted ring.
@@ -140,6 +144,9 @@ find_vnodes(State) ->
     State#state{idxtab=IdxTable}.
 
 %% @private
+handle_call(all_vnodes_status, _From, State) ->
+    Reply = get_all_vnodes_status(State),
+    {reply, Reply, State};
 handle_call(all_vnodes, _From, State) ->
     Reply = get_all_vnodes(State),
     {reply, Reply, State};
@@ -299,7 +306,7 @@ compute_forwarding(Mods, Ring) ->
     {AllIndices, _} = lists:unzip(riak_core_ring:all_owners(Ring)),
     Forwarding = [check_forward(Ring, Mod, Index) || Index <- AllIndices,
                                                      Mod <- Mods],
-    Forwarding.
+    orddict:from_list(Forwarding).
 
 update_forwarding(AllVNodes, Mods, Ring,
                   State=#state{forwarding=Forwarding}) ->
@@ -400,3 +407,38 @@ maybe_trigger_handoff(Mod, Idx, Pid, _State=#state{handoff=HO}) ->
         error ->
             ok
     end.
+
+get_all_vnodes_status(State=#state{forwarding=Forwarding, handoff=HO}) ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    Owners = riak_core_ring:all_owners(Ring),
+    VNodes = get_all_vnodes(State),
+    Mods = [Mod || {_App, Mod} <- riak_core:vnode_modules()],
+
+    ThisNode = node(),
+    Types = [case Owner of
+                 ThisNode ->
+                     {{Mod, Idx}, {type, primary}};
+                 _ ->
+                     {{Mod, Idx}, {type, secondary}}
+             end || {Idx, Owner} <- Owners,
+                    Mod <- Mods],
+    Types2 = lists:keysort(1, Types),
+    Pids = [{{Mod, Idx}, {pid, Pid}} || {Mod, Idx, Pid} <- VNodes],
+    Pids2 = lists:keysort(1, Pids),
+    Forwarding2 = [{MI, {forwarding, Node}} || {MI,Node} <- Forwarding,
+                                               Node /= undefined],
+    Handoff2 = [{MI, {should_handoff, Node}} || {MI,Node} <- HO],
+
+    MergeFn = fun(_, V1, V2) when is_list(V1) and is_list(V2) ->
+                      V1 ++ V2;
+                 (_, V1, V2) when is_list(V1) ->
+                      V1 ++ [V2];
+                 (_, V1, V2) ->
+                      [V1, V2]
+              end,
+    Status = lists:foldl(fun(B, A) ->
+                                 orddict:merge(MergeFn, A, B)
+                         end, Types2, [Pids2, Forwarding2, Handoff2]),
+    Status.
+
+
