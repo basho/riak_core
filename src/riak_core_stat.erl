@@ -41,12 +41,13 @@
 -record(state, {
           ignored_gossip_total   :: integer(),
           rings_reconciled_total :: integer(),
-          gossip_received  :: spiraltime:spiral(),
-          rings_reconciled :: spiraltime:spiral(),
-          converge_epoch  :: calendar:t_now(),
-          converge_delay  :: #cuml{},
-          rebalance_epoch :: calendar:t_now(),
-          rebalance_delay :: #cuml{}
+          rejected_handoffs      :: integer(),
+          gossip_received        :: spiraltime:spiral(),
+          rings_reconciled       :: spiraltime:spiral(),
+          converge_epoch         :: calendar:t_now(),
+          converge_delay         :: #cuml{},
+          rebalance_epoch        :: calendar:t_now(),
+          rebalance_delay        :: #cuml{}
          }).
 
 %% @spec start_link() -> {ok,Pid} | ignore | {error,Error}
@@ -77,6 +78,7 @@ init([]) ->
 
     {ok, #state{ignored_gossip_total=0,
                 rings_reconciled_total=0,
+                rejected_handoffs=0,
                 gossip_received=spiraltime:fresh(),
                 rings_reconciled=spiraltime:fresh(),
                 converge_delay=#cuml{},
@@ -129,8 +131,11 @@ update(rebalance_timer_end, _Moment, State=#state{rebalance_epoch=undefined}) ->
     State;
 update(rebalance_timer_end, _Moment, State=#state{rebalance_epoch=T0}) ->
     Duration = timer:now_diff(erlang:now(), T0),
-    update_cumulative(#state.rebalance_delay, Duration, 
+    update_cumulative(#state.rebalance_delay, Duration,
                       State#state{rebalance_epoch=undefined});
+
+update(rejected_handoffs, _Moment, State) ->
+    int_incr(#state.rejected_handoffs, State);
 
 update(ignored_gossip, _Moment, State) ->
     int_incr(#state.ignored_gossip_total, State);
@@ -203,10 +208,10 @@ gossip_stats(Moment, State=#state{converge_delay=CDelay,
 %% Provide aggregate stats for vnode queues.  Compute instantaneously for now,
 %% may need to cache if stats are called heavily (multiple times per seconds)
 vnodeq_stats() ->
-    VnodesInfo = [{Service, element(2, erlang:process_info(Pid, message_queue_len))} || 
+    VnodesInfo = [{Service, element(2, erlang:process_info(Pid, message_queue_len))} ||
                      {Service, _Index, Pid} <- riak_core_vnode_manager:all_vnodes()],
-    ServiceInfo = lists:foldl(fun({S,MQL}, A) -> 
-                                      orddict:append_list(S, [MQL], A) 
+    ServiceInfo = lists:foldl(fun({S,MQL}, A) ->
+                                      orddict:append_list(S, [MQL], A)
                               end, orddict:new(), VnodesInfo),
     lists:flatten([vnodeq_aggregate(S, MQLs) || {S, MQLs} <- ServiceInfo]).
 
@@ -233,8 +238,8 @@ vnodeq_aggregate(Service, MQLs0) ->
 
 vnodeq_atom(Service, Desc) ->
     binary_to_atom(<<(atom_to_binary(Service, latin1))/binary, Desc/binary>>, latin1).
-                            
-    
+
+
 -ifdef(TEST).
 
 %% Check vnodeq aggregation function
