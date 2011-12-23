@@ -88,6 +88,14 @@ handle_cast({remove_handoff,Hoff={_Mod,_Idx}}, State=#state{handoffs=Hoffs}) ->
 handle_cast({del_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
     {noreply, State#state{excl=ordsets:del_element({Mod, Idx}, Excl)}};
 handle_cast({add_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
+    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
+    case riak_core_ring:my_indices(Ring) of
+        [] ->
+            %% Trigger a ring update to ensure the node shuts down
+            riak_core_ring_events:ring_update(Ring);
+        _ ->
+            ok
+    end,
     {noreply, State#state{excl=ordsets:add_element({Mod, Idx}, Excl)}}.
 
 handle_info(_Info, State) ->
