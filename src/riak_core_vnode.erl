@@ -398,6 +398,10 @@ handle_event({set_forwarding, ForwardTo}, _StateName, State) ->
     lager:debug("vnode fwd :: ~p/~p :: ~p -> ~p~n",
                 [State#state.mod, State#state.index, State#state.forward, ForwardTo]),
     continue(State#state{forward=ForwardTo});
+handle_event(finish_handoff, _StateName,
+             State=#state{modstate={deleted, _ModState}}) ->
+    stop_manager_event_timer(State),
+    continue(State#state{handoff_node=none});
 handle_event(finish_handoff, _StateName, State=#state{mod=Mod,
                                                       modstate=ModState,
                                                       handoff_node=HN}) ->
@@ -406,8 +410,8 @@ handle_event(finish_handoff, _StateName, State=#state{mod=Mod,
         none ->
             continue(State);
         _ ->
-            Mod:handoff_finished(HN, ModState),
-            finish_handoff(State)
+            {ok, NewModState} = Mod:handoff_finished(HN, ModState),
+            finish_handoff(State#state{modstate=NewModState})
     end;
 handle_event(cancel_handoff, _StateName, State=#state{mod=Mod,
                                                       modstate=ModState}) ->
@@ -418,9 +422,12 @@ handle_event(cancel_handoff, _StateName, State=#state{mod=Mod,
         none ->
             continue(State);
         _ ->
-            Mod:handoff_cancelled(ModState),
-            continue(State#state{handoff_node=none})
+            {ok, NewModState} = Mod:handoff_cancelled(ModState),
+            continue(State#state{handoff_node=none, modstate=NewModState})
     end;
+handle_event({trigger_handoff, _TargetNode}, _StateName,
+             State=#state{modstate={deleted, _ModState}}) ->
+    continue(State);
 handle_event(R={trigger_handoff, _TargetNode}, _StateName, State) ->
     active(R, State);
 handle_event(R=?VNODE_REQ{}, _StateName, State) ->

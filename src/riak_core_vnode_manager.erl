@@ -107,6 +107,7 @@ init(_State) ->
     AllVNodes = get_all_vnodes(Mods, State2),
     State3 = update_forwarding(AllVNodes, Mods, Ring, State2),
     State4 = update_handoff(AllVNodes, Ring, State3),
+    schedule_management_timer(),
     {ok, State4}.
 
 %% @private
@@ -196,20 +197,18 @@ handle_cast({ring_changed, Ring}, State) ->
     State3 = update_handoff(AllVNodes, Ring, State2),
 
     %% Trigger ownership transfers.
-    Transfers = riak_core_ring:pending_changes(Ring),
-    Limit = app_helper:get_env(riak_core,
-                               forced_ownership_handoff,
-                               ?DEFAULT_OWNERSHIP_TRIGGER),
-    Throttle = lists:sublist(Transfers, Limit),
-    Awaiting = [{Mod, Idx} || {Idx, Node, _, CMods, S} <- Throttle,
-                              Mod <- Mods,
-                              S =:= awaiting,
-                              Node =:= node(),
-                              not lists:member(Mod, CMods)],
-
-    [maybe_trigger_handoff(Mod, Idx, State3) || {Mod, Idx} <- Awaiting],
+    trigger_ownership_handoff(Mods, Ring, State3),
 
     {noreply, State3};
+
+handle_cast(management_tick, State) ->
+    schedule_management_timer(),
+    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
+    Mods = [Mod || {_, Mod} <- riak_core:vnode_modules()],
+    AllVNodes = get_all_vnodes(Mods, State),
+    State2 = update_handoff(AllVNodes, Ring, State),
+    trigger_ownership_handoff(Mods, Ring, State2),
+    {noreply, State2};
 
 handle_cast(_, State) ->
     {noreply, State}.
@@ -243,6 +242,23 @@ code_change(_OldVsn, State, _Extra) ->
 %% ===================================================================
 %% Internal functions
 %% ===================================================================
+
+schedule_management_timer() ->
+    timer:apply_after(30000, gen_server, cast, [?MODULE, management_tick]).
+
+trigger_ownership_handoff(Mods, Ring, State) ->
+    Transfers = riak_core_ring:pending_changes(Ring),
+    Limit = app_helper:get_env(riak_core,
+                               forced_ownership_handoff,
+                               ?DEFAULT_OWNERSHIP_TRIGGER),
+    Throttle = lists:sublist(Transfers, Limit),
+    Awaiting = [{Mod, Idx} || {Idx, Node, _, CMods, S} <- Throttle,
+                              Mod <- Mods,
+                              S =:= awaiting,
+                              Node =:= node(),
+                              not lists:member(Mod, CMods)],
+    [maybe_trigger_handoff(Mod, Idx, State) || {Mod, Idx} <- Awaiting],
+    ok.
 
 get_all_index_pid(Mod, State) ->
     [list_to_tuple(L) 
