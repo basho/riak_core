@@ -167,9 +167,14 @@ handle_cast({Partition, Mod, start_vnode}, State) ->
     get_vnode(Partition, Mod, State),
     {noreply, State};
 handle_cast({unregister, Index, Mod, Pid}, #state{idxtab=T} = State) ->
+    %% Update forwarding state to ensure vnode is not restarted in
+    %% incorrect forwarding state if next request arrives before next
+    %% ring event.
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    State2 = update_forwarding({Mod, Index}, Ring, State),
     ets:match_delete(T, {idxrec, {Index, Mod}, Index, Mod, Pid, '_'}),
     riak_core_vnode_proxy:unregister_vnode(Mod, Index, Pid),
-    {noreply, State};
+    {noreply, State2};
 handle_cast({vnode_event, Mod, Idx, Pid, Event}, State) ->
     handle_vnode_event(Event, Mod, Idx, Pid, State);
 handle_cast(force_handoffs, State) ->
@@ -318,6 +323,11 @@ update_forwarding(AllVNodes, Mods, Ring,
     [change_forward(VNodes, Mod, Idx, ForwardTo)
      || {{Mod, Idx}, ForwardTo} <- Diff],
 
+    State#state{forwarding=NewForwarding}.
+
+update_forwarding({Mod, Idx}, Ring, State=#state{forwarding=Forwarding}) ->
+    {_, ForwardTo} = check_forward(Ring, Mod, Idx),
+    NewForwarding = orddict:store({Mod, Idx}, ForwardTo, Forwarding),
     State#state{forwarding=NewForwarding}.
 
 change_forward(VNodes, Mod, Idx, ForwardTo) ->
