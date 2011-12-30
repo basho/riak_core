@@ -47,8 +47,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
-%% Default gossip rate: allow at most 45 gossip messages every 10 seconds
--define(DEFAULT_LIMIT, {45, 10000}).
+%% Set a high default limit to emulate having no limit at all.
+-define(DEFAULT_LIMIT, {1000000, 60000}).
 
 -record(state, {gossip_versions,
                 gossip_tokens}).
