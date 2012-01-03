@@ -31,6 +31,8 @@
          force_handoffs/0]).
 -export([all_index_pid/1, get_vnode_pid/2, start_vnode/2,
          unregister_vnode/2, unregister_vnode/3, vnode_event/4]).
+%% Field debugging
+-export([get_tab/0]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -94,6 +96,9 @@ start_vnode(Index, VNodeMod) ->
 vnode_event(Mod, Idx, Pid, Event) ->
     gen_server:cast(?MODULE, {vnode_event, Mod, Idx, Pid, Event}).
 
+get_tab() ->
+    gen_server:call(?MODULE, get_tab, infinity).
+
 %% ===================================================================
 %% gen_server behaviour
 %% ===================================================================
@@ -118,7 +123,7 @@ find_vnodes(State) ->
     VnodePids = [Pid || {_, Pid, worker, _}
                             <- supervisor:which_children(riak_core_vnode_sup),
                         is_pid(Pid) andalso is_process_alive(Pid)],
-    IdxTable = ets:new(ets_vnodes, [{keypos, 2}]),
+    IdxTable = ets:new(ets_vnodes, [{keypos, 2}, private]),
 
     %% If the vnode manager is being restarted, scan the existing
     %% vnode children and work out which module and index they are
@@ -160,6 +165,8 @@ handle_call({all_index_pid, Mod}, _From, State) ->
 handle_call({Partition, Mod, get_vnode}, _From, State) ->
     Pid = get_vnode(Partition, Mod, State),
     {reply, {ok, Pid}, State};
+handle_call(get_tab, _From, State) ->
+    {reply, ets:tab2list(State#state.idxtab), State};
 handle_call(_, _From, State) ->
     {reply, ok, State}.
 
@@ -281,9 +288,9 @@ get_all_vnodes(Mod, State) ->
 
 %% @private
 idx2vnode(Idx, Mod, _State=#state{idxtab=T}) ->
-    case ets:match(T, {idxrec, {Idx,Mod}, Idx, Mod, '$1', '_'}) of
-        [[VNodePid]] -> VNodePid;
-        [] -> no_match
+    case ets:lookup(T, {Idx, Mod}) of
+        [I] -> I#idxrec.pid;
+        []  -> no_match
     end.
 
 %% @private
