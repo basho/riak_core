@@ -206,7 +206,7 @@ running(S) ->
                                          S#qcst.asyncdone_pid]}},
      {history, {call,?MODULE,restart_master,[]}},
      {history, {call,mock_vnode,stop,[active_preflist1(S)]}},
-     {history, {call,riak_core_vnode_manager,all_nodes,[mock_vnode]}}
+     {history, {call,riak_core_vnode_master,all_nodes,[mock_vnode]}}
     ].
 
 precondition(_From,_To,#qcst{started=Started},{call,?MODULE,start_vnode,[Index]}) ->
@@ -240,7 +240,7 @@ postcondition(_From,_To,_S,
   when Func =:= neverreply; Func =:= returnreply; Func =:= latereply ->
     Result =:= ok;
 postcondition(_From,_To,_S,
-              {call,riak_core_vnode_manager,all_nodes,[mock_vnode]},Result) ->
+              {call,riak_core_vnode_master,all_nodes,[mock_vnode]},Result) ->
     Pids = [Pid || {_,Pid,_,_} <- supervisor:which_children(riak_core_vnode_sup)],
     lists:sort(Result) =:= lists:sort(Pids);
 postcondition(_From,_To,_S,_C,_R) ->
