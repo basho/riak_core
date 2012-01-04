@@ -68,10 +68,10 @@ services() ->
     gen_server:call(?MODULE, services, infinity).
 
 services(Node) ->
-    pubtab_get_services(Node).
+    internal_get_services(Node).
 
 nodes(Service) ->
-    pubtab_get_nodes(Service).
+    internal_get_nodes(Service).
 
 
 %% ===================================================================
@@ -99,7 +99,7 @@ init([]) ->
     net_kernel:monitor_nodes(true),
 
     %% Setup ETS table to track node status
-    ets:new(?MODULE, [protected, named_table]),
+    ets:new(?MODULE, [protected, read_concurrency, named_table]),
 
     {ok, schedule_broadcast(#state{})}.
 
@@ -317,8 +317,8 @@ node_down(Node, State) ->
 
 
 node_delete(Node) ->
-    Services = pubtab_get_services(Node),
-    [pubtab_delete(Node, Service) || Service <- Services],
+    Services = internal_get_services(Node),
+    [internal_delete(Node, Service) || Service <- Services],
     ets:delete(?MODULE, Node),
     Services.
 
@@ -327,15 +327,15 @@ node_update(Node, Services) ->
     %% know and determine what's changed (if anything).
     Now = riak_core_util:moment(),
     NewStatus = ordsets:from_list(Services),
-    OldStatus = ordsets:from_list(services(Node)),
+    OldStatus = ordsets:from_list(internal_get_services(Node)),
 
     Added     = ordsets:subtract(NewStatus, OldStatus),
     Deleted   = ordsets:subtract(OldStatus, NewStatus),
 
     %% Update ets table with changes; make sure to touch unchanged
     %% service with latest timestamp
-    [pubtab_delete(Node, Ss) || Ss <- Deleted],
-    [pubtab_insert(Node, Ss) || Ss <- Added],
+    [internal_delete(Node, Ss) || Ss <- Deleted],
+    [internal_insert(Node, Ss) || Ss <- Added],
 
     %% Keep track of the last time we recv'd data from a node
     ets:insert(?MODULE, {Node, Now}),
@@ -395,20 +395,20 @@ peers_update(NewPeers, State) ->
     %% Broadcast our current status to new peers
     broadcast(Added, State#state { peers = NewPeers }).
 
-pubtab_delete(Node, Service) ->
-    Svcs = pubtab_get_services(Node),
+internal_delete(Node, Service) ->
+    Svcs = internal_get_services(Node),
     ets:insert(?MODULE, {{by_node, Node}, Svcs -- [Service]}),
-    Nds = pubtab_get_nodes(Service),
+    Nds = internal_get_nodes(Service),
     ets:insert(?MODULE, {{by_service, Service}, Nds -- [Node]}).
 
-pubtab_insert(Node, Service) ->
+internal_insert(Node, Service) ->
     %% Remove Service & node before adding: avoid accidental duplicates
-    Svcs = pubtab_get_services(Node) -- [Service],
+    Svcs = internal_get_services(Node) -- [Service],
     ets:insert(?MODULE, {{by_node, Node}, [Service|Svcs]}),
-    Nds = pubtab_get_nodes(Service) -- [Node],
+    Nds = internal_get_nodes(Service) -- [Node],
     ets:insert(?MODULE, {{by_service, Service}, [Node|Nds]}).
 
-pubtab_get_services(Node) ->
+internal_get_services(Node) ->
     case ets:lookup(?MODULE, {by_node, Node}) of
         [{{by_node, Node}, Ss}] ->
             Ss;
@@ -416,7 +416,7 @@ pubtab_get_services(Node) ->
             []
     end.
 
-pubtab_get_nodes(Service) ->
+internal_get_nodes(Service) ->
     case ets:lookup(?MODULE, {by_service, Service}) of
         [{{by_service, Service}, Ns}] ->
             Ns;
