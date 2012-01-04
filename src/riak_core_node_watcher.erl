@@ -65,13 +65,13 @@ node_down() ->
     gen_server:call(?MODULE, {node_status, down}, infinity).
 
 services() ->
-    ordsets:from_list([Service || [Service] <- ets:match(?MODULE, {{'_', '$1'}, '_'})]).
+    gen_server:call(?MODULE, services, infinity).
 
 services(Node) ->
-    [Service || [Service] <- ets:match(?MODULE, {{Node, '$1'}, '_'})].
+    internal_get_services(Node).
 
 nodes(Service) ->
-    [Node || [Node] <- ets:match(?MODULE, {{'$1', Service}, '_'})].
+    internal_get_nodes(Service).
 
 
 %% ===================================================================
@@ -99,7 +99,7 @@ init([]) ->
     net_kernel:monitor_nodes(true),
 
     %% Setup ETS table to track node status
-    ets:new(?MODULE, [protected, named_table]),
+    ets:new(?MODULE, [protected, read_concurrency, named_table]),
 
     {ok, schedule_broadcast(#state{})}.
 
@@ -151,7 +151,11 @@ handle_call({node_status, Status}, _From, State) ->
              {Status, Status} -> %% noop
                  State
     end,
-    {reply, ok, update_avsn(S2)}.
+    {reply, ok, update_avsn(S2)};
+handle_call(services, _From, State) ->
+    Res = [Service || {{by_service, Service}, Nds} <- ets:tab2list(?MODULE),
+                      Nds /= []],
+    {reply, lists:sort(Res), State}.
 
 
 handle_cast({ring_update, R}, State) ->
@@ -313,8 +317,8 @@ node_down(Node, State) ->
 
 
 node_delete(Node) ->
-    Services = services(Node),
-    ets:match_delete(?MODULE, {{Node, '_'}, '_'}),
+    Services = internal_get_services(Node),
+    [internal_delete(Node, Service) || Service <- Services],
     ets:delete(?MODULE, Node),
     Services.
 
@@ -323,16 +327,15 @@ node_update(Node, Services) ->
     %% know and determine what's changed (if anything).
     Now = riak_core_util:moment(),
     NewStatus = ordsets:from_list(Services),
-    OldStatus = ordsets:from_list(services(Node)),
+    OldStatus = ordsets:from_list(internal_get_services(Node)),
 
     Added     = ordsets:subtract(NewStatus, OldStatus),
     Deleted   = ordsets:subtract(OldStatus, NewStatus),
-    Unchanged = ordsets:intersection(NewStatus, OldStatus),
 
     %% Update ets table with changes; make sure to touch unchanged
     %% service with latest timestamp
-    [ets:delete(?MODULE, {Node, Ss}) || Ss <- Deleted],
-    ets:insert(?MODULE, [{{Node, Ss}, Now} || Ss <- Added ++ Unchanged]),
+    [internal_delete(Node, Ss) || Ss <- Deleted],
+    [internal_insert(Node, Ss) || Ss <- Added],
 
     %% Keep track of the last time we recv'd data from a node
     ets:insert(?MODULE, {Node, Now}),
@@ -392,3 +395,31 @@ peers_update(NewPeers, State) ->
     %% Broadcast our current status to new peers
     broadcast(Added, State#state { peers = NewPeers }).
 
+internal_delete(Node, Service) ->
+    Svcs = internal_get_services(Node),
+    ets:insert(?MODULE, {{by_node, Node}, Svcs -- [Service]}),
+    Nds = internal_get_nodes(Service),
+    ets:insert(?MODULE, {{by_service, Service}, Nds -- [Node]}).
+
+internal_insert(Node, Service) ->
+    %% Remove Service & node before adding: avoid accidental duplicates
+    Svcs = internal_get_services(Node) -- [Service],
+    ets:insert(?MODULE, {{by_node, Node}, [Service|Svcs]}),
+    Nds = internal_get_nodes(Service) -- [Node],
+    ets:insert(?MODULE, {{by_service, Service}, [Node|Nds]}).
+
+internal_get_services(Node) ->
+    case ets:lookup(?MODULE, {by_node, Node}) of
+        [{{by_node, Node}, Ss}] ->
+            Ss;
+        [] ->
+            []
+    end.
+
+internal_get_nodes(Service) ->
+    case ets:lookup(?MODULE, {by_service, Service}) of
+        [{{by_service, Service}, Ns}] ->
+            Ns;
+        [] ->
+            []
+    end.
