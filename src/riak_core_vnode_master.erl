@@ -33,7 +33,9 @@
          sync_spawn_command/3, make_request/3,
          make_coverage_request/4,
          unregister_vnode/2, unregister_vnode/3,
-         all_nodes/1, reg_name/1, all_index_pid/1]).
+         all_nodes/1, reg_name/1, all_index_pid/1,
+         %% field debugging
+         get_tab/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 -record(idxrec, {idx, pid, monref}).
@@ -152,6 +154,10 @@ all_index_pid(VNodeMod) ->
     RegName = reg_name(VNodeMod),
     gen_server:call(RegName, all_index_pid, infinity).
 
+get_tab(VNodeMod) ->
+    RegName = reg_name(VNodeMod),
+    gen_server:call(RegName, get_tab, infinity).
+
 %% @private
 init([VNodeMod, LegacyMod, RegName]) ->
     %% Get the current list of vnodes running in the supervisor. We use this
@@ -159,7 +165,7 @@ init([VNodeMod, LegacyMod, RegName]) ->
     %% vnode.
     VnodePids = [Pid || {_, Pid, worker, _}
                             <- supervisor:which_children(riak_core_vnode_sup)],
-    IdxTable = ets:new(RegName, [{keypos, 2}]),
+    IdxTable = ets:new(RegName, [{keypos, 2}, private]),
 
     %% In case this the vnode master is being restarted, scan the existing
     %% vnode children and work out which module and index they are responsible
@@ -229,6 +235,8 @@ handle_call(all_index_pid, _From, State) ->
     Reply = [list_to_tuple(L) 
              || L <- ets:match(State#state.idxtab, {idxrec, '$1', '$2', '_'})],
     {reply, Reply, State};
+handle_call(get_tab, _From, State) ->
+    {reply, ets:tab2list(State#state.idxtab), State};
 handle_call({Partition, get_vnode}, _From, State) ->
     Pid = get_vnode(Partition, State),
     {reply, {ok, Pid}, State};
@@ -253,9 +261,9 @@ code_change(_OldVsn, State, _Extra) ->  {ok, State}.
 
 %% @private
 idx2vnode(Idx, _State=#state{idxtab=T}) ->
-    case ets:match(T, {idxrec, Idx, '$1', '_'}) of
-        [[VNodePid]] -> VNodePid;
-        [] -> no_match
+    case ets:lookup(T, Idx) of
+        [I] -> I#idxrec.pid;
+        []  -> no_match
     end.
 
 %% @private
