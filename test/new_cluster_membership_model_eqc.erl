@@ -134,9 +134,9 @@ handoff_all(State) ->
     State3.
 
 do_maybe(State, Cmd, Args) ->
-    case precondition(State, {call,join_eqc,Cmd,Args}) of
+    case precondition(State, {call,?MODULE,Cmd,Args}) of
         true ->
-            run(State, {call,join_eqc,Cmd,Args});
+            run(State, {call,?MODULE,Cmd,Args});
         false ->
             State
     end.
@@ -155,9 +155,9 @@ test_ring_convergence(State) ->
     end.
 
 do_gossip(State, N2, N1) ->
-    case precondition(State, {call,join_eqc,random_gossip,[N2,N1]}) of
+    case precondition(State, {call,?MODULE,random_gossip,[N2,N1]}) of
         true ->
-            {true, run(State, {call,join_eqc,random_gossip,[N2,N1]})};
+            {true, run(State, {call,?MODULE,random_gossip,[N2,N1]})};
         false ->
             {false, State}
     end.
@@ -539,10 +539,11 @@ postcondition(State, Cmd, _) ->
                     T = [%%check_members(State2),
                          %% TODO: Update check_states to work with rejoining
                          %%check_states(State2),
+                         check_transfers(State2),
                          check_rvsn(State2),
                          check_sorted_members(State2)],
                     %% ?debugFmt("T: ~p~n", [T]),
-                    lists:all(fun(X) -> X end, T)
+                    lists:all(fun(X) -> X =:= true end, T)
             end
     end.
 
@@ -551,6 +552,16 @@ postcondition(State, Cmd, _) ->
 
 %% postcondition(_,_,_) ->
 %%     true.
+
+%% Ensure there are no transfer loops scheduled
+check_transfers(#state{nstates=NStates}) ->
+    dict:fold(fun(_, NState, Acc) ->
+                      Acc andalso check_transfers(NState)
+              end, true, NStates);
+check_transfers(#nstate{chstate=CState}) ->
+    L = [Idx || {Idx, Owner, NextOwner, _, _} <- CState?CHSTATE.next,
+                Owner =:= NextOwner],
+    L =:= [].
 
 check_rvsn(State) ->
     dict:map(fun(_, NState) ->
@@ -1355,7 +1366,7 @@ ring_ready(CState0) ->
     Seen = CState?CHSTATE.seen,
     %% TODO: Should we add joining here?
     %%Members = get_members(CState?CHSTATE.members, [joining, valid, leaving, exiting]),
-    Members = get_members(CState?CHSTATE.members, [valid, leaving]),
+    Members = get_members(CState?CHSTATE.members, [valid, leaving, exiting]),
     VClock = CState?CHSTATE.vclock,
     R = [begin
              case orddict:find(Node, Seen) of
@@ -1454,7 +1465,7 @@ maybe_remove_exiting(State, Node, CState) ->
     Claimant = CState?CHSTATE.claimant,
     case Claimant of
         Node ->
-            Exiting = get_members(CState?CHSTATE.members, [exiting]),
+            Exiting = get_members(CState?CHSTATE.members, [exiting]) -- [Node],
             %%io:format("Claimant ~p removing exiting ~p~n", [Node, Exiting]),
             Changed = (Exiting /= []),
             {State2, CState2} =
@@ -1608,7 +1619,7 @@ handle_down_nodes(CState, Next) ->
                  NextDown = lists:member(NO, DownMembers),
                  case (OwnerLeaving and NextDown) of
                      true ->
-                         Active = riak_core_ring:active_members(CState),
+                         Active = riak_core_ring:active_members(CState) -- [O],
                          RNode = lists:nth(random:uniform(length(Active)),
                                            Active),
                          {Idx, O, RNode, Mods, Status};
@@ -1942,7 +1953,22 @@ run_cmds(RingSize, Cmds) ->
 
 %% TODO: Re-add manual tests.
 manual_test_list() ->
-    [].
+    [fun test_down_reassign/0].
+
+test_down_reassign() ->    
+    run_cmds([{set,{var,1},
+               {call,new_cluster_membership_model_eqc,initial_cluster,
+                [{[2,3,5],[0,1,4]},[0,1,2,3,4,5,6,7],{1,1,1}]}},
+              {set,{var,2},{call,new_cluster_membership_model_eqc,down,[2,3]}},
+              {set,{var,4},{call,new_cluster_membership_model_eqc,leave,[3]}},
+              {set,{var,5},{call,new_cluster_membership_model_eqc,join,[1,5]}},
+              {set,{var,6},{call,new_cluster_membership_model_eqc,join,[0,3]}},
+              {set,{var,9},{call,new_cluster_membership_model_eqc,random_gossip,[3,2]}},
+              {set,{var,20},{call,new_cluster_membership_model_eqc,random_gossip,[5,2]}},
+              {set,{var,30},{call,new_cluster_membership_model_eqc,random_gossip,[1,5]}},
+              {set,{var,56},{call,new_cluster_membership_model_eqc,random_gossip,[3,1]}},
+              {set,{var,69},{call,new_cluster_membership_model_eqc,down,[0,3]}}]),
+    ok.
 
 -endif.
 -endif.

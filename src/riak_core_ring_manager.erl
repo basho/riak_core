@@ -258,8 +258,7 @@ handle_call({ring_trans, Fun, Args}, _From, State=#state{raw_ring=Ring}) ->
                                    [Other]),
             {reply, not_changed, State}
     end;
-handle_call({set_cluster_name, Name}, _From, State) ->
-    {ok, Ring} = get_my_ring(),
+handle_call({set_cluster_name, Name}, _From, State=#state{raw_ring=Ring}) ->
     NewRing = riak_core_ring:set_cluster_name(Ring, Name),
     prune_write_notify_ring(NewRing),
     {reply, ok, State#state{raw_ring=NewRing}}.
@@ -273,7 +272,7 @@ handle_cast({refresh_my_ring, ClusterName}, State) ->
         ClusterName ->
             handle_cast(refresh_my_ring, State);
         _ ->
-            {noreply, ok, State}
+            {noreply, State}
     end;
 handle_cast(refresh_my_ring, State) ->
     {_, _, State2} = handle_call(refresh_my_ring, undefined, State),
@@ -282,8 +281,7 @@ handle_cast(refresh_my_ring, State) ->
 handle_cast(write_ringfile, test) ->
     {noreply,test};
 
-handle_cast(write_ringfile, State) ->
-    {ok, Ring} = get_my_ring(),
+handle_cast(write_ringfile, State=#state{raw_ring=Ring}) ->
     do_write_ringfile(Ring),
     {noreply,State}.
 
@@ -371,11 +369,15 @@ set_ring_global(Ring) ->
                             AccRing)
                 end, Ring, Buckets)
     end,
+    %% Mark ring as tainted to check if it is ever leaked over gossip or
+    %% relied upon for any non-local ring operations.
+    TaintedRing = riak_core_ring:set_tainted(FixedRing),
     %% store the modified ring in mochiglobal
-    mochiglobal:put(?RING_KEY, FixedRing).
+    mochiglobal:put(?RING_KEY, TaintedRing).
 
 %% Persist a new ring file, set the global value and notify any listeners
 prune_write_notify_ring(Ring) ->
+    riak_core_ring:check_tainted(Ring, "Error: Persisting tainted ring"),
     riak_core_ring_manager:prune_ringfiles(),
     do_write_ringfile(Ring),
     set_ring_global(Ring),
@@ -409,13 +411,14 @@ set_ring_global_test() ->
     application:set_env(riak_core,ring_creation_size, 4),
     Ring = riak_core_ring:fresh(),
     set_ring_global(Ring),
-    ?assertEqual(Ring, mochiglobal:get(?RING_KEY)).
+    ?assert(riak_core_ring:nearly_equal(Ring, mochiglobal:get(?RING_KEY))).
 
 set_my_ring_test() ->
     application:set_env(riak_core,ring_creation_size, 4),
     Ring = riak_core_ring:fresh(),
     set_ring_global(Ring),
-    ?assertEqual({ok, Ring}, get_my_ring()).
+    {ok, MyRing} = get_my_ring(),
+    ?assert(riak_core_ring:nearly_equal(Ring, MyRing)).
 
 refresh_my_ring_test() ->
     Core_Settings = [{ring_creation_size, 4},

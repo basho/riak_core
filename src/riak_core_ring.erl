@@ -58,8 +58,12 @@
          legacy_reconcile/2,
          upgrade/1,
          downgrade/2,
+         set_tainted/1,
+         check_tainted/2,
+         nearly_equal/2,
          claimant/1,
          member_status/2,
+         pretty_print/2,
          all_member_status/1,
          update_member_meta/5,
          get_member_meta/3,
@@ -195,6 +199,36 @@ downgrade(1,?CHSTATE{nodename=Node,
              meta=Meta};
 downgrade(2,State=?CHSTATE{}) ->
     State.
+
+set_tainted(Ring) ->
+    update_meta(riak_core_ring_tainted, true, Ring).
+
+check_tainted(#chstate{}, _Msg) ->
+    %% Legacy ring is never tainted
+    ok;
+check_tainted(Ring=?CHSTATE{}, Msg) ->
+    Exit = app_helper:get_env(riak_core, exit_when_tainted, false),
+    case {get_meta(riak_core_ring_tainted, Ring), Exit} of
+        {{ok, true}, true} ->
+            riak_core:stop(Msg),
+            ok;
+        {{ok, true}, false} ->
+            lager:error(Msg),
+            ok;
+        _ ->
+            ok
+    end.
+
+%% @doc Verify that the two rings are identical expect that metadata can
+%%      differ and RingB's vclock is allowed to be equal or a direct
+%%      descendant of RingA's vclock. This matches the changes that the
+%%      fix-up logic may make to a ring.
+nearly_equal(RingA, RingB) ->
+    TestVC = vclock:descends(RingB?CHSTATE.vclock, RingA?CHSTATE.vclock),
+    RingA2 = RingA?CHSTATE{vclock=[], meta=[]},
+    RingB2 = RingB?CHSTATE{vclock=[], meta=[]},
+    TestRing = (RingA2 =:= RingB2),
+    TestVC and TestRing.
 
 %% @doc Produce a list of all nodes that are members of the cluster
 -spec all_members(State :: chstate()) -> [Node :: term()].
@@ -363,6 +397,12 @@ random_other_active_node(State) ->
 -spec reconcile(ExternState :: chstate(), MyState :: chstate()) ->
         {no_change, chstate()} | {new_ring, chstate()}.
 reconcile(ExternState, MyState) ->
+    check_tainted(ExternState,
+                  "Error: riak_core_ring/reconcile :: "
+                  "reconciling tainted external ring"),
+    check_tainted(MyState, 
+                  "Error: riak_core_ring/reconcile :: "
+                  "reconciling tainted internal ring"),
     case internal_reconcile(MyState, ExternState) of
         {false, State} ->
             {no_change, State};
@@ -593,10 +633,12 @@ next_owner(State, Idx, Mod) ->
 %% @doc Returns true if all cluster members have seen the current ring.
 -spec ring_ready(State :: chstate()) -> boolean().
 ring_ready(State0) ->
+    check_tainted(State0,
+                  "Error: riak_core_ring/ring_ready called on tainted ring"),
     Owner = owner_node(State0),
     State = update_seen(Owner, State0),
     Seen = State?CHSTATE.seen,
-    Members = get_members(State?CHSTATE.members, [valid, leaving]),
+    Members = get_members(State?CHSTATE.members, [valid, leaving, exiting]),
     VClock = State?CHSTATE.vclock,
     R = [begin
              case orddict:find(Node, Seen) of
@@ -617,7 +659,7 @@ ring_ready_info(State0) ->
     Owner = owner_node(State0),
     State = update_seen(Owner, State0),
     Seen = State?CHSTATE.seen,
-    Members = get_members(State?CHSTATE.members, [valid, leaving]),
+    Members = get_members(State?CHSTATE.members, [valid, leaving, exiting]),
     RecentVC =
         orddict:fold(fun(_, VC, Recent) ->
                              case vclock:descends(VC, Recent) of
@@ -641,7 +683,61 @@ handoff_complete(State, Idx, Mod) ->
     transfer_complete(State, Idx, Mod).
 
 ring_changed(Node, State) ->
+    check_tainted(State,
+                  "Error: riak_core_ring/ring_changed called on tainted ring"),
     internal_ring_changed(Node, State).
+
+pretty_print(Ring, Opts) ->
+    OptNumeric = lists:member(numeric, Opts),
+    OptLegend = lists:member(legend, Opts),
+    Out = proplists:get_value(out, Opts, standard_io),
+    TargetN = proplists:get_value(target_n, Opts,
+                                  app_helper:get_env(riak_core, target_n_val)),
+
+    Owners = riak_core_ring:all_members(Ring),
+    Indices = riak_core_ring:all_owners(Ring),
+    RingSize = length(Indices),
+    Numeric = OptNumeric or (length(Owners) > 26),
+    case Numeric of
+        true ->
+            Ids = [integer_to_list(N) || N <- lists:seq(1, length(Owners))];
+        false ->
+            Ids = [[Letter] || Letter <- lists:seq(97, 96+length(Owners))]
+    end,
+    Names = lists:zip(Owners, Ids),
+    case OptLegend of
+        true ->
+            io:format(Out, "~36..=s Nodes ~36..=s~n", ["", ""]),
+            [begin
+                 NodeIndices = [Idx || {Idx,Owner} <- Indices,
+                                       Owner =:= Node],
+                 RingPercent = length(NodeIndices) * 100 / RingSize,
+                 io:format(Out, "Node ~s: ~5.1f% ~s~n",
+                           [Name, RingPercent, Node])
+             end || {Node, Name} <- Names],
+            io:format(Out, "~36..=s Ring ~37..=s~n", ["", ""]);
+        false ->
+            ok
+    end,
+
+    case Numeric of
+        true ->
+            Ownership =
+                [orddict:fetch(Owner, Names) || {_Idx, Owner} <- Indices],
+            io:format(Out, "~p~n", [Ownership]);
+        false ->
+            lists:foldl(fun({_, Owner}, N) ->
+                                Name = orddict:fetch(Owner, Names),
+                                case N rem TargetN of
+                                    0 ->
+                                        io:format(Out, "~s|", [[Name]]);
+                                    _ ->
+                                        io:format(Out, "~s", [[Name]])
+                                end,
+                                N+1
+                        end, 1, Indices),
+            io:format(Out, "~n", [])
+    end.
 
 %% ===================================================================
 %% Legacy reconciliation
@@ -836,7 +932,8 @@ maybe_remove_exiting(Node, CState) ->
     Claimant = CState?CHSTATE.claimant,
     case Claimant of
         Node ->
-            Exiting = get_members(CState?CHSTATE.members, [exiting]),
+            %% Change exiting nodes to invalid, skipping this node.
+            Exiting = get_members(CState?CHSTATE.members, [exiting]) -- [Node],
             Changed = (Exiting /= []),
             CState2 =
                 lists:foldl(fun(ENode, CState0) ->
@@ -895,7 +992,9 @@ update_ring(CNode, CState) ->
 
     %% Rebalance the ring as necessary
     Next3 = rebalance_ring(CNode, CState4),
-
+    lager:debug("Pending ownership transfers: ~b~n",
+                [length(pending_changes(CState4))]),
+    
     %% Remove transfers to/from down nodes
     Next4 = handle_down_nodes(CState4, Next3),
 
@@ -988,7 +1087,7 @@ handle_down_nodes(CState, Next) ->
                  NextDown = lists:member(NO, DownMembers),
                  case (OwnerLeaving and NextDown) of
                      true ->
-                         Active = riak_core_ring:active_members(CState),
+                         Active = riak_core_ring:active_members(CState) -- [O],
                          RNode = lists:nth(random:uniform(length(Active)),
                                            Active),
                          {Idx, O, RNode, Mods, Status};

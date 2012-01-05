@@ -3,7 +3,7 @@
 {application, riak_core,
 [
   {description, "Riak Core"},
-  {vsn, "1.0.0"},
+  {vsn, "1.0.2"},
   {modules, [
              app_helper,
              bloom,
@@ -21,6 +21,7 @@
              riak_core_bucket,
              riak_core_cinfo_core,
              riak_core_claim,
+             riak_core_new_claim,
              riak_core_config,
              riak_core_console,
              riak_core_coverage_fsm,
@@ -59,6 +60,7 @@
              riak_core_wm_urlmap,
              slide,
              spiraltime,
+             supervisor_pre_r14b04,
              vclock
             ]},
   {registered, []},
@@ -98,7 +100,7 @@
          {vnode_inactivity_timeout, 60000},
          
          %% Number of VNodes allowed to do handoff concurrently.
-         {handoff_concurrency, 4},
+         {handoff_concurrency, 1},
 
          %% Disable Nagle on HTTP sockets
          {disable_http_nagle, false},

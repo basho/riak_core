@@ -47,7 +47,11 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--record(state, {gossip_versions}).
+%% Set a high default limit to emulate having no limit at all.
+-define(DEFAULT_LIMIT, {1000000, 60000}).
+
+-record(state, {gossip_versions,
+                gossip_tokens}).
 
 %% ===================================================================
 %% Public API
@@ -77,7 +81,7 @@ stop() ->
     gen_server:cast(?MODULE, stop).
 
 finish_handoff(Idx, Prev, New, Mod) ->
-    gen_server:call(?MODULE, {finish_handoff, Idx, Prev, New, Mod}).
+    gen_server:call(?MODULE, {finish_handoff, Idx, Prev, New, Mod}, infinity).
 
 rejoin(Node, Ring) ->
     gen_server:cast({?MODULE, Node}, {rejoin, Ring}).
@@ -134,9 +138,12 @@ random_recursive_gossip(Ring) ->
 %% @private
 init(_State) ->
     schedule_next_gossip(),
+    schedule_next_reset(),
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
+    {Tokens, _} = app_helper:get_env(riak_core, gossip_limit, ?DEFAULT_LIMIT),
     State = update_known_versions(Ring,
-                                  #state{gossip_versions=orddict:new()}),
+                                  #state{gossip_versions=orddict:new(),
+                                         gossip_tokens=Tokens}),
     {ok, State}.
 
 
@@ -262,7 +269,12 @@ rpc_gossip_version(Ring, Node) ->
     end.
 
 %% @private
+handle_cast({send_ring_to, _Node}, State=#state{gossip_tokens=0}) ->
+    %% Out of gossip tokens, ignore the send request
+    {noreply, State};
+
 handle_cast({send_ring_to, Node}, State) ->
+    lager:debug("Sending ring to ~p~n", [Node]),
     {ok, MyRing0} = riak_core_ring_manager:get_raw_ring(),
     MyRing = update_gossip_version(MyRing0),
     GossipVsn = case gossip_version() of
@@ -272,8 +284,12 @@ handle_cast({send_ring_to, Node}, State) ->
                         rpc_gossip_version(MyRing, Node)
                 end,
     RingOut = riak_core_ring:downgrade(GossipVsn, MyRing),
+    riak_core_ring:check_tainted(RingOut,
+                                 "Error: riak_core_gossip/send_ring_to :: "
+                                 "Sending tainted ring over gossip"),
     gen_server:cast({?MODULE, Node}, {reconcile_ring, RingOut}),
-    {noreply, State};
+    Tokens = State#state.gossip_tokens - 1,
+    {noreply, State#state{gossip_tokens=Tokens}};
 
 handle_cast({distribute_ring, Ring}, State) ->
     RingOut = case check_legacy_gossip(Ring, State) of
@@ -283,6 +299,9 @@ handle_cast({distribute_ring, Ring}, State) ->
                       Ring
               end,
     Nodes = riak_core_ring:active_members(Ring),
+    riak_core_ring:check_tainted(RingOut,
+                                 "Error: riak_core_gossip/distribute_ring :: "
+                                 "Sending tainted ring over gossip"),
     gen_server:abcast(Nodes, ?MODULE, {reconcile_ring, RingOut}),
     {noreply, State};
 
@@ -302,6 +321,11 @@ handle_cast({reconcile_ring, RingIn}, State) ->
             riak_core_ring_manager:ring_trans(fun reconcile/2, [OtherRing]),
             {noreply, State2}
     end;
+
+handle_cast(reset_tokens, State) ->
+    schedule_next_reset(),
+    {Tokens, _} = app_helper:get_env(riak_core, gossip_limit, ?DEFAULT_LIMIT),
+    {noreply, State#state{gossip_tokens=Tokens}};
 
 handle_cast(gossip_ring, State) ->
     % First, schedule the next round of gossip...
@@ -330,7 +354,7 @@ handle_cast({rejoin, RingIn}, State) ->
         true ->
             Legacy = check_legacy_gossip(Ring, State),
             OtherNode = riak_core_ring:owner_node(OtherRing),
-            riak_core:join(Legacy, node(), OtherNode),
+            riak_core:join(Legacy, node(), OtherNode, true),
             {noreply, State};
         false ->
             {noreply, State}
@@ -359,6 +383,10 @@ schedule_next_gossip() ->
     MaxInterval = app_helper:get_env(riak_core, gossip_interval),
     Interval = random:uniform(MaxInterval),
     timer:apply_after(Interval, gen_server, cast, [?MODULE, gossip_ring]).
+
+schedule_next_reset() ->
+    {_, Reset} = app_helper:get_env(riak_core, gossip_limit, ?DEFAULT_LIMIT),
+    timer:apply_after(Reset, gen_server, cast, [?MODULE, reset_tokens]).
 
 reconcile(Ring0, [OtherRing0]) ->
     %% Due to rolling upgrades and legacy gossip, a ring's cluster name

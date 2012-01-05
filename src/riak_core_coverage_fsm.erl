@@ -230,7 +230,7 @@ waiting_results({{ReqId, VNode}, Results},
             UpdatedVNodes = lists:delete(VNode, CoverageVNodes),
             case UpdatedVNodes of
                 [] ->
-                    Mod:finish(clean, ModState);
+                    Mod:finish(clean, UpdModState);
                 _ ->
                     UpdStateData =
                         StateData#state{coverage_vnodes=UpdatedVNodes,
@@ -238,7 +238,8 @@ waiting_results({{ReqId, VNode}, Results},
                     {next_state, waiting_results, UpdStateData, Timeout}
             end;
         Error ->
-            Mod:finish(Error, ModState)
+            Mod:finish(Error, ModState),
+            {stop, Error, StateData}
     end;
 waiting_results(timeout, #state{mod=Mod, mod_state=ModState}) ->
     Mod:finish({error, timeout}, ModState).
