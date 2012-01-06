@@ -117,7 +117,8 @@ wants_claim_v1(Ring0, Node) ->
 wants_claim_v2(Ring) ->
     wants_claim_v2(Ring, node()).
 
-wants_claim_v2(Ring, Node) ->
+wants_claim_v2(RingIn, Node) ->
+    Ring = riak_core_ring:upgrade(RingIn),
     Active = riak_core_ring:claiming_members(Ring),
     Owners = riak_core_ring:all_owners(Ring),
     Counts = get_counts(Active, Owners),
@@ -155,7 +156,8 @@ choose_claim_v1(Ring0, Node) ->
 choose_claim_v2(Ring) ->
     choose_claim_v2(Ring, node()).
 
-choose_claim_v2(Ring, Node) ->
+choose_claim_v2(RingIn, Node) ->
+    Ring = riak_core_ring:upgrade(RingIn),
     Active = riak_core_ring:claiming_members(Ring),
     Owners = riak_core_ring:all_owners(Ring),
     Counts = get_counts(Active, Owners),
