@@ -99,7 +99,7 @@ init([]) ->
     net_kernel:monitor_nodes(true),
 
     %% Setup ETS table to track node status
-    ets:new(?MODULE, [protected, read_concurrency, named_table]),
+    ets:new(?MODULE, [protected, {read_concurrency, true}, named_table]),
 
     {ok, schedule_broadcast(#state{})}.
 
