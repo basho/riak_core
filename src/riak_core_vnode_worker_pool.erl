@@ -54,15 +54,14 @@ init([WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps]) ->
     {ok, Pid} = poolboy:start_link([{worker_module, riak_core_vnode_worker},
             {worker_args, [VNodeIndex, WorkerArgs, WorkerProps]},
             {worker_callback_mod, WorkerMod},
-            {size, PoolSize}, {max_overflow, 0},
-            {checkout_blocks, false}]),
+            {size, PoolSize}, {max_overflow, 0}]),
     {ok, ready, #state{pool=Pid}}.
 
 ready(_Event, _From, State) ->
     {reply, ok, ready, State}.
 
 ready({work, Work, From} = Msg, #state{pool=Pool, queue=Q, monitors=Monitors} = State) ->
-    case poolboy:checkout(Pool) of
+    case poolboy:checkout(Pool, false) of
         full ->
             {next_state, queueing, State#state{queue=queue:in(Msg, Q)}};
         Pid when is_pid(Pid) ->
@@ -103,7 +102,7 @@ handle_event({checkin, Worker}, _, #state{pool = Pool, queue=Q, monitors=Monitor
     Monitors = lists:keydelete(Worker, 1, Monitors0),
     case queue:out(Q) of
         {{value, {work, Work, From}}, Rem} ->
-            case poolboy:checkout(Pool) of
+            case poolboy:checkout(Pool, false) of
                 full ->
                     {next_state, queueing, State#state{queue=Q,
                             monitors=Monitors}};
