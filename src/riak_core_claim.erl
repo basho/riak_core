@@ -81,7 +81,12 @@ default_choose_claim(Ring) ->
     default_choose_claim(Ring, node()).
 
 default_choose_claim(Ring, Node) ->
-    choose_claim_v2(Ring, Node).
+    case riak_core_ring:legacy_ring(Ring) of
+        true ->
+            choose_claim_v1(Ring, Node);
+        false ->
+            choose_claim_v2(Ring, Node)
+    end.
 
 %% @spec default_wants_claim(riak_core_ring()) -> {yes, integer()} | no
 %% @doc Want a partition if we currently have less than floor(ringsize/nodes).
@@ -89,7 +94,12 @@ default_wants_claim(Ring) ->
     default_wants_claim(Ring, node()).
 
 default_wants_claim(Ring, Node) ->
-    wants_claim_v2(Ring, Node).
+    case riak_core_ring:legacy_ring(Ring) of
+        true ->
+            wants_claim_v1(Ring, Node);
+        false ->
+            wants_claim_v2(Ring, Node)
+    end.
 
 %% @deprecated
 wants_claim_v1(Ring) ->
@@ -117,8 +127,7 @@ wants_claim_v1(Ring0, Node) ->
 wants_claim_v2(Ring) ->
     wants_claim_v2(Ring, node()).
 
-wants_claim_v2(RingIn, Node) ->
-    Ring = riak_core_ring:upgrade(RingIn),
+wants_claim_v2(Ring, Node) ->
     Active = riak_core_ring:claiming_members(Ring),
     Owners = riak_core_ring:all_owners(Ring),
     Counts = get_counts(Active, Owners),
@@ -156,8 +165,7 @@ choose_claim_v1(Ring0, Node) ->
 choose_claim_v2(Ring) ->
     choose_claim_v2(Ring, node()).
 
-choose_claim_v2(RingIn, Node) ->
-    Ring = riak_core_ring:upgrade(RingIn),
+choose_claim_v2(Ring, Node) ->
     Active = riak_core_ring:claiming_members(Ring),
     Owners = riak_core_ring:all_owners(Ring),
     Counts = get_counts(Active, Owners),
