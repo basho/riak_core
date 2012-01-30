@@ -155,7 +155,7 @@ private_dir() ->
         undefined ->
             Root = case application:get_env(riak_core, platform_data_dir) of
                        undefined -> ?DIR;
-                       X -> filename:join([X, "slide-data"])
+                       {ok, X} -> filename:join([X, "slide-data"])
                    end,
             filename:join([Root, os:getpid()]);
         {ok, Dir} ->
