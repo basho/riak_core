@@ -153,7 +153,11 @@ sum(#slide{dir=Dir}, Moment, Seconds) ->
 private_dir() ->
     case application:get_env(riak_core, slide_private_dir) of
         undefined ->
-            lists:flatten(io_lib:format("~s/~s", [?DIR, os:getpid()]));
+            Root = case application:get_env(riak_core, platform_data_dir) of
+                       undefined -> ?DIR;
+                       {ok, X} -> filename:join([X, "slide-data"])
+                   end,
+            filename:join([Root, os:getpid()]);
         {ok, Dir} ->
             Dir
     end.
