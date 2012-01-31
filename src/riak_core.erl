@@ -321,7 +321,8 @@ register_mod(App, Module, Type) when is_atom(Module), is_atom(Type) ->
         undefined ->
             application:set_env(riak_core, Type, [{App,Module}]);
         {ok, Mods} ->
-            application:set_env(riak_core, Type, [{App,Module}|Mods])
+            application:set_env(riak_core, Type,
+                lists:usort([{App,Module}|Mods]))
     end.
 
 %% @spec add_guarded_event_handler(HandlerMod, Handler, Args) -> AddResult
