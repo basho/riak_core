@@ -73,6 +73,7 @@
   {applications, [
                   kernel,
                   stdlib,
+                  lager,
                   sasl,
                   crypto,
                   riak_sysmon,
