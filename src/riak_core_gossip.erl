@@ -41,7 +41,7 @@
           recursive_gossip/1, random_recursive_gossip/1, rejoin/2,
           gossip_version/0, legacy_gossip/0, legacy_gossip/1]).
 
--include_lib("riak_core_ring.hrl").
+-include("riak_core_ring.hrl").
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").

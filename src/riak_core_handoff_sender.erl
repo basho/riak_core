@@ -24,8 +24,8 @@
 
 -module(riak_core_handoff_sender).
 -export([start_link/4, get_handoff_ssl_options/0]).
--include_lib("riak_core_vnode.hrl").
--include_lib("riak_core_handoff.hrl").
+-include("riak_core_vnode.hrl").
+-include("riak_core_handoff.hrl").
 -define(ACK_COUNT, 1000).
 
 start_link(TargetNode, Module, Partition, VnodePid) ->
