@@ -40,8 +40,11 @@
          kill_handoffs/0
         ]).
 
--include_lib("riak_core/include/riak_core_handoff.hrl").
+-include("riak_core_handoff.hrl").
+
+-ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
+-endif.
 
 -type mod()   :: atom().
 -type index() :: integer().

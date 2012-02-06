@@ -38,7 +38,7 @@
          terminate/2, code_change/3]).
 -export ([distribute_ring/1, send_ring/1, send_ring/2, remove_from_cluster/1]).
 
--include_lib("riak_core_ring.hrl").
+-include("riak_core_ring.hrl").
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").

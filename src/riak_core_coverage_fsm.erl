@@ -63,7 +63,7 @@
 -module(riak_core_coverage_fsm).
 -author('Kelly McLaughlin <kelly@basho.com>').
 
--include_lib("riak_core_vnode.hrl").
+-include("riak_core_vnode.hrl").
 
 -behaviour(gen_fsm).
 
