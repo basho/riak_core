@@ -120,7 +120,7 @@ update(S0=#slide{oldest=Oldest,dir=Dir,readings_m=RdMoment,readings_fh=FH},
     Reading = if Reading0 < 4000000000 -> Reading0;
                  true                  -> 4000000000
               end,
-    %% 4 bytes len header + 8 bytes ... 
+    %% 4 bytes len header + 8 bytes ...
     Bin = pad_bin(term_to_binary(Reading), 8),
     ok = file:write(S1#slide.readings_fh, [<<8:32>>, Bin]),
     S1.
@@ -408,7 +408,7 @@ mean_test() ->
                   slide:mean(S3, 9, 10)),
     S3b = idle_time_passing(S3, 6, 13),
     S4 = slide:update(S3b, 11, 14),
-    ?assertEqual(23/11, % ignoring first reading, avg = 
+    ?assertEqual(23/11, % ignoring first reading, avg =
                  element(2, slide:mean(S4, 14, 10))),
     S4b = idle_time_passing(S4, 15, 18),
     ?assertEqual(11/10, % shifted window
@@ -417,7 +417,7 @@ mean_test() ->
     S5 = slide:update(S4c, 13, 22),
     ?assertEqual(24/10, % shifted window
                  element(2, slide:mean(S5, 22, 10))).
-    
+
 mean_and_nines_test() ->
     setup_eunit_proc_dict(),
     PushReadings = fun(S, Readings) ->
@@ -446,5 +446,39 @@ mean_and_nines_test() ->
     %% lists:sum([X*100 || X <- lists:seq(11,100)]) / (90+8) -> 5096.9
     ?assertEqual({98, 5096, {5125, 9512, 9918, 10000}},
                  slide:mean_and_nines(S4, 11)).
+
+private_dir_test() ->
+    %% Capture the initial state
+    Pid = os:getpid(),
+    OldSlide = application:get_env(riak_core, slide_private_dir),
+    OldPlatform = application:get_env(riak_core, platform_data_dir),
+
+    %% When slide_private_dir is set, use that.
+    application:set_env(riak_core, slide_private_dir, "foo"),
+    ?assertEqual("foo", private_dir()),
+
+    %% When slide_private_dir is unset, but platform_data_dir is set,
+    %% use a subdirectory of the platform_data_dir.
+    application:unset_env(riak_core, slide_private_dir),
+    application:set_env(riak_core, platform_data_dir, "./data"),
+    ?assertEqual("./data/slide-data/" ++ Pid, private_dir()),
+
+    %% When neither slide_private_dir nor platform_data_dir is set,
+    %% use the hardcoded path.
+    application:unset_env(riak_core, slide_private_dir),
+    application:unset_env(riak_core, platform_data_dir),
+    ?assertEqual(?DIR ++ "/" ++ Pid, private_dir()),
+
+    %% Cleanup after ourselves
+    case OldSlide of
+        {ok, S} ->
+            application:set_env(riak_core, slide_private_dir, S);
+        _ -> ok
+    end,
+    case OldPlatform of
+        {ok, P} ->
+            application:set_env(riak_core, platform_data_dir, P);
+        _ -> ok
+    end.
 
 -endif. %TEST

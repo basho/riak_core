@@ -23,7 +23,7 @@
 %% @doc incoming data handler for TCP-based handoff
 
 -module(riak_core_handoff_receiver).
--include_lib("riak_core_handoff.hrl").
+-include("riak_core_handoff.hrl").
 -behaviour(gen_server2).
 -export([start_link/0,                          % Don't use SSL
          start_link/1,                          % SSL options list, empty=no SSL
