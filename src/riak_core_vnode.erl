@@ -118,23 +118,29 @@ init([Mod, Index, InitialInactivityTimeout, Forward]) ->
     process_flag(trap_exit, true),
     {ModState, Props} = case Mod:init([Index]) of
         {ok, MS} -> {MS, []};
-        {ok, MS, P} -> {MS, P}
+        {ok, MS, P} -> {MS, P};
+        {error, R} -> {error, R}
     end,
-    PoolPid = case lists:keyfind(pool, 1, Props) of
-        {pool, WorkerModule, PoolSize, WorkerArgs} ->
-            lager:debug("starting worker pool ~p with size of ~p~n",
-                [WorkerModule, PoolSize]),
-            {ok, Pid} = riak_core_vnode_worker_pool:start_link(WorkerModule,
-                PoolSize, Index, WorkerArgs, worker_props),
-            Pid;
-        _ -> undefined
-    end,
-    riak_core_handoff_manager:remove_exclusion(Mod, Index),
-    Timeout = app_helper:get_env(riak_core, vnode_inactivity_timeout, ?DEFAULT_TIMEOUT),
-    State = #state{index=Index, mod=Mod, modstate=ModState, forward=Forward,
-                   inactivity_timeout=Timeout, pool_pid=PoolPid},
-    lager:debug("vnode :: ~p/~p :: ~p~n", [Mod, Index, Forward]),
-    {ok, active, State, InitialInactivityTimeout}.
+    case {ModState, Props} of
+        {error, Reason} ->
+            {stop, Reason};
+        _ ->
+            PoolPid = case lists:keyfind(pool, 1, Props) of
+                {pool, WorkerModule, PoolSize, WorkerArgs} ->
+                    lager:debug("starting worker pool ~p with size of ~p~n",
+                        [WorkerModule, PoolSize]),
+                    {ok, Pid} = riak_core_vnode_worker_pool:start_link(WorkerModule,
+                        PoolSize, Index, WorkerArgs, worker_props),
+                    Pid;
+                _ -> undefined
+            end,
+            riak_core_handoff_manager:remove_exclusion(Mod, Index),
+            Timeout = app_helper:get_env(riak_core, vnode_inactivity_timeout, ?DEFAULT_TIMEOUT),
+            State = #state{index=Index, mod=Mod, modstate=ModState, forward=Forward,
+                inactivity_timeout=Timeout, pool_pid=PoolPid},
+            lager:debug("vnode :: ~p/~p :: ~p~n", [Mod, Index, Forward]),
+            {ok, active, State, InitialInactivityTimeout}
+    end.
 
 handoff_error(Vnode, Err, Reason) ->
     gen_fsm:send_event(Vnode, {handoff_error, Err, Reason}).
