@@ -96,9 +96,14 @@ coverage(Msg, {Index, Node}, Keyspaces, Sender, VMaster) ->
 %% return the pid for the vnode handling the request, as `{ok,
 %% VnodePid}'.
 command_return_vnode({Index,Node}, Msg, Sender, VMaster) ->
-    Mod = vmaster_to_vmod(VMaster),
     Req = make_request(Msg, Sender, Index),
-    riak_core_vnode_proxy:command_return_vnode({Mod,Index,Node}, Req).
+    case app_helper:get_env(riak_core, legacy_vnode_routing, true) of
+        true ->
+            gen_server:call({VMaster, Node}, {return_vnode, Req});
+        false ->
+            Mod = vmaster_to_vmod(VMaster),
+            riak_core_vnode_proxy:command_return_vnode({Mod,Index,Node}, Req)
+    end.
 
 %% Send a synchronous command to an individual Index/Node combination.
 %% Will not return until the vnode has returned
@@ -189,6 +194,11 @@ handle_cast(Other, State=#state{legacy=Legacy}) when Legacy =/= undefined ->
             {noreply, State}
     end.
 
+handle_call({return_vnode, Req=?VNODE_REQ{index=Idx}}, _From,
+            State=#state{vnode_mod=Mod}) ->
+    {ok, Pid} =
+        riak_core_vnode_proxy:command_return_vnode({Mod,Idx,node()}, Req),
+    {reply, {ok, Pid}, State};
 handle_call(Req=?VNODE_REQ{index=Idx, sender={server, undefined, undefined}},
             From, State=#state{vnode_mod=Mod}) ->
     Proxy = riak_core_vnode_proxy:reg_name(Mod, Idx),
