@@ -67,7 +67,14 @@
              slide,
              spiraltime,
              supervisor_pre_r14b04,
-             vclock
+             vclock,
+             riak_core_metric,
+             riak_core_metric_sup,
+             riak_core_metric_proc,
+	     riak_core_metric_counter,
+             riak_core_metric_histogram,
+	     riak_core_metric_meter,
+	     riak_core_metric_duration
             ]},
   {registered, []},
   {applications, [
