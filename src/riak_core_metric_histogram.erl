@@ -22,7 +22,7 @@
 
 -behaviour(riak_core_metric).
 
--export([new/0, value/1, value/2,  update/2]).
+-export([new/0, value/2, value/3,  update/2]).
 
 -export([increment/4, minute/7, sum/2]).
 
@@ -35,15 +35,15 @@ minute(App, Stat, Moment, Min, Max, Bins, RoundingMode) ->
 sum(App, Stat) ->
     riak_core_metric_proc:value(App, Stat).
     
-
+%% Behaviour
 new() ->
     slide:fresh().
 
-value(Slide) ->
-    slide:sum(Slide).
+value(Name, Slide) ->
+    {Name, slide:sum(Slide)}.
 
-value({Moment, Min, Max, Bins, RoundingMode}, Slide) ->
-    slide:mean_and_nines(Slide, Moment, Min, Max, Bins, RoundingMode).
+value({Moment, Min, Max, Bins, RoundingMode}, Name,  Slide) ->
+    {Name, slide:mean_and_nines(Slide, Moment, Min, Max, Bins, RoundingMode)}.
 
 update({Reading, Moment}, Slide) ->
     slide:update(Slide, Reading, Moment).

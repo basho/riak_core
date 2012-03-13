@@ -30,7 +30,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--record(state, {mod, mod_state, display, description}).
+-record(state, {name, mod, mod_state, presentation, description}).
 
 %%%===================================================================
 %%% API
@@ -38,7 +38,7 @@
 
 start_link(App, Name, Args) ->
     RegName = riak_core_metric:regname(App, Name),
-    gen_server:start_link({local, RegName}, ?MODULE, Args, []).
+    gen_server:start_link({local, RegName}, ?MODULE, [{name, Name}|Args], []).
 
 update(App, Name, Args) ->
     RegName = riak_core_metric:regname(App, Name),
@@ -47,22 +47,33 @@ update(App, Name, Args) ->
 value(App, Name) ->
     value(App, Name, []).
 
-value(App, Name, Args) ->
+value(App, Name, Presentation) ->
     RegName = riak_core_metric:regname(App, Name),
-    {ok, Val} =    gen_server:call(RegName, {value, Args}),
+    {ok, Val} = gen_server:call(RegName, {value, Presentation}),
     Val.
 
 init(Args) ->
+    Name = proplists:get_value(name, Args),
     {type, ShortName} = proplists:lookup(type, Args), %% Does mod need init args?
     Mod = mod_from_shortname(ShortName),
     Description = proplists:get_value(description, Args),
-    DisplaySpec =  proplists:get_value(display, Args),
+    DisplaySpec =  proplists:get_value(presentation, Args),
     ModState = Mod:new(),
-    {ok, #state{mod=Mod, mod_state=ModState, description=Description, display=DisplaySpec}}.
+    {ok, #state{name=Name, mod=Mod, mod_state=ModState, description=Description, presentation=DisplaySpec}}.
 
-
-handle_call({value, Args}, _From, #state{mod=Mod, mod_state=ModState}=State) ->
-    Stat = Mod:value(Args, ModState),
+handle_call({value, _}, _From, #state{mod=Mod, mod_state=ModState, presentation=undefined, name=Name}=State) ->
+    Stat = Mod:value(Name, ModState),
+    {reply, {ok, Stat}, State};
+handle_call({value, undefined}, _From, #state{mod=Mod, mod_state=ModState, name=Name}=State) ->
+    Stat = Mod:value(Name, ModState),
+    {reply, {ok, Stat}, State};
+handle_call({value, Presentation}, _From, #state{mod=Mod, mod_state=ModState, presentation=DisplaySpecs, name=Name}=State) ->
+    Stat = case proplists:get_value(Presentation, DisplaySpecs) of
+               undefined ->
+                   Mod:value(Name, ModState);
+               DisplaySpec ->
+                   Mod:value(DisplaySpec, Name, ModState)
+           end,
     {reply, {ok, Stat}, State}.
 
 handle_cast({update, Args}, #state{mod=Mod, mod_state=ModState0}=State) ->

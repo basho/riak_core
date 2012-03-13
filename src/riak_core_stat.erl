@@ -34,22 +34,26 @@
 
 -spec stat_specs() -> riak_core_metric:stat_specs().
 stat_specs() ->
-    [{ignored_gossip_total, [{type, counter}]},
-     {rings_reconciled_total, [{type, counter}]},
-     {rejected_handoffs, [{type, counter}]},
-     {gossip_received, [{type, meter}]},
-     {rings_reconciled, [{type, meter}]},
-     {converge_delay, [{type, duration}]},
-     {rebalance_delay, [{type, duration}]}
+    [{ignored_gossip_total, [{type, counter}, {group, gossip}]},
+     {rings_reconciled_total, [{type, counter}, {group, gossip}]},
+     {rejected_handoffs, [{type, counter}, {group, gossip}]},
+     {gossip_received, [{type, meter}, {group, gossip}]},
+     {rings_reconciled, [{type, meter}, {group, gossip}]},
+     {converge_delay, [{type, duration}, {group, gossip},
+                       {presentation,
+                        [{legacy, [min, max, mean, last]}]}]},
+     {rebalance_delay, [{type, duration}, {group, gossip},
+                        {presentation,
+                         [{legacy, [min, max, mean, last]}]}]}
     ].
 
 %% @spec get_stats() -> proplist()
 %% @doc Get the current aggregation of stats.
 get_stats() ->
-    produce_stats().
+    produce_stats(legacy).
 
 get_stats(_Moment) ->
-    produce_stats().
+    produce_stats(legacy).
 
 %% @spec update(term()) -> ok
 %% @doc Update the given stat.
@@ -82,31 +86,18 @@ update(rings_reconciled, Moment) ->
 update(_, _) ->
     ok.
 
-%% @spec produce_stats(state(), integer()) -> proplist()
+%% @spec produce_stats(Presentation : atom()) -> proplist()
 %% @doc Produce a proplist-formatted view of the current aggregation
 %%      of stats.
-produce_stats() ->
-    lists:append([gossip_stats(),
+produce_stats(Presentation) ->
+    lists:append([gossip_stats(Presentation),
                   vnodeq_stats()]).
 
 %% @spec gossip_stats(integer()) -> proplist()
 %% @doc Get the gossip stats proplist.
-gossip_stats() ->
-    CDelay = riak_core_metric_duration:cumulative(?APP, converge_delay),
-    RDelay = riak_core_metric_duration:cumulative(?APP, rebalance_delay),
-    [{ignored_gossip_total, riak_core_metric_counter:total(?APP, ignored_gossip_total)},
-     {rings_reconciled_total, riak_core_metric_counter:total(?APP, rings_reconciled_total)},
-     {rings_reconciled, riak_core_metric_meter:minute(?APP, rings_reconciled)},
-     {gossip_received, riak_core_metric_meter:minute(?APP, gossip_received)},
-     {converge_delay_min,  proplists:get_value(min,  CDelay)},
-     {converge_delay_max,  proplists:get_value(max, CDelay)},
-     {converge_delay_mean, proplists:get_value(mean, CDelay)},
-     {converge_delay_last, proplists:get_value(last, CDelay)},
-     {rebalance_delay_min,  proplists:get_value(min, RDelay)},
-     {rebalance_delay_max,  proplists:get_value(max, RDelay)},
-     {rebalance_delay_mean, proplists:get_value(mean, RDelay)},
-     {rebalance_delay_last, proplists:get_value(last, RDelay)}].
-
+gossip_stats(Presentation) ->
+    GossipStats = [riak_core_metric_proc:value(?APP, Name, Presentation) || {Name, Spec} <- stat_specs(), lists:keyfind(gossip, 2, Spec) /= false],
+    lists:flatten( GossipStats ).
 
 %% Provide aggregate stats for vnode queues.  Compute instantaneously for now,
 %% may need to cache if stats are called heavily (multiple times per seconds)

@@ -23,13 +23,16 @@
 -behaviour(riak_core_metric).
 
 %% Behaviour API
--export([new/0, value/1, value/2, update/2]).
+-export([new/0, value/2, value/3, update/2]).
 
 %% Usage API
--export([increment/3, minute/2]).
+-export([increment/3, increment/4, minute/2]).
+
+increment(App, Stat, Amount, Moment) ->
+    riak_core_metric_proc:update(App, Stat, {Amount, Moment}).
 
 increment(App, Stat, Moment) ->
-    riak_core_metric_proc:update(App, Stat, {1, Moment}).
+    increment(App, Stat, 1, Moment).
 
 minute(App, Stat) ->
     riak_core_metric_proc:value(App, Stat).
@@ -37,12 +40,12 @@ minute(App, Stat) ->
 new() ->
     spiraltime:fresh().
 
-value(Meter) ->
+value(Name, Meter) ->
     {_Moment, Count} = spiraltime:rep_minute(Meter),
-    Count.
+    {Name, Count}.
 
-value(_, Meter) ->
-    value(Meter).
+value(_Spec, Name, Meter) ->
+    value(Name, Meter).
 
 update({Amount, Moment}, Meter) ->
     spiraltime:incr(Amount, Moment, Meter).

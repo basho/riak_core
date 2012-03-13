@@ -23,7 +23,7 @@
 
 -module(riak_core_metric).
 
--export([behaviour_info/1, regname/2]).
+-export([behaviour_info/1, regname/2, join_as_atom/1]).
 
 -export_type([stat_specs/0]).
 
@@ -39,14 +39,28 @@
 
 behaviour_info(callbacks) ->
     [{new, 0},
-     {value, 1},
      {value, 2},
+     {value, 3},
      {update, 2}
     ].
 
 regname(App, Name) when is_atom(App), is_atom(Name) ->
-    AppBin = atom_to_binary(App, latin1),
-    NameBin = atom_to_binary(Name, latin1),
-    AllBin = <<$s,$t,$a,$t,$s,$_, AppBin/binary, $_, NameBin/binary>>,
-    binary_to_atom(AllBin, latin1).
+    join_as_atom(['stats_', App, $_, Name]).
 
+join_as_atom(L) ->
+    join_as_atom(L, <<>>).
+
+join_as_atom([], Acc) ->
+    binary_to_atom(Acc, latin1);
+join_as_atom([Elem|Rest], Acc) ->
+    Bin1 = to_binary(Elem),
+    join_as_atom(Rest, <<Acc/binary, Bin1/binary>>).
+
+to_binary(Atom) when is_atom(Atom) ->
+    atom_to_binary(Atom, latin1);
+to_binary(List) when is_list(List) ->
+    list_to_binary(List);
+to_binary(Bin) when is_binary(Bin) ->
+    Bin;
+to_binary(Int) when is_integer(Int) ->
+    <<Int>>.

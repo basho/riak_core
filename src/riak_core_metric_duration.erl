@@ -23,7 +23,7 @@
 -behaviour(riak_core_metric).
 
 %% Behaviour API
--export([new/0, value/1, value/2,  update/2]).
+-export([new/0, value/2, value/3,  update/2]).
 
 %% Public API
 -export([start/2, stop/2, cumulative/2]).
@@ -47,14 +47,11 @@ cumulative(App, Stat) ->
 new() ->
     #cuml{}.
 
-value(Dur) ->
-    [{min, Dur#cuml.min},
-    {max, Dur#cuml.max},
-    {mean, Dur#cuml.mean},
-    {last, Dur#cuml.last}].
+value(Name, Dur) ->
+    display(Name, to_proplist(Dur), [count, min, max, mean, last], []).
 
-value(_, Dur) ->
-    value(Dur).
+value(Fields, Name, Dur) ->
+    display(Name, to_proplist(Dur), Fields, []).
 
 update(start, Dur) ->
     Dur#cuml{start=erlang:now()};
@@ -64,3 +61,14 @@ update(stop, #cuml{count=N, min=Min, max=Max, mean=Mean, start=T0}) ->
     Max2 = erlang:max(Max, Duration),
     Mean2 = ((N * Mean) + Duration) div (N+1),
     #cuml{count=N+1, min=Min2, max=Max2, mean=Mean2, last=Duration, start=undefined}.
+
+%% internal
+display(_Stat, _Cuml, [], Acc) ->
+    lists:reverse(Acc);
+display(Stat, Cuml, [Field|Rest], Acc) ->
+    Name = riak_core_metric:join_as_atom([Stat, '_', Field]),
+    Value = proplists:get_value(Field, Cuml),
+    display(Stat, Cuml, Rest, [{Name, Value}|Acc]).
+
+to_proplist(Cuml) when is_record(Cuml, cuml) ->
+    lists:zip(record_info(fields, cuml), tl(tuple_to_list(Cuml))).

@@ -22,24 +22,38 @@
 
 -behaviour(riak_core_metric).
 
--export([new/0, value/1, value/2,  update/2]).
+-export([new/0, value/2, value/3,  update/2]).
 
--export([increment/2, total/2]).
+-export([increment/2, increment/3, decrement/2, decrement/3, total/2]).
+
+increment(App, Stat, Amount) ->
+    riak_core_metric_proc:update(App, Stat, Amount).
 
 increment(App, Stat) ->
-    riak_core_metric_proc:update(App, Stat, 1).
+    increment(App, Stat, 1).
+
+decrement(App, Stat, Amount) ->
+    riak_core_metric_proc:update(App, Stat, {decrement, Amount}).
+
+decrement(App, Stat) ->
+    decrement(App, Stat, 1).
 
 total(App, Stat) ->
     riak_core_metric_proc:value(App, Stat).
 
+%% Behaviour
 new() ->
     0.
 
-value(Counter) ->
-    Counter.
+value(Name, Counter) ->
+    {Name, Counter}.
 
-value(_, Counter) ->
-    Counter.
+value(_, Name, Counter) ->
+    value(Name, Counter).
 
+update({decrement, Amount}, 0) when is_integer(Amount) ->
+    0;
+update({decrement, Amount}, Counter) when is_integer(Amount) ->
+    Counter - Amount;
 update(Amount, Counter) when is_integer(Amount) ->
-    Amount + Counter.
+    Counter + Amount.
