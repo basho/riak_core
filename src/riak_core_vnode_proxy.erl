@@ -103,7 +103,7 @@ handle_cast({unregister_vnode, Pid}, State) ->
     %% The pid may not match the vnode_pid in the state, but we must send the
     %% unregister event anyway -- the vnode manager requires it.
     gen_fsm:send_event(Pid, unregistered),
-    catch demonitor(State#state.vnode_mref, [flush]),
+    catch erlang:demonitor(State#state.vnode_mref, [flush]),
     NewState = State#state{vnode_pid=undefined, vnode_mref=undefined},
     {noreply, NewState};
 handle_cast(_Msg, State) ->

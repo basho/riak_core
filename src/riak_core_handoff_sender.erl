@@ -81,7 +81,7 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
          ok = TcpMod:send(Socket, M),
          StartFoldTime = now(),
 
-         MRef = monitor(process, ParentPid),
+         MRef = erlang:monitor(process, ParentPid),
          process_flag(trap_exit, true),
          SPid = self(),
          Req = ?FOLD_REQ{foldfun=fun visit_item/3,
