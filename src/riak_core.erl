@@ -24,6 +24,7 @@
          remove_from_cluster/1]).
 -export([vnode_modules/0]).
 -export([register/1, register/2, bucket_fixups/0, bucket_validators/0]).
+-export([stat_specs/0]).
 
 -export([add_guarded_event_handler/3, add_guarded_event_handler/4]).
 -export([delete_guarded_event_handler/3]).
@@ -273,6 +274,12 @@ bucket_validators() ->
         {ok, Mods} -> Mods
     end.
 
+stat_specs() ->
+    case application:get_env(riak_core, stat_specs) of
+        undefined -> [];
+        {ok, Mods} -> Mods
+    end.
+
 %% Get the application name if not supplied, first by get_application
 %% then by searching by module name
 get_app(undefined, Module) ->
@@ -308,12 +315,18 @@ register(App, [{vnode_module, VNodeMod}|T]) ->
     register(App, T);
 register(App, [{bucket_validator, ValidationMod}|T]) ->
     register_mod(get_app(App, ValidationMod), ValidationMod, bucket_validators),
+    register(App, T);
+register(App, [{stat_specs, StatsMod}|T]) ->
+    register_mod(get_app(App, StatsMod), StatsMod, stat_specs),
     register(App, T).
+
 
 register_mod(App, Module, Type) when is_atom(Module), is_atom(Type) ->
     case Type of
         vnode_modules ->
             riak_core_vnode_proxy_sup:start_proxies(Module);
+        stat_specs ->
+            riak_core_metric_sup:start_stats(App, Module);
         _ ->
             ok
     end,
