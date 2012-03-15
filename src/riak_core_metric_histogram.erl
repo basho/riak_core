@@ -42,8 +42,36 @@ new() ->
 value(Name, Slide) ->
     {Name, slide:sum(Slide)}.
 
-value({Moment, Min, Max, Bins, RoundingMode}, Name,  Slide) ->
-    {Name, slide:mean_and_nines(Slide, Moment, Min, Max, Bins, RoundingMode)}.
+value(DisplaySpec, Name,  Slide) ->
+    {Min, Max, Bins, RoundingMode} = proplists:get_value(args, DisplaySpec),
+    Fields = proplists:get_value(fields, DisplaySpec),
+    Prefix = proplists:get_value(prefix, DisplaySpec),
+    Res = slide:mean_and_nines(Slide, slide:moment(), Min, Max, Bins, RoundingMode),
+    PL = to_proplist(Res),
+    FieldPrefix = field_prefix(Prefix, Name),
+    display(FieldPrefix, Fields, PL, []).
+
 
 update({Reading, Moment}, Slide) ->
     slide:update(Slide, Reading, Moment).
+
+%% Internal
+to_proplist({Cnt, Mean, {Median, NineFive, NineNine, Max}}) ->
+    [{count, Cnt},
+     {mean, Mean},
+     {median, Median},
+     {'95', NineFive},
+     {'99', NineNine},
+     {'100', Max}].
+
+field_prefix(undefined, Name) ->
+    Name;
+field_prefix(Prefix, Name) ->
+    riak_core_metric:join_as_atom([Prefix, '_', Name]).
+
+display(_Prefix, [], _Stat, Acc) ->
+    lists:reverse(Acc);
+display(Prefix, [Field|Rest], Stats, Acc) ->
+    Name = riak_core_metric:join_as_atom([Prefix, '_',  Field]),
+    Item = {Name, proplists:get_value(Field, Stats)},
+    display(Prefix, Rest, Stats, [Item|Acc]).

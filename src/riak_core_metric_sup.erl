@@ -29,6 +29,7 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
+    remove_slide_private_dirs(),
     %% Populate supervisor list with stats for already registered app,stat
     %% modules. Ensures restart of stat procs after a crash of this supervisor.
     Refs0 = [mod_refs(App, Mod) || {App, Mod} <- riak_core:stat_specs()],
@@ -62,3 +63,5 @@ stat_ref(App, Stat, Args) ->
     {{App, Stat}, {riak_core_metric_proc, start_link, [App, Stat, Args]},
      permanent, 5000, worker, [riak_core_metric_proc]}.
 
+remove_slide_private_dirs() ->
+    os:cmd("rm -rf " ++ slide:private_dir()).
