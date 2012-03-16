@@ -40,8 +40,6 @@ start_link(TargetNode, Module, Partition, VnodePid) ->
 
 start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
      try
-         lager:info("Starting handoff of partition ~p ~p from ~p to ~p",
-                               [Module, Partition, node(), TargetNode]),
          [_Name,Host] = string:tokens(atom_to_list(TargetNode), "@"),
          {ok, Port} = get_handoff_port(TargetNode),
          SockOpts = [binary, {packet, 4}, {header,1}, {active, false}],
@@ -65,6 +63,8 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
          Msg = <<?PT_MSG_OLDSYNC:8,ModBin/binary>>,
          ok = TcpMod:send(Socket, Msg),
 
+         RecvTimout = get_handoff_receive_timeout(),
+
          %% Now that handoff_concurrency applies to both outbound and
          %% inbound conns there is a chance that the receiver may
          %% decide to reject the senders attempt to start a handoff.
@@ -72,10 +72,14 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
          %% protocol but for now the sender must assume that a closed
          %% socket at this point is a rejection by the receiver to
          %% enforce handoff_concurrency.
-         case TcpMod:recv(Socket, 0) of
+         case TcpMod:recv(Socket, 0, RecvTimout) of
              {ok,[?PT_MSG_OLDSYNC|<<"sync">>]} -> ok;
+             {error, timeout} -> exit({shutdown, timeout});
              {error, closed} -> exit({shutdown, max_concurrency})
          end,
+
+         lager:info("Starting handoff of partition ~p ~p from ~p to ~p",
+                    [Module, Partition, node(), TargetNode]),
 
          M = <<?PT_MSG_INIT:8,Partition:160/integer>>,
          ok = TcpMod:send(Socket, M),
@@ -117,20 +121,24 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
 
              {MRef, {Socket,ParentPid,Module,TcpMod,_Ack,SentCount,ErrStatus}} ->
 
-                 %% One last sync to make sure the message has been received.
-                 %% post-0.14 vnodes switch to handoff to forwarding immediately
-                 %% so handoff_complete can only be sent once all of the data is
-                 %% written.  handle_handoff_data is a sync call, so once
-                 %% we receive the sync the remote side will be up to date.
-                 lager:debug("~p ~p Sending final sync", [Partition, Module]),
-                 ok = TcpMod:send(Socket, <<?PT_MSG_SYNC:8>>),
-                 {ok,[?PT_MSG_SYNC|<<"sync">>]} = TcpMod:recv(Socket, 0),
-                 lager:debug("~p ~p Final sync received", [Partition, Module]),
-
-                 EndFoldTime = now(),
-                 FoldTimeDiff = timer:now_diff(EndFoldTime, StartFoldTime) / 1000000,
                  case ErrStatus of
                      ok ->
+                         %% One last sync to make sure the message has been received.
+                         %% post-0.14 vnodes switch to handoff to forwarding immediately
+                         %% so handoff_complete can only be sent once all of the data is
+                         %% written.  handle_handoff_data is a sync call, so once
+                         %% we receive the sync the remote side will be up to date.
+                         lager:debug("~p ~p Sending final sync", [Partition, Module]),
+                         ok = TcpMod:send(Socket, <<?PT_MSG_SYNC:8>>),
+
+                         case TcpMod:recv(Socket, 0, RecvTimout) of
+                             {ok,[?PT_MSG_SYNC|<<"sync">>]} ->
+                                 lager:debug("~p ~p Final sync received", [Partition, Module]);
+                             {error, timeout} -> exit({shutdown, timeout})
+                         end,
+
+                         FoldTimeDiff = end_fold_time(StartFoldTime),
+
                          lager:info("Handoff of partition ~p ~p from ~p to ~p "
                                     "completed: sent ~p objects in ~.2f "
                                     "seconds",
@@ -138,11 +146,16 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
                                      SentCount, FoldTimeDiff]),
                          gen_fsm:send_event(ParentPid, handoff_complete);
                      {error, ErrReason} ->
+                         FoldTimeDiff = end_fold_time(StartFoldTime),
                          lager:error("Handoff of partition ~p ~p from ~p to ~p "
                                      "FAILED after sending ~p objects "
                                      "in ~.2f seconds: ~p",
                                      [Module, Partition, node(), TargetNode,
                                       SentCount, FoldTimeDiff, ErrReason]),
+                         if ErrReason == timeout ->
+                                 riak_core_stat:update(handoff_timeouts);
+                            true -> ok
+                         end,
                          gen_fsm:send_event(ParentPid, {handoff_error,
                                                         fold_error, ErrReason})
                  end
@@ -153,6 +166,12 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
              %% of handoff_concurrency.  You don't want to log
              %% anything because this is normal.
              ok;
+         exit:{shutdown, timeout} ->
+             %% A receive timeout during handoff
+             riak_core_stat:update(handoff_timeouts),
+             lager:warning(
+               "TCP recv timeout in handoff of partition ~p ~p from ~p to ~p",
+               [Module, Partition, node(), TargetNode]);
          Err:Reason ->
              lager:error("Handoff of partition ~p ~p from ~p to ~p failed ~p:~p",
                          [Module, Partition, node(), TargetNode,
@@ -166,10 +185,11 @@ visit_item(_K, _V, {Socket, ParentPid, Module, TcpMod, Ack, Total,
                     {error, Reason}}) ->
     {Socket, ParentPid, Module, TcpMod, Ack, Total, {error, Reason}};
 visit_item(K, V, {Socket, ParentPid, Module, TcpMod, ?ACK_COUNT, Total, _Err}) ->
+    RecvTimout = get_handoff_receive_timeout(),
     M = <<?PT_MSG_OLDSYNC:8,"sync">>,
     case TcpMod:send(Socket, M) of
         ok ->
-            case TcpMod:recv(Socket, 0) of
+            case TcpMod:recv(Socket, 0, RecvTimout) of
                 {ok,[?PT_MSG_OLDSYNC|<<"sync">>]} ->
                     visit_item(K, V, {Socket, ParentPid, Module, TcpMod, 0, Total, ok});
                 {error, Reason} ->
@@ -223,3 +243,10 @@ get_handoff_ssl_options() ->
                     []
             end
     end.
+
+get_handoff_receive_timeout() ->
+    app_helper:get_env(riak_core, riak_core_handoff_timeout, 60000).
+
+end_fold_time(StartFoldTime) ->
+    EndFoldTime = now(),
+    timer:now_diff(EndFoldTime, StartFoldTime) / 1000000.
