@@ -42,6 +42,7 @@
           ignored_gossip_total   :: integer(),
           rings_reconciled_total :: integer(),
           rejected_handoffs      :: integer(),
+          handoff_timeouts       :: integer(),
           gossip_received        :: spiraltime:spiral(),
           rings_reconciled       :: spiraltime:spiral(),
           converge_epoch         :: calendar:t_now(),
@@ -79,6 +80,7 @@ init([]) ->
     {ok, #state{ignored_gossip_total=0,
                 rings_reconciled_total=0,
                 rejected_handoffs=0,
+                handoff_timeouts=0,
                 gossip_received=spiraltime:fresh(),
                 rings_reconciled=spiraltime:fresh(),
                 converge_delay=#cuml{},
@@ -136,6 +138,9 @@ update(rebalance_timer_end, _Moment, State=#state{rebalance_epoch=T0}) ->
 
 update(rejected_handoffs, _Moment, State) ->
     int_incr(#state.rejected_handoffs, State);
+
+update(handoff_timeouts, _Moment, State) ->
+    int_incr(#state.handoff_timeouts, State);
 
 update(ignored_gossip, _Moment, State) ->
     int_incr(#state.ignored_gossip_total, State);
@@ -195,6 +200,7 @@ gossip_stats(Moment, State=#state{converge_delay=CDelay,
      {rings_reconciled_total, State#state.rings_reconciled_total},
      {rings_reconciled, spiral_minute(Moment, #state.rings_reconciled, State)},
      {gossip_received, spiral_minute(Moment, #state.gossip_received, State)},
+     {handoff_timeouts, State#state.handoff_timeouts},
      {converge_delay_min,  CDelay#cuml.min},
      {converge_delay_max,  CDelay#cuml.max},
      {converge_delay_mean, CDelay#cuml.mean},
