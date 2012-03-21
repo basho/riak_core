@@ -27,6 +27,8 @@
 -include("riak_core_vnode.hrl").
 -include("riak_core_handoff.hrl").
 -define(ACK_COUNT, 1000).
+%% can be set with env riak_core, handoff_timeout
+-define(TCP_TIMEOUT, 60000).
 
 start_link(TargetNode, Module, Partition, VnodePid) ->
     SslOpts = get_handoff_ssl_options(),
@@ -63,7 +65,7 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
          Msg = <<?PT_MSG_OLDSYNC:8,ModBin/binary>>,
          ok = TcpMod:send(Socket, Msg),
 
-         RecvTimout = get_handoff_receive_timeout(),
+         RecvTimeout = get_handoff_receive_timeout(),
 
          %% Now that handoff_concurrency applies to both outbound and
          %% inbound conns there is a chance that the receiver may
@@ -72,7 +74,7 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
          %% protocol but for now the sender must assume that a closed
          %% socket at this point is a rejection by the receiver to
          %% enforce handoff_concurrency.
-         case TcpMod:recv(Socket, 0, RecvTimout) of
+         case TcpMod:recv(Socket, 0, RecvTimeout) of
              {ok,[?PT_MSG_OLDSYNC|<<"sync">>]} -> ok;
              {error, timeout} -> exit({shutdown, timeout});
              {error, closed} -> exit({shutdown, max_concurrency})
@@ -131,7 +133,7 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
                          lager:debug("~p ~p Sending final sync", [Partition, Module]),
                          ok = TcpMod:send(Socket, <<?PT_MSG_SYNC:8>>),
 
-                         case TcpMod:recv(Socket, 0, RecvTimout) of
+                         case TcpMod:recv(Socket, 0, RecvTimeout) of
                              {ok,[?PT_MSG_SYNC|<<"sync">>]} ->
                                  lager:debug("~p ~p Final sync received", [Partition, Module]);
                              {error, timeout} -> exit({shutdown, timeout})
@@ -185,11 +187,11 @@ visit_item(_K, _V, {Socket, ParentPid, Module, TcpMod, Ack, Total,
                     {error, Reason}}) ->
     {Socket, ParentPid, Module, TcpMod, Ack, Total, {error, Reason}};
 visit_item(K, V, {Socket, ParentPid, Module, TcpMod, ?ACK_COUNT, Total, _Err}) ->
-    RecvTimout = get_handoff_receive_timeout(),
+    RecvTimeout = get_handoff_receive_timeout(),
     M = <<?PT_MSG_OLDSYNC:8,"sync">>,
     case TcpMod:send(Socket, M) of
         ok ->
-            case TcpMod:recv(Socket, 0, RecvTimout) of
+            case TcpMod:recv(Socket, 0, RecvTimeout) of
                 {ok,[?PT_MSG_OLDSYNC|<<"sync">>]} ->
                     visit_item(K, V, {Socket, ParentPid, Module, TcpMod, 0, Total, ok});
                 {error, Reason} ->
@@ -245,7 +247,7 @@ get_handoff_ssl_options() ->
     end.
 
 get_handoff_receive_timeout() ->
-    app_helper:get_env(riak_core, riak_core_handoff_timeout, 60000).
+    app_helper:get_env(riak_core, handoff_timeout, ?TCP_TIMEOUT).
 
 end_fold_time(StartFoldTime) ->
     EndFoldTime = now(),
