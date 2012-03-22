@@ -33,7 +33,7 @@
                  Args :: [stat_arg()]
                 }.
 
--type stat_arg() :: {Name :: type | desc | display,
+-type stat_arg() :: {Name :: type | group | presentation,
                      Value :: term()
                     }.
 
