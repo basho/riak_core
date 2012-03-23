@@ -17,7 +17,7 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc A counter. Wraps, erm, an integer()
+%% @doc A counter. Wraps an integer()
 -module(riak_core_metric_counter).
 
 -behaviour(riak_core_metric).
@@ -26,34 +26,58 @@
 
 -export([increment/2, increment/3, decrement/2, decrement/3, total/2]).
 
+%% @doc increments the counter for App named Stat
+%% by Amount.
+-spec increment(atom(), atom(), integer()) ->
+                       ok.
 increment(App, Stat, Amount) ->
     riak_core_metric_proc:update(App, Stat, Amount).
 
+%% @doc increment the counter for App named Stat
+%% by 1.
+-spec increment(atom(), atom()) ->
+                       ok.
 increment(App, Stat) ->
     increment(App, Stat, 1).
 
+%% @doc decrement the counter for App named Stat
+%% by Amount.
+-spec decrement(atom(), atom(), integer()) ->
+                       ok.
 decrement(App, Stat, Amount) ->
     riak_core_metric_proc:update(App, Stat, {decrement, Amount}).
 
+%% @doc decrement the counter for App named Stat
+%% by 1.
+-spec decrement(atom(), atom()) -> ok.
 decrement(App, Stat) ->
     decrement(App, Stat, 1).
 
+%% @doc return the counter for App named Stat's
+%% current value.
+-spec total(atom(), atom()) -> non_neg_integer().
 total(App, Stat) ->
     riak_core_metric_proc:value(App, Stat).
 
 %% Behaviour
+-spec new() -> 0.
 new() ->
     0.
 
+-spec value(atom(), non_neg_integer()) ->
+                   {atom(), non_neg_integer()}.
 value(Name, Counter) ->
     {Name, Counter}.
 
+-spec value(_, atom(), non_neg_integer()) ->
+                   {atom(), non_neg_integer()}.
 value(_, Name, Counter) ->
     value(Name, Counter).
 
-update({decrement, Amount}, 0) when is_integer(Amount) ->
-    0;
+-spec update({atom(), integer()}, non_neg_integer()) ->
+                    non_neg_integer();
+            (integer(), non_neg_integer()) -> non_neg_integer().
 update({decrement, Amount}, Counter) when is_integer(Amount) ->
-    Counter - Amount;
+    erlang:max(Counter - Amount, 0);
 update(Amount, Counter) when is_integer(Amount) ->
-    Counter + Amount.
+    erlang:max(Counter + Amount, 0).

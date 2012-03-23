@@ -65,7 +65,7 @@ update(Stat) ->
 %%--------------------------------------------------------------------
 
 %% @doc Update the given stat in State, returning a new State.
--spec update(Stat::term(), integer()) -> ok.
+-spec update(Stat::term(), non_neg_integer()) -> ok.
 update(converge_timer_begin, _Moment) ->
     riak_core_metric_duration:start(?APP, converge_delay);
 update(converge_timer_end, _Moment) ->

@@ -30,13 +30,14 @@
 -type stat_specs() ::  [stat()].
 
 -type stat() :: {Name :: atom(),
-                 Args :: [stat_arg()]
+                 Args :: [type() | group() | presentation()]
                 }.
 
--type stat_arg() :: {Name :: type | group | presentation,
-                     Value :: term()
-                    }.
-
+-type type() :: {type, counter | meter | histogram | duration}.
+-type group() :: {group, GroupName::atom()}.
+-type presentation() :: {presentation, [{Name :: atom(),
+                                         Spec :: riak_core_metric_duration:display_spec() |
+                                                 riak_core_metric_histogram:display_spec()}]}.
 behaviour_info(callbacks) ->
     [{new, 0},
      {value, 2},
@@ -44,18 +45,34 @@ behaviour_info(callbacks) ->
      {update, 2}
     ].
 
+%% @doc generate the regsitered name of the stat
+%% name Name, for the application App. e.g.
+%% regname(riak_kv, fsm_gets) ->
+%%      stats_riak_kv_fsm_gets.
+-spec regname(atom(), atom()) -> atom().
 regname(App, Name) when is_atom(App), is_atom(Name) ->
     join_as_atom(['stats_', App, $_, Name]).
 
+%% @doc joins a list of terms into a single atom
+%% e.g. join_as_atom(["prefix", '_', atom, "suffix", 7]) ->
+%% 'prefix_atomsiffix7'
+-spec join_as_atom([atom() | string() | binary() | integer()]) ->
+                          atom().
 join_as_atom(L) ->
     join_as_atom(L, <<>>).
 
+-spec join_as_atom([atom() | string() | binary() | integer()],
+                   binary()) -> atom().
 join_as_atom([], Acc) ->
     binary_to_atom(Acc, latin1);
 join_as_atom([Elem|Rest], Acc) ->
     Bin1 = to_binary(Elem),
     join_as_atom(Rest, <<Acc/binary, Bin1/binary>>).
 
+%% @doc turn an atom, list or integer
+%% to a binary
+-spec to_binary(atom() | string() |
+                binary() | integer()) -> binary().
 to_binary(Atom) when is_atom(Atom) ->
     atom_to_binary(Atom, latin1);
 to_binary(List) when is_list(List) ->

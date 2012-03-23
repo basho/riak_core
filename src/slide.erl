@@ -53,6 +53,8 @@
 -export([mean_and_nines/2, mean_and_nines/6]).
 -export([private_dir/0, sync/1]).
 
+-export_type([slide/0]).
+
 -include_lib("kernel/include/file.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -67,6 +69,8 @@
           readings_fh, %% filehandle for current moment's readings
           readings_m %% moment associated with readings_fh
          }).
+
+-type slide() :: #slide{}.
 
 %% @spec fresh() -> slide()
 %% @equiv fresh(60)
