@@ -105,7 +105,6 @@ field_prefix(Prefix, Name) ->
 display(_Prefix, [], _Stat, Acc) ->
     lists:reverse(Acc);
 display(Prefix, [{Field, Name}|Rest], Stats, Acc) ->
-    Name = riak_core_metric:join_as_atom([Prefix, '_',  Name]),
     Item = {Name, proplists:get_value(Field, Stats)},
     display(Prefix, Rest, Stats, [Item|Acc]);
 display(Prefix, [Field|Rest], Stats, Acc) ->
