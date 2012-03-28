@@ -37,6 +37,7 @@ stat_specs() ->
     [{ignored_gossip_total, [{type, counter}, {group, gossip}]},
      {rings_reconciled_total, [{type, counter}, {group, gossip}]},
      {rejected_handoffs, [{type, counter}, {group, gossip}]},
+     {handoff_timeouts, [{type, counter}, {group, gossip}]},
      {gossip_received, [{type, meter}, {group, gossip}]},
      {rings_reconciled, [{type, meter}, {group, gossip}]},
      {converge_delay, [{type, duration}, {group, gossip},
@@ -76,6 +77,8 @@ update(rebalance_timer_end, _Moment) ->
     riak_core_metric_duration:stop(?APP, rebalance_delay);
 update(rejected_handoffs, _Moment) ->
     riak_core_metric_counter:increment(?APP, rejected_handoffs);
+update(handoff_timeouts, _Moment) ->
+    riak_core_metric_counter:increment(?APP, handoff_timeouts);
 update(ignored_gossip, _Moment) ->
     riak_core_metric_counter:increment(?APP, ignored_gossip_total);
 update(gossip_received, Moment) ->
