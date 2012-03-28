@@ -71,7 +71,7 @@ value(Name, Counter) ->
 
 -spec value(_, atom(), non_neg_integer()) ->
                    {atom(), non_neg_integer()}.
-value(_, Name, Counter) ->
+value({display_name, Name}, _StatName, Counter) ->
     value(Name, Counter).
 
 -spec update({atom(), integer()}, non_neg_integer()) ->

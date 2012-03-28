@@ -63,10 +63,10 @@ value(Name, Meter) ->
 %% {name, count}.
 -spec value(_, atom(), spiraltime:spiral()) ->
                    {atom(), integer()}.
-value(_Spec, Name, Meter) ->
+value({display_name, Name}, _StatName, Meter) ->
     value(Name, Meter).
 
-%% @doc update the entry for the given Momen by Amout,
+%% @doc update the entry for the given Moment by Amount,
 %%  in the given Meter
 -spec update({integer(), integer()}, spiraltime:spiral()) ->
                     spiraltime:spiral().
