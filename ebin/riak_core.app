@@ -9,7 +9,7 @@
              bloom,
              chash,
              gen_nb_server,
-             gen_server2,
+             riak_core_gen_server,
              json_pp,
              merkerl,
              priority_queue,

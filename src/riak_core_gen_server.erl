@@ -1,22 +1,22 @@
 %% This file is a copy of gen_server.erl from the R13B-1 Erlang/OTP
 %% distribution, with the following modifications:
 %%
-%% 1) the module name is gen_server2
+%% 1) the module name is riak_core_gen_server
 %%
 %% 2) more efficient handling of selective receives in callbacks
-%% gen_server2 processes drain their message queue into an internal
+%% riak_core_gen_server processes drain their message queue into an internal
 %% buffer before invoking any callback module functions. Messages are
 %% dequeued from the buffer for processing. Thus the effective message
-%% queue of a gen_server2 process is the concatenation of the internal
+%% queue of a riak_core_gen_server process is the concatenation of the internal
 %% buffer and the real message queue.
 %% As a result of the draining, any selective receive invoked inside a
 %% callback is less likely to have to scan a large message queue.
 %%
-%% 3) gen_server2:cast is guaranteed to be order-preserving
+%% 3) riak_core_gen_server:cast is guaranteed to be order-preserving
 %% The original code could reorder messages when communicating with a
 %% process on a remote node that was not currently connected.
 %%
-%% 4) The new functions gen_server2:pcall/3, pcall/4, and pcast/3
+%% 4) The new functions riak_core_gen_server:pcall/3, pcall/4, and pcast/3
 %% allow callers to attach priorities to requests. Requests with
 %% higher priorities are processed before requests with lower
 %% priorities. The default priority is 0.
@@ -57,7 +57,7 @@
 %% 
 %%     $Id$
 %%
--module(gen_server2).
+-module(riak_core_gen_server).
 
 %%% ---------------------------------------------------
 %%%
