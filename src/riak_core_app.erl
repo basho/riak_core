@@ -90,8 +90,6 @@ start(_StartType, _StartArgs) ->
                         [lager:posix_error(Reason)]),
                     throw({error, Reason})
             end,
-            %% register stats mod
-            ok = riak_core:register(riak_core, [{stat_specs, riak_core_stat}]),
             {ok, Pid};
         {error, Reason} ->
             {error, Reason}

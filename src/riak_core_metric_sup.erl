@@ -22,11 +22,19 @@
 
 -module(riak_core_metric_sup).
 -behaviour(supervisor).
--export([start_link/0, init/1]).
+-export([start_link/0, start_link/2, init/1]).
 -export([start_stat/3, stop_stat/2, start_stats/2]).
 
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
+
+start_link(App, Mod) ->
+    case start_link() of
+        {ok, _Pid}=Res ->
+            ok = start_stats(App, Mod),
+            Res;
+        Error  -> Error
+    end.
 
 init([]) ->
     remove_slide_private_dirs(),

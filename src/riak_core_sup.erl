@@ -31,6 +31,7 @@
 -export([init/1]).
 
 %% Helper macro for declaring children of supervisor
+-define(CHILD(I, Type, Args, Timeout), {I, {I, start_link, Args}, permanent, Timeout, Type, [I]}).
 -define(CHILD(I, Type, Timeout), {I, {I, start_link, []}, permanent, Timeout, Type, [I]}).
 -define(CHILD(I, Type), ?CHILD(I, Type, 5000)).
 -define (IF (Bool, A, B), if Bool -> A; true -> B end).
@@ -69,7 +70,7 @@ init([]) ->
                   ?CHILD(riak_core_node_watcher, worker),
                   ?CHILD(riak_core_vnode_manager, worker),
                   ?CHILD(riak_core_gossip, worker),
-                  ?CHILD(riak_core_metric_sup, supervisor),
+                  ?CHILD(riak_core_metric_sup, supervisor, [riak_core, riak_core_stat], 5000),
                   RiakWebs
                  ]),
 
