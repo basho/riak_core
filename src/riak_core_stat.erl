@@ -56,39 +56,33 @@ get_stats() ->
 get_stats(_Moment) ->
     produce_stats(legacy).
 
-%% @spec update(term()) -> ok
-%% @doc Update the given stat.
-update(Stat) ->
-    update(Stat, slide:moment()).
+%% @doc Update the given stat
+-spec update(Stat::atom()) -> ok.
+update(converge_timer_begin) ->
+    riak_core_metric_duration:start(?APP, converge_delay);
+update(converge_timer_end) ->
+    riak_core_metric_duration:stop(?APP, converge_delay);
+update(rebalance_timer_begin) ->
+    riak_core_metric_duration:start(?APP, rebalance_delay);
+update(rebalance_timer_end) ->
+    riak_core_metric_duration:stop(?APP, rebalance_delay);
+update(rejected_handoffs) ->
+    riak_core_metric_counter:increment(?APP, rejected_handoffs);
+update(handoff_timeouts) ->
+    riak_core_metric_counter:increment(?APP, handoff_timeouts);
+update(ignored_gossip) ->
+    riak_core_metric_counter:increment(?APP, ignored_gossip_total);
+update(gossip_received) ->
+    riak_core_metric_meter:increment(?APP, gossip_received, slide:moment());
+update(rings_reconciled) ->
+    riak_core_metric_meter:increment(?APP, rings_reconciled, slide:moment()),
+    riak_core_metric_counter:increment(?APP, rings_reconciled_total);
+update(_) ->
+    ok.
 
 %%--------------------------------------------------------------------
 %%% Internal functions
 %%--------------------------------------------------------------------
-
-%% @doc Update the given stat in State, returning a new State.
--spec update(Stat::term(), non_neg_integer()) -> ok.
-update(converge_timer_begin, _Moment) ->
-    riak_core_metric_duration:start(?APP, converge_delay);
-update(converge_timer_end, _Moment) ->
-    riak_core_metric_duration:stop(?APP, converge_delay);
-update(rebalance_timer_begin, _Moment) ->
-    riak_core_metric_duration:start(?APP, rebalance_delay);
-update(rebalance_timer_end, _Moment) ->
-    riak_core_metric_duration:stop(?APP, rebalance_delay);
-update(rejected_handoffs, _Moment) ->
-    riak_core_metric_counter:increment(?APP, rejected_handoffs);
-update(handoff_timeouts, _Moment) ->
-    riak_core_metric_counter:increment(?APP, handoff_timeouts);
-update(ignored_gossip, _Moment) ->
-    riak_core_metric_counter:increment(?APP, ignored_gossip_total);
-update(gossip_received, Moment) ->
-    riak_core_metric_meter:increment(?APP, gossip_received, Moment);
-update(rings_reconciled, Moment) ->
-    riak_core_metric_meter:increment(?APP, rings_reconciled, Moment),
-    riak_core_metric_counter:increment(?APP, rings_reconciled_total);
-update(_, _) ->
-    ok.
-
 %% @spec produce_stats(Presentation : atom()) -> proplist()
 %% @doc Produce a proplist-formatted view of the current aggregation
 %%      of stats.
