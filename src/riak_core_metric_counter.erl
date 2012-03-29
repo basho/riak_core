@@ -45,7 +45,7 @@ increment(App, Stat) ->
 -spec decrement(atom(), atom(), integer()) ->
                        ok.
 decrement(App, Stat, Amount) ->
-    riak_core_metric_proc:update(App, Stat, {decrement, Amount}).
+    riak_core_metric_proc:update(App, Stat, Amount * -1).
 
 %% @doc decrement the counter for App named Stat
 %% by 1.
@@ -74,10 +74,6 @@ value(Name, Counter) ->
 value({display_name, Name}, _StatName, Counter) ->
     value(Name, Counter).
 
--spec update({atom(), integer()}, non_neg_integer()) ->
-                    non_neg_integer();
-            (integer(), non_neg_integer()) -> non_neg_integer().
-update({decrement, Amount}, Counter) when is_integer(Amount) ->
-    erlang:max(Counter - Amount, 0);
+-spec update(integer(), integer()) -> non_neg_integer().
 update(Amount, Counter) when is_integer(Amount) ->
     erlang:max(Counter + Amount, 0).
