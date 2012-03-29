@@ -257,28 +257,24 @@ legacy_remove(Node) when is_atom(Node) ->
     end.
 
 vnode_modules() ->
-    case application:get_env(riak_core, vnode_modules) of
-        undefined -> [];
-        {ok, Mods} -> Mods
-    end.
+    get_mods(vnode_modules).
 
 bucket_fixups() ->
-     case application:get_env(riak_core, bucket_fixups) of
-        undefined -> [];
-        {ok, Mods} -> Mods
-    end.
+    get_mods(bucket_fixups).
 
 bucket_validators() ->
-    case application:get_env(riak_core, bucket_validators) of
-        undefined -> [];
-        {ok, Mods} -> Mods
-    end.
+    get_mods(bucket_validators).
 
 stat_specs() ->
-    case application:get_env(riak_core, stat_specs) of
-        undefined -> [];
-        {ok, Mods} -> Mods
-    end.
+    get_mods(stat_specs).
+
+%% @private
+%% @doc get registered modules of Type
+-spec get_mods(vnode_modules | bucket_fixups |
+               bucket_validators | stat_specs) ->
+                      [{App::atom(), module()}] | [].
+get_mods(Type) ->
+    app_helper:get_env(riak_core, Type, []).
 
 %% Get the application name if not supplied, first by get_application
 %% then by searching by module name
