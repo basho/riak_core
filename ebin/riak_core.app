@@ -12,7 +12,7 @@
              riak_core_gen_server,
              json_pp,
              merkerl,
-             priority_queue,
+             riak_core_priority_queue,
              process_proxy,
              riak_core_gossip_legacy,
              riak_core,

@@ -334,7 +334,7 @@ enter_loop(Mod, Options, State, ServerName, Timeout) ->
     Name = get_proc_name(ServerName),
     Parent = get_parent(),
     Debug = debug_options(Name, Options),
-    Queue = priority_queue:new(),
+    Queue = riak_core_priority_queue:new(),
     {Timeout1, TimeoutState} = build_timeout_state(Timeout),
     loop(Parent, Name, State, Mod, Timeout1, TimeoutState, Queue, Debug).
 
@@ -354,7 +354,7 @@ init_it(Starter, self, Name, Mod, Args, Options) ->
 init_it(Starter, Parent, Name0, Mod, Args, Options) ->
     Name = name(Name0),
     Debug = debug_options(Name, Options),
-    Queue = priority_queue:new(),
+    Queue = riak_core_priority_queue:new(),
     case catch Mod:init(Args) of
 	{ok, State} ->
 	    proc_lib:init_ack(Starter, {ok, self()}), 	    
@@ -431,7 +431,7 @@ loop(Parent, Name, State, Mod, Time, TimeoutState, Queue, Debug) ->
 
 process_next_msg(Parent, Name, State, Mod, Time, TimeoutState, Queue,
                  Debug, Hib) ->
-    case priority_queue:out(Queue) of
+    case riak_core_priority_queue:out(Queue) of
         {{value, Msg}, Queue1} ->
             process_msg(Parent, Name, State, Mod,
                         Time, TimeoutState, Queue1, Debug, Hib, Msg);
@@ -481,11 +481,11 @@ adjust_hibernate_after({Current, Min, HibernatedAt}) ->
     end.
 
 in({'$gen_pcast', {Priority, Msg}}, Queue) ->
-    priority_queue:in({'$gen_cast', Msg}, Priority, Queue);
+    riak_core_priority_queue:in({'$gen_cast', Msg}, Priority, Queue);
 in({'$gen_pcall', From, {Priority, Msg}}, Queue) ->
-    priority_queue:in({'$gen_call', From, Msg}, Priority, Queue);
+    riak_core_priority_queue:in({'$gen_call', From, Msg}, Priority, Queue);
 in(Input, Queue) ->
-    priority_queue:in(Input, Queue).
+    riak_core_priority_queue:in(Input, Queue).
 
 process_msg(Parent, Name, State, Mod, Time, TimeoutState, Queue,
             Debug, _Hib, Msg) ->
@@ -1022,5 +1022,5 @@ format_status(Opt, StatusData) ->
      {data, [{"Status", SysState},
 	     {"Parent", Parent},
 	     {"Logged events", Log},
-             {"Queued messages", priority_queue:to_list(Queue)}]} |
+             {"Queued messages", riak_core_priority_queue:to_list(Queue)}]} |
      Specfic1].
