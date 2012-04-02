@@ -36,6 +36,14 @@ start(_StartType, _StartArgs) ->
     %% riak_core_sysmon_minder start it, because that process can act
     %% on any handler crash notification, whereas we cannot.
 
+    case application:get_env(riak_core, delayed_start) of
+        {ok, Delay} ->
+            lager:info("Delaying riak_core startup as requested"),
+            timer:sleep(Delay);
+        _ ->
+            ok
+    end,
+
     %% Validate that the ring state directory exists
     riak_core_util:start_app_deps(riak_core),
     RingStateDir = app_helper:get_env(riak_core, ring_state_dir),
