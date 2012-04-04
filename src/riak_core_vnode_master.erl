@@ -25,7 +25,7 @@
 -module(riak_core_vnode_master).
 -include("riak_core_vnode.hrl").
 -behaviour(gen_server).
--export([start_link/1, start_link/2, get_vnode_pid/2,
+-export([start_link/1, start_link/2, start_link/3, get_vnode_pid/2,
          start_vnode/2, command/3, command/4, sync_command/3,
          coverage/5,
          command_return_vnode/4,
@@ -50,9 +50,12 @@ start_link(VNodeMod) ->
     start_link(VNodeMod, undefined).
 
 start_link(VNodeMod, LegacyMod) ->
+    start_link(VNodeMod, LegacyMod, undefined).
+
+start_link(VNodeMod, LegacyMod, Service) ->
     RegName = reg_name(VNodeMod),
     gen_server:start_link({local, RegName}, ?MODULE,
-                          [VNodeMod,LegacyMod,RegName], []).
+                          [Service,VNodeMod,LegacyMod,RegName], []).
 
 start_vnode(Index, VNodeMod) ->
     riak_core_vnode_manager:start_vnode(Index, VNodeMod).
@@ -152,7 +155,8 @@ all_nodes(VNodeMod) ->
     [Pid || {_Mod, _Idx, Pid} <- VNodes].
 
 %% @private
-init([VNodeMod, LegacyMod, _RegName]) ->
+init([Service, VNodeMod, LegacyMod, _RegName]) ->
+    gen_server:cast(self(), {wait_for_service, Service}),
     {ok, #state{idxtab=undefined,
                 vnode_mod=VNodeMod,
                 legacy=LegacyMod}}.
@@ -178,6 +182,15 @@ do_proxy_cast({VMaster, Node}, Req=?COVERAGE_REQ{index=Idx}) ->
 do_proxy_cast({VMaster, Node}, Other) ->
     gen_server:cast({VMaster, Node}, Other).
 
+handle_cast({wait_for_service, Service}, State) ->
+    case Service of
+        undefined ->
+            ok;
+        _ ->
+            lager:debug("Waiting for service: ~p", [Service]),
+            riak_core:wait_for_service(Service)
+    end,
+    {noreply, State};
 handle_cast(Req=?VNODE_REQ{index=Idx}, State=#state{vnode_mod=Mod}) ->
     Proxy = riak_core_vnode_proxy:reg_name(Mod, Idx),
     gen_fsm:send_event(Proxy, Req),
