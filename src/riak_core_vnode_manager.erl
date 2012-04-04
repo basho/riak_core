@@ -41,7 +41,9 @@
 -record(idxrec, {key, idx, mod, pid, monref}).
 -record(state, {idxtab, 
                 forwarding :: [pid()],
-                handoff :: [{term(), integer(), pid(), node()}]
+                handoff :: [{term(), integer(), pid(), node()}],
+                known_modules :: [term()],
+                never_started :: [{integer(), term()}]
                }).
 
 -define(DEFAULT_OWNERSHIP_TRIGGER, 8).
@@ -107,7 +109,8 @@ get_tab() ->
 init(_State) ->
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
     Mods = [Mod || {_, Mod} <- riak_core:vnode_modules()],
-    State = #state{forwarding=[], handoff=[]},
+    State = #state{forwarding=[], handoff=[],
+                   known_modules=[], never_started=[]},
     State2 = find_vnodes(State),
     AllVNodes = get_all_vnodes(Mods, State2),
     State3 = update_forwarding(AllVNodes, Mods, Ring, State2),
@@ -215,7 +218,9 @@ handle_cast(management_tick, State) ->
     AllVNodes = get_all_vnodes(Mods, State),
     State2 = update_handoff(AllVNodes, Ring, State),
     trigger_ownership_handoff(Mods, Ring, State2),
-    {noreply, State2};
+    State3 = update_never_started(Ring, State2),
+    State4 = maybe_start_vnodes(State3),
+    {noreply, State4};
 
 handle_cast(_, State) ->
     {noreply, State}.
@@ -251,7 +256,10 @@ code_change(_OldVsn, State, _Extra) ->
 %% ===================================================================
 
 schedule_management_timer() ->
-    timer:apply_after(30000, gen_server, cast, [?MODULE, management_tick]).
+    ManagementTick = app_helper:get_env(riak_core,
+                                        vnode_management_timer,
+                                        30000),
+    timer:apply_after(ManagementTick, gen_server, cast, [?MODULE, management_tick]).
 
 trigger_ownership_handoff(Mods, Ring, State) ->
     Transfers = riak_core_ring:pending_changes(Ring),
@@ -474,4 +482,43 @@ get_all_vnodes_status(State=#state{forwarding=Forwarding, handoff=HO}) ->
                          end, Types2, [Pids2, Forwarding2, Handoff2]),
     Status.
 
+update_never_started(Ring, State) ->
+    {Indices, _} = lists:unzip(riak_core_ring:all_owners(Ring)),
+    lists:foldl(fun({_App, Mod}, StateAcc) ->
+                        case lists:member(Mod, StateAcc#state.known_modules) of
+                            false ->
+                                update_never_started(Mod, Indices, StateAcc);
+                            true ->
+                                StateAcc
+                        end
+                end, State, riak_core:vnode_modules()).
+
+update_never_started(Mod, Indices, State) ->
+    IdxPids =
+        try
+            get_all_index_pid(Mod, State)
+        catch
+            _:_ -> []
+        end,
+    AlreadyStarted = [Idx || {Idx, _Pid} <- IdxPids],
+    NeverStarted = ordsets:subtract(ordsets:from_list(Indices),
+                                    ordsets:from_list(AlreadyStarted)),
+    NeverStarted2 = [{Idx, Mod} || Idx <- NeverStarted],
+    NeverStarted3 = NeverStarted2 ++ State#state.never_started,
+    KnownModules = [Mod | State#state.known_modules],
+    State#state{known_modules=KnownModules, never_started=NeverStarted3}.
+
+maybe_start_vnodes(State=#state{never_started=NeverStarted}) ->
+    MaxStart = app_helper:get_env(riak_core, vnode_rolling_start, 16),
+    Length = length(NeverStarted),
+    Split =
+        case Length < MaxStart of
+            true ->
+                Length;
+            false ->
+                MaxStart
+        end,
+    {Start, NeverStarted2} = lists:split(Split, NeverStarted),
+    [get_vnode(Idx, Mod, State) || {Idx, Mod} <- Start],
+    State#state{never_started=NeverStarted2}.
 
