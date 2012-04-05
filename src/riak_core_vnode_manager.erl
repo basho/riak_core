@@ -43,7 +43,8 @@
                 forwarding :: [pid()],
                 handoff :: [{term(), integer(), pid(), node()}],
                 known_modules :: [term()],
-                never_started :: [{integer(), term()}]
+                never_started :: [{integer(), term()}],
+                vnode_start_tokens :: integer()
                }).
 
 -define(DEFAULT_OWNERSHIP_TRIGGER, 8).
@@ -110,7 +111,7 @@ init(_State) ->
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
     Mods = [Mod || {_, Mod} <- riak_core:vnode_modules()],
     State = #state{forwarding=[], handoff=[],
-                   known_modules=[], never_started=[]},
+                   known_modules=[], never_started=[], vnode_start_tokens=0},
     State2 = find_vnodes(State),
     AllVNodes = get_all_vnodes(Mods, State2),
     State3 = update_forwarding(AllVNodes, Mods, Ring, State2),
@@ -218,9 +219,16 @@ handle_cast(management_tick, State) ->
     AllVNodes = get_all_vnodes(Mods, State),
     State2 = update_handoff(AllVNodes, Ring, State),
     trigger_ownership_handoff(Mods, Ring, State2),
-    State3 = update_never_started(Ring, State2),
-    State4 = maybe_start_vnodes(State3),
+
+    MaxStart = app_helper:get_env(riak_core, vnode_rolling_start, 16),
+    State3 = State2#state{vnode_start_tokens=MaxStart},
+    State4 = maybe_start_vnodes(Ring, State3),
     {noreply, State4};
+
+handle_cast(maybe_start_vnodes, State) ->
+    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
+    State2 = maybe_start_vnodes(Ring, State),
+    {noreply, State2};
 
 handle_cast(_, State) ->
     {noreply, State}.
@@ -508,17 +516,21 @@ update_never_started(Mod, Indices, State) ->
     KnownModules = [Mod | State#state.known_modules],
     State#state{known_modules=KnownModules, never_started=NeverStarted3}.
 
-maybe_start_vnodes(State=#state{never_started=NeverStarted}) ->
-    MaxStart = app_helper:get_env(riak_core, vnode_rolling_start, 16),
-    Length = length(NeverStarted),
-    Split =
-        case Length < MaxStart of
-            true ->
-                Length;
-            false ->
-                MaxStart
-        end,
-    {Start, NeverStarted2} = lists:split(Split, NeverStarted),
-    [get_vnode(Idx, Mod, State) || {Idx, Mod} <- Start],
-    State#state{never_started=NeverStarted2}.
+maybe_start_vnodes(Ring, State) ->
+    State2 = update_never_started(Ring, State),
+    State3 = maybe_start_vnodes(State2),
+    State3.
 
+maybe_start_vnodes(State=#state{vnode_start_tokens=Tokens,
+                                never_started=NeverStarted}) ->
+    case {Tokens, NeverStarted} of
+        {0, _} ->
+            State;
+        {_, []} ->
+            State;
+        {_, [{Idx, Mod} | NeverStarted2]} ->
+            get_vnode(Idx, Mod, State),
+            gen_server:cast(?MODULE, maybe_start_vnodes),
+            State#state{vnode_start_tokens=Tokens-1,
+                        never_started=NeverStarted2}
+    end.
