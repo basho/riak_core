@@ -266,7 +266,7 @@ code_change(_OldVsn, State, _Extra) ->
 schedule_management_timer() ->
     ManagementTick = app_helper:get_env(riak_core,
                                         vnode_management_timer,
-                                        30000),
+                                        10000),
     timer:apply_after(ManagementTick, gen_server, cast, [?MODULE, management_tick]).
 
 trigger_ownership_handoff(Mods, Ring, State) ->
