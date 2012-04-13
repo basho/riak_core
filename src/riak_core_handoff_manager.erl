@@ -65,7 +65,7 @@
         }).
 
 %% this can be overridden with riak_core handoff_concurrency
--define(HANDOFF_CONCURRENCY,1).
+-define(HANDOFF_CONCURRENCY,2).
 
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
