@@ -36,6 +36,8 @@
 -export([add_outbound/4,
          add_inbound/1,
          status/0,
+         status/1,
+         status_update/2,
          set_concurrency/1,
          kill_handoffs/0
         ]).
@@ -46,17 +48,20 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--type mod()   :: atom().
 -type index() :: integer().
+-type modindex() :: {module(), index()}.
 
 -record(handoff_status,
-        { modindex      :: {mod(),index()},
-          node          :: atom(),
+        { modindex      :: modindex(),
+          src_node      :: node(),
+          target_node   :: node(),
           direction     :: inbound | outbound,
           transport_pid :: pid(),
           timestamp     :: tuple(),
           status        :: any(),
-          vnode_pid     :: pid() | undefined
+          stats         :: dict(),
+          vnode_pid     :: pid() | undefined,
+          type          :: ownership | hinted_handoff
         }).
 
 -record(state,
@@ -67,13 +72,16 @@
 %% this can be overridden with riak_core handoff_concurrency
 -define(HANDOFF_CONCURRENCY,2).
 
+
+%%%===================================================================
+%%% API
+%%%===================================================================
+
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 init([]) ->
     {ok, #state{excl=ordsets:new(), handoffs=[]}}.
-
-%% handoff_manager API
 
 add_outbound(Module,Idx,Node,VnodePid) ->
     gen_server:call(?MODULE,{add_outbound,Module,Idx,Node,VnodePid}).
@@ -82,7 +90,16 @@ add_inbound(SSLOpts) ->
     gen_server:call(?MODULE,{add_inbound,SSLOpts}).
 
 status() ->
-    gen_server:call(?MODULE,status).
+    status(none).
+
+status(Filter) ->
+    gen_server:call(?MODULE, {status, Filter}).
+
+%% @doc Send status updates `Stats' to the handoff manager for a
+%%      particular handoff identified by `ModIdx'.
+-spec status_update(modindex(), proplists:proplist()) -> ok.
+status_update(ModIdx, Stats) ->
+    gen_server:cast(?MODULE, {status_update, ModIdx, Stats}).
 
 set_concurrency(Limit) ->
     gen_server:call(?MODULE,{set_concurrency,Limit}).
@@ -99,7 +116,10 @@ remove_exclusion(Module, Index) ->
 get_exclusions(Module) ->
     gen_server:call(?MODULE, {get_exclusions, Module}, infinity).
 
-%% gen_server API
+
+%%%===================================================================
+%%% Callbacks
+%%%===================================================================
 
 handle_call({get_exclusions, Module}, _From, State=#state{excl=Excl}) ->
     Reply =  [I || {M, I} <- ordsets:to_list(Excl), M =:= Module],
@@ -120,10 +140,11 @@ handle_call({add_inbound,SSLOpts},_From,State=#state{handoffs=HS}) ->
         Error ->
             {reply,Error,State}
     end;
-handle_call(status,_From,State=#state{handoffs=HS}) ->
-    Handoffs=[{M,N,D,active,S} ||
-                 #handoff_status{modindex=M,node=N,direction=D,status=S} <- HS],
-    {reply, Handoffs, State};
+
+handle_call({status, Filter}, _From, State=#state{handoffs=HS}) ->
+    Status = lists:filter(filter(Filter), [build_status(HO) || HO <- HS]),
+    {reply, Status, State};
+
 handle_call({set_concurrency,Limit},_From,State=#state{handoffs=HS}) ->
     application:set_env(riak_core,handoff_concurrency,Limit),
     case Limit < erlang:length(HS) of
@@ -140,7 +161,6 @@ handle_call({set_concurrency,Limit},_From,State=#state{handoffs=HS}) ->
             {reply, ok, State}
     end.
 
-
 handle_cast({del_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
     {noreply, State#state{excl=ordsets:del_element({Mod, Idx}, Excl)}};
 handle_cast({add_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
@@ -152,8 +172,19 @@ handle_cast({add_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
         _ ->
             ok
     end,
-    {noreply, State#state{excl=ordsets:add_element({Mod, Idx}, Excl)}}.
+    {noreply, State#state{excl=ordsets:add_element({Mod, Idx}, Excl)}};
 
+handle_cast({status_update, ModIdx, StatsUpdate}, State=#state{handoffs=HS}) ->
+    case lists:keyfind(ModIdx, #handoff_status.modindex, HS) of
+        false ->
+            lager:error("status_update for non-existing handoff ~p", [ModIdx]),
+            {noreply, State};
+        HO ->
+            Stats2 = update_stats(StatsUpdate, HO#handoff_status.stats),
+            HO2 = HO#handoff_status{stats=Stats2},
+            HS2 = lists:keyreplace(ModIdx, #handoff_status.modindex, HS, HO2),
+            {noreply, State#state{handoffs=HS2}}
+    end.
 
 handle_info({'DOWN',_Ref,process,Pid,Reason},State=#state{handoffs=HS}) ->
     case lists:keytake(Pid,#handoff_status.transport_pid,HS) of
@@ -201,9 +232,57 @@ terminate(_Reason, _State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-%%
-%% @private functions
-%%
+
+%%%===================================================================
+%%% Private
+%%%===================================================================
+
+build_status(HO) ->
+    #handoff_status{modindex={Mod, Partition},
+                    src_node=SrcNode,
+                    target_node=TargetNode,
+                    direction=Dir,
+                    status=Status,
+                    timestamp=StartTS,
+                    transport_pid=TPid,
+                    stats=Stats,
+                    type=Type}=HO,
+    {status_v2, [{mod, Mod},
+                 {partition, Partition},
+                 {src_node, SrcNode},
+                 {target_node, TargetNode},
+                 {direction, Dir},
+                 {status, Status},
+                 {start_ts, StartTS},
+                 {sender_pid, TPid},
+                 {stats, calc_stats(Stats, StartTS)},
+                 {type, Type}]}.
+
+calc_stats(Stats, StartTS) ->
+    case dict:find(last_update, Stats) of
+        error ->
+            no_stats;
+        {ok, LastUpdate} ->
+            Objs = dict:fetch(objs, Stats),
+            Bytes = dict:fetch(bytes, Stats),
+            ElapsedS = timer:now_diff(LastUpdate, StartTS) / 1000000,
+            ObjsS = round(Objs / ElapsedS),
+            BytesS = round(Bytes / ElapsedS),
+            [{objs_total, Objs},
+             {objs_per_s, ObjsS},
+             {bytes_per_s, BytesS},
+             {last_update, LastUpdate}]
+    end.
+
+filter(none) ->
+    fun(_) -> true end;
+filter({Key, Value}=_Filter) ->
+    fun({status_v2, Status}) ->
+            case proplists:get_value(Key, Status) of
+                Value -> true;
+                _ -> false
+            end
+    end.
 
 get_concurrency_limit () ->
     app_helper:get_env(riak_core,handoff_concurrency,?HANDOFF_CONCURRENCY).
@@ -226,7 +305,7 @@ send_handoff (Mod,Idx,Node,Vnode,HS) ->
                 case lists:keyfind({Mod,Idx},#handoff_status.modindex,HS) of
                     false ->
                         true;
-                    Handoff=#handoff_status{node=Node,vnode_pid=Vnode} ->
+                    Handoff=#handoff_status{target_node=Node,vnode_pid=Vnode} ->
                         {false,Handoff};
                     #handoff_status{transport_pid=Sender} ->
                         %% found a running handoff with a different vnode
@@ -238,6 +317,13 @@ send_handoff (Mod,Idx,Node,Vnode,HS) ->
 
             case ShouldHandoff of
                 true ->
+                    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+                    %% assumes local node is doing the sending
+                    Primary = riak_core_ring:is_primary(Ring, {Idx, node()}),
+                    HOType = if Primary -> ownership_handoff;
+                                true -> hinted_handoff
+                             end,
+
                     %% start the sender process
                     {ok,Pid}=riak_core_handoff_sender_sup:start_sender(Node,
                                                                        Mod,
@@ -249,10 +335,13 @@ send_handoff (Mod,Idx,Node,Vnode,HS) ->
                     {ok, #handoff_status{ transport_pid=Pid,
                                           direction=outbound,
                                           timestamp=now(),
-                                          node=Node,
+                                          src_node=node(),
+                                          target_node=Node,
                                           modindex={Mod,Idx},
                                           vnode_pid=Vnode,
-                                          status=[]
+                                          status=[],
+                                          stats=dict:new(),
+                                          type=HOType
                                         }
                     };
 
@@ -276,15 +365,24 @@ receive_handoff (SSLOpts) ->
                                   direction=inbound,
                                   timestamp=now(),
                                   modindex={undefined,undefined},
-                                  node=undefined,
-                                  status=[]
+                                  src_node=undefined,
+                                  target_node=undefined,
+                                  status=[],
+                                  stats=dict:new()
                                 }
             }
     end.
 
-%%
-%% EUNIT tests...
-%%
+update_stats(StatsUpdate, Stats) ->
+    #ho_stats{last_update=LU, objs=Objs, bytes=Bytes}=StatsUpdate,
+    Stats2 = dict:update_counter(objs, Objs, Stats),
+    Stats3 = dict:update_counter(bytes, Bytes, Stats2),
+    dict:store(last_update, LU, Stats3).
+
+
+%%%===================================================================
+%%% Tests
+%%%===================================================================
 
 -ifdef (TEST_BROKEN_AZ_TICKET_1042).
 

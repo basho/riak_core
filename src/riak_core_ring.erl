@@ -91,7 +91,8 @@
          ring_changed/2,
          set_cluster_name/2,
          reconcile_names/2,
-         reconcile_members/2]).
+         reconcile_members/2,
+         is_primary/2]).
 
 -export_type([riak_core_ring/0]).
 
@@ -229,6 +230,13 @@ nearly_equal(RingA, RingB) ->
     RingB2 = RingB?CHSTATE{vclock=[], meta=[]},
     TestRing = (RingA2 =:= RingB2),
     TestVC and TestRing.
+
+%% @doc Determine if a given Index/Node `IdxNode' combination is a
+%%      primary.
+-spec is_primary(chstate(), {integer(), node()}) -> boolean().
+is_primary(Ring, IdxNode) ->
+    Owners = all_owners(Ring),
+    lists:member(IdxNode, Owners).
 
 %% @doc Produce a list of all nodes that are members of the cluster
 -spec all_members(State :: chstate()) -> [Node :: term()].
