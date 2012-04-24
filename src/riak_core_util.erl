@@ -36,6 +36,7 @@
          mkclientid/1,
          start_app_deps/1,
          build_tree/3,
+         orddict_delta/2,
          rpc_every_member/4,
          rpc_every_member_ann/4,
          is_arch/1]).
@@ -262,6 +263,29 @@ build_tree(N, Nodes, Opts) ->
                             {NewResult, Rest}
                     end, {[], tl(Expand)}, Nodes),
     orddict:from_list(Tree).
+
+orddict_delta(A, B) ->
+    %% Pad both A and B to the same length
+    DummyA = [{Key, '$none'} || {Key, _} <- B],
+    A2 = orddict:merge(fun(_, Value, _) ->
+                               Value
+                       end, A, DummyA),
+
+    DummyB = [{Key, '$none'} || {Key, _} <- A],
+    B2 = orddict:merge(fun(_, Value, _) ->
+                               Value
+                       end, B, DummyB),
+
+    %% Merge and filter out equal values
+    Merged = orddict:merge(fun(_, AVal, BVal) ->
+                                   {AVal, BVal}
+                           end, A2, B2),
+    Diff = orddict:filter(fun(_, {Same, Same}) ->
+                                  false;
+                             (_, _) ->
+                                  true
+                          end, Merged),
+    Diff.
 
 %% Returns a forced-lowercase architecture for this node
 -spec get_arch () -> string().
