@@ -43,5 +43,6 @@ init ([]) ->
          ]}}.
 
 %% start a sender process
-start_sender (TargetNode,Module,Idx,VnodePid) ->
-    supervisor:start_child(?MODULE,[TargetNode,Module,Idx,VnodePid]).
+-spec start_sender(node(), module(), any(), pid()) -> {ok, Sender::pid()}.
+start_sender(TargetNode, Module, Idx, Vnode) ->
+    supervisor:start_child(?MODULE, [TargetNode, Module, Idx, Vnode]).

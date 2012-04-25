@@ -20,7 +20,10 @@
 %%
 %% -------------------------------------------------------------------
 -module(riak_core_status).
--export([ringready/0, transfers/0, ring_status/0]).
+-export([ringready/0,
+         all_active_transfers/0,
+         transfers/0,
+         ring_status/0]).
 
 -spec(ringready() -> {ok, [atom()]} | {error, any()}).
 ringready() ->
@@ -63,6 +66,16 @@ transfers() ->
                 end
         end,
     {Down, lists:foldl(F, [], Rings)}.
+
+%% @doc Produce status for all active transfers in the cluster.
+-spec all_active_transfers() -> {Xfers::list(), Down::list()}.
+all_active_transfers() ->
+    {Xfers, Down} =
+        riak_core_util:rpc_every_member(riak_core_handoff_manager,
+                                        status,
+                                        [{direction, outbound}],
+                                        5000),
+    {Xfers, Down}.
 
 ring_status() ->
     %% Determine which nodes are reachable as well as what vnode modules
@@ -140,21 +153,12 @@ rings_match(R1hash, [{N2, R2} | Rest]) ->
             {false, N2}
     end.
 
-
 %% Get a list of active partition numbers - regardless of vnode type
 active_partitions(Node) ->
-    lists:foldl(fun({_,P}, Ps) ->
+    VNodes = gen_server:call({riak_core_vnode_manager, Node}, all_vnodes, 30000),
+    lists:foldl(fun({_, P, _}, Ps) ->
                         ordsets:add_element(P, Ps)
-                end, [], running_vnodes(Node)).
-
-%% Get a list of running vnodes for a node
-running_vnodes(Node) ->
-    Pids = vnode_pids(Node),
-    [rpc:call(Node, riak_core_vnode, get_mod_index, [Pid], 30000) || Pid <- Pids].
-
-%% Get a list of vnode pids for a node
-vnode_pids(Node) ->
-    [Pid || {_,Pid,_,_} <- supervisor:which_children({riak_core_vnode_sup, Node})].
+                end, [], VNodes).
 
 %% Return a list of active primary partitions, active secondary partitions (to be handed off)
 %% and stopped partitions that should be started
