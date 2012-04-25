@@ -29,13 +29,16 @@
 -define(ACK_COUNT, 1000).
 %% can be set with env riak_core, handoff_timeout
 -define(TCP_TIMEOUT, 60000).
+%% can be set with env riak_core, handoff_status_interval
+%% note this is in seconds
+-define(STATUS_INTERVAL, 2).
 
-start_link(TargetNode, Module, Partition, VnodePid) ->
+start_link(TargetNode, Module, Partition, Vnode) ->
     SslOpts = get_handoff_ssl_options(),
     Pid = spawn_link(fun()->start_fold(TargetNode,
                                        Module,
                                        Partition,
-                                       VnodePid,
+                                       Vnode,
                                        SslOpts)
                      end),
     {ok, Pid}.
@@ -85,13 +88,16 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
 
          M = <<?PT_MSG_INIT:8,Partition:160/integer>>,
          ok = TcpMod:send(Socket, M),
-         StartFoldTime = now(),
+         StartFoldTime = os:timestamp(),
 
          MRef = monitor(process, ParentPid),
          process_flag(trap_exit, true),
          SPid = self(),
+         Stats = #ho_stats{interval_end=future_now(get_status_interval())},
+
          Req = ?FOLD_REQ{foldfun=fun visit_item/3,
-                         acc0={Socket, ParentPid, Module, TcpMod, 0,0, ok}},
+                         acc0={Socket, ParentPid, Module, TcpMod,
+                               0, 0, Stats, Partition, ok}},
 
          HPid =
              spawn_link(
@@ -99,7 +105,7 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
                        %% match structure here because otherwise
                        %% you'll end up in infinite loop below if you
                        %% return something other than what it expects.
-                       R = {Socket,ParentPid,Module,TcpMod,_Ack,_,_} =
+                       R = {Socket,ParentPid,Module,TcpMod,_Ack,_,_,_,_} =
                            riak_core_vnode_master:sync_command({Partition, node()},
                                                                Req,
                                                                VMaster, infinity),
@@ -121,7 +127,7 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
                              [Module, Partition, node(), TargetNode, From, E]),
                  error;
 
-             {MRef, {Socket,ParentPid,Module,TcpMod,_Ack,SentCount,ErrStatus}} ->
+             {MRef, {Socket,ParentPid,Module,TcpMod,_Ack,SentCount,_,_,ErrStatus}} ->
 
                  case ErrStatus of
                      ok ->
@@ -175,39 +181,59 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
                "TCP recv timeout in handoff of partition ~p ~p from ~p to ~p",
                [Module, Partition, node(), TargetNode]);
          Err:Reason ->
-             lager:error("Handoff of partition ~p ~p from ~p to ~p failed ~p:~p",
+             lager:error("Handoff of partition ~p ~p from ~p to ~p failed ~p:~p ~p",
                          [Module, Partition, node(), TargetNode,
-                          Err, Reason]),
+                          Err, Reason, erlang:get_stacktrace()]),
              gen_fsm:send_event(ParentPid, {handoff_error, Err, Reason})
      end.
 
 %% When a tcp error occurs, the ErrStatus argument is set to {error, Reason}.
 %% Since we can't abort the fold, this clause is just a no-op.
-visit_item(_K, _V, {Socket, ParentPid, Module, TcpMod, Ack, Total,
-                    {error, Reason}}) ->
-    {Socket, ParentPid, Module, TcpMod, Ack, Total, {error, Reason}};
-visit_item(K, V, {Socket, ParentPid, Module, TcpMod, ?ACK_COUNT, Total, _Err}) ->
+%%
+%% TODO: turn accumulator into record, this tuple is out of control
+visit_item(_K, _V, {Socket, Parent, Module, TcpMod, Ack, Total, Stats,
+                    Partition, {error, Reason}}) ->
+    {Socket, Parent, Module, TcpMod, Ack, Total, Stats, Partition,
+     {error, Reason}};
+visit_item(K, V, {Socket, Parent, Module, TcpMod, ?ACK_COUNT, Total,
+                  Stats, Partition, _Err}) ->
     RecvTimeout = get_handoff_receive_timeout(),
     M = <<?PT_MSG_OLDSYNC:8,"sync">>,
+    NumBytes = byte_size(M),
+
+    Stats2 = incr_bytes(Stats, NumBytes),
+    Stats3 = maybe_send_status({Module, Partition}, Stats2),
+
     case TcpMod:send(Socket, M) of
         ok ->
             case TcpMod:recv(Socket, 0, RecvTimeout) of
                 {ok,[?PT_MSG_OLDSYNC|<<"sync">>]} ->
-                    visit_item(K, V, {Socket, ParentPid, Module, TcpMod, 0, Total, ok});
+                    visit_item(K, V, {Socket, Parent, Module, TcpMod, 0,
+                                      Total, Stats3, Partition, ok});
                 {error, Reason} ->
-                    {Socket, ParentPid, Module, TcpMod, 0, Total, {error, Reason}}
+                    {Socket, Parent, Module, TcpMod, 0, Total,
+                     Stats3, Partition, {error, Reason}}
             end;
         {error, Reason} ->
-            {Socket, ParentPid, Module, TcpMod, 0, Total, {error, Reason}}
+            {Socket, Parent, Module, TcpMod, 0, Total, Stats3,
+             Partition, {error, Reason}}
     end;
-visit_item(K, V, {Socket, ParentPid, Module, TcpMod, Ack, Total, _ErrStatus}) ->
+visit_item(K, V, {Socket, Parent, Module, TcpMod, Ack, Total, Stats,
+                  Partition, _ErrStatus}) ->
     BinObj = Module:encode_handoff_item(K, V),
     M = <<?PT_MSG_OBJ:8,BinObj/binary>>,
+    NumBytes = byte_size(M),
+
+    Stats2 = incr_bytes(incr_objs(Stats), NumBytes),
+    Stats3 = maybe_send_status({Module, Partition}, Stats2),
+
     case TcpMod:send(Socket, M) of
         ok ->
-            {Socket, ParentPid, Module, TcpMod, Ack+1, Total+1, ok};
+            {Socket, Parent, Module, TcpMod, Ack+1, Total+1, Stats3,
+             Partition, ok};
         {error, Reason} ->
-            {Socket, ParentPid, Module, TcpMod, Ack, Total, {error, Reason}}
+            {Socket, Parent, Module, TcpMod, Ack, Total, Stats3,
+             Partition, {error, Reason}}
     end.
 
 get_handoff_port(Node) when is_atom(Node) ->
@@ -250,5 +276,55 @@ get_handoff_receive_timeout() ->
     app_helper:get_env(riak_core, handoff_timeout, ?TCP_TIMEOUT).
 
 end_fold_time(StartFoldTime) ->
-    EndFoldTime = now(),
+    EndFoldTime = os:timestamp(),
     timer:now_diff(EndFoldTime, StartFoldTime) / 1000000.
+
+%% @private
+%%
+%% @doc Produce the value of `now/0' as if it were called `S' seconds
+%% in the future.
+-spec future_now(pos_integer()) -> erlang:timestamp().
+future_now(S) ->
+    {Megas, Secs, Micros} = os:timestamp(),
+    {Megas, Secs + S, Micros}.
+
+%% @private
+%%
+%% @doc Check if the given timestamp `TS' has elapsed.
+-spec is_elapsed(erlang:timestamp()) -> boolean().
+is_elapsed(TS) ->
+    os:timestamp() >= TS.
+
+%% @private
+%%
+%% @doc Increment `Stats' byte count by `NumBytes'.
+-spec incr_bytes(ho_stats(), non_neg_integer()) -> NewStats::ho_stats().
+incr_bytes(Stats=#ho_stats{bytes=Bytes}, NumBytes) ->
+    Stats#ho_stats{bytes=Bytes + NumBytes}.
+
+%% @private
+%%
+%% @doc Increment `Stats' object count by 1.
+-spec incr_objs(ho_stats()) -> NewStats::ho_stats().
+incr_objs(Stats=#ho_stats{objs=Objs}) ->
+    Stats#ho_stats{objs=Objs+1}.
+
+%% @private
+%%
+%% @doc Check if the interval has elapsed and if so send handoff stats
+%%      for `ModIdx' to the manager and return a new stats record
+%%      `NetStats'.
+-spec maybe_send_status({module(), non_neg_integer()}, ho_stats()) ->
+                               NewStats::ho_stats().
+maybe_send_status(ModIdx, Stats=#ho_stats{interval_end=IntervalEnd}) ->
+    case is_elapsed(IntervalEnd) of
+        true ->
+            Stats2 = Stats#ho_stats{last_update=os:timestamp()},
+            riak_core_handoff_manager:status_update(ModIdx, Stats2),
+            #ho_stats{interval_end=future_now(get_status_interval())};
+        false ->
+            Stats
+    end.
+
+get_status_interval() ->
+    app_helper:get_env(riak_core, handoff_status_interval, ?STATUS_INTERVAL).

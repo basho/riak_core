@@ -28,6 +28,7 @@
              riak_core_coverage_plan,
              riak_core_eventhandler_guard,
              riak_core_eventhandler_sup,
+             riak_core_format,
              riak_core_gossip,
              riak_core_handoff_listener,
              riak_core_handoff_listener_sup,
