@@ -6,7 +6,8 @@ applications. Riak Core is influenced by the [[http://s3.amazonaws.com/AllThings
 ** Quick Start
    You must have [[http://erlang.org/download.html][Erlang/OTP R13B04]] or later and a GNU-style build
    system to compile and run =riak_core=. The easiest way to utilize riak_core is by installing the full 
-   Riak application available on [[https://github.com/basho/riak][Github]].
+   Riak application available on [[https://github.com/basho/riak][Github]]. You can also view the Riak Core EDocs 
+   [[http://basho.github.com/riak_core/][here]].
 
 ** Contributing
    We encourage contributions to =riak_core= from the community.
