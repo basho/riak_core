@@ -98,7 +98,7 @@ status(Filter) ->
 
 %% @doc Send status updates `Stats' to the handoff manager for a
 %%      particular handoff identified by `ModIdx'.
--spec status_update(modindex(), proplists:proplist()) -> ok.
+-spec status_update(modindex(), ho_stats()) -> ok.
 status_update(ModIdx, Stats) ->
     gen_server:cast(?MODULE, {status_update, ModIdx, Stats}).
 
