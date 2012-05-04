@@ -1,8 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_handoff_sender: send a partition's data via TCP-based handoff
-%%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2012 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -33,18 +31,46 @@
 %% note this is in seconds
 -define(STATUS_INTERVAL, 2).
 
-start_link(TargetNode, Module, Partition, Vnode) ->
+%% Accumulator for the visit item HOF
+-record(ho_acc,
+        {
+          ack            :: non_neg_integer(),
+          error          :: ok | {error, any()},
+          filter         :: function(),
+          module         :: module(),
+          parent         :: pid(),
+          socket         :: any(),
+          src_target     :: {non_neg_integer(), non_neg_integer()},
+          stats          :: #ho_stats{},
+          tcp_mod        :: module(),
+          total          :: non_neg_integer()
+        }).
+
+%%%===================================================================
+%%% API
+%%%===================================================================
+
+start_link(TargetNode, Module, {Type, Opts}, Vnode) ->
     SslOpts = get_handoff_ssl_options(),
     Pid = spawn_link(fun()->start_fold(TargetNode,
                                        Module,
-                                       Partition,
+                                       {Type, Opts},
                                        Vnode,
                                        SslOpts)
                      end),
     {ok, Pid}.
 
-start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
+%%%===================================================================
+%%% Private
+%%%===================================================================
+
+start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
+    SrcNode = node(),
+
      try
+         SrcPartition = get_src_partition(Opts),
+         TargetPartition = get_target_partition(Opts),
+         Filter = get_filter(Opts),
          [_Name,Host] = string:tokens(atom_to_list(TargetNode), "@"),
          {ok, Port} = get_handoff_port(TargetNode),
          TNHandoffIP =
@@ -92,10 +118,9 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
              {error, closed} -> exit({shutdown, max_concurrency})
          end,
 
-         lager:info("Starting handoff of partition ~p ~p from ~p to ~p",
-                    [Module, Partition, node(), TargetNode]),
+         log_start(Module, {Type, Opts}, SrcNode, TargetNode),
 
-         M = <<?PT_MSG_INIT:8,Partition:160/integer>>,
+         M = <<?PT_MSG_INIT:8,TargetPartition:160/integer>>,
          ok = TcpMod:send(Socket, M),
          StartFoldTime = os:timestamp(),
 
@@ -105,8 +130,16 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
          Stats = #ho_stats{interval_end=future_now(get_status_interval())},
 
          Req = ?FOLD_REQ{foldfun=fun visit_item/3,
-                         acc0={Socket, ParentPid, Module, TcpMod,
-                               0, 0, Stats, Partition, ok}},
+                         acc0=#ho_acc{ack=0,
+                                      error=ok,
+                                      filter=Filter,
+                                      module=Module,
+                                      parent=ParentPid,
+                                      socket=Socket,
+                                      src_target={SrcPartition, TargetPartition},
+                                      stats=Stats,
+                                      tcp_mod=TcpMod,
+                                      total=0}},
 
          HPid =
              spawn_link(
@@ -114,8 +147,8 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
                        %% match structure here because otherwise
                        %% you'll end up in infinite loop below if you
                        %% return something other than what it expects.
-                       R = {Socket,ParentPid,Module,TcpMod,_Ack,_,_,_,_} =
-                           riak_core_vnode_master:sync_command({Partition, node()},
+                       R = #ho_acc{} =
+                           riak_core_vnode_master:sync_command({SrcPartition, SrcNode},
                                                                Req,
                                                                VMaster, infinity),
                        SPid ! {MRef, R}
@@ -124,19 +157,21 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
          receive
              {'DOWN', MRef, process, ParentPid, _Info} ->
                  exit(HPid, kill),
-                 lager:error("Handoff of partition ~p ~p from ~p to ~p failed "
-                             " because vnode died",
-                             [Module, Partition, node(), TargetNode]),
-
+                 log_fail(Module, {Type, Opts}, SrcNode, TargetNode, "because vnode died"),
                  error;
 
              {'EXIT', From, E} ->
-                 lager:error("Handoff of partition ~p ~p from ~p to ~p failed "
-                             " because ~p died with reason ~p",
-                             [Module, Partition, node(), TargetNode, From, E]),
+                 ReasonStr1 = io_lib:format("because ~p died with reason ~p",
+                                           [From, E]),
+                 log_fail(Module, {Type, Opts}, SrcNode, TargetNode, ReasonStr1),
                  error;
 
-             {MRef, {Socket,ParentPid,Module,TcpMod,_Ack,SentCount,_,_,ErrStatus}} ->
+             {MRef, #ho_acc{}=Acc} ->
+                 #ho_acc{error=ErrStatus,
+                         module=Module,
+                         parent=ParentPid,
+                         tcp_mod=TcpMod,
+                         total=SentCount} = Acc,
 
                  case ErrStatus of
                      ok ->
@@ -145,30 +180,31 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
                          %% so handoff_complete can only be sent once all of the data is
                          %% written.  handle_handoff_data is a sync call, so once
                          %% we receive the sync the remote side will be up to date.
-                         lager:debug("~p ~p Sending final sync", [Partition, Module]),
+                         lager:debug("~p ~p Sending final sync",
+                                     [SrcPartition, Module]),
                          ok = TcpMod:send(Socket, <<?PT_MSG_SYNC:8>>),
 
                          case TcpMod:recv(Socket, 0, RecvTimeout) of
                              {ok,[?PT_MSG_SYNC|<<"sync">>]} ->
-                                 lager:debug("~p ~p Final sync received", [Partition, Module]);
+                                 lager:debug("~p ~p Final sync received",
+                                             [SrcPartition, Module]);
                              {error, timeout} -> exit({shutdown, timeout})
                          end,
 
                          FoldTimeDiff = end_fold_time(StartFoldTime),
 
-                         lager:info("Handoff of partition ~p ~p from ~p to ~p "
-                                    "completed: sent ~p objects in ~.2f "
-                                    "seconds",
-                                    [Module, Partition, node(), TargetNode,
-                                     SentCount, FoldTimeDiff]),
-                         gen_fsm:send_event(ParentPid, handoff_complete);
+                         log_complete(Module, {Type, Opts}, SrcNode,
+                                      TargetNode, SentCount, FoldTimeDiff),
+
+                         case Type of
+                             repair -> ok;
+                             _ -> gen_fsm:send_event(ParentPid, handoff_complete)
+                         end;
                      {error, ErrReason} ->
-                         FoldTimeDiff = end_fold_time(StartFoldTime),
-                         lager:error("Handoff of partition ~p ~p from ~p to ~p "
-                                     "FAILED after sending ~p objects "
-                                     "in ~.2f seconds: ~p",
-                                     [Module, Partition, node(), TargetNode,
-                                      SentCount, FoldTimeDiff, ErrReason]),
+                         ReasonStr2 = io_lib:format(" because of ~p",
+                                                    [ErrReason]),
+                         log_fail(Module, {Type, Opts}, SrcNode,
+                                  TargetNode, ReasonStr2),
                          if ErrReason == timeout ->
                                  riak_core_stat:update(handoff_timeouts);
                             true -> ok
@@ -179,70 +215,79 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
          end
      catch
          exit:{shutdown,max_concurrency} ->
-             %% In this case the receiver hungup on the sender because
-             %% of handoff_concurrency.  You don't want to log
-             %% anything because this is normal.
-             ok;
+             %% Need to fwd the error so the handoff mgr knows
+             exit({shutdown, max_concurrency});
          exit:{shutdown, timeout} ->
              %% A receive timeout during handoff
              riak_core_stat:update(handoff_timeouts),
-             lager:warning(
-               "TCP recv timeout in handoff of partition ~p ~p from ~p to ~p",
-               [Module, Partition, node(), TargetNode]);
+             log_fail(Module, {Type, Opts}, SrcNode, TargetNode,
+                      " because of TCP recv timeout");
          Err:Reason ->
-             lager:error("Handoff of partition ~p ~p from ~p to ~p failed ~p:~p ~p",
-                         [Module, Partition, node(), TargetNode,
-                          Err, Reason, erlang:get_stacktrace()]),
+             ReasonStr3 = io_lib:format(" because of ~p:~p ~p",
+                                        [Err, Reason, erlang:get_stacktrace()]),
+             log_fail(Module, {Type, Opts}, SrcNode, TargetNode, ReasonStr3),
              gen_fsm:send_event(ParentPid, {handoff_error, Err, Reason})
      end.
 
 %% When a tcp error occurs, the ErrStatus argument is set to {error, Reason}.
 %% Since we can't abort the fold, this clause is just a no-op.
-%%
-%% TODO: turn accumulator into record, this tuple is out of control
-visit_item(_K, _V, {Socket, Parent, Module, TcpMod, Ack, Total, Stats,
-                    Partition, {error, Reason}}) ->
-    {Socket, Parent, Module, TcpMod, Ack, Total, Stats, Partition,
-     {error, Reason}};
-visit_item(K, V, {Socket, Parent, Module, TcpMod, ?ACK_COUNT, Total,
-                  Stats, Partition, _Err}) ->
+visit_item(_K, _V, Acc=#ho_acc{error={error, _Reason}}) ->
+    Acc;
+visit_item(K, V, Acc=#ho_acc{ack=?ACK_COUNT}) ->
+    #ho_acc{module=Module,
+            socket=Sock,
+            src_target={SrcPartition, TargetPartition},
+            stats=Stats,
+            tcp_mod=TcpMod
+           } = Acc,
+
     RecvTimeout = get_handoff_receive_timeout(),
     M = <<?PT_MSG_OLDSYNC:8,"sync">>,
     NumBytes = byte_size(M),
 
     Stats2 = incr_bytes(Stats, NumBytes),
-    Stats3 = maybe_send_status({Module, Partition}, Stats2),
+    Stats3 = maybe_send_status({Module, SrcPartition, TargetPartition}, Stats2),
 
-    case TcpMod:send(Socket, M) of
+    case TcpMod:send(Sock, M) of
         ok ->
-            case TcpMod:recv(Socket, 0, RecvTimeout) of
+            case TcpMod:recv(Sock, 0, RecvTimeout) of
                 {ok,[?PT_MSG_OLDSYNC|<<"sync">>]} ->
-                    visit_item(K, V, {Socket, Parent, Module, TcpMod, 0,
-                                      Total, Stats3, Partition, ok});
+                    Acc2 = Acc#ho_acc{ack=0, error=ok, stats=Stats3},
+                    visit_item(K, V, Acc2);
                 {error, Reason} ->
-                    {Socket, Parent, Module, TcpMod, 0, Total,
-                     Stats3, Partition, {error, Reason}}
+                    Acc#ho_acc{ack=0, error={error, Reason}, stats=Stats3}
             end;
         {error, Reason} ->
-            {Socket, Parent, Module, TcpMod, 0, Total, Stats3,
-             Partition, {error, Reason}}
+            Acc#ho_acc{ack=0, error={error, Reason}, stats=Stats3}
     end;
-visit_item(K, V, {Socket, Parent, Module, TcpMod, Ack, Total, Stats,
-                  Partition, _ErrStatus}) ->
-    BinObj = Module:encode_handoff_item(K, V),
-    M = <<?PT_MSG_OBJ:8,BinObj/binary>>,
-    NumBytes = byte_size(M),
+visit_item(K, V, Acc) ->
+    #ho_acc{ack=Ack,
+            filter=Filter,
+            module=Module,
+            socket=Sock,
+            src_target={SrcPartition, TargetPartition},
+            stats=Stats,
+            tcp_mod=TcpMod,
+            total=Total
+           } = Acc,
 
-    Stats2 = incr_bytes(incr_objs(Stats), NumBytes),
-    Stats3 = maybe_send_status({Module, Partition}, Stats2),
+    case Filter(K) of
+        true ->
+            BinObj = Module:encode_handoff_item(K, V),
+            M = <<?PT_MSG_OBJ:8,BinObj/binary>>,
+            NumBytes = byte_size(M),
 
-    case TcpMod:send(Socket, M) of
-        ok ->
-            {Socket, Parent, Module, TcpMod, Ack+1, Total+1, Stats3,
-             Partition, ok};
-        {error, Reason} ->
-            {Socket, Parent, Module, TcpMod, Ack, Total, Stats3,
-             Partition, {error, Reason}}
+            Stats2 = incr_bytes(incr_objs(Stats), NumBytes),
+            Stats3 = maybe_send_status({Module, SrcPartition, TargetPartition}, Stats2),
+
+            case TcpMod:send(Sock, M) of
+                ok ->
+                    Acc#ho_acc{ack=Ack+1, error=ok, stats=Stats3, total=Total+1};
+                {error, Reason} ->
+                    Acc#ho_acc{error={error, Reason}, stats=Stats3}
+            end;
+        false ->
+            Acc#ho_acc{error=ok, total=Total+1}
     end.
 
 get_handoff_ip(Node) when is_atom(Node) ->
@@ -331,13 +376,14 @@ incr_objs(Stats=#ho_stats{objs=Objs}) ->
 %% @doc Check if the interval has elapsed and if so send handoff stats
 %%      for `ModIdx' to the manager and return a new stats record
 %%      `NetStats'.
--spec maybe_send_status({module(), non_neg_integer()}, ho_stats()) ->
+-spec maybe_send_status({module(), non_neg_integer(), non_neg_integer()},
+                        ho_stats()) ->
                                NewStats::ho_stats().
-maybe_send_status(ModIdx, Stats=#ho_stats{interval_end=IntervalEnd}) ->
+maybe_send_status(ModSrcTgt, Stats=#ho_stats{interval_end=IntervalEnd}) ->
     case is_elapsed(IntervalEnd) of
         true ->
             Stats2 = Stats#ho_stats{last_update=os:timestamp()},
-            riak_core_handoff_manager:status_update(ModIdx, Stats2),
+            riak_core_handoff_manager:status_update(ModSrcTgt, Stats2),
             #ho_stats{interval_end=future_now(get_status_interval())};
         false ->
             Stats
@@ -345,3 +391,39 @@ maybe_send_status(ModIdx, Stats=#ho_stats{interval_end=IntervalEnd}) ->
 
 get_status_interval() ->
     app_helper:get_env(riak_core, handoff_status_interval, ?STATUS_INTERVAL).
+
+log_start(Module, {Type, Opts}, SrcNode, TargetNode) ->
+    SrcPartition = get_src_partition(Opts),
+    TargetPartition = get_target_partition(Opts),
+    lager:info("Starting ~p transfer of ~p from ~p ~p to ~p ~p",
+               [Type, Module, SrcNode, SrcPartition,
+                TargetNode, TargetPartition]).
+
+log_fail(Module, {Type, Opts}, SrcNode, TargetNode, Reason) ->
+    SrcPartition = get_src_partition(Opts),
+    TargetPartition = get_target_partition(Opts),
+    lager:error("~p transfer of ~p from ~p ~p to ~p ~p failed ~s",
+                [Type, Module, SrcNode, SrcPartition,
+                 TargetNode, TargetPartition, Reason]).
+
+log_complete(Module, {Type, Opts}, SrcNode, TargetNode, SentCount,
+             FoldTimeDiff) ->
+    SrcPartition = get_src_partition(Opts),
+    TargetPartition = get_target_partition(Opts),
+    lager:info("~p transfer of ~p from ~p ~p to ~p ~p"
+               " completed: sent ~p objects in ~.2f seconds",
+               [Type, Module, SrcNode, SrcPartition,
+                TargetNode, TargetPartition, SentCount, FoldTimeDiff]).
+
+get_src_partition(Opts) ->
+    proplists:get_value(src_partition, Opts).
+
+get_target_partition(Opts) ->
+    proplists:get_value(target_partition, Opts).
+
+-spec get_filter(proplists:proplist()) -> predicate().
+get_filter(Opts) ->
+    case proplists:get_value(filter, Opts) of
+        none -> fun(_) -> true end;
+        Filter -> Filter
+    end.

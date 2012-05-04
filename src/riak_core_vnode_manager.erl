@@ -28,7 +28,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 -export([all_vnodes/0, all_vnodes/1, all_vnodes_status/0, ring_changed/1,
-         force_handoffs/0]).
+         force_handoffs/0, repair/3, repair_status/1, xfer_complete/2,
+         kill_repairs/1]).
 -export([all_index_pid/1, get_vnode_pid/2, start_vnode/2,
          unregister_vnode/2, unregister_vnode/3, vnode_event/4]).
 %% Field debugging
@@ -39,14 +40,32 @@
 -endif.
 
 -record(idxrec, {key, idx, mod, pid, monref}).
--record(state, {idxtab, 
+
+-record(repair,
+        {
+          mod_partition         :: mod_partition(),
+          filter_mod_fun        :: {module(), atom()},
+          minus_one_xfer        :: handoff(),
+          plus_one_xfer         :: handoff()
+        }).
+-type repair() :: #repair{}.
+-type repairs() :: [repair()].
+
+-record(state, {idxtab,
                 forwarding :: [pid()],
                 handoff :: [{term(), integer(), pid(), node()}],
                 known_modules :: [term()],
                 never_started :: [{integer(), term()}],
-                vnode_start_tokens :: integer()
+                vnode_start_tokens :: integer(),
+                repairs :: repairs()
                }).
 
+-include("riak_core_handoff.hrl").
+-define(XFER_EQ(A, B),
+        A#handoff_status.mod_src_tgt == B#handoff_status.mod_src_tgt
+        andalso A#handoff_status.timestamp == B#handoff_status.timestamp).
+-define(XFER_COMPLETE(X),
+        X#handoff_status.status == complete).
 -define(DEFAULT_OWNERSHIP_TRIGGER, 8).
 
 %% ===================================================================
@@ -67,6 +86,49 @@ all_vnodes(Mod) ->
 
 all_vnodes_status() ->
     gen_server:call(?MODULE, all_vnodes_status).
+
+%% @doc Repair the given `ModPartition' pair for `Service' using the
+%%      given `FilterModFun' to filter keys.
+-spec repair(atom(), {module(), non_neg_integer()}, {module(), atom()}) ->
+                    {ok, Pairs::[{non_neg_integer(), node()}]} |
+                    {down, Down::[{non_neg_integer(), node()}]} |
+                    ownership_change_in_progress.
+repair(Service, {_Module, Partition}=ModPartition, FilterModFun) ->
+    %% Fwd the request to the partition owner to guarentee that there
+    %% is only one request per partition.
+    %%
+    %% TODO: Pass Ring (or piece of info) to verify receiving nodes
+    %% have same ring or abort repair.
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    Pairs = [_, {_, Owner}, _] = repair_pairs(Ring, Partition),
+    UpNodes = riak_core_node_watcher:nodes(Service),
+    case is_pending_ownership_changes(Ring) of
+        false ->
+            case check_up(Pairs, UpNodes) of
+                true ->
+                    Msg = {repair, ModPartition, Pairs, FilterModFun},
+                    ok = gen_server:call({?MODULE, Owner}, Msg),
+                    {ok, Pairs};
+                {false, Down} ->
+                    {down, Down}
+            end;
+        true ->
+            ownership_change_in_progress
+    end.
+
+%% @doc Get the status of the repair process for a given `ModPartition'.
+-spec repair_status(mod_partition()) -> in_progress | not_found.
+repair_status({_Module, Partition}=ModPartition) ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    Owner = riak_core_ring:index_owner(Ring, Partition),
+    gen_server:call({?MODULE, Owner}, {repair_status, ModPartition}).
+
+-spec xfer_complete(node(), handoff()) -> ok.
+xfer_complete(Origin, Xfer) ->
+    gen_server:call({?MODULE, Origin}, {xfer_complete, Xfer}).
+
+kill_repairs(Reason) ->
+    gen_server:cast(?MODULE, {kill_repairs, Reason}).
 
 ring_changed(_TaintedRing) ->
     %% The ring passed into ring events is the locally modified tainted ring.
@@ -111,7 +173,8 @@ init(_State) ->
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
     Mods = [Mod || {_, Mod} <- riak_core:vnode_modules()],
     State = #state{forwarding=[], handoff=[],
-                   known_modules=[], never_started=[], vnode_start_tokens=0},
+                   known_modules=[], never_started=[], vnode_start_tokens=0,
+                   repairs=[]},
     State2 = find_vnodes(State),
     AllVNodes = get_all_vnodes(Mods, State2),
     State3 = update_forwarding(AllVNodes, Mods, Ring, State2),
@@ -171,6 +234,64 @@ handle_call({Partition, Mod, get_vnode}, _From, State) ->
     {reply, {ok, Pid}, State};
 handle_call(get_tab, _From, State) ->
     {reply, ets:tab2list(State#state.idxtab), State};
+
+handle_call({repair, ModPartition, Pairs, FilterModFun}, _From, State) ->
+    #state{repairs=Repairs} = State,
+    case get_repair(ModPartition, Repairs) of
+        none ->
+            [MinusOne, _, PlusOne] = Pairs,
+            MOX = riak_core_handoff_manager:xfer(MinusOne, ModPartition,
+                                                 FilterModFun),
+            POX = riak_core_handoff_manager:xfer(PlusOne, ModPartition,
+                                                 FilterModFun),
+            Repair = #repair{mod_partition=ModPartition,
+                             filter_mod_fun=FilterModFun,
+                             minus_one_xfer=MOX,
+                             plus_one_xfer=POX},
+            Repairs2 = Repairs ++ [Repair],
+            State2 = State#state{repairs=Repairs2},
+            lager:debug("add repair ~p", [ModPartition]),
+            {reply, ok, State2};
+        #repair{} ->
+            {reply, ok, State}
+    end;
+
+handle_call({repair_status, ModPartition}, _From, State) ->
+    Repairs = State#state.repairs,
+    case get_repair(ModPartition, Repairs) of
+        none -> {reply, not_found, State};
+        #repair{} -> {reply, in_progress, State}
+    end;
+
+handle_call({xfer_complete, Xfer}, _From, State) ->
+    Repairs = State#state.repairs,
+    {Module, _, Partition} = Xfer#handoff_status.mod_src_tgt,
+    ModPartition = {Module, Partition},
+    case get_repair(ModPartition, Repairs) of
+        none ->
+            lager:error("Received xfer_complete for non-existing repair: ~p",
+                        [ModPartition]),
+            {reply, ok, State};
+        #repair{minus_one_xfer=MOX, plus_one_xfer=POX}=R ->
+            R2 = if ?XFER_EQ(MOX, Xfer) ->
+                         MOX2 = MOX#handoff_status{status=complete},
+                         R#repair{minus_one_xfer=MOX2};
+                    ?XFER_EQ(POX, Xfer) ->
+                         POX2 = POX#handoff_status{status=complete},
+                         R#repair{plus_one_xfer=POX2};
+                    true ->
+                         throw({xfer_complete_matches_none, R, Xfer})
+                 end,
+
+            case {?XFER_COMPLETE(R2#repair.minus_one_xfer),
+                  ?XFER_COMPLETE(R2#repair.plus_one_xfer)} of
+                {true, true} ->
+                    {reply, ok, State#state{repairs=remove_repair(R2, Repairs)}};
+                _ ->
+                    {reply, ok, State#state{repairs=replace_repair(R2, Repairs)}}
+            end
+    end;
+
 handle_call(_, _From, State) ->
     {reply, ok, State}.
 
@@ -218,17 +339,36 @@ handle_cast(management_tick, State) ->
     Mods = [Mod || {_, Mod} <- riak_core:vnode_modules()],
     AllVNodes = get_all_vnodes(Mods, State),
     State2 = update_handoff(AllVNodes, Ring, State),
-    trigger_ownership_handoff(Mods, Ring, State2),
+    Transfers = riak_core_ring:pending_changes(Ring),
+
+    %% Kill/cancel any repairs during ownership changes
+    State3 =
+        case Transfers of
+            [] ->
+                State2;
+            _ ->
+                Repairs = State#state.repairs,
+                kill_repairs(Repairs, ownership_change),
+                trigger_ownership_handoff(Transfers, Mods, State2),
+                State2#state{repairs=[]}
+        end,
 
     MaxStart = app_helper:get_env(riak_core, vnode_rolling_start, 16),
-    State3 = State2#state{vnode_start_tokens=MaxStart},
-    State4 = maybe_start_vnodes(Ring, State3),
-    {noreply, State4};
+    State4 = State3#state{vnode_start_tokens=MaxStart},
+    State5 = maybe_start_vnodes(Ring, State4),
+
+    Repairs2 = check_repairs(State4#state.repairs),
+    {noreply, State5#state{repairs=Repairs2}};
 
 handle_cast(maybe_start_vnodes, State) ->
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
     State2 = maybe_start_vnodes(Ring, State),
     {noreply, State2};
+
+handle_cast({kill_repairs, Reason}, State) ->
+    lager:warning("Killing all repairs: ~p", [Reason]),
+    kill_repairs(State#state.repairs, Reason),
+    {noreply, State#state{repairs=[]}};
 
 handle_cast(_, State) ->
     {noreply, State}.
@@ -269,8 +409,7 @@ schedule_management_timer() ->
                                         10000),
     timer:apply_after(ManagementTick, gen_server, cast, [?MODULE, management_tick]).
 
-trigger_ownership_handoff(Mods, Ring, State) ->
-    Transfers = riak_core_ring:pending_changes(Ring),
+trigger_ownership_handoff(Transfers, Mods, State) ->
     Limit = app_helper:get_env(riak_core,
                                forced_ownership_handoff,
                                ?DEFAULT_OWNERSHIP_TRIGGER),
@@ -534,3 +673,101 @@ maybe_start_vnodes(State=#state{vnode_start_tokens=Tokens,
             State#state{vnode_start_tokens=Tokens-1,
                         never_started=NeverStarted2}
     end.
+
+-spec check_repairs(repairs()) -> Repairs2::repairs().
+check_repairs(Repairs) ->
+    Check =
+        fun(R=#repair{minus_one_xfer=MOX, plus_one_xfer=POX}, Repairs2) ->
+                MOX2 = maybe_retry(MOX),
+                POX2 = maybe_retry(POX),
+                if ?XFER_COMPLETE(MOX2) andalso ?XFER_COMPLETE(POX2) ->
+                        Repairs2;
+                   true ->
+                        R2 = R#repair{minus_one_xfer=MOX2, plus_one_xfer=POX2},
+                        [R2|Repairs2]
+                end
+        end,
+    lists:reverse(lists:foldl(Check, [], Repairs)).
+
+-spec maybe_retry(handoff()) -> Xfer2::handoff().
+maybe_retry(Xfer) ->
+    case riak_core_handoff_manager:xfer_status(Xfer) of
+        complete -> Xfer;
+        in_progress -> Xfer;
+        not_found -> riak_core_handoff_manager:retry_xfer(Xfer)
+    end.
+
+%% @private
+-spec is_pending_ownership_changes(riak_core_ring:riak_core_ring()) ->
+                                          boolean().
+is_pending_ownership_changes(Ring) ->
+    case riak_core_ring:pending_changes(Ring) of
+        [] -> false;
+        _ -> true
+    end.
+
+%% @private
+%%
+%% @doc Verify that all nodes are up involved in the repair.
+-spec check_up([{non_neg_integer(), node()}], [node()]) ->
+                      true | {false, Down::[{non_neg_integer(), node()}]}.
+check_up(Pairs, UpNodes) ->
+    F = fun({_Partition, Owner}=P, Down) ->
+                case lists:member(Owner, UpNodes) of
+                    true -> Down;
+                    false -> [P|Down]
+                end
+        end,
+    case lists:foldl(F, [], Pairs) of
+        [] -> true;
+        Down -> {false, Down}
+    end.
+
+%% @private
+%%
+%% @doc Get the three `{Partition, Owner}' pairs involved in a repair
+%%      operation for the given `Ring' and `Partition'.
+-spec repair_pairs(riak_core_ring:riak_core_ring(), non_neg_integer()) ->
+                          [{Partition::non_neg_integer(), Owner::node()}].
+repair_pairs(Ring, Partition) ->
+    Owner = riak_core_ring:index_owner(Ring, Partition),
+    CH = element(4, Ring),
+    [_, Before] = chash:predecessors(<<Partition:160/integer>>, CH, 2),
+    [After] = chash:successors(<<Partition:160/integer>>, CH, 1),
+    [Before, {Partition, Owner}, After].
+
+%% @private
+%%
+%% @doc Get the corresponding repair entry in `Repairs', if one
+%%      exists, for the given `ModPartition'.
+-spec get_repair(mod_partition(), repairs()) -> repair() | none.
+get_repair(ModPartition, Repairs) ->
+    case lists:keyfind(ModPartition, #repair.mod_partition, Repairs) of
+        false -> none;
+        Val -> Val
+    end.
+
+%% @private
+%%
+%% @doc Remove the repair entry.
+-spec remove_repair(repair(), repairs()) -> repairs().
+remove_repair(Repair, Repairs) ->
+    lists:keydelete(Repair#repair.mod_partition, #repair.mod_partition, Repairs).
+
+%% @private
+%%
+%% @doc Replace the matching repair entry with `Repair'.
+-spec replace_repair(repair(), repairs()) -> repairs().
+replace_repair(Repair, Repairs) ->
+    lists:keyreplace(Repair#repair.mod_partition, #repair.mod_partition,
+                     Repairs, Repair).
+
+kill_repairs(Repairs, Reason) ->
+    Kill =
+        fun(R) ->
+                MOX = R#repair.minus_one_xfer,
+                POX = R#repair.plus_one_xfer,
+                riak_core_handoff_manager:kill_xfer(MOX, Reason),
+                riak_core_handoff_manager:kill_xfer(POX, Reason)
+        end,
+    [Kill(Repair) || Repair <- Repairs].
