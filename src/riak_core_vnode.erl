@@ -193,8 +193,8 @@ should_handoff(#state{index=Idx, mod=Mod}) ->
         Me ->
             false;
         TargetNode ->
-            ["riak", A, "vnode"] = string:tokens(atom_to_list(Mod), "_"),
-            App = list_to_atom("riak_" ++ A),
+            [ModPrefix, ModInfix, "vnode"] = string:tokens(atom_to_list(Mod), "_"),
+            App = list_to_atom(ModPrefix ++ "_" ++ ModInfix),
             case lists:member(TargetNode, riak_core_node_watcher:nodes(App)) of
                 false  -> false;
                 true -> {true, TargetNode}
