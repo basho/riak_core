@@ -26,6 +26,7 @@
              riak_core_console,
              riak_core_coverage_fsm,
              riak_core_coverage_plan,
+             riak_core_dtrace,
              riak_core_eventhandler_guard,
              riak_core_eventhandler_sup,
              riak_core_format,
