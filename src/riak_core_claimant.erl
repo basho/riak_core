@@ -50,9 +50,9 @@ ring_changed(Node, CState) ->
     %%   -- Starts when next changes from empty to non-empty
     %%   -- Stops when next changes from non-empty to empty
     %%
-    IsClaimant = (CState5?CHSTATE.claimant =:= Node),
-    WasPending = ([] /= pending_changes(CState)),
-    IsPending  = ([] /= pending_changes(CState5)),
+    IsClaimant = (riak_core_ring:claimant(CState5) =:= Node),
+    WasPending = ([] /= riak_core_ring:pending_changes(CState)),
+    IsPending  = ([] /= riak_core_ring:pending_changes(CState5)),
 
     %% Outer case statement already checks for ring_ready
     case {IsClaimant, Changed} of
@@ -75,7 +75,7 @@ ring_changed(Node, CState) ->
     end,
 
     %% Set cluster name if it is undefined
-    case {IsClaimant, cluster_name(CState5)} of
+    case {IsClaimant, riak_core_ring:cluster_name(CState5)} of
         {true, undefined} ->
             ClusterName = {Node, erlang:now()},
             riak_core_util:rpc_every_member(riak_core_ring_manager,
@@ -84,42 +84,41 @@ ring_changed(Node, CState) ->
                                             1000),
             ok;
         _ ->
-            ClusterName = cluster_name(CState5),
+            ClusterName = riak_core_ring:cluster_name(CState5),
             ok
     end,
 
     case Changed of
         true ->
-            VClock = vclock:increment(Node, CState5?CHSTATE.vclock),
-            CState5?CHSTATE{vclock=VClock, clustername=ClusterName};
+            CState6 = riak_core_ring:set_cluster_name(CState5, ClusterName),
+            riak_core_ring:increment_vclock(Node, CState6);
         false ->
             CState5
     end.
 
 %% @private
 maybe_update_claimant(Node, CState) ->
-    Members = get_members(CState?CHSTATE.members, [valid, leaving]),
-    Claimant = CState?CHSTATE.claimant,
-    RVsn = CState?CHSTATE.rvsn,
+    Members = riak_core_ring:members(CState, [valid, leaving]),
+    Claimant = riak_core_ring:claimant(CState),
     NextClaimant = hd(Members ++ [undefined]),
     ClaimantMissing = not lists:member(Claimant, Members),
 
     case {ClaimantMissing, NextClaimant} of
         {true, Node} ->
             %% Become claimant
-            RVsn2 = vclock:increment(Claimant, RVsn),
-            CState2 = CState?CHSTATE{claimant=Node, rvsn=RVsn2},
-            {true, CState2};
+            CState2 = riak_core_ring:set_claimant(CState, Node),
+            CState3 = riak_core_ring:increment_ring_version(Claimant, CState2),
+            {true, CState3};
         _ ->
             {false, CState}
     end.
 
 %% @private
 maybe_update_ring(Node, CState) ->
-    Claimant = CState?CHSTATE.claimant,
+    Claimant = riak_core_ring:claimant(CState),
     case Claimant of
         Node ->
-            case claiming_members(CState) of
+            case riak_core_ring:claiming_members(CState) of
                 [] ->
                     %% Consider logging an error/warning here or even
                     %% intentionally crashing. This state makes no logical
@@ -136,20 +135,20 @@ maybe_update_ring(Node, CState) ->
 
 %% @private
 maybe_remove_exiting(Node, CState) ->
-    Claimant = CState?CHSTATE.claimant,
+    Claimant = riak_core_ring:claimant(CState),
     case Claimant of
         Node ->
             %% Change exiting nodes to invalid, skipping this node.
-            Exiting = get_members(CState?CHSTATE.members, [exiting]) -- [Node],
+            Exiting = riak_core_ring:members(CState, [exiting]) -- [Node],
             Changed = (Exiting /= []),
             CState2 =
                 lists:foldl(fun(ENode, CState0) ->
                                     %% Tell exiting node to shutdown.
-                                    CName = cluster_name(CState),
+                                    CName = riak_core_ring:cluster_name(CState),
                                     riak_core_ring_manager:refresh_ring(ENode,
                                                                         CName),
-                                    set_member(Node, CState0, ENode,
-                                               invalid, same_vclock)
+                                    riak_core_ring:set_member(Node, CState0, ENode,
+                                                              invalid, same_vclock)
                             end, CState, Exiting),
             {Changed, CState2};
         _ ->
@@ -158,15 +157,15 @@ maybe_remove_exiting(Node, CState) ->
 
 %% @private
 maybe_handle_joining(Node, CState) ->
-    Claimant = CState?CHSTATE.claimant,
+    Claimant = riak_core_ring:claimant(CState),
     case Claimant of
         Node ->
-            Joining = get_members(CState?CHSTATE.members, [joining]),
+            Joining = riak_core_ring:members(CState, [joining]),
             Changed = (Joining /= []),
             CState2 =
                 lists:foldl(fun(JNode, CState0) ->
-                                    set_member(Node, CState0, JNode,
-                                               valid, same_vclock)
+                                    riak_core_ring:set_member(Node, CState0, JNode,
+                                                              valid, same_vclock)
                             end, CState, Joining),
             {Changed, CState2};
         _ ->
@@ -175,32 +174,36 @@ maybe_handle_joining(Node, CState) ->
 
 %% @private
 update_ring(CNode, CState) ->
-    Next0 = CState?CHSTATE.next,
+    Next0 = riak_core_ring:pending_changes(CState),
 
-    ?ROUT("Members: ~p~n", [CState?CHSTATE.members]),
+    ?ROUT("Members: ~p~n", [riak_core_ring:members(CState, [joining, valid,
+                                                            leaving, exiting,
+                                                            invalid])]),
     ?ROUT("Updating ring :: next0 : ~p~n", [Next0]),
 
     %% Remove tuples from next for removed nodes
-    InvalidMembers = get_members(CState?CHSTATE.members, [invalid]),
+    InvalidMembers = riak_core_ring:members(CState, [invalid]),
     Next2 = lists:filter(fun(NInfo) ->
-                                 {Owner, NextOwner, _} = next_owner(NInfo),
+                                 {Owner, NextOwner, _} = riak_core_ring:next_owner(NInfo),
                                  not lists:member(Owner, InvalidMembers) and
                                  not lists:member(NextOwner, InvalidMembers)
                          end, Next0),
-    CState2 = CState?CHSTATE{next=Next2},
+    CState2 = riak_core_ring:set_pending_changes(CState, Next2),
 
     %% Transfer ownership after completed handoff
     {RingChanged1, CState3} = transfer_ownership(CState2),
-    ?ROUT("Updating ring :: next1 : ~p~n", [CState3?CHSTATE.next]),
+    ?ROUT("Updating ring :: next1 : ~p~n",
+          [riak_core_ring:pending_changes(CState3)]),
 
     %% Ressign leaving/inactive indices
     {RingChanged2, CState4} = reassign_indices(CState3),
-    ?ROUT("Updating ring :: next2 : ~p~n", [CState4?CHSTATE.next]),
+    ?ROUT("Updating ring :: next2 : ~p~n",
+          [riak_core_ring:pending_changes(CState4)]),
 
     %% Rebalance the ring as necessary
     Next3 = rebalance_ring(CNode, CState4),
     lager:debug("Pending ownership transfers: ~b~n",
-                [length(pending_changes(CState4))]),
+                [length(riak_core_ring:pending_changes(CState4))]),
     
     %% Remove transfers to/from down nodes
     Next4 = handle_down_nodes(CState4, Next3),
@@ -213,25 +216,27 @@ update_ring(CNode, CState) ->
             NewS = ordsets:from_list([{Idx,O,NO} || {Idx,O,NO,_,_} <- Next4]),
             Diff = ordsets:subtract(NewS, OldS),
             [log(next, NChange) || NChange <- Diff],
-            RVsn2 = vclock:increment(CNode, CState4?CHSTATE.rvsn),
             ?ROUT("Updating ring :: next3 : ~p~n", [Next4]),
-            {true, CState4?CHSTATE{next=Next4, rvsn=RVsn2}};
+            CState5 = riak_core_ring:set_pending_changes(CState4, Next4),
+            CState6 = riak_core_ring:increment_ring_version(CNode, CState5),
+            {true, CState6};
         false ->
             {false, CState}
     end.
 
 %% @private
-transfer_ownership(CState=?CHSTATE{next=Next}) ->
+transfer_ownership(CState) ->
+    Next = riak_core_ring:pending_changes(CState),
     %% Remove already completed and transfered changes
     Next2 = lists:filter(fun(NInfo={Idx, _, _, _, _}) ->
-                                 {_, NewOwner, S} = next_owner(NInfo),
+                                 {_, NewOwner, S} = riak_core_ring:next_owner(NInfo),
                                  not ((S == complete) and
-                                      (index_owner(CState, Idx) =:= NewOwner))
+                                      (riak_core_ring:index_owner(CState, Idx) =:= NewOwner))
                          end, Next),
 
     CState2 = lists:foldl(
                 fun(NInfo={Idx, _, _, _, _}, CState0) ->
-                        case next_owner(NInfo) of
+                        case riak_core_ring:next_owner(NInfo) of
                             {_, Node, complete} ->
                                 log(ownership, {Idx, Node, CState0}),
                                 riak_core_ring:transfer_node(Idx, Node,
@@ -242,53 +247,59 @@ transfer_ownership(CState=?CHSTATE{next=Next}) ->
                 end, CState, Next2),
 
     NextChanged = (Next2 /= Next),
-    RingChanged = (all_owners(CState) /= all_owners(CState2)),
+    RingChanged = (riak_core_ring:all_owners(CState) /= riak_core_ring:all_owners(CState2)),
     Changed = (NextChanged or RingChanged),
-    {Changed, CState2?CHSTATE{next=Next2}}.
+    CState3 = riak_core_ring:set_pending_changes(CState2, Next2),
+    {Changed, CState3}.
 
 %% @private
-reassign_indices(CState=?CHSTATE{next=Next}) ->
-    Invalid = get_members(CState?CHSTATE.members, [invalid]),
+reassign_indices(CState) ->
+    Next = riak_core_ring:pending_changes(CState),
+    Invalid = riak_core_ring:members(CState, [invalid]),
     CState2 =
         lists:foldl(fun(Node, CState0) ->
                             remove_node(CState0, Node, invalid)
                     end, CState, Invalid),
     CState3 = case Next of
                   [] ->
-                      Leaving = get_members(CState?CHSTATE.members, [leaving]),
+                      Leaving = riak_core_ring:members(CState, [leaving]),
                       lists:foldl(fun(Node, CState0) ->
                                           remove_node(CState0, Node, leaving)
                                   end, CState2, Leaving);
                   _ ->
                       CState2
               end,
-    Owners1 = all_owners(CState),
-    Owners2 = all_owners(CState3),
+    Owners1 = riak_core_ring:all_owners(CState),
+    Owners2 = riak_core_ring:all_owners(CState3),
     RingChanged = (Owners1 /= Owners2),
-    NextChanged = (Next /= CState3?CHSTATE.next),
+    NextChanged = (Next /= riak_core_ring:pending_changes(CState3)),
     {RingChanged or NextChanged, CState3}.
 
 %% @private
-rebalance_ring(_CNode, CState=?CHSTATE{next=[]}) ->
-    Members = claiming_members(CState),
+rebalance_ring(CNode, CState) ->
+    Next = riak_core_ring:pending_changes(CState),
+    rebalance_ring(CNode, Next, CState).
+
+rebalance_ring(_CNode, [], CState) ->
+    Members = riak_core_ring:claiming_members(CState),
     CState2 = lists:foldl(fun(Node, Ring0) ->
                                   riak_core_gossip:claim_until_balanced(Ring0,
                                                                         Node)
                           end, CState, Members),
-    Owners1 = all_owners(CState),
-    Owners2 = all_owners(CState2),
+    Owners1 = riak_core_ring:all_owners(CState),
+    Owners2 = riak_core_ring:all_owners(CState2),
     Owners3 = lists:zip(Owners1, Owners2),
     Next = [{Idx, PrevOwner, NewOwner, [], awaiting}
             || {{Idx, PrevOwner}, {Idx, NewOwner}} <- Owners3,
                PrevOwner /= NewOwner],
     Next;
-rebalance_ring(_CNode, _CState=?CHSTATE{next=Next}) ->
+rebalance_ring(_CNode, Next, _CState) ->
     Next.
 
 %% @private
 handle_down_nodes(CState, Next) ->
-    LeavingMembers = get_members(CState?CHSTATE.members, [leaving, invalid]),
-    DownMembers = get_members(CState?CHSTATE.members, [down]),
+    LeavingMembers = riak_core_ring:members(CState, [leaving, invalid]),
+    DownMembers = riak_core_ring:members(CState, [down]),
     Next2 = [begin
                  OwnerLeaving = lists:member(O, LeavingMembers),
                  NextDown = lists:member(NO, DownMembers),
@@ -308,28 +319,19 @@ handle_down_nodes(CState, Next) ->
     Next3.
 
 %% @private
-all_next_owners(?CHSTATE{next=Next}) ->
-    [{Idx, NextOwner} || {Idx, _, NextOwner, _, _} <- Next].
-
-%% @private
-change_owners(CState, Reassign) ->
-    lists:foldl(fun({Idx, NewOwner}, CState0) ->
-                        riak_core_ring:transfer_node(Idx, NewOwner, CState0)
-                end, CState, Reassign).
-
-%% @private
 remove_node(CState, Node, Status) ->
-    Indices = indices(CState, Node),
+    Indices = riak_core_ring:indices(CState, Node),
     remove_node(CState, Node, Status, Indices).
 
 %% @private
 remove_node(CState, _Node, _Status, []) ->
     CState;
 remove_node(CState, Node, Status, Indices) ->
-    CStateT1 = change_owners(CState, all_next_owners(CState)),
+    CStateT1 = riak_core_ring:change_owners(CState,
+                                            riak_core_ring:all_next_owners(CState)),
     CStateT2 = riak_core_gossip:remove_from_cluster(CStateT1, Node),
-    Owners1 = all_owners(CState),
-    Owners2 = all_owners(CStateT2),
+    Owners1 = riak_core_ring:all_owners(CState),
+    Owners2 = riak_core_ring:all_owners(CStateT2),
     Owners3 = lists:zip(Owners1, Owners2),
     RemovedIndices = case Status of
                          invalid ->
@@ -348,15 +350,16 @@ remove_node(CState, Node, Status, Indices) ->
 
     %% Unlike rebalance_ring, remove_node can be called when Next is non-empty,
     %% therefore we need to merge the values. Original Next has priority.
-    Next2 = lists:ukeysort(1, CState?CHSTATE.next ++ Next),
-    CState2 = change_owners(CState, Reassign),
-    CState2?CHSTATE{next=Next2}.
+    Next2 = lists:ukeysort(1, riak_core_ring:pending_changes(CState) ++ Next),
+    CState2 = riak_core_ring:change_owners(CState, Reassign),
+    CState3 = riak_core_ring:set_pending_changes(CState2, Next2),
+    CState3.
 
 log(ownership, {Idx, NewOwner, CState}) ->
-    Owner = index_owner(CState, Idx),
+    Owner = riak_core_ring:index_owner(CState, Idx),
     lager:debug("(new-owner) ~b :: ~p -> ~p~n", [Idx, Owner, NewOwner]);
 log(reassign, {Idx, NewOwner, CState}) ->
-    Owner = index_owner(CState, Idx),
+    Owner = riak_core_ring:index_owner(CState, Idx),
     lager:debug("(reassign) ~b :: ~p -> ~p~n", [Idx, Owner, NewOwner]);
 log(next, {Idx, Owner, NewOwner}) ->
     lager:debug("(pending) ~b :: ~p -> ~p~n", [Idx, Owner, NewOwner]);

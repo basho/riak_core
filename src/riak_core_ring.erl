@@ -72,6 +72,14 @@
          leave_member/3,
          exit_member/3,
          down_member/3,
+         set_member/4,
+         set_member/5,
+         members/2,
+         set_claimant/2,
+         increment_vclock/2,
+         ring_version/1,
+         increment_ring_version/2,
+         set_pending_changes/2,
          active_members/1,
          claiming_members/1,
          ready_members/1,
@@ -82,8 +90,11 @@
          future_indices/2,
          disowning_indices/2,
          pending_changes/1,
+         next_owner/1,
          next_owner/2,
          next_owner/3,
+         all_next_owners/1,
+         change_owners/2,
          handoff_complete/3,
          ring_ready/0,
          ring_ready/1,
@@ -238,6 +249,9 @@ is_primary(Ring, IdxNode) ->
 -spec all_members(State :: chstate()) -> [Node :: term()].
 all_members(?CHSTATE{members=Members}) ->
     get_members(Members).
+
+members(?CHSTATE{members=Members}, Types) ->
+    get_members(Members, Types).
 
 %% @doc Produce a list of all active (not marked as down) cluster members
 active_members(?CHSTATE{members=Members}) ->
@@ -482,6 +496,9 @@ update_meta(Key, Val, State) ->
 claimant(?CHSTATE{claimant=Claimant}) ->
     Claimant.
 
+set_claimant(State, Claimant) ->
+    State?CHSTATE{claimant=Claimant}.
+
 %% @doc Returns the unique identifer for this cluster.
 -spec cluster_name(State :: chstate()) -> term().
 cluster_name(State) ->
@@ -500,7 +517,18 @@ reconcile_names(RingA=?CHSTATE{clustername=NameA},
         false ->
             {RingA, RingB}
     end.
-    
+
+increment_vclock(Node, State) ->
+    VClock = vclock:increment(Node, State?CHSTATE.vclock),
+    State?CHSTATE{vclock=VClock}.
+
+ring_version(?CHSTATE{rvsn=RVsn}) ->
+    RVsn.
+
+increment_ring_version(Node, State) ->
+    RVsn = vclock:increment(Node, State?CHSTATE.rvsn),
+    State?CHSTATE{rvsn=RVsn}.
+
 %% @doc Returns the current membership status for a node in the cluster.
 -spec member_status(State :: chstate(), Node :: node()) -> member_status().
 member_status(?CHSTATE{members=Members}, Node) ->
@@ -567,6 +595,21 @@ exit_member(PNode, State, Node) ->
 down_member(PNode, State, Node) ->
     set_member(PNode, State, Node, down).
 
+set_member(Node, CState, Member, Status) ->
+    VClock = vclock:increment(Node, CState?CHSTATE.vclock),
+    CState2 = set_member(Node, CState, Member, Status, same_vclock),
+    CState2?CHSTATE{vclock=VClock}.
+
+set_member(Node, CState, Member, Status, same_vclock) ->
+    Members2 = orddict:update(Member,
+                              fun({_, VC, MD}) ->
+                                      {Status, vclock:increment(Node, VC), MD}
+                              end,
+                              {Status, vclock:increment(Node,
+                                                        vclock:fresh()), []},
+                              CState?CHSTATE.members),
+    CState?CHSTATE{members=Members2}.
+
 %% @doc Return a list of all members of the cluster that are eligible to
 %%      claim partitions.
 -spec claiming_members(State :: chstate()) -> [Node :: node()].
@@ -596,6 +639,17 @@ future_indices(State, Node) ->
     FutureState = change_owners(State, all_next_owners(State)),
     indices(FutureState, Node).
 
+%% @private
+all_next_owners(CState) ->
+    Next = riak_core_ring:pending_changes(CState),
+    [{Idx, NextOwner} || {Idx, _, NextOwner, _, _} <- Next].
+
+%% @private
+change_owners(CState, Reassign) ->
+    lists:foldl(fun({Idx, NewOwner}, CState0) ->
+                        riak_core_ring:transfer_node(Idx, NewOwner, CState0)
+                end, CState, Reassign).
+
 %% @doc Return all indices that a node is scheduled to give to another.
 disowning_indices(State, Node) ->
     [Idx || {Idx, Owner, _NextOwner, _Mods, _Status} <- State?CHSTATE.next,
@@ -605,6 +659,9 @@ disowning_indices(State, Node) ->
 pending_changes(State) ->
     %% For now, just return next directly.
     State?CHSTATE.next.
+
+set_pending_changes(State, Transfers) ->
+    State?CHSTATE{next=Transfers}.
 
 %% @doc Return details for a pending partition ownership change.
 -spec next_owner(State :: chstate(), Idx :: integer()) -> pending_change().
@@ -633,6 +690,10 @@ next_owner(State, Idx, Mod) ->
                     {Owner, NextOwner, awaiting}
             end
     end.
+
+%% @private
+next_owner({_, Owner, NextOwner, _Transfers, Status}) ->
+    {Owner, NextOwner, Status}.
 
 %% @doc Returns true if all cluster members have seen the current ring.
 -spec ring_ready(State :: chstate()) -> boolean().
@@ -817,6 +878,16 @@ legacy_reconcile(MyNodeName, StateA, StateB) ->
 %% ====================================================================
 %% Internal functions
 %% ====================================================================
+
+%% @private
+internal_ring_changed(Node, CState0) ->
+    CState = update_seen(Node, CState0),
+    case ring_ready(CState) of
+        false ->
+            CState;
+        true ->
+            riak_core_claimant:ring_changed(Node, CState)
+    end.
 
 %% @private
 merge_meta(M1,M2) ->
@@ -1078,33 +1149,12 @@ transfer_complete(CState=?CHSTATE{next=Next, vclock=VClock}, Idx, Mod) ->
     CState?CHSTATE{next=Next2, vclock=VClock2}.
 
 %% @private
-next_owner({_, Owner, NextOwner, _Transfers, Status}) ->
-    {Owner, NextOwner, Status}.
-
-%% @private
 get_members(Members) ->
     get_members(Members, [joining, valid, leaving, exiting, down]).
 
 %% @private
 get_members(Members, Types) ->
     [Node || {Node, {V, _, _}} <- Members, lists:member(V, Types)].
-
-%% @private
-set_member(Node, CState, Member, Status) ->
-    VClock = vclock:increment(Node, CState?CHSTATE.vclock),
-    CState2 = set_member(Node, CState, Member, Status, same_vclock),
-    CState2?CHSTATE{vclock=VClock}.
-
-%% @private
-set_member(Node, CState, Member, Status, same_vclock) ->
-    Members2 = orddict:update(Member,
-                              fun({_, VC, MD}) ->
-                                      {Status, vclock:increment(Node, VC), MD}
-                              end,
-                              {Status, vclock:increment(Node,
-                                                        vclock:fresh()), []},
-                              CState?CHSTATE.members),
-    CState?CHSTATE{members=Members2}.
 
 %% @private
 update_seen(Node, CState=?CHSTATE{vclock=VClock, seen=Seen}) ->
