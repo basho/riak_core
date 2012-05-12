@@ -88,6 +88,7 @@
          set_owner/2,
          indices/2,
          future_indices/2,
+         future_ring/1,
          disowning_indices/2,
          pending_changes/1,
          next_owner/1,
@@ -751,6 +752,20 @@ ring_changed(Node, State) ->
     check_tainted(State,
                   "Error: riak_core_ring/ring_changed called on tainted ring"),
     internal_ring_changed(Node, State).
+
+%% @doc Return the ring that will exist after all pending ownership transfers
+%%      have completed.
+future_ring(State) ->
+    FutureState = change_owners(State, all_next_owners(State)),
+    %% Individual nodes will move themselves from leaving to exiting if they
+    %% have no ring ownership, this is implemented in riak_core_ring_handler.
+    %% Emulate it here to return similar ring.
+    Leaving = get_members(FutureState?CHSTATE.members, [leaving]),
+    FutureState2 =
+        lists:foldl(fun(Node, StateAcc) ->
+                            riak_core_ring:exit_member(Node, StateAcc, Node)
+                    end, FutureState, Leaving),
+    FutureState2?CHSTATE{next=[]}.
 
 pretty_print(Ring, Opts) ->
     OptNumeric = lists:member(numeric, Opts),
