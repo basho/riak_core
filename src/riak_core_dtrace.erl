@@ -43,8 +43,8 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -export([dtrace/1, dtrace/3, dtrace/4, dtrace/6]).
--export([t/1, t/2, tt/3,
-         timeit0/1, timeit_mg/1, timeit_best/1]).   % debugging/testing only
+-export([enabled/0, put_tag/1]).
+-export([timeit0/1, timeit_mg/1, timeit_best/1]).   % debugging/testing only
 
 -define(MAGIC, '**DTRACE*SUPPORT**').
 
@@ -112,18 +112,48 @@ dtrace(Int0, Int1, Ints, String0, String1, Strings)
             dtrace([Int0, Int1] ++ Ints ++ [S0, String1] ++ Strings)
     end.
 
-t(L) ->                                  % debugging/micro-performance
-    dtrace(L).
-
-t(Ints, Strings) ->                      % debugging/micro-performance
-    dtrace([77] ++ Ints ++ ["entry"] ++ Strings).
-
-tt(Int0, Ints, Strings) ->                     % debugging/micro-performance
+enabled() ->
     case get(?MAGIC) of
-        X when X == dyntrace; X == dtrace ->
-            dtrace([Int0] ++ Ints ++ Strings);
+        undefined ->
+            case application:get_env(riak_core, dtrace_support) of
+                {ok, true} ->
+                    case string:to_float(erlang:system_info(version)) of
+                        {5.8, _} ->
+                            %% R14B04
+                            put(?MAGIC, dtrace),
+                            true;
+                        {Num, _} when Num > 5.8 ->
+                            %% R15B or higher, though dyntrace option
+                            %% was first available in R15B01.
+                            put(?MAGIC, dyntrace),
+                            true;
+                        _ ->
+                            put(?MAGIC, unsupported),
+                            false
+                    end;
+                _ ->
+                    put(?MAGIC, unsupported),
+                    false
+            end;
+        dyntrace ->
+            true;
+        dtrace ->
+            true;
         _ ->
             false
+    end.
+
+put_tag(Tag) ->
+    case enabled() of
+        true ->
+            case get(?MAGIC) of
+                dtrace ->
+                    dtrace:put_utag(Tag);
+                dyntrace ->
+                    dyntrace:put_tag(Tag)
+            end;
+        false ->
+            ok
     end.
 
 timeit0(ArgList) ->
