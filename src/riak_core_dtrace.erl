@@ -47,6 +47,7 @@
 -export([timeit0/1, timeit_mg/1, timeit_best/1]).   % debugging/testing only
 
 -define(MAGIC, '**DTRACE*SUPPORT**').
+-define(DTRACE_TAG_KEY, '**DTRACE*TAG*KEY**').
 
 dtrace(ArgList) ->
     case get(?MAGIC) of
@@ -146,11 +147,13 @@ enabled() ->
 put_tag(Tag) ->
     case enabled() of
         true ->
+            FTag = iolist_to_binary(Tag),
+            put(?DTRACE_TAG_KEY, FTag),
             case get(?MAGIC) of
                 dtrace ->
-                    dtrace:put_utag(Tag);
+                    dtrace:put_utag(FTag);
                 dyntrace ->
-                    dyntrace:put_tag(Tag)
+                    dyntrace:put_tag(FTag)
             end;
         false ->
             ok
