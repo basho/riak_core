@@ -61,6 +61,7 @@
                }).
 
 -include("riak_core_handoff.hrl").
+-include("riak_core_vnode.hrl").
 -define(XFER_EQ(A, B),
         A#handoff_status.mod_src_tgt == B#handoff_status.mod_src_tgt
         andalso A#handoff_status.timestamp == B#handoff_status.timestamp).
@@ -89,9 +90,9 @@ all_vnodes_status() ->
 
 %% @doc Repair the given `ModPartition' pair for `Service' using the
 %%      given `FilterModFun' to filter keys.
--spec repair(atom(), {module(), non_neg_integer()}, {module(), atom()}) ->
-                    {ok, Pairs::[{non_neg_integer(), node()}]} |
-                    {down, Down::[{non_neg_integer(), node()}]} |
+-spec repair(atom(), {module(), partition()}, {module(), atom()}) ->
+                    {ok, Pairs::[{partition(), node()}]} |
+                    {down, Down::[{partition(), node()}]} |
                     ownership_change_in_progress.
 repair(Service, {_Module, Partition}=ModPartition, FilterModFun) ->
     %% Fwd the request to the partition owner to guarentee that there
