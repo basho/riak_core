@@ -29,6 +29,7 @@
          terminate/2, code_change/3]).
 -export([sock_opts/0, new_connection/2]).
 -record(state, {
+          ipaddr :: string(),
           portnum :: integer(),
           ssl_opts :: list()
          }).
@@ -37,9 +38,9 @@ start_link() ->
     PortNum = app_helper:get_env(riak_core, handoff_port),
     IpAddr = app_helper:get_env(riak_core, handoff_ip),
     SslOpts = riak_core_handoff_sender:get_handoff_ssl_options(),
-    gen_nb_server:start_link(?MODULE, IpAddr, PortNum, [PortNum, SslOpts]).
+    gen_nb_server:start_link(?MODULE, IpAddr, PortNum, [IpAddr, PortNum, SslOpts]).
 
-init([PortNum, SslOpts]) ->
+init([IpAddr, PortNum, SslOpts]) ->
     register(?MODULE, self()),
 
     %% This exit() call shouldn't be necessary, AFAICT the VM's EXIT
@@ -51,9 +52,12 @@ init([PortNum, SslOpts]) ->
     catch exit(whereis(riak_kv_handoff_listener), kill),
     process_proxy:start_link(riak_kv_handoff_listener, ?MODULE),
 
-    {ok, #state{portnum=PortNum, ssl_opts = SslOpts}}.
+    {ok, #state{portnum=PortNum, ipaddr=IpAddr, ssl_opts = SslOpts}}.
 
 sock_opts() -> [binary, {packet, 4}, {reuseaddr, true}, {backlog, 64}].
+
+handle_call(handoff_ip, _From, State=#state{ipaddr=I}) ->
+    {reply, {ok, I}, State};
 
 handle_call(handoff_port, _From, State=#state{portnum=P}) ->
     {reply, {ok, P}, State}.
