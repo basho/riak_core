@@ -48,6 +48,9 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
          [_Name,Host] = string:tokens(atom_to_list(TargetNode), "@"),
          {ok, Port} = get_handoff_port(TargetNode),
          {ok, TNHandoffIP} = get_handoff_ip(TargetNode),
+         TNHandoffIP = if TNHandoffIP == "0.0.0.0" -> Host;
+                         true -> TNHandoffIP
+                      end,
          SockOpts = [binary, {packet, 4}, {header,1}, {active, false}],
          {Socket, TcpMod} =
              if SslOpts /= [] ->
