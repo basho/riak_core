@@ -28,6 +28,7 @@
          register/4,
          register/3,
          get/1,
+         get/2,
          all/0,
          publish_supported/1,
          ring_changed/1]).
@@ -74,18 +75,30 @@ register(Capability, Supported, Default, LegacyVar) ->
 register(Capability, Supported, Default) ->
     register(Capability, Supported, Default, []).
 
-%% @doc Query the current negotiated mode for a given capability
+%% @doc Query the current negotiated mode for a given capability, throwing an
+%%      exception if the capability is unknown or the capability system is
+%%      unavailable.
 get(Capability) ->
+    case get(Capability, '$unknown') of
+        '$unknown' ->
+            throw(unknown_capability);
+        Result ->
+            Result
+    end.
+
+%% @doc Query the current negotiated mode for a given capability, returning
+%%      `Default' if the capability system is unavailable.
+get(Capability, Default) ->
     try
         case ets:lookup(?ETS, Capability) of
             [] ->
-                undefined;
+                Default;
             [{Capability, Choice}] ->
                 Choice
         end
     catch
         _:_ ->
-            undefined
+            Default
     end.
 
 %% @doc Return a list of all negotiated capabilities
