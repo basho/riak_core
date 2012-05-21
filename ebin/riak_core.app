@@ -79,7 +79,8 @@
                   crypto,
                   riak_sysmon,
                   webmachine,
-                  os_mon
+                  os_mon,
+                  folsom
                  ]},
   {mod, { riak_core_app, []}},
   {env, [
