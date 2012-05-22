@@ -44,9 +44,10 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
      try
          [_Name,Host] = string:tokens(atom_to_list(TargetNode), "@"),
          {ok, Port} = get_handoff_port(TargetNode),
-         {ok, TNHandoffIP} = get_handoff_ip(TargetNode),
          TNHandoffIP =
             case get_handoff_ip(TargetNode) of
+                error ->
+                    Host;
                 {ok, "0.0.0.0"} ->
                     Host;
                 {ok, Other} ->
@@ -219,11 +220,11 @@ visit_item(K, V, {Socket, ParentPid, Module, TcpMod, Ack, Total, _ErrStatus}) ->
     end.
 
 get_handoff_ip(Node) when is_atom(Node) ->
-    case catch(gen_server2:call({riak_core_handoff_listener, Node}, handoff_ip, infinity)) of
-        {'EXIT', _}  ->
-            %% Check old location from previous release
-            gen_server2:call({riak_kv_handoff_listener, Node}, handoff_ip, infinity);
-        Other -> Other
+    try
+        gen_server2:call({riak_core_handoff_listener, Node}, handoff_ip, infinity)
+    catch
+        _:_ ->
+            error
     end.
 
 get_handoff_port(Node) when is_atom(Node) ->
