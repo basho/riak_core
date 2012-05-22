@@ -44,14 +44,23 @@ start_fold(TargetNode, Module, Partition, ParentPid, SslOpts) ->
      try
          [_Name,Host] = string:tokens(atom_to_list(TargetNode), "@"),
          {ok, Port} = get_handoff_port(TargetNode),
+         TNHandoffIP =
+            case get_handoff_ip(TargetNode) of
+                error ->
+                    Host;
+                {ok, "0.0.0.0"} ->
+                    Host;
+                {ok, Other} ->
+                    Other
+            end,
          SockOpts = [binary, {packet, 4}, {header,1}, {active, false}],
          {Socket, TcpMod} =
              if SslOpts /= [] ->
-                     {ok, Skt} = ssl:connect(Host, Port, SslOpts ++ SockOpts,
+                     {ok, Skt} = ssl:connect(TNHandoffIP, Port, SslOpts ++ SockOpts,
                                              15000),
                      {Skt, ssl};
                 true ->
-                     {ok, Skt} = gen_tcp:connect(Host, Port, SockOpts, 15000),
+                     {ok, Skt} = gen_tcp:connect(TNHandoffIP, Port, SockOpts, 15000),
                      {Skt, gen_tcp}
              end,
 
@@ -208,6 +217,14 @@ visit_item(K, V, {Socket, ParentPid, Module, TcpMod, Ack, Total, _ErrStatus}) ->
             {Socket, ParentPid, Module, TcpMod, Ack+1, Total+1, ok};
         {error, Reason} ->
             {Socket, ParentPid, Module, TcpMod, Ack, Total, {error, Reason}}
+    end.
+
+get_handoff_ip(Node) when is_atom(Node) ->
+    try
+        gen_server2:call({riak_core_handoff_listener, Node}, handoff_ip, infinity)
+    catch
+        _:_ ->
+            error
     end.
 
 get_handoff_port(Node) when is_atom(Node) ->
