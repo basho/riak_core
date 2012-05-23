@@ -20,8 +20,8 @@
 
 -module(riak_core_console).
 -export([member_status/1, ring_status/1, print_member_status/2,
-         stage_leave/1, stage_remove/1, print_staged/1, commit_staged/1,
-         clear_staged/1]).
+         stage_leave/1, stage_remove/1, stage_replace/1,
+         stage_force_replace/1, print_staged/1, commit_staged/1, clear_staged/1]).
 
 member_status([]) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -235,6 +235,74 @@ stage_remove(Node) ->
             error
     end.
 
+stage_replace([NodeStr1, NodeStr2]) ->
+    stage_replace(list_to_atom(NodeStr1), list_to_atom(NodeStr2)).
+stage_replace(Node1, Node2) ->
+    try
+        case riak_core_claimant:replace(Node1, Node2) of
+            ok ->
+                io:format("Success: staged replacement of ~p with ~p~n",
+                          [Node1, Node2]),
+                ok;
+            {error, already_leaving} ->
+                io:format("~p is already in the process of leaving the "
+                          "cluster.~n", [Node1]),
+                ok;
+            {error, not_member} ->
+                io:format("Failed: ~p is not a member of the cluster.~n",
+                          [Node1]),
+                error;
+            {error, invalid_replacement} ->
+                io:format("Failed: ~p is not a valid replacement candiate.~n"
+                          "Only newly joining nodes can be used for "
+                          "replacement.~n", [Node2]),
+                error;
+            {error, already_replacement} ->
+                io:format("Failed: ~p is already staged to replace another "
+                          "node.~n", [Node2]),
+                error
+        end
+    catch
+        Exception:Reason ->
+            lager:error("Node replacement failed ~p:~p", [Exception, Reason]),
+            io:format("Node replacement failed, see log for details~n"),
+            error
+    end.
+
+stage_force_replace([NodeStr1, NodeStr2]) ->
+    stage_force_replace(list_to_atom(NodeStr1), list_to_atom(NodeStr2)).
+stage_force_replace(Node1, Node2) ->
+    try
+        case riak_core_claimant:force_replace(Node1, Node2) of
+            ok ->
+                io:format("Success: staged forced replacement of ~p with ~p~n",
+                          [Node1, Node2]),
+                ok;
+            {error, not_member} ->
+                io:format("Failed: ~p is not a member of the cluster.~n",
+                          [Node1]),
+                error;
+            {error, is_claimant} ->
+                is_claimant_error(Node1, "replace"),
+                error;
+            {error, invalid_replacement} ->
+                io:format("Failed: ~p is not a valid replacement candiate.~n"
+                          "Only newly joining nodes can be used for "
+                          "replacement.~n", [Node2]),
+                error;
+            {error, already_replacement} ->
+                io:format("Failed: ~p is already staged to replace another "
+                          "node.~n", [Node2]),
+                error
+        end
+    catch
+        Exception:Reason ->
+            lager:error("Forced node replacement failed ~p:~p",
+                        [Exception, Reason]),
+            io:format("Forced node replacement failed, see log for details~n"),
+            error
+    end.
+
 clear_staged([]) ->
     try
         case riak_core_claimant:clear() of
@@ -286,12 +354,18 @@ print_plan(Changes, _Ring, NextRings) ->
                  ({Node, leave}) ->
                       io:format("leave          ~p~n", [Node]);
                  ({Node, remove}) ->
-                      io:format("force-remove   ~p~n", [Node])
+                      io:format("force-remove   ~p~n", [Node]);
+                 ({Node, {replace, NewNode}}) ->
+                      io:format("replace        ~p with ~p~n", [Node, NewNode]);
+                 ({Node, {force_replace, NewNode}}) ->
+                      io:format("force-replace  ~p with ~p~n", [Node, NewNode])
               end, Changes),
     io:format("~79..-s~n", [""]),
     io:format("~n"),
 
     lists:map(fun({Node, remove}) ->
+                      io:format("WARNING: All of ~p replicas will be lost~n", [Node]);
+                 ({Node, {force_replace, _}}) ->
                       io:format("WARNING: All of ~p replicas will be lost~n", [Node]);
                  (_) ->
                       ok
