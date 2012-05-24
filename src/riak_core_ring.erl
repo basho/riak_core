@@ -725,7 +725,7 @@ pretty_print(Ring, Opts) ->
     Owners = riak_core_ring:all_members(Ring),
     Indices = riak_core_ring:all_owners(Ring),
     RingSize = length(Indices),
-    Numeric = OptNumeric or (length(Owners) > 26),
+    Numeric = OptNumeric orelse (length(Owners) > 26),
     case Numeric of
         true ->
             Ids = [integer_to_list(N) || N <- lists:seq(1, length(Owners))];

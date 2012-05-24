@@ -31,6 +31,7 @@
 
 -record(simopts,  {wants,
                    choose,
+                   prepare = finish,
                    current = fun(_Ring) -> ok end,
                    prepared = fun(_Ring, _Prepare) -> ok end,
                    percmd = fun(_Ring, _Cmd) -> ok end,
@@ -45,7 +46,12 @@ help() ->
               "  riak_core_claim_sim:run([Opts]).\n"
               "\n"
               "Opts = {claimant, node()} | \n"
-              "       {ringfile, path()} | {appvars, [{Key,Val}]} \n"
+              "       {ringfile, path()} | \n"
+              "       {ring, ring()} | {appvars, [{Key,Val}]} \n"
+              "\n"
+              "       {wants, {WMod,WFun}}\n"
+              "       {choose, {CMod,CFun} | {CMod,CFun,CParam}}\n"
+              "       {target_n_val, int()}\n"
               "       {prepare, finish | cancel}\n"
               "       {print, false | standard_io | io_device()}\n"
               "       {cmds, [Commands]}\n"
@@ -64,6 +70,8 @@ help() ->
               "join/leave commands or a batch to be added all at once.\n"
               "{cmds, [[{join, 'riak@hosta'},{join, 'riak@hostb'}],{join,'riak@hostc'}]}\n"
               "would join hosta/hostb and recalculate claim, then join hostc.\n"
+              "\n"
+              "Caveat: To use leave in commands, target_n_val must be set in the app env.\n"
               "\n"
               "Examples:\n"
               "  Simulate adding 9 nodes in a single batch to the current ring\n"
@@ -86,26 +94,59 @@ run([Config]) when is_list(Config) ->
 run(Opts) ->
     Claimant = proplists:get_value(claimant, Opts),
     RingFile = proplists:get_value(ringfile, Opts),
+    RingArg = proplists:get_value(ring, Opts),
+    
     AppVars = proplists:get_value(riak_core, Opts, []),
+    setup_environment(AppVars),
+               
+    Wants = proplists:get_value(wants, Opts, 
+                                app_helper:get_env(riak_core, wants_claim_fun)),
+    Choose = proplists:get_value(choose, 
+                                 Opts, app_helper:get_env(riak_core, choose_claim_fun)),
+    
     Prepare = proplists:get_value(prepare, Opts, finish),
     Cmds = proplists:get_value(cmds, Opts, []),
     IoDev = proplists:get_value(print, Opts, standard_io),
     Analysis = proplists:get_value(analysis, Opts, []),
+    ReturnRing = proplists:get_value(return_ring, Opts, false),
     
-    case {Claimant, RingFile} of
-        {undefined, undefined} ->
-            {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
-            SimOpts = default_simopts(IoDev, Analysis),
-            dryrun(Ring, Prepare, Cmds, SimOpts);
-        {Claimant, undefined} ->
-            load_vars(Claimant),
-            run_claimant(IoDev, Claimant, Prepare, Analysis, Cmds);
-        {undefined, RingFile} ->
-            setup_environment(AppVars),
-            run_ring(IoDev, RingFile, Prepare, Analysis, Cmds);
-        _ ->
-            help()
-    end.           
+    TN0 = proplists:get_value(target_n_val, Opts, app_helper:get_env(riak_core, target_n_val)),
+
+    {Ring, TN} = 
+        case {Claimant, RingFile, RingArg} of
+            {undefined, undefined, undefined} ->
+                {ok, Ring0} = riak_core_ring_manager:get_raw_ring(),
+                {Ring0, TN0};
+            {Claimant, undefined, undefined} ->
+                {ok, Ring0} = rpc:call(Claimant, riak_core_ring_manager, get_raw_ring, []),
+                ClaimantTN = rpc:call(Claimant, app_helper, get_env, [riak_core, target_n_val]),
+                {Ring0, ClaimantTN};
+            {undefined, RingFile, undefined} ->
+                Ring0 = riak_core_ring_manager:read_ringfile(RingFile),
+                {Ring0, TN0};
+            {undefined, undefined, RingArg} ->
+                {RingArg, TN0};
+            _ ->
+                help(),
+                throw({bad_opts, Opts})
+            end,
+    Choose1 = add_choose_params(Choose, TN),
+
+    SimOpts0 = default_simopts(IoDev, Analysis, TN),
+    SimOpts = SimOpts0#simopts{wants = Wants, choose = Choose1, 
+                               prepare = Prepare, return_ring = ReturnRing},
+    
+    dryrun(Ring, Cmds, SimOpts).
+
+add_choose_params(Choose, TN) ->
+    Params = case Choose of
+                 {CMod, CFun} ->
+                     [];
+                 {CMod, CFun, Params0} ->
+                     Params0
+             end,
+    Params1 = [{target_n_val, TN} | proplists:delete(target_n_val, Params)],
+    {CMod, CFun, Params1}.
 
 run_rebalance(Ring, Wants, Choose, Rebalance) ->
     %% o(IoDev, "~nAfter rebalance~n", []),        
@@ -122,77 +163,35 @@ read_ringfile(RingFile) ->
     end.
 
 setup_environment(Vars) ->
-    default_vars(),
     [application:set_env(riak_core, Key, Val) || {Key, Val} <- Vars],
     ok.
 
-load_var(Node, App, Var, _Default) ->
-    Result = rpc:call(Node, application, get_env, [App, Var]),
-    case Result of
-        {ok, Value} ->
-            application:set_env(App, Var, Value);
-        _ ->
-            ok
-    end.
-
-load_vars(Node) ->
-    application:load(riak_core),
-    load_var(Node, riak_core, default_bucket_props, [{n_val, 3}]),
-    %% load_var(Node, riak_core, wants_claim_fun, {riak_core_claim, wants_claim_v2}),
-    application:set_env(riak_core, wants_claim_fun, {riak_core_claim, wants_claim_v2}),
-    load_var(Node, riak_core, choose_claim_fun, {riak_core_claim, choose_claim_v2}),
-    load_var(Node, riak_core, target_n_val, 4).
-
-default_vars() ->
-    application:load(riak_core),
-    application:set_env(riak_core, default_bucket_props, [{n_val, 3}]),
-    application:set_env(riak_core, wants_claim_fun, {riak_core_claim, wants_claim_v2}),
-    application:set_env(riak_core, choose_claim_fun, {riak_core_claim, choose_claim_v2}),
-    application:set_env(riak_core, target_n_val, 4).
-
-run_ring(IoDev, RingFile, Prepare, Analysis, CmdsL) ->
-    Ring = read_ringfile(RingFile),
-    SimOpts = default_simopts(IoDev, Analysis),
-    dryrun(Ring, Prepare, CmdsL, SimOpts).
-
-run_claimant(IoDev, Claimant, Prepare, Analysis, CmdsL) ->
-    {ok, Ring} = rpc:call(Claimant, riak_core_ring_manager, get_raw_ring, []),
-    TargetN = rpc:call(Claimant, app_helper, get_env, [riak_core, target_n_val]),
-    application:set_env(riak_core, target_n_val, TargetN),
-    SimOpts = default_simopts(IoDev, Analysis),
-    dryrun(Ring, Prepare, CmdsL, SimOpts).
-
-
-dryrun(Ring, CmdsL) ->
-    SimOpts = default_simopts(standard_io, []),
-    dryrun(Ring, finish, CmdsL, SimOpts).
-
 %% Perform the dry run, if printing is disabled, return the ring
-dryrun(Ring, Prepare, CmdsL0, SimOpts) ->
+dryrun(Ring, CmdsL0, SimOpts) ->
     CmdsL = case CmdsL0 of 
                 [Cmd0|_] when not is_list(Cmd0) ->
                     [[Cmd] || Cmd <- CmdsL0];
                 _ ->
                     CmdsL0
             end,
-    Ring1 = dryrun1(Ring, Prepare, CmdsL, SimOpts),
-    case #simopts.return_ring of
+    Ring1 = dryrun1(Ring, CmdsL, SimOpts),
+    case SimOpts#simopts.return_ring of
         true ->
             Ring1;
         _ ->
             ok
     end.
 
-make_current(IoDev) ->
+make_current(IoDev, TN) ->
     fun(Ring00) ->
             o(IoDev, "Current ring:~n", []),
-            pretty_print(IoDev, Ring00)
+            pretty_print(IoDev, Ring00, TN)
     end.
 
-make_prepared(IoDev, Analysis) ->
+make_prepared(IoDev, Analysis, TN) ->
     fun(Ring01, Prepare) ->
             o(IoDev, "~nCurrent after ~p transfers:~n", [Prepare]),
-            pretty_print(IoDev, Ring01),
+            pretty_print(IoDev, Ring01, TN),
             run_analysis(IoDev, Analysis, Ring01)
     end.
             
@@ -212,9 +211,9 @@ make_percmd(IoDev) ->
             end
     end.
    
-make_rebalance(false) ->
+make_rebalance(false, _TN) ->
     fun(_R1, _R2) -> ok end;
-make_rebalance(IoDev) ->
+make_rebalance(IoDev, TN) ->
     fun(Ring, Ring2) ->
             Owners1 = riak_core_ring:all_owners(Ring),
             Owners2 = riak_core_ring:all_owners(Ring2),
@@ -226,10 +225,10 @@ make_rebalance(IoDev) ->
                 lists:foldl(fun({_, PrevOwner, NewOwner}, Tally) ->
                                     dict:update_counter({PrevOwner, NewOwner}, 1, Tally)
                             end, dict:new(), Next),
-            pretty_print(IoDev, Ring2),
+            pretty_print(IoDev, Ring2, TN),
             o(IoDev, "Pending: ~p~n", [length(Next)]),
-            BadPL = riak_core_ring_util:check_ring(Ring2),
-            o(IoDev, "Preflists violating targetN: ~p~n", [length(BadPL)]),
+            BadPL = riak_core_ring_util:check_ring(Ring2, TN),
+            o(IoDev, "Preflists violating targetN=~p: ~p~n", [TN, length(BadPL)]),
             [o(IoDev, "~b transfers from ~p to ~p~n", [Count, PrevOwner, NewOwner])
              || {{PrevOwner, NewOwner}, Count} <- dict:to_list(Tally)],
             ok
@@ -242,20 +241,21 @@ make_analysis(IoDev, Analysis) ->
             run_analysis(IoDev, Analysis, Ring)
     end.
 
-default_simopts(IoDev, Analysis) ->
-    #simopts{current = make_current(IoDev),
-             prepared = make_prepared(IoDev, Analysis),
+default_simopts(IoDev, Analysis, TN) ->
+    #simopts{current = make_current(IoDev, TN),
+             prepared = make_prepared(IoDev, Analysis, TN),
              percmd = make_percmd(IoDev),
-             rebalance = make_rebalance(IoDev),
+             rebalance = make_rebalance(IoDev, TN),
              analysis = make_analysis(IoDev, Analysis)}.
 
-dryrun1(Ring00, Prepare, CmdsL, #simopts{wants = Wants,
-                                         choose = Choose,
-                                         current = Current,
-                                         prepared = Prepared,
-                                         percmd = PerCmd,
-                                         rebalance = Rebalance,
-                                         analysis = Analysis}) ->
+dryrun1(Ring00, CmdsL, #simopts{wants = Wants,
+                                choose = Choose,
+                                prepare = Prepare,
+                                current = Current,
+                                prepared = Prepared,
+                                percmd = PerCmd,
+                                rebalance = Rebalance,
+                                analysis = Analysis}) ->
     Current(Ring00),
 
     Ring01 = case Prepare of
@@ -314,10 +314,10 @@ command({leave, Node}, Ring) ->
     riak_core_ring:leave_member(Node, Ring, Node).
 
 %% Pretty print the ring if IoDev is not false
-pretty_print(false, _Ring) ->
+pretty_print(false, _Ring, _TN) ->
     ok;
-pretty_print(IoDev, Ring) ->
-    riak_core_ring:pretty_print(Ring, [legend, {out, IoDev}]).
+pretty_print(IoDev, Ring, TN) ->
+    riak_core_ring:pretty_print(Ring, [legend, {out, IoDev}, {target_n, TN}]).
 
 %% Run analysis of the ring
 run_analysis(false, _Analysis, _Ring) ->
@@ -380,16 +380,13 @@ commission(Base, Test, Claims) when is_list(Claims) ->
              Err
      end || Claim <- Claims];
 commission(Base, Test, {Wants, Choose}) ->
-    application:set_env(riak_core, wants_claim_fun, Wants),
-    application:set_env(riak_core, choose_claim_fun, Choose),
-   
     RingSize = proplists:get_value(ring_size, Test, 64),
     Nodes = proplists:get_value(nodes, Test, 16),
     NVal = proplists:get_value(n_val, Test, 3),
-    TN = proplists:get_value(target_n, Test, 4),
-
+    TN = proplists:get_value(target_n_val, Test, 4),
+    
     Ring = riak_core_ring:fresh(RingSize, sim_node(1)),
-
+    
     SeqJoinCmds = [ [{join, sim_node(I)}] || I <- lists:seq(2, Nodes)],
     BulkJoinCmds =  [ [ {join, sim_node(I)} || I <- lists:seq(2, Nodes) ] ],
 
@@ -411,11 +408,13 @@ commission(Base, Test, {Wants, Choose}) ->
     io:format(SeqFh, "cmds,balance,violations,diversity\n", []),
     application:set_env(riak_core, target_n_val, TN),
 
+    Choose1 = add_choose_params(Choose, TN),
+
     %% Sequential node joins
     %%   initial ring of one node, add up to Nodes sequentially
     SeqSimOpts = #simopts{
       wants = Wants,
-      choose = Choose,
+      choose = Choose1,
       analysis = 
           fun(Ring2, Cmds) ->
                   Seq = get(sim_seq),
@@ -438,7 +437,7 @@ commission(Base, Test, {Wants, Choose}) ->
                              proplists:get_value(diversity, Stats, undefined)])
           end},
     put(sim_seq, 2),
-    dryrun(Ring, finish, SeqJoinCmds, SeqSimOpts),
+    dryrun(Ring, SeqJoinCmds, SeqSimOpts),
     file:close(SeqFh),
 
     %% Bulk node joins
@@ -473,7 +472,7 @@ commission(Base, Test, {Wants, Choose}) ->
                              proplists:get_value(diversity, Stats, undefined)])
           end},
     put(sim_seq, 2),
-    dryrun(Ring, finish, BulkJoinCmds, BulkSimOpts),
+    dryrun(Ring, BulkJoinCmds, BulkSimOpts),
     file:close(BulkFh).
 
 commission_test_dir(Base, RingSize, Nodes, NVal, TN, {_Mod, Choose}) ->
@@ -489,21 +488,21 @@ commission_tests_all() ->
     First ++ (Rest -- First).
 
 commission_tests_first() ->
-    [[{n_val, 3}, {target_n, 3}, {nodes, 32}, {ring_size, 64}],
-     [{n_val, 3}, {target_n, 4}, {nodes, 32}, {ring_size, 64}],
-     [{n_val, 3}, {target_n, 3}, {nodes, 32}, {ring_size, 1024}],
-     [{n_val, 3}, {target_n, 4}, {nodes, 32}, {ring_size, 1024}],
-     [{n_val, 3}, {target_n, 3}, {nodes, 32}, {ring_size, 256}],
-     [{n_val, 3}, {target_n, 4}, {nodes, 32}, {ring_size, 256}],
-     [{n_val, 1}, {target_n, 1}, {nodes, 32}, {ring_size, 64}],
-     [{n_val, 1}, {target_n, 1}, {nodes, 32}, {ring_size, 256}],
-     [{n_val, 1}, {target_n, 1}, {nodes, 32}, {ring_size, 1024}],
-     [{n_val, 5}, {target_n, 5}, {nodes, 32}, {ring_size, 64}],
-     [{n_val, 5}, {target_n, 5}, {nodes, 32}, {ring_size, 256}],
-     [{n_val, 5}, {target_n, 5}, {nodes, 32}, {ring_size, 1024}]].
+    [[{n_val, 3}, {target_n_val, 3}, {nodes, 32}, {ring_size, 64}],
+     [{n_val, 3}, {target_n_val, 4}, {nodes, 32}, {ring_size, 64}],
+     [{n_val, 3}, {target_n_val, 3}, {nodes, 32}, {ring_size, 1024}],
+     [{n_val, 3}, {target_n_val, 4}, {nodes, 32}, {ring_size, 1024}],
+     [{n_val, 3}, {target_n_val, 3}, {nodes, 32}, {ring_size, 256}],
+     [{n_val, 3}, {target_n_val, 4}, {nodes, 32}, {ring_size, 256}],
+     [{n_val, 1}, {target_n_val, 1}, {nodes, 32}, {ring_size, 64}],
+     [{n_val, 1}, {target_n_val, 1}, {nodes, 32}, {ring_size, 256}],
+     [{n_val, 1}, {target_n_val, 1}, {nodes, 32}, {ring_size, 1024}],
+     [{n_val, 5}, {target_n_val, 5}, {nodes, 32}, {ring_size, 64}],
+     [{n_val, 5}, {target_n_val, 5}, {nodes, 32}, {ring_size, 256}],
+     [{n_val, 5}, {target_n_val, 5}, {nodes, 32}, {ring_size, 1024}]].
 
 commission_tests_rest() ->
-    [[{n_val, NVal}, {target_n, NVal+TNDelta}, {nodes, min(Q, 64)}, {ring_size, Q}] ||
+    [[{n_val, NVal}, {target_n_val, NVal+TNDelta}, {nodes, min(Q, 64)}, {ring_size, Q}] ||
         Q <- [64, 256, 1024, 32, 128, 512, 2048, 4096, 8192, 16384],
         NVal <- lists:seq(1, 9), 
         TNDelta <- lists:seq(0, 3)
@@ -519,6 +518,36 @@ commission_claims() ->
 %% -------------------------------------------------------------------
 
 -ifdef(TEST).
+
+run_test() ->
+    Ring = riak_core_ring:fresh(64, anode),
+    ?assertEqual(ok, run([{ring, Ring},
+                          {target_n_val,2},
+                          {wants,{riak_core_claim,wants_claim_v2}},
+                          {choose,{riak_core_claim,choose_claim_v2}},
+                          {cmds, [[{join,a}],[{join,b}]]},
+                          {print,false},
+                          {return_ring, false}])),
+    Ring2 = run([{ring, Ring},
+                 {target_n_val,2},
+                 {wants,{riak_core_claim,wants_claim_v2}},
+                 {choose,{riak_core_claim,choose_claim_v2}},
+                 {cmds, [[{join,a}],[{join,b}]]},
+                 {print,false},
+                 {return_ring, true}]),
+    ?assert(is_tuple(Ring2)),
+    {ok, Fh} = file:open("sim.out", [write]),
+    ?assertEqual(ok, run([{ring, Ring2},
+                          {target_n_val,4},
+                          {wants,{riak_core_claim,wants_claim_v1}},
+                          {choose,{riak_core_claim,choose_claim_v1}},
+                          {cmds, [[{join,3}]]},
+                          {analysis, [{failures, 2},{n_val, 3}]},
+                          {print,Fh},
+                          {return_ring, false}])),
+    file:close(Fh).
+                         
+                     
 
 commission_test_() ->
     {timeout, 120, 

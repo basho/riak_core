@@ -54,12 +54,12 @@
 -module(riak_core_claim).
 -export([claim/1, claim/3, claim_until_balanced/2, claim_until_balanced/4]).
 -export([default_wants_claim/1, default_wants_claim/2,
-         default_choose_claim/1, default_choose_claim/2,
+         default_choose_claim/1, default_choose_claim/2, default_choose_claim/3,
          never_wants_claim/1, random_choose_claim/1]).
 -export([wants_claim_v1/1, wants_claim_v1/2,
          wants_claim_v2/1, wants_claim_v2/2,
-         choose_claim_v1/1, choose_claim_v1/2,
-         choose_claim_v2/1, choose_claim_v2/2,
+         choose_claim_v1/1, choose_claim_v1/2, choose_claim_v1/3,
+         choose_claim_v2/1, choose_claim_v2/2, choose_claim_v2/3,
          claim_rebalance_n/2,
          meets_target_n/2,
          diagonal_stripe/2]).
@@ -88,13 +88,18 @@ claim_until_balanced(Ring, Node) ->
     Choose = app_helper:get_env(riak_core, choose_claim_fun),
     claim_until_balanced(Ring, Node, Want, Choose).
 
-claim_until_balanced(Ring, Node, {WMod, WFun}=Want, {CMod, CFun}=Choose) ->
+claim_until_balanced(Ring, Node, {WMod, WFun}=Want, Choose) ->
     NeedsIndexes = apply(WMod, WFun, [Ring, Node]),
     case NeedsIndexes of
         no ->
             Ring;
         {yes, _NumToClaim} ->
-            NewRing = CMod:CFun(Ring, Node),
+            NewRing = case Choose of
+                          {CMod, CFun} ->
+                              CMod:CFun(Ring, Node);
+                          {CMod, CFun, Params} ->
+                              CMod:CFun(Ring, Node, Params)
+                      end,
             claim_until_balanced(NewRing, Node, Want, Choose)
     end.
 
@@ -113,6 +118,14 @@ default_choose_claim(Ring, Node) ->
             choose_claim_v1(Ring, Node);
         false ->
             choose_claim_v2(Ring, Node)
+    end.
+
+default_choose_claim(Ring, Node, Params) ->
+    case riak_core_ring:legacy_ring(Ring) of
+        true ->
+            choose_claim_v1(Ring, Node, Params);
+        false ->
+            choose_claim_v2(Ring, Node, Params)
     end.
 
 %% @spec default_wants_claim(riak_core_ring()) -> {yes, integer()} | no
@@ -169,14 +182,31 @@ wants_claim_v2(Ring, Node) ->
             {yes, Avg - Count}
     end.
 
+%% Provide default choose parameters if none given
+default_choose_params() ->
+    default_choose_params([]).
+
+default_choose_params(Params) ->
+    case proplists:get_value(target_n_val, Params) of
+        undefined ->
+            TN = app_helper:get_env(riak_core, target_n_val, 4),
+            [{target_n_val, TN} | Params];
+        _->
+            Params
+    end.
+
 %% @deprecated
 choose_claim_v1(Ring) ->
     choose_claim_v1(Ring, node()).
 
 %% @deprecated
 choose_claim_v1(Ring0, Node) ->
+    choose_claim_v1(Ring0, Node, []).
+
+choose_claim_v1(Ring0, Node, Params0) ->
+    Params = default_choose_params(Params0),
     Ring = riak_core_ring:upgrade(Ring0),
-    TargetN = app_helper:get_env(riak_core, target_n_val),
+    TargetN = proplists:get_value(target_n_val, Params),
     case meets_target_n(Ring, TargetN) of
         {true, TailViolations} ->
             %% if target N is met, then it doesn't matter where
@@ -193,6 +223,11 @@ choose_claim_v2(Ring) ->
     choose_claim_v2(Ring, node()).
 
 choose_claim_v2(Ring, Node) ->
+    Params = default_choose_params(),
+    choose_claim_v2(Ring, Node, Params).
+
+choose_claim_v2(Ring, Node, Params0) ->
+    Params = default_choose_params(Params0),
     Active = riak_core_ring:claiming_members(Ring),
     Owners = riak_core_ring:all_owners(Ring),
     Counts = get_counts(Active, Owners),
@@ -201,7 +236,7 @@ choose_claim_v2(Ring, Node) ->
     Avg = RingSize div NodeCount,
     Deltas = [{Member, Avg - Count} || {Member, Count} <- Counts],
     {_, Want} = lists:keyfind(Node, 1, Deltas),
-    TargetN = app_helper:get_env(riak_core, target_n_val),
+    TargetN = proplists:get_value(target_n_val, Params),
     AllIndices = lists:zip(lists:seq(0, length(Owners)-1),
                            [Idx || {Idx, _} <- Owners]),
 
@@ -591,7 +626,7 @@ prop_claim_ensures_unique_nodes() ->
             begin
                 Nval = 3,
                 TNval = Nval + 1,
-                application:set_env(riak_core, target_n_val, TNval),
+                Params = [{target_n_val, TNval}],
 
                 Partitions = ?POW_2(PartsPow),
                 [Node0 | RestNodes] = test_nodes(NodeCount),
@@ -599,7 +634,7 @@ prop_claim_ensures_unique_nodes() ->
                 R0 = riak_core_ring:fresh(Partitions, Node0),
                 Rfinal = lists:foldl(fun(Node, Racc) ->
                                              Racc0 = riak_core_ring:add_member(Node0, Racc, Node),
-                                             default_choose_claim(Racc0, Node)
+                                             default_choose_claim(Racc0, Node, Params)
                                      end, R0, RestNodes),
 
                 Preflists = riak_core_ring:all_preflists(Rfinal, Nval),
