@@ -52,6 +52,7 @@
 %% default is 3.
 
 -module(riak_core_claim).
+-export([claim/1, claim/3, claim_until_balanced/2, claim_until_balanced/4]).
 -export([default_wants_claim/1, default_wants_claim/2,
          default_choose_claim/1, default_choose_claim/2,
          never_wants_claim/1, random_choose_claim/1]).
@@ -71,8 +72,34 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
+claim(Ring) ->
+    Want = app_helper:get_env(riak_core, wants_claim_fun),
+    Choose = app_helper:get_env(riak_core, choose_claim_fun),
+    claim(Ring, Want, Choose).
+
+claim(Ring, Want, Choose) ->
+    Members = riak_core_ring:claiming_members(Ring),
+    lists:foldl(fun(Node, Ring0) ->
+                        claim_until_balanced(Ring0, Node, Want, Choose)
+                end, Ring, Members).
+
+claim_until_balanced(Ring, Node) ->
+    Want = app_helper:get_env(riak_core, wants_claim_fun),
+    Choose = app_helper:get_env(riak_core, choose_claim_fun),
+    claim_until_balanced(Ring, Node, Want, Choose).
+
+claim_until_balanced(Ring, Node, {WMod, WFun}=Want, {CMod, CFun}=Choose) ->
+    NeedsIndexes = apply(WMod, WFun, [Ring, Node]),
+    case NeedsIndexes of
+        no ->
+            Ring;
+        {yes, _NumToClaim} ->
+            NewRing = CMod:CFun(Ring, Node),
+            claim_until_balanced(NewRing, Node, Want, Choose)
+    end.
+
 %% ===================================================================
-%% API
+%% Claim Function Implementations 
 %% ===================================================================
 
 %% @spec default_choose_claim(riak_core_ring()) -> riak_core_ring()

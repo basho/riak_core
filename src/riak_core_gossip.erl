@@ -37,7 +37,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 -export ([distribute_ring/1, send_ring/1, send_ring/2, remove_from_cluster/2,
-          claim_until_balanced/2, random_gossip/1,
+          random_gossip/1,
           recursive_gossip/1, random_recursive_gossip/1, rejoin/2,
           gossip_version/0, legacy_gossip/0, legacy_gossip/1]).
 
@@ -411,18 +411,6 @@ log_membership_changes(OldRing, NewRing) ->
                                      [Node, Old, New])
                   end, OldStatus2, NewStatus2),
     ok.
-    
-claim_until_balanced(Ring, Node) ->
-    {WMod, WFun} = app_helper:get_env(riak_core, wants_claim_fun),
-    NeedsIndexes = apply(WMod, WFun, [Ring, Node]),
-    case NeedsIndexes of
-        no ->
-            Ring;
-        {yes, _NumToClaim} ->
-            {CMod, CFun} = app_helper:get_env(riak_core, choose_claim_fun),
-            NewRing = CMod:CFun(Ring, Node),
-            claim_until_balanced(NewRing, Node)
-    end.
 
 remove_from_cluster(Ring, ExitingNode) ->
     % Get a list of indices owned by the ExitingNode...
