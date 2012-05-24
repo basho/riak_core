@@ -27,7 +27,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--define(APP_NAME, "riak_core_").
+-define(APP, riak_core).
 
 %% @spec get_stats() -> proplist()
 %% @doc Get the current aggregation of stats.
@@ -37,48 +37,48 @@ get_stats() ->
 %% @spec update(term()) -> ok
 %% @doc Update the given stat.
 update(rejected_handoffs) ->
-    folsom_metrics:notify_existing_metric(riak_core_rejected_handoffs, {inc, 1}, counter);
+    folsom_metrics:notify_existing_metric({?APP, rejected_handoffs}, {inc, 1}, counter);
 
 update(handoff_timeouts) ->
-    folsom_metrics:notify_existing_metric(riak_core_handoff_timeouts, {inc, 1}, counter);
+    folsom_metrics:notify_existing_metric({?APP, handoff_timeouts}, {inc, 1}, counter);
 
 update(ignored_gossip) ->
-    folsom_metrics:notify_existing_metric(riak_core_ignored_gossip_total, {inc, 1}, counter);
+    folsom_metrics:notify_existing_metric({?APP, ignored_gossip_total}, {inc, 1}, counter);
 
 update(gossip_received) ->
-    folsom_metrics:notify_existing_metric(riak_core_gossip_received, 1, meter);
+    folsom_metrics:notify_existing_metric({?APP, gossip_received}, 1, meter);
 
 update(rings_reconciled) ->
-    folsom_metrics:notify_existing_metric(riak_core_rings_reconciled, 1, meter);
+    folsom_metrics:notify_existing_metric({?APP, rings_reconciled}, 1, meter);
     
 update(converge_timer_begin) ->
-    folsom_metrics:notify_existing_metric(riak_core_converge_delay, timer_start, duration);
+    folsom_metrics:notify_existing_metric({?APP, converge_delay}, timer_start, duration);
 update(converge_timer_end) ->
-    folsom_metrics:notify_existing_metric(riak_core_converge_delay, timer_end, duration);
+    folsom_metrics:notify_existing_metric({?APP, converge_delay}, timer_end, duration);
 
 update(rebalance_timer_begin) ->
-    folsom_metrics:notify_existing_metric(riak_core_rebalance_delay, timer_start, duration);
+    folsom_metrics:notify_existing_metric({?APP, rebalance_delay}, timer_start, duration);
 update(rebalance_timer_end) ->
-    folsom_metrics:notify_existing_metric(riak_core_rebalance_delay, timer_end, duration).
+    folsom_metrics:notify_existing_metric({?APP, rebalance_delay}, timer_end, duration).
 
 register_stats() ->
-    [register_stat(Stat) || Stat <- stats()].
+    [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()].
 
 %% private
 stats() ->
-    [{riak_core_ignored_gossip_total, counter},
-     {riak_core_rings_reconciled, meter},
-     {riak_core_gossip_received, meter},
-     {riak_core_rejected_handoffs, counter},
-     {riak_core_handoff_timeouts, counter},
-     {riak_core_converge_delay, duration},
-     {riak_core_rebalance_delay, duration}].
+    [{ignored_gossip_total, counter},
+     {rings_reconciled, meter},
+     {gossip_received, meter},
+     {rejected_handoffs, counter},
+     {handoff_timeouts, counter},
+     {converge_delay, duration},
+     {rebalance_delay, duration}].
 
-register_stat({Name, counter}) ->
+register_stat(Name, counter) ->
     folsom_metrics:new_counter(Name);
-register_stat({Name, meter}) ->
+register_stat(Name, meter) ->
     folsom_metrics:new_meter(Name);
-register_stat({Name, duration}) ->
+register_stat(Name, duration) ->
     folsom_metrics:new_duration(Name).
 
 % @spec produce_stats(state(), integer()) -> proplist()
@@ -89,25 +89,21 @@ produce_stats() ->
                   vnodeq_stats()]).
 
 gossip_stats() ->
-    lists:flatten([backwards_compat(Stat, Type, folsom_metrics:get_metric_value(Stat)) || 
+    lists:flatten([backwards_compat(Stat, Type, folsom_metrics:get_metric_value({?APP, Stat})) ||
                       {Stat, Type} <- stats(), Stat /= riak_core_rejected_handoffs]).
 
-backwards_compat(riak_core_rings_reconciled, meter, Stats) ->
+backwards_compat(rings_reconciled, meter, Stats) ->
     [{rings_reconciled_total, proplists:get_value(count, Stats)},
     {rings_reconciled, trunc(proplists:get_value(one, Stats))}];
-backwards_compat(riak_core_gossip_received, meter, Stats) ->
+backwards_compat(gossip_received, meter, Stats) ->
     {gossip_received, trunc(proplists:get_value(one, Stats))};
 backwards_compat(Name, counter, Stats) ->
-    {un_namespace(Name), Stats};
+    {Name, Stats};
 backwards_compat(Name, duration, Stats) ->
-    Base = un_namespace(Name),
-    [{join(Base, min), trunc(proplists:get_value(min, Stats))},
-     {join(Base, max), trunc(proplists:get_value(max, Stats))},
-     {join(Base, mean), trunc(proplists:get_value(arithmetic_mean, Stats))},
-     {join(Base, last), proplists:get_value(last, Stats)}].
-
-un_namespace(Name) ->
-    list_to_atom(lists:subtract(atom_to_list(Name), ?APP_NAME)).
+    [{join(Name, min), trunc(proplists:get_value(min, Stats))},
+     {join(Name, max), trunc(proplists:get_value(max, Stats))},
+     {join(Name, mean), trunc(proplists:get_value(arithmetic_mean, Stats))},
+     {join(Name, last), proplists:get_value(last, Stats)}].
 
 join(Atom1, Atom2) ->
     Bin1 = atom_to_binary(Atom1, latin1),
