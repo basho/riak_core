@@ -578,12 +578,13 @@ do_claimant(Node, CState, Log) ->
     do_claimant(Node, CState, [], erlang:now(), Log).
 
 do_claimant(Node, CState, Replacing, Seed, Log) ->
+    AreJoining = are_joining_nodes(CState),
     {C1, CState2} = maybe_update_claimant(Node, CState),
-    {C2, CState3} = {are_joining_nodes(CState2), CState2},
-    case C2 of
+    {C2, CState3} = maybe_handle_auto_joining(Node, CState2),
+    case AreJoining of
         true ->
             %% Do not rebalance if there are joining nodes
-            Changed = C1,
+            Changed = C1 or C2,
             CState5 = CState3;
         false ->
             {C3, CState4} =
@@ -655,11 +656,24 @@ are_joining_nodes(CState) ->
     Joining /= [].
 
 %% @private
+maybe_handle_auto_joining(Node, CState) ->
+    Joining = riak_core_ring:members(CState, [joining]),
+    Auto = [Member || Member <- Joining,
+                      riak_core_ring:get_member_meta(CState,
+                                                     Member,
+                                                     '$autojoin') == true],
+    maybe_handle_joining(Node, Auto, CState).
+
+%% @private
 maybe_handle_joining(Node, CState) ->
+    Joining = riak_core_ring:members(CState, [joining]),
+    maybe_handle_joining(Node, Joining, CState).
+
+%% @private
+maybe_handle_joining(Node, Joining, CState) ->
     Claimant = riak_core_ring:claimant(CState),
     case Claimant of
         Node ->
-            Joining = riak_core_ring:members(CState, [joining]),
             Changed = (Joining /= []),
             CState2 =
                 lists:foldl(fun(JNode, CState0) ->

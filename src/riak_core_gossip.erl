@@ -323,7 +323,7 @@ handle_cast({rejoin, RingIn}, State) ->
         true ->
             Legacy = check_legacy_gossip(Ring, State),
             OtherNode = riak_core_ring:owner_node(OtherRing),
-            riak_core:join(Legacy, node(), OtherNode, true),
+            riak_core:join(Legacy, node(), OtherNode, true, true),
             {noreply, State};
         false ->
             {noreply, State}
