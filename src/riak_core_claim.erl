@@ -63,7 +63,7 @@
          choose_claim_v1/1, choose_claim_v1/2, choose_claim_v1/3,
          choose_claim_v2/1, choose_claim_v2/2, choose_claim_v2/3,
          choose_claim_v3/1, choose_claim_v3/2, choose_claim_v3/3,
-         claim_rebalance_n/2,
+         claim_rebalance_n/2, claim_diversify/3, claim_diagonal/3,
          meets_target_n/2,
          diagonal_stripe/2]).
 
@@ -364,7 +364,7 @@ choose_claim_v3(Ring, _ClaimNode, Params) ->
     TN = proplists:get_value(target_n_val, Params, 4),
     Active = riak_core_ring:active_members(Ring),
     Wants = lists:zip(Active, wants(length(Active), Q)),
-    lager:debug("Claim3 started: Q=~p TN = ~p\n", [Q, TN]),
+    lager:debug("Claim3 started: S=~p Q=~p TN=~p\n", [S, Q, TN]),
     lager:debug("       wants: ~p\n", [Wants]),
     {Partitions, Owners} = lists:unzip(riak_core_ring:all_owners(Ring)),
 
@@ -414,7 +414,7 @@ claim_v3(Wants, Owners, Params) ->
     Q = length(Owners),
     Claiming = [N || {N,W} <- Wants, W > 0],
     Trials = proplists:get_value(trials, Params, 100),
-    case length(Claiming) >= TN of
+    case length(Claiming) > TN of
         true ->
             NIs = build_nis(Wants, Owners),
 
@@ -431,13 +431,15 @@ claim_v3(Wants, Owners, Params) ->
                 0 ->
                     New;
                 _ ->
-                    %% If could not build ring without violations, diversify it
+                    lager:debug("claimv3: Could not make plan without violations, diversifying\n",
+                                []),
+                   %% If could not build ring without violations, diversify it
                     claim_diversify(Wants, Owners, Params)
             end;
         false ->
-            lager:debug("claimv3: Not enough nodes to run (have ~p need ~p), diversifying\n",
+            lager:debug("claimv3: Not enough nodes to run (have ~p need ~p), diagonalized\n",
                         [length(Claiming), TN]),
-            claim_diversify(Wants, Owners, Params)
+            claim_diagonal(Wants, Owners, Params)
     end.
                 
 %% Claim diversify tries to build a perfectly diverse ownership list that meets
@@ -453,6 +455,25 @@ claim_diversify(Wants, Owners, Params) ->
                              riak_core_claim_util:gen_complete_len(Q), Claiming, TN),
     {NewOwners, [diversified]}.
 
+%% Claim nodes in seq a,b,c,a,b,c trying to handle the wraparound
+%% case to meet target N
+claim_diagonal(Wants, Owners, Params) ->
+    TN = proplists:get_value(target_n_val, Params, 4),
+    Claiming = lists:sort([N || {N,W} <- Wants, W > 0]),
+    S = length(Claiming),
+    Q = length(Owners),
+    Reps = Q div S,
+    %% Handle the ring wrapround case.  If possible try to pick nodes
+    %% that are not within the first TN of Claiming, if enough nodes
+    %% are available.
+    Tail = Q - Reps * S,
+    Last = case S >= TN + Tail of
+               true -> % If number wanted can be filled excluding first TN nodes
+                   lists:sublist(lists:nthtail(TN - Tail, Claiming), Tail);
+               _ ->
+                   lists:sublist(Claiming, Tail)
+           end,
+    {lists:flatten([lists:duplicate(Reps, Claiming), Last]), [diagonalized]}.
 
 claim_rebalance_n(Ring0, Node) ->
     Ring = riak_core_ring:upgrade(Ring0),
@@ -735,19 +756,20 @@ roundup(I) when I >= 0 ->
 
 %% @private Evaluate a list of plans and return the best.
 evaluate_plans(Plans, Wants, Q, TN) ->
-    lists:foldl(fun(Plan, {_RunningOwners, RunningMetrics}=T) ->
-                        OM = {Owners, Metrics} = score_plan(Plan, Wants, Q, TN),
-                        case better_plan(Metrics, RunningMetrics) of
-                            true ->
-                                lager:debug("Better plan: ~p\nOwners: ~p\n",
-                                            [Metrics, Owners]),
-                                OM;
-                            _ ->
-                                lager:debug("Same or worse plan: ~p\n", [Metrics]),
-                                T
-                        end
-                end, {undefined, undefined}, Plans).
- 
+    {_, FOM} =
+        lists:foldl(fun(Plan, {Trial, {_RunningOwners, RunningMetrics}=T}) ->
+                            OM = {_Owners, Metrics} = score_plan(Plan, Wants, Q, TN),
+                            case better_plan(Metrics, RunningMetrics) of
+                                true ->
+                                    lager:debug("Claim3: Trial ~p found better plan: ~p\n",
+                                                [Trial, Metrics]),
+                                    {Trial + 1, OM};
+                                _ ->
+                                    {Trial + 1, T}
+                            end
+                    end, {1, {undefined, undefined}}, Plans),
+    FOM.
+
 %% @private
 %% Return true if plan P1 is better than plan P2, assumes the metrics
 %% are ordered [{violations, Violations}, {balance, Balance}, {diversity, Diversity}]}.
