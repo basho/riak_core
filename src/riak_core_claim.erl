@@ -64,13 +64,11 @@
          choose_claim_v2/1, choose_claim_v2/2, choose_claim_v2/3,
          choose_claim_v3/1, choose_claim_v3/2, choose_claim_v3/3,
          claim_rebalance_n/2, claim_diversify/3, claim_diagonal/3,
-         meets_target_n/2,
-         diagonal_stripe/2]).
+         wants/1, wants_owns_diff/2, meets_target_n/2, diagonal_stripe/2]).
 
 -ifdef(TEST).
 -ifdef(EQC).
--export([prop_claim_ensures_unique_nodes/1,
-         wants/2, prop_wants/0]).
+-export([prop_claim_ensures_unique_nodes/1, prop_wants/0, prop_wants_counts/0]).
 -include_lib("eqc/include/eqc.hrl").
 -endif.
 -include_lib("eunit/include/eunit.hrl").
@@ -192,18 +190,51 @@ wants_claim_v3(Ring) ->
     wants_claim_v3(Ring, node()).
 
 wants_claim_v3(Ring, _Node) ->
-    Active = lists:sort(riak_core_ring:claiming_members(Ring)),
-    Q = riak_core_ring:num_partitions(Ring),
-    Wants = lists:zip(Active, wants(length(Active), Q)),
-
+    Wants = wants(Ring),
+    
+    %% This case will only hold true during claim_until_balanced
+    %% as only the ownership information is transferred after
+    %% running claim not the metadata.
     case riak_core_ring:get_meta(claimed, Ring) of
         {ok, {claim_v3, Wants}} ->
-            lager:debug("WantsClaim3(~p) no.  Current ring claimed for ~p\n", [_Node, Wants]),
+            lager:debug("WantsClaim3(~p) no.  Current ring claimed for ~p\n", 
+                        [_Node, Wants]),
             no;
-        Claimed ->
-            lager:debug("WantsClaim3 for ~p active - current ring claimed for ~p\n", 
-                        [Active, Claimed]),
-            {yes, 1}
+        {ok, {claim_v3, CurWants}} ->
+            lager:debug("WantsClaim3(~p) yes.  Current ring claimed for "
+                        "different wants\n~p\n",
+                        [_Node, CurWants]),
+            {yes, 1};
+        undefined ->
+            %% First time through claim_until_balanced, check for override
+            %% to recalculate.
+            case app_helper:get_env(riak_core, force_reclaim, false) of
+                true ->
+                    application:unset_env(riak_core, force_reclaim),
+                    lager:info("Forced rerun of claim algorithm - "
+                               "unsetting force_reclaim"),
+                    {yes, 1};
+                false ->
+                    %% Otherwise, base wants decision on whether the current 
+                    %% wants versus current ownership if the claim does not
+                    %% manage to claim all requested nodes then the temporary
+                    %% 'claim_v3' metadatawill stop the loop
+                    Owns = get_counts(riak_core_ring:claiming_members(Ring),
+                                      riak_core_ring:all_owners(Ring)),
+                    Deltas = wants_owns_diff(Wants, Owns),
+                    Diffs = lists:sum([abs(Diff) || {_, Diff} <- Deltas]),
+                    case Diffs of
+                        0 ->
+                            lager:debug("WantsClaim3(~p) no.  All wants met.\n", 
+                                        [_Node]),
+                            no;
+                        _ ->
+                            lager:debug("WantsClaim3(~p) yes - ~p.\n"
+                                        "Does not meet wants - diffs ~p\n",
+                                        [_Node, Diffs, Deltas]),
+                            {yes, Diffs}
+                    end
+            end
     end.
 
 %% Provide default choose parameters if none given
@@ -360,10 +391,10 @@ choose_claim_v3(Ring, ClaimNode) ->
     choose_claim_v3(Ring, ClaimNode, Params).
 
 choose_claim_v3(Ring, _ClaimNode, Params) ->
+    S = length(riak_core_ring:active_members(Ring)),
     Q = riak_core_ring:num_partitions(Ring),
     TN = proplists:get_value(target_n_val, Params, 4),
-    Active = riak_core_ring:active_members(Ring),
-    Wants = lists:zip(Active, wants(length(Active), Q)),
+    Wants = wants(Ring),
     lager:debug("Claim3 started: S=~p Q=~p TN=~p\n", [S, Q, TN]),
     lager:debug("       wants: ~p\n", [Wants]),
     {Partitions, Owners} = lists:unzip(riak_core_ring:all_owners(Ring)),
@@ -732,10 +763,30 @@ build_nis(Wants, Owners) ->
                                  end, {0, Initial}, Owners),
     [{Node, Want, Owned} || {Node, Want} <- Wants, {Node1, Owned} <- Ownership, Node == Node1].
 
+%% For each node in wants, work out how many more partition it wants (positive) or is
+%% overlaoded by (negative)
+wants_owns_diff(Wants, Owns) ->
+    [ case lists:keyfind(N, 1, Owns) of
+          {N, O} ->
+              {N, W - O};
+          false ->
+              {N,W}
+      end || {N, W} <- Wants ].
+    
+%% Given a ring, work out how many partition each wants to be
+%% considered balanced
+wants(Ring) ->
+    Active = lists:sort(riak_core_ring:claiming_members(Ring)),
+    Inactive = riak_core_ring:all_members(Ring) -- Active,
+    Q = riak_core_ring:num_partitions(Ring),
+    ActiveWants = lists:zip(Active, wants_counts(length(Active), Q)),
+    InactiveWants = [ {N, 0} || N <- Inactive ],
+    lists:sort(ActiveWants ++ InactiveWants).
+
 %% @private
 %% Given a number of nodes and ring size, return a list of 
 %% desired ownership, S long that add up to Q
-wants(S, Q) ->
+wants_counts(S, Q) ->
     Max = roundup(Q / S),
     case S * Max - Q of 
         0 ->
@@ -743,7 +794,6 @@ wants(S, Q) ->
         X ->
             lists:duplicate(X, Max - 1) ++ lists:duplicate(S - X, Max)
     end.
-
 
 %% Round up to next whole integer - ceil
 roundup(I) when I >= 0 ->
@@ -1098,17 +1148,61 @@ prop_claim_ensures_unique_nodes(ChooseFun) ->
                                 {unique_nodes, equals([], Counts)}]))
             end).
 
-wants_test() ->
-    ?assert(eqc:quickcheck(?QC_OUT((prop_wants())))).
+wants_counts_test() ->
+    ?assert(eqc:quickcheck(?QC_OUT((prop_wants_counts())))).
 
-prop_wants() ->
+prop_wants_counts() ->
     ?FORALL({S, Q}, {large_pos(100), large_pos(100000)},
             begin
-                Wants = wants(S, Q),
+                Wants = wants_counts(S, Q),
                 conjunction([{len, equals(S, length(Wants))},
                              {sum, equals(Q, lists:sum(Wants))}])
             end).
 
+wants_test() ->
+    ?assert(eqc:quickcheck(?QC_OUT((prop_wants())))).
+
+prop_wants() ->
+    ?FORALL({NodeStatus, Q},
+            {?SUCHTHAT(L, non_empty(list(elements([leaving, joining]))),
+                       lists:member(joining, L)),
+             ?LET(X, choose(1,16), trunc(math:pow(2, X)))},
+            begin
+                R0 = riak_core_ring:fresh(Q, tnode(1)),
+                {_, R2, Active} = 
+                    lists:foldl(
+                      fun(S, {I, R1, A1}) ->
+                              N = tnode(I),
+                              case S of
+                                  joining ->
+                                      {I+1, riak_core_ring:add_member(N, R1, N), [N|A1]};
+                                  _ ->
+                                      {I+1, riak_core_ring:leave_member(N, R1, N), A1}
+                              end
+                      end, {1, R0, []}, NodeStatus),
+                Wants = wants(R2),
+                
+                %% Check any non-claiming nodes are set to 0
+                %% Check all nodes are present
+                {ActiveWants, InactiveWants} = 
+                    lists:partition(fun({N,_W}) -> lists:member(N, Active) end, Wants),
+                                                 
+                ActiveSum = lists:sum([W || {_,W} <- ActiveWants]),
+                InactiveSum = lists:sum([W || {_,W} <- InactiveWants]),
+                ?WHENFAIL(
+                   begin
+                       io:format(user, "NodeStatus: ~p\n", [NodeStatus]),
+                       io:format(user, "Active: ~p\n", [Active]),
+                       io:format(user, "Q: ~p\n", [Q]),
+                       io:format(user, "Wants: ~p\n", [Wants]),
+                       io:format(user, "ActiveWants: ~p\n", [ActiveWants]),
+                       io:format(user, "InactiveWants: ~p\n", [InactiveWants])
+                   end,
+                   conjunction([{wants, equals(length(Wants), length(NodeStatus))},
+                                {active, equals(Q, ActiveSum)},
+                                {inactive, equals(0, InactiveSum)}]))
+            end).
+             
 %% Large positive integer between 1 and Max
 large_pos(Max) ->
     ?LET(X, largeint(), 1 + (abs(X) rem Max)).
