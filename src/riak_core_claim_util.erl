@@ -28,7 +28,7 @@
 -export([print_failure_analysis/3, failure_analysis/3, node_sensitivity/3, node_load/3,
           print_analysis/1, print_analysis/2, sort_by_down_fbmax/1]).
 -export([adjacency_matrix/1, summarize_am/1, adjacency_matrix_from_al/1, 
-         adjacency_list/1, fixup_dam/2, score_am/2, count/1, rms/1]).
+         adjacency_list/1, fixup_dam/2, score_am/2, count/2, rms/1]).
 -export([make_ring/1, gen_complete_diverse/1, gen_complete_len/1, construct/3]).
 -export([num_perms/2, num_combs/2, fac/1, perm_gen/1, down_combos/2, 
          rotations/1, substitutions/2]).
@@ -370,12 +370,13 @@ score_am([], _NVal) ->
 score_am(AM, NVal) ->
     Cs = lists:flatten(
            [begin
-                [C || {D,C} <- count(Ds), D < NVal]
+                [C || {D,C} <- count(Ds, NVal), D < NVal]
             end || {_Pair,Ds} <- AM]),
     rms(Cs).
 
-count(L) ->
-    lists:foldl(fun(E,A) -> orddict:update_counter(E, 1, A) end, [], L).
+count(L, NVal) ->
+    Acc0 = orddict:from_list([{D, 0} || D <- lists:seq(0, NVal-1)]),
+    lists:foldl(fun(E,A) -> orddict:update_counter(E, 1, A) end, Acc0, L).
                          
 rms([]) ->
     throw(empty_list);
@@ -443,11 +444,12 @@ construct(Complete, M, Owners, DAM, NVal) ->
                             Left when Left >= NVal ->
                                 Eligible0; % At least Nval lest, no restriction
                             Left ->
-                                Eligible0 -- lists:sublist(lists:reverse(Owners), Left)
+                                Eligible0 -- lists:sublist(lists:reverse(Owners), NVal - Left)
                         end,
             case Eligible of
                 [] ->
                     %% No eligible nodes - not enough to meet NVal, use any node
+                    lager:debug("construct -- unable to construct without violating NVal"),
                     {Owners1, DAM1} = prepend_next_owner(M, M, Owners, DAM, NVal),
                     construct(Complete, M, Owners1, DAM1, NVal);
                 _ ->
