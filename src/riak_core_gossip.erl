@@ -37,9 +37,10 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 -export ([distribute_ring/1, send_ring/1, send_ring/2, remove_from_cluster/2,
-          claim_until_balanced/2, random_gossip/1,
+          remove_from_cluster/3, claim_until_balanced/2, random_gossip/1,
           recursive_gossip/1, random_recursive_gossip/1, rejoin/2,
-          gossip_version/0, legacy_gossip/0, legacy_gossip/1]).
+          gossip_version/0, legacy_gossip/0, legacy_gossip/1,
+          any_legacy_gossip/2]).
 
 -include("riak_core_ring.hrl").
 
@@ -88,6 +89,20 @@ legacy_gossip() ->
 
 legacy_gossip(Node) ->
     gen_server:call(?MODULE, {legacy_gossip, Node}).
+
+%% @doc Determine if any of the `Nodes' are using legacy gossip by querying
+%%      each node's capability directly over RPC. The proper way to check
+%%      for legacy gossip is to use {@link legacy/gossip/1}. This function
+%%      is used to support staged clustering in `riak_core_claimant'.
+any_legacy_gossip(_Ring, []) ->
+    false;
+any_legacy_gossip(Ring, [Node|Nodes]) ->
+    case rpc_gossip_version(Ring, Node) of
+        ?LEGACY_RING_VSN ->
+            true;
+        _ ->
+            any_legacy_gossip(Ring, Nodes)
+    end.
 
 %% @doc Gossip state to a random node in the ring.
 random_gossip(Ring) ->
@@ -308,7 +323,7 @@ handle_cast({rejoin, RingIn}, State) ->
         true ->
             Legacy = check_legacy_gossip(Ring, State),
             OtherNode = riak_core_ring:owner_node(OtherRing),
-            riak_core:join(Legacy, node(), OtherNode, true),
+            riak_core:join(Legacy, node(), OtherNode, true, true),
             {noreply, State};
         false ->
             {noreply, State}
@@ -425,12 +440,15 @@ claim_until_balanced(Ring, Node) ->
     end.
 
 remove_from_cluster(Ring, ExitingNode) ->
+    remove_from_cluster(Ring, ExitingNode, erlang:now()).
+
+remove_from_cluster(Ring, ExitingNode, Seed) ->
     % Get a list of indices owned by the ExitingNode...
     AllOwners = riak_core_ring:all_owners(Ring),
 
     % Transfer indexes to other nodes...
     ExitRing =
-        case attempt_simple_transfer(Ring, AllOwners, ExitingNode) of
+        case attempt_simple_transfer(Seed, Ring, AllOwners, ExitingNode) of
             {ok, NR} ->
                 NR;
             target_n_fail ->
@@ -450,14 +468,14 @@ remove_from_cluster(Ring, ExitingNode) ->
         end,
     ExitRing.
 
-attempt_simple_transfer(Ring, Owners, ExitingNode) ->
+attempt_simple_transfer(Seed, Ring, Owners, ExitingNode) ->
     TargetN = app_helper:get_env(riak_core, target_n_val),
-    attempt_simple_transfer(Ring, Owners,
+    attempt_simple_transfer(Seed, Ring, Owners,
                             TargetN,
                             ExitingNode, 0,
                             [{O,-TargetN} || O <- riak_core_ring:claiming_members(Ring),
                                              O /= ExitingNode]).
-attempt_simple_transfer(Ring, [{P, Exit}|Rest], TargetN, Exit, Idx, Last) ->
+attempt_simple_transfer(Seed, Ring, [{P, Exit}|Rest], TargetN, Exit, Idx, Last) ->
     %% handoff
     case [ N || {N, I} <- Last, Idx-I >= TargetN ] of
         [] ->
@@ -479,18 +497,19 @@ attempt_simple_transfer(Ring, [{P, Exit}|Rest], TargetN, Exit, Idx, Last) ->
                     target_n_fail;
                 Qualifiers ->
                     %% these nodes don't violate target_n forward
-                    Chosen = lists:nth(random:uniform(length(Qualifiers)),
-                                       Qualifiers),
+                    {Rand, Seed2} = random:uniform_s(length(Qualifiers), Seed),
+                    Chosen = lists:nth(Rand, Qualifiers),
                     %% choose one, and do the rest of the ring
                     attempt_simple_transfer(
+                      Seed2,
                       riak_core_ring:transfer_node(P, Chosen, Ring),
                       Rest, TargetN, Exit, Idx+1,
                       lists:keyreplace(Chosen, 1, Last, {Chosen, Idx}))
             end
     end;
-attempt_simple_transfer(Ring, [{_, N}|Rest], TargetN, Exit, Idx, Last) ->
+attempt_simple_transfer(Seed, Ring, [{_, N}|Rest], TargetN, Exit, Idx, Last) ->
     %% just keep track of seeing this node
-    attempt_simple_transfer(Ring, Rest, TargetN, Exit, Idx+1,
+    attempt_simple_transfer(Seed, Ring, Rest, TargetN, Exit, Idx+1,
                             lists:keyreplace(N, 1, Last, {N, Idx}));
-attempt_simple_transfer(Ring, [], _, _, _, _) ->
+attempt_simple_transfer(_, Ring, [], _, _, _, _) ->
     {ok, Ring}.
