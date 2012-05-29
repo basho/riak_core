@@ -2,7 +2,7 @@
 %%
 %% riak_core: Core Riak Application
 %%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2012 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -26,7 +26,9 @@
          get_env/2,
          get_env/3,
          get_prop_or_env/3,
-         get_prop_or_env/4]).
+         get_prop_or_env/4,
+         try_envs/1,
+         try_envs/2]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -75,6 +77,26 @@ get_prop_or_env(Key, Properties, App, Default) ->
             Value
     end.
 
+%% @doc Like `get_env' but try multiple `{App, Key}' combos before
+%%      returning `{default, Default}'.  The return value is `{App,
+%%      Key, Value}' so that the caller may distinguish where the
+%%      value came from.  This is useful for scenarios when the config
+%%      app/key has changed between releases and you need to check for
+%%      both.
+-spec try_envs([{atom(), atom()}], term()) -> {atom(), atom(), term()}.
+try_envs([{App, Key}|T], Default) ->
+    case get_env(App, Key) of
+        undefined ->
+            try_envs(T, Default);
+        Value ->
+            {App, Key, Value}
+    end;
+try_envs([], Default) ->
+    {default, Default}.
+
+try_envs(Pairs) ->
+    try_envs(Pairs, undefined).
+
 %% ===================================================================
 %% EUnit tests
 %% ===================================================================
@@ -89,7 +111,8 @@ app_helper_test_() ->
        fun get_prop_or_env_undefined_value_test_case/0,
        fun get_prop_or_env_from_env_test_case/0,
        fun get_prop_or_env_from_prop_test_case/0,
-       fun get_prop_or_env_from_prop_with_default_test_case/0
+       fun get_prop_or_env_from_prop_with_default_test_case/0,
+       fun try_envs_test_case/0
       ]
     }.
 
@@ -116,5 +139,13 @@ get_prop_or_env_from_prop_test_case() ->
 get_prop_or_env_from_prop_with_default_test_case() ->
     Properties = [{envkeyone, propvalue}],
     ?assertEqual(propvalue, get_prop_or_env(envkeyone, Properties, bogus_app, default)).
+
+try_envs_test_case() ->
+    Val = try_envs([{noapp, nokey}, {bogus_app, envkeyone}], failed),
+    ?assertEqual({bogus_app, envkeyone, value}, Val),
+    Val2 = try_envs([{bogus_app, envkeytwo}, {noapp, nokey}], failed),
+    ?assertEqual({bogus_app, envkeytwo, valuetwo}, Val2),
+    Val3 = try_envs([{noapp, nokey}, {blah, blah}], default),
+    ?assertEqual({default, default}, Val3).
 
 -endif.
