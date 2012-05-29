@@ -20,6 +20,57 @@
 %%
 %% -------------------------------------------------------------------
 
+%% @doc
+%% This module implements a cluster capability system that tracks the modes
+%% supported by different nodes in the cluster and automatically determines
+%% the most preferred mode for each capability that is supported by all nodes.
+%% The primary use of this system is to support seamless transitions between
+%% different node versions during a rolling upgrade -- such as speaking an
+%% old protocol while the cluster still contains older nodes, and then
+%% switching to a newer protocol after all nodes have been upgraded.
+%%
+%% The capability system exposes a simple `register' and `get' API, that
+%% allows applications to register a given capability and set of supported
+%% modes, and then retrieve the current mode that has been safely negotiated
+%% across the cluster. The system also allows overriding negotiation through
+%% application environment variables (eg. in app.config).
+%%
+%% To register a capability and set of supported modes:
+%%   Use {@link register/3} or {@link register/4}
+%%
+%% To query the current negotiated capability:
+%%   Use {@link get/1} or {@link get/2}
+%%
+%% The capability system implements implicit mode preference. When registering
+%% modes, the modes listed earlier in the list are preferred over modes listed
+%% later in the list.
+%%
+%% Users can override capabilities by setting the `override_capability' app
+%% variable for the appropriate application. For example, to override the
+%% `{riak_core, vnode_routing}' capability, the user could add the following
+%% to `riak_core' section of `app.config':
+%%
+%% {override_capability,
+%%   [{vnode_routing,
+%%     [{use, some_mode},
+%%      {prefer, some_other_mode}]
+%%   }]
+%% }
+%%
+%% The two override parameters are `use' and `prefer'. The `use' parameter
+%% specifies a mode that will always be used for the given capability,
+%% ignoring negotiation. It is a forced override. The `prefer' parameter
+%% specifies a mode that will be used if safe across the entire cluster.
+%% This overrides the built-in mode preference, but still only selects the
+%% mode if safe. When both `use' and `prefer' are specified, `use' takes
+%% precedence.
+%%
+%% There is no inherent upgrading/downgrading of protocols in this system.
+%% The system is designed with the assumption that all supported modes can
+%% be used at any time (even concurrently), and is concerned solely with
+%% selecting the most preferred mode common across the cluster at a given
+%% point in time.
+
 -module(riak_core_capability).
 -behaviour(gen_server).
 
@@ -30,7 +81,7 @@
          get/1,
          get/2,
          all/0,
-         publish_supported/1,
+         update_ring/1,
          ring_changed/1]).
 
 %% gen_server callbacks
@@ -64,14 +115,16 @@ start_link() ->
 
 %% @doc Register a new capability providing a list of supported modes, the
 %% default mode, and an optional mapping of how a legacy application variable
-%% maps to different modes
+%% maps to different modes. The order of modes in `Supported' determines the
+%% mode preference -- modes listed earlier are more preferred.
 register(Capability, Supported, Default, LegacyVar) ->
     Info = capability_info(Supported, Default, LegacyVar),
     gen_server:call(?MODULE, {register, Capability, Info}, infinity),
     ok.
 
 %% @doc Register a new capability providing a list of supported modes as well
-%% as the default value
+%% as the default value. The order of modes in `Supported' determines the mode
+%% preference -- modes listed earlier are more preferred.
 register(Capability, Supported, Default) ->
     register(Capability, Supported, Default, []).
 
@@ -81,7 +134,7 @@ register(Capability, Supported, Default) ->
 get(Capability) ->
     case get(Capability, '$unknown') of
         '$unknown' ->
-            throw(unknown_capability);
+            throw({unknown_capability, Capability});
         Result ->
             Result
     end.
@@ -107,9 +160,9 @@ all() ->
 
 %% @doc Add the local node's supported capabilities to the given
 %% ring. Currently used during the `riak-admin join' process
-publish_supported(Ring) ->
+update_ring(Ring) ->
     [{_, Supported}] = ets:lookup(?ETS, '$supported'),
-    publish_supported(node(), Supported, Ring).
+    add_supported_to_ring(node(), Supported, Ring).
 
 %% @doc Internal callback used by `riak_core_ring_handler' to notify the
 %%      capability manager of a new ring
@@ -138,7 +191,7 @@ init_state(Registered) ->
 handle_call({register, Capability, Info}, _From, State) ->
     State2 = register_capability(node(), Capability, Info, State),
     State3 = renegotiate_capabilities(State2),
-    update_ring(State3),
+    publish_supported(State3),
     update_local_cache(State3),
     save_registered(State3#state.registered),
     {reply, ok, State3};
@@ -156,9 +209,6 @@ handle_cast(tick, State) ->
     State3 = renegotiate_capabilities(State2),
     {noreply, State3}.
 
-schedule_tick() ->
-    timer:apply_after(1000, gen_server, cast, [?MODULE, tick]).
-
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -174,6 +224,12 @@ code_change(_OldVsn, State, _Extra) ->
 
 capability_info(Supported, Default, Legacy) ->
     #capability{supported=Supported, default=Default, legacy=Legacy}.
+
+schedule_tick() ->
+    Tick = app_helper:get_env(riak_core,
+                              capability_tick,
+                              10000),
+    timer:apply_after(Tick, gen_server, cast, [?MODULE, tick]).
 
 %% Capabilities are re-initialized if riak_core_capability server crashes
 reload(State=#state{registered=[]}) ->
@@ -207,6 +263,10 @@ update_supported(Ring, State) ->
                             {[], []} ->
                                 add_node(Node, Supported, StateAcc);
                             {[], _} ->
+                                %% While the ring has no knowledge of Node's
+                                %% supported modes, the local view has prior
+                                %% knowledge. Do nothing and continue to use
+                                %% the existing modes.
                                 StateAcc;
                             {Same, Same} ->
                                 StateAcc;
@@ -277,7 +337,7 @@ add_node_capabilities(Node, Capabilities, State) ->
                 end, State, Capabilities).
 
 %% We maintain a cached-copy of the local node's supported capabilities
-%% in our existing capability ETS table. This allows publish_supported/1
+%% in our existing capability ETS table. This allows update_ring/1
 %% to update rings without going through the capability server.
 update_local_cache(State) ->
     Supported = get_supported(node(), State),
@@ -285,11 +345,12 @@ update_local_cache(State) ->
     ok.
 
 %% Publish the local node's supported modes in the ring
-update_ring(State) ->
+publish_supported(State) ->
     Node = node(),
     Supported = get_supported(Node, State),
     F = fun(Ring, _) ->
-                {Changed, Ring2} = publish_supported(Node, Supported, Ring),
+                {Changed, Ring2} =
+                    add_supported_to_ring(Node, Supported, Ring),
                 case Changed of
                     true ->
                         {new_ring, Ring2};
@@ -303,7 +364,7 @@ update_ring(State) ->
     ok.
 
 %% Add a node's capabilities to the provided ring
-publish_supported(Node, Supported, Ring) ->
+add_supported_to_ring(Node, Supported, Ring) ->
     Current = riak_core_ring:get_member_meta(Ring, Node, ?CAPS),
     case Current of
         Supported ->
@@ -398,13 +459,13 @@ order_by_preference(Capability, Preferred, Common) ->
 override_capabilities(Caps, AppOver) ->
     [override_capability(Cap, Modes, AppOver) || {Cap, Modes} <- Caps].
 
-override_capability(AC={App, Cap}, Modes, AppOver) ->
+override_capability(Capability={App, CapName}, Modes, AppOver) ->
     Over = orddict:fetch(App, AppOver),
-    case orddict:find(Cap, Over) of
+    case orddict:find(CapName, Over) of
         error ->
-            {AC, Modes};
+            {Capability, Modes};
         {ok, Opts} ->
-            {AC, override_capability(Opts, Modes)}
+            {Capability, override_capability(Opts, Modes)}
     end.
 
 override_capability(Opts, Modes) ->
@@ -414,8 +475,12 @@ override_capability(Opts, Modes) ->
         {undefined, undefined} ->
             Modes;
         {undefined, Val} ->
-            [Mode || Mode <- Modes,
-                     Mode == Val];
+            case lists:member(Val, Modes) of
+                true ->
+                    [Val];
+                false ->
+                    Modes
+            end;
         {Val, _} ->
             [Val]
     end.
