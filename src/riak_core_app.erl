@@ -98,6 +98,15 @@ start(_StartType, _StartArgs) ->
                         [lager:posix_error(Reason)]),
                     throw({error, Reason})
             end,
+
+            %% Register capabilities
+            riak_core_capability:register({riak_core, vnode_routing},
+                                          [proxy, legacy],
+                                          legacy,
+                                          {riak_core,
+                                           legacy_vnode_routing,
+                                           [{true, legacy}, {false, proxy}]}),
+
             {ok, Pid};
         {error, Reason} ->
             {error, Reason}

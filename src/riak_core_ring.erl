@@ -556,11 +556,28 @@ update_member_meta(Node, State, Member, Key, Val, same_vclock) ->
             State
     end.
 
+clear_member_meta(Node, State, Member) ->
+    Members = State?CHSTATE.members,
+    case orddict:is_key(Member, Members) of
+        true ->
+            Members2 = orddict:update(Member,
+                                      fun({Status, VC, _MD}) ->
+                                              {Status,
+                                               vclock:increment(Node, VC),
+                                               orddict:new()}
+                                      end,
+                                      Members),
+            State?CHSTATE{members=Members2};
+        false ->
+            State
+    end.
+
 add_member(PNode, State, Node) ->
     set_member(PNode, State, Node, joining).
 
 remove_member(PNode, State, Node) ->
-    set_member(PNode, State, Node, invalid).
+    State2 = clear_member_meta(PNode, State, Node),
+    set_member(PNode, State2, Node, invalid).
 
 leave_member(PNode, State, Node) ->
     set_member(PNode, State, Node, leaving).
@@ -949,7 +966,9 @@ maybe_remove_exiting(Node, CState) ->
                                     CName = cluster_name(CState),
                                     riak_core_ring_manager:refresh_ring(ENode,
                                                                         CName),
-                                    set_member(Node, CState0, ENode,
+                                    CState01 =
+                                        clear_member_meta(Node, CState0, ENode),
+                                    set_member(Node, CState01, ENode,
                                                invalid, same_vclock)
                             end, CState, Exiting),
             {Changed, CState2};

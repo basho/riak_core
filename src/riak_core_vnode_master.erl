@@ -100,10 +100,10 @@ coverage(Msg, {Index, Node}, Keyspaces, Sender, VMaster) ->
 %% VnodePid}'.
 command_return_vnode({Index,Node}, Msg, Sender, VMaster) ->
     Req = make_request(Msg, Sender, Index),
-    case app_helper:get_env(riak_core, legacy_vnode_routing, true) of
-        true ->
+    case riak_core_capability:get({riak_core, vnode_routing}, legacy) of
+        legacy ->
             gen_server:call({VMaster, Node}, {return_vnode, Req});
-        false ->
+        proxy ->
             Mod = vmaster_to_vmod(VMaster),
             riak_core_vnode_proxy:command_return_vnode({Mod,Index,Node}, Req)
     end.
@@ -162,10 +162,10 @@ init([Service, VNodeMod, LegacyMod, _RegName]) ->
                 legacy=LegacyMod}}.
 
 proxy_cast({VMaster, Node}, Req) ->
-    case app_helper:get_env(riak_core, legacy_vnode_routing, true) of
-        true ->
+    case riak_core_capability:get({riak_core, vnode_routing}, legacy) of
+        legacy ->
             gen_server:cast({VMaster, Node}, Req);
-        false ->
+        proxy ->
             do_proxy_cast({VMaster, Node}, Req)
     end.
 
