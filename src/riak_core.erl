@@ -134,7 +134,8 @@ standard_join(Node, Ring, Rejoin) ->
                                                   node(),
                                                   gossip_vsn,
                                                   GossipVsn),
-            riak_core_ring_manager:set_my_ring(Ring4),
+            {_, Ring5} = riak_core_capability:update_ring(Ring4),
+            riak_core_ring_manager:set_my_ring(Ring5),
             riak_core_gossip:send_ring(Node, node())
     end.
 
