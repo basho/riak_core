@@ -19,198 +19,97 @@
 %% -------------------------------------------------------------------
 
 -module(riak_core_stat).
--behaviour(gen_server2).
 
 %% API
--export([start_link/0, get_stats/0, get_stats/1, update/1]).
-
-%% gen_server callbacks
--export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-         terminate/2, code_change/3]).
+-export([get_stats/0, update/1, register_stats/0]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--record(cuml, {count =  0 :: integer(),
-               min        :: integer(),
-               max   = -1 :: integer(),
-               mean  =  0 :: integer(),
-               last       :: integer()}).
-
--record(state, {
-          ignored_gossip_total   :: integer(),
-          rings_reconciled_total :: integer(),
-          rejected_handoffs      :: integer(),
-          handoff_timeouts       :: integer(),
-          gossip_received        :: spiraltime:spiral(),
-          rings_reconciled       :: spiraltime:spiral(),
-          converge_epoch         :: calendar:t_now(),
-          converge_delay         :: #cuml{},
-          rebalance_epoch        :: calendar:t_now(),
-          rebalance_delay        :: #cuml{}
-         }).
-
-%% @spec start_link() -> {ok,Pid} | ignore | {error,Error}
-%% @doc Start the server.
-start_link() ->
-    gen_server2:start_link({local, ?MODULE}, ?MODULE, [], []).
+-define(APP, riak_core).
 
 %% @spec get_stats() -> proplist()
 %% @doc Get the current aggregation of stats.
 get_stats() ->
-    get_stats(slide:moment()).
-
-get_stats(Moment) ->
-    gen_server2:call(?MODULE, {get_stats, Moment}, infinity).
+    produce_stats().
 
 %% @spec update(term()) -> ok
 %% @doc Update the given stat.
-update(Stat) ->
-    gen_server2:cast(?MODULE, {update, Stat, slide:moment()}).
+update(rejected_handoffs) ->
+    folsom_metrics:notify_existing_metric({?APP, rejected_handoffs}, {inc, 1}, counter);
 
-%% @private
-init([]) ->
-    %% Removing the slide directory here would conflict with riak_kv_stat.
-    %% We will need to resolve if we ever use slide metrics in this module.
-    %%
-    %% process_flag(trap_exit, true),
-    %% remove_slide_private_dirs(),
+update(handoff_timeouts) ->
+    folsom_metrics:notify_existing_metric({?APP, handoff_timeouts}, {inc, 1}, counter);
 
-    {ok, #state{ignored_gossip_total=0,
-                rings_reconciled_total=0,
-                rejected_handoffs=0,
-                handoff_timeouts=0,
-                gossip_received=spiraltime:fresh(),
-                rings_reconciled=spiraltime:fresh(),
-                converge_delay=#cuml{},
-                rebalance_delay=#cuml{}
-               }}.
+update(ignored_gossip) ->
+    folsom_metrics:notify_existing_metric({?APP, ignored_gossip_total}, {inc, 1}, counter);
 
-%% @private
-handle_call({get_stats, Moment}, _From, State) ->
-    {reply, produce_stats(State, Moment), State};
-handle_call(_Request, _From, State) ->
-    Reply = ok,
-    {reply, Reply, State}.
+update(gossip_received) ->
+    folsom_metrics:notify_existing_metric({?APP, gossip_received}, 1, meter);
 
-%% @private
-handle_cast({update, Stat, Moment}, State) ->
-    {noreply, update(Stat, Moment, State)};
-handle_cast(_Msg, State) ->
-    {noreply, State}.
+update(rings_reconciled) ->
+    folsom_metrics:notify_existing_metric({?APP, rings_reconciled}, 1, meter);
+    
+update(converge_timer_begin) ->
+    folsom_metrics:notify_existing_metric({?APP, converge_delay}, timer_start, duration);
+update(converge_timer_end) ->
+    folsom_metrics:notify_existing_metric({?APP, converge_delay}, timer_end, duration);
 
-%% @private
-handle_info(_Info, State) ->
-    {noreply, State}.
+update(rebalance_timer_begin) ->
+    folsom_metrics:notify_existing_metric({?APP, rebalance_delay}, timer_start, duration);
+update(rebalance_timer_end) ->
+    folsom_metrics:notify_existing_metric({?APP, rebalance_delay}, timer_end, duration).
 
-%% @private
-terminate(_Reason, _State) ->
-    ok.
+register_stats() ->
+    [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()].
 
-%% @private
-code_change(_OldVsn, State, _Extra) ->
-    {ok, State}.
+%% private
+stats() ->
+    [{ignored_gossip_total, counter},
+     {rings_reconciled, meter},
+     {gossip_received, meter},
+     {rejected_handoffs, counter},
+     {handoff_timeouts, counter},
+     {converge_delay, duration},
+     {rebalance_delay, duration}].
 
-%%--------------------------------------------------------------------
-%%% Internal functions
-%%--------------------------------------------------------------------
+register_stat(Name, counter) ->
+    folsom_metrics:new_counter(Name);
+register_stat(Name, meter) ->
+    folsom_metrics:new_meter(Name);
+register_stat(Name, duration) ->
+    folsom_metrics:new_duration(Name).
 
-%% @doc Update the given stat in State, returning a new State.
--spec update(Stat::term(), integer(), #state{}) -> #state{}.
-update(converge_timer_begin, _Moment, State) ->
-    State#state{converge_epoch=erlang:now()};
-update(converge_timer_end, _Moment, State=#state{converge_epoch=undefined}) ->
-    State;
-update(converge_timer_end, _Moment, State=#state{converge_epoch=T0}) ->
-    Duration = timer:now_diff(erlang:now(), T0),
-    update_cumulative(#state.converge_delay, Duration,
-                      State#state{converge_epoch=undefined});
-
-update(rebalance_timer_begin, _Moment, State) ->
-    State#state{rebalance_epoch=erlang:now()};
-update(rebalance_timer_end, _Moment, State=#state{rebalance_epoch=undefined}) ->
-    State;
-update(rebalance_timer_end, _Moment, State=#state{rebalance_epoch=T0}) ->
-    Duration = timer:now_diff(erlang:now(), T0),
-    update_cumulative(#state.rebalance_delay, Duration,
-                      State#state{rebalance_epoch=undefined});
-
-update(rejected_handoffs, _Moment, State) ->
-    int_incr(#state.rejected_handoffs, State);
-
-update(handoff_timeouts, _Moment, State) ->
-    int_incr(#state.handoff_timeouts, State);
-
-update(ignored_gossip, _Moment, State) ->
-    int_incr(#state.ignored_gossip_total, State);
-
-update(gossip_received, Moment, State) ->
-    spiral_incr(#state.gossip_received, Moment, State);
-
-update(rings_reconciled, Moment, State) ->
-    spiral_incr(#state.rings_reconciled, Moment,
-                int_incr(#state.rings_reconciled_total, State));
-
-update(_, _, State) ->
-    State.
-
-%% @spec spiral_incr(integer(), integer(), state()) -> state()
-%% @doc Increment the value of a spiraltime structure at a given
-%%      position of the State tuple.
-spiral_incr(Elt, Moment, State) ->
-    setelement(Elt, State,
-               spiraltime:incr(1, Moment, element(Elt, State))).
-
-%% @doc Increment the value at the given position of the State tuple.
-int_incr(Elt, State) ->
-    int_incr(Elt, 1, State).
-int_incr(Elt, Amount, State) ->
-    setelement(Elt, State, element(Elt, State) + Amount).
-
-%% @doc Add a value to a set, updating the cumulative min/max/mean
-update_cumulative(Elt, Value, State) ->
-    #cuml{count=N, min=Min, max=Max, mean=Mean} = element(Elt, State),
-    Min2 = erlang:min(Min, Value),
-    Max2 = erlang:max(Max, Value),
-    Mean2 = ((N * Mean) + Value) div (N+1),
-    Stat2 = #cuml{count=N+1, min=Min2, max=Max2, mean=Mean2, last=Value},
-    setelement(Elt, State, Stat2).
-
-%% @spec produce_stats(state(), integer()) -> proplist()
+% @spec produce_stats(state(), integer()) -> proplist()
 %% @doc Produce a proplist-formatted view of the current aggregation
 %%      of stats.
-produce_stats(State, Moment) ->
-    lists:append([gossip_stats(Moment, State),
+produce_stats() ->
+    lists:append([gossip_stats(),
                   vnodeq_stats()]).
 
-%% @spec spiral_minute(integer(), integer(), state()) -> integer()
-%% @doc Get the count of events in the last minute from the spiraltime
-%%      structure at the given element of the state tuple.
-spiral_minute(_Moment, Elt, State) ->
-    {_,Count} = spiraltime:rep_minute(element(Elt, State)),
-    Count.
+gossip_stats() ->
+    lists:flatten([backwards_compat(Stat, Type, folsom_metrics:get_metric_value({?APP, Stat})) ||
+                      {Stat, Type} <- stats(), Stat /= riak_core_rejected_handoffs]).
 
-%% @spec gossip_stats(integer(), state()) -> proplist()
-%% @doc Get the gossip stats proplist.
-gossip_stats(Moment, State=#state{converge_delay=CDelay,
-                                  rebalance_delay=RDelay}) ->
+backwards_compat(rings_reconciled, meter, Stats) ->
+    [{rings_reconciled_total, proplists:get_value(count, Stats)},
+    {rings_reconciled, trunc(proplists:get_value(one, Stats))}];
+backwards_compat(gossip_received, meter, Stats) ->
+    {gossip_received, trunc(proplists:get_value(one, Stats))};
+backwards_compat(Name, counter, Stats) ->
+    {Name, Stats};
+backwards_compat(Name, duration, Stats) ->
+    [{join(Name, min), trunc(proplists:get_value(min, Stats))},
+     {join(Name, max), trunc(proplists:get_value(max, Stats))},
+     {join(Name, mean), trunc(proplists:get_value(arithmetic_mean, Stats))},
+     {join(Name, last), proplists:get_value(last, Stats)}].
 
-    [{ignored_gossip_total, State#state.ignored_gossip_total},
-     {rings_reconciled_total, State#state.rings_reconciled_total},
-     {rings_reconciled, spiral_minute(Moment, #state.rings_reconciled, State)},
-     {gossip_received, spiral_minute(Moment, #state.gossip_received, State)},
-     {handoff_timeouts, State#state.handoff_timeouts},
-     {converge_delay_min,  CDelay#cuml.min},
-     {converge_delay_max,  CDelay#cuml.max},
-     {converge_delay_mean, CDelay#cuml.mean},
-     {converge_delay_last, CDelay#cuml.last},
-     {rebalance_delay_min,  RDelay#cuml.min},
-     {rebalance_delay_max,  RDelay#cuml.max},
-     {rebalance_delay_mean, RDelay#cuml.mean},
-     {rebalance_delay_last, RDelay#cuml.last}].
-
-
+join(Atom1, Atom2) ->
+    Bin1 = atom_to_binary(Atom1, latin1),
+    Bin2 = atom_to_binary(Atom2, latin1),
+    binary_to_atom(<<Bin1/binary, $_, Bin2/binary>>, latin1).
+    
 %% Provide aggregate stats for vnode queues.  Compute instantaneously for now,
 %% may need to cache if stats are called heavily (multiple times per seconds)
 vnodeq_stats() ->
