@@ -48,7 +48,6 @@
         ]).
 
 -include("riak_core_handoff.hrl").
--define(DEFAULT_TIMEOUT, 60000).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -154,24 +153,24 @@ get_exclusions(Module) ->
 
 handle_call({get_exclusions, Module}, _From, State=#state{excl=Excl}) ->
     Reply =  [I || {M, I} <- ordsets:to_list(Excl), M =:= Module],
-    {reply, {ok, Reply}, State, timeout()};
+    {reply, {ok, Reply}, State};
 handle_call({add_outbound,Mod,Idx,Node,Pid},_From,State=#state{handoffs=HS}) ->
     case send_handoff(Mod,Idx,Node,Pid,HS) of
         {ok,Handoff=#handoff_status{transport_pid=Sender}} ->
             HS2 = HS ++ [Handoff],
-            {reply, {ok,Sender}, State#state{handoffs=HS2}, timeout()};
+            {reply, {ok,Sender}, State#state{handoffs=HS2}};
         {false,_ExistingHandoff=#handoff_status{transport_pid=Sender}} ->
-            {reply, {ok,Sender}, State, timeout()};
+            {reply, {ok,Sender}, State};
         Error ->
-            {reply, Error, State, timeout()}
+            {reply, Error, State}
     end;
 handle_call({add_inbound,SSLOpts},_From,State=#state{handoffs=HS}) ->
     case receive_handoff(SSLOpts) of
         {ok,Handoff=#handoff_status{transport_pid=Receiver}} ->
             HS2 = HS ++ [Handoff],
-            {reply, {ok,Receiver}, State#state{handoffs=HS2}, timeout()};
+            {reply, {ok,Receiver}, State#state{handoffs=HS2}};
         Error ->
-            {reply, Error, State, timeout()}
+            {reply, Error, State}
     end;
 
 handle_call({xfer_status, Xfer}, _From, State=#state{handoffs=HS}) ->
@@ -186,7 +185,7 @@ handle_call({kill_xfer, Xfer, Reason}, _From, State) ->
     HS = State#state.handoffs,
     case lists:keytake(TP, #handoff_status.transport_pid, HS) of
         false ->
-            {reply, ok, State, timeout()};
+            {reply, ok, State};
         {value, Xfer, HS2} ->
             #handoff_status{mod_src_tgt={Mod, SrcPartition, TargetPartition},
                             type=Type,
@@ -197,7 +196,7 @@ handle_call({kill_xfer, Xfer, Reason}, _From, State) ->
             lager:info(Msg, [Type, Mod, SrcNode, SrcPartition,
                              TargetNode, TargetPartition, Reason]),
             exit(TP, {kill_xfer, Reason}),
-            {reply, ok, State#state{handoffs=HS2}, timeout()}
+            {reply, ok, State#state{handoffs=HS2}}
     end;
 
 handle_call({send_handoff, Mod, {Src, Target}, ReqOrigin, {FilterMod, FilterFun}=FMF},
@@ -208,14 +207,14 @@ handle_call({send_handoff, Mod, {Src, Target}, ReqOrigin, {FilterMod, FilterFun}
     case send_handoff({Mod, Src, Target}, ReqOrigin, SrcPid, HS, {Filter, FMF}, ReqOrigin) of
         {ok, Handoff} ->
             HS2 = HS ++ [Handoff],
-            {reply, {ok, Handoff}, State#state{handoffs=HS2}, timeout()};
+            {reply, {ok, Handoff}, State#state{handoffs=HS2}};
         {false, Handoff} ->
-            {reply, {ok, Handoff}, State, timeout()}
+            {reply, {ok, Handoff}, State}
     end;
 
 handle_call({status, Filter}, _From, State=#state{handoffs=HS}) ->
     Status = lists:filter(filter(Filter), [build_status(HO) || HO <- HS]),
-    {reply, Status, State, timeout()};
+    {reply, Status, State};
 
 handle_call({set_concurrency,Limit},_From,State=#state{handoffs=HS}) ->
     application:set_env(riak_core,handoff_concurrency,Limit),
@@ -228,9 +227,9 @@ handle_call({set_concurrency,Limit},_From,State=#state{handoffs=HS}) ->
             {_Keep,Discard}=lists:split(Limit,HS),
             [erlang:exit(Pid,max_concurrency) ||
                 #handoff_status{transport_pid=Pid} <- Discard],
-            {reply, ok, State, timeout()};
+            {reply, ok, State};
         false ->
-            {reply, ok, State, timeout()}
+            {reply, ok, State}
     end;
 
 handle_call(get_concurrency, _From, State) ->
@@ -239,7 +238,7 @@ handle_call(get_concurrency, _From, State) ->
 
 handle_cast({del_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
     Excl2 = ordsets:del_element({Mod, Idx}, Excl),
-    {noreply, State#state{excl=Excl2}, timeout()};
+    {noreply, State#state{excl=Excl2}};
 
 handle_cast({add_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
@@ -251,28 +250,24 @@ handle_cast({add_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
             ok
     end,
     Excl2 = ordsets:add_element({Mod, Idx}, Excl),
-    {noreply, State#state{excl=Excl2}, timeout()};
+    {noreply, State#state{excl=Excl2}};
 
 handle_cast({status_update, ModSrcTgt, StatsUpdate}, State=#state{handoffs=HS}) ->
     case lists:keyfind(ModSrcTgt, #handoff_status.mod_src_tgt, HS) of
         false ->
             lager:error("status_update for non-existing handoff ~p", [ModSrcTgt]),
-            {noreply, State, timeout()};
+            {noreply, State};
         HO ->
             Stats2 = update_stats(StatsUpdate, HO#handoff_status.stats),
             HO2 = HO#handoff_status{stats=Stats2},
             HS2 = lists:keyreplace(ModSrcTgt, #handoff_status.mod_src_tgt, HS, HO2),
-            {noreply, State#state{handoffs=HS2}, timeout()}
+            {noreply, State#state{handoffs=HS2}}
     end.
-
-handle_info(timeout, State) ->
-    %% do nothing with timeout now but maybe leave it in here?
-    {noreply, State, timeout()};
 
 handle_info({handoff_finished, {_Mod, _Target}, Handoff, _Reason}, State) ->
     %% NOTE: this msg will only come in for repair handoff
     riak_core_vnode_manager:xfer_complete(Handoff),
-    {noreply, State, timeout()};
+    {noreply, State};
 
 handle_info({'DOWN',_Ref,process,Pid,Reason},State=#state{handoffs=HS}) ->
     case lists:keytake(Pid,#handoff_status.transport_pid,HS) of
@@ -310,9 +305,9 @@ handle_info({'DOWN',_Ref,process,Pid,Reason},State=#state{handoffs=HS}) ->
             end,
 
             %% removed the handoff from the list of active handoffs
-            {noreply, State#state{handoffs=NewHS}, timeout()};
+            {noreply, State#state{handoffs=NewHS}};
         false ->
-            {noreply, State, timeout()}
+            {noreply, State}
     end.
 
 
@@ -504,11 +499,6 @@ update_stats(StatsUpdate, Stats) ->
     Stats2 = dict:update_counter(objs, Objs, Stats),
     Stats3 = dict:update_counter(bytes, Bytes, Stats2),
     dict:store(last_update, LU, Stats3).
-
-%% @private
--spec timeout() -> Timeout::pos_integer().
-timeout() ->
-    app_helper:get_env(riak_core, handoff_manager_timeout, ?DEFAULT_TIMEOUT).
 
 %%%===================================================================
 %%% Tests
