@@ -49,7 +49,7 @@
 
 %% A good way to decide on the setting of target_n_val for your application is
 %% to set it to the largest value you expect to use for any bucket's n_val.  The
-%% default is 3.
+%% default is 4.
 
 -module(riak_core_claim).
 -export([claim/1, claim/3, claim_until_balanced/2, claim_until_balanced/4]).
@@ -218,7 +218,7 @@ wants_claim_v3(Ring, _Node) ->
                     %% Otherwise, base wants decision on whether the current 
                     %% wants versus current ownership if the claim does not
                     %% manage to claim all requested nodes then the temporary
-                    %% 'claim_v3' metadatawill stop the loop
+                    %% 'claim_v3' metadata will stop the loop
                     Owns = get_counts(riak_core_ring:claiming_members(Ring),
                                       riak_core_ring:all_owners(Ring)),
                     Deltas = wants_owns_diff(Wants, Owns),
@@ -387,7 +387,7 @@ choose_claim_v3(Ring) ->
     choose_claim_v3(Ring, node()).
 
 choose_claim_v3(Ring, ClaimNode) ->
-    Params = [{target_n_val, app_helper:get_env(riak_core, target_n_val, 3)}],
+    Params = [{target_n_val, app_helper:get_env(riak_core, target_n_val, 4)}],
     choose_claim_v3(Ring, ClaimNode, Params).
 
 choose_claim_v3(Ring, _ClaimNode, Params) ->
