@@ -763,8 +763,8 @@ build_nis(Wants, Owners) ->
                                  end, {0, Initial}, Owners),
     [{Node, Want, Owned} || {Node, Want} <- Wants, {Node1, Owned} <- Ownership, Node == Node1].
 
-%% For each node in wants, work out how many more partition it wants (positive) or is
-%% overlaoded by (negative)
+%% For each node in wants, work out how many more partition each node wants (positive) or is
+%% overloaded by (negative) compared to what it owns.
 wants_owns_diff(Wants, Owns) ->
     [ case lists:keyfind(N, 1, Owns) of
           {N, O} ->
