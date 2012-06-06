@@ -117,10 +117,10 @@ status(Filter) ->
     gen_server:call(?MODULE, {status, Filter}).
 
 %% @doc Send status updates `Stats' to the handoff manager for a
-%%      particular handoff identified by `ModIdx'.
+%%      particular handoff identified by `ModSrcTgt'.
 -spec status_update(mod_src_tgt(), ho_stats()) -> ok.
-status_update(ModIdx, Stats) ->
-    gen_server:cast(?MODULE, {status_update, ModIdx, Stats}).
+status_update(ModSrcTgt, Stats) ->
+    gen_server:cast(?MODULE, {status_update, ModSrcTgt, Stats}).
 
 set_concurrency(Limit) ->
     gen_server:call(?MODULE,{set_concurrency,Limit}).

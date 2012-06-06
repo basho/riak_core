@@ -95,7 +95,7 @@ all_vnodes_status() ->
                     {down, Down::[{partition(), node()}]} |
                     ownership_change_in_progress.
 repair(Service, {_Module, Partition}=ModPartition, FilterModFun) ->
-    %% Fwd the request to the partition owner to guarentee that there
+    %% Fwd the request to the partition owner to guarantee that there
     %% is only one request per partition.
     %%
     %% TODO: Pass Ring (or piece of info) to verify receiving nodes

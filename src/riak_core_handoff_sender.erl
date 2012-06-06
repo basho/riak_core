@@ -374,7 +374,7 @@ incr_objs(Stats=#ho_stats{objs=Objs}) ->
 %% @private
 %%
 %% @doc Check if the interval has elapsed and if so send handoff stats
-%%      for `ModIdx' to the manager and return a new stats record
+%%      for `ModSrcTgt' to the manager and return a new stats record
 %%      `NetStats'.
 -spec maybe_send_status({module(), non_neg_integer(), non_neg_integer()},
                         ho_stats()) ->
