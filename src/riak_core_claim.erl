@@ -74,6 +74,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
+-define(DEF_TARGET_N, 4).
+
 claim(Ring) ->
     Want = app_helper:get_env(riak_core, wants_claim_fun),
     Choose = app_helper:get_env(riak_core, choose_claim_fun),
@@ -244,7 +246,7 @@ default_choose_params() ->
 default_choose_params(Params) ->
     case proplists:get_value(target_n_val, Params) of
         undefined ->
-            TN = app_helper:get_env(riak_core, target_n_val, 4),
+            TN = app_helper:get_env(riak_core, target_n_val, ?DEF_TARGET_N),
             [{target_n_val, TN} | Params];
         _->
             Params
@@ -387,13 +389,14 @@ choose_claim_v3(Ring) ->
     choose_claim_v3(Ring, node()).
 
 choose_claim_v3(Ring, ClaimNode) ->
-    Params = [{target_n_val, app_helper:get_env(riak_core, target_n_val, 4)}],
+    Params = [{target_n_val, app_helper:get_env(riak_core, target_n_val, 
+                                                ?DEF_TARGET_N)}],
     choose_claim_v3(Ring, ClaimNode, Params).
 
 choose_claim_v3(Ring, _ClaimNode, Params) ->
     S = length(riak_core_ring:active_members(Ring)),
     Q = riak_core_ring:num_partitions(Ring),
-    TN = proplists:get_value(target_n_val, Params, 4),
+    TN = proplists:get_value(target_n_val, Params, ?DEF_TARGET_N),
     Wants = wants(Ring),
     lager:debug("Claim3 started: S=~p Q=~p TN=~p\n", [S, Q, TN]),
     lager:debug("       wants: ~p\n", [Wants]),
@@ -441,7 +444,7 @@ choose_claim_v3(Ring, _ClaimNode, Params) ->
 %% Lower diversity score is better, 0 if nodes are perfectly diverse.
 %%
 claim_v3(Wants, Owners, Params) ->
-    TN = proplists:get_value(target_n_val, Params, 4),
+    TN = proplists:get_value(target_n_val, Params, ?DEF_TARGET_N),
     Q = length(Owners),
     Claiming = [N || {N,W} <- Wants, W > 0],
     Trials = proplists:get_value(trials, Params, 100),
@@ -451,13 +454,13 @@ claim_v3(Wants, Owners, Params) ->
 
             lager:debug("claim3 - NIs\n",[]),
             [lager:debug("  ~p\n", [NI]) || NI <- NIs],
-            
+
             %% Generate plans that resolve violations and overloads
             Plans = lists:usort(make_plans(Trials, NIs, Q, TN)),
-            
+
             %% Work out which plan meets the balance and diversity objectives
             {_NewOwners, NewMetrics} = New = evaluate_plans(Plans, Wants, Q, TN),
-            
+
             case proplists:get_value(violations, NewMetrics) of
                 0 ->
                     New;
@@ -469,17 +472,17 @@ claim_v3(Wants, Owners, Params) ->
             end;
         false ->
             lager:debug("claimv3: Not enough nodes to run (have ~p need ~p), diagonalized\n",
-                        [length(Claiming), TN]),
+                        [length(Claiming), TN+1]),
             claim_diagonal(Wants, Owners, Params)
     end.
-                
+
 %% Claim diversify tries to build a perfectly diverse ownership list that meets
 %% target N.  It uses wants to work out which nodes want partitions, but does
 %% not honor the counts currently.  The algorithm incrementally builds the ownership
 %% list, updating the adjacency matrix needed to compute the diversity score as each
 %% node is added and uses it to drive the selection of the next nodes.
 claim_diversify(Wants, Owners, Params) ->
-    TN = proplists:get_value(target_n_val, Params, 4),
+    TN = proplists:get_value(target_n_val, Params, ?DEF_TARGET_N),
     Q = length(Owners),
     Claiming = [N || {N,W} <- Wants, W > 0],
     {ok, NewOwners, _AM} = riak_core_claim_util:construct(
@@ -489,7 +492,7 @@ claim_diversify(Wants, Owners, Params) ->
 %% Claim nodes in seq a,b,c,a,b,c trying to handle the wraparound
 %% case to meet target N
 claim_diagonal(Wants, Owners, Params) ->
-    TN = proplists:get_value(target_n_val, Params, 4),
+    TN = proplists:get_value(target_n_val, Params, ?DEF_TARGET_N),
     Claiming = lists:sort([N || {N,W} <- Wants, W > 0]),
     S = length(Claiming),
     Q = length(Owners),
