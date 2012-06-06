@@ -26,10 +26,12 @@
           target_node           :: node(),
           direction             :: inbound | outbound,
           transport_pid         :: pid(),
+          transport_mon         :: reference(),
           timestamp             :: tuple(),
           status                :: any(),
           stats                 :: dict(),
           vnode_pid             :: pid() | undefined,
+          vnode_mon             :: reference(),
           type                  :: ownership | hinted_handoff | repair,
           req_origin            :: node(),
           filter_mod_fun        :: {module(), atom()}

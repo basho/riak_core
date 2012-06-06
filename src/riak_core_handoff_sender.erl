@@ -123,10 +123,6 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
          M = <<?PT_MSG_INIT:8,TargetPartition:160/integer>>,
          ok = TcpMod:send(Socket, M),
          StartFoldTime = os:timestamp(),
-
-         MRef = monitor(process, ParentPid),
-         process_flag(trap_exit, true),
-         SPid = self(),
          Stats = #ho_stats{interval_end=future_now(get_status_interval())},
 
          Req = ?FOLD_REQ{foldfun=fun visit_item/3,
@@ -141,77 +137,60 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                                       tcp_mod=TcpMod,
                                       total=0}},
 
-         HPid =
-             spawn_link(
-               fun() ->
-                       %% match structure here because otherwise
-                       %% you'll end up in infinite loop below if you
-                       %% return something other than what it expects.
-                       R = #ho_acc{} =
-                           riak_core_vnode_master:sync_command({SrcPartition, SrcNode},
-                                                               Req,
-                                                               VMaster, infinity),
-                       SPid ! {MRef, R}
-               end),
 
-         receive
-             {'DOWN', MRef, process, ParentPid, _Info} ->
-                 exit(HPid, kill),
-                 log_fail(Module, {Type, Opts}, SrcNode, TargetNode, "because vnode died"),
-                 error;
+         %% IFF the vnode is using an async worker to perform the fold
+         %% then sync_command will return error on vnode crash,
+         %% otherwise it will wait forever but vnode crash will be
+         %% caught by handoff manager.  I know, this is confusing, a
+         %% new handoff system will be written soon enough.
+         R = riak_core_vnode_master:sync_command({SrcPartition, SrcNode},
+                                                 Req,
+                                                 VMaster, infinity),
 
-             {'EXIT', From, E} ->
-                 ReasonStr1 = io_lib:format("because ~p died with reason ~p",
-                                           [From, E]),
-                 log_fail(Module, {Type, Opts}, SrcNode, TargetNode, ReasonStr1),
-                 error;
+         #ho_acc{error=ErrStatus,
+                 module=Module,
+                 parent=ParentPid,
+                 tcp_mod=TcpMod,
+                 total=SentCount} = R,
 
-             {MRef, #ho_acc{}=Acc} ->
-                 #ho_acc{error=ErrStatus,
-                         module=Module,
-                         parent=ParentPid,
-                         tcp_mod=TcpMod,
-                         total=SentCount} = Acc,
+         case ErrStatus of
+             ok ->
+                 %% One last sync to make sure the message has been received.
+                 %% post-0.14 vnodes switch to handoff to forwarding immediately
+                 %% so handoff_complete can only be sent once all of the data is
+                 %% written.  handle_handoff_data is a sync call, so once
+                 %% we receive the sync the remote side will be up to date.
+                 lager:debug("~p ~p Sending final sync",
+                             [SrcPartition, Module]),
+                 ok = TcpMod:send(Socket, <<?PT_MSG_SYNC:8>>),
 
-                 case ErrStatus of
-                     ok ->
-                         %% One last sync to make sure the message has been received.
-                         %% post-0.14 vnodes switch to handoff to forwarding immediately
-                         %% so handoff_complete can only be sent once all of the data is
-                         %% written.  handle_handoff_data is a sync call, so once
-                         %% we receive the sync the remote side will be up to date.
-                         lager:debug("~p ~p Sending final sync",
-                                     [SrcPartition, Module]),
-                         ok = TcpMod:send(Socket, <<?PT_MSG_SYNC:8>>),
+                 case TcpMod:recv(Socket, 0, RecvTimeout) of
+                     {ok,[?PT_MSG_SYNC|<<"sync">>]} ->
+                         lager:debug("~p ~p Final sync received",
+                                     [SrcPartition, Module]);
+                     {error, timeout} -> exit({shutdown, timeout})
+                 end,
 
-                         case TcpMod:recv(Socket, 0, RecvTimeout) of
-                             {ok,[?PT_MSG_SYNC|<<"sync">>]} ->
-                                 lager:debug("~p ~p Final sync received",
-                                             [SrcPartition, Module]);
-                             {error, timeout} -> exit({shutdown, timeout})
-                         end,
+                 FoldTimeDiff = end_fold_time(StartFoldTime),
 
-                         FoldTimeDiff = end_fold_time(StartFoldTime),
+                 log_complete(Module, {Type, Opts}, SrcNode,
+                              TargetNode, SentCount, FoldTimeDiff),
 
-                         log_complete(Module, {Type, Opts}, SrcNode,
-                                      TargetNode, SentCount, FoldTimeDiff),
-
-                         case Type of
-                             repair -> ok;
-                             _ -> gen_fsm:send_event(ParentPid, handoff_complete)
-                         end;
-                     {error, ErrReason} ->
-                         ReasonStr2 = io_lib:format(" because of ~p",
-                                                    [ErrReason]),
-                         log_fail(Module, {Type, Opts}, SrcNode,
-                                  TargetNode, ReasonStr2),
-                         if ErrReason == timeout ->
-                                 riak_core_stat:update(handoff_timeouts);
-                            true -> ok
-                         end,
-                         gen_fsm:send_event(ParentPid, {handoff_error,
-                                                        fold_error, ErrReason})
-                 end
+                 case Type of
+                     repair -> ok;
+                     _ -> gen_fsm:send_event(ParentPid, handoff_complete)
+                 end;
+             {error, ErrReason} ->
+                 ReasonStr2 = io_lib:format(" because of ~p",
+                                            [ErrReason]),
+                 log_fail(Module, {Type, Opts}, SrcNode,
+                          TargetNode, ReasonStr2),
+                 if ErrReason == timeout ->
+                         riak_core_stat:update(handoff_timeouts);
+                    true -> ok
+                 end,
+                 gen_fsm:send_event(ParentPid, {handoff_error,
+                                                fold_error, ErrReason})
          end
      catch
          exit:{shutdown,max_concurrency} ->

@@ -203,7 +203,7 @@ handle_call({send_handoff, Mod, {Src, Target}, ReqOrigin, {FilterMod, FilterFun}
             _From,
             State=#state{handoffs=HS}) ->
     Filter = FilterMod:FilterFun(Target),
-    {ok, SrcPid} = riak_core_vnode_manager:get_vnode_pid(Src, riak_search_vnode),
+    {ok, SrcPid} = riak_core_vnode_manager:get_vnode_pid(Src, Mod),
     case send_handoff({Mod, Src, Target}, ReqOrigin, SrcPid, HS, {Filter, FMF}, ReqOrigin) of
         {ok, Handoff} ->
             HS2 = HS ++ [Handoff],
@@ -265,11 +265,11 @@ handle_cast({status_update, ModSrcTgt, StatsUpdate}, State=#state{handoffs=HS}) 
     end.
 
 
-handle_info({'DOWN',_Ref,process,Pid,Reason},State=#state{handoffs=HS}) ->
-    case lists:keytake(Pid,#handoff_status.transport_pid,HS) of
+handle_info({'DOWN', Ref, process, _Pid, Reason}, State=#state{handoffs=HS}) ->
+    case lists:keytake(Ref, #handoff_status.transport_mon, HS) of
         {value,
          #handoff_status{mod_src_tgt={M,_,I}, direction=Dir, vnode_pid=Vnode,
-                         req_origin=Origin}=Handoff,
+                         vnode_mon=VnodeM, req_origin=Origin}=Handoff,
          NewHS
         } ->
             WarnVnode =
@@ -290,7 +290,7 @@ handle_info({'DOWN',_Ref,process,Pid,Reason},State=#state{handoffs=HS}) ->
             %% handoff stopped so it can clean up its state
             case WarnVnode andalso is_pid(Vnode) of
                 true ->
-                    riak_core_vnode:handoff_error(Vnode,'DOWN',Reason);
+                    riak_core_vnode:handoff_error(Vnode, 'DOWN', Reason);
                 _ ->
                     case Origin of
                         none -> ok;
@@ -300,10 +300,30 @@ handle_info({'DOWN',_Ref,process,Pid,Reason},State=#state{handoffs=HS}) ->
                     ok
             end,
 
+            %% No monitor on vnode for receiver
+            if VnodeM /= undefined -> demonitor(VnodeM);
+               true -> ok
+            end,
+
             %% removed the handoff from the list of active handoffs
             {noreply, State#state{handoffs=NewHS}};
         false ->
-            {noreply, State}
+            case lists:keytake(Ref, #handoff_status.vnode_mon, HS) of
+                {value,
+                 #handoff_status{mod_src_tgt={M,_,I}, direction=Dir,
+                                 transport_pid=Trans, transport_mon=TransM},
+                 NewHS} ->
+                    %% In this case the vnode died and the handoff
+                    %% sender must be killed.
+                    lager:error("An ~w handoff of partition ~w ~w was "
+                                "terminated because the vnode died",
+                                [Dir, M, I]),
+                    demonitor(TransM),
+                    exit(Trans, vnode_died),
+                    {noreply, State#state{handoffs=NewHS}};
+                _ ->
+                    {noreply, State}
+            end
     end.
 
 
@@ -415,6 +435,7 @@ send_handoff({Mod, Src, Target}, Node, Vnode, HS, {Filter, FilterModFun}, Origin
 
             case ShouldHandoff of
                 true ->
+                    VnodeM = monitor(process, Vnode),
                     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
                     %% assumes local node is doing the sending
                     Primary = riak_core_ring:is_primary(Ring, {Src, node()}),
@@ -443,16 +464,18 @@ send_handoff({Mod, Src, Target}, Node, Vnode, HS, {Filter, FilterModFun}, Origin
                                                                            Vnode,
                                                                            Node)
                     end,
-                    erlang:monitor(process,Pid),
+                    PidM = monitor(process, Pid),
 
                     %% successfully started up a new sender handoff
                     {ok, #handoff_status{ transport_pid=Pid,
+                                          transport_mon=PidM,
                                           direction=outbound,
                                           timestamp=now(),
                                           src_node=node(),
                                           target_node=Node,
                                           mod_src_tgt={Mod, Src, Target},
                                           vnode_pid=Vnode,
+                                          vnode_mon=VnodeM,
                                           status=[],
                                           stats=dict:new(),
                                           type=HOType,
@@ -474,10 +497,11 @@ receive_handoff (SSLOpts) ->
             {error, max_concurrency};
         false ->
             {ok,Pid}=riak_core_handoff_receiver_sup:start_receiver(SSLOpts),
-            erlang:monitor(process,Pid),
+            PidM = monitor(process, Pid),
 
             %% successfully started up a new receiver
             {ok, #handoff_status{ transport_pid=Pid,
+                                  transport_mon=PidM,
                                   direction=inbound,
                                   timestamp=now(),
                                   mod_src_tgt={undefined, undefined, undefined},
