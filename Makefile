@@ -26,11 +26,11 @@ docs: deps
 
 build_plt: compile
 	dialyzer --build_plt --output_plt $(COMBO_PLT) --apps $(APPS) \
-		deps/*/ebin apps/*/ebin
+		deps/*/ebin
 
 check_plt: compile
 	dialyzer --check_plt --plt $(COMBO_PLT) --apps $(APPS) \
-		deps/*/ebin apps/*/ebin
+		deps/*/ebin
 
 dialyzer: compile
 	@echo
