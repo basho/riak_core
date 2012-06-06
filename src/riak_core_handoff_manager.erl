@@ -264,10 +264,6 @@ handle_cast({status_update, ModSrcTgt, StatsUpdate}, State=#state{handoffs=HS}) 
             {noreply, State#state{handoffs=HS2}}
     end.
 
-handle_info({handoff_finished, {_Mod, _Target}, Handoff, _Reason}, State) ->
-    %% NOTE: this msg will only come in for repair handoff
-    riak_core_vnode_manager:xfer_complete(Handoff),
-    {noreply, State};
 
 handle_info({'DOWN',_Ref,process,Pid,Reason},State=#state{handoffs=HS}) ->
     case lists:keytake(Pid,#handoff_status.transport_pid,HS) of
