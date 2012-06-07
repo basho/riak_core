@@ -88,11 +88,35 @@ xfer({SrcPartition, SrcOwner}, {Module, TargetPartition},
      VNode, FilterModFun) ->
     %% NOTE: This will not work with old nodes
     ReqOrigin = node(),
-    {ok, Xfer} = gen_server:call({?MODULE, SrcOwner},
-                                 {send_handoff, Module,
-                                  {SrcPartition, TargetPartition},
-                                  VNode, ReqOrigin, FilterModFun}),
-    Xfer.
+    case gen_server:call({?MODULE, SrcOwner},
+                         {send_handoff, Module,
+                          {SrcPartition, TargetPartition},
+                          VNode, ReqOrigin, FilterModFun}) of
+        {ok, Xfer} -> Xfer;
+        {error, max_concurrency} ->
+            %% TODO: Special case for repair so that it can later
+            %% retry the transfer.  I'd like to see this returned from
+            %% `send_handoff' in case of `max_concurrency' but the
+            %% code for hinted handoff would have to change.  I.e. the
+            %% vnode mgr tick would have to check the handoff mgr for
+            %% pending handoffs like it does with repair transfers
+            %% currently.
+            VNodeM = monitor(process, VNode),
+            #handoff_status{
+                             direction=outbound,
+                             timestamp=now(),
+                             src_node=SrcOwner,
+                             target_node=ReqOrigin,
+                             mod_src_tgt={Module, SrcPartition, TargetPartition},
+                             vnode_pid=VNode,
+                             vnode_mon=VNodeM,
+                             status=max_concurrency,
+                             stats=dict:new(),
+                             type=repair,
+                             req_origin=ReqOrigin,
+                             filter_mod_fun=FilterModFun
+                           }
+    end.
 
 %% @doc Retry the given `Xfer'.
 -spec retry_xfer(handoff()) -> NewXfer::handoff().
@@ -104,10 +128,12 @@ retry_xfer(Xfer) ->
     xfer({SrcPartition, SrcOwner}, {Module, TargetPartition},
          VNode, FilterModFun).
 
--spec xfer_status(handoff()) -> complete | in_progress | not_found.
+-spec xfer_status(handoff() | max_concurrency) ->
+                         complete | in_progress | max_concurrency | not_found.
 xfer_status(HS) ->
     case HS#handoff_status.status of
         complete -> complete;
+        max_concurrency -> max_concurrency;
         _ ->
             SrcNode = HS#handoff_status.src_node,
             gen_server:call({?MODULE, SrcNode}, {xfer_status, HS})
@@ -212,7 +238,9 @@ handle_call({send_handoff, Mod, {Src, Target}, VNode, ReqOrigin,
             HS2 = HS ++ [Handoff],
             {reply, {ok, Handoff}, State#state{handoffs=HS2}};
         {false, Handoff} ->
-            {reply, {ok, Handoff}, State}
+            {reply, {ok, Handoff}, State};
+        {error, _}=Err ->
+            {reply, Err, State}
     end;
 
 handle_call({status, Filter}, _From, State=#state{handoffs=HS}) ->

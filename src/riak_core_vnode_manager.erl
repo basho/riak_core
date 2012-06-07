@@ -65,8 +65,7 @@
 -define(XFER_EQ(A, B),
         A#handoff_status.mod_src_tgt == B#handoff_status.mod_src_tgt
         andalso A#handoff_status.timestamp == B#handoff_status.timestamp).
--define(XFER_COMPLETE(X),
-        X#handoff_status.status == complete).
+-define(XFER_COMPLETE(X), X#handoff_status.status == complete).
 -define(DEFAULT_OWNERSHIP_TRIGGER, 8).
 
 %% ===================================================================
@@ -718,6 +717,7 @@ maybe_retry(Xfer) ->
     case riak_core_handoff_manager:xfer_status(Xfer) of
         complete -> Xfer;
         in_progress -> Xfer;
+        max_concurrency -> riak_core_handoff_manager:retry_xfer(Xfer);
         not_found -> riak_core_handoff_manager:retry_xfer(Xfer)
     end.
 
