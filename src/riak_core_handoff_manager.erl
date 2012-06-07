@@ -35,7 +35,7 @@
 %% handoff api
 -export([add_outbound/4,
          add_inbound/1,
-         xfer/3,
+         xfer/4,
          retry_xfer/1,
          xfer_status/1,
          kill_xfer/2,
@@ -82,15 +82,16 @@ add_inbound(SSLOpts) ->
 
 %% @doc Initiate a transfer from `SrcPartition' to `TargetPartition'
 %%      for the given `Module' using the `FilterModFun' filter.
--spec xfer({index(), node()}, mod_partition(), {module(), atom()}) ->
+-spec xfer({index(), node()}, mod_partition(), pid(), {module(), atom()}) ->
                   handoff().
-xfer({SrcPartition, SrcOwner}, {Module, TargetPartition}, FilterModFun) ->
+xfer({SrcPartition, SrcOwner}, {Module, TargetPartition},
+     VNode, FilterModFun) ->
     %% NOTE: This will not work with old nodes
     ReqOrigin = node(),
     {ok, Xfer} = gen_server:call({?MODULE, SrcOwner},
                                  {send_handoff, Module,
                                   {SrcPartition, TargetPartition},
-                                  ReqOrigin, FilterModFun}),
+                                  VNode, ReqOrigin, FilterModFun}),
     Xfer.
 
 %% @doc Retry the given `Xfer'.
@@ -98,8 +99,10 @@ xfer({SrcPartition, SrcOwner}, {Module, TargetPartition}, FilterModFun) ->
 retry_xfer(Xfer) ->
     #handoff_status{mod_src_tgt={Module, SrcPartition, TargetPartition},
                     src_node=SrcOwner,
+                    vnode_pid=VNode,
                     filter_mod_fun=FilterModFun} = Xfer,
-    xfer({SrcPartition, SrcOwner}, {Module, TargetPartition}, FilterModFun).
+    xfer({SrcPartition, SrcOwner}, {Module, TargetPartition},
+         VNode, FilterModFun).
 
 -spec xfer_status(handoff()) -> complete | in_progress | not_found.
 xfer_status(HS) ->
@@ -199,12 +202,12 @@ handle_call({kill_xfer, Xfer, Reason}, _From, State) ->
             {reply, ok, State#state{handoffs=HS2}}
     end;
 
-handle_call({send_handoff, Mod, {Src, Target}, ReqOrigin, {FilterMod, FilterFun}=FMF},
+handle_call({send_handoff, Mod, {Src, Target}, VNode, ReqOrigin,
+             {FilterMod, FilterFun}=FMF},
             _From,
             State=#state{handoffs=HS}) ->
     Filter = FilterMod:FilterFun(Target),
-    {ok, SrcPid} = riak_core_vnode_manager:get_vnode_pid(Src, Mod),
-    case send_handoff({Mod, Src, Target}, ReqOrigin, SrcPid, HS, {Filter, FMF}, ReqOrigin) of
+    case send_handoff({Mod, Src, Target}, ReqOrigin, VNode, HS, {Filter, FMF}, ReqOrigin) of
         {ok, Handoff} ->
             HS2 = HS ++ [Handoff],
             {reply, {ok, Handoff}, State#state{handoffs=HS2}};

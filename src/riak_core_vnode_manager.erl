@@ -236,15 +236,38 @@ handle_call({Partition, Mod, get_vnode}, _From, State) ->
 handle_call(get_tab, _From, State) ->
     {reply, ets:tab2list(State#state.idxtab), State};
 
-handle_call({repair, ModPartition, Pairs, FilterModFun}, _From, State) ->
+handle_call({repair, {Mod,_}=ModPartition, Pairs, FilterModFun},
+            _From, State) ->
     #state{repairs=Repairs} = State,
+    GetVnodePid =
+        fun(Owner, Partition) ->
+                %% Free variable Mod being used instead of passing arg
+                %% to avoid shadowing/compiler warning.
+                case node() == Owner of
+                    true ->
+                        get_vnode(Partition, Mod, State);
+                    false ->
+                        R = rpc:call(Owner, ?MODULE,
+                                     get_vnode_pid, [Partition, Mod], 2000),
+                        case R of
+                            {ok, VNode} ->
+                                VNode;
+                            _ ->
+                                {reply, {error, failed_to_get_pid,
+                                         Owner, Partition, Mod, R}}
+                        end
+                end
+        end,
+
     case get_repair(ModPartition, Repairs) of
         none ->
-            [MinusOne, _, PlusOne] = Pairs,
+            [{MOP,MOwner}=MinusOne, _, {POP,POwner}=PlusOne] = Pairs,
+            MOVNode = GetVnodePid(MOwner, MOP),
+            POVNode = GetVnodePid(POwner, POP),
             MOX = riak_core_handoff_manager:xfer(MinusOne, ModPartition,
-                                                 FilterModFun),
+                                                 MOVNode, FilterModFun),
             POX = riak_core_handoff_manager:xfer(PlusOne, ModPartition,
-                                                 FilterModFun),
+                                                 POVNode, FilterModFun),
             Repair = #repair{mod_partition=ModPartition,
                              filter_mod_fun=FilterModFun,
                              minus_one_xfer=MOX,
