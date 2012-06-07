@@ -54,7 +54,8 @@
 -module(riak_core_claim).
 -export([default_wants_claim/1, default_wants_claim/2,
          default_choose_claim/1, default_choose_claim/2,
-         never_wants_claim/1, random_choose_claim/1]).
+         never_wants_claim/1, never_wants_claim/2,
+         random_choose_claim/1]).
 -export([wants_claim_v1/1, wants_claim_v1/2,
          wants_claim_v2/1, wants_claim_v2/2,
          choose_claim_v1/1, choose_claim_v1/2,
@@ -298,6 +299,7 @@ random_choose_claim(Ring0, Node) ->
 %% @spec never_wants_claim(riak_core_ring()) -> no
 %% @doc For use by nodes that should not claim any partitions.
 never_wants_claim(_) -> no.
+never_wants_claim(_, _) -> no.
 
 %% ===================================================================
 %% Private
