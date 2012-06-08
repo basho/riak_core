@@ -2,7 +2,7 @@
 %%
 %% riak_core: Core Riak Application
 %%
-%% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2012 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -41,12 +41,20 @@
 
 -record(idxrec, {key, idx, mod, pid, monref}).
 
+-record(xfer_status, {
+          status                :: pending | complete,
+          mod_src_target        :: {module(), index(), index()}
+         }).
+-type xfer_status() :: #xfer_status{}.
+
 -record(repair,
         {
           mod_partition         :: mod_partition(),
           filter_mod_fun        :: {module(), atom()},
-          minus_one_xfer        :: handoff_status(),
-          plus_one_xfer         :: handoff_status()
+          minus_one             :: tuple(),
+          minus_one_xfer        :: xfer_status(),
+          plus_one              :: tuple(),
+          plus_one_xfer         :: xfer_status()
         }).
 -type repair() :: #repair{}.
 -type repairs() :: [repair()].
@@ -62,10 +70,8 @@
 
 -include("riak_core_handoff.hrl").
 -include("riak_core_vnode.hrl").
--define(XFER_EQ(A, B),
-        A#handoff_status.mod_src_tgt == B#handoff_status.mod_src_tgt
-        andalso A#handoff_status.timestamp == B#handoff_status.timestamp).
--define(XFER_COMPLETE(X), X#handoff_status.status == complete).
+-define(XFER_EQ(A, ModSrcTgt), A#xfer_status.mod_src_target == ModSrcTgt).
+-define(XFER_COMPLETE(X), X#xfer_status.status == complete).
 -define(DEFAULT_OWNERSHIP_TRIGGER, 8).
 
 %% ===================================================================
@@ -123,7 +129,10 @@ repair_status({_Module, Partition}=ModPartition) ->
     Owner = riak_core_ring:index_owner(Ring, Partition),
     gen_server:call({?MODULE, Owner}, {repair_status, ModPartition}).
 
--spec xfer_complete(node(), handoff_status()) -> ok.
+%% TODO: make cast with retry on handoff sender side and handshake?
+%%
+%% TODO: second arg has specific form but maybe make proplist?
+-spec xfer_complete(node(), tuple()) -> ok.
 xfer_complete(Origin, Xfer) ->
     gen_server:call({?MODULE, Origin}, {xfer_complete, Xfer}).
 
@@ -235,42 +244,27 @@ handle_call({Partition, Mod, get_vnode}, _From, State) ->
 handle_call(get_tab, _From, State) ->
     {reply, ets:tab2list(State#state.idxtab), State};
 
-handle_call({repair, {Mod,_}=ModPartition, Pairs, FilterModFun},
+handle_call({repair, {Mod,Partition}=ModPartition, Pairs, FilterModFun},
             _From, State) ->
     #state{repairs=Repairs} = State,
-    GetVnodePid =
-        fun(Owner, Partition) ->
-                %% Free variable Mod being used instead of passing arg
-                %% to avoid shadowing/compiler warning.
-                case node() == Owner of
-                    true ->
-                        get_vnode(Partition, Mod, State);
-                    false ->
-                        R = rpc:call(Owner, ?MODULE,
-                                     get_vnode_pid, [Partition, Mod], 2000),
-                        case R of
-                            {ok, VNode} ->
-                                VNode;
-                            _ ->
-                                {reply, {error, failed_to_get_pid,
-                                         Owner, Partition, Mod, R}}
-                        end
-                end
-        end,
 
     case get_repair(ModPartition, Repairs) of
         none ->
-            [{MOP,MOwner}=MinusOne, _, {POP,POwner}=PlusOne] = Pairs,
-            MOVNode = GetVnodePid(MOwner, MOP),
-            POVNode = GetVnodePid(POwner, POP),
-            MOX = riak_core_handoff_manager:xfer(MinusOne, ModPartition,
-                                                 MOVNode, FilterModFun),
-            POX = riak_core_handoff_manager:xfer(PlusOne, ModPartition,
-                                                 POVNode, FilterModFun),
+            [{MOP,_MOwner}=MinusOne, _, {POP,_POwner}=PlusOne] = Pairs,
+            riak_core_handoff_manager:xfer(MinusOne, ModPartition,
+                                           FilterModFun),
+            riak_core_handoff_manager:xfer(PlusOne, ModPartition, FilterModFun),
+            MOXStatus = #xfer_status{status=pending,
+                                     mod_src_target={Mod, MOP, Partition}},
+            POXStatus = #xfer_status{status=pending,
+                                     mod_src_target={Mod, POP, Partition}},
+
             Repair = #repair{mod_partition=ModPartition,
                              filter_mod_fun=FilterModFun,
-                             minus_one_xfer=MOX,
-                             plus_one_xfer=POX},
+                             minus_one=MinusOne,
+                             minus_one_xfer=MOXStatus,
+                             plus_one=PlusOne,
+                             plus_one_xfer=POXStatus},
             Repairs2 = Repairs ++ [Repair],
             State2 = State#state{repairs=Repairs2},
             lager:debug("add repair ~p", [ModPartition]),
@@ -286,24 +280,24 @@ handle_call({repair_status, ModPartition}, _From, State) ->
         #repair{} -> {reply, in_progress, State}
     end;
 
-handle_call({xfer_complete, Xfer}, _From, State) ->
+handle_call({xfer_complete, ModSrcTgt}, _From, State) ->
     Repairs = State#state.repairs,
-    {Module, _, Partition} = Xfer#handoff_status.mod_src_tgt,
-    ModPartition = {Module, Partition},
+    {Mod, _, Partition} = ModSrcTgt,
+    ModPartition = {Mod, Partition},
     case get_repair(ModPartition, Repairs) of
         none ->
             lager:error("Received xfer_complete for non-existing repair: ~p",
                         [ModPartition]),
             {reply, ok, State};
         #repair{minus_one_xfer=MOX, plus_one_xfer=POX}=R ->
-            R2 = if ?XFER_EQ(MOX, Xfer) ->
-                         MOX2 = MOX#handoff_status{status=complete},
+            R2 = if ?XFER_EQ(MOX, ModSrcTgt) ->
+                         MOX2 = MOX#xfer_status{status=complete},
                          R#repair{minus_one_xfer=MOX2};
-                    ?XFER_EQ(POX, Xfer) ->
-                         POX2 = POX#handoff_status{status=complete},
+                    ?XFER_EQ(POX, ModSrcTgt) ->
+                         POX2 = POX#xfer_status{status=complete},
                          R#repair{plus_one_xfer=POX2};
                     true ->
-                         throw({xfer_complete_matches_none, R, Xfer})
+                         throw({xfer_complete_matches_none, R, ModSrcTgt})
                  end,
 
             case {?XFER_COMPLETE(R2#repair.minus_one_xfer),
@@ -701,8 +695,8 @@ maybe_start_vnodes(State=#state{vnode_start_tokens=Tokens,
 check_repairs(Repairs) ->
     Check =
         fun(R=#repair{minus_one_xfer=MOX, plus_one_xfer=POX}, Repairs2) ->
-                MOX2 = maybe_retry(MOX),
-                POX2 = maybe_retry(POX),
+                MOX2 = maybe_retry(R, R#repair.minus_one, MOX),
+                POX2 = maybe_retry(R, R#repair.plus_one, POX),
                 if ?XFER_COMPLETE(MOX2) andalso ?XFER_COMPLETE(POX2) ->
                         Repairs2;
                    true ->
@@ -712,13 +706,19 @@ check_repairs(Repairs) ->
         end,
     lists:reverse(lists:foldl(Check, [], Repairs)).
 
--spec maybe_retry(handoff_status()) -> Xfer2::handoff_status().
-maybe_retry(Xfer) ->
-    case riak_core_handoff_manager:xfer_status(Xfer) of
-        complete -> Xfer;
-        in_progress -> Xfer;
-        max_concurrency -> riak_core_handoff_manager:retry_xfer(Xfer);
-        not_found -> riak_core_handoff_manager:retry_xfer(Xfer)
+%% TODO: get all this repair, xfer status and Src business figured out.
+-spec maybe_retry(repair(), tuple(), xfer_status()) -> Xfer2::xfer_status().
+maybe_retry(R, {SrcPartition, _}=Src, Xfer) ->
+    case Xfer#xfer_status.status of
+        complete ->
+            Xfer;
+        pending ->
+            {Mod, _, Partition} = Xfer#xfer_status.mod_src_target,
+            FilterModFun = R#repair.filter_mod_fun,
+
+            riak_core_handoff_manager:xfer(Src, {Mod, Partition}, FilterModFun),
+            #xfer_status{status=pending,
+                         mod_src_target={Mod, SrcPartition, Partition}}
     end.
 
 %% @private
@@ -786,12 +786,18 @@ replace_repair(Repair, Repairs) ->
     lists:keyreplace(Repair#repair.mod_partition, #repair.mod_partition,
                      Repairs, Repair).
 
+%% TODO: Need to kill the receivers for these xfers in case the cast
+%% doesn't reach the handoff mgr.
 kill_repairs(Repairs, Reason) ->
     Kill =
         fun(R) ->
+                {_,MOOwner} = R#repair.minus_one,
+                {_,POOwner} = R#repair.plus_one,
                 MOX = R#repair.minus_one_xfer,
                 POX = R#repair.plus_one_xfer,
-                riak_core_handoff_manager:kill_xfer(MOX, Reason),
-                riak_core_handoff_manager:kill_xfer(POX, Reason)
+                MOModSrcTarget = MOX#xfer_status.mod_src_target,
+                POModSrcTarget = POX#xfer_status.mod_src_target,
+                riak_core_handoff_manager:kill_xfer(MOOwner, MOModSrcTarget, Reason),
+                riak_core_handoff_manager:kill_xfer(POOwner, POModSrcTarget, Reason)
         end,
     [Kill(Repair) || Repair <- Repairs].

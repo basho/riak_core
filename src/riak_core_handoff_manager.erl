@@ -35,10 +35,8 @@
 %% handoff api
 -export([add_outbound/4,
          add_inbound/1,
-         xfer/4,
-         retry_xfer/1,
-         xfer_status/1,
-         kill_xfer/2,
+         xfer/3,
+         kill_xfer/3,
          status/0,
          status/1,
          status_update/2,
@@ -82,62 +80,14 @@ add_inbound(SSLOpts) ->
 
 %% @doc Initiate a transfer from `SrcPartition' to `TargetPartition'
 %%      for the given `Module' using the `FilterModFun' filter.
--spec xfer({index(), node()}, mod_partition(), pid(), {module(), atom()}) ->
-                  handoff_status().
-xfer({SrcPartition, SrcOwner}, {Module, TargetPartition},
-     VNode, FilterModFun) ->
+-spec xfer({index(), node()}, mod_partition(), {module(), atom()}) -> ok.
+xfer({SrcPartition, SrcOwner}, {Module, TargetPartition}, FilterModFun) ->
     %% NOTE: This will not work with old nodes
     ReqOrigin = node(),
-    case gen_server:call({?MODULE, SrcOwner},
-                         {send_handoff, Module,
-                          {SrcPartition, TargetPartition},
-                          VNode, ReqOrigin, FilterModFun}) of
-        {ok, Xfer} -> Xfer;
-        {error, max_concurrency} ->
-            %% TODO: Special case for repair so that it can later
-            %% retry the transfer.  I'd like to see this returned from
-            %% `send_handoff' in case of `max_concurrency' but the
-            %% code for hinted handoff would have to change.  I.e. the
-            %% vnode mgr tick would have to check the handoff mgr for
-            %% pending handoffs like it does with repair transfers
-            %% currently.
-            VNodeM = monitor(process, VNode),
-            #handoff_status{
-                             direction=outbound,
-                             timestamp=now(),
-                             src_node=SrcOwner,
-                             target_node=ReqOrigin,
-                             mod_src_tgt={Module, SrcPartition, TargetPartition},
-                             vnode_pid=VNode,
-                             vnode_mon=VNodeM,
-                             status=max_concurrency,
-                             stats=dict:new(),
-                             type=repair,
-                             req_origin=ReqOrigin,
-                             filter_mod_fun=FilterModFun
-                           }
-    end.
-
-%% @doc Retry the given `Xfer'.
--spec retry_xfer(handoff_status()) -> NewXfer::handoff_status().
-retry_xfer(Xfer) ->
-    #handoff_status{mod_src_tgt={Module, SrcPartition, TargetPartition},
-                    src_node=SrcOwner,
-                    vnode_pid=VNode,
-                    filter_mod_fun=FilterModFun} = Xfer,
-    xfer({SrcPartition, SrcOwner}, {Module, TargetPartition},
-         VNode, FilterModFun).
-
--spec xfer_status(handoff_status() | max_concurrency) ->
-                         complete | in_progress | max_concurrency | not_found.
-xfer_status(HS) ->
-    case HS#handoff_status.status of
-        complete -> complete;
-        max_concurrency -> max_concurrency;
-        _ ->
-            SrcNode = HS#handoff_status.src_node,
-            gen_server:call({?MODULE, SrcNode}, {xfer_status, HS})
-    end.
+    gen_server:cast({?MODULE, SrcOwner},
+                    {send_handoff, Module,
+                     {SrcPartition, TargetPartition},
+                     ReqOrigin, FilterModFun}).
 
 status() ->
     status(none).
@@ -157,11 +107,10 @@ set_concurrency(Limit) ->
 get_concurrency() ->
     gen_server:call(?MODULE, get_concurrency).
 
-%% @doc Kill the transfer `Xfer' with `Reason'.
--spec kill_xfer(handoff_status(), any()) -> ok.
-kill_xfer(Xfer, Reason) ->
-    SrcNode = Xfer#handoff_status.src_node,
-    ok = gen_server:call({?MODULE, SrcNode}, {kill_xfer, Xfer, Reason}).
+%% @doc Kill the transfer of `ModSrcTarget' with `Reason'.
+-spec kill_xfer(node(), tuple(), any()) -> ok.
+kill_xfer(SrcNode, ModSrcTarget, Reason) ->
+    gen_server:cast({?MODULE, SrcNode}, {kill_xfer, ModSrcTarget, Reason}).
 
 kill_handoffs() ->
     set_concurrency(0).
@@ -207,40 +156,6 @@ handle_call({xfer_status, Xfer}, _From, State=#state{handoffs=HS}) ->
     case lists:keyfind(TP, #handoff_status.transport_pid, HS) of
         false -> {reply, not_found, State};
         _ -> {reply, in_progress, State}
-    end;
-
-handle_call({kill_xfer, Xfer, Reason}, _From, State) ->
-    TP = Xfer#handoff_status.transport_pid,
-    HS = State#state.handoffs,
-    case lists:keytake(TP, #handoff_status.transport_pid, HS) of
-        false ->
-            {reply, ok, State};
-        {value, Xfer, HS2} ->
-            #handoff_status{mod_src_tgt={Mod, SrcPartition, TargetPartition},
-                            type=Type,
-                            target_node=TargetNode,
-                            src_node=SrcNode
-                           } = Xfer,
-            Msg = "~p transfer of ~p from ~p ~p to ~p ~p killed for reason ~p",
-            lager:info(Msg, [Type, Mod, SrcNode, SrcPartition,
-                             TargetNode, TargetPartition, Reason]),
-            exit(TP, {kill_xfer, Reason}),
-            {reply, ok, State#state{handoffs=HS2}}
-    end;
-
-handle_call({send_handoff, Mod, {Src, Target}, VNode, ReqOrigin,
-             {FilterMod, FilterFun}=FMF},
-            _From,
-            State=#state{handoffs=HS}) ->
-    Filter = FilterMod:FilterFun(Target),
-    case send_handoff({Mod, Src, Target}, ReqOrigin, VNode, HS, {Filter, FMF}, ReqOrigin) of
-        {ok, Handoff} ->
-            HS2 = HS ++ [Handoff],
-            {reply, {ok, Handoff}, State#state{handoffs=HS2}};
-        {false, Handoff} ->
-            {reply, {ok, Handoff}, State};
-        {error, _}=Err ->
-            {reply, Err, State}
     end;
 
 handle_call({status, Filter}, _From, State=#state{handoffs=HS}) ->
@@ -293,14 +208,48 @@ handle_cast({status_update, ModSrcTgt, StatsUpdate}, State=#state{handoffs=HS}) 
             HO2 = HO#handoff_status{stats=Stats2},
             HS2 = lists:keyreplace(ModSrcTgt, #handoff_status.mod_src_tgt, HS, HO2),
             {noreply, State#state{handoffs=HS2}}
+    end;
+
+handle_cast({send_handoff, Mod, {Src, Target}, ReqOrigin,
+             {FilterMod, FilterFun}=FMF},
+            State=#state{handoffs=HS}) ->
+    Filter = FilterMod:FilterFun(Target),
+    %% TODO: make a record?
+    {ok, VNode} = riak_core_vnode_manager:get_vnode_pid(Src, Mod),
+    case send_handoff({Mod, Src, Target}, ReqOrigin, VNode, HS,
+                      {Filter, FMF}, ReqOrigin) of
+        {ok, Handoff} ->
+            HS2 = HS ++ [Handoff],
+            {noreply, State#state{handoffs=HS2}};
+        _ ->
+            {noreply, State}
+    end;
+
+handle_cast({kill_xfer, ModSrcTarget, Reason}, State) ->
+    HS = State#state.handoffs,
+    case lists:keytake(ModSrcTarget, #handoff_status.mod_src_tgt, HS) of
+        false ->
+            {reply, ok, State};
+        {value, Xfer, HS2} ->
+            #handoff_status{mod_src_tgt={Mod, SrcPartition, TargetPartition},
+                            type=Type,
+                            target_node=TargetNode,
+                            src_node=SrcNode,
+                            transport_pid=TP
+                           } = Xfer,
+            Msg = "~p transfer of ~p from ~p ~p to ~p ~p killed for reason ~p",
+            lager:info(Msg, [Type, Mod, SrcNode, SrcPartition,
+                             TargetNode, TargetPartition, Reason]),
+            exit(TP, {kill_xfer, Reason}),
+            {reply, ok, State#state{handoffs=HS2}}
     end.
 
 
 handle_info({'DOWN', Ref, process, _Pid, Reason}, State=#state{handoffs=HS}) ->
     case lists:keytake(Ref, #handoff_status.transport_mon, HS) of
         {value,
-         #handoff_status{mod_src_tgt={M,_,I}, direction=Dir, vnode_pid=Vnode,
-                         vnode_mon=VnodeM, req_origin=Origin}=Handoff,
+         #handoff_status{mod_src_tgt={M, S, I}, direction=Dir, vnode_pid=Vnode,
+                         vnode_mon=VnodeM, req_origin=Origin},
          NewHS
         } ->
             WarnVnode =
@@ -326,7 +275,11 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}, State=#state{handoffs=HS}) ->
                     case Origin of
                         none -> ok;
                         _ ->
-                            riak_core_vnode_manager:xfer_complete(Origin, Handoff)
+                            %% Use proplist instead so it's more
+                            %% flexible in future, or does
+                            %% capabilities nullify that?
+                            Msg = {M, S, I},
+                            riak_core_vnode_manager:xfer_complete(Origin, Msg)
                     end,
                     ok
             end,
