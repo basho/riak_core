@@ -58,14 +58,14 @@ dtrace(ArgList) ->
                         {5.8, _} ->
                             %% R14B04
                             put(?MAGIC, dtrace),
-                            if ArgList == enabled_check -> ok;
+                            if ArgList == enabled_check -> true;
                                true                     -> dtrace(ArgList)
                             end;
                         {Num, _} when Num > 5.8 ->
                             %% R15B or higher, though dyntrace option
                             %% was first available in R15B01.
                             put(?MAGIC, dyntrace),
-                            if ArgList == enabled_check -> ok;
+                            if ArgList == enabled_check -> true;
                                true                     -> dtrace(ArgList)
                             end;
                         _ ->
@@ -77,11 +77,11 @@ dtrace(ArgList) ->
                     false
             end;
         dyntrace ->
-            if ArgList == enabled_check -> ok;
+            if ArgList == enabled_check -> true;
                true                     -> erlang:apply(dyntrace, p, ArgList)
             end;
         dtrace ->
-            if ArgList == enabled_check -> ok;
+            if ArgList == enabled_check -> true;
                true                     -> erlang:apply(dtrace, p, ArgList)
             end;
         _ ->
