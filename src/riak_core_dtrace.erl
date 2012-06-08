@@ -58,12 +58,16 @@ dtrace(ArgList) ->
                         {5.8, _} ->
                             %% R14B04
                             put(?MAGIC, dtrace),
-                            dtrace(ArgList);
+                            if ArgList == enabled_check -> ok;
+                               true                     -> dtrace(ArgList)
+                            end;
                         {Num, _} when Num > 5.8 ->
                             %% R15B or higher, though dyntrace option
                             %% was first available in R15B01.
                             put(?MAGIC, dyntrace),
-                            dtrace(ArgList);
+                            if ArgList == enabled_check -> ok;
+                               true                     -> dtrace(ArgList)
+                            end;
                         _ ->
                             put(?MAGIC, unsupported),
                             false
@@ -73,9 +77,13 @@ dtrace(ArgList) ->
                     false
             end;
         dyntrace ->
-            erlang:apply(dyntrace, p, ArgList);
+            if ArgList == enabled_check -> ok;
+               true                     -> erlang:apply(dyntrace, p, ArgList)
+            end;
         dtrace ->
-            erlang:apply(dtrace, p, ArgList);
+            if ArgList == enabled_check -> ok;
+               true                     -> erlang:apply(dtrace, p, ArgList)
+            end;
         _ ->
             false
     end.
@@ -114,35 +122,7 @@ dtrace(Int0, Int1, Ints, String0, String1, Strings)
     end.
 
 enabled() ->
-    case get(?MAGIC) of
-        undefined ->
-            case application:get_env(riak_core, dtrace_support) of
-                {ok, true} ->
-                    case string:to_float(erlang:system_info(version)) of
-                        {5.8, _} ->
-                            %% R14B04
-                            put(?MAGIC, dtrace),
-                            true;
-                        {Num, _} when Num > 5.8 ->
-                            %% R15B or higher, though dyntrace option
-                            %% was first available in R15B01.
-                            put(?MAGIC, dyntrace),
-                            true;
-                        _ ->
-                            put(?MAGIC, unsupported),
-                            false
-                    end;
-                _ ->
-                    put(?MAGIC, unsupported),
-                    false
-            end;
-        dyntrace ->
-            true;
-        dtrace ->
-            true;
-        _ ->
-            false
-    end.
+    dtrace(enabled_check).
 
 put_tag(Tag) ->
     case enabled() of
