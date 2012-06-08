@@ -165,8 +165,14 @@ handle_call({stage, Node, Action}, _From, State) ->
 
 handle_call(plan, _From, State) ->
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
-    {Reply, State2} = generate_plan(Ring, State),
-    {reply, Reply, State2};
+    case riak_core_ring:ring_ready(Ring) of
+        false ->
+            Reply = {error, ring_not_ready},
+            {reply, Reply, State};
+        true ->
+            {Reply, State2} = generate_plan(Ring, State),
+            {reply, Reply, State2}
+    end;
 
 handle_call(commit, _From, State) ->
     {Reply, State2} = commit_staged(State),
@@ -209,32 +215,43 @@ maybe_stage(Node, Action, Ring, State=#state{changes=Changes}) ->
 %% @private
 %% @doc Determine how the staged set of cluster changes will affect
 %%      the cluster. See {@link plan/0} for additional details.
-generate_plan(Ring, State=#state{changes=Changes, seed=Seed}) ->
+generate_plan(Ring, State=#state{changes=Changes}) ->
     Changes2 = filter_changes(Changes, Ring),
     Joining = [{Node, join} || Node <- riak_core_ring:members(Ring, [joining])],
     AllChanges = lists:ukeysort(1, Changes2 ++ Joining),
-    case compute_all_next_rings(Changes2, Seed, Ring) of
+    State2 = State#state{changes=Changes2},
+    generate_plan(AllChanges, Ring, State2).
+
+generate_plan([], _, State) ->
+    %% There are no changes to apply
+    {{ok, [], []}, State};
+generate_plan(Changes, Ring, State=#state{seed=Seed}) ->
+    case compute_all_next_rings(Changes, Seed, Ring) of
         legacy ->
-            {legacy, State#state{changes=Changes2}};
+            {{error, legacy}, State};
         {ok, NextRings} ->
             {_, NextRing} = hd(NextRings),
-            State2 = State#state{next_ring=NextRing, changes=Changes2},
-            Reply = {ok, AllChanges, NextRings},
+            State2 = State#state{next_ring=NextRing},
+            Reply = {ok, Changes, NextRings},
             {Reply, State2}
     end.
 
 %% @private
 %% @doc Commit the set of staged cluster changes. See {@link commit/0}
 %%      for additional details.
+commit_staged(State=#state{next_ring=undefined}) ->
+    {{error, nothing_planned}, State};
 commit_staged(State) ->
     case maybe_commit_staged(State) of
         {ok, _} ->
             State2 = State#state{next_ring=undefined,
                                  changes=[],
                                  seed=erlang:now()},
-            {true, State2};
-        _ ->
-            {false, State}
+            {ok, State2};
+        not_changed ->
+            {error, State};
+        {not_changed, Reason} ->
+            {{error, Reason}, State}
     end.
 
 %% @private
@@ -246,7 +263,7 @@ maybe_commit_staged(Ring, State=#state{changes=Changes, seed=Seed}) ->
     Changes2 = filter_changes(Changes, Ring),
     case compute_next_ring(Changes2, Seed, Ring) of
         {legacy, _} ->
-            ignore;
+            {ignore, legacy};
         {ok, NextRing} ->
             maybe_commit_staged(Ring, NextRing, State)
     end.
@@ -257,10 +274,14 @@ maybe_commit_staged(Ring, NextRing, #state{next_ring=PlannedRing}) ->
     IsReady = riak_core_ring:ring_ready(Ring),
     IsClaimant = (Claimant == node()),
     IsSamePlan = same_plan(PlannedRing, NextRing),
-    case IsReady and IsClaimant and IsSamePlan of
-        false ->
+    case {IsReady, IsClaimant, IsSamePlan} of
+        {false, _, _} ->
+            {ignore, ring_not_ready};
+        {_, false, _} ->
             ignore;
-        true ->
+        {_, _, false} ->
+            {ignore, plan_changed};
+        _ ->
             NewRing = riak_core_ring:increment_vclock(Claimant, NextRing),
             {new_ring, NewRing}
     end.
@@ -439,9 +460,7 @@ compute_all_next_rings(Changes, Seed, Ring, Acc) ->
             legacy;
         {ok, NextRing} ->
             Acc2 = [{Ring, NextRing}|Acc],
-            OwnersChanged = (riak_core_ring:all_owners(Ring) /= riak_core_ring:all_owners(NextRing)),
-            HasPending = (riak_core_ring:pending_changes(NextRing) /= []),
-            case OwnersChanged or HasPending of
+            case not same_plan(Ring, NextRing) of
                 true ->
                     FutureRing = riak_core_ring:future_ring(NextRing),
                     compute_all_next_rings([], Seed, FutureRing, Acc2);

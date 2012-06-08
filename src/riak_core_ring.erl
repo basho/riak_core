@@ -763,7 +763,12 @@ future_ring(State) ->
     Leaving = get_members(FutureState?CHSTATE.members, [leaving]),
     FutureState2 =
         lists:foldl(fun(Node, StateAcc) ->
-                            riak_core_ring:exit_member(Node, StateAcc, Node)
+                            case indices(StateAcc, Node) of
+                                [] ->
+                                    riak_core_ring:exit_member(Node, StateAcc, Node);
+                                _ ->
+                                    StateAcc
+                            end
                     end, FutureState, Leaving),
     FutureState2?CHSTATE{next=[]}.
 

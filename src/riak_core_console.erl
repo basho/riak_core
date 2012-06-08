@@ -21,7 +21,8 @@
 -module(riak_core_console).
 -export([member_status/1, ring_status/1, print_member_status/2,
          stage_leave/1, stage_remove/1, stage_replace/1,
-         stage_force_replace/1, print_staged/1, commit_staged/1, clear_staged/1]).
+         stage_force_replace/1, print_staged/1, commit_staged/1,
+         clear_staged/1, transfer_limit/1]).
 
 member_status([]) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -330,14 +331,18 @@ is_claimant_error(Node, Action) ->
 
 print_staged([]) ->
     case riak_core_claimant:plan() of
-        legacy ->
+        {error, legacy} ->
             io:format("The cluster is running in legacy mode and does not "
                       "support plan/commit.~n");
+        {error, ring_not_ready} ->
+            io:format("Cannot plan until cluster state has converged.~n"
+                      "Check 'Ring Ready' in 'riak-admin ring_status'~n");
         {ok, Changes, NextRings} ->
             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
             %% The last next ring is always the final ring after all changes,
             %% which is uninteresting to show. Only print N-1 rings.
-            NextRings2 = lists:sublist(NextRings, length(NextRings)-1),
+            NextRings2 = lists:sublist(NextRings,
+                                       erlang:max(0, length(NextRings)-1)),
             print_plan(Changes, Ring, NextRings2),
             ok
     end.
@@ -452,10 +457,60 @@ tally(Changes) ->
 
 commit_staged([]) ->
     case riak_core_claimant:commit() of
-        true ->
+        ok ->
             io:format("Cluster changes committed~n");
-        false ->
-            io:format("Unable to commit cluster changes. Plan may have "
-                      "changed, please verify the plan and try to commit "
-                      "again~n")
+        {error, legacy} ->
+            io:format("The cluster is running in legacy mode and does not "
+                      "support plan/commit.~n");
+        {error, nothing_planned} ->
+            io:format("You must verify the plan with "
+                      "'riak-admin cluster plan' before committing~n");
+        {error, ring_not_ready} ->
+            io:format("Cannot commit until cluster state has converged.~n"
+                      "Check 'Ring Ready' in 'riak-admin ring_status'~n");
+        {error, plan_changed} ->
+            io:format("The plan has changed. Verify with "
+                      "'riak-admin cluster plan' before committing~n");
+        _ ->
+            io:format("Unable to commit cluster changes. Plan "
+                      "may have changed, please verify the~n"
+                      "plan and try to commit again~n")
     end.
+
+transfer_limit([]) ->
+    {Limits, Down} =
+        riak_core_util:rpc_every_member_ann(riak_core_handoff_manager,
+                                            get_concurrency, [], 5000),
+    io:format("~s~n", [string:centre(" Transfer Limit ", 79, $=)]),
+    io:format("Limit        Node~n"),
+    io:format("~79..-s~n", [""]),
+    lists:foreach(fun({Node, Limit}) ->
+                          io:format("~5b        ~p~n", [Limit, Node])
+                  end, Limits),
+    lists:foreach(fun(Node) ->
+                          io:format("(offline)    ~p~n", [Node])
+                  end, Down),
+    io:format("~79..-s~n", [""]),
+    io:format("Note: You can change transfer limits with "
+              "'riak-admin transfer_limit <limit>'~n"
+              "      and 'riak-admin transfer_limit <node> <limit>'~n"),
+    ok;
+transfer_limit([LimitStr]) ->
+    Limit = list_to_integer(LimitStr),
+    io:format("Setting transfer limit to ~b across the cluster~n", [Limit]),
+    {_, Down} =
+        riak_core_util:rpc_every_member_ann(riak_core_handoff_manager,
+                                            set_concurrency, [Limit], 5000),
+    (Down == []) orelse
+        io:format("Failed to set limit for: ~p~n", [Down]),
+    ok;
+transfer_limit([NodeStr, LimitStr]) ->
+    Node = list_to_atom(NodeStr),
+    Limit = list_to_integer(LimitStr),
+    case rpc:call(Node, riak_core_handoff_manager, set_concurrency, [Limit]) of
+        {badrpc, _} ->
+            io:format("Failed to set transfer limit for ~p~n", [Node]);
+        _ ->
+            io:format("Set transfer limit for ~p to ~b~n", [Node, Limit])
+    end,
+    ok.

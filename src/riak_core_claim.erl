@@ -172,7 +172,8 @@ choose_claim_v2(Ring, Node) ->
     RingSize = riak_core_ring:num_partitions(Ring),
     NodeCount = erlang:length(Active),
     Avg = RingSize div NodeCount,
-    Deltas = [{Member, Avg - Count} || {Member, Count} <- Counts],
+    ActiveDeltas = [{Member, Avg - Count} || {Member, Count} <- Counts],
+    Deltas = add_default_deltas(Owners, ActiveDeltas, 0),
     {_, Want} = lists:keyfind(Node, 1, Deltas),
     TargetN = app_helper:get_env(riak_core, target_n_val),
     AllIndices = lists:zip(lists:seq(0, length(Owners)-1),
@@ -423,6 +424,13 @@ get_counts(Nodes, Ring) ->
                                  end
                          end, dict:from_list(Empty), Ring),
     dict:to_list(Counts).
+
+%% @private
+add_default_deltas(IdxOwners, Deltas, Default) ->
+    {_, Owners} = lists:unzip(IdxOwners),
+    Owners2 = lists:usort(Owners),
+    Defaults = [{Member, Default} || Member <- Owners2],
+    lists:usort(Deltas ++ Defaults).
 
 %% @private
 get_expected_partitions(Ring, Node) ->
