@@ -13,7 +13,7 @@
         }).
 
 -type ho_stats() :: #ho_stats{}.
--type ho_type() :: ownership_handoff | hinted_handoff.
+-type ho_type() :: ownership_handoff | hinted_handoff | repair.
 -type predicate() :: fun((any()) -> boolean()).
 
 -type index() :: integer().
@@ -32,9 +32,8 @@
           stats                 :: dict(),
           vnode_pid             :: pid() | undefined,
           vnode_mon             :: reference(),
-          type                  :: ownership | hinted_handoff | repair,
+          type                  :: ho_type(),
           req_origin            :: node(),
           filter_mod_fun        :: {module(), atom()}
         }).
--type handoff() :: #handoff_status{}.
--type handoffs() :: [handoff()].
+-type handoff_status() :: #handoff_status{}.

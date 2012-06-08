@@ -45,8 +45,8 @@
         {
           mod_partition         :: mod_partition(),
           filter_mod_fun        :: {module(), atom()},
-          minus_one_xfer        :: handoff(),
-          plus_one_xfer         :: handoff()
+          minus_one_xfer        :: handoff_status(),
+          plus_one_xfer         :: handoff_status()
         }).
 -type repair() :: #repair{}.
 -type repairs() :: [repair()].
@@ -123,7 +123,7 @@ repair_status({_Module, Partition}=ModPartition) ->
     Owner = riak_core_ring:index_owner(Ring, Partition),
     gen_server:call({?MODULE, Owner}, {repair_status, ModPartition}).
 
--spec xfer_complete(node(), handoff()) -> ok.
+-spec xfer_complete(node(), handoff_status()) -> ok.
 xfer_complete(Origin, Xfer) ->
     gen_server:call({?MODULE, Origin}, {xfer_complete, Xfer}).
 
@@ -712,7 +712,7 @@ check_repairs(Repairs) ->
         end,
     lists:reverse(lists:foldl(Check, [], Repairs)).
 
--spec maybe_retry(handoff()) -> Xfer2::handoff().
+-spec maybe_retry(handoff_status()) -> Xfer2::handoff_status().
 maybe_retry(Xfer) ->
     case riak_core_handoff_manager:xfer_status(Xfer) of
         complete -> Xfer;

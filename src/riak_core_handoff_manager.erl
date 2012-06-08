@@ -55,7 +55,7 @@
 
 -record(state,
         { excl,
-          handoffs=[] :: handoffs()
+          handoffs=[] :: [handoff_status()]
         }).
 
 %% this can be overridden with riak_core handoff_concurrency
@@ -83,7 +83,7 @@ add_inbound(SSLOpts) ->
 %% @doc Initiate a transfer from `SrcPartition' to `TargetPartition'
 %%      for the given `Module' using the `FilterModFun' filter.
 -spec xfer({index(), node()}, mod_partition(), pid(), {module(), atom()}) ->
-                  handoff().
+                  handoff_status().
 xfer({SrcPartition, SrcOwner}, {Module, TargetPartition},
      VNode, FilterModFun) ->
     %% NOTE: This will not work with old nodes
@@ -119,7 +119,7 @@ xfer({SrcPartition, SrcOwner}, {Module, TargetPartition},
     end.
 
 %% @doc Retry the given `Xfer'.
--spec retry_xfer(handoff()) -> NewXfer::handoff().
+-spec retry_xfer(handoff_status()) -> NewXfer::handoff_status().
 retry_xfer(Xfer) ->
     #handoff_status{mod_src_tgt={Module, SrcPartition, TargetPartition},
                     src_node=SrcOwner,
@@ -128,7 +128,7 @@ retry_xfer(Xfer) ->
     xfer({SrcPartition, SrcOwner}, {Module, TargetPartition},
          VNode, FilterModFun).
 
--spec xfer_status(handoff() | max_concurrency) ->
+-spec xfer_status(handoff_status() | max_concurrency) ->
                          complete | in_progress | max_concurrency | not_found.
 xfer_status(HS) ->
     case HS#handoff_status.status of
@@ -158,7 +158,7 @@ get_concurrency() ->
     gen_server:call(?MODULE, get_concurrency).
 
 %% @doc Kill the transfer `Xfer' with `Reason'.
--spec kill_xfer(handoff(), any()) -> ok.
+-spec kill_xfer(handoff_status(), any()) -> ok.
 kill_xfer(Xfer, Reason) ->
     SrcNode = Xfer#handoff_status.src_node,
     ok = gen_server:call({?MODULE, SrcNode}, {kill_xfer, Xfer, Reason}).
@@ -442,9 +442,9 @@ send_handoff(Mod, Partition, Node, Pid, HS) ->
 -spec send_handoff({module(), index(), index()}, node(),
                    pid(), list(),
                    {predicate() | none, {module(), atom()} | none}, node()) ->
-                          {ok, handoff()}
+                          {ok, handoff_status()}
                               | {error, max_concurrency}
-                              | {false, handoff()}.
+                              | {false, handoff_status()}.
 send_handoff({Mod, Src, Target}, Node, Vnode, HS, {Filter, FilterModFun}, Origin) ->
     case handoff_concurrency_limit_reached() of
         true ->
