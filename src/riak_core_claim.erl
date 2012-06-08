@@ -846,6 +846,12 @@ score_plan(NIs, Wants, Q, TN) ->
 
     Balance = balance(Wants, NIs),
 
+    %% TODO: Change this to an exact count of violations.
+    %% This is the list of claimable violations per-node
+    %% so will over-count.  The scoring algorithm
+    %% works as any violations will give a non-zero count
+    %% and will need to be resolved before any balance or
+    %% diversity scores are accounted for.
     Violations = length(lists:flatten([Vs || {_, _, _, Vs} <- violations(NIs, Q, TN),
                                              length(Vs) > 0])),
 
@@ -869,8 +875,8 @@ balance(Wants, NIs) ->
 
 %% @private 
 %% Make the number of plans requested
-make_plans(NumPlans, Available, Claiming, TN) ->
-    lists:usort([make_plan(Available, Claiming, TN) || _ <- lists:seq(1,NumPlans)]).
+make_plans(NumPlans, NIs, Q, TN) ->
+    lists:usort([make_plan(NIs, Q, TN) || _ <- lists:seq(1,NumPlans)]).
 
 %% @private
 %% Make a plan to meet the Wants in the NodeInfos
@@ -1273,9 +1279,9 @@ prop_take_idxs() ->
 
 tnode(I) ->
     list_to_atom("n"++integer_to_list(I)).
-    
+
 %% Check that no node gained more than it wanted to take
-%% Check that none of the node took any partitions that 
+%% Check that none of the nodes took more partitions than allowed
 %% Check that no nodes violate target N
 check_deltas(Exchanges, Before, After, Q, TN) ->
     conjunction(
@@ -1287,8 +1293,8 @@ check_deltas(Exchanges, Before, After, Q, TN) ->
              V2 = count_violations(OIdxs2, Q, TN),
              [{{give, Node, Gave, Give}, Gave =< Give},
               {{take, Node, Took, Take}, Took =< Take},
-              {{valid, Node, V1, V2}, 
-               V2 == 0 orelse 
+              {{valid, Node, V1, V2},
+               V2 == 0 orelse
                V1 > 0 orelse % check no violations if there were not before
                OIdxs1 == []}] % or the node held no indices so violation was impossible
          end || {{Node, Give, Take, _CIdxs}, {Node, _Want1, OIdxs1}, {Node, _Want2, OIdxs2}} <-
