@@ -106,7 +106,8 @@
          set_cluster_name/2,
          reconcile_names/2,
          reconcile_members/2,
-         is_primary/2]).
+         is_primary/2,
+         chash/1]).
 
 -export_type([riak_core_ring/0]).
 
@@ -247,6 +248,11 @@ nearly_equal(RingA, RingB) ->
 is_primary(Ring, IdxNode) ->
     Owners = all_owners(Ring),
     lists:member(IdxNode, Owners).
+
+%% @doc Return the `CHash' of the ring.
+-spec chash(chstate()) -> CHash::chash:chash().
+chash(?CHSTATE{chring=CHash}) ->
+    CHash.
 
 %% @doc Produce a list of all nodes that are members of the cluster
 -spec all_members(State :: chstate()) -> [Node :: term()].

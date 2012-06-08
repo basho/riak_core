@@ -755,7 +755,7 @@ check_up(Pairs, UpNodes) ->
                           [{Partition::non_neg_integer(), Owner::node()}].
 repair_pairs(Ring, Partition) ->
     Owner = riak_core_ring:index_owner(Ring, Partition),
-    CH = element(4, Ring),
+    CH = riak_core_ring:chash(Ring),
     [_, Before] = chash:predecessors(<<Partition:160/integer>>, CH, 2),
     [After] = chash:successors(<<Partition:160/integer>>, CH, 1),
     [Before, {Partition, Owner}, After].
