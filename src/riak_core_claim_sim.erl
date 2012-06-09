@@ -520,7 +520,8 @@ commission_tests_rest() ->
 
 commission_claims() ->
     [{{riak_core_claim, wants_claim_v1}, {riak_core_claim, choose_claim_v1}},
-     {{riak_core_claim, wants_claim_v2}, {riak_core_claim, choose_claim_v2}}].
+     {{riak_core_claim, wants_claim_v2}, {riak_core_claim, choose_claim_v2}},
+     {{riak_core_claim, wants_claim_v3}, {riak_core_claim, choose_claim_v3}}].
 
 
 %% -------------------------------------------------------------------
