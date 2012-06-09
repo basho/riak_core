@@ -35,6 +35,7 @@
                    current = fun(_Ring) -> ok end,
                    prepared = fun(_Ring, _Prepare) -> ok end,
                    percmd = fun(_Ring, _Cmd) -> ok end,
+                   postxfer = fun(_Ring) -> ok end,
                    rebalance = fun(_R1, _R2) -> ok end,
                    analysis = fun(_Ring, _Cmds) -> ok end,
                    return_ring = false}).
@@ -149,7 +150,6 @@ add_choose_params(Choose, TN) ->
     {CMod, CFun, Params1}.
 
 run_rebalance(Ring, Wants, Choose, Rebalance) ->
-    %% o(IoDev, "~nAfter rebalance~n", []),        
     Ring2 = riak_core_claim:claim(Ring, Wants, Choose),
     Rebalance(Ring, Ring2),
     Ring2.
@@ -194,7 +194,13 @@ make_prepared(IoDev, Analysis, TN) ->
             pretty_print(IoDev, Ring01, TN),
             run_analysis(IoDev, Analysis, Ring01)
     end.
-            
+
+make_postxfer(IoDev, TN) ->
+    fun(Ring01) ->
+            o(IoDev, "~nAfter transfers:~n", []),
+            pretty_print(IoDev, Ring01, TN)
+    end.
+
 make_percmd(IoDev) ->
     fun(_Ring, Cmd) ->
             case Cmd of
@@ -215,6 +221,8 @@ make_rebalance(false, _TN) ->
     fun(_R1, _R2) -> ok end;
 make_rebalance(IoDev, TN) ->
     fun(Ring, Ring2) ->
+            o(IoDev, "~nAfter rebalance~n", []),
+
             Owners1 = riak_core_ring:all_owners(Ring),
             Owners2 = riak_core_ring:all_owners(Ring2),
             Owners3 = lists:zip(Owners1, Owners2),
@@ -245,6 +253,7 @@ default_simopts(IoDev, Analysis, TN) ->
     #simopts{current = make_current(IoDev, TN),
              prepared = make_prepared(IoDev, Analysis, TN),
              percmd = make_percmd(IoDev),
+             postxfer = make_postxfer(IoDev, TN),
              rebalance = make_rebalance(IoDev, TN),
              analysis = make_analysis(IoDev, Analysis)}.
 
@@ -254,6 +263,7 @@ dryrun1(Ring00, CmdsL, #simopts{wants = Wants,
                                 current = Current,
                                 prepared = Prepared,
                                 percmd = PerCmd,
+                                postxfer = PostXfer,
                                 rebalance = Rebalance,
                                 analysis = Analysis}) ->
     Current(Ring00),
@@ -283,8 +293,8 @@ dryrun1(Ring00, CmdsL, #simopts{wants = Wants,
                   [] ->
                       NewRing3 = NewRing2;
                   _ ->
-                      NewRing3 = riak_core_ring:finish_transfers(NewRing2)
-                      %result(IoDev, NewRing2, NewRing3)
+                      NewRing3 = riak_core_ring:finish_transfers(NewRing2),
+                      PostXfer(NewRing3)
               end,
               NewRing4 = run_rebalance(NewRing3, Wants, Choose, Rebalance),
               NewRing5 = run_rebalance(NewRing4, Wants, Choose, Rebalance),
@@ -338,7 +348,7 @@ run_analysis(IoDev, Analysis, Ring) ->
                     o(IoDev, "Problem with failure analysis: ~p\n", [Err])
             end
     end.
-            
+
 %% Output to the iodev supplied
 o(false, _Fmt) ->
     ok;
@@ -546,10 +556,11 @@ run_test() ->
                           {print,Fh},
                           {return_ring, false}])),
     file:close(Fh).
-                         
-                     
 
-commission_test_() ->
+
+%% Decided not to run by default, perhaps better as an
+%% integration test.
+commission_test_no_longer_run_by_default() ->
     {timeout, 120, 
      ?_test(begin
                 Dir = "commission_test",

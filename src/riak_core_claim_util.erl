@@ -114,7 +114,7 @@ node_sensitivity(R, NVal, Depth) ->
 
 %% For a given ring, with a list of downed nodes, compute
 %% all preference lists then count up the number that
-%% each node partipates in.
+%% each node participates in.
 %%
 %% [{node(), Primaries, Fallbacks, PortionOfKeySpace}]
 %%
@@ -195,7 +195,7 @@ toint(F) when is_number(F) ->
 toint(X) ->
     X.
 
-%% Order failurest by number of nodes down ascending, then fbmax, then down list
+%% Order failures by number of nodes down ascending, then fbmax, then down list
 sort_by_down_fbmax(Failures) ->
     Cmp = fun(#failure{down = DownA, fbmax = FBMaxA},
               #failure{down = DownB, fbmax = FBMaxB}) ->
@@ -219,7 +219,7 @@ sort_by_down_fbmax(Failures) ->
                   end
           end,
     lists:sort(Cmp, Failures).
-    
+
 %% -------------------------------------------------------------------
 %% Adjacency calculations
 %% -------------------------------------------------------------------
@@ -231,10 +231,10 @@ sort_by_down_fbmax(Failures) ->
 %% by pointwise measuring the distance to each of the other nodes
 %% taking into account wraparounds (forward distance only).
 %%
-%% The ownership list a,b,c,b,a,c,b,c would compute the following adjaceny
+%% The ownership list a,b,c,b,a,c,b,c would compute the following adjacency
 %% list
 %%
-%% AL = lists:sort(adjacency_list([a,b,c,b,a,c,b])).  
+%% AL = lists:sort(adjacency_list([a,b,c,b,a,c,b])).
 %% [{{a,b},0}, <-- entry for first a
 %%  {{a,b},1}, <-- entry for second a
 %%  {{a,c},0},
@@ -251,7 +251,7 @@ sort_by_down_fbmax(Failures) ->
 %%  {{c,b},0}]
 %%
 %% The adjacency matrix rolls up each of the distances int a list for
-%% each node pair  
+%% each node pair
 %%
 %% lists:sort(adjacency_matrix_from_al(AL)).
 %% [{{a,b},[0,1]},
@@ -264,10 +264,10 @@ sort_by_down_fbmax(Failures) ->
 %% Preflists with good diversity have equal counts of each distance
 %% between nodes, so the scoring measure for adjacency is the RMS
 %% of each distance, for each distance less than target N
-%% 
+%%
 %% riak_core_claim_util:score_am(AM, 3).
 %% 2.1818181818181817
-%% 
+%%
 %% Lower scores are better.
 %%
 
@@ -404,7 +404,7 @@ make_ring(Nodes) ->
 
 
 %% Generate a completion test function that makes sure all required
-%% dbs are created
+%% distances are created
 gen_complete_diverse(RequiredDs) ->
     fun(Owners, DAM) ->
             OwnersLen = length(Owners),
@@ -421,15 +421,16 @@ gen_complete_len(Len) ->
 
 %% M = list of node names
 %% NVal = target nval
-%% Required = list of required indices - should replace
-
 construct(Complete, M, NVal) ->
-    DAM1 = lists:foldl(fun(Pair,AM0) ->
-                               ?DICT:append_list(Pair, [], AM0)
-                       end, ?DICT:new(), [{F,T} || F <- M, T <- M, F /= T]),
+    DAM1 = empty_adjacency_matrix(M),
     construct(Complete, M, [lists:last(M)], DAM1, NVal).
 
-                
+%% Make an empty adjacency matrix for all pairs of members
+empty_adjacency_matrix(M) ->
+    lists:foldl(fun(Pair,AM0) ->
+                        ?DICT:append_list(Pair, [], AM0)
+                end, ?DICT:new(), [{F,T} || F <- M, T <- M, F /= T]).
+
 construct(Complete, M, Owners, DAM, NVal) ->
     %% Work out which pairs do not have the requiredDs
     case Complete(Owners, DAM) of
@@ -458,6 +459,8 @@ construct(Complete, M, Owners, DAM, NVal) ->
             end
     end.
 
+%% Returns true only when we have met all required distances across all
+%% possible pairs in the adjacency matrix
 met_required(Owners, DAM, RequiredDs) ->
     FixupDAM = fixup_dam(Owners, DAM),
     case [Pair ||  {Pair, Ds} <- ?DICT:to_list(FixupDAM), 
@@ -564,7 +567,7 @@ perm_gen(L) ->
                    end || X <- L]).
   
 
-%% Pick all combinations of Depth nodes from the Mmebers list
+%% Pick all combinations of Depth nodes from the MemFbers list
 %% 0 = []
 %% 1 = [1], [2], [3]
 %% 2 = [1,1], [1,2], [1,3], [2, 1], [2, 2], [2, 3], [3, 1], [3, 2], [3, 3]
