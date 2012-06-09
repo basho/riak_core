@@ -108,8 +108,8 @@ repair(Service, {_Module, Partition}=ModPartition, FilterModFun) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Pairs = [_, {_, Owner}, _] = repair_pairs(Ring, Partition),
     UpNodes = riak_core_node_watcher:nodes(Service),
-    case is_pending_ownership_changes(Ring) of
-        false ->
+    case riak_core_ring:pending_changes(Ring) of
+        [] ->
             case check_up(Pairs, UpNodes) of
                 true ->
                     Msg = {repair, ModPartition, Pairs, FilterModFun},
@@ -118,7 +118,7 @@ repair(Service, {_Module, Partition}=ModPartition, FilterModFun) ->
                 {false, Down} ->
                     {down, Down}
             end;
-        true ->
+        _ ->
             ownership_change_in_progress
     end.
 
@@ -719,15 +719,6 @@ maybe_retry(R, {SrcPartition, _}=Src, Xfer) ->
             riak_core_handoff_manager:xfer(Src, {Mod, Partition}, FilterModFun),
             #xfer_status{status=pending,
                          mod_src_target={Mod, SrcPartition, Partition}}
-    end.
-
-%% @private
--spec is_pending_ownership_changes(riak_core_ring:riak_core_ring()) ->
-                                          boolean().
-is_pending_ownership_changes(Ring) ->
-    case riak_core_ring:pending_changes(Ring) of
-        [] -> false;
-        _ -> true
     end.
 
 %% @private
