@@ -727,15 +727,11 @@ maybe_retry(R, {SrcPartition, _}=Src, Xfer) ->
 -spec check_up([{non_neg_integer(), node()}], [node()]) ->
                       true | {false, Down::[{non_neg_integer(), node()}]}.
 check_up(Pairs, UpNodes) ->
-    F = fun({_Partition, Owner}=P, Down) ->
-                case lists:member(Owner, UpNodes) of
-                    true -> Down;
-                    false -> [P|Down]
-                end
-        end,
-    case lists:foldl(F, [], Pairs) of
+    Down = [Pair || {_Partition, Owner}=Pair <- Pairs,
+                    not lists:member(Owner, UpNodes)],
+    case Down of
         [] -> true;
-        Down -> {false, Down}
+        _ -> {false, Down}
     end.
 
 %% @private
