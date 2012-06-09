@@ -346,7 +346,8 @@ handle_cast({ring_changed, Ring}, State) ->
     State3 = update_handoff(AllVNodes, Ring, State2),
 
     %% Trigger ownership transfers.
-    trigger_ownership_handoff(Mods, Ring, State3),
+    Transfers = riak_core_ring:pending_changes(Ring),
+    trigger_ownership_handoff(Transfers, Mods, State3),
 
     {noreply, State3};
 
