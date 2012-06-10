@@ -23,7 +23,8 @@
 
 -export([assign/2,
          check_ring/0,
-         check_ring/1]).
+         check_ring/1,
+         check_ring/2]).
 
 %% @doc Forcibly assign a partition to a specific node
 assign(Partition, ToNode) ->
@@ -38,10 +39,13 @@ check_ring() ->
     {ok, R} = riak_core_ring_manager:get_my_ring(),
     check_ring(R).
 
-%% @doc Check a ring for any preflists that do not satisfy n_val
 check_ring(Ring) ->
     {ok, Props} = application:get_env(riak_core, default_bucket_props),
     {n_val, Nval} = lists:keyfind(n_val, 1, Props),
+    check_ring(Ring, Nval).
+
+%% @doc Check a ring for any preflists that do not satisfy n_val
+check_ring(Ring, Nval) ->
     Preflists = riak_core_ring:all_preflists(Ring, Nval),
     lists:foldl(fun(PL,Acc) ->
                         PLNodes = lists:usort([Node || {_,Node} <- PL]),

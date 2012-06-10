@@ -81,6 +81,9 @@
          indices/2,
          future_indices/2,
          disowning_indices/2,
+         reassign_indices/1,
+         cancel_transfers/1,
+         finish_transfers/1,
          pending_changes/1,
          next_owner/2,
          next_owner/3,
@@ -722,7 +725,7 @@ pretty_print(Ring, Opts) ->
     Owners = riak_core_ring:all_members(Ring),
     Indices = riak_core_ring:all_owners(Ring),
     RingSize = length(Indices),
-    Numeric = OptNumeric or (length(Owners) > 26),
+    Numeric = OptNumeric orelse (length(Owners) > 26),
     case Numeric of
         true ->
             Ids = [integer_to_list(N) || N <- lists:seq(1, length(Owners))];
@@ -737,8 +740,8 @@ pretty_print(Ring, Opts) ->
                  NodeIndices = [Idx || {Idx,Owner} <- Indices,
                                        Owner =:= Node],
                  RingPercent = length(NodeIndices) * 100 / RingSize,
-                 io:format(Out, "Node ~s: ~5.1f% ~s~n",
-                           [Name, RingPercent, Node])
+                 io:format(Out, "Node ~s: ~w (~5.1f%) ~s~n",
+                           [Name, length(NodeIndices), RingPercent, Node])
              end || {Node, Name} <- Names],
             io:format(Out, "~36..=s Ring ~37..=s~n", ["", ""]);
         false ->
@@ -763,6 +766,44 @@ pretty_print(Ring, Opts) ->
                         end, 1, Indices),
             io:format(Out, "~n", [])
     end.
+
+%% @doc Reassign indices 
+reassign_indices(CState=?CHSTATE{next=Next}) ->
+    Invalid = get_members(CState?CHSTATE.members, [invalid]),
+    CState2 =
+        lists:foldl(fun(Node, CState0) ->
+                            remove_node(CState0, Node, invalid)
+                    end, CState, Invalid),
+    CState3 = case Next of
+                  [] ->
+                      Leaving = get_members(CState?CHSTATE.members, [leaving]),
+                      lists:foldl(fun(Node, CState0) ->
+                                          remove_node(CState0, Node, leaving)
+                                  end, CState2, Leaving);
+                  _ ->
+                      CState2
+              end,
+    Owners1 = all_owners(CState),
+    Owners2 = all_owners(CState3),
+    RingChanged = (Owners1 /= Owners2),
+    NextChanged = (Next /= CState3?CHSTATE.next),
+    {RingChanged or NextChanged, CState3}.
+
+%% @doc Return a ring with all transfers completed - for claim sim
+finish_transfers(Ring) ->
+    Pending = riak_core_ring:pending_changes(Ring),
+    Owners1 = riak_core_ring:all_owners(Ring),
+    Owners2 = [{Idx,NOwner} || {Idx,_,NOwner,_,_} <- Pending],
+    Owners3 = lists:ukeysort(1, Owners2++Owners1),
+    CH1 = Ring?CHSTATE.chring,
+    CH2 = {element(1,CH1), Owners3},
+    Ring2 = Ring?CHSTATE{chring=CH2},
+    Ring3 = Ring2?CHSTATE{next=[]},
+    Ring3.
+
+%% @doc Return a ring with all transfers cancelled - for claim sim
+cancel_transfers(Ring) ->
+    Ring?CHSTATE{next=[]}.
 
 %% ===================================================================
 %% Legacy reconciliation
@@ -1067,34 +1108,8 @@ transfer_ownership(CState=?CHSTATE{next=Next}) ->
     {Changed, CState2?CHSTATE{next=Next2}}.
 
 %% @private
-reassign_indices(CState=?CHSTATE{next=Next}) ->
-    Invalid = get_members(CState?CHSTATE.members, [invalid]),
-    CState2 =
-        lists:foldl(fun(Node, CState0) ->
-                            remove_node(CState0, Node, invalid)
-                    end, CState, Invalid),
-    CState3 = case Next of
-                  [] ->
-                      Leaving = get_members(CState?CHSTATE.members, [leaving]),
-                      lists:foldl(fun(Node, CState0) ->
-                                          remove_node(CState0, Node, leaving)
-                                  end, CState2, Leaving);
-                  _ ->
-                      CState2
-              end,
-    Owners1 = all_owners(CState),
-    Owners2 = all_owners(CState3),
-    RingChanged = (Owners1 /= Owners2),
-    NextChanged = (Next /= CState3?CHSTATE.next),
-    {RingChanged or NextChanged, CState3}.
-
-%% @private
 rebalance_ring(_CNode, CState=?CHSTATE{next=[]}) ->
-    Members = claiming_members(CState),
-    CState2 = lists:foldl(fun(Node, Ring0) ->
-                                  riak_core_gossip:claim_until_balanced(Ring0,
-                                                                        Node)
-                          end, CState, Members),
+    CState2 = riak_core_claim:claim(CState),
     Owners1 = all_owners(CState),
     Owners2 = all_owners(CState2),
     Owners3 = lists:zip(Owners1, Owners2),
