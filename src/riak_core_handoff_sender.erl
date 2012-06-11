@@ -31,6 +31,11 @@
 %% note this is in seconds
 -define(STATUS_INTERVAL, 2).
 
+-define(log_fail(Str, Args),
+        lager:error("~p transfer of ~p from ~p ~p to ~p ~p failed " ++ Str,
+                    [Type, Module, SrcNode, SrcPartition, TargetNode,
+                     TargetPartition, Args])).
+
 %% Accumulator for the visit item HOF
 -record(ho_acc,
         {
@@ -66,10 +71,10 @@ start_link(TargetNode, Module, {Type, Opts}, Vnode) ->
 
 start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
     SrcNode = node(),
+    SrcPartition = get_src_partition(Opts),
+    TargetPartition = get_target_partition(Opts),
 
      try
-         SrcPartition = get_src_partition(Opts),
-         TargetPartition = get_target_partition(Opts),
          Filter = get_filter(Opts),
          [_Name,Host] = string:tokens(atom_to_list(TargetNode), "@"),
          {ok, Port} = get_handoff_port(TargetNode),
@@ -118,7 +123,9 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
              {error, closed} -> exit({shutdown, max_concurrency})
          end,
 
-         log_start(Module, {Type, Opts}, SrcNode, TargetNode),
+         lager:info("Starting ~p transfer of ~p from ~p ~p to ~p ~p",
+                    [Type, Module, SrcNode, SrcPartition,
+                     TargetNode, TargetPartition]),
 
          M = <<?PT_MSG_INIT:8,TargetPartition:160/integer>>,
          ok = TcpMod:send(Socket, M),
@@ -173,18 +180,18 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
 
                  FoldTimeDiff = end_fold_time(StartFoldTime),
 
-                 log_complete(Module, {Type, Opts}, SrcNode,
-                              TargetNode, SentCount, FoldTimeDiff),
+                 lager:info("~p transfer of ~p from ~p ~p to ~p ~p"
+                            " completed: sent ~p objects in ~.2f seconds",
+                            [Type, Module, SrcNode, SrcPartition,
+                             TargetNode, TargetPartition, SentCount,
+                             FoldTimeDiff]),
 
                  case Type of
                      repair -> ok;
                      _ -> gen_fsm:send_event(ParentPid, handoff_complete)
                  end;
              {error, ErrReason} ->
-                 ReasonStr2 = io_lib:format(" because of ~p",
-                                            [ErrReason]),
-                 log_fail(Module, {Type, Opts}, SrcNode,
-                          TargetNode, ReasonStr2),
+                 ?log_fail("because of ~p", [ErrReason]),
                  if ErrReason == timeout ->
                          riak_core_stat:update(handoff_timeouts);
                     true -> ok
@@ -199,12 +206,10 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
          exit:{shutdown, timeout} ->
              %% A receive timeout during handoff
              riak_core_stat:update(handoff_timeouts),
-             log_fail(Module, {Type, Opts}, SrcNode, TargetNode,
-                      " because of TCP recv timeout");
+             ?log_fail(" because of TCP recv timeout", []);
          Err:Reason ->
-             ReasonStr3 = io_lib:format(" because of ~p:~p ~p",
-                                        [Err, Reason, erlang:get_stacktrace()]),
-             log_fail(Module, {Type, Opts}, SrcNode, TargetNode, ReasonStr3),
+             ?log_fail(" because of ~p:~p ~p",
+                       [Err, Reason, erlang:get_stacktrace()]),
              gen_fsm:send_event(ParentPid, {handoff_error, Err, Reason})
      end.
 
@@ -370,29 +375,6 @@ maybe_send_status(ModSrcTgt, Stats=#ho_stats{interval_end=IntervalEnd}) ->
 
 get_status_interval() ->
     app_helper:get_env(riak_core, handoff_status_interval, ?STATUS_INTERVAL).
-
-log_start(Module, {Type, Opts}, SrcNode, TargetNode) ->
-    SrcPartition = get_src_partition(Opts),
-    TargetPartition = get_target_partition(Opts),
-    lager:info("Starting ~p transfer of ~p from ~p ~p to ~p ~p",
-               [Type, Module, SrcNode, SrcPartition,
-                TargetNode, TargetPartition]).
-
-log_fail(Module, {Type, Opts}, SrcNode, TargetNode, Reason) ->
-    SrcPartition = get_src_partition(Opts),
-    TargetPartition = get_target_partition(Opts),
-    lager:error("~p transfer of ~p from ~p ~p to ~p ~p failed ~s",
-                [Type, Module, SrcNode, SrcPartition,
-                 TargetNode, TargetPartition, Reason]).
-
-log_complete(Module, {Type, Opts}, SrcNode, TargetNode, SentCount,
-             FoldTimeDiff) ->
-    SrcPartition = get_src_partition(Opts),
-    TargetPartition = get_target_partition(Opts),
-    lager:info("~p transfer of ~p from ~p ~p to ~p ~p"
-               " completed: sent ~p objects in ~.2f seconds",
-               [Type, Module, SrcNode, SrcPartition,
-                TargetNode, TargetPartition, SentCount, FoldTimeDiff]).
 
 get_src_partition(Opts) ->
     proplists:get_value(src_partition, Opts).
