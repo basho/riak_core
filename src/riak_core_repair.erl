@@ -19,7 +19,8 @@
 %% -------------------------------------------------------------------
 
 -module(riak_core_repair).
--export([gen_range/3,
+-export([gen_filter/5,
+         gen_range/3,
          gen_range_fun/2,
          gen_range_map/3]).
 
@@ -34,6 +35,33 @@
 %% ===================================================================
 %% Public API
 %% ===================================================================
+
+%% @doc Generate a `Filter' fun to use during partition repair.
+%%
+%%      `Target' - Partition under repair.
+%%
+%%      `Ring' - The ring to use for repair.
+%%
+%%      `NValMap' - A map from bucket to `n_val', only custom buckets
+%%      have entries, everything else uses default.
+%%
+%%      `DefaultN' - The default `n_val'.
+%%
+%%      `InfoFun' - A function which returns information about the key
+%%      used to determine if it should be repaired or not.
+gen_filter(Target, Ring, NValMap, DefaultN, InfoFun) ->
+    RangeMap = riak_core_repair:gen_range_map(Target, Ring, NValMap),
+    Default = riak_core_repair:gen_range(Target, Ring, DefaultN),
+    RangeFun = riak_core_repair:gen_range_fun(RangeMap, Default),
+    fun(BKey) ->
+            {Bucket, Hash} = InfoFun(BKey),
+            case RangeFun(Bucket) of
+                {nowrap, GTE, LTE} ->
+                    Hash >= GTE andalso Hash =< LTE;
+                {wrap, GTE, LTE} ->
+                    Hash >= GTE orelse Hash =< LTE
+            end
+    end.
 
 %% @doc Generate the hash `Range' for a given `Target' partition and
 %%      `NVal'.
