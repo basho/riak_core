@@ -281,6 +281,12 @@ handle_call({repair_status, ModPartition}, _From, State) ->
         #repair{} -> {reply, in_progress, State}
     end;
 
+%% NOTE: The `xfer_complete' logic assumes two things:
+%%
+%%       1. The `xfer_complete' msg will always be sent to the owner
+%%       of the partition under repair (also called the "target").
+%%
+%%       2. The target partition is always a local, primary partition.
 handle_call({xfer_complete, ModSrcTgt}, _From, State) ->
     Repairs = State#state.repairs,
     {Mod, _, Partition} = ModSrcTgt,
