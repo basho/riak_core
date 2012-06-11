@@ -304,7 +304,8 @@ handle_call({xfer_complete, ModSrcTgt}, _From, State) ->
                          POX2 = POX#xfer_status{status=complete},
                          R#repair{plus_one_xfer=POX2};
                     true ->
-                         throw({xfer_complete_matches_none, R, ModSrcTgt})
+                         lager:error("Received xfer_complete for "
+                                     "non-existing xfer: ~p", [ModSrcTgt])
                  end,
 
             case {?XFER_COMPLETE(R2#repair.minus_one_xfer),
