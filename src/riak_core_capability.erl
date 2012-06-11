@@ -165,12 +165,18 @@ update_ring(Ring) ->
     %% possible that the ETS table does not yet exist, or that the
     %% '$supported' key has not yet been written. Therefore, we catch
     %% any errors and return an unmodified ring.
-    try
-        [{_, Supported}] = ets:lookup(?ETS, '$supported'),
-        add_supported_to_ring(node(), Supported, Ring)
-    catch
-        _:_ ->
-            Ring
+    Supported = try
+                    [{_, Sup}] = ets:lookup(?ETS, '$supported'),
+                    Sup
+                catch
+                    _:_ ->
+                        error
+                end,
+    case Supported of
+        error ->
+            {false, Ring};
+        _ ->
+            add_supported_to_ring(node(), Supported, Ring)
     end.
 
 %% @doc Internal callback used by `riak_core_ring_handler' to notify the
