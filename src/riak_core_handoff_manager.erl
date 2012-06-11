@@ -39,6 +39,7 @@
          status/1,
          status_update/2,
          set_concurrency/1,
+         get_concurrency/0,
          kill_handoffs/0
         ]).
 
@@ -104,6 +105,9 @@ status_update(ModIdx, Stats) ->
 set_concurrency(Limit) ->
     gen_server:call(?MODULE,{set_concurrency,Limit}).
 
+get_concurrency() ->
+    gen_server:call(?MODULE, get_concurrency).
+
 kill_handoffs() ->
     set_concurrency(0).
 
@@ -159,7 +163,11 @@ handle_call({set_concurrency,Limit},_From,State=#state{handoffs=HS}) ->
             {reply, ok, State};
         false ->
             {reply, ok, State}
-    end.
+    end;
+
+handle_call(get_concurrency, _From, State) ->
+    Concurrency = get_concurrency_limit(),
+    {reply, Concurrency, State}.
 
 handle_cast({del_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
     {noreply, State#state{excl=ordsets:del_element({Mod, Idx}, Excl)}};

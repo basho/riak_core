@@ -256,6 +256,8 @@ handle_call({ring_trans, Fun, Args}, _From, State=#state{raw_ring=Ring}) ->
             {reply, {ok, NewRing}, State#state{raw_ring=NewRing}};
         ignore ->
             {reply, not_changed, State};
+        {ignore, Reason} ->
+            {reply, {not_changed, Reason}, State};
         Other ->
             lager:error("ring_trans: invalid return value: ~p", 
                                    [Other]),
