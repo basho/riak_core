@@ -51,10 +51,9 @@
         {
           mod_partition         :: mod_partition(),
           filter_mod_fun        :: {module(), atom()},
-          minus_one             :: tuple(),
           minus_one_xfer        :: xfer_status(),
-          plus_one              :: tuple(),
-          plus_one_xfer         :: xfer_status()
+          plus_one_xfer         :: xfer_status(),
+          pairs                 :: [{index(), node()}]
         }).
 -type repair() :: #repair{}.
 -type repairs() :: [repair()].
@@ -102,25 +101,10 @@ all_vnodes_status() ->
 repair(Service, {_Module, Partition}=ModPartition, FilterModFun) ->
     %% Fwd the request to the partition owner to guarantee that there
     %% is only one request per partition.
-    %%
-    %% TODO: Pass Ring (or piece of info) to verify receiving nodes
-    %% have same ring or abort repair.
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    Pairs = [_, {_, Owner}, _] = repair_pairs(Ring, Partition),
-    UpNodes = riak_core_node_watcher:nodes(Service),
-    case riak_core_ring:pending_changes(Ring) of
-        [] ->
-            case check_up(Pairs, UpNodes) of
-                true ->
-                    Msg = {repair, ModPartition, Pairs, FilterModFun},
-                    ok = gen_server:call({?MODULE, Owner}, Msg),
-                    {ok, Pairs};
-                {false, Down} ->
-                    {down, Down}
-            end;
-        _ ->
-            ownership_change_in_progress
-    end.
+    Owner = riak_core_ring:index_owner(Ring, Partition),
+    Msg = {repair, Service, ModPartition, FilterModFun},
+    gen_server:call({?MODULE, Owner}, Msg).
 
 %% @doc Get the status of the repair process for a given `ModPartition'.
 -spec repair_status(mod_partition()) -> in_progress | not_found.
@@ -244,33 +228,51 @@ handle_call({Partition, Mod, get_vnode}, _From, State) ->
 handle_call(get_tab, _From, State) ->
     {reply, ets:tab2list(State#state.idxtab), State};
 
-handle_call({repair, {Mod,Partition}=ModPartition, Pairs, FilterModFun},
+handle_call({repair, Service, {Mod,Partition}=ModPartition, FilterModFun},
             _From, State) ->
     #state{repairs=Repairs} = State,
 
     case get_repair(ModPartition, Repairs) of
         none ->
-            [{MOP,_MOwner}=MinusOne, _, {POP,_POwner}=PlusOne] = Pairs,
-            riak_core_handoff_manager:xfer(MinusOne, ModPartition,
-                                           FilterModFun),
-            riak_core_handoff_manager:xfer(PlusOne, ModPartition, FilterModFun),
-            MOXStatus = #xfer_status{status=pending,
-                                     mod_src_target={Mod, MOP, Partition}},
-            POXStatus = #xfer_status{status=pending,
-                                     mod_src_target={Mod, POP, Partition}},
+            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+            Pairs = repair_pairs(Ring, Partition),
+            UpNodes = riak_core_node_watcher:nodes(Service),
 
-            Repair = #repair{mod_partition=ModPartition,
-                             filter_mod_fun=FilterModFun,
-                             minus_one=MinusOne,
-                             minus_one_xfer=MOXStatus,
-                             plus_one=PlusOne,
-                             plus_one_xfer=POXStatus},
-            Repairs2 = Repairs ++ [Repair],
-            State2 = State#state{repairs=Repairs2},
-            lager:debug("add repair ~p", [ModPartition]),
-            {reply, ok, State2};
-        #repair{} ->
-            {reply, ok, State}
+            case riak_core_ring:pending_changes(Ring) of
+                    [] ->
+                        case check_up(Pairs, UpNodes) of
+                            true ->
+                                {MOP,_} = MinusOne = get_minus_one(Pairs),
+                                {POP,_} = PlusOne = get_plus_one(Pairs),
+                                riak_core_handoff_manager:xfer(MinusOne,
+                                                               ModPartition,
+                                                               FilterModFun),
+                                riak_core_handoff_manager:xfer(PlusOne,
+                                                               ModPartition,
+                                                               FilterModFun),
+                                MOXStatus = #xfer_status{status=pending,
+                                                         mod_src_target={Mod, MOP, Partition}},
+                                POXStatus = #xfer_status{status=pending,
+                                                         mod_src_target={Mod, POP, Partition}},
+
+                                Repair = #repair{mod_partition=ModPartition,
+                                                 filter_mod_fun=FilterModFun,
+                                                 pairs=Pairs,
+                                                 minus_one_xfer=MOXStatus,
+                                                 plus_one_xfer=POXStatus},
+                                Repairs2 = Repairs ++ [Repair],
+                                State2 = State#state{repairs=Repairs2},
+                                lager:debug("add repair ~p", [ModPartition]),
+                                {reply, {ok, Pairs}, State2};
+                            {false, Down} ->
+                                {reply, {down, Down}, State}
+                        end;
+                    _ ->
+                        {reply, ownership_change_in_progress, State}
+                end;
+        Repair ->
+            Pairs = Repair#repair.pairs,
+            {reply, {ok, Pairs}, State}
     end;
 
 handle_call({repair_status, ModPartition}, _From, State) ->
@@ -696,8 +698,12 @@ maybe_start_vnodes(State=#state{vnode_start_tokens=Tokens,
 check_repairs(Repairs) ->
     Check =
         fun(R=#repair{minus_one_xfer=MOX, plus_one_xfer=POX}, Repairs2) ->
-                MOX2 = maybe_retry(R, R#repair.minus_one, MOX),
-                POX2 = maybe_retry(R, R#repair.plus_one, POX),
+                Pairs = R#repair.pairs,
+                MO = get_minus_one(Pairs),
+                PO = get_plus_one(Pairs),
+                MOX2 = maybe_retry(R, MO, MOX),
+                POX2 = maybe_retry(R, PO, POX),
+
                 if ?XFER_COMPLETE(MOX2) andalso ?XFER_COMPLETE(POX2) ->
                         Repairs2;
                    true ->
@@ -774,13 +780,29 @@ replace_repair(Repair, Repairs) ->
     lists:keyreplace(Repair#repair.mod_partition, #repair.mod_partition,
                      Repairs, Repair).
 
+%% @private
+%%
+%% @doc Get the `{Partition, Owner}' pair that comes before the
+%%      partition under repair.
+-spec get_minus_one([{index(), node()}]) -> {index(), node()}.
+get_minus_one([MinusOne, _, _]) ->
+    MinusOne.
+
+%% @private
+%%
+%% @doc Get the `{Partition, Owner}' pair that comes after the
+%%      partition under repair.
+-spec get_plus_one([{index(), node()}]) -> {index(), node()}.
+get_plus_one([_, _, PlusOne]) ->
+    PlusOne.
+
 %% TODO: Need to kill the receivers for these xfers in case the cast
 %% doesn't reach the handoff mgr.
 kill_repairs(Repairs, Reason) ->
     Kill =
         fun(R) ->
-                {_,MOOwner} = R#repair.minus_one,
-                {_,POOwner} = R#repair.plus_one,
+                {_,MOOwner} = get_minus_one(R),
+                {_,POOwner} = get_minus_one(R),
                 MOX = R#repair.minus_one_xfer,
                 POX = R#repair.plus_one_xfer,
                 MOModSrcTarget = MOX#xfer_status.mod_src_target,
