@@ -161,8 +161,23 @@ all() ->
 %% @doc Add the local node's supported capabilities to the given
 %% ring. Currently used during the `riak-admin join' process
 update_ring(Ring) ->
-    [{_, Supported}] = ets:lookup(?ETS, '$supported'),
-    add_supported_to_ring(node(), Supported, Ring).
+    %% If a join occurs immediately after a node has started, it is
+    %% possible that the ETS table does not yet exist, or that the
+    %% '$supported' key has not yet been written. Therefore, we catch
+    %% any errors and return an unmodified ring.
+    Supported = try
+                    [{_, Sup}] = ets:lookup(?ETS, '$supported'),
+                    Sup
+                catch
+                    _:_ ->
+                        error
+                end,
+    case Supported of
+        error ->
+            {false, Ring};
+        _ ->
+            add_supported_to_ring(node(), Supported, Ring)
+    end.
 
 %% @doc Internal callback used by `riak_core_ring_handler' to notify the
 %%      capability manager of a new ring
