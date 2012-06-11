@@ -229,8 +229,7 @@ handle_call(get_tab, _From, State) ->
     {reply, ets:tab2list(State#state.idxtab), State};
 
 handle_call({repair, Service, {Mod,Partition}=ModPartition, FilterModFun},
-            _From, State) ->
-    #state{repairs=Repairs} = State,
+            _From, #state{repairs=Repairs}=State) ->
 
     case get_repair(ModPartition, Repairs) of
         none ->
