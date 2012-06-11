@@ -66,6 +66,7 @@
          pretty_print/2,
          all_member_status/1,
          update_member_meta/5,
+         clear_member_meta/3,
          get_member_meta/3,
          add_member/3,
          remove_member/3,
@@ -90,6 +91,7 @@
          future_indices/2,
          future_ring/1,
          disowning_indices/2,
+         cancel_transfers/1,
          pending_changes/1,
          next_owner/1,
          next_owner/2,
@@ -137,7 +139,7 @@
     meta      % dict of cluster-wide other data (primarily bucket N-value, etc)
 }). 
 
--type member_status() :: valid | invalid | leaving | exiting.
+-type member_status() :: joining | valid | invalid | leaving | exiting | down.
 
 %% type meta_entry(). Record for each entry in #chstate.meta
 -record(meta_entry, {
@@ -531,7 +533,7 @@ increment_ring_version(Node, State) ->
     State?CHSTATE{rvsn=RVsn}.
 
 %% @doc Returns the current membership status for a node in the cluster.
--spec member_status(State :: chstate(), Node :: node()) -> member_status().
+-spec member_status(chstate() | [node()], Node :: node()) -> member_status().
 member_status(?CHSTATE{members=Members}, Node) ->
     member_status(Members, Node);
 member_status(Members, Node) ->
@@ -581,11 +583,28 @@ update_member_meta(Node, State, Member, Key, Val, same_vclock) ->
             State
     end.
 
+clear_member_meta(Node, State, Member) ->
+    Members = State?CHSTATE.members,
+    case orddict:is_key(Member, Members) of
+        true ->
+            Members2 = orddict:update(Member,
+                                      fun({Status, VC, _MD}) ->
+                                              {Status,
+                                               vclock:increment(Node, VC),
+                                               orddict:new()}
+                                      end,
+                                      Members),
+            State?CHSTATE{members=Members2};
+        false ->
+            State
+    end.
+
 add_member(PNode, State, Node) ->
     set_member(PNode, State, Node, joining).
 
 remove_member(PNode, State, Node) ->
-    set_member(PNode, State, Node, invalid).
+    State2 = clear_member_meta(PNode, State, Node),
+    set_member(PNode, State2, Node, invalid).
 
 leave_member(PNode, State, Node) ->
     set_member(PNode, State, Node, leaving).
@@ -823,7 +842,11 @@ pretty_print(Ring, Opts) ->
                         end, 1, Indices),
             io:format(Out, "~n", [])
     end.
- 
+
+%% @doc Return a ring with all transfers cancelled - for claim sim
+cancel_transfers(Ring) ->
+    Ring?CHSTATE{next=[]}.
+
 %% ===================================================================
 %% Legacy reconciliation
 %% ===================================================================

@@ -80,7 +80,7 @@ start_link() ->
 %%      modifications that correspond to each resulting cluster transition
 %%      (eg. the initial transition that applies the staged changes, and
 %%      any additional transitions triggered by later rebalancing).
--spec plan() -> legacy | {ok, [action()], [ring_transition()]}.
+-spec plan() -> {error, term()} | {ok, [action()], [ring_transition()]}.
 plan() ->
     gen_server:call(claimant(), plan, infinity).
 
@@ -88,7 +88,7 @@ plan() ->
 %%      A commit is only allowed to succeed if the ring is ready and if the
 %%      current set of changes matches those computed by the most recent
 %%      call to plan/0.
--spec commit() -> true | false.
+-spec commit() -> ok | {error, term()}.
 commit() ->
     gen_server:call(claimant(), commit, infinity).
 
@@ -669,7 +669,9 @@ maybe_remove_exiting(Node, CState) ->
             Changed = (Exiting /= []),
             CState2 =
                 lists:foldl(fun(ENode, CState0) ->
-                                    riak_core_ring:set_member(Node, CState0, ENode,
+                                    ClearedCS =
+                                        riak_core_ring:clear_member_meta(Node, CState0, ENode),
+                                    riak_core_ring:set_member(Node, ClearedCS, ENode,
                                                               invalid, same_vclock)
                             end, CState, Exiting),
             {Changed, CState2};
@@ -824,7 +826,6 @@ rebalance_ring(CNode, CState) ->
     rebalance_ring(CNode, Next, CState).
 
 rebalance_ring(_CNode, [], CState) ->
-
     CState2 = riak_core_claim:claim(CState),
     Owners1 = riak_core_ring:all_owners(CState),
     Owners2 = riak_core_ring:all_owners(CState2),
@@ -871,7 +872,7 @@ remove_node(CState, Node, Status, Replacing, Seed, Log) ->
     remove_node(CState, Node, Status, Replacing, Seed, Log, Indices).
 
 %% @private
-remove_node(CState, _Node, _Status, _Log, _Replacing, _Seed, []) ->
+remove_node(CState, _Node, _Status, _Replacing, _Seed, _Log, []) ->
     CState;
 remove_node(CState, Node, Status, Replacing, Seed, Log, Indices) ->
     CStateT1 = riak_core_ring:change_owners(CState,
