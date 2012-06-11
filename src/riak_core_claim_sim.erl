@@ -272,7 +272,7 @@ dryrun1(Ring00, CmdsL, #simopts{wants = Wants,
                  cancel ->
                      riak_core_ring:cancel_transfers(Ring00);
                  finish ->
-                     riak_core_ring:finish_transfers(Ring00)
+                     riak_core_ring:future_ring(Ring00)
              end,
 
     Prepared(Ring01, Prepare),
@@ -287,13 +287,13 @@ dryrun1(Ring00, CmdsL, #simopts{wants = Wants,
                             PerCmd(RingAcc3, Cmd),
                             RingAcc3
                     end, RingAcc1, Cmds),
-              {_, NewRing2} = riak_core_ring:reassign_indices(NewRing),
+              {_, NewRing2} = riak_core_claimant:reassign_indices(NewRing),
               Pending = riak_core_ring:pending_changes(NewRing2),
               case Pending of
                   [] ->
                       NewRing3 = NewRing2;
                   _ ->
-                      NewRing3 = riak_core_ring:finish_transfers(NewRing2),
+                      NewRing3 = riak_core_ring:future_ring(NewRing2),
                       PostXfer(NewRing3)
               end,
               NewRing4 = run_rebalance(NewRing3, Wants, Choose, Rebalance),

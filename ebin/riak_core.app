@@ -20,6 +20,7 @@
              riak_core_app,
              riak_core_bucket,
              riak_core_cinfo_core,
+             riak_core_claimant,
              riak_core_claim,
              riak_core_claim_sim,
              riak_core_claim_util,
@@ -113,7 +114,7 @@
          {vnode_inactivity_timeout, 60000},
 
          %% Number of VNodes allowed to do handoff concurrently.
-         {handoff_concurrency, 1},
+         {handoff_concurrency, 2},
 
          %% Disable Nagle on HTTP sockets
          {disable_http_nagle, true},
