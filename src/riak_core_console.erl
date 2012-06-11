@@ -496,21 +496,46 @@ transfer_limit([]) ->
               "      and 'riak-admin transfer_limit <node> <limit>'~n"),
     ok;
 transfer_limit([LimitStr]) ->
-    Limit = list_to_integer(LimitStr),
-    io:format("Setting transfer limit to ~b across the cluster~n", [Limit]),
-    {_, Down} =
-        riak_core_util:rpc_every_member_ann(riak_core_handoff_manager,
-                                            set_concurrency, [Limit], 5000),
-    (Down == []) orelse
-        io:format("Failed to set limit for: ~p~n", [Down]),
-    ok;
+    {Valid, Limit} = check_limit(LimitStr),
+    case Valid of
+        false ->
+            io:format("Invalid limit: ~s~n", [LimitStr]),
+            error;
+        true ->
+            io:format("Setting transfer limit to ~b across the cluster~n",
+                      [Limit]),
+            {_, Down} =
+                riak_core_util:rpc_every_member_ann(riak_core_handoff_manager,
+                                                    set_concurrency,
+                                                    [Limit], 5000),
+            (Down == []) orelse
+                io:format("Failed to set limit for: ~p~n", [Down]),
+            ok
+    end;
 transfer_limit([NodeStr, LimitStr]) ->
     Node = list_to_atom(NodeStr),
-    Limit = list_to_integer(LimitStr),
-    case rpc:call(Node, riak_core_handoff_manager, set_concurrency, [Limit]) of
-        {badrpc, _} ->
-            io:format("Failed to set transfer limit for ~p~n", [Node]);
-        _ ->
-            io:format("Set transfer limit for ~p to ~b~n", [Node, Limit])
-    end,
-    ok.
+    {Valid, Limit} = check_limit(LimitStr),
+    case Valid of
+        false ->
+            io:format("Invalid limit: ~s~n", [LimitStr]),
+            error;
+        true ->
+            case rpc:call(Node, riak_core_handoff_manager,
+                          set_concurrency, [Limit]) of
+                {badrpc, _} ->
+                    io:format("Failed to set transfer limit for ~p~n", [Node]);
+                _ ->
+                    io:format("Set transfer limit for ~p to ~b~n",
+                              [Node, Limit])
+            end,
+            ok
+    end.
+
+check_limit(Str) ->
+    try
+        Int = list_to_integer(Str),
+        {Int >= 0, Int}
+    catch
+        _:_ ->
+            {false, 0}
+    end.
