@@ -802,18 +802,32 @@ get_minus_one([MinusOne, _, _]) ->
 get_plus_one([_, _, PlusOne]) ->
     PlusOne.
 
-%% TODO: Need to kill the receivers for these xfers in case the cast
-%% doesn't reach the handoff mgr.
+%% @private
+%%
+%% @doc Kill all outbound and inbound xfers related to `Repairs'
+%%      targeting this node with `Reason'.
+-spec kill_repairs([repair()], term()) -> ok.
 kill_repairs(Repairs, Reason) ->
-    Kill =
-        fun(R) ->
-                {_,MOOwner} = get_minus_one(R),
-                {_,POOwner} = get_minus_one(R),
-                MOX = R#repair.minus_one_xfer,
-                POX = R#repair.plus_one_xfer,
-                MOModSrcTarget = MOX#xfer_status.mod_src_target,
-                POModSrcTarget = POX#xfer_status.mod_src_target,
-                riak_core_handoff_manager:kill_xfer(MOOwner, MOModSrcTarget, Reason),
-                riak_core_handoff_manager:kill_xfer(POOwner, POModSrcTarget, Reason)
-        end,
-    [Kill(Repair) || Repair <- Repairs].
+    [kill_repair(Repair, Reason) || Repair <- Repairs],
+    ok.
+
+kill_repair(Repair, Reason) ->
+    {Mod, Partition} = Repair#repair.mod_partition,
+    Pairs = Repair#repair.pairs,
+    {_,MOOwner} = get_minus_one(Pairs),
+    {_,POOwner} = get_minus_one(Pairs),
+    MOX = Repair#repair.minus_one_xfer,
+    POX = Repair#repair.plus_one_xfer,
+    MOModSrcTarget = MOX#xfer_status.mod_src_target,
+    POModSrcTarget = POX#xfer_status.mod_src_target,
+    %% Kill the remote senders
+    riak_core_handoff_manager:kill_xfer(MOOwner,
+                                        MOModSrcTarget,
+                                        Reason),
+    riak_core_handoff_manager:kill_xfer(POOwner,
+                                        POModSrcTarget,
+                                        Reason),
+    %% Kill the local receivers
+    riak_core_handoff_manager:kill_xfer(node(),
+                                        {Mod, undefined, Partition},
+                                        Reason).

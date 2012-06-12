@@ -42,6 +42,7 @@
          status_update/2,
          set_concurrency/1,
          get_concurrency/0,
+         set_recv_data/2,
          kill_handoffs/0
         ]).
 
@@ -88,6 +89,13 @@ xfer({SrcPartition, SrcOwner}, {Module, TargetPartition}, FilterModFun) ->
                     {send_handoff, Module,
                      {SrcPartition, TargetPartition},
                      ReqOrigin, FilterModFun}).
+
+%% @doc Associate `Data' with the inbound handoff `Recv'.
+-spec set_recv_data(pid(), proplists:proplist()) -> ok.
+set_recv_data(Recv, Data) ->
+    %% Let this timeout and crash receiver if handoff mgr is
+    %% unresponsive.
+    gen_server:call(?MODULE, {set_recv_data, Recv, Data}).
 
 status() ->
     status(none).
@@ -149,6 +157,20 @@ handle_call({add_inbound,SSLOpts},_From,State=#state{handoffs=HS}) ->
             {reply, {ok,Receiver}, State#state{handoffs=HS2}};
         Error ->
             {reply, Error, State}
+    end;
+
+handle_call({set_recv_data, Recv, Data}, _From, State=#state{handoffs=HS}) ->
+    case lists:keyfind(Recv, #handoff_status.transport_pid, HS) of
+        false ->
+            throw({error, "set_recv_data called for non-existing receiver",
+                   Recv, Data});
+        #handoff_status{}=H ->
+            H2 = H#handoff_status{
+                   mod_src_tgt=proplists:get_value(mod_src_tgt, Data),
+                   vnode_pid=proplists:get_value(vnode_pid, Data)
+                  },
+            HS2 = lists:keyreplace(Recv, #handoff_status.transport_pid, HS, H2),
+            {reply, ok, State#state{handoffs=HS2}}
     end;
 
 handle_call({xfer_status, Xfer}, _From, State=#state{handoffs=HS}) ->
@@ -227,23 +249,8 @@ handle_cast({send_handoff, Mod, {Src, Target}, ReqOrigin,
 
 handle_cast({kill_xfer, ModSrcTarget, Reason}, State) ->
     HS = State#state.handoffs,
-    case lists:keytake(ModSrcTarget, #handoff_status.mod_src_tgt, HS) of
-        false ->
-            {reply, ok, State};
-        {value, Xfer, HS2} ->
-            #handoff_status{mod_src_tgt={Mod, SrcPartition, TargetPartition},
-                            type=Type,
-                            target_node=TargetNode,
-                            src_node=SrcNode,
-                            transport_pid=TP
-                           } = Xfer,
-            Msg = "~p transfer of ~p from ~p ~p to ~p ~p killed for reason ~p",
-            lager:info(Msg, [Type, Mod, SrcNode, SrcPartition,
-                             TargetNode, TargetPartition, Reason]),
-            exit(TP, {kill_xfer, Reason}),
-            {reply, ok, State#state{handoffs=HS2}}
-    end.
-
+    HS2 = kill_xfer_i(ModSrcTarget, Reason, HS),
+    {noreply, State#state{handoffs=HS2}}.
 
 handle_info({'DOWN', Ref, process, _Pid, Reason}, State=#state{handoffs=HS}) ->
     case lists:keytake(Ref, #handoff_status.transport_mon, HS) of
@@ -503,6 +510,29 @@ update_stats(StatsUpdate, Stats) ->
     Stats2 = dict:update_counter(objs, Objs, Stats),
     Stats3 = dict:update_counter(bytes, Bytes, Stats2),
     dict:store(last_update, LU, Stats3).
+
+%% @private
+%%
+%% @doc Kill and remove _each_ xfer associated with `ModSrcTarget'
+%%      with `Reason'.  There might be more than one because repair
+%%      can have two simultaneous inbound xfers.
+kill_xfer_i(ModSrcTarget, Reason, HS) ->
+    case lists:keytake(ModSrcTarget, #handoff_status.mod_src_tgt, HS) of
+        false ->
+            HS;
+        {value, Xfer, HS2} ->
+            #handoff_status{mod_src_tgt={Mod, SrcPartition, TargetPartition},
+                            type=Type,
+                            target_node=TargetNode,
+                            src_node=SrcNode,
+                            transport_pid=TP
+                           } = Xfer,
+            Msg = "~p transfer of ~p from ~p ~p to ~p ~p killed for reason ~p",
+            lager:info(Msg, [Type, Mod, SrcNode, SrcPartition,
+                             TargetNode, TargetPartition, Reason]),
+            exit(TP, {kill_xfer, Reason}),
+            kill_xfer_i(ModSrcTarget, Reason, HS2)
+    end.
 
 %%%===================================================================
 %%% Tests
