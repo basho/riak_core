@@ -34,7 +34,7 @@
 -define(log_fail(Str, Args),
         lager:error("~p transfer of ~p from ~p ~p to ~p ~p failed " ++ Str,
                     [Type, Module, SrcNode, SrcPartition, TargetNode,
-                     TargetPartition, Args])).
+                     TargetPartition] ++ Args)).
 
 %% Accumulator for the visit item HOF
 -record(ho_acc,
@@ -206,9 +206,9 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
          exit:{shutdown, timeout} ->
              %% A receive timeout during handoff
              riak_core_stat:update(handoff_timeouts),
-             ?log_fail(" because of TCP recv timeout", []);
+             ?log_fail("because of TCP recv timeout", []);
          Err:Reason ->
-             ?log_fail(" because of ~p:~p ~p",
+             ?log_fail("because of ~p:~p ~p",
                        [Err, Reason, erlang:get_stacktrace()]),
              gen_fsm:send_event(ParentPid, {handoff_error, Err, Reason})
      end.
