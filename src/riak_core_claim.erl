@@ -678,7 +678,7 @@ add_default_deltas(IdxOwners, Deltas, Default) ->
     {_, Owners} = lists:unzip(IdxOwners),
     Owners2 = lists:usort(Owners),
     Defaults = [{Member, Default} || Member <- Owners2],
-    lists:usort(Deltas ++ Defaults).
+    lists:ukeysort(1, Deltas ++ Defaults).
 
 %% @private
 get_expected_partitions(Ring, Node) ->
