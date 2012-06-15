@@ -265,7 +265,9 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}, State=#state{handoffs=HS}) ->
                     %% than 'normal' we should log the reason why as an error
                     normal ->
                         false;
-                    {shutdown, max_concurrency} ->
+                    X when X == max_concurrency orelse
+                           (element(1, X) == shutdown andalso
+                            element(2, X) == max_concurrency) ->
                         lager:info("An ~w handoff of partition ~w ~w was terminated for reason: ~w~n", [Dir,M,I,Reason]),
                         true;
                     _ ->
