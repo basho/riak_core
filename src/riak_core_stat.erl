@@ -20,49 +20,92 @@
 
 -module(riak_core_stat).
 
+-behaviour(gen_server).
+
 %% API
--export([get_stats/0, update/1, register_stats/0]).
+-export([start_link/0, get_stats/0, update/1,
+         register_stats/0, produce_stats/0]).
+
+%% gen_server callbacks
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2,
+         terminate/2, code_change/3]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
+-define(SERVER, ?MODULE).
+
 -define(APP, riak_core).
+
+start_link() ->
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+
+register_stats() ->
+    [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()],
+    riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
 
 %% @spec get_stats() -> proplist()
 %% @doc Get the current aggregation of stats.
 get_stats() ->
-    produce_stats().
+    case riak_core_stat_cache:get_stats(?APP) of
+        {ok, Stats, _TS} ->
+            Stats;
+        Error -> Error
+    end.
+
+update(Arg) ->
+    gen_server:cast(?SERVER, {update, Arg}).
+
+%% gen_server
+
+init([]) ->
+    {ok, ok}.
+
+handle_call(_Req, _From, State) ->
+    {reply, ok, State}.
+
+handle_cast({update, Arg}, State) ->
+    update1(Arg),
+    {noreply, State};
+handle_cast(_Req, State) ->
+    {noreply, State}.
+
+handle_info(_Info, State) ->
+    {noreply, State}.
+
+terminate(_Reason, _State) ->
+    ok.
+
+code_change(_OldVsn, State, _Extra) ->
+    {ok, State}.
 
 %% @spec update(term()) -> ok
 %% @doc Update the given stat.
-update(rejected_handoffs) ->
+update1(rejected_handoffs) ->
     folsom_metrics:notify_existing_metric({?APP, rejected_handoffs}, {inc, 1}, counter);
 
-update(handoff_timeouts) ->
+update1(handoff_timeouts) ->
     folsom_metrics:notify_existing_metric({?APP, handoff_timeouts}, {inc, 1}, counter);
 
-update(ignored_gossip) ->
+update1(ignored_gossip) ->
     folsom_metrics:notify_existing_metric({?APP, ignored_gossip_total}, {inc, 1}, counter);
 
-update(gossip_received) ->
+update1(gossip_received) ->
     folsom_metrics:notify_existing_metric({?APP, gossip_received}, 1, meter);
 
-update(rings_reconciled) ->
+update1(rings_reconciled) ->
     folsom_metrics:notify_existing_metric({?APP, rings_reconciled}, 1, meter);
-    
-update(converge_timer_begin) ->
+
+update1(converge_timer_begin) ->
     folsom_metrics:notify_existing_metric({?APP, converge_delay}, timer_start, duration);
-update(converge_timer_end) ->
+update1(converge_timer_end) ->
     folsom_metrics:notify_existing_metric({?APP, converge_delay}, timer_end, duration);
 
-update(rebalance_timer_begin) ->
+update1(rebalance_timer_begin) ->
     folsom_metrics:notify_existing_metric({?APP, rebalance_delay}, timer_start, duration);
-update(rebalance_timer_end) ->
+update1(rebalance_timer_end) ->
     folsom_metrics:notify_existing_metric({?APP, rebalance_delay}, timer_end, duration).
-
-register_stats() ->
-    [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()].
 
 %% private
 stats() ->
@@ -109,7 +152,7 @@ join(Atom1, Atom2) ->
     Bin1 = atom_to_binary(Atom1, latin1),
     Bin2 = atom_to_binary(Atom2, latin1),
     binary_to_atom(<<Bin1/binary, $_, Bin2/binary>>, latin1).
-    
+
 %% Provide aggregate stats for vnode queues.  Compute instantaneously for now,
 %% may need to cache if stats are called heavily (multiple times per seconds)
 vnodeq_stats() ->
