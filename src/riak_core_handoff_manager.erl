@@ -530,8 +530,13 @@ kill_xfer_i(ModSrcTarget, Reason, HS) ->
                             transport_pid=TP
                            } = Xfer,
             Msg = "~p transfer of ~p from ~p ~p to ~p ~p killed for reason ~p",
-            lager:info(Msg, [Type, Mod, SrcNode, SrcPartition,
-                             TargetNode, TargetPartition, Reason]),
+            case Type of
+                undefined ->
+                    ok;
+                _ ->
+                    lager:info(Msg, [Type, Mod, SrcNode, SrcPartition,
+                                     TargetNode, TargetPartition, Reason])
+            end,
             exit(TP, {kill_xfer, Reason}),
             kill_xfer_i(ModSrcTarget, Reason, HS2)
     end.

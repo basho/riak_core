@@ -191,13 +191,11 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                      _ -> gen_fsm:send_event(ParentPid, handoff_complete)
                  end;
              {error, ErrReason} ->
-                 ?log_fail("because of ~p", [ErrReason]),
                  if ErrReason == timeout ->
-                         riak_core_stat:update(handoff_timeouts);
-                    true -> ok
-                 end,
-                 gen_fsm:send_event(ParentPid, {handoff_error,
-                                                fold_error, ErrReason})
+                         exit({shutdown, timeout});
+                    true ->
+                         exit({shutdown, {error, ErrReason}})
+                 end
          end
      catch
          exit:{shutdown,max_concurrency} ->
@@ -206,7 +204,13 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
          exit:{shutdown, timeout} ->
              %% A receive timeout during handoff
              riak_core_stat:update(handoff_timeouts),
-             ?log_fail("because of TCP recv timeout", []);
+             ?log_fail("because of TCP recv timeout", []),
+             exit({shutdown, timeout});
+         exit:{shutdown, {error, Reason}} ->
+             ?log_fail("because of ~p", [Reason]),
+             gen_fsm:send_event(ParentPid, {handoff_error,
+                                            fold_error, Reason}),
+             exit({shutdown, {error, Reason}});
          Err:Reason ->
              ?log_fail("because of ~p:~p ~p",
                        [Err, Reason, erlang:get_stacktrace()]),
