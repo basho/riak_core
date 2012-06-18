@@ -30,6 +30,12 @@
 -include_lib("riak_core_vnode.hrl").
 -compile([export_all]).
 
+-define(POST_COND(PC, ErrTuple),
+        case PC of
+            true -> true;
+            false -> ErrTuple
+        end).
+
 -define(QC_OUT(P),
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 
@@ -224,25 +230,35 @@ precondition(_From,_To,_S,_C) ->
 
 postcondition(_From,_To,_S,
               {call,mock_vnode,get_index,[{Index,_Node}]},{ok,ReplyIndex}) ->
-    Index =:= ReplyIndex;
+    ?POST_COND(Index =:= ReplyIndex, {get_index, Index, ReplyIndex});
+
 postcondition(_From,_To,#qcst{crash_reasons=CRs},
               {call,mock_vnode,get_crash_reason,[{Index,_Node}]},{ok, Reason}) ->
     %% there is the potential for a race here if get_crash_reason is called
     %% before the EXIT signal is sent to the vnode, but it didn't appear 
     %% even with 1k tests - just a note in case a heisenbug rears its head
     %% on some future, less deterministic day.
-    orddict:fetch(Index, CRs) =:= Reason;
+    Expected = orddict:fetch(Index, CRs),
+    ?POST_COND(Expected =:= Reason, {get_crash_reason, Expected, Reason});
+
 postcondition(_From,_To,#qcst{counters=Counters},
               {call,mock_vnode,get_counter,[{Index,_Node}]},{ok,ReplyCount}) ->
-    orddict:fetch(Index, Counters) =:= ReplyCount;
+    Expected = orddict:fetch(Index, Counters),
+    ?POST_COND(Expected=:= ReplyCount, {get_counter, Expected, ReplyCount});
+
 postcondition(_From,_To,_S,
               {call,_Mod,Func,[]},Result)
   when Func =:= neverreply; Func =:= returnreply; Func =:= latereply ->
-    Result =:= ok;
+    Expected = ok,
+    ?POST_COND(Expected == Result, {Func, Expected, Result});
+
 postcondition(_From,_To,_S,
               {call,riak_core_vnode_master,all_nodes,[mock_vnode]},Result) ->
     Pids = [Pid || {_,Pid,_,_} <- supervisor:which_children(riak_core_vnode_sup)],
-    lists:sort(Result) =:= lists:sort(Pids);
+    Expected = lists:sort(Pids),
+    Result2 = lists:sort(Result),
+    ?POST_COND(Expected == Result2, {all_nodes, Expected, Result2});
+
 postcondition(_From,_To,_S,_C,_R) ->
     true.
 
