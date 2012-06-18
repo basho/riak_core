@@ -33,7 +33,6 @@
 %% Helper macro for declaring children of supervisor
 -define(CHILD(I, Type, Timeout), {I, {I, start_link, []}, permanent, Timeout, Type, [I]}).
 -define(CHILD(I, Type), ?CHILD(I, Type, 5000)).
--define (IF (Bool, A, B), if Bool -> A; true -> B end).
 
 %% ===================================================================
 %% API functions
@@ -68,6 +67,7 @@ init([]) ->
                   ?CHILD(riak_core_node_watcher_events, worker),
                   ?CHILD(riak_core_node_watcher, worker),
                   ?CHILD(riak_core_vnode_manager, worker),
+                  ?CHILD(riak_core_stat_cache, worker),
                   ?CHILD(riak_core_capability, worker),
                   ?CHILD(riak_core_gossip, worker),
                   ?CHILD(riak_core_claimant, worker),
