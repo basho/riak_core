@@ -126,7 +126,7 @@ register(Capability, Supported, Default, LegacyVar) ->
 %% as the default value. The order of modes in `Supported' determines the mode
 %% preference -- modes listed earlier are more preferred.
 register(Capability, Supported, Default) ->
-    register(Capability, Supported, Default, []).
+    register(Capability, Supported, Default, undefined).
 
 %% @doc Query the current negotiated mode for a given capability, throwing an
 %%      exception if the capability is unknown or the capability system is
@@ -557,6 +557,9 @@ query_capabilities(Node, #state{registered=Registered}) ->
                            {Cap, ResolvedAcc and Resv}
                    end, true, Registered).
 
+query_capability(_, Capability, DefaultSup, undefined) ->
+    Default = {Capability, [DefaultSup]},
+    {true, Default};
 query_capability(Node, Capability, DefaultSup, {App, Var, Map}) ->
     Default = {Capability, [DefaultSup]},
     Result = rpc:call(Node, application, get_env, [App, Var]),
