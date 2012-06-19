@@ -107,6 +107,9 @@ start(_StartType, _StartArgs) ->
                                           {riak_core,
                                            legacy_vnode_routing,
                                            [{true, legacy}, {false, proxy}]}),
+            riak_core_capability:register({riak_core, staged_joins},
+                                          [true, false],
+                                          false),
 
             {ok, Pid};
         {error, Reason} ->
