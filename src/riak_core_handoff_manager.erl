@@ -12,7 +12,7 @@
 %% specific language governing permissions and limitations
 %% under the License.
 
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2012 Basho Technologies, Inc.  All Rights Reserved.
 -module(riak_core_handoff_manager).
 -behaviour(gen_server).
 
@@ -35,11 +35,14 @@
 %% handoff api
 -export([add_outbound/4,
          add_inbound/1,
+         xfer/3,
+         kill_xfer/3,
          status/0,
          status/1,
          status_update/2,
          set_concurrency/1,
          get_concurrency/0,
+         set_recv_data/2,
          kill_handoffs/0
         ]).
 
@@ -49,30 +52,16 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--type index() :: integer().
--type modindex() :: {module(), index()}.
-
--record(handoff_status,
-        { modindex      :: modindex(),
-          src_node      :: node(),
-          target_node   :: node(),
-          direction     :: inbound | outbound,
-          transport_pid :: pid(),
-          timestamp     :: tuple(),
-          status        :: any(),
-          stats         :: dict(),
-          vnode_pid     :: pid() | undefined,
-          type          :: ownership | hinted_handoff
-        }).
-
 -record(state,
         { excl,
-          handoffs :: [#handoff_status{}]
+          handoffs=[] :: [handoff_status()]
         }).
 
 %% this can be overridden with riak_core handoff_concurrency
 -define(HANDOFF_CONCURRENCY,2).
-
+-define(HO_EQ(HOA, HOB),
+        HOA#handoff_status.mod_src_tgt == HOB#handoff_status.mod_src_tgt
+        andalso HOA#handoff_status.timestamp == HOB#handoff_status.timestamp).
 
 %%%===================================================================
 %%% API
@@ -90,6 +79,24 @@ add_outbound(Module,Idx,Node,VnodePid) ->
 add_inbound(SSLOpts) ->
     gen_server:call(?MODULE,{add_inbound,SSLOpts}).
 
+%% @doc Initiate a transfer from `SrcPartition' to `TargetPartition'
+%%      for the given `Module' using the `FilterModFun' filter.
+-spec xfer({index(), node()}, mod_partition(), {module(), atom()}) -> ok.
+xfer({SrcPartition, SrcOwner}, {Module, TargetPartition}, FilterModFun) ->
+    %% NOTE: This will not work with old nodes
+    ReqOrigin = node(),
+    gen_server:cast({?MODULE, SrcOwner},
+                    {send_handoff, Module,
+                     {SrcPartition, TargetPartition},
+                     ReqOrigin, FilterModFun}).
+
+%% @doc Associate `Data' with the inbound handoff `Recv'.
+-spec set_recv_data(pid(), proplists:proplist()) -> ok.
+set_recv_data(Recv, Data) ->
+    %% Let this timeout and crash receiver if handoff mgr is
+    %% unresponsive.
+    gen_server:call(?MODULE, {set_recv_data, Recv, Data}).
+
 status() ->
     status(none).
 
@@ -97,16 +104,21 @@ status(Filter) ->
     gen_server:call(?MODULE, {status, Filter}).
 
 %% @doc Send status updates `Stats' to the handoff manager for a
-%%      particular handoff identified by `ModIdx'.
--spec status_update(modindex(), proplists:proplist()) -> ok.
-status_update(ModIdx, Stats) ->
-    gen_server:cast(?MODULE, {status_update, ModIdx, Stats}).
+%%      particular handoff identified by `ModSrcTgt'.
+-spec status_update(mod_src_tgt(), ho_stats()) -> ok.
+status_update(ModSrcTgt, Stats) ->
+    gen_server:cast(?MODULE, {status_update, ModSrcTgt, Stats}).
 
 set_concurrency(Limit) ->
     gen_server:call(?MODULE,{set_concurrency,Limit}).
 
 get_concurrency() ->
     gen_server:call(?MODULE, get_concurrency).
+
+%% @doc Kill the transfer of `ModSrcTarget' with `Reason'.
+-spec kill_xfer(node(), tuple(), any()) -> ok.
+kill_xfer(SrcNode, ModSrcTarget, Reason) ->
+    gen_server:cast({?MODULE, SrcNode}, {kill_xfer, ModSrcTarget, Reason}).
 
 kill_handoffs() ->
     set_concurrency(0).
@@ -131,18 +143,41 @@ handle_call({get_exclusions, Module}, _From, State=#state{excl=Excl}) ->
 handle_call({add_outbound,Mod,Idx,Node,Pid},_From,State=#state{handoffs=HS}) ->
     case send_handoff(Mod,Idx,Node,Pid,HS) of
         {ok,Handoff=#handoff_status{transport_pid=Sender}} ->
-            {reply,{ok,Sender},State#state{handoffs=HS ++ [Handoff]}};
+            HS2 = HS ++ [Handoff],
+            {reply, {ok,Sender}, State#state{handoffs=HS2}};
         {false,_ExistingHandoff=#handoff_status{transport_pid=Sender}} ->
-            {reply,{ok,Sender},State};
+            {reply, {ok,Sender}, State};
         Error ->
-            {reply,Error,State}
+            {reply, Error, State}
     end;
 handle_call({add_inbound,SSLOpts},_From,State=#state{handoffs=HS}) ->
     case receive_handoff(SSLOpts) of
         {ok,Handoff=#handoff_status{transport_pid=Receiver}} ->
-            {reply,{ok,Receiver},State#state{handoffs=HS ++ [Handoff]}};
+            HS2 = HS ++ [Handoff],
+            {reply, {ok,Receiver}, State#state{handoffs=HS2}};
         Error ->
-            {reply,Error,State}
+            {reply, Error, State}
+    end;
+
+handle_call({set_recv_data, Recv, Data}, _From, State=#state{handoffs=HS}) ->
+    case lists:keyfind(Recv, #handoff_status.transport_pid, HS) of
+        false ->
+            throw({error, "set_recv_data called for non-existing receiver",
+                   Recv, Data});
+        #handoff_status{}=H ->
+            H2 = H#handoff_status{
+                   mod_src_tgt=proplists:get_value(mod_src_tgt, Data),
+                   vnode_pid=proplists:get_value(vnode_pid, Data)
+                  },
+            HS2 = lists:keyreplace(Recv, #handoff_status.transport_pid, HS, H2),
+            {reply, ok, State#state{handoffs=HS2}}
+    end;
+
+handle_call({xfer_status, Xfer}, _From, State=#state{handoffs=HS}) ->
+    TP = Xfer#handoff_status.transport_pid,
+    case lists:keyfind(TP, #handoff_status.transport_pid, HS) of
+        false -> {reply, not_found, State};
+        _ -> {reply, in_progress, State}
     end;
 
 handle_call({status, Filter}, _From, State=#state{handoffs=HS}) ->
@@ -170,7 +205,9 @@ handle_call(get_concurrency, _From, State) ->
     {reply, Concurrency, State}.
 
 handle_cast({del_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
-    {noreply, State#state{excl=ordsets:del_element({Mod, Idx}, Excl)}};
+    Excl2 = ordsets:del_element({Mod, Idx}, Excl),
+    {noreply, State#state{excl=Excl2}};
+
 handle_cast({add_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
     case riak_core_ring:my_indices(Ring) of
@@ -180,24 +217,46 @@ handle_cast({add_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
         _ ->
             ok
     end,
-    {noreply, State#state{excl=ordsets:add_element({Mod, Idx}, Excl)}};
+    Excl2 = ordsets:add_element({Mod, Idx}, Excl),
+    {noreply, State#state{excl=Excl2}};
 
-handle_cast({status_update, ModIdx, StatsUpdate}, State=#state{handoffs=HS}) ->
-    case lists:keyfind(ModIdx, #handoff_status.modindex, HS) of
+handle_cast({status_update, ModSrcTgt, StatsUpdate}, State=#state{handoffs=HS}) ->
+    case lists:keyfind(ModSrcTgt, #handoff_status.mod_src_tgt, HS) of
         false ->
-            lager:error("status_update for non-existing handoff ~p", [ModIdx]),
+            lager:error("status_update for non-existing handoff ~p", [ModSrcTgt]),
             {noreply, State};
         HO ->
             Stats2 = update_stats(StatsUpdate, HO#handoff_status.stats),
             HO2 = HO#handoff_status{stats=Stats2},
-            HS2 = lists:keyreplace(ModIdx, #handoff_status.modindex, HS, HO2),
+            HS2 = lists:keyreplace(ModSrcTgt, #handoff_status.mod_src_tgt, HS, HO2),
             {noreply, State#state{handoffs=HS2}}
-    end.
+    end;
 
-handle_info({'DOWN',_Ref,process,Pid,Reason},State=#state{handoffs=HS}) ->
-    case lists:keytake(Pid,#handoff_status.transport_pid,HS) of
+handle_cast({send_handoff, Mod, {Src, Target}, ReqOrigin,
+             {FilterMod, FilterFun}=FMF},
+            State=#state{handoffs=HS}) ->
+    Filter = FilterMod:FilterFun(Target),
+    %% TODO: make a record?
+    {ok, VNode} = riak_core_vnode_manager:get_vnode_pid(Src, Mod),
+    case send_handoff({Mod, Src, Target}, ReqOrigin, VNode, HS,
+                      {Filter, FMF}, ReqOrigin) of
+        {ok, Handoff} ->
+            HS2 = HS ++ [Handoff],
+            {noreply, State#state{handoffs=HS2}};
+        _ ->
+            {noreply, State}
+    end;
+
+handle_cast({kill_xfer, ModSrcTarget, Reason}, State) ->
+    HS = State#state.handoffs,
+    HS2 = kill_xfer_i(ModSrcTarget, Reason, HS),
+    {noreply, State#state{handoffs=HS2}}.
+
+handle_info({'DOWN', Ref, process, _Pid, Reason}, State=#state{handoffs=HS}) ->
+    case lists:keytake(Ref, #handoff_status.transport_mon, HS) of
         {value,
-         #handoff_status{modindex={M,I},direction=Dir,vnode_pid=Vnode},
+         #handoff_status{mod_src_tgt={M, S, I}, direction=Dir, vnode_pid=Vnode,
+                         vnode_mon=VnodeM, req_origin=Origin},
          NewHS
         } ->
             WarnVnode =
@@ -206,7 +265,9 @@ handle_info({'DOWN',_Ref,process,Pid,Reason},State=#state{handoffs=HS}) ->
                     %% than 'normal' we should log the reason why as an error
                     normal ->
                         false;
-                    max_concurrency ->
+                    X when X == max_concurrency orelse
+                           (element(1, X) == shutdown andalso
+                            element(2, X) == max_concurrency) ->
                         lager:info("An ~w handoff of partition ~w ~w was terminated for reason: ~w~n", [Dir,M,I,Reason]),
                         true;
                     _ ->
@@ -218,19 +279,45 @@ handle_info({'DOWN',_Ref,process,Pid,Reason},State=#state{handoffs=HS}) ->
             %% handoff stopped so it can clean up its state
             case WarnVnode andalso is_pid(Vnode) of
                 true ->
-                    riak_core_vnode:handoff_error(Vnode,'DOWN',Reason);
+                    riak_core_vnode:handoff_error(Vnode, 'DOWN', Reason);
                 _ ->
+                    case Origin of
+                        none -> ok;
+                        _ ->
+                            %% Use proplist instead so it's more
+                            %% flexible in future, or does
+                            %% capabilities nullify that?
+                            Msg = {M, S, I},
+                            riak_core_vnode_manager:xfer_complete(Origin, Msg)
+                    end,
                     ok
+            end,
+
+            %% No monitor on vnode for receiver
+            if VnodeM /= undefined -> demonitor(VnodeM);
+               true -> ok
             end,
 
             %% removed the handoff from the list of active handoffs
             {noreply, State#state{handoffs=NewHS}};
         false ->
-            {noreply, State}
-    end;
-handle_info(Info, State) ->
-    io:format(">>>>> ~w~n", [Info]),
-    {noreply, State}.
+            case lists:keytake(Ref, #handoff_status.vnode_mon, HS) of
+                {value,
+                 #handoff_status{mod_src_tgt={M,_,I}, direction=Dir,
+                                 transport_pid=Trans, transport_mon=TransM},
+                 NewHS} ->
+                    %% In this case the vnode died and the handoff
+                    %% sender must be killed.
+                    lager:error("An ~w handoff of partition ~w ~w was "
+                                "terminated because the vnode died",
+                                [Dir, M, I]),
+                    demonitor(TransM),
+                    exit(Trans, vnode_died),
+                    {noreply, State#state{handoffs=NewHS}};
+                _ ->
+                    {noreply, State}
+            end
+    end.
 
 
 terminate(_Reason, _State) ->
@@ -246,7 +333,7 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 
 build_status(HO) ->
-    #handoff_status{modindex={Mod, Partition},
+    #handoff_status{mod_src_tgt={Mod, SrcP, TargetP},
                     src_node=SrcNode,
                     target_node=TargetNode,
                     direction=Dir,
@@ -256,7 +343,8 @@ build_status(HO) ->
                     stats=Stats,
                     type=Type}=HO,
     {status_v2, [{mod, Mod},
-                 {partition, Partition},
+                 {src_partition, SrcP},
+                 {target_partition, TargetP},
                  {src_node, SrcNode},
                  {target_node, TargetNode},
                  {direction, Dir},
@@ -303,14 +391,29 @@ handoff_concurrency_limit_reached () ->
     ActiveSenders=proplists:get_value(active,Senders),
     get_concurrency_limit() =< (ActiveReceivers + ActiveSenders).
 
-%% spawn a sender process
-send_handoff (Mod,Idx,Node,Vnode,HS) ->
+send_handoff(Mod, Partition, Node, Pid, HS) ->
+    send_handoff({Mod, Partition, Partition}, Node, Pid, HS, {none, none}, none).
+
+%% @private
+%%
+%% @doc Start a handoff process for the given `Mod' from
+%%      `Src'/`VNode' to `Target'/`Node' using the given `Filter'
+%%      function which is a predicate applied to the key.  The
+%%      `Origin' is the node this request originated from so a reply
+%%      can't be sent on completion.
+-spec send_handoff({module(), index(), index()}, node(),
+                   pid(), list(),
+                   {predicate() | none, {module(), atom()} | none}, node()) ->
+                          {ok, handoff_status()}
+                              | {error, max_concurrency}
+                              | {false, handoff_status()}.
+send_handoff({Mod, Src, Target}, Node, Vnode, HS, {Filter, FilterModFun}, Origin) ->
     case handoff_concurrency_limit_reached() of
         true ->
             {error, max_concurrency};
         false ->
             ShouldHandoff=
-                case lists:keyfind({Mod,Idx},#handoff_status.modindex,HS) of
+                case lists:keyfind({Mod, Src, Target}, #handoff_status.mod_src_tgt, HS) of
                     false ->
                         true;
                     Handoff=#handoff_status{target_node=Node,vnode_pid=Vnode} ->
@@ -325,31 +428,52 @@ send_handoff (Mod,Idx,Node,Vnode,HS) ->
 
             case ShouldHandoff of
                 true ->
+                    VnodeM = monitor(process, Vnode),
                     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
                     %% assumes local node is doing the sending
-                    Primary = riak_core_ring:is_primary(Ring, {Idx, node()}),
-                    HOType = if Primary -> ownership_handoff;
+                    Primary = riak_core_ring:is_primary(Ring, {Src, node()}),
+                    HOType = if Primary ->
+                                     if Src == Target -> ownership_handoff;
+                                        true -> repair
+                                     end;
                                 true -> hinted_handoff
                              end,
 
                     %% start the sender process
-                    {ok,Pid}=riak_core_handoff_sender_sup:start_sender(Node,
-                                                                       Mod,
-                                                                       Idx,
-                                                                       Vnode),
-                    erlang:monitor(process,Pid),
+                    case HOType of
+                        repair ->
+                            {ok, Pid} =
+                                riak_core_handoff_sender_sup:start_repair(Mod,
+                                                                          Src,
+                                                                          Target,
+                                                                          Vnode,
+                                                                          Node,
+                                                                          Filter);
+                        _ ->
+                            {ok,Pid} =
+                                riak_core_handoff_sender_sup:start_handoff(HOType,
+                                                                           Mod,
+                                                                           Target,
+                                                                           Vnode,
+                                                                           Node)
+                    end,
+                    PidM = monitor(process, Pid),
 
                     %% successfully started up a new sender handoff
                     {ok, #handoff_status{ transport_pid=Pid,
+                                          transport_mon=PidM,
                                           direction=outbound,
                                           timestamp=now(),
                                           src_node=node(),
                                           target_node=Node,
-                                          modindex={Mod,Idx},
+                                          mod_src_tgt={Mod, Src, Target},
                                           vnode_pid=Vnode,
+                                          vnode_mon=VnodeM,
                                           status=[],
                                           stats=dict:new(),
-                                          type=HOType
+                                          type=HOType,
+                                          req_origin=Origin,
+                                          filter_mod_fun=FilterModFun
                                         }
                     };
 
@@ -366,17 +490,19 @@ receive_handoff (SSLOpts) ->
             {error, max_concurrency};
         false ->
             {ok,Pid}=riak_core_handoff_receiver_sup:start_receiver(SSLOpts),
-            erlang:monitor(process,Pid),
+            PidM = monitor(process, Pid),
 
             %% successfully started up a new receiver
             {ok, #handoff_status{ transport_pid=Pid,
+                                  transport_mon=PidM,
                                   direction=inbound,
                                   timestamp=now(),
-                                  modindex={undefined,undefined},
+                                  mod_src_tgt={undefined, undefined, undefined},
                                   src_node=undefined,
                                   target_node=undefined,
                                   status=[],
-                                  stats=dict:new()
+                                  stats=dict:new(),
+                                  req_origin=none
                                 }
             }
     end.
@@ -387,6 +513,33 @@ update_stats(StatsUpdate, Stats) ->
     Stats3 = dict:update_counter(bytes, Bytes, Stats2),
     dict:store(last_update, LU, Stats3).
 
+%% @private
+%%
+%% @doc Kill and remove _each_ xfer associated with `ModSrcTarget'
+%%      with `Reason'.  There might be more than one because repair
+%%      can have two simultaneous inbound xfers.
+kill_xfer_i(ModSrcTarget, Reason, HS) ->
+    case lists:keytake(ModSrcTarget, #handoff_status.mod_src_tgt, HS) of
+        false ->
+            HS;
+        {value, Xfer, HS2} ->
+            #handoff_status{mod_src_tgt={Mod, SrcPartition, TargetPartition},
+                            type=Type,
+                            target_node=TargetNode,
+                            src_node=SrcNode,
+                            transport_pid=TP
+                           } = Xfer,
+            Msg = "~p transfer of ~p from ~p ~p to ~p ~p killed for reason ~p",
+            case Type of
+                undefined ->
+                    ok;
+                _ ->
+                    lager:info(Msg, [Type, Mod, SrcNode, SrcPartition,
+                                     TargetNode, TargetPartition, Reason])
+            end,
+            exit(TP, {kill_xfer, Reason}),
+            kill_xfer_i(ModSrcTarget, Reason, HS2)
+    end.
 
 %%%===================================================================
 %%% Tests

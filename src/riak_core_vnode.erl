@@ -40,6 +40,10 @@
          core_status/1,
          handoff_error/3]).
 
+-define(normal_reason(R),
+        (R == normal orelse R == shutdown orelse
+                                            (is_tuple(R) andalso element(1,R) == shutdown))).
+
 -spec behaviour_info(atom()) -> 'undefined' | [{atom(), arity()}].
 behaviour_info(callbacks) ->
     [{init,1},
@@ -542,10 +546,10 @@ handle_info(Info, StateName, State=#state{mod=Mod,modstate=ModState}) ->
     end.
 
 terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState,
-        pool_pid=Pool}) ->
-    %% Shutdown if the pool is still alive - there could be a race on
-    %% delivery of the unregistered event and successfully shutting
-    %% down the pool.
+        pool_pid=Pool}) when ?normal_reason(Reason) ->
+    %% Shutdown if the pool is still alive and a normal `Reason' is
+    %% given - there could be a race on delivery of the unregistered
+    %% event and successfully shutting down the pool.
     case is_pid(Pool) andalso is_process_alive(Pool) of
         true ->
             riak_core_vnode_worker_pool:shutdown_pool(Pool, 60000);
@@ -558,7 +562,9 @@ terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState,
             Mod:terminate(Reason, ModState1);
         _ ->
             Mod:terminate(Reason, ModState)
-    end.
+    end;
+terminate(_, _, _) ->
+    ok.
 
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.

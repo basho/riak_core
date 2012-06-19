@@ -1,8 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_handoff_receiver: incoming data handler for TCP-based handoff
-%%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2012 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -31,12 +29,12 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--record(state, {sock :: port(), 
+-record(state, {sock :: port(),
                 ssl_opts :: [] | list(),
                 tcp_mod :: atom(),
-                partition :: non_neg_integer(), 
+                partition :: non_neg_integer(),
                 vnode_mod = riak_kv_vnode:: module(),
-                vnode :: pid(), 
+                vnode :: pid(),
                 count = 0 :: non_neg_integer()}).
 
 
@@ -49,7 +47,7 @@ start_link(SslOpts) ->
 set_socket(Pid, Socket) ->
     gen_server2:call(Pid, {set_socket, Socket}).
 
-init([SslOpts]) -> 
+init([SslOpts]) ->
     {ok, #state{ssl_opts = SslOpts,
                 tcp_mod  = if SslOpts /= [] -> ssl;
                               true          -> gen_tcp
@@ -100,6 +98,9 @@ process_message(?PT_MSG_INIT, MsgData, State=#state{vnode_mod=VNodeMod}) ->
     <<Partition:160/integer>> = MsgData,
     lager:info("Receiving handoff data for partition ~p:~p", [VNodeMod, Partition]),
     {ok, VNode} = riak_core_vnode_master:get_vnode_pid(Partition, VNodeMod),
+    Data = [{mod_src_tgt, {VNodeMod, undefined, Partition}},
+            {vnode_pid, VNode}],
+    riak_core_handoff_manager:set_recv_data(self(), Data),
     State#state{partition=Partition, vnode=VNode};
 process_message(?PT_MSG_OBJ, MsgData, State=#state{vnode=VNode, count=Count}) ->
     Msg = {handoff_data, MsgData},
@@ -133,4 +134,3 @@ handle_cast(_Msg, State) -> {noreply, State}.
 terminate(_Reason, _State) -> ok.
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
-
