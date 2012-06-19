@@ -29,7 +29,10 @@
          set_bucket/2,
          get_bucket/1,
          get_bucket/2,
-         merge_props/2]).
+         get_buckets/1,
+         merge_props/2,
+         name/1,
+         n_val/1]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -107,6 +110,14 @@ get_bucket(Name, Ring) ->
         {ok, Bucket} -> Bucket
     end.
 
+%% @doc Get bucket properties `Props' for all the buckets in the given
+%%      `Ring'
+-spec get_buckets(riak_core_ring:riak_core_ring()) ->
+                         Props::list().
+get_buckets(Ring) ->
+    Names = riak_core_ring:get_buckets(Ring),
+    [get_bucket(Name, Ring) || Name <- Names].
+
 %% @private
 -spec validate_props(BucketProps::list({PropName::atom(), Value::any()}),
                      Validators::list(module()),
@@ -120,6 +131,12 @@ validate_props(_, [], Errors) ->
 validate_props(BucketProps0, [{_App, Validator}|T], Errors0) ->
     {BucketProps, Errors} = Validator:validate(BucketProps0),
     validate_props(BucketProps, T, lists:flatten([Errors|Errors0])).
+
+name(BProps) ->
+    proplists:get_value(name, BProps).
+
+n_val(BProps) ->
+    proplists:get_value(n_val, BProps).
 
 %% ===================================================================
 %% EUnit tests
