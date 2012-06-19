@@ -62,7 +62,10 @@ simple_test_() ->
 setup_simple() ->
     Vars = [{ring_creation_size, 8},
             {ring_state_dir, "<nostore>"},
-            {cluster_name, "test"}],
+            {cluster_name, "test"},
+            %% Don't allow rolling start of vnodes as it will cause a
+            %% race condition with `all_nodes'.
+            {vnode_rolling_start, 0}],
     OldVars = [begin
                    Old = app_helper:get_env(riak_core, AppKey),
                    ok = application:set_env(riak_core, AppKey, Val),
