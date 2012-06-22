@@ -115,17 +115,30 @@ force_update() ->
     ok.
 
 do_write_ringfile(Ring) ->
-    {{Year, Month, Day},{Hour, Minute, Second}} = calendar:universal_time(),
-    TS = io_lib:format(".~B~2.10.0B~2.10.0B~2.10.0B~2.10.0B~2.10.0B",
-                       [Year, Month, Day, Hour, Minute, Second]),
     case app_helper:get_env(riak_core, ring_state_dir) of
         "<nostore>" -> nop;
         Dir ->
+            {{Year, Month, Day},{Hour, Minute, Second}} = calendar:universal_time(),
+            TS = io_lib:format(".~B~2.10.0B~2.10.0B~2.10.0B~2.10.0B~2.10.0B",
+                               [Year, Month, Day, Hour, Minute, Second]),
             Cluster = app_helper:get_env(riak_core, cluster_name),
             FN = Dir ++ "/riak_core_ring." ++ Cluster ++ TS,
-            ok = filelib:ensure_dir(FN),
-            ok = file:write_file(FN, term_to_binary(Ring))
+            do_write_ringfile(Ring, FN)
     end.
+
+do_write_ringfile(Ring, FN) ->
+    ok = filelib:ensure_dir(FN),
+    TmpFN = FN ++ ".tmp", %% list comp. in find_latest_ringfile will skip
+    try
+        ok = file:write_file(TmpFN, term_to_binary(Ring)),
+        Ring = read_ringfile(TmpFN),
+        ok = file:rename(TmpFN, FN)
+    catch
+        _:Err ->
+            lager:error("Unable to write ring to \"~s\" - ~p\n", [FN, Err]),
+            {error,Err}
+    end.
+    
 
 %% @spec find_latest_ringfile() -> string()
 find_latest_ringfile() ->
@@ -450,5 +463,31 @@ refresh_my_ring_test() ->
      || {AppKey, _Val} <- Core_Settings],
     ok.
 
+-define(TEST_RINGDIR, "ring_manager_eunit").
+-define(TEST_RINGFILE, (?TEST_RINGDIR ++ "/test.ring")).
+-define(TMP_RINGFILE,  (?TEST_RINGFILE ++ ".tmp")).
+do_write_ringfile_test() ->
+    %% Make sure no data exists from previous runs
+    file:change_mode(?TMP_RINGFILE, 8#00644),
+    file:delete(?TMP_RINGFILE),
+    file:change_mode(?TEST_RINGFILE, 8#00644),
+    file:delete(?TEST_RINGFILE),
+    
+    %% Check happy path
+    GenR = fun(Name) -> riak_core_ring:fresh(64, Name) end,
+    ?assertEqual(ok, do_write_ringfile(GenR(happy), ?TEST_RINGFILE)),
+    
+    %% Check write fails (create .tmp file with no write perms)
+    ok = file:write_file(?TMP_RINGFILE, <<"no write for you">>),
+    ok = file:change_mode(?TMP_RINGFILE, 8#00444),
+    ?assertMatch({error,_}, do_write_ringfile(GenR(tmp_perms), ?TEST_RINGFILE)),
+    ok = file:change_mode(?TMP_RINGFILE, 8#00644),
+    ok = file:delete(?TMP_RINGFILE),
+    
+    %% Check rename fails
+    ok = file:change_mode(?TEST_RINGDIR, 8#00444),
+    ?assertMatch({error,_}, do_write_ringfile(GenR(ring_perms), ?TEST_RINGFILE)),
+    ok = file:change_mode(?TEST_RINGDIR, 8#00755).
+    
 -endif.
 
