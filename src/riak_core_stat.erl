@@ -20,23 +20,62 @@
 
 -module(riak_core_stat).
 
+-behaviour(gen_server).
+
 %% API
--export([get_stats/0, update/1, register_stats/0, produce_stats/0]).
+-export([start_link/0, get_stats/0, update/1,
+         register_stats/0, produce_stats/0]).
+
+%% gen_server callbacks
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2,
+         terminate/2, code_change/3]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
+-define(SERVER, ?MODULE).
+
 -define(APP, riak_core).
+
+start_link() ->
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 %% @spec get_stats() -> proplist()
 %% @doc Get the current aggregation of stats.
 get_stats() ->
-    riak_core_stat_cache:get_stats(?APP).
+    case riak_core_stat_cache:get_stats(?APP) of
+        {ok, Stats, _TS} ->
+            Stats;
+        Error -> Error
+    end.
 
 update(Arg) ->
-    spawn(fun() ->
-                 update1(Arg) end).
+    gen_server:cast(?SERVER, {update, Arg}).
+
+
+%% gen_server
+
+init([]) ->
+    {ok, ok}.
+
+handle_call(_Req, _From, State) ->
+    {reply, ok, State}.
+
+handle_cast({update, Arg}, State) ->
+    update1(Arg),
+    {noreply, State};
+handle_cast(_Req, State) ->
+    {noreply, State}.
+
+handle_info(_Info, State) ->
+    {noreply, State}.
+
+terminate(_Reason, _State) ->
+    ok.
+
+code_change(_OldVsn, State, _Extra) ->
+    {ok, State}.
 
 %% @spec update(term()) -> ok
 %% @doc Update the given stat.
