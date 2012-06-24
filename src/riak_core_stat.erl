@@ -41,6 +41,10 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
+register_stats() ->
+    [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()],
+    riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
+
 %% @spec get_stats() -> proplist()
 %% @doc Get the current aggregation of stats.
 get_stats() ->
@@ -52,7 +56,6 @@ get_stats() ->
 
 update(Arg) ->
     gen_server:cast(?SERVER, {update, Arg}).
-
 
 %% gen_server
 
@@ -103,10 +106,6 @@ update1(rebalance_timer_begin) ->
     folsom_metrics:notify_existing_metric({?APP, rebalance_delay}, timer_start, duration);
 update1(rebalance_timer_end) ->
     folsom_metrics:notify_existing_metric({?APP, rebalance_delay}, timer_end, duration).
-
-register_stats() ->
-    [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()],
-    riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
 
 %% private
 stats() ->
