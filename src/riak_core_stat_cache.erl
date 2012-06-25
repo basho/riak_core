@@ -233,11 +233,12 @@ serialize_calls() ->
     %% call get stats for core to show the server is not blocked
     %% return from the kv call and show a) all have same result
     %% b) only one call to produce_stats
+    Procs = 20,
     Now = tick(2000, 0),
     meck:expect(riak_kv_stat, produce_stats, fun() -> register(blocked, self()), receive release -> ?STATS  end end),
     Coordinator = self(),
-    Collector  = spawn(fun() -> collect_results(Coordinator, []) end),
-    Pids = [spawn(fun() -> Stats = riak_core_stat_cache:get_stats(riak_kv), Collector ! {res, Stats} end) || _ <- lists:seq(1, 20)],
+    Collector  = spawn_link(fun() -> collect_results(Coordinator, [], Procs) end),
+    Pids = [spawn_link(fun() -> Stats = riak_core_stat_cache:get_stats(riak_kv), Collector ! {res, Stats} end) || _ <- lists:seq(1, Procs)],
     ?assertEqual({ok, ?STATS, Now}, riak_core_stat_cache:get_stats(riak_core)),
     [?assertEqual({status, waiting}, process_info(Pid, status)) || Pid <- Pids],
 
@@ -253,7 +254,7 @@ serialize_calls() ->
               end,
 
     [?assertEqual(undefined, process_info(Pid)) || Pid <- Pids],
-    ?assertEqual(20, length(Results)),
+    ?assertEqual(Procs, length(Results)),
     [?assertEqual({ok, ?STATS, Now}, Res) || Res <- Results],
     ?assertEqual(2, meck:num_calls(riak_kv_stat, produce_stats, [])).
 
@@ -261,12 +262,12 @@ tick(Moment, IncrBy) ->
     meck:expect(folsom_utils, now_epoch, fun() -> Moment + IncrBy end),
     Moment+IncrBy.
 
-collect_results(Pid, Results) when length(Results) == 20 ->
+collect_results(Pid, Results, 0) ->
     Pid ! Results;
-collect_results(Pid, Results) ->
+collect_results(Pid, Results, Procs) ->
     receive
         {res, Stats} ->
-            collect_results(Pid, [Stats|Results])
+            collect_results(Pid, [Stats|Results], Procs-1)
     end.
 
 -endif.
