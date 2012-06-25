@@ -172,9 +172,9 @@ cache_test_() ->
      end,
      fun(_) ->
              folsom:stop(),
-             [meck:unload(Mock) || Mock <- ?MOCKS],
-             erlang:exit(whereis(riak_core_stat_cache), kill)
+             [meck:unload(Mock) || Mock <- ?MOCKS]
      end,
+
      [{"Register with the cache",
       fun register/0},
       {"Get cached value",
