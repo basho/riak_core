@@ -25,7 +25,8 @@
 -author('Russell Brown <russelldb@basho.com>').
 
 %% API
--export([start_link/0, get_stats/1, register_app/2, register_app/3]).
+-export([start_link/0, get_stats/1, register_app/2, register_app/3,
+        stop/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -58,6 +59,9 @@ register_app(App, {M, F, A}, TTL) ->
 
 get_stats(App) ->
     gen_server:call(?SERVER, {get_stats, App}, infinity).
+
+stop() ->
+    gen_server:cast(?SERVER, stop).
 
 %%% gen server
 
@@ -103,6 +107,8 @@ handle_cast({stats, App, Stats, TS}, State0=#state{tab=Tab, active=Active}) ->
                     State0
             end,
     {noreply, State};
+handle_cast(stop, State) ->
+    {stop, normal, State};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -172,7 +178,8 @@ cache_test_() ->
      end,
      fun(_) ->
              folsom:stop(),
-             [meck:unload(Mock) || Mock <- ?MOCKS]
+             [meck:unload(Mock) || Mock <- ?MOCKS],
+             riak_core_stat_cache:stop()
      end,
 
      [{"Register with the cache",
