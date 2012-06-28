@@ -51,7 +51,8 @@
          rename_node/3,
          responsible_index/2,
          transfer_node/3,
-         update_meta/3]).
+         update_meta/3,
+         clear_meta/2]).
 
 -export([cluster_name/1,
          legacy_ring/1,
@@ -496,6 +497,24 @@ update_meta(Key, Val, State) ->
                                       State?CHSTATE.vclock),
             State?CHSTATE{vclock=VClock,
                           meta=dict:store(Key, M, State?CHSTATE.meta)};
+       true ->
+            State
+    end.
+
+% @doc Clear a key in the cluster metadata dict
+-spec clear_meta(Key :: term(), State :: chstate()) -> chstate().
+clear_meta(Key, State) ->
+    Change = case dict:find(Key, State?CHSTATE.meta) of
+                 {ok, _} ->
+                     true;
+                 error ->
+                     false
+             end,
+    if Change ->
+            VClock = vclock:increment(State?CHSTATE.nodename,
+                                      State?CHSTATE.vclock),
+            State?CHSTATE{vclock=VClock,
+                          meta=dict:erase(Key, State?CHSTATE.meta)};
        true ->
             State
     end.
