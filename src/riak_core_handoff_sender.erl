@@ -279,11 +279,12 @@ visit_item(K, V, Acc) ->
     end.
 
 get_handoff_ip(Node) when is_atom(Node) ->
-    try
-        gen_server2:call({riak_core_handoff_listener, Node}, handoff_ip, infinity)
-    catch
-        _:_ ->
-            error
+    case rpc:call(Node, riak_core_handoff_listener, get_handoff_ip, [],
+                  infinity) of
+        {badrpc, _} ->
+            error;
+        Res ->
+            Res
     end.
 
 get_handoff_port(Node) when is_atom(Node) ->
