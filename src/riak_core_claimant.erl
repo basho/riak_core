@@ -160,6 +160,7 @@ claimant() ->
 %%%===================================================================
 
 init([]) ->
+    schedule_tick(),
     {ok, #state{changes=[], seed=erlang:now()}}.
 
 handle_call(clear, _From, State) ->
@@ -192,6 +193,10 @@ handle_call(_Request, _From, State) ->
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
+
+handle_info(tick, State) ->
+    State2 = tick(State),
+    {noreply, State2};
 
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -452,6 +457,40 @@ same_plan(RingA, RingB) ->
     (riak_core_ring:all_member_status(RingA) == riak_core_ring:all_member_status(RingB)) andalso
     (riak_core_ring:all_owners(RingA) == riak_core_ring:all_owners(RingB)) andalso
     (riak_core_ring:pending_changes(RingA) == riak_core_ring:pending_changes(RingB)).
+
+schedule_tick() ->
+    Tick = app_helper:get_env(riak_core,
+                              claimant_tick,
+                              10000),
+    erlang:send_after(Tick, ?MODULE, tick).
+
+tick(State) ->
+    maybe_force_ring_update(),
+    schedule_tick(),
+    State.
+
+maybe_force_ring_update() ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    case riak_core_ring:claimant(Ring) == node() of
+        true ->
+            maybe_force_ring_update(Ring);
+        false ->
+            ok
+    end.
+
+maybe_force_ring_update(Ring) ->
+    case compute_next_ring([], erlang:now(), Ring) of
+        {ok, NextRing} ->
+            case same_plan(Ring, NextRing) of
+                false ->
+                    lager:warning("Forcing update of stalled ring"),
+                    riak_core_ring_manager:force_update();
+                true ->
+                    ok
+            end;
+        _ ->
+            ok
+    end.
 
 %% =========================================================================
 %% Claimant rebalance/reassign logic
