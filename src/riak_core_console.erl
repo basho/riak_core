@@ -19,7 +19,7 @@
 %% -------------------------------------------------------------------
 
 -module(riak_core_console).
--export([member_status/1, ring_status/1, print_member_status/2,
+-export([member_status/1, ring_status/1, print_member_status/2, status/1,
          stage_leave/1, stage_remove/1, stage_replace/1,
          stage_force_replace/1, print_staged/1, commit_staged/1,
          clear_staged/1, transfer_limit/1]).
@@ -180,6 +180,29 @@ unreachable_status(Down) ->
               "forcibly remove the nodes from the cluster (riak-admin~n"
               "force-remove NODE) to allow the remaining nodes to settle.~n"),
     ok.
+
+-spec(status([]) -> ok).
+status([]) ->
+    try
+        case riak_core_stat:get_stats() of
+            [] ->
+                io:format("riak_core_stat is not enabled.\n", []);
+            Stats ->
+                StatString = format_stats(Stats, []),
+                io:format("~s\n", [StatString])
+        end
+    catch
+        Exception:Reason ->
+            lager:error("Status failed ~p:~p", [Exception,
+                    Reason]),
+            io:format("Status failed, see log for details~n"),
+            error
+    end.
+
+format_stats([], Acc) ->
+    lists:reverse(Acc);
+format_stats([{Stat, V}|T], Acc) ->
+    format_stats(T, [io_lib:format("~p : ~p~n", [Stat, V])|Acc]).
 
 stage_leave([]) ->
     stage_leave(node());
