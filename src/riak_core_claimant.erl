@@ -470,8 +470,10 @@ tick(State) ->
     State.
 
 maybe_force_ring_update() ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    case riak_core_ring:claimant(Ring) == node() of
+    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
+    IsClaimant = (riak_core_ring:claimant(Ring) == node()),
+    IsReady = riak_core_ring:ring_ready(Ring),
+    case IsClaimant and IsReady of
         true ->
             maybe_force_ring_update(Ring);
         false ->
