@@ -30,8 +30,8 @@
 -export([create_plan/5]).
 
 -type index() :: non_neg_integer().
--type req_id() :: non_neg_integer().
--type coverage_vnodes() :: [{index(), node()}].
+-type vnode() :: {index(), node()}.
+-type coverage_vnodes() :: [vnode()].
 -type vnode_filters() :: [{node(), [{index(), [index()]}]}].
 -type coverage_plan() :: {coverage_vnodes(), vnode_filters()}.
 
@@ -41,49 +41,23 @@
 
 %% @doc Create a coverage plan to distribute work to a set
 %%      covering VNodes around the ring.
--spec create_plan(all | allup, pos_integer(), pos_integer(), 
-                  req_id(), atom()) ->
+-spec create_plan(all | allup, pos_integer(), pos_integer(),
+                  non_neg_integer(), atom()) ->
                          {error, term()} | coverage_plan().
-create_plan(VNodeSelector, NVal, PVC, ReqId, Service) ->
-    {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
-    PartitionCount = chashbin:num_partitions(CHBin),
+create_plan(VNodeSelector, NVal, PVC, Offset, Service) ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    PartitionCount = riak_core_ring:num_partitions(Ring),
+    %% Check which nodes are up for the specified service
+    %% so we can determine which VNodes are ineligible
+    %% to be part of the coverage plan.
+    UpNodes = riak_core_node_watcher:nodes(Service),
     %% Create a coverage plan with the requested primary
     %% preference list VNode coverage.
     %% Get a list of the VNodes owned by any unavailble nodes
-    DownVNodes = [Index ||
-                     {Index, _Node}
-                         <- riak_core_apl:offline_owners(Service, CHBin)],
-    %% Calculate an offset based on the request id to offer
-    %% the possibility of different sets of VNodes being
-    %% used even when all nodes are available.
-    Offset = ReqId rem NVal,
-
+    DownVNodes = [Index || {Index, Node} <- riak_core_ring:all_owners(Ring),
+                           not lists:member(Node, UpNodes)],
     RingIndexInc = chash:ring_increment(PartitionCount),
     AllKeySpaces = lists:seq(0, PartitionCount - 1),
-    UnavailableKeySpaces = [(DownVNode div RingIndexInc) || DownVNode <- DownVNodes],
-    %% Create function to map coverage keyspaces to
-    %% actual VNode indexes and determine which VNode
-    %% indexes should be filtered.
-    CoverageVNodeFun =
-        fun({Position, KeySpaces}, Acc) ->
-                %% Calculate the VNode index using the
-                %% ring position and the increment of
-                %% ring index values.
-                VNodeIndex = (Position rem PartitionCount) * RingIndexInc,
-                Node = chashbin:index_owner(VNodeIndex, CHBin),
-                CoverageVNode = {VNodeIndex, Node},
-                case length(KeySpaces) < NVal of
-                    true ->
-                        %% Get the VNode index of each keyspace to
-                        %% use to filter results from this VNode.
-                        KeySpaceIndexes = [(((KeySpaceIndex+1) rem
-                                             PartitionCount) * RingIndexInc) ||
-                                              KeySpaceIndex <- KeySpaces],
-                        {CoverageVNode, [{VNodeIndex, KeySpaceIndexes} | Acc]};
-                    false ->
-                        {CoverageVNode, Acc}
-                end
-        end,
     %% The offset value serves as a tiebreaker in the
     %% compare_next_vnode function and is used to distribute
     %% work to different sets of VNodes.
@@ -91,20 +65,25 @@ create_plan(VNodeSelector, NVal, PVC, ReqId, Service) ->
                                    Offset,
                                    NVal,
                                    PartitionCount,
-                                   UnavailableKeySpaces,
+                                   [(DownVNode div RingIndexInc) ||
+                                       DownVNode <- DownVNodes], % Unavail keyspaces
                                    lists:min([PVC, NVal]),
                                    []),
     case CoverageResult of
         {ok, CoveragePlan} ->
             %% Assemble the data structures required for
             %% executing the coverage operation.
-            lists:mapfoldl(CoverageVNodeFun, [], CoveragePlan);
+            lists:mapfoldl(coverage_vnode_fun(Ring, RingIndexInc, NVal, PartitionCount),
+                           [],
+                           CoveragePlan);
         {insufficient_vnodes_available, _KeySpace, PartialCoverage}  ->
             case VNodeSelector of
                 allup ->
                     %% The allup indicator means generate a coverage plan
                     %% for any available VNodes.
-                    lists:mapfoldl(CoverageVNodeFun, [], PartialCoverage);
+                    lists:mapfoldl(coverage_vnode_fun(Ring, RingIndexInc, NVal, PartitionCount),
+                                   [],
+                                   PartialCoverage);
                 all ->
                     {error, insufficient_vnodes_available}
             end
@@ -114,82 +93,79 @@ create_plan(VNodeSelector, NVal, PVC, ReqId, Service) ->
 %% Internal functions
 %% ====================================================================
 
+%% @doc Return a function to map coverage keyspaces to actual VNode
+%% indexes and determine which VNode indexes should be filtered.
+coverage_vnode_fun(Ring, RingIndexInc, NVal, PartitionCount) ->
+    fun({Position, KeySpaces}, Acc)  when length(KeySpaces) < NVal ->
+            %% Get the VNode index of each keyspace to
+            %% use to filter results from this VNode.
+            KeySpaceIndexes = [(((KeySpaceIndex+1) rem
+                                 PartitionCount) * RingIndexInc) ||
+                                  KeySpaceIndex <- KeySpaces],
+            {VNodeIndex, _} = VNode = get_vnode(Ring,
+                                                RingIndexInc,
+                                                PartitionCount,
+                                                Position),
+            {VNode, [{VNodeIndex, KeySpaceIndexes} | Acc]};
+       ({Position, _KeySpaces}, Acc) ->
+            VNode = get_vnode(Ring, RingIndexInc, PartitionCount, Position),
+            {VNode, Acc}
+
+    end.
+
+-spec get_vnode(term(), pos_integer(), pos_integer(), pos_integer()) -> vnode().
+get_vnode(Ring, RingIndexInc, PartitionCount, Position) ->
+    %% Calculate the VNode index using the ring position and the
+    %% increment of ring index values.
+    VNodeIndex = (Position rem PartitionCount) * RingIndexInc,
+    Node = riak_core_ring:index_owner(Ring, VNodeIndex),
+    {VNodeIndex, Node}.
+
 %% @private
-find_coverage(AllKeySpaces, Offset, NVal, PartitionCount, UnavailableKeySpaces, PVC, []) ->
-    %% Calculate the available keyspaces.
-    AvailableKeySpaces = [{((VNode+Offset) rem PartitionCount),
-                           VNode,
-                           n_keyspaces(VNode, NVal, PartitionCount)}
-                          || VNode <- (AllKeySpaces -- UnavailableKeySpaces)],
-    case find_coverage_vnodes(
-           ordsets:from_list(AllKeySpaces),
-           AvailableKeySpaces,
-           []) of
-        {ok, CoverageResults} ->
-            case PVC of
-                1 ->
-                    {ok, CoverageResults};
-                _ ->
-                    find_coverage(AllKeySpaces,
-                                  Offset,
-                                  NVal,
-                                  PartitionCount,
-                                  UnavailableKeySpaces,
-                                  PVC-1,
-                                  CoverageResults)
-            end;
-        Error ->
-            Error
-    end;
-find_coverage(AllKeySpaces,
-              Offset,
-              NVal,
-              PartitionCount,
-              UnavailableKeySpaces,
-              PVC,
-              ResultsAcc) ->
-    %% Calculate the available keyspaces. The list of
-    %% keyspaces for each vnode that have already been
-    %% covered by the plan are subtracted from the complete
-    %% list of keyspaces so that coverage plans that
-    %% want to cover more one preflist vnode work out
+find_coverage(_, _, _, _, _, 0, ResultsAcc) ->
+    {ok, ResultsAcc};
+find_coverage(AllKeySpaces, Offset, NVal, PartitionCount,
+              UnavailableKeySpaces, PVC, ResultsAcc) ->
+    %% Calculate the available keyspaces. The list of keyspaces for
+    %% each vnode that have already been covered by the plan are
+    %% subtracted from the complete list of keyspaces so that coverage
+    %% plans that want to cover more one preflist vnode work out
     %% correctly.
     AvailableKeySpaces = [{((VNode+Offset) rem PartitionCount),
                            VNode,
                            n_keyspaces(VNode, NVal, PartitionCount) --
                                proplists:get_value(VNode, ResultsAcc, [])}
                           || VNode <- (AllKeySpaces -- UnavailableKeySpaces)],
-    case find_coverage_vnodes(ordsets:from_list(AllKeySpaces),
+    case handle_coverage_vnodes(find_coverage_vnodes(ordsets:from_list(AllKeySpaces),
                               AvailableKeySpaces,
-                              ResultsAcc) of
+                              ResultsAcc), ResultsAcc) of
         {ok, CoverageResults} ->
-            UpdateResultsFun =
-                fun({Key, NewValues}, Results) ->
-                        case proplists:get_value(Key, Results) of
-                            undefined ->
-                                [{Key, NewValues} | Results];
-                            Values ->
-                                UniqueValues = lists:usort(Values ++ NewValues),
-                                [{Key, UniqueValues} |
-                                 proplists:delete(Key, Results)]
-                        end
-                end,
-            UpdatedResults =
-                lists:foldl(UpdateResultsFun, ResultsAcc, CoverageResults),
-            case PVC of
-                1 ->
-                    {ok, UpdatedResults};
-                _ ->
-                    find_coverage(AllKeySpaces,
-                                  Offset,
-                                  NVal,
-                                  PartitionCount,
-                                  UnavailableKeySpaces,
-                                  PVC-1,
-                                  UpdatedResults)
-            end;
+            find_coverage(AllKeySpaces,
+                          Offset,
+                          NVal,
+                          PartitionCount,
+                          UnavailableKeySpaces,
+                          PVC-1,
+                          CoverageResults);
         Error ->
             Error
+    end.
+
+handle_coverage_vnodes({ok, CoverageResults}, []) ->
+    CoverageResults;
+handle_coverage_vnodes({ok, CoverageResults}, Acc) ->
+    lists:foldl(fun augment_coverage_results/2, Acc, CoverageResults);
+handle_coverage_vnodes({error, _}=Error, _) ->
+    Error.
+
+augment_coverage_results({Key, NewValues}, Results) ->
+    case proplists:get_value(Key, Results) of
+        undefined ->
+            [{Key, NewValues} | Results];
+        Values ->
+            UniqueValues = lists:usort(Values ++ NewValues),
+            [{Key, UniqueValues} |
+             proplists:delete(Key, Results)]
     end.
 
 %% @private
@@ -225,22 +201,16 @@ next_vnode(KeySpace, Available) ->
                      {TieBreaker, VNode, CoversKeys} <- Available],
     hd(lists:sort(fun compare_next_vnode/2, CoverCount)).
 
-%% @private
-%% There is a potential optimization here once
-%% the partition claim logic has been changed
-%% so that physical nodes claim partitions at
-%% regular intervals around the ring.
-%% The optimization is for the case
-%% when the partition count is not evenly divisible
-%% by the n_val and when the coverage counts of the
-%% two arguments are equal and a tiebreaker is
-%% required to determine the sort order. In this
-%% case, choosing the lower node for the final
-%% vnode to complete coverage will result
-%% in an extra physical node being involved
-%% in the coverage plan so the optimization is
-%% to choose the upper node to minimize the number
-%% of physical nodes.
+%% @private There is a potential optimization here once the partition
+%% claim logic has been changed so that physical nodes claim
+%% partitions at regular intervals around the ring.  The optimization
+%% is for the case when the partition count is not evenly divisible by
+%% the n_val and when the coverage counts of the two arguments are
+%% equal and a tiebreaker is required to determine the sort order. In
+%% this case, choosing the lower node for the final vnode to complete
+%% coverage will result in an extra physical node being involved in
+%% the coverage plan so the optimization is to choose the upper node
+%% to minimize the number of physical nodes.
 compare_next_vnode({CA, _VA, TBA}, {CB, _VB, TBB}) ->
     if
         CA > CB -> %% Descending sort on coverage
@@ -255,4 +225,3 @@ compare_next_vnode({CA, _VA, TBA}, {CB, _VB, TBB}) ->
 %% @doc Count how many of CoversKeys appear in KeySpace
 covers(KeySpace, CoversKeys) ->
     ordsets:size(ordsets:intersection(KeySpace, CoversKeys)).
-
