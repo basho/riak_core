@@ -145,21 +145,17 @@ code_change(_OldVsn, State, _Extra) ->
 %% IpAddr = string()
 %% Port = integer()
 %% Result = {ok, port()} | {error, any()}
-listen_on(CallbackModule, IpAddr, Port) ->
-  SockOpts = [{ip, convert(IpAddr)}|CallbackModule:sock_opts()],
-  case gen_tcp:listen(Port, SockOpts) of
-    {ok, LSock} ->
-      {ok, _Ref} = prim_inet:async_accept(LSock, -1),
-      {ok, LSock};
+listen_on(CallbackModule, IpAddrStr, Port) ->
+  case inet_parse:address(IpAddrStr) of
+    {ok, IpAddr} ->
+      SockOpts = [{ip, IpAddr}|CallbackModule:sock_opts()],
+      case gen_tcp:listen(Port, SockOpts) of
+        {ok, LSock} ->
+          {ok, _Ref} = prim_inet:async_accept(LSock, -1),
+          {ok, LSock};
+        Err ->
+          Err
+      end;
     Err ->
       Err
   end.
- 
-%% @hidden
-%% @spec convert(Addr) -> Result
-%% Addr = string()
-%% Result = {integer(), integer(), integer(), integer()}
-%% @doc Converts text IP addresses "0.0.0.0" to tuples {0, 0, 0, 0}
-convert(Addr) ->
-  T = string:tokens(Addr, "."),
-  list_to_tuple([list_to_integer(X) || X <- T]).
