@@ -57,6 +57,13 @@ get_stats() ->
 update(Arg) ->
     gen_server:cast(?SERVER, {update, Arg}).
 
+% @spec produce_stats(state(), integer()) -> proplist()
+%% @doc Produce a proplist-formatted view of the current aggregation
+%%      of stats.
+produce_stats() ->
+    lists:append([gossip_stats(),
+                  vnodeq_stats()]).
+
 %% gen_server
 
 init([]) ->
@@ -123,13 +130,6 @@ register_stat(Name, spiral) ->
     folsom_metrics:new_spiral(Name);
 register_stat(Name, duration) ->
     folsom_metrics:new_duration(Name).
-
-% @spec produce_stats(state(), integer()) -> proplist()
-%% @doc Produce a proplist-formatted view of the current aggregation
-%%      of stats.
-produce_stats() ->
-    lists:append([gossip_stats(),
-                  vnodeq_stats()]).
 
 gossip_stats() ->
     lists:flatten([backwards_compat(Stat, Type, folsom_metrics:get_metric_value({?APP, Stat})) ||
