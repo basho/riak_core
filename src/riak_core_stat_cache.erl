@@ -68,7 +68,10 @@ stop() ->
 init([]) ->
     process_flag(trap_exit, true),
     Tab = ets:new(?MODULE, [protected, set, named_table]),
-    {ok, #state{tab=Tab}}.
+    TTL = app_helper:get_env(riak_core, stat_cache_ttl, ?TTL),
+    %% re-register mods, if this is a restart after a crash
+    RegisteredMods = [{App, {Mod, produce_stats, [], TTL}} || {App, Mod}  <- riak_core:stat_mods()],
+    {ok, #state{tab=Tab, apps=orddict:from_list(RegisteredMods)}}.
 
 handle_call({register, App, {Mod, Fun, Args}, TTL}, _From, State0=#state{apps=Apps0}) ->
     Apps = case registered(App, Apps0) of
