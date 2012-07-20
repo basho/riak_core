@@ -95,6 +95,7 @@ behaviour_info(_Other) ->
           forward :: node(),
           handoff_node=none :: none | node(),
           pool_pid :: pid() | undefined,
+          pool_config :: tuple() | undefined,
           manager_event_timer :: reference(),
           inactivity_timeout}).
 
@@ -129,19 +130,22 @@ init([Mod, Index, InitialInactivityTimeout, Forward]) ->
         {error, Reason} ->
             {stop, Reason};
         _ ->
-            PoolPid = case lists:keyfind(pool, 1, Props) of
-                {pool, WorkerModule, PoolSize, WorkerArgs} ->
+            case lists:keyfind(pool, 1, Props) of
+                {pool, WorkerModule, PoolSize, WorkerArgs}=PoolConfig ->
                     lager:debug("starting worker pool ~p with size of ~p~n",
-                        [WorkerModule, PoolSize]),
-                    {ok, Pid} = riak_core_vnode_worker_pool:start_link(WorkerModule,
-                        PoolSize, Index, WorkerArgs, worker_props),
-                    Pid;
-                _ -> undefined
+                                [WorkerModule, PoolSize]),
+                    {ok, PoolPid} = riak_core_vnode_worker_pool:start_link(WorkerModule,
+                                                                       PoolSize,
+                                                                       Index,
+                                                                       WorkerArgs,
+                                                                       worker_props);
+                _ ->
+                    PoolPid = PoolConfig = undefined
             end,
             riak_core_handoff_manager:remove_exclusion(Mod, Index),
             Timeout = app_helper:get_env(riak_core, vnode_inactivity_timeout, ?DEFAULT_TIMEOUT),
             State = #state{index=Index, mod=Mod, modstate=ModState, forward=Forward,
-                inactivity_timeout=Timeout, pool_pid=PoolPid},
+                inactivity_timeout=Timeout, pool_pid=PoolPid, pool_config=PoolConfig},
             lager:debug("vnode :: ~p/~p :: ~p~n", [Mod, Index, Forward]),
             {ok, active, State, InitialInactivityTimeout}
     end.
@@ -501,15 +505,26 @@ handle_sync_event(core_status, _From, StateName, State=#state{index=Index,
     {reply, {Mode, Status}, StateName, State, State#state.inactivity_timeout}.
 
 
-handle_info({'EXIT', Pid, Reason}, _StateName,
-            State=#state{mod=Mod, index=Index, pool_pid=Pid}) ->
+handle_info({'EXIT', Pid, Reason},
+            _StateName,
+            State=#state{mod=Mod,
+                         index=Index,
+                         pool_pid=Pid,
+                         pool_config=PoolConfig}) ->
     case Reason of
         Reason when Reason == normal; Reason == shutdown ->
-            ok;
+            continue(State#state{pool_pid=undefined});
         _ ->
-            lager:error("~p ~p worker pool crashed ~p\n", [Index, Mod, Reason])
-    end,
-    continue(State#state{pool_pid=undefined});
+            lager:error("~p ~p worker pool crashed ~p\n", [Index, Mod, Reason]),
+            {pool, WorkerModule, PoolSize, WorkerArgs}=PoolConfig,
+            {ok, NewPoolPid} =
+                riak_core_vnode_worker_pool:start_link(WorkerModule,
+                                                       PoolSize,
+                                                       Index,
+                                                       WorkerArgs,
+                                                       worker_props),
+            continue(State#state{pool_pid=NewPoolPid})
+        end;
 
 handle_info(Info, _StateName,
             State=#state{mod=Mod,modstate={deleted, _},index=Index}) ->
