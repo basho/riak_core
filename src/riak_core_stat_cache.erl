@@ -66,8 +66,12 @@ stop() ->
 %%% gen server
 
 init([]) ->
+    process_flag(trap_exit, true),
     Tab = ets:new(?MODULE, [protected, set, named_table]),
-    {ok, #state{tab=Tab}}.
+    TTL = app_helper:get_env(riak_core, stat_cache_ttl, ?TTL),
+    %% re-register mods, if this is a restart after a crash
+    RegisteredMods = [{App, {Mod, produce_stats, [], TTL}} || {App, Mod}  <- riak_core:stat_mods()],
+    {ok, #state{tab=Tab, apps=orddict:from_list(RegisteredMods)}}.
 
 handle_call({register, App, {Mod, Fun, Args}, TTL}, _From, State0=#state{apps=Apps0}) ->
     Apps = case registered(App, Apps0) of
@@ -100,7 +104,7 @@ handle_call(_Request, _From, State) ->
 handle_cast({stats, App, Stats, TS}, State0=#state{tab=Tab, active=Active}) ->
     ets:insert(Tab, {App, TS, Stats}),
     State = case orddict:find(App, Active) of
-                {ok, Awaiting} ->
+                {ok, {_Pid, Awaiting}} ->
                     [gen_server:reply(From, {ok, Stats, TS}) || From <- Awaiting],
                     State0#state{active=orddict:erase(App, Active)};
                 error ->
@@ -112,6 +116,16 @@ handle_cast(stop, State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
+%% don't let a crashing stat mod crash the cache
+handle_info({'EXIT', FromPid, Reason}, State0=#state{active=Active}) when Reason /= normal ->
+     Reply = case awaiting_for_pid(FromPid, Active) of
+                 not_found ->
+                     {stop, Reason, State0};
+                 {ok, {App, Awaiting}} ->
+                     [gen_server:reply(From, {error, Reason}) || From <- Awaiting],
+                     {noreply, State0#state{active=orddict:erase(App, Active)}}
+             end,
+     Reply;
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -151,10 +165,10 @@ maybe_get_stats(App, From, Active, {M, F, A}) ->
     %% if a get stats is not under way start one
     Awaiting = case orddict:find(App, Active) of
                    error ->
-                       do_get_stats(App, {M, F, A}),
-                       [From];
-                   {ok, Froms} ->
-                       [From|Froms]
+                      Pid = do_get_stats(App, {M, F, A}),
+                       {Pid, [From]};
+                   {ok, {Pid, Froms}} ->
+                       {Pid, [From|Froms]}
                end,
     orddict:store(App, Awaiting, Active).
 
@@ -163,6 +177,14 @@ do_get_stats(App, {M, F, A}) ->
                        Stats = folsom_metrics:histogram_timed_update({?MODULE, M}, M, F, A),
                        folsom_metrics:notify_existing_metric({?MODULE, App}, 1, meter),
                        gen_server:cast(?MODULE, {stats, App, Stats, folsom_utils:now_epoch()}) end).
+
+awaiting_for_pid(Pid, Active) ->
+    case  [{App, Awaiting} || {App, {Proc, Awaiting}} <- orddict:to_list(Active),
+                              Proc == Pid] of
+        [] ->
+            not_found;
+        L -> {ok, hd(L)}
+    end.
 
 -ifdef(TEST).
 
@@ -189,8 +211,10 @@ cache_test_() ->
       {"Expired cache, re-calculate",
        fun get_expired/0},
       {"Only a single process can calculate stats",
-       fun serialize_calls/0}
-     ]}.
+       fun serialize_calls/0},
+      {"Crash test",
+       fun crasher/0}
+      ]}.
 
 register() ->
     [meck:expect(M, produce_stats, fun() -> ?STATS end)
@@ -257,6 +281,16 @@ serialize_calls() ->
     ?assertEqual(Procs, length(Results)),
     [?assertEqual({ok, ?STATS, Now}, Res) || Res <- Results],
     ?assertEqual(2, meck:num_calls(riak_kv_stat, produce_stats, [])).
+
+crasher() ->
+    Pid = whereis(riak_core_stat_cache),
+    Now = tick(10000, 0),
+    meck:expect(riak_core_stat, produce_stats, fun() ->
+                                                       ?STATS end),
+    meck:expect(riak_kv_stat, produce_stats, fun() -> erlang:error(boom)  end),
+    ?assertMatch({error, {boom, _Stack}}, riak_core_stat_cache:get_stats(riak_kv)),
+    ?assertEqual(Pid, whereis(riak_core_stat_cache)),
+    ?assertEqual({ok, ?STATS, Now}, riak_core_stat_cache:get_stats(riak_core)).
 
 tick(Moment, IncrBy) ->
     meck:expect(folsom_utils, now_epoch, fun() -> Moment + IncrBy end),
