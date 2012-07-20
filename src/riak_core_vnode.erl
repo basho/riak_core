@@ -516,6 +516,9 @@ handle_info({'EXIT', Pid, Reason},
             continue(State#state{pool_pid=undefined});
         _ ->
             lager:error("~p ~p worker pool crashed ~p\n", [Index, Mod, Reason]),
+            lager:debug("starting worker pool ~p with size"
+                        "of ~p for vnode ~p.",
+                        [WorkerModule, PoolSize, Index]),
             {pool, WorkerModule, PoolSize, WorkerArgs}=PoolConfig,
             {ok, NewPoolPid} =
                 riak_core_vnode_worker_pool:start_link(WorkerModule,
