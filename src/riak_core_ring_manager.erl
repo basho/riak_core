@@ -206,22 +206,35 @@ stop() ->
 %% ===================================================================
 
 init([Mode]) ->
-    case Mode of
-        live ->
-            Ring = riak_core_ring:fresh();
-        test ->
-            Ring = riak_core_ring:fresh(16,node())
-    end,
-
-    %% Set the ring and send initial notification to local observers that
-    %% ring has changed.
-    %% Do *not* save the ring to disk here.  On startup we deliberately come
-    %% up with a ring where the local node owns all partitions so that any
-    %% fallback vnodes will be started so they can hand off.
+    Ring = reload_ring(Mode),
     set_ring_global(Ring),
     riak_core_ring_events:ring_update(Ring),
     {ok, #state{mode = Mode, raw_ring=Ring}}.
 
+reload_ring(test) ->
+    riak_core_ring:fresh(16,node());
+reload_ring(live) ->
+    case riak_core_ring_manager:find_latest_ringfile() of
+        {ok, RingFile} ->
+            case riak_core_ring_manager:read_ringfile(RingFile) of
+                {error, Reason} ->
+                    lager:critical("Failed to read ring file: ~p",
+                                   [lager:posix_error(Reason)]),
+                    throw({error, Reason});
+                Ring0 ->
+                    %% Upgrade the ring data structure if necessary.
+                    lager:info("Upgrading legacy ring"),
+                    Ring = riak_core_ring:upgrade(Ring0),
+                    Ring
+            end;
+        {error, not_found} ->
+            lager:warning("No ring file available."),
+            riak_core_ring:fresh();
+        {error, Reason} ->
+            lager:critical("Failed to load ring file: ~p",
+                           [lager:posix_error(Reason)]),
+            throw({error, Reason})
+    end.
 
 handle_call(get_raw_ring, _From, #state{raw_ring=Ring} = State) ->
     {reply, {ok, Ring}, State};
