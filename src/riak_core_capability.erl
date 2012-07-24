@@ -395,13 +395,17 @@ add_supported_to_ring(Node, Supported, Ring) ->
 %% in the cluster.
 negotiate_capabilities(Node, Override, State=#state{registered=Registered,
                                                     supported=Capabilities}) ->
-    MyCaps = orddict:fetch(Node, Capabilities),
-    N1 = reformat_capabilities(Registered, Capabilities),
-    N2 = intersect_capabilities(N1),
-    N3 = order_by_preference(MyCaps, N2),
-    N4 = override_capabilities(N3, Override),
-    N5 = [{Cap, hd(Common)} || {Cap, Common} <- N4],
-    State#state{negotiated=N5}.
+    case orddict:find(Node, Capabilities) of
+        error ->
+            State;
+        {ok, MyCaps} ->
+            N1 = reformat_capabilities(Registered, Capabilities),
+            N2 = intersect_capabilities(N1),
+            N3 = order_by_preference(MyCaps, N2),
+            N4 = override_capabilities(N3, Override),
+            N5 = [{Cap, hd(Common)} || {Cap, Common} <- N4],
+            State#state{negotiated=N5}
+    end.
 
 renegotiate_capabilities(State=#state{supported=[]}) ->
     State;
