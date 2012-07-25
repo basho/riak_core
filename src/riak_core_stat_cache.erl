@@ -70,15 +70,16 @@ init([]) ->
     Tab = ets:new(?MODULE, [protected, set, named_table]),
     TTL = app_helper:get_env(riak_core, stat_cache_ttl, ?TTL),
     %% re-register mods, if this is a restart after a crash
-    RegisteredMods = [{App, {Mod, produce_stats, [], TTL}} || {App, Mod}  <- riak_core:stat_mods()],
+    RegisteredMods = lists:foldl(fun({App, Mod}, Registerd) ->
+                                         register_mod(App, Mod, produce_stats, [], TTL, Registerd) end,
+                                 orddict:new(),
+                                 riak_core:stat_mods()),
     {ok, #state{tab=Tab, apps=orddict:from_list(RegisteredMods)}}.
 
 handle_call({register, App, {Mod, Fun, Args}, TTL}, _From, State0=#state{apps=Apps0}) ->
     Apps = case registered(App, Apps0) of
                false ->
-                   folsom_metrics:new_histogram({?MODULE, Mod}),
-                   folsom_metrics:new_meter({?MODULE, App}),
-                   orddict:store(App, {Mod, Fun, Args, TTL}, Apps0);
+                   register_mod(App, Mod, Fun, Args, TTL, Apps0);
                {true, _} ->
                    Apps0
            end,
@@ -136,6 +137,11 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %% internal
+register_mod(App, Mod, Fun, Args, TTL, Apps) ->
+    folsom_metrics:new_histogram({?MODULE, Mod}),
+    folsom_metrics:new_meter({?MODULE, App}),
+    orddict:store(App, {Mod, Fun, Args, TTL}, Apps).
+
 registered(App, Apps) ->
     registered(orddict:find(App, Apps)).
 

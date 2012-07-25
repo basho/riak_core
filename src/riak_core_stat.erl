@@ -68,6 +68,7 @@ produce_stats() ->
 %% gen_server
 
 init([]) ->
+    register_stats(),
     {ok, ok}.
 
 handle_call(_Req, _From, State) ->
