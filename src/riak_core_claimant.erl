@@ -473,7 +473,11 @@ maybe_force_ring_update() ->
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
     IsClaimant = (riak_core_ring:claimant(Ring) == node()),
     IsReady = riak_core_ring:ring_ready(Ring),
-    case IsClaimant and IsReady of
+    %% Do not force if we have any joining nodes unless any of them are
+    %% auto-joining nodes. Otherwise, we will force update continuously.
+    JoinBlock = (are_joining_nodes(Ring)
+                 andalso (auto_joining_nodes(Ring) == [])),
+    case IsClaimant and IsReady and (not JoinBlock) of
         true ->
             maybe_force_ring_update(Ring);
         false ->
@@ -726,18 +730,21 @@ are_joining_nodes(CState) ->
     Joining /= [].
 
 %% @private
-maybe_handle_auto_joining(Node, CState) ->
+auto_joining_nodes(CState) ->
     Joining = riak_core_ring:members(CState, [joining]),
-    Auto =
-        case riak_core_capability:get({riak_core, staged_joins}, false) of
-            false ->
-                Joining;
-            true ->
-                [Member || Member <- Joining,
-                           riak_core_ring:get_member_meta(CState,
-                                                          Member,
-                                                          '$autojoin') == true]
-        end,
+    case riak_core_capability:get({riak_core, staged_joins}, false) of
+        false ->
+            Joining;
+        true ->
+            [Member || Member <- Joining,
+                       riak_core_ring:get_member_meta(CState,
+                                                      Member,
+                                                      '$autojoin') == true]
+    end.
+
+%% @private
+maybe_handle_auto_joining(Node, CState) ->
+    Auto = auto_joining_nodes(CState),
     maybe_handle_joining(Node, Auto, CState).
 
 %% @private
