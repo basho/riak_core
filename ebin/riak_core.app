@@ -55,6 +55,8 @@
              riak_core_ring_util,
              riak_core_stat,
              riak_core_stat_cache,
+             riak_core_stat_sup,
+             riak_core_stats_sup,
              riak_core_status,
              riak_core_sup,
              riak_core_sysmon_handler,
@@ -76,6 +78,7 @@
              vclock
             ]},
   {registered, []},
+  {included_applications, [folsom]},
   {applications, [
                   kernel,
                   stdlib,
@@ -84,8 +87,7 @@
                   crypto,
                   riak_sysmon,
                   webmachine,
-                  os_mon,
-                  folsom
+                  os_mon
                  ]},
   {mod, { riak_core_app, []}},
   {env, [
