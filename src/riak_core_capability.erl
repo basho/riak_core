@@ -205,11 +205,12 @@ init_state(Registered) ->
 
 handle_call({register, Capability, Info}, _From, State) ->
     State2 = register_capability(node(), Capability, Info, State),
-    State3 = renegotiate_capabilities(State2),
-    publish_supported(State3),
-    update_local_cache(State3),
-    save_registered(State3#state.registered),
-    {reply, ok, State3};
+    State3 = update_supported(State2),
+    State4 = renegotiate_capabilities(State3),
+    publish_supported(State4),
+    update_local_cache(State4),
+    save_registered(State4#state.registered),
+    {reply, ok, State4};
 
 handle_call({ring_changed, Ring}, _From, State) ->
     State2 = update_supported(Ring, State),
@@ -265,6 +266,10 @@ reload(State) ->
     save_registered(State3#state.registered),
     State3.
 
+update_supported(State) ->
+    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
+    update_supported(Ring, State).
+
 %% Update this node's view of cluster capabilities based on a received ring
 update_supported(Ring, State) ->
     AllSupported = get_supported_from_ring(Ring),
@@ -278,11 +283,7 @@ update_supported(Ring, State) ->
                             {[], []} ->
                                 add_node(Node, Supported, StateAcc);
                             {[], _} ->
-                                %% While the ring has no knowledge of Node's
-                                %% supported modes, the local view has prior
-                                %% knowledge. Do nothing and continue to use
-                                %% the existing modes.
-                                StateAcc;
+                                add_node(Node, Supported, StateAcc);
                             {Same, Same} ->
                                 StateAcc;
                             {_, _} ->
@@ -552,14 +553,25 @@ get_supported_from_ring(Ring) ->
 %% Determine capabilities of legacy nodes based on app.config settings and
 %% the provided app-var -> mode mapping associated with capabilities when
 %% registered.
-query_capabilities(Node, #state{registered=Registered}) ->
+query_capabilities(Node, State=#state{registered=Registered}) ->
+    %% Only query results we do not already have local knowledge of
+    Known = dict:from_list(get_supported(Node, State)),
     lists:mapfoldl(fun({Capability, Info}, ResolvedAcc) ->
                            {Resv, Cap} = query_capability(Node,
+                                                          Known,
                                                           Capability,
                                                           Info#capability.default,
                                                           Info#capability.legacy),
                            {Cap, ResolvedAcc and Resv}
                    end, true, Registered).
+
+query_capability(Node, Known, Capability, DefaultSup, LegacyVar) ->
+    case dict:find(Capability, Known) of
+        {ok, Supported} ->
+            {true, {Capability, Supported}};
+        error ->
+            query_capability(Node, Capability, DefaultSup, LegacyVar)
+    end.
 
 query_capability(_, Capability, DefaultSup, undefined) ->
     Default = {Capability, [DefaultSup]},
