@@ -50,8 +50,6 @@
 -module(merkerl).
 -export([insert/2,delete/2,build_tree/1,diff/2,allkeys/1]).
 
--include_lib("eunit/include/eunit.hrl").
-
 % TODO: fix doc, userdata is the ONLY user-exposed key
 -record(merk, {nodetype,           % atom: expected values are 'leaf' or 'inner'
                key=undefined,      % if nodetype=leaf, then this is binary/160
@@ -328,6 +326,9 @@ getkids(Tree) ->
 sha(X) ->
     crypto:sha(term_to_binary(X)).
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
 % @spec merkle_test() -> bool()
 % @doc A test function and example code.
 %
@@ -365,4 +366,4 @@ merkle_test() ->
     I2 = build_tree(I),
     ?assertEqual(2, length(allkeys(I2))).
 
-
+-endif.

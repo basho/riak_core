@@ -23,7 +23,6 @@
 %% @doc the local view of the cluster's ring configuration
 
 -module(riak_core_ring_manager).
--include_lib("eunit/include/eunit.hrl").
 -define(RING_KEY, riak_ring).
 -behaviour(gen_server2).
 
