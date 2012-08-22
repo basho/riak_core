@@ -40,8 +40,6 @@
 
 -module(riak_core_dtrace).
 
--include_lib("eunit/include/eunit.hrl").
-
 -export([dtrace/1, dtrace/3, dtrace/4, dtrace/6]).
 -export([enabled/0, put_tag/1]).
 -export([timeit0/1, timeit_mg/1, timeit_best/1]).   % debugging/testing only
@@ -187,6 +185,7 @@ timeit_best(ArgList) ->
     dtrace(ArgList).
 
 -ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
 
 timeit_naive_test() ->
     test_common("timeit_naive",
