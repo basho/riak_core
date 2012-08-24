@@ -44,10 +44,6 @@
 
 -include("riak_core_ring.hrl").
 
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
-
 %% Default gossip rate: allow at most 45 gossip messages every 10 seconds
 -define(DEFAULT_LIMIT, {45, 10000}).
 
