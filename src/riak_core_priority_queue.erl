@@ -224,69 +224,69 @@ r2f([X,Y|R]) -> {queue, [X,Y], lists:reverse(R, [])}.
 -include_lib("eunit/include/eunit.hrl").
 
 simple_case(Order) ->
-    Queue = priority_queue:new(),
-    ?assertEqual(true, priority_queue:is_queue(Queue)),
-    ?assertEqual(true, priority_queue:is_empty(Queue)),
-    ?assertEqual(0, priority_queue:len(Queue)),
-    ?assertEqual([], priority_queue:to_list(Queue)),
+    Queue = ?MODULE:new(),
+    ?assertEqual(true, ?MODULE:is_queue(Queue)),
+    ?assertEqual(true, ?MODULE:is_empty(Queue)),
+    ?assertEqual(0, ?MODULE:len(Queue)),
+    ?assertEqual([], ?MODULE:to_list(Queue)),
     case Order of
         forward ->
-            Queue2 = priority_queue:in(low, Queue),
-            Queue3 = priority_queue:in(mid, 500, Queue2),
-            Queue4 = priority_queue:in(high, 1000, Queue3);
+            Queue2 = ?MODULE:in(low, Queue),
+            Queue3 = ?MODULE:in(mid, 500, Queue2),
+            Queue4 = ?MODULE:in(high, 1000, Queue3);
         reverse ->
-            Queue2 = priority_queue:in(high, 1000, Queue),
-            Queue3 = priority_queue:in(mid, 500, Queue2),
-            Queue4 = priority_queue:in(low, Queue3);
+            Queue2 = ?MODULE:in(high, 1000, Queue),
+            Queue3 = ?MODULE:in(mid, 500, Queue2),
+            Queue4 = ?MODULE:in(low, Queue3);
         mixed ->
-            Queue2 = priority_queue:in(high, 1000, Queue),
-            Queue3 = priority_queue:in(low, Queue2),
-            Queue4 = priority_queue:in(mid, 500, Queue3)
+            Queue2 = ?MODULE:in(high, 1000, Queue),
+            Queue3 = ?MODULE:in(low, Queue2),
+            Queue4 = ?MODULE:in(mid, 500, Queue3)
     end,
-    ?assertEqual(false, priority_queue:is_empty(Queue4)),
-    ?assertEqual(3, priority_queue:len(Queue4)),
-    ?assertMatch({{value, high}, _}, priority_queue:out(Queue4)),
-    {{value, high}, Queue5} = priority_queue:out(Queue4),
-    ?assertMatch({{value, mid}, _}, priority_queue:out(Queue5)),
-    {{value, mid}, Queue6} = priority_queue:out(Queue5),
-    ?assertMatch({{value, low}, _}, priority_queue:out(Queue6)),
-    {{value, low}, Queue7} = priority_queue:out(Queue6),
-    ?assertEqual(0, priority_queue:len(Queue7)),
+    ?assertEqual(false, ?MODULE:is_empty(Queue4)),
+    ?assertEqual(3, ?MODULE:len(Queue4)),
+    ?assertMatch({{value, high}, _}, ?MODULE:out(Queue4)),
+    {{value, high}, Queue5} = ?MODULE:out(Queue4),
+    ?assertMatch({{value, mid}, _}, ?MODULE:out(Queue5)),
+    {{value, mid}, Queue6} = ?MODULE:out(Queue5),
+    ?assertMatch({{value, low}, _}, ?MODULE:out(Queue6)),
+    {{value, low}, Queue7} = ?MODULE:out(Queue6),
+    ?assertEqual(0, ?MODULE:len(Queue7)),
 
-    ?assertEqual(true, priority_queue:is_queue(Queue2)),
-    ?assertEqual(true, priority_queue:is_queue(Queue3)),
-    ?assertEqual(true, priority_queue:is_queue(Queue4)),
-    ?assertEqual(false, priority_queue:is_queue([])),
+    ?assertEqual(true, ?MODULE:is_queue(Queue2)),
+    ?assertEqual(true, ?MODULE:is_queue(Queue3)),
+    ?assertEqual(true, ?MODULE:is_queue(Queue4)),
+    ?assertEqual(false, ?MODULE:is_queue([])),
     ok.
 
 merge_case() ->
-    QueueA1 = priority_queue:new(),
-    QueueA2 = priority_queue:in(1, QueueA1),
-    QueueA3 = priority_queue:in(3, QueueA2),
-    QueueA4 = priority_queue:in(5, QueueA3),
+    QueueA1 = ?MODULE:new(),
+    QueueA2 = ?MODULE:in(1, QueueA1),
+    QueueA3 = ?MODULE:in(3, QueueA2),
+    QueueA4 = ?MODULE:in(5, QueueA3),
 
-    QueueB1 = priority_queue:new(),
-    QueueB2 = priority_queue:in(2, QueueB1),
-    QueueB3 = priority_queue:in(4, QueueB2),
-    QueueB4 = priority_queue:in(6, QueueB3),
+    QueueB1 = ?MODULE:new(),
+    QueueB2 = ?MODULE:in(2, QueueB1),
+    QueueB3 = ?MODULE:in(4, QueueB2),
+    QueueB4 = ?MODULE:in(6, QueueB3),
 
-    Merged1 = priority_queue:join(QueueA4, QueueB4),
+    Merged1 = ?MODULE:join(QueueA4, QueueB4),
     ?assertEqual([{0,1},{0,3},{0,5},{0,2},{0,4},{0,6}],
-                 priority_queue:to_list(Merged1)),
+                 ?MODULE:to_list(Merged1)),
 
-    QueueC1 = priority_queue:new(),
-    QueueC2 = priority_queue:in(1, 10, QueueC1),
-    QueueC3 = priority_queue:in(3, 30, QueueC2),
-    QueueC4 = priority_queue:in(5, 50, QueueC3),
+    QueueC1 = ?MODULE:new(),
+    QueueC2 = ?MODULE:in(1, 10, QueueC1),
+    QueueC3 = ?MODULE:in(3, 30, QueueC2),
+    QueueC4 = ?MODULE:in(5, 50, QueueC3),
 
-    QueueD1 = priority_queue:new(),
-    QueueD2 = priority_queue:in(2, 20, QueueD1),
-    QueueD3 = priority_queue:in(4, 40, QueueD2),
-    QueueD4 = priority_queue:in(6, 60, QueueD3),
+    QueueD1 = ?MODULE:new(),
+    QueueD2 = ?MODULE:in(2, 20, QueueD1),
+    QueueD3 = ?MODULE:in(4, 40, QueueD2),
+    QueueD4 = ?MODULE:in(6, 60, QueueD3),
 
-    Merged2 = priority_queue:join(QueueC4, QueueD4),
+    Merged2 = ?MODULE:join(QueueC4, QueueD4),
     ?assertEqual([{60,6},{50,5},{40,4},{30,3},{20,2},{10,1}],
-                 priority_queue:to_list(Merged2)),
+                 ?MODULE:to_list(Merged2)),
     ok.
 
 basic_test() ->
