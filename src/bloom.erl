@@ -187,3 +187,47 @@ bitarray_get(I, A) ->
   V = array:get(AI, A),
   V band (1 bsl (I rem ?W)) =/= 0.
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+simple_shuffle(L, N) ->
+    lists:sublist(simple_shuffle(L), 1, N).
+simple_shuffle(L) ->
+    N = 1000 * length(L),
+    L2 = [{random:uniform(N), E} || E <- L],
+    {_, L3} = lists:unzip(lists:keysort(1, L2)),
+    L3.
+
+fixed_case(Bloom, Size, FalseRate) ->
+    ?assert(bloom:capacity(Bloom) > Size),
+    ?assertEqual(0, bloom:size(Bloom)),
+    RandomList = simple_shuffle(lists:seq(1,100*Size), Size),
+    [?assertEqual(false, bloom:is_element(E, Bloom)) || E <- RandomList],
+    Bloom2 = 
+        lists:foldl(fun(E, Bloom0) ->
+                            bloom:add_element(E, Bloom0)
+                    end, Bloom, RandomList),
+    [?assertEqual(true, bloom:is_element(E, Bloom2)) || E <- RandomList],
+
+    ?assert(bloom:size(Bloom2) > ((1-FalseRate)*Size)),
+    ok.
+
+scalable_case(Bloom, Size, FalseRate) ->
+    ?assertEqual(infinity, bloom:capacity(Bloom)),
+    ?assertEqual(0, bloom:size(Bloom)),
+    RandomList = simple_shuffle(lists:seq(1,100*Size), 10*Size),
+    [?assertEqual(false, bloom:is_element(E, Bloom)) || E <- RandomList],
+    Bloom2 = 
+        lists:foldl(fun(E, Bloom0) ->
+                            bloom:add_element(E, Bloom0)
+                    end, Bloom, RandomList),
+    [?assertEqual(true, bloom:is_element(E, Bloom2)) || E <- RandomList],
+    ?assert(bloom:size(Bloom2) > ((1-FalseRate)*Size)),
+    ok.
+
+bloom_test() ->
+    fixed_case(bloom(5000), 5000, 0.001),
+    scalable_case(sbf(1000, 0.2), 1000, 0.2),
+    ok.
+    
+-endif.
