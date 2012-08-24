@@ -53,7 +53,7 @@
 %% a base case.
 
 
--module(priority_queue).
+-module(riak_core_priority_queue).
 
 -export([new/0, is_queue/1, is_empty/1, len/1, to_list/1, in/2, in/3,
          out/1, out/2, pout/1, join/2]).
