@@ -41,6 +41,9 @@
          handoff_error/3]).
 
 -ifdef(TEST).
+
+-include_lib("eunit/include/eunit.hrl").
+
 -export([test_link/2,
          current_state/1]).
 -endif.
