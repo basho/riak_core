@@ -160,6 +160,7 @@ claimant() ->
 %%%===================================================================
 
 init([]) ->
+    schedule_tick(),
     {ok, #state{changes=[], seed=erlang:now()}}.
 
 handle_call(clear, _From, State) ->
@@ -192,6 +193,10 @@ handle_call(_Request, _From, State) ->
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
+
+handle_info(tick, State) ->
+    State2 = tick(State),
+    {noreply, State2};
 
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -453,6 +458,46 @@ same_plan(RingA, RingB) ->
     (riak_core_ring:all_owners(RingA) == riak_core_ring:all_owners(RingB)) andalso
     (riak_core_ring:pending_changes(RingA) == riak_core_ring:pending_changes(RingB)).
 
+schedule_tick() ->
+    Tick = app_helper:get_env(riak_core,
+                              claimant_tick,
+                              10000),
+    erlang:send_after(Tick, ?MODULE, tick).
+
+tick(State) ->
+    maybe_force_ring_update(),
+    schedule_tick(),
+    State.
+
+maybe_force_ring_update() ->
+    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
+    IsClaimant = (riak_core_ring:claimant(Ring) == node()),
+    IsReady = riak_core_ring:ring_ready(Ring),
+    %% Do not force if we have any joining nodes unless any of them are
+    %% auto-joining nodes. Otherwise, we will force update continuously.
+    JoinBlock = (are_joining_nodes(Ring)
+                 andalso (auto_joining_nodes(Ring) == [])),
+    case IsClaimant and IsReady and (not JoinBlock) of
+        true ->
+            maybe_force_ring_update(Ring);
+        false ->
+            ok
+    end.
+
+maybe_force_ring_update(Ring) ->
+    case compute_next_ring([], erlang:now(), Ring) of
+        {ok, NextRing} ->
+            case same_plan(Ring, NextRing) of
+                false ->
+                    lager:warning("Forcing update of stalled ring"),
+                    riak_core_ring_manager:force_update();
+                true ->
+                    ok
+            end;
+        _ ->
+            ok
+    end.
+
 %% =========================================================================
 %% Claimant rebalance/reassign logic
 %% =========================================================================
@@ -685,18 +730,21 @@ are_joining_nodes(CState) ->
     Joining /= [].
 
 %% @private
-maybe_handle_auto_joining(Node, CState) ->
+auto_joining_nodes(CState) ->
     Joining = riak_core_ring:members(CState, [joining]),
-    Auto =
-        case riak_core_capability:get({riak_core, staged_joins}, false) of
-            false ->
-                Joining;
-            true ->
-                [Member || Member <- Joining,
-                           riak_core_ring:get_member_meta(CState,
-                                                          Member,
-                                                          '$autojoin') == true]
-        end,
+    case riak_core_capability:get({riak_core, staged_joins}, false) of
+        false ->
+            Joining;
+        true ->
+            [Member || Member <- Joining,
+                       riak_core_ring:get_member_meta(CState,
+                                                      Member,
+                                                      '$autojoin') == true]
+    end.
+
+%% @private
+maybe_handle_auto_joining(Node, CState) ->
+    Auto = auto_joining_nodes(CState),
     maybe_handle_joining(Node, Auto, CState).
 
 %% @private

@@ -27,7 +27,7 @@
 -export([start_link/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
--export([sock_opts/0, new_connection/2]).
+-export([get_handoff_ip/0, sock_opts/0, new_connection/2]).
 -record(state, {
           ipaddr :: string(),
           portnum :: integer(),
@@ -39,6 +39,9 @@ start_link() ->
     IpAddr = app_helper:get_env(riak_core, handoff_ip),
     SslOpts = riak_core_handoff_sender:get_handoff_ssl_options(),
     gen_nb_server:start_link(?MODULE, IpAddr, PortNum, [IpAddr, PortNum, SslOpts]).
+
+get_handoff_ip() ->
+    riak_core_gen_server:call(?MODULE, handoff_ip, infinity).
 
 init([IpAddr, PortNum, SslOpts]) ->
     register(?MODULE, self()),

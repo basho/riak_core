@@ -42,6 +42,7 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 register_stats() ->
+    [(catch folsom_metrics:delete_metric({?APP, Name})) || {Name, _Type} <- stats()],
     [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()],
     riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
 
@@ -57,9 +58,17 @@ get_stats() ->
 update(Arg) ->
     gen_server:cast(?SERVER, {update, Arg}).
 
+% @spec produce_stats(state(), integer()) -> proplist()
+%% @doc Produce a proplist-formatted view of the current aggregation
+%%      of stats.
+produce_stats() ->
+    lists:append([gossip_stats(),
+                  vnodeq_stats()]).
+
 %% gen_server
 
 init([]) ->
+    register_stats(),
     {ok, ok}.
 
 handle_call(_Req, _From, State) ->
@@ -92,10 +101,10 @@ update1(ignored_gossip) ->
     folsom_metrics:notify_existing_metric({?APP, ignored_gossip_total}, {inc, 1}, counter);
 
 update1(gossip_received) ->
-    folsom_metrics:notify_existing_metric({?APP, gossip_received}, 1, meter);
+    folsom_metrics:notify_existing_metric({?APP, gossip_received}, 1, spiral);
 
 update1(rings_reconciled) ->
-    folsom_metrics:notify_existing_metric({?APP, rings_reconciled}, 1, meter);
+    folsom_metrics:notify_existing_metric({?APP, rings_reconciled}, 1, spiral);
 
 update1(converge_timer_begin) ->
     folsom_metrics:notify_existing_metric({?APP, converge_delay}, timer_start, duration);
@@ -110,8 +119,8 @@ update1(rebalance_timer_end) ->
 %% private
 stats() ->
     [{ignored_gossip_total, counter},
-     {rings_reconciled, meter},
-     {gossip_received, meter},
+     {rings_reconciled, spiral},
+     {gossip_received, spiral},
      {rejected_handoffs, counter},
      {handoff_timeouts, counter},
      {converge_delay, duration},
@@ -119,26 +128,19 @@ stats() ->
 
 register_stat(Name, counter) ->
     folsom_metrics:new_counter(Name);
-register_stat(Name, meter) ->
-    folsom_metrics:new_meter(Name);
+register_stat(Name, spiral) ->
+    folsom_metrics:new_spiral(Name);
 register_stat(Name, duration) ->
     folsom_metrics:new_duration(Name).
-
-% @spec produce_stats(state(), integer()) -> proplist()
-%% @doc Produce a proplist-formatted view of the current aggregation
-%%      of stats.
-produce_stats() ->
-    lists:append([gossip_stats(),
-                  vnodeq_stats()]).
 
 gossip_stats() ->
     lists:flatten([backwards_compat(Stat, Type, folsom_metrics:get_metric_value({?APP, Stat})) ||
                       {Stat, Type} <- stats(), Stat /= riak_core_rejected_handoffs]).
 
-backwards_compat(rings_reconciled, meter, Stats) ->
+backwards_compat(rings_reconciled, spiral, Stats) ->
     [{rings_reconciled_total, proplists:get_value(count, Stats)},
     {rings_reconciled, trunc(proplists:get_value(one, Stats))}];
-backwards_compat(gossip_received, meter, Stats) ->
+backwards_compat(gossip_received, spiral, Stats) ->
     {gossip_received, trunc(proplists:get_value(one, Stats))};
 backwards_compat(Name, counter, Stats) ->
     {Name, Stats};

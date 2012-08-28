@@ -24,6 +24,7 @@
          leave/0, remove_from_cluster/1]).
 -export([vnode_modules/0]).
 -export([register/1, register/2, bucket_fixups/0, bucket_validators/0]).
+-export([stat_mods/0]).
 
 -export([add_guarded_event_handler/3, add_guarded_event_handler/4]).
 -export([delete_guarded_event_handler/3]).
@@ -115,7 +116,7 @@ standard_join(Node, Rejoin, Auto) when is_atom(Node) ->
                         false ->
                             standard_join(Node, Ring, Rejoin, Auto)
                     end;
-                _ -> 
+                _ ->
                     {error, unable_to_get_join_ring}
             end;
         pang ->
@@ -160,11 +161,11 @@ legacy_join(Node) when is_atom(Node) ->
         pong ->
             case rpc:call(Node,
                           application,
-                          get_env, 
+                          get_env,
                           [riak_core, ring_creation_size]) of
                 {ok, OurRingSize} ->
                     riak_core_gossip:send_ring(Node, node());
-                _ -> 
+                _ ->
                     {error, different_ring_sizes}
             end;
         pang ->
@@ -190,7 +191,7 @@ remove(Node) ->
 
 standard_remove(Node) ->
     riak_core_ring_manager:ring_trans(
-      fun(Ring2, _) -> 
+      fun(Ring2, _) ->
               Ring3 = riak_core_ring:remove_member(node(), Ring2, Node),
               Ring4 = riak_core_ring:ring_changed(node(), Ring3),
               {new_ring, Ring4}
@@ -215,7 +216,7 @@ down(false, Node) ->
                     {error, only_member};
                 _ ->
                     riak_core_ring_manager:ring_trans(
-                      fun(Ring2, _) -> 
+                      fun(Ring2, _) ->
                               Ring3 = riak_core_ring:down_member(node(), Ring2, Node),
                               Ring4 = riak_core_ring:ring_changed(node(), Ring3),
                               {new_ring, Ring4}
@@ -246,7 +247,7 @@ leave() ->
 
 standard_leave(Node) ->
     riak_core_ring_manager:ring_trans(
-      fun(Ring2, _) -> 
+      fun(Ring2, _) ->
               Ring3 = riak_core_ring:leave_member(Node, Ring2, Node),
               {new_ring, Ring3}
       end, []),
@@ -289,6 +290,12 @@ bucket_validators() ->
         {ok, Mods} -> Mods
     end.
 
+stat_mods() ->
+    case application:get_env(riak_core, stat_mods) of
+        undefined -> [];
+        {ok, Mods} -> Mods
+    end.
+
 %% Get the application name if not supplied, first by get_application
 %% then by searching by module name
 get_app(undefined, Module) ->
@@ -324,12 +331,18 @@ register(App, [{vnode_module, VNodeMod}|T]) ->
     register(App, T);
 register(App, [{bucket_validator, ValidationMod}|T]) ->
     register_mod(get_app(App, ValidationMod), ValidationMod, bucket_validators),
+    register(App, T);
+register(App, [{stat_mod, StatMod}|T]) ->
+    register_mod(App, StatMod, stat_mods),
     register(App, T).
+
 
 register_mod(App, Module, Type) when is_atom(Module), is_atom(Type) ->
     case Type of
         vnode_modules ->
             riak_core_vnode_proxy_sup:start_proxies(Module);
+        stat_mods ->
+            riak_core_stats_sup:start_server(Module);
         _ ->
             ok
     end,
@@ -356,9 +369,9 @@ add_guarded_event_handler(HandlerMod, Handler, Args) ->
 %%       ExitFun = fun(Handler, Reason::term())
 %%       AddResult = ok | {error, Reason::term()}
 %%
-%% @doc Add a "guarded" event handler to a gen_event instance.  
-%%      A guarded handler is implemented as a supervised gen_server 
-%%      (riak_core_eventhandler_guard) that adds a supervised handler in its 
+%% @doc Add a "guarded" event handler to a gen_event instance.
+%%      A guarded handler is implemented as a supervised gen_server
+%%      (riak_core_eventhandler_guard) that adds a supervised handler in its
 %%      init() callback and exits when the handler crashes so it can be
 %%      restarted by the supervisor.
 add_guarded_event_handler(HandlerMod, Handler, Args, ExitFun) ->
@@ -372,13 +385,13 @@ add_guarded_event_handler(HandlerMod, Handler, Args, ExitFun) ->
 %%       Reason = term()
 %%
 %% @doc Delete a guarded event handler from a gen_event instance.
-%% 
-%%      Args is an arbitrary term which is passed as one of the arguments to 
+%%
+%%      Args is an arbitrary term which is passed as one of the arguments to
 %%      Module:terminate/2.
 %%
-%%      The return value is the return value of Module:terminate/2. If the 
-%%      specified event handler is not installed, the function returns 
-%%      {error,module_not_found}. If the callback function fails with Reason, 
+%%      The return value is the return value of Module:terminate/2. If the
+%%      specified event handler is not installed, the function returns
+%%      {error,module_not_found}. If the callback function fails with Reason,
 %%      the function returns {'EXIT',Reason}.
 delete_guarded_event_handler(HandlerMod, Handler, Args) ->
     riak_core_eventhandler_sup:stop_guarded_handler(HandlerMod, Handler, Args).

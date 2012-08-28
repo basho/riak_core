@@ -22,7 +22,7 @@
 
 -module(riak_core_handoff_receiver).
 -include("riak_core_handoff.hrl").
--behaviour(gen_server2).
+-behaviour(riak_core_gen_server).
 -export([start_link/0,                          % Don't use SSL
          start_link/1,                          % SSL options list, empty=no SSL
          set_socket/2]).
@@ -42,10 +42,10 @@ start_link() ->
     start_link([]).
 
 start_link(SslOpts) ->
-    gen_server2:start_link(?MODULE, [SslOpts], []).
+    riak_core_gen_server:start_link(?MODULE, [SslOpts], []).
 
 set_socket(Pid, Socket) ->
-    gen_server2:call(Pid, {set_socket, Socket}).
+    riak_core_gen_server:call(Pid, {set_socket, Socket}).
 
 init([SslOpts]) ->
     {ok, #state{ssl_opts = SslOpts,

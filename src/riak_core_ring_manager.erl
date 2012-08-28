@@ -23,9 +23,8 @@
 %% @doc the local view of the cluster's ring configuration
 
 -module(riak_core_ring_manager).
--include_lib("eunit/include/eunit.hrl").
 -define(RING_KEY, riak_ring).
--behaviour(gen_server2).
+-behaviour(riak_core_gen_server).
 
 -export([start_link/0,
          start_link/1,
@@ -63,12 +62,12 @@
 %% ===================================================================
 
 start_link() ->
-    gen_server2:start_link({local, ?MODULE}, ?MODULE, [live], []).
+    riak_core_gen_server:start_link({local, ?MODULE}, ?MODULE, [live], []).
 
 
 %% Testing entry point
 start_link(test) ->
-    gen_server2:start_link({local, ?MODULE}, ?MODULE, [test], []).
+    riak_core_gen_server:start_link({local, ?MODULE}, ?MODULE, [test], []).
 
 
 %% @spec get_my_ring() -> {ok, riak_core_ring:riak_core_ring()} | {error, Reason}
@@ -79,29 +78,29 @@ get_my_ring() ->
     end.
 
 get_raw_ring() ->
-    gen_server2:call(?MODULE, get_raw_ring, infinity).
+    riak_core_gen_server:call(?MODULE, get_raw_ring, infinity).
 
 %% @spec refresh_my_ring() -> ok
 refresh_my_ring() ->
-    gen_server2:call(?MODULE, refresh_my_ring, infinity).
+    riak_core_gen_server:call(?MODULE, refresh_my_ring, infinity).
 
 refresh_ring(Node, ClusterName) ->
-    gen_server2:cast({?MODULE, Node}, {refresh_my_ring, ClusterName}).
+    riak_core_gen_server:cast({?MODULE, Node}, {refresh_my_ring, ClusterName}).
 
 %% @spec set_my_ring(riak_core_ring:riak_core_ring()) -> ok
 set_my_ring(Ring) ->
-    gen_server2:call(?MODULE, {set_my_ring, Ring}, infinity).
+    riak_core_gen_server:call(?MODULE, {set_my_ring, Ring}, infinity).
 
 
 %% @spec write_ringfile() -> ok
 write_ringfile() ->
-    gen_server2:cast(?MODULE, write_ringfile).
+    riak_core_gen_server:cast(?MODULE, write_ringfile).
 
 ring_trans(Fun, Args) ->
-    gen_server2:call(?MODULE, {ring_trans, Fun, Args}, infinity).
+    riak_core_gen_server:call(?MODULE, {ring_trans, Fun, Args}, infinity).
 
 set_cluster_name(Name) ->
-    gen_server2:call(?MODULE, {set_cluster_name, Name}, infinity).
+    riak_core_gen_server:call(?MODULE, {set_cluster_name, Name}, infinity).
 
 %% @doc Exposed for support/debug purposes. Forces the node to change its
 %%      ring in a manner that will trigger reconciliation on gossip.
@@ -198,7 +197,7 @@ prune_ringfiles() ->
 
 %% @private (only used for test instances)
 stop() ->
-    gen_server2:cast(?MODULE, stop).
+    riak_core_gen_server:cast(?MODULE, stop).
 
 
 %% ===================================================================
@@ -206,22 +205,35 @@ stop() ->
 %% ===================================================================
 
 init([Mode]) ->
-    case Mode of
-        live ->
-            Ring = riak_core_ring:fresh();
-        test ->
-            Ring = riak_core_ring:fresh(16,node())
-    end,
-
-    %% Set the ring and send initial notification to local observers that
-    %% ring has changed.
-    %% Do *not* save the ring to disk here.  On startup we deliberately come
-    %% up with a ring where the local node owns all partitions so that any
-    %% fallback vnodes will be started so they can hand off.
+    Ring = reload_ring(Mode),
     set_ring_global(Ring),
     riak_core_ring_events:ring_update(Ring),
     {ok, #state{mode = Mode, raw_ring=Ring}}.
 
+reload_ring(test) ->
+    riak_core_ring:fresh(16,node());
+reload_ring(live) ->
+    case riak_core_ring_manager:find_latest_ringfile() of
+        {ok, RingFile} ->
+            case riak_core_ring_manager:read_ringfile(RingFile) of
+                {error, Reason} ->
+                    lager:critical("Failed to read ring file: ~p",
+                                   [lager:posix_error(Reason)]),
+                    throw({error, Reason});
+                Ring0 ->
+                    %% Upgrade the ring data structure if necessary.
+                    lager:info("Upgrading legacy ring"),
+                    Ring = riak_core_ring:upgrade(Ring0),
+                    Ring
+            end;
+        {error, not_found} ->
+            lager:warning("No ring file available."),
+            riak_core_ring:fresh();
+        {error, Reason} ->
+            lager:critical("Failed to load ring file: ~p",
+                           [lager:posix_error(Reason)]),
+            throw({error, Reason})
+    end.
 
 handle_call(get_raw_ring, _From, #state{raw_ring=Ring} = State) ->
     {reply, {ok, Ring}, State};

@@ -75,30 +75,8 @@ start(_StartType, _StartArgs) ->
     %% Spin up the supervisor; prune ring files as necessary
     case riak_core_sup:start_link() of
         {ok, Pid} ->
-            riak_core_stat:register_stats(),
+            riak_core:register(riak_core, [{stat_mod, riak_core_stat}]),
             ok = riak_core_ring_events:add_guarded_handler(riak_core_ring_handler, []),
-            %% App is running; search for latest ring file and initialize with it
-            riak_core_ring_manager:prune_ringfiles(),
-            case riak_core_ring_manager:find_latest_ringfile() of
-                {ok, RingFile} ->
-                    case riak_core_ring_manager:read_ringfile(RingFile) of
-                        {error, Reason} ->
-                            lager:critical("Failed to read ring file: ~p",
-                                [lager:posix_error(Reason)]),
-                            throw({error, Reason});
-                        Ring0 ->
-                            %% Upgrade the ring data structure if necessary.
-                            Ring = riak_core_ring:upgrade(Ring0),
-                            riak_core_ring_manager:set_my_ring(Ring)
-                    end;
-                {error, not_found} ->
-                    riak_core_ring_manager:write_ringfile(),
-                    lager:warning("No ring file available.");
-                {error, Reason} ->
-                    lager:critical("Failed to load ring file: ~p",
-                        [lager:posix_error(Reason)]),
-                    throw({error, Reason})
-            end,
 
             %% Register capabilities
             riak_core_capability:register({riak_core, vnode_routing},

@@ -3,16 +3,16 @@
 {application, riak_core,
 [
   {description, "Riak Core"},
-  {vsn, "1.1.2"},
+  {vsn, "1.2.0"},
   {modules, [
              app_helper,
              bloom,
              chash,
              gen_nb_server,
-             gen_server2,
+             riak_core_gen_server,
              json_pp,
              merkerl,
-             priority_queue,
+             riak_core_priority_queue,
              process_proxy,
              riak_core_gossip_legacy,
              riak_core,
@@ -55,6 +55,8 @@
              riak_core_ring_util,
              riak_core_stat,
              riak_core_stat_cache,
+             riak_core_stat_sup,
+             riak_core_stats_sup,
              riak_core_status,
              riak_core_sup,
              riak_core_sysmon_handler,
@@ -72,12 +74,11 @@
              riak_core_vnode_worker_pool,
              riak_core_web,
              riak_core_wm_urlmap,
-             slide,
-             spiraltime,
              supervisor_pre_r14b04,
              vclock
             ]},
   {registered, []},
+  {included_applications, [folsom]},
   {applications, [
                   kernel,
                   stdlib,
@@ -86,8 +87,7 @@
                   crypto,
                   riak_sysmon,
                   webmachine,
-                  os_mon,
-                  folsom
+                  os_mon
                  ]},
   {mod, { riak_core_app, []}},
   {env, [

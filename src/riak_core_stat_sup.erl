@@ -20,7 +20,7 @@
 %%
 %% -------------------------------------------------------------------
 
--module(riak_core_sup).
+-module(riak_core_stat_sup).
 
 -behaviour(supervisor).
 
@@ -46,32 +46,9 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-    RiakWebs = case lists:flatten(riak_core_web:bindings(http),
-                                  riak_core_web:bindings(https)) of
-                   [] ->
-                       %% check for old settings, in case app.config
-                       %% was not updated
-                       riak_core_web:old_binding();
-                   Binding ->
-                       Binding
-               end,
-
     Children = lists:flatten(
-                 [?CHILD(riak_core_sysmon_minder, worker),
-                  ?CHILD(riak_core_vnode_sup, supervisor, 305000),
-                  ?CHILD(riak_core_eventhandler_sup, supervisor),
-                  ?CHILD(riak_core_handoff_sup, supervisor),
-                  ?CHILD(riak_core_ring_events, worker),
-                  ?CHILD(riak_core_ring_manager, worker),
-                  ?CHILD(riak_core_vnode_proxy_sup, supervisor),
-                  ?CHILD(riak_core_node_watcher_events, worker),
-                  ?CHILD(riak_core_node_watcher, worker),
-                  ?CHILD(riak_core_vnode_manager, worker),
-                  ?CHILD(riak_core_capability, worker),
-                  ?CHILD(riak_core_gossip, worker),
-                  ?CHILD(riak_core_claimant, worker),
-                  ?CHILD(riak_core_stat_sup, supervisor),
-                  RiakWebs
+                 [?CHILD(folsom_sup, supervisor),
+                  ?CHILD(riak_core_stats_sup, supervisor)
                  ]),
 
-    {ok, {{one_for_one, 10, 10}, Children}}.
+    {ok, {{rest_for_one, 10, 10}, Children}}.

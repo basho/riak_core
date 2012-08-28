@@ -91,15 +91,14 @@ shutdown(_Event, State) ->
     {next_state, shutdown, State}.
 
 handle_event({checkin, Pid}, shutdown, #state{monitors=Monitors0} = State) ->
-    Monitors = lists:keydelete(Pid, 1, Monitors0),
+    Monitors = demonitor_worker(Pid, Monitors0),
     case Monitors of
         [] -> %% work all done, time to exit!
             {stop, shutdown, State};
         _ ->
             {next_state, shutdown, State#state{monitors=Monitors}}
     end;
-handle_event({checkin, Worker}, _, #state{pool = Pool, queue=Q, monitors=Monitors0} = State) ->
-    Monitors = lists:keydelete(Worker, 1, Monitors0),
+handle_event({checkin, Worker}, _, #state{pool = Pool, queue=Q, monitors=Monitors} = State) ->
     case queue:out(Q) of
         {{value, {work, Work, From}}, Rem} ->
             case poolboy:checkout(Pool, false) of
@@ -113,7 +112,8 @@ handle_event({checkin, Worker}, _, #state{pool = Pool, queue=Q, monitors=Monitor
                             monitors=NewMonitors}}
             end;
         {empty, Empty} ->
-            {next_state, ready, State#state{queue=Empty, monitors=Monitors}}
+            NewMonitors = demonitor_worker(Worker, Monitors),
+            {next_state, ready, State#state{queue=Empty, monitors=NewMonitors}}
     end;
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
@@ -177,6 +177,16 @@ monitor_worker(Worker, From, Work, Monitors) ->
         false ->
             Ref = erlang:monitor(process, Worker),
             [{Worker, Ref, From, Work} | Monitors]
+    end.
+
+demonitor_worker(Worker, Monitors) ->
+    case lists:keyfind(Worker, 1, Monitors) of
+        {Worker, Ref, _From, _Work} ->
+            erlang:demonitor(Ref),
+            lists:keydelete(Worker, 1, Monitors);
+        false ->
+            %% not monitored?
+            Monitors
     end.
 
 discard_queued_work(Q) ->
