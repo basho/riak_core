@@ -66,7 +66,7 @@ ready({work, Work, From} = Msg, #state{pool=Pool, queue=Q, monitors=Monitors} = 
             {next_state, queueing, State#state{queue=queue:in(Msg, Q)}};
         Pid when is_pid(Pid) ->
             NewMonitors = monitor_worker(Pid, From, Work, Monitors),
-            ok = riak_core_vnode_worker:handle_work(Pid, Pool, Work, From),
+            riak_core_vnode_worker:handle_work(Pid, Pool, Work, From),
             {next_state, ready, State#state{monitors=NewMonitors}}
     end;
 ready(_Event, State) ->
@@ -107,7 +107,7 @@ handle_event({checkin, Worker}, _, #state{pool = Pool, queue=Q, monitors=Monitor
                             monitors=Monitors}};
                 Pid when is_pid(Pid) ->
                     NewMonitors = monitor_worker(Pid, From, Work, Monitors),
-                    ok = riak_core_vnode_worker:handle_work(Pid, Pool, Work, From),
+                    riak_core_vnode_worker:handle_work(Pid, Pool, Work, From),
                     {next_state, queueing, State#state{queue=Rem,
                             monitors=NewMonitors}}
             end;
