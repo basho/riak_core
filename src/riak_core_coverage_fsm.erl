@@ -36,7 +36,7 @@
 %%      a 5 member tuple from their init function that looks
 %%      like this:
 %%
-%%         `{Request, VNodeSelector, NVal, PrimaryVNodeCoverage,
+%%         `{Request, VNodeConstraint, NVal, Primaries,
 %%          NodeCheckService, VNodeMaster, Timeout, State}'
 %%
 %%      The description of the tuple members is as follows:
@@ -44,14 +44,14 @@
 %%      <ul>
 %%      <li>Request - An opaque data structure that is used by
 %%        the VNode to implement the specific coverage request.</li>
-%%      <li>VNodeSelector - Either the atom `all' to indicate that
+%%      <li>VNodeConstraint - Either the atom `all' to indicate that
 %%        enough VNodes must be available to achieve a minimal
 %%        covering set or `allup' to use whatever VNodes are
 %%        available even if they do not represent a fully covering
 %%        set.</li>
 %%      <li>NVal - Indicates the replication factor and is used to
 %%        accurately create a minimal covering set of VNodes.</li>
-%%      <li>PrimaryVNodeCoverage - The number of primary VNodes
+%%      <li>Primaries - The number of primary VNodes
 %%      from the preference list to use in creating the coverage
 %%      plan.</li>
 %%      <li>NodeCheckService - The service to use to check for available
@@ -108,7 +108,7 @@ behaviour_info(_) ->
                 n_val :: pos_integer(),
                 node_check_service :: module(),
                 vnode_selector :: all | allup,
-                pvc :: all | pos_integer(), % primary vnode coverage
+                primaries :: all | pos_integer(), % primary vnode coverage
                 request :: tuple(),
                 req_id :: req_id(),
                 required_responses :: pos_integer(),
@@ -158,7 +158,7 @@ init([Mod,
       From={_, ReqId, _},
       RequestArgs]) ->
     Exports = Mod:module_info(exports),
-    {Request, VNodeSelector, NVal, PrimaryVNodeCoverage,
+    {Request, VNodeConstraint, NVal, PrimaryVNodeCoverage,
      NodeCheckService, VNodeMaster, Timeout, ModState} =
         Mod:init(From, RequestArgs),
     maybe_start_timeout_timer(Timeout),
@@ -167,9 +167,9 @@ init([Mod,
     StateData = #state{mod=Mod,
                        mod_state=ModState,
                        node_check_service=NodeCheckService,
-                       vnode_selector=VNodeSelector,
+                       vnode_selector=VNodeConstraint,
                        n_val=NVal,
-                       pvc = PrimaryVNodeCoverage,
+                       primaries=Primaries,
                        request=Request,
                        req_id=ReqId,
                        timeout=infinity,
@@ -208,17 +208,17 @@ initialize(timeout, StateData0=#state{mod=Mod,
                                       mod_state=ModState,
                                       n_val=NVal,
                                       node_check_service=NodeCheckService,
-                                      vnode_selector=VNodeSelector,
-                                      pvc=PVC,
+                                      vnode_selector=VNodeConstraint,
+                                      primaries=Primaries,
                                       request=Request,
                                       req_id=ReqId,
                                       timeout=Timeout,
                                       vnode_master=VNodeMaster,
                                       plan_fun = PlanFun}) ->
     Offset = ReqId rem NVal,
-    CoveragePlan = riak_core_coverage_plan:create_plan(VNodeSelector,
+    CoveragePlan = riak_core_coverage_plan:create_plan(VNodeConstraint,
                                                        NVal,
-                                                       PVC,
+                                                       Primaries,
                                                        Offset,
                                                        NodeCheckService),
     case CoveragePlan of

@@ -26,7 +26,8 @@
 
 %% API
 -export([create_plan/5,
-         create_plan/6]).
+         create_plan/6,
+         print_coverage_plan/1]).
 
 -type index() :: non_neg_integer().
 -type vnode() :: {index(), node()}.
@@ -38,13 +39,13 @@
 %% Public API
 %% ===================================================================
 
-%% @doc Create a coverage plan to distribute work to a set
+%% @doc Create a coverage plan to distribute work to a set of
 %% covering VNodes around the ring.
 -spec create_plan(all | allup, pos_integer(), pos_integer(),
                   non_neg_integer(), atom()) ->
                          {error, term()} | coverage_plan().
-create_plan(VNodeConstraint, NVal, PVC, Offset, Service) ->
-    create_plan(VNodeConstraint, NVal, PVC, Offset, Service, vnodes).
+create_plan(VNodeConstraint, NVal, Primaries, Offset, Service) ->
+    create_plan(VNodeConstraint, NVal, Primaries, Offset, Service, vnodes).
 
 %% @doc Create a coverage plan to distribute work to a set
 %% covering VNodes around the ring.
@@ -55,7 +56,7 @@ create_plan(VNodeConstraint, NVal, PVC, Offset, Service) ->
                   atom(),
                   nodes | vnodes) ->
                          {error, term()} | coverage_plan().
-create_plan(VNodeConstraint, NVal, PVC, Offset, Service, MinimizationTarget) ->
+create_plan(VNodeConstraint, NVal, Primaries, Offset, Service, MinimizationTarget) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     PartitionCount = riak_core_ring:num_partitions(Ring),
     %% Check which nodes are up for the specified service
@@ -80,7 +81,7 @@ create_plan(VNodeConstraint, NVal, PVC, Offset, Service, MinimizationTarget) ->
                       MinimizationTarget,
                       [(DownVNode div RingIndexInc) ||
                           DownVNode <- DownVNodes], % Unavail keyspaces
-                      lists:min([PVC, NVal]),
+                      lists:min([Primaries, NVal]),
                       [],
                       vnode_fun(Ring, RingIndexInc, PartitionCount)),
     handle_coverage_result(
@@ -120,15 +121,15 @@ handle_coverage_result({insufficient_vnodes_available, _, _},
                        _, _, _, _) ->
     {error, insufficient_vnodes_available}.
 
-%% ====================================================================
-%% Internal functions
-%% ====================================================================
-
 print_coverage_plan({Vnodes, _Filters}) ->
     SortedVnodes = lists:sort(fun sort_by_node/2, Vnodes),
     io:format("Coverage Plan~n"),
     [io:format("~p~n", [Vnode]) || Vnode <- SortedVnodes],
     io:format("~n").
+
+%% ====================================================================
+%% Internal functions
+%% ====================================================================
 
 sort_by_node({Index1, Node}, {Index2, Node}) ->
     Index1 < Index2;
@@ -172,7 +173,7 @@ get_vnode(Ring, RingIndexInc, PartitionCount, Position) ->
 find_coverage(_, _, _, _, _, _, 0, ResultsAcc, _) ->
     {ok, ResultsAcc};
 find_coverage(AllKeySpaces, Offset, NVal, PartitionCount, MinimizeFor,
-              UnavailableKeySpaces, PVC, ResultsAcc, VnodeFun) ->
+              UnavailableKeySpaces, Primaries, ResultsAcc, VnodeFun) ->
     %% Calculate the available keyspaces. The list of keyspaces for
     %% each vnode that have already been covered by the plan are
     %% subtracted from the complete list of keyspaces so that coverage
@@ -200,7 +201,7 @@ find_coverage(AllKeySpaces, Offset, NVal, PartitionCount, MinimizeFor,
                           PartitionCount,
                           MinimizeFor,
                           UnavailableKeySpaces,
-                          PVC-1,
+                          Primaries-1,
                           CoverageResults,
                           VnodeFun);
         Error ->
@@ -228,7 +229,7 @@ augment_coverage_results({Key, NewValues}, Results) ->
 %% @doc Find the N key spaces for a VNode
 -spec n_keyspaces(non_neg_integer(), pos_integer(), pos_integer()) -> ordsets:new().
 n_keyspaces(VNodeIndex, N, PartitionCount) ->
-    LB = PartitionCount + VNodeIndex - N,
+  LB = PartitionCount + VNodeIndex - N,
     UB = PartitionCount + VNodeIndex - 1,
     ordsets:from_list([X rem PartitionCount || X <- lists:seq(LB, UB)]).
 
