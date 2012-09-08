@@ -202,9 +202,9 @@ timeit_mochiglobal_test() ->
     Reps = lists:seq(1, ?REPS),
     test_common("timeit_mochiglobal",
                 fun() ->
-                        Start = now(),
+                        Start = os:timestamp(),
                         [?MODULE:timeit_mg([42]) || _ <- Reps],
-                        [unused, {timer:now_diff(now(), Start), unused}]
+                        [unused, {timer:now_diff(os:timestamp(), Start), unused}]
                 end,
                 ?REPS),
     mochiglobal:delete(?MAGIC).
@@ -239,10 +239,10 @@ timeit_best_common(Label, InitTheDTraceStuff_p) ->
             Reps = lists:seq(1, ?REPS),
             test_common(Label,
                         fun() ->
-                                Start = now(),
+                                Start = os:timestamp(),
                                 [?MODULE:timeit_best([42]) || _ <- Reps],
                                 %% X = lists:usort([?MODULE:timeit_best([42]) || _ <- Reps]), io:format(user, "Label ~s out ~p\n", [Label, X]),
-                                [unused, {timer:now_diff(now(), Start), unused}]
+                                [unused, {timer:now_diff(os:timestamp(), Start), unused}]
                         end,
                         ?REPS)
     end.

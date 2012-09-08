@@ -419,7 +419,7 @@ loop(Parent, Name, State, Mod, hibernate, undefined, Queue, Debug) ->
 loop(Parent, Name, State, Mod, hibernate, {Current, Min, undefined}, Queue,
      Debug) ->
     proc_lib:hibernate(?MODULE,wake_hib,[Parent, Name, State, Mod,
-                                         {Current, Min, now()}, Queue, Debug]);
+                                         {Current, Min, os:timestamp()}, Queue, Debug]);
 loop(Parent, Name, State, Mod, Time, TimeoutState, Queue, Debug) ->
     receive
         Input -> loop(Parent, Name, State, Mod,
@@ -462,7 +462,7 @@ wake_hib(Parent, Name, State, Mod, TimeoutState, Queue, Debug) ->
 adjust_hibernate_after(undefined) ->
     undefined;
 adjust_hibernate_after({Current, Min, HibernatedAt}) ->
-    NapLengthMicros = timer:now_diff(now(), HibernatedAt),
+    NapLengthMicros = timer:now_diff(os:timestamp(), HibernatedAt),
     CurrentMicros = Current * 1000,
     LowTargetMicros = CurrentMicros * 4,
     HighTargetMicros = LowTargetMicros * 4,
