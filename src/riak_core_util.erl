@@ -133,7 +133,7 @@ integer_to_list(I0, Base, R0) ->
 %% @doc Create a random identifying integer, returning its string
 %%      representation in base 62.
 unique_id_62() ->
-    Rand = crypto:sha(term_to_binary({make_ref(), now()})),
+    Rand = crypto:sha(term_to_binary({make_ref(), os:timestamp()})),
     <<I:160/integer>> = Rand,
     integer_to_list(I, 62).
 
@@ -155,8 +155,8 @@ reload_all(Module) ->
 %% @doc Create a unique-enough id for vclock clients.
 mkclientid(RemoteNode) ->
     {{Y,Mo,D},{H,Mi,S}} = erlang:universaltime(),
-    {_,_,NowPart} = now(),
-    Id = erlang:phash2([Y,Mo,D,H,Mi,S,node(),RemoteNode,NowPart]),
+    {_,_,NowPart} = os:timestamp(),
+    Id = erlang:phash2([Y,Mo,D,H,Mi,S,node(),RemoteNode,NowPart,self()]),
     <<Id:32>>.
 
 %% @spec chash_key(BKey :: riak_object:bkey()) -> chash:index()
