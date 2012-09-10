@@ -31,9 +31,6 @@
 
 -module(vclock).
 
--author('Justin Sheehy <justin@basho.com>').
--author('Andy Gross <andy@basho.com>').
-
 -export([fresh/0,descends/2,merge/1,get_counter/2,get_timestamp/2,
 	increment/2,increment/3,all_nodes/1,equal/2,prune/3,timestamp/0]).
 
