@@ -58,10 +58,6 @@ start(_StartType, _StartArgs) ->
             throw({error, invalid_ring_state_dir})
     end,
 
-    %% Register our cluster_info app callback modules, with catch if
-    %% the app is missing or packaging is broken.
-    catch cluster_info:register_app(riak_core_cinfo_core),
-
     %% add these defaults now to supplement the set that may have been
     %% configured in app.config
     riak_core_bucket:append_bucket_defaults(
