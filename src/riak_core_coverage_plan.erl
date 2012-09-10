@@ -25,7 +25,6 @@
 %%      from each preference list to use in the plan.
 
 -module(riak_core_coverage_plan).
--author('Kelly McLaughlin <kelly@basho.com>').
 
 %% API
 -export([create_plan/5]).

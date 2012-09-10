@@ -33,8 +33,6 @@
 %% New York, NY, USA
 
 -module(chash).
--author('Justin Sheehy <justin@basho.com>').
--author('Andy Gross <andy@basho.com>').
 
 -export([contains_name/2,
          fresh/2,

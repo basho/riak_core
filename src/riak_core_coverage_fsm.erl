@@ -61,7 +61,6 @@
 %%      <li>State - The initial state for the module.</li>
 %%      </ul>
 -module(riak_core_coverage_fsm).
--author('Kelly McLaughlin <kelly@basho.com>').
 
 -include("riak_core_vnode.hrl").
 
