@@ -359,7 +359,20 @@ handle_cast({ring_changed, Ring}, State) ->
 
     {noreply, State3};
 
-handle_cast(management_tick, State) ->
+handle_cast(maybe_start_vnodes, State) ->
+    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
+    State2 = maybe_start_vnodes(Ring, State),
+    {noreply, State2};
+
+handle_cast({kill_repairs, Reason}, State) ->
+    lager:warning("Killing all repairs: ~p", [Reason]),
+    kill_repairs(State#state.repairs, Reason),
+    {noreply, State#state{repairs=[]}};
+
+handle_cast(_, State) ->
+    {noreply, State}.
+
+handle_info(management_tick, State) ->
     schedule_management_timer(),
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
     Mods = [Mod || {_, Mod} <- riak_core:vnode_modules()],
@@ -385,19 +398,6 @@ handle_cast(management_tick, State) ->
 
     Repairs2 = check_repairs(State4#state.repairs),
     {noreply, State5#state{repairs=Repairs2}};
-
-handle_cast(maybe_start_vnodes, State) ->
-    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
-    State2 = maybe_start_vnodes(Ring, State),
-    {noreply, State2};
-
-handle_cast({kill_repairs, Reason}, State) ->
-    lager:warning("Killing all repairs: ~p", [Reason]),
-    kill_repairs(State#state.repairs, Reason),
-    {noreply, State#state{repairs=[]}};
-
-handle_cast(_, State) ->
-    {noreply, State}.
 
 handle_info({'DOWN', MonRef, process, _P, _I}, State) ->
     delmon(MonRef, State),
@@ -433,7 +433,7 @@ schedule_management_timer() ->
     ManagementTick = app_helper:get_env(riak_core,
                                         vnode_management_timer,
                                         10000),
-    timer:apply_after(ManagementTick, gen_server, cast, [?MODULE, management_tick]).
+    erlang:send_after(ManagementTick, ?MODULE, management_tick).
 
 trigger_ownership_handoff(Transfers, Mods, State) ->
     Limit = app_helper:get_env(riak_core,
