@@ -25,7 +25,7 @@
 -behaviour(supervisor).
 
 %% API
--export([start_link/0]).
+-export([start_link/0, stop_webs/0, restart_webs/0]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -41,21 +41,19 @@
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
+stop_webs() ->
+    Specs = riak_web_childspecs(),
+    [supervisor:terminate_child(Id) || {Id, _, _, _, _, _} <- Specs].
+
+restart_webs() ->
+    Specs = riak_web_childspecs(),
+    [supervisor:restart_child(Id) || {Id, _, _, _, _, _} <- Specs].
+
 %% ===================================================================
 %% Supervisor callbacks
 %% ===================================================================
 
 init([]) ->
-    RiakWebs = case lists:flatten(riak_core_web:bindings(http),
-                                  riak_core_web:bindings(https)) of
-                   [] ->
-                       %% check for old settings, in case app.config
-                       %% was not updated
-                       riak_core_web:old_binding();
-                   Binding ->
-                       Binding
-               end,
-
     Children = lists:flatten(
                  [?CHILD(riak_core_sysmon_minder, worker),
                   ?CHILD(riak_core_vnode_sup, supervisor, 305000),
@@ -71,7 +69,18 @@ init([]) ->
                   ?CHILD(riak_core_gossip, worker),
                   ?CHILD(riak_core_claimant, worker),
                   ?CHILD(riak_core_stat_sup, supervisor),
-                  RiakWebs
+                  riak_web_childspecs()
                  ]),
 
     {ok, {{one_for_one, 10, 10}, Children}}.
+
+riak_web_childspecs() ->
+    case lists:flatten(riak_core_web:bindings(http),
+                       riak_core_web:bindings(https)) of
+        [] ->
+            %% check for old settings, in case app.config
+            %% was not updated
+            riak_core_web:old_binding();
+        Binding ->
+            Binding
+    end.

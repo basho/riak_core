@@ -25,7 +25,7 @@
 -behaviour(application).
 
 %% Application callbacks
--export([start/2, stop/1]).
+-export([start/2, prep_stop/1, stop/1]).
 
 %% ===================================================================
 %% Application callbacks
@@ -94,5 +94,11 @@ start(_StartType, _StartArgs) ->
             {error, Reason}
     end.
 
+prep_stop(_State) ->
+    lager:info("Stopping application riak_core - disabling web services\n", []),
+    riak_core_sup:stop_webs(),
+    stopping.
+
 stop(_State) ->
+    lager:info("Stopped  application riak_core\n", []),
     ok.
