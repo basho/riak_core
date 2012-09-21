@@ -377,9 +377,7 @@ publish_supported(State) ->
                         ignore
                 end
         end,
-    spawn(fun() ->
-                  riak_core_ring_manager:ring_trans(F, ok)
-          end),
+    riak_core_ring_manager:ring_trans(F, ok),
     ok.
 
 %% Add a node's capabilities to the provided ring
