@@ -25,7 +25,6 @@
 
 -module(riak_core_config).
 
--author('Kelly McLaughlin <kelly@basho.com>').
 
 -export([http_ip_and_port/0, ring_state_dir/0, ring_creation_size/0,
          default_bucket_props/0, cluster_name/0, gossip_interval/0,

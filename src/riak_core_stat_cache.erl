@@ -22,7 +22,6 @@
 
 -behaviour(gen_server).
 
--author('Russell Brown <russelldb@basho.com>').
 
 %% API
 -export([start_link/0, get_stats/1, register_app/2, register_app/3,

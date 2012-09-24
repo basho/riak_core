@@ -23,7 +23,6 @@
 %% @doc  QuickCheck tests for the chash module
 
 -module(chash_eqc).
--author('Kelly McLaughlin <kelly@basho.com>').
 
 -ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
