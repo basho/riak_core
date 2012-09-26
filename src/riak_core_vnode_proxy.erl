@@ -45,16 +45,22 @@ init([Parent, RegName, Mod, Index]) ->
 unregister_vnode(Mod, Index, Pid) ->
     cast(reg_name(Mod, Index), {unregister_vnode, Pid}).
 
+-spec command_return_vnode({atom(), non_neg_integer(), atom()}, term()) ->
+                                  {ok, pid()} | {error, term()}.
 command_return_vnode({Mod,Index,Node}, Req) ->
     call(reg_name(Mod, Index, Node), {return_vnode, Req}).
 
 call(Name, Msg) ->
-    {ok,Res} = (catch gen:call(Name, '$vnode_proxy_call', Msg)),
-    Res.
+    call_reply(catch gen:call(Name, '$vnode_proxy_call', Msg)).
 
 call(Name, Msg, Timeout) ->
-    {ok,Res} = (catch gen:call(Name, '$vnode_proxy_call', Msg, Timeout)),
-    Res.
+    call_reply(catch gen:call(Name, '$vnode_proxy_call', Msg, Timeout)).
+
+-spec call_reply({atom(), term()}) -> term().
+call_reply({ok, Res}) ->
+    Res;
+call_reply({'EXIT', Reason}) ->
+    {error, Reason}.
 
 cast(Name, Msg) ->
     catch erlang:send(Name, {'$vnode_proxy_cast', Msg}),
