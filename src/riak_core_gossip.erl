@@ -297,12 +297,6 @@ handle_cast({reconcile_ring, RingIn}, State) ->
             {noreply, State2}
     end;
 
-handle_cast(reset_tokens, State) ->
-    schedule_next_reset(),
-    gen_server:cast(?MODULE, gossip_ring),
-    {Tokens, _} = app_helper:get_env(riak_core, gossip_limit, ?DEFAULT_LIMIT),
-    {noreply, State#state{gossip_tokens=Tokens}};
-
 handle_cast(gossip_ring, State) ->
     % Gossip the ring to some random other node...
     {ok, MyRing} = riak_core_ring_manager:get_raw_ring(),
@@ -328,7 +322,12 @@ handle_cast({rejoin, RingIn}, State) ->
 handle_cast(_, State) ->
     {noreply, State}.
 
-%% @private
+handle_info(reset_tokens, State) ->
+    schedule_next_reset(),
+    gen_server:cast(?MODULE, gossip_ring),
+    {Tokens, _} = app_helper:get_env(riak_core, gossip_limit, ?DEFAULT_LIMIT),
+    {noreply, State#state{gossip_tokens=Tokens}};
+
 handle_info(_Info, State) -> {noreply, State}.
 
 %% @private
@@ -346,7 +345,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 schedule_next_reset() ->
     {_, Reset} = app_helper:get_env(riak_core, gossip_limit, ?DEFAULT_LIMIT),
-    timer:apply_after(Reset, gen_server, cast, [?MODULE, reset_tokens]).
+    erlang:send_after(Reset, ?MODULE, reset_tokens).
 
 reconcile(Ring0, [OtherRing0]) ->
     %% Due to rolling upgrades and legacy gossip, a ring's cluster name

@@ -216,14 +216,17 @@ handle_call({ring_changed, Ring}, _From, State) ->
     State2 = update_supported(Ring, State),
     {reply, ok, State2}.
 
-handle_cast(tick, State) ->
+handle_cast(_Msg, State) ->
+    {noreply, State}.
+
+handle_info(tick, State) ->
     schedule_tick(),
     State2 =
         lists:foldl(fun(Node, StateAcc) ->
                             add_node(Node, [], StateAcc)
                     end, State, State#state.unknown),
     State3 = renegotiate_capabilities(State2),
-    {noreply, State3}.
+    {noreply, State3};
 
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -245,7 +248,7 @@ schedule_tick() ->
     Tick = app_helper:get_env(riak_core,
                               capability_tick,
                               10000),
-    timer:apply_after(Tick, gen_server, cast, [?MODULE, tick]).
+    erlang:send_after(Tick, ?MODULE, tick).
 
 %% Capabilities are re-initialized if riak_core_capability server crashes
 reload(State=#state{registered=[]}) ->
@@ -374,9 +377,7 @@ publish_supported(State) ->
                         ignore
                 end
         end,
-    spawn(fun() ->
-                  riak_core_ring_manager:ring_trans(F, ok)
-          end),
+    riak_core_ring_manager:ring_trans(F, ok),
     ok.
 
 %% Add a node's capabilities to the provided ring

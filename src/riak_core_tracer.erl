@@ -125,7 +125,7 @@ handle_call({collect, Duration, Nodes}, _From, State) ->
                                      [] ->
                                          ok;
                                      _ ->
-                                         {Mega, Secs, Micro} = now(),
+                                         {Mega, Secs, Micro} = os:timestamp(),
                                          Ts = 1000000 * (1000000 * Mega + Secs) + Micro,
                                          TsEntries = [{Ts, E} || E <- Entries],
                                          gen_server:call(Pid,  {traces, TsEntries})
