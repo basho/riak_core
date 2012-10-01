@@ -31,10 +31,12 @@
          get_pretty_proc_info/1, get_pretty_proc_info/2]).
 
 %% gen_event callbacks
--export([init/1, handle_event/2, handle_call/2, 
+-export([init/1, handle_event/2, handle_call/2,
          handle_info/2, terminate/2, code_change/3]).
 
--record(state, {}).
+-record(state, {timer_ref :: reference()}).
+
+-define(INACTIVITY_TIMEOUT, 5000).
 
 %%%===================================================================
 %%% gen_event callbacks
@@ -65,7 +67,7 @@ add_handler() ->
 %% @end
 %%--------------------------------------------------------------------
 init([]) ->
-    {ok, #state{}}.
+    {ok, #state{}, hibernate}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -80,14 +82,17 @@ init([]) ->
 %%                          remove_handler
 %% @end
 %%--------------------------------------------------------------------
-handle_event({monitor, Pid, Type, Info}, State) ->
+handle_event({monitor, Pid, Type, Info}, State=#state{timer_ref=TimerRef}) ->
+    %% Reset the inactivity timeout
+    NewTimerRef = reset_timer(TimerRef),
+    maybe_collect_garbage(Pid, Type),
     Pretty = format_pretty_proc_info(Pid, almost_current_function),
-    lager:info("monitor ~w ~w ~s ~w",
-                          [Type, Pid, Pretty, Info]),
-    {ok, State};
-handle_event(Event, State) ->
+    lager:info("monitor ~w ~w ~s ~w", [Type, Pid, Pretty, Info]),
+    {ok, State#state{timer_ref=NewTimerRef}};
+handle_event(Event, State=#state{timer_ref=TimerRef}) ->
+    NewTimerRef = reset_timer(TimerRef),
     lager:info("Monitor got ~p", [Event]),
-    {ok, State}.
+    {ok, State#state{timer_ref=NewTimerRef}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -122,6 +127,10 @@ handle_call(_Call, State) ->
 handle_info(die_for_testing_purposes_only, _State) ->
     %% exit({told_to_die, lists:duplicate(500000, $x)});
     exit({told_to_die, lists:duplicate(50, $x)});
+handle_info(inactivity_timeout, _State) ->
+    %% No events have arrived for the timeout period
+    %% so hibernate to free up resources.
+    {ok, _State, hibernate};
 handle_info(Info, State) ->
     lager:info("handle_info got ~p", [Info]),
     {ok, State}.
@@ -192,3 +201,21 @@ get_pretty_proc_info(Pid, Acf) ->
                   end,
             RNL ++ [ICT, {Acf, CF}, {message_queue_len, MQL}]
     end.
+
+
+%% @doc If the message type is due to a large heap warning
+%% and the source is ourself, go ahead and collect garbage
+%% to avoid the death spiral.
+-spec maybe_collect_garbage(pid(), atom()) -> ok.
+maybe_collect_garbage(Pid, large_heap) when Pid =:= self() ->
+    erlang:garbage_collect(Pid),
+    ok;
+maybe_collect_garbage(_, _) ->
+    ok.
+
+-spec reset_timer(undefined | reference()) -> reference().
+reset_timer(undefined) ->
+    erlang:send_after(?INACTIVITY_TIMEOUT, self(), inactivity_timeout);
+reset_timer(TimerRef) ->
+    erlang:cancel_timer(TimerRef),
+    reset_timer(undefined).
