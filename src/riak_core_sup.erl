@@ -43,11 +43,11 @@ start_link() ->
 
 stop_webs() ->
     Specs = riak_web_childspecs(),
-    [supervisor:terminate_child(Id) || {Id, _, _, _, _, _} <- Specs].
+    [supervisor:terminate_child(?MODULE, Id) || {Id, _, _, _, _, _} <- Specs].
 
 restart_webs() ->
     Specs = riak_web_childspecs(),
-    [supervisor:restart_child(Id) || {Id, _, _, _, _, _} <- Specs].
+    [supervisor:restart_child(?MODULE, Id) || {Id, _, _, _, _, _} <- Specs].
 
 %% ===================================================================
 %% Supervisor callbacks
