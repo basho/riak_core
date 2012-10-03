@@ -265,7 +265,7 @@ postcondition(S, {call, _, healthy_new_service, [Service]}, _Res) ->
 
 postcondition(S, {call, _, healthy_existing_service, [Service]}, _Res) ->
     S2 = service_up(node(), Service, S),
-    ?assert(meck:valdiate(mod_health)),
+    ?assert(meck:validate(mod_health)),
     deep_validate(S2);
 
 postcondition(S, {call, _, unhealthy_service, [Service]}, _Res) ->
