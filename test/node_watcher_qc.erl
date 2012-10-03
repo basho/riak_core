@@ -32,6 +32,7 @@
 -record(state, { up_nodes = [],
                  services = [],
                  service_pids = [],
+                 service_healths = [],
                  peers = []}).
 
 -define(QC_OUT(P),
@@ -52,6 +53,9 @@ prop_main() ->
     riak_core_eventhandler_sup:start_link(),
     riak_core_ring_events:start_link(),
     riak_core_node_watcher_events:start_link(),
+
+    %% meck used for health watch / threshold
+    meck:new(mod_health),
 
     ?FORALL(Cmds, commands(?MODULE),
             begin
@@ -101,7 +105,13 @@ command(S) ->
            {call, ?MODULE, remote_service_up, [g_node(), g_services()]},
            {call, ?MODULE, remote_service_down, [g_node()]},
            {call, ?MODULE, remote_service_down_disterl, [g_node()]},
-           {call, ?MODULE, wait_for_bcast, []}
+           {call, ?MODULE, wait_for_bcast, []},
+           {call, ?MODULE, healthy_new_service, [g_service()]},
+           {call, ?MODULE, healthy_existing_service, [g_service()]},
+           {call, ?MODULE, unhealthy_service, [g_service()]},
+           {call, ?MODULE, recovering_service, [g_service()]},
+           {call, ?MODULE, faulty_health_check_callback_once, [g_service()]},
+           {call, ?MODULE, faulty_health_check_callback_many, [g_service()]}
           ]).
 
 precondition(S, {call, _, local_service_kill, [Service, S]}) ->
@@ -143,9 +153,49 @@ next_state(S, _Res, {call, _, Fn, [Node]})
 next_state(S, _Res, {call, _, wait_for_bcast, _}) ->
     S;
 
+next_state(S, _, {call, _, healthy_new_service, [_Service]}) ->
+    meck:expect(mod_health, callback, fun (Pid, true) when is_pid(Pid) ->
+        true
+    end),
+    S;
+
+next_state(S, Res, {call, M, healthy_existing_service, [Service]}) ->
+    meck:expect(mod_health, callback, fun (Pid, true) when is_pid(Pid) ->
+        true
+    end),
+    next_state(S, Res, {call, M, local_service_up, [Service]});
+
+next_state(S, Res, {call, M, unhealthy_service, [Service]}) ->
+    meck:expect(mod_health, callback, fun (Pid, false) when is_pid(Pid) ->
+        false
+    end),
+    next_state(S, Res, {call, M, local_service_up, [Service]});
+
+next_state(S, Res, {call, M, recovering_service, [Service]}) ->
+    meck:sequence(mod_health, callback, 2, [false, true]),
+    next_state(S, Res, {call, M, local_service_up, [Service]});
+
+next_state(S, Res, {call, M, faulty_health_check_callback_once, [Service]}) ->
+    meck:expect(mod_health, callback, fun(_Pid, error_once) ->
+        case put(meck_boomed, true) of
+            false ->
+                meck:exception(meck_boomed);
+            true ->
+                true
+        end
+    end),
+    next_state(S, Res, {call, M, local_service_up, [Service]});
+
+next_state(S, Res, {call, M, faulty_health_check_callback_many, [Service]}) ->
+    meck:expect(mod_health, callback, fun(_Pid, error) ->
+        meck:exception(meck_boomed)
+    end),
+    next_state(S, Res, {call, M, local_service_up, [Service]});
+
 next_state(S, _Res, {call, _, ring_update, [Nodes]}) ->
     Peers = ordsets:del_element(node(), ordsets:from_list(Nodes)),
     peer_filter(S#state { peers = Peers }).
+
 
 
 
@@ -206,6 +256,39 @@ postcondition(S, {call, _, Fn, [Node]}, _Res)
 
 postcondition(S, {call, _, wait_for_bcast, _}, _Res) ->
     validate_broadcast(S, S, service);
+
+postcondition(S, {call, _, healthy_new_service, [Service]}, _Res) ->
+    S2 = service_up(node(), Service, S),
+    validate_broadcast(S, S2, service),
+    ?assert(meck:validate(mod_health)),
+    deep_validate(S2);
+
+postcondition(S, {call, _, healthy_existing_service, [Service]}, _Res) ->
+    S2 = service_up(node(), Service, S),
+    ?assert(meck:valdiate(mod_health)),
+    deep_validate(S2);
+
+postcondition(S, {call, _, unhealthy_service, [Service]}, _Res) ->
+    S2 = service_down(node(), Service, S),
+    validate_broadcast(S, S2, service),
+    ?assert(meck:validate(mod_health)),
+    deep_validate(S2);
+
+postcondition(S, {call, _, recovering_service, [Service]}, _Res) ->
+    S2 = service_down(node(), Service, S),
+    S3 = service_up(node(), Service, S2),
+    validate_broadcast(S, S2, service),
+    validate_broadcast(S2, S3, service),
+    ?assert(meck:validate(mod_health)),
+    deep_validate(S3);
+
+postcondition(S, {call, _, faulty_health_check_callback_once, [_Service]}, _Res) ->
+    ?assert(meck:validate(mod_health)),
+    deep_validate(S);
+
+postcondition(S, {call, _, faulty_health_check_callback_many, [_Service]}, _REs) ->
+    ?assert(meck:validate(mod_health)),
+    deep_validate(S);
 
 postcondition(S, {call, _, ring_update, [Nodes]}, _Res) ->
     %% Ring update should generate a broadcast to all NEW peers
@@ -276,7 +359,11 @@ g_services() ->
 g_ring_nodes() ->
     vector(app_helper:get_env(riak_core, ring_creation_size),
            oneof([node(), 'n1@127.0.0.1', 'n2@127.0.0.1', 'n3@127.0.0.1'])).
+g_service_threshold() ->
+    [g_service(), {nw_mecked_thresher, health_check, [oneof([true, false, kill, error])]}].
 
+g_services_threshold() ->
+    [g_service_threshold() | list(g_service_threshold())].
 
 %% ====================================================================
 %% Calls
@@ -327,6 +414,48 @@ ring_update(Nodes) ->
     gen_server:cast(riak_core_node_watcher, {ring_update, Ring}),
     wait_for_avsn(Avsn0),
     ?ORDSET(Nodes).
+
+healthy_new_service(Service) ->
+    Pid = spawn(fun() -> service_loop() end),
+    ok = riak_core_node_watcher:service_up(Service, Pid, {mod_health, callback, [true]}),
+    gen_server:cast(riak_core_node_watcher, {force_health_check, Service}),
+    Pid.
+
+healthy_existing_service(Service) ->
+    Pid = spawn(fun() -> service_loop() end),
+    ok = riak_core_node_watcher:service_up(Service, Pid),
+    ok = riak_core_node_watcher:service_up(Service, Pid, {mod_health, callback, [true]}),
+    gen_server:cast(riak_core_node_watcher, {force_health_check, Service}),
+    Pid.
+
+unhealthy_service(Service) ->
+    Pid = spawn(fun() -> service_loop() end),
+    ok = riak_core_node_watcher:service_up(Service, Pid),
+    ok = riak_core_node_watcher:service_up(Service, Pid, {mod_health, callback, [false]}),
+    gen_server:cast(riak_core_node_watcher, {force_health_check, Service}),
+    Pid.
+
+recovering_service(Service) ->
+    Pid = spawn(fun() -> service_loop() end),
+    ok = riak_core_node_watcher:service_up(Service, Pid, {mod_health, callback, [false_once]}),
+    gen_server:cast(riak_core_node_watcher, {force_health_check, Service}),
+    gen_server:cast(riak_core_node_watcher, {force_health_check, Service}),
+    Pid.
+
+faulty_health_check_callback_once(Service) ->
+    Pid = spawn(fun() -> service_loop() end),
+    ok = riak_core_node_watcher:service_up(Service, Pid, {mod_health, callback, [error_once]}),
+    gen_server:cast(riak_core_node_watcher, {force_health_check, Service}),
+    gen_server:cast(riak_core_node_watcher, {force_health_check, Service}),
+    Pid.
+
+faulty_health_check_callback_many(Service) ->
+    Pid = spawn(fun() -> service_loop() end),
+    ok = riak_core_node_watcher:service_up(Service, Pid, {mod_health, callback, [error_once]}),
+    gen_server:cast(riak_core_node_watcher, {force_health_check, Service}),
+    gen_server:cast(riak_core_node_watcher, {force_health_check, Service}),
+    gen_server:cast(riak_core_node_watcher, {force_health_check, Service}),
+    Pid.
 
 
 %% ====================================================================
