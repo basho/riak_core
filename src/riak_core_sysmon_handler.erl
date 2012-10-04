@@ -26,9 +26,6 @@
 
 %% API
 -export([add_handler/0]).
-%% Perhaps useful to the outside world.
--export([format_pretty_proc_info/1, format_pretty_proc_info/2,
-         get_pretty_proc_info/1, get_pretty_proc_info/2]).
 
 %% gen_event callbacks
 -export([init/1, handle_event/2, handle_call/2,
@@ -91,8 +88,9 @@ handle_event({monitor, Pid, Type, _Info},
 handle_event({monitor, Pid, Type, Info}, State=#state{timer_ref=TimerRef}) ->
     %% Reset the inactivity timeout
     NewTimerRef = reset_timer(TimerRef),
-    Pretty = format_pretty_proc_info(Pid, almost_current_function),
-    lager:info("monitor ~w ~w ~s ~w", [Type, Pid, Pretty, Info]),
+    {Fmt, Args} = format_pretty_proc_info(Pid, almost_current_function),
+    lager:info("monitor ~w ~w "++ Fmt ++ " ~w",
+                          [Type, Pid] ++ Args ++ [Info]),
     {ok, State#state{timer_ref=NewTimerRef}};
 handle_event(Event, State=#state{timer_ref=TimerRef}) ->
     NewTimerRef = reset_timer(TimerRef),
@@ -175,13 +173,13 @@ format_pretty_proc_info(Pid, Acf) ->
     try
         case get_pretty_proc_info(Pid, Acf) of
             undefined ->
-                "";
+                {"", []};
             Res ->
-                io_lib:format("~w", [Res])
+                {"~w", [Res]}
         end
     catch X:Y ->
-            io_lib:format("Pid ~w, ~W ~W at ~w\n",
-                          [Pid, X, 20, Y, 20, erlang:get_stacktrace()])
+        {"Pid ~w, ~W ~W at ~w\n",
+            [Pid, X, 20, Y, 20, erlang:get_stacktrace()]}
     end.
 
 get_pretty_proc_info(Pid) ->
