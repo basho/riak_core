@@ -323,6 +323,9 @@ deep_validate(S) ->
 
 validate_broadcast(S0, Sfinal, Op) ->
     Bcasts = broadcasts(),
+    validate_broadcast(S0, Sfinal, Op, Bcasts).
+
+validate_broadcast(S0, Sfinal, Op, Bcasts) ->
     Transition = {is_node_up(node(), S0), is_node_up(node(), Sfinal), Op},
     ExpPeers = Sfinal#state.peers,
     case Transition of
@@ -341,6 +344,18 @@ validate_broadcast(S0, Sfinal, Op) ->
             ?assertEqual([], Bcasts)
     end,
     true.
+
+validate_broadcasts(States, Op) ->
+    Bcasts = broadcasts(),
+    ?assertEqual(length(Bcasts) + 1,  length(States)),
+    validate_broadcasts(States, Op, Bcasts).
+
+validate_broadcasts([S0, Sfinal], Op, [Bcast]) ->
+    validate_broadcast(S0, Sfinal, Op, [Bcast]);
+
+validate_broadcasts([S0, Sfinal | STail], Op, [Bcast | BTail]) ->
+    true = validate_broadcast(S0, Sfinal, Op, [Bcast]),
+    validate_broadcasts([Sfinal | STail], Op, BTail).
 
 
 %% ====================================================================
