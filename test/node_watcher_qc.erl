@@ -424,7 +424,7 @@ ring_update(Nodes) ->
 healthy_service(Service) ->
     Pid = spawn(fun() -> service_loop() end),
     Self = self(),
-    meck:expect(mod_health, callback, fun (InPid, true) when is_pid(Pid) ->
+    meck:expect(mod_health, callback, fun (InPid, true) when is_pid(InPid) ->
         Self ! {meck_done, InPid},
         true
     end),
