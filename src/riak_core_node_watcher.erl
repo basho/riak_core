@@ -156,12 +156,7 @@ handle_call({service_up, Id, Pid}, _From, State) ->
 
 handle_call({service_up, Id, Pid, MFA, Options}, From, State) ->
     %% update the active set of services if needed.
-    {reply, _, State1} = case erlang:get(Id) of
-        Pid ->
-            {reply, ok, State};
-        _OtherPid ->
-            handle_call({service_up, Id, Pid}, From, State)
-    end,
+    {reply, _, State1} = handle_call({service_up, Id, Pid}, From, State),
 
     %% uninstall old health check
     State2 = cancel_health_check(Id, State1),
@@ -171,6 +166,7 @@ handle_call({service_up, Id, Pid, MFA, Options}, From, State) ->
     CheckRec = #health_check{
         callback = MFA,
         check_interval = CheckInterval,
+        service_pid = Pid,
         max_callback_failures = proplists:get_value(max_callback_failures, Options, 3),
         interval_tref = erlang:send_after(CheckInterval * 1000, self(), {health_check, Id})
     },
@@ -578,7 +574,7 @@ handle_health_check_exit(Id, Cause, State) ->
 % all is well
 handle_health_check_exit(Id, normal, #health_check{health_failures = 0} = CheckRec, State) ->
     CheckRec2 = schedule_health_check(Id, CheckRec#health_check{checking_pid = undefined, callback_failures = 0}),
-    Checks = orddict:store(Id, CheckRec2),
+    Checks = orddict:store(Id, CheckRec2, State#state.health_checks),
     State#state{health_checks = Checks};
 
 % recovery before service_down
