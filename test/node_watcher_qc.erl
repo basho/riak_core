@@ -157,12 +157,6 @@ next_state(S, Res, {call, _, healthy_service, [Service]}) ->
     Pids = orddict:store(Service, Res, S2#state.service_pids),
     S2#state { service_pids = Pids };
 
-next_state(S, Res, {call, M, healthy_existing_service, [Service]}) ->
-    meck:expect(mod_health, callback, fun (Pid, true) when is_pid(Pid) ->
-        true
-    end),
-    next_state(S, Res, {call, M, local_service_up, [Service]});
-
 next_state(S, Res, {call, M, unhealthy_service, [Service]}) ->
     meck:expect(mod_health, callback, fun (Pid, false) when is_pid(Pid) ->
         false
@@ -442,13 +436,6 @@ healthy_service(Service) ->
     after 1000 ->
         erlang:error(timeout)
     end,
-    Pid.
-
-healthy_existing_service(Service) ->
-    Pid = spawn(fun() -> service_loop() end),
-    ok = riak_core_node_watcher:service_up(Service, Pid),
-    ok = riak_core_node_watcher:service_up(Service, Pid, {mod_health, callback, [true]}),
-    gen_server:cast(riak_core_node_watcher, {force_health_check, Service}),
     Pid.
 
 unhealthy_service(Service) ->
