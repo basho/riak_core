@@ -597,7 +597,7 @@ handle_health_check_exit(Id, false, #health_check{health_failures = N, max_healt
     CheckRec2 = CheckRec#health_check{health_failures = N + 1, checking_pid = undefined, callback_failures = 0},
     {reply, _, State2} = handle_call({service_down, Id}, "from", State),
     CheckRec3 = schedule_health_check(Id, CheckRec2),
-    Checks = orddict:store(Id, CheckRec3),
+    Checks = orddict:store(Id, CheckRec3, State2#state.health_checks),
     State2#state{health_checks = Checks};
 
 % healthy failure while service_down
@@ -657,6 +657,15 @@ trigger_health_check(Id, Rec, true) ->
     erlang:cancel_timer(Rec#health_check.interval_tref),
     #health_check{callback = MFA, service_pid = ServPid} = Rec,
     {Mod, Fun, Args} = MFA,
-    Pid = proc_lib:spawn_link(Mod, Fun, [ServPid | Args]),
+    CheckFun = fun() ->
+        Out = erlang:apply(Mod,Fun,[ServPid | Args]),
+        if
+            Out ->
+                ok;
+            true ->
+                exit(Out)
+        end
+    end,
+    Pid = proc_lib:spawn_link(CheckFun),
     erlang:put(Pid, Id),
     Rec#health_check{checking_pid = Pid, interval_tref = undefined}.
