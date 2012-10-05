@@ -32,11 +32,14 @@
 -record(state, {sock :: port(),
                 ssl_opts :: [] | list(),
                 tcp_mod :: atom(),
+                timeout_len :: non_neg_integer(),
                 partition :: non_neg_integer(),
                 vnode_mod = riak_kv_vnode:: module(),
                 vnode :: pid(),
                 count = 0 :: non_neg_integer()}).
 
+%% set the timeout to five minutes to be conservative.
+-define(RECV_TIMEOUT, 300000).
 
 start_link() ->
     start_link([]).
@@ -51,7 +54,8 @@ init([SslOpts]) ->
     {ok, #state{ssl_opts = SslOpts,
                 tcp_mod  = if SslOpts /= [] -> ssl;
                               true          -> gen_tcp
-                           end}}.
+                           end,
+                timeout_len = app_helper:get_env(riak_core, handoff_receive_timeout, ?RECV_TIMEOUT)}}.
 
 handle_call({set_socket, Socket0}, _From, State = #state{ssl_opts = SslOpts}) ->
     SockOpts = [{active, once}, {packet, 4}, {header, 1}],
@@ -85,14 +89,18 @@ handle_info({tcp, Socket, Data}, State) ->
                          true                          -> inet
                       end,
             InetMod:setopts(Socket, [{active, once}]),
-            {noreply, NewState}
+            {noreply, NewState, State#state.timeout_len}
     end;
 handle_info({ssl_closed, Socket}, State) ->
     handle_info({tcp_closed, Socket}, State);
 handle_info({ssl_error, Socket, Reason}, State) ->
     handle_info({tcp_error, Socket, Reason}, State);
 handle_info({ssl, Socket, Data}, State) ->
-    handle_info({tcp, Socket, Data}, State).
+    handle_info({tcp, Socket, Data}, State);
+handle_info(timeout, State) ->
+            lager:error("Handoff receiver for partition ~p timed out after "
+                                   "processing ~p objects.", [State#state.partition, State#state.count]),
+    {stop, normal, State}.
 
 process_message(?PT_MSG_INIT, MsgData, State=#state{vnode_mod=VNodeMod}) ->
     <<Partition:160/integer>> = MsgData,
