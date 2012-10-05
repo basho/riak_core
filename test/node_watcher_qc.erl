@@ -96,21 +96,21 @@ initial_state() ->
 
 command(S) ->
     oneof([
-           %{call, ?MODULE, ring_update, [g_ring_nodes()]},
-           %{call, ?MODULE, local_service_up, [g_service()]},
-           %{call, ?MODULE, local_service_down, [g_service()]},
-           %{call, ?MODULE, local_service_kill, [g_service(), S]},
-           %{call, ?MODULE, local_node_up, []},
-           %{call, ?MODULE, local_node_down, []},
-           %{call, ?MODULE, remote_service_up, [g_node(), g_services()]},
-           %{call, ?MODULE, remote_service_down, [g_node()]},
-           %{call, ?MODULE, remote_service_down_disterl, [g_node()]},
-           %{call, ?MODULE, wait_for_bcast, []},
-           %{call, ?MODULE, healthy_service, [g_service()]},
-           {call, ?MODULE, unhealthy_service, [g_service()]}%,
-           %{call, ?MODULE, recovering_service, [g_service()]},
-           %{call, ?MODULE, faulty_health_check_callback_once, [g_service()]},
-           %{call, ?MODULE, faulty_health_check_callback_many, [g_service()]}
+           {call, ?MODULE, ring_update, [g_ring_nodes()]},
+           {call, ?MODULE, local_service_up, [g_service()]},
+           {call, ?MODULE, local_service_down, [g_service()]},
+           {call, ?MODULE, local_service_kill, [g_service(), S]},
+           {call, ?MODULE, local_node_up, []},
+           {call, ?MODULE, local_node_down, []},
+           {call, ?MODULE, remote_service_up, [g_node(), g_services()]},
+           {call, ?MODULE, remote_service_down, [g_node()]},
+           {call, ?MODULE, remote_service_down_disterl, [g_node()]},
+           {call, ?MODULE, wait_for_bcast, []},
+           {call, ?MODULE, healthy_service, [g_service()]},
+           {call, ?MODULE, unhealthy_service, [g_service()]},
+           {call, ?MODULE, recovering_service, [g_service()]},
+           {call, ?MODULE, faulty_health_check_callback_once, [g_service()]},
+           {call, ?MODULE, faulty_health_check_callback_many, [g_service()]}
           ]).
 
 precondition(S, {call, _, local_service_kill, [Service, S]}) ->
@@ -158,15 +158,7 @@ next_state(S, Res, {call, _, healthy_service, [Service]}) ->
     S2#state { service_pids = Pids };
 
 next_state(S, Res, {call, M, unhealthy_service, [Service]}) ->
-    ?debugFmt("Next state:\n"
-    "   in state:  ~p\n"
-    "   last res:  ~p\n"
-    "   service:  ~p",
-    [S,Res,Service]),
     S;
-    %S2 = service_up(node(), Service, S),
-    %Pids = orddict:store(Service, Res, S2#state.service_pids),
-    %S2#state { service_pids = Pids };
 
 next_state(S, Res, {call, M, recovering_service, [Service]}) ->
     meck:sequence(mod_health, callback, 2, [false, true]),
@@ -261,14 +253,9 @@ postcondition(S, {call, _, healthy_service, [Service]}, _Res) ->
     deep_validate(S2);
 
 postcondition(S, {call, _, unhealthy_service, [Service]}, Res) ->
-    ?debugFmt("postcondition:\n"
-    "   in state:  ~p\n"
-    "   service:  ~p\n"
-    "   in res:  ~p",
-    [S, Service, Res]),
     S2 = service_up(node(), Service, S),
     S3 = service_down(node(), Service, S2),
-    validate_broadcasts([S,S2,S3], Service),
+    validate_broadcasts([S,S2,S3], service),
     ?assert(meck:validate(mod_health)),
     deep_validate(S3);
 
@@ -344,7 +331,6 @@ validate_broadcast(S0, Sfinal, Op, Bcasts) ->
 
 validate_broadcasts(States, Op) ->
     Bcasts = broadcasts(),
-    ?debugFmt("broadcasts:  ~p", [Bcasts]),
     ?assertEqual(length(Bcasts) + 1,  length(States)),
     validate_broadcasts(States, Op, Bcasts).
 
@@ -460,6 +446,8 @@ unhealthy_service(Service) ->
     after 1000 ->
         erlang:error(timeout)
     end,
+    % give the broadcast for service down to be handled.
+    timer:sleep(50),
     Pid.
 
 recovering_service(Service) ->
