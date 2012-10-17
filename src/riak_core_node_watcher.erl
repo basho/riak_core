@@ -331,7 +331,7 @@ handle_info({'DOWN', Mref, _, _Pid, _Info}, State) ->
             {noreply, update_avsn(S2#state{health_checks = Healths})}
     end;
 
-handle_info({'EXIT', Pid, Cause} = Msg, State) ->
+handle_info({'EXIT', Pid, _Cause} = Msg, State) ->
     Service = erlang:erase(Pid),
     State2 = handle_check_msg(Msg, Service, State),
     {noreply, State2};
@@ -636,11 +636,11 @@ health_fsm(resume, Service, #health_check{state = suspend} = InCheck) ->
     },
     {ok, OutCheck};
 
-health_fsm(remove, Service, #health_check{state = suspend} = InCheck) ->
+health_fsm(remove, _Service, #health_check{state = suspend}) ->
     ok;
 
 %% message handling when checking state
-health_fsm(suspend, Service, #health_check{state = checking} = InCheck) ->
+health_fsm(suspend, _Service, #health_check{state = checking} = InCheck) ->
     #health_check{checking_pid = Pid} = InCheck,
     erlang:erase(Pid),
     {ok, InCheck#health_check{state = suspend, checking_pid = undefined}};
@@ -697,7 +697,7 @@ health_fsm({'EXIT', Pid, false}, Service, #health_check{health_failures = N, max
     },
     {ok, OutCheck};
 
-health_fsm({'EXIT', Pid, false}, Service, #health_check{health_failures = N, max_health_failures = M, checking_pid = Pid} = InCheck) ->
+health_fsm({'EXIT', Pid, false}, Service, #health_check{health_failures = N, checking_pid = Pid} = InCheck) ->
     Tref = next_health_tref(N, InCheck#health_check.check_interval, Service),
     OutCheck = InCheck#health_check{
         state = waiting,
@@ -710,7 +710,6 @@ health_fsm({'EXIT', Pid, false}, Service, #health_check{health_failures = N, max
 
 health_fsm({'EXIT', Pid, Cause}, Service, #health_check{checking_pid = Pid} = InCheck) ->
     lager:error("health check process for ~p error'ed:  ~p", [Service, Cause]),
-    {M,F,A} = InCheck#health_check.callback,
     Fails = InCheck#health_check.callback_failures + 1,
     if
         Fails == InCheck#health_check.max_callback_failures ->
@@ -747,7 +746,7 @@ health_fsm(remove, _Service, #health_check{state = waiting, interval_tref = Tref
     ok;
 
 % fallthrough handling
-health_fsm(Msg, Service, Health) ->
+health_fsm(_Msg, _Service, Health) ->
     {ok, Health}.
 
 start_health_check(Service, #health_check{checking_pid = undefined} = CheckRec) ->
