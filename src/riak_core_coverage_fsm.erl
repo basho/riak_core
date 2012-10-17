@@ -158,7 +158,7 @@ init([Mod,
       From={_, ReqId, _},
       RequestArgs]) ->
     Exports = Mod:module_info(exports),
-    {Request, VNodeConstraint, NVal, PrimaryVNodeCoverage,
+    {Request, VNodeConstraint, NVal, Primaries,
      NodeCheckService, VNodeMaster, Timeout, ModState} =
         Mod:init(From, RequestArgs),
     maybe_start_timeout_timer(Timeout),

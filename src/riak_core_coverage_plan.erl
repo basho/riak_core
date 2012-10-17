@@ -35,6 +35,20 @@
 -type vnode_filters() :: [{node(), [{index(), [index()]}]}].
 -type coverage_plan() :: {coverage_vnodes(), vnode_filters()}.
 
+-record(context, {keyspaces :: [non_neg_integer()],
+                  partition_count :: pos_integer(),
+                  offset :: non_neg_integer(),
+                  n_val :: pos_integer(),
+                  minimization_target :: nodes | vnodes,
+                  unavail_keyspaces :: [non_neg_integer()],
+                  primaries :: all | pos_integer(),
+                  results=[] :: [vnode()],
+                  ring=term(),
+                  index_increment=pos_integer(),
+                  vnode_fun :: function(),
+                  vnode_constraint :: all | allup
+                 }).
+
 %% ===================================================================
 %% Public API
 %% ===================================================================
@@ -69,21 +83,35 @@ create_plan(VNodeConstraint, NVal, Primaries, Offset, Service, MinimizationTarge
     DownVNodes = [Index || {Index, Node} <- riak_core_ring:all_owners(Ring),
                            not lists:member(Node, UpNodes)],
     RingIndexInc = chash:ring_increment(PartitionCount),
-    AllKeySpaces = lists:seq(0, PartitionCount - 1),
     %% The offset value serves as a tiebreaker in the
     %% compare_next_vnode function and is used to distribute
     %% work to different sets of VNodes.
-    CoverageResult =
-        find_coverage(AllKeySpaces,
-                      Offset,
-                      NVal,
-                      PartitionCount,
-                      MinimizationTarget,
-                      [(DownVNode div RingIndexInc) ||
-                          DownVNode <- DownVNodes], % Unavail keyspaces
-                      lists:min([Primaries, NVal]),
-                      [],
-                      vnode_fun(Ring, RingIndexInc, PartitionCount)),
+
+    %% Create a coverage context
+    Context = #context{keyspaces=lists:seq(0, PartitionCount - 1),
+                       offset=Offset,
+                       n_val=NVal,
+                       partition_count=PartitionCount,
+                       minimization_target=MinimizationTarget,
+                       unavail_keyspaces=[(DownVNode div RingIndexInc) ||
+                                             DownVNode <- DownVNodes],
+                       primaries=lists:min([Primaries, NVal]),
+                       ring=Ring,
+                       index_increment=RingIndexInc
+                       vnode_constraint=VNodeConstraint
+                       vnode_fun=vnode_fun(Ring, RingIndexInc, PartitionCount))},
+
+    CoverageResult = find_coverage(Context, Context#context.primaries)
+        %% find_coverage(AllKeySpaces,
+        %%               Offset,
+        %%               NVal,
+        %%               PartitionCount,
+        %%               MinimizationTarget,
+        %%               [(DownVNode div RingIndexInc) ||
+        %%                   DownVNode <- DownVNodes], % Unavail keyspaces
+        %%               lists:min([Primaries, NVal]),
+        %%               [],
+        %%               vnode_fun(Ring, RingIndexInc, PartitionCount)),
     handle_coverage_result(
       CoverageResult,
       VNodeConstraint,
@@ -105,7 +133,7 @@ handle_coverage_result({ok, CoveragePlan},
                         CoveragePlan),
     print_coverage_plan(FP),
     FP;
-handle_coverage_result({insufficient_vnodes_available, _KeySpace, PartialCoverage},
+handle_coverage_result({insufficient_vnodes, _KeySpace, PartialCoverage},
                        allup,
                        Ring,
                        RingIndexInc,
@@ -116,9 +144,13 @@ handle_coverage_result({insufficient_vnodes_available, _KeySpace, PartialCoverag
     lists:mapfoldl(coverage_vnode_fun(Ring, RingIndexInc, NVal, PartitionCount),
                    [],
                    PartialCoverage);
-handle_coverage_result({insufficient_vnodes_available, _, _},
+handle_coverage_result({insufficient_vnodes, KeySpace, PartialCoverage},
                        all,
                        _, _, _, _) ->
+    lager:warning("Insufficient vnodes available to achieve cluster coverage."
+                  "Keyspace: ~p"
+                  "Partial coverage plan: ~p",
+                  [KeySpace, PartialCoverage]),
     {error, insufficient_vnodes_available}.
 
 print_coverage_plan({Vnodes, _Filters}) ->
@@ -156,12 +188,17 @@ coverage_vnode_fun(Ring, RingIndexInc, NVal, PartitionCount) ->
 
     end.
 
+%% @doc Return a function to return a pair consisting of the Vnode
+%% index and the node based on a given ring position.
+-spec vnode_fun(term(), pos_integer(), pos_integer()) -> function().
 vnode_fun(Ring, RingIndexInc, PartitionCount) ->
     fun(Position) ->
             get_vnode(Ring, RingIndexInc, PartitionCount, Position)
     end.
 
--spec get_vnode(term(), pos_integer(), pos_integer(), pos_integer()) -> vnode().
+%% @doc Return a pair consisting of the Vnode index and the node based
+%% on a given ring position.
+-spec get_vnode(term(), pos_integer(), pos_integer(), non_neg_integer()) -> vnode().
 get_vnode(Ring, RingIndexInc, PartitionCount, Position) ->
     %% Calculate the VNode index using the ring position and the
     %% increment of ring index values.
@@ -170,10 +207,9 @@ get_vnode(Ring, RingIndexInc, PartitionCount, Position) ->
     {VNodeIndex, Node}.
 
 %% @private
-find_coverage(_, _, _, _, _, _, 0, ResultsAcc, _) ->
-    {ok, ResultsAcc};
-find_coverage(AllKeySpaces, Offset, NVal, PartitionCount, MinimizeFor,
-              UnavailableKeySpaces, Primaries, ResultsAcc, VnodeFun) ->
+find_coverage(#context{results=Results}, 0) ->
+    {ok, Results};
+find_coverage(Context, PrimariesLeft) ->
     %% Calculate the available keyspaces. The list of keyspaces for
     %% each vnode that have already been covered by the plan are
     %% subtracted from the complete list of keyspaces so that coverage
@@ -192,26 +228,26 @@ find_coverage(AllKeySpaces, Offset, NVal, PartitionCount, MinimizeFor,
                                 AvailableKeySpaces,
                                 ResultsAcc,
                                 VnodeFun,
-                                dict:new(),
+                                orddict:new(),
                                 MinimizeFor), ResultsAcc) of
         {ok, CoverageResults} ->
-            find_coverage(AllKeySpaces,
-                          Offset,
-                          NVal,
-                          PartitionCount,
-                          MinimizeFor,
-                          UnavailableKeySpaces,
-                          Primaries-1,
-                          CoverageResults,
-                          VnodeFun);
+            find_coverage(Context#context{primaries=Primaries-1);
         Error ->
             Error
     end.
 
+-spec handle_coverage_vnodes({ok, [vnode()]} |
+                             {insufficient_vnodes, ordsets:new(), [vnode()]} |
+                             {error, term()}, [vnode()]) ->
+                                    {ok, [vnode()]} |
+                                    {insufficient_vnodes, ordsets:new(), [vnode()]} |
+                                    {error, term()}.
 handle_coverage_vnodes({ok, _}=CoverageResults, []) ->
     CoverageResults;
 handle_coverage_vnodes({ok, CoverageVnodes}, Acc) ->
     {ok, lists:foldl(fun augment_coverage_results/2, Acc, CoverageVnodes)};
+handle_coverage_vnodes({insufficient_vnodes, _, _}=Result, _) ->
+    Result;
 handle_coverage_vnodes({error, _}=Error, _) ->
     Error.
 
@@ -238,7 +274,7 @@ n_keyspaces(VNodeIndex, N, PartitionCount) ->
 find_coverage_vnodes([], _, Coverage, _, _, _) ->
     {ok, lists:sort(Coverage)};
 find_coverage_vnodes(KeySpace, [], Coverage, _, _, _) ->
-    {insufficient_vnodes_available, KeySpace, lists:sort(Coverage)};
+    {insufficient_vnodes, KeySpace, lists:sort(Coverage)};
 find_coverage_vnodes(KeySpace, Available, Coverage, VnodeFun, NodeCounts, MinimizeFor) ->
     {NumCovered, Position, TB, {_, Node}=_Vnode, _} =
         next_vnode(
@@ -248,7 +284,7 @@ find_coverage_vnodes(KeySpace, Available, Coverage, VnodeFun, NodeCounts, Minimi
           NodeCounts,
           MinimizeFor),
     lager:debug("Next vnode: ~p ~p ~p ~p", [Position, TB, NumCovered, Node]),
-    UpdNodeCounts = dict:update_counter(Node, 1, NodeCounts),
+    UpdNodeCounts = orddict:update_counter(Node, 1, NodeCounts),
     case NumCovered of
         0 -> % out of vnodes
             find_coverage_vnodes(KeySpace, [], Coverage, VnodeFun, UpdNodeCounts, MinimizeFor);
@@ -269,7 +305,7 @@ find_coverage_vnodes(KeySpace, Available, Coverage, VnodeFun, NodeCounts, Minimi
 %% @private
 %% @doc Find the next vnode that covers the most of the
 %% remaining keyspace. Use VNode id as tie breaker.
--spec next_vnode([{non_neg_integer(), [non_neg_integer()]}], function(), dict(), nodes | vnodes) ->
+-spec next_vnode([{non_neg_integer(), [non_neg_integer()]}], function(), orddict:new(), nodes | vnodes) ->
                         non_neg_integer().
 next_vnode(EligibleVnodes, VnodeFun, NodeCounts, MinimizeFor) ->
     lists:foldl(vnode_compare_fun(VnodeFun, NodeCounts, MinimizeFor), [], EligibleVnodes).
@@ -278,7 +314,7 @@ vnode_compare_fun(VnodeFun, NodeCounts, vnodes) ->
     fun({A, ACoverCount, ATB}, []) ->
             VnodeA = VnodeFun(A),
             {ACoverCount, A, ATB, VnodeA, NodeCounts};
-       ({A, ACoverCount, ATB}, {BCoverCount, B, BTB, {_, NodeB}=VnodeB, _}) ->
+       ({A, ACoverCount, ATB}, {BCoverCount, B, BTB, {_, _NodeB}=VnodeB, _}) ->
             VnodeA = VnodeFun(A),
             compare_vnodes({ACoverCount, A, ATB, VnodeA, 0},
                            {BCoverCount, B, BTB, VnodeB, 0})
@@ -289,8 +325,8 @@ vnode_compare_fun(VnodeFun, NodeCounts, nodes) ->
             {ACoverCount, A, ATB, VnodeA, NodeCounts};
        ({A, ACoverCount, ATB}, {BCoverCount, B, BTB, {_, NodeB}=VnodeB, _}) ->
             {_, NodeA} = VnodeA = VnodeFun(A),
-            compare_vnodes({ACoverCount, A, ATB, VnodeA, dict:find(NodeA, NodeCounts)},
-                           {BCoverCount, B, BTB, VnodeB, dict:find(NodeB, NodeCounts)})
+            compare_vnodes({ACoverCount, A, ATB, VnodeA, orddict:find(NodeA, NodeCounts)},
+                           {BCoverCount, B, BTB, VnodeB, orddict:find(NodeB, NodeCounts)})
     end.
 
 compare_vnodes({ACoverCount, _, _, _, _}=A, {BCoverCount, _, _, _, _})
