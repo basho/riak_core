@@ -417,7 +417,7 @@ health_service_up(Service, S) ->
         true
     end),
     Avsn0 = riak_core_node_watcher:avsn(),
-    riak_core_node_watcher ! {check_health, Service},
+    riak_core_node_watcher:check_health(Service),
     receive meck_done -> ok after 100 -> erlang:error(timeout) end,
     case is_service_up(node(), Service, S) of
         true -> ok;
@@ -432,7 +432,7 @@ health_service_down(Service, S) ->
         false
     end),
     Avsn0 = riak_core_node_watcher:avsn(),
-    riak_core_node_watcher ! {check_health, Service},
+    riak_core_node_watcher:check_health(Service),
     receive meck_done -> ok after 100 -> erlang:error(timeout) end,
     case is_service_up(node(), Service, S) of
         true -> wait_for_avsn(Avsn0);
@@ -447,7 +447,7 @@ health_service_error(Service, S) ->
         meck:exception(badarg)
     end),
     Avsn0 = riak_core_node_watcher:avsn(),
-    riak_core_node_watcher ! {check_health, Service},
+    riak_core_node_watcher:check_health(Service),
     receive meck_done -> ok after 100 -> erlang:error(timeout) end,
     case is_service_up(node(), Service, S) of
         true -> wait_for_avsn(Avsn0);

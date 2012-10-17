@@ -28,6 +28,7 @@
          service_up/2,
          service_up/3,
          service_up/4,
+         check_health/1,
          service_down/1,
          service_down/2,
          node_up/0,
@@ -72,11 +73,46 @@ start_link() ->
 service_up(Id, Pid) ->
     gen_server:call(?MODULE, {service_up, Id, Pid}, infinity).
 
+%% @doc {@link service_up/4} with default options.
+%% @see service_up/4
+-spec service_up(Id :: atom(), Pid :: pid(), MFA :: mfa()) -> 'ok'.
 service_up(Id, Pid, MFA) ->
     service_up(Id, Pid, MFA, []).
 
+-type hc_check_interval_opt() :: {check_interval, timeout()}.
+-type hc_max_callback_fails_opt() :: {max_callback_failures, non_neg_integer()}.
+-type hc_max_health_fails_opt() :: {max_health_failures, non_neg_integer()}.
+-type health_opt() :: hc_check_interval_opt() | hc_max_callback_fails_opt() | hc_max_health_fails_opt().
+-type health_opts() :: health_opt().
+%% @doc Create a service that can be declared up or down based on the
+%% result of a function in addition to usual monitoring. The function can
+%% be set to be called automatically every interval, or only explicitly.
+%% An explicit health check can be done using {@link check_health/1}. The
+%% check interval is expressed in seconds. If `infinity' is passed in, a
+%% check is never done automatically. The function used to check for
+%% health must return a boolean; if it does not, it is considered an error.
+%% A check has a default maxiumum health failures as 1, and maximum number
+%% of other callback errors as 3. Either of those being reached will cause
+%% the service to be marked as down. In the case of a health failure, the
+%% health function will continue to be called at increasing intervals.  In
+%% the case of a callback error, the automatic health check is disabled.
+%% The callback function will have the pid of the service prepended to its
+%% list of args, so the actual arity of the function must be 1 + the length
+%% of the argument list provided. A service added this way is removed like
+%% any other, using {@link service_down/1}.
+%% @see service_up/2
+-spec service_up(Id :: atom(), Pid :: pid(), Callback :: mfa(), Options :: health_opts()) -> 'ok'.
 service_up(Id, Pid, {Module, Function, Args}, Options) ->
     gen_server:call(?MODULE, {service_up, Id, Pid, {Module, Function, Args}, Options}, infinity).
+
+%% @doc Force a health check for the given service.  If the service does
+%% not have a health check associated with it, this is ignored.  Resets the
+%% automatic health check timer if there is one.
+%% @see service_up/4
+-spec check_health(Service :: atom()) -> 'ok'.
+check_health(Service) ->
+    ?MODULE ! {check_health, Service},
+    ok.
 
 service_down(Id) ->
     gen_server:call(?MODULE, {service_down, Id}, infinity).
@@ -186,6 +222,7 @@ handle_call({service_up, Id, Pid, MFA, Options}, From, State) ->
         callback = MFA,
         check_interval = CheckInterval,
         service_pid = Pid,
+        max_health_failures = proplists:get_value(max_health_failures, Options, 1),
         max_callback_failures = proplists:get_value(max_callback_failures, Options, 3),
         interval_tref = IntervalTref
     },
