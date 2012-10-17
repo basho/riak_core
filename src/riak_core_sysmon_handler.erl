@@ -82,10 +82,16 @@ init([]) ->
 %%                          remove_handler
 %% @end
 %%--------------------------------------------------------------------
+handle_event({monitor, Pid, Type, _Info},
+             State=#state{timer_ref=TimerRef}) when Pid == self() ->
+    %% Reset the inactivity timeout
+    NewTimerRef = reset_timer(TimerRef),
+    maybe_collect_garbage(Type),
+    erlang:garbage_collect(),
+    {ok, State#state{timer_ref=NewTimerRef}};
 handle_event({monitor, Pid, Type, Info}, State=#state{timer_ref=TimerRef}) ->
     %% Reset the inactivity timeout
     NewTimerRef = reset_timer(TimerRef),
-    maybe_collect_garbage(Pid, Type),
     Pretty = format_pretty_proc_info(Pid, almost_current_function),
     lager:info("monitor ~w ~w ~s ~w", [Type, Pid, Pretty, Info]),
     {ok, State#state{timer_ref=NewTimerRef}};
@@ -127,10 +133,10 @@ handle_call(_Call, State) ->
 handle_info(die_for_testing_purposes_only, _State) ->
     %% exit({told_to_die, lists:duplicate(500000, $x)});
     exit({told_to_die, lists:duplicate(50, $x)});
-handle_info(inactivity_timeout, _State) ->
+handle_info(inactivity_timeout, State) ->
     %% No events have arrived for the timeout period
     %% so hibernate to free up resources.
-    {ok, _State, hibernate};
+    {ok, State, hibernate};
 handle_info(Info, State) ->
     lager:info("handle_info got ~p", [Info]),
     {ok, State}.
@@ -206,11 +212,11 @@ get_pretty_proc_info(Pid, Acf) ->
 %% @doc If the message type is due to a large heap warning
 %% and the source is ourself, go ahead and collect garbage
 %% to avoid the death spiral.
--spec maybe_collect_garbage(pid(), atom()) -> ok.
-maybe_collect_garbage(Pid, large_heap) when Pid =:= self() ->
-    erlang:garbage_collect(Pid),
+-spec maybe_collect_garbage(atom()) -> ok.
+maybe_collect_garbage(large_heap) ->
+    erlang:garbage_collect(),
     ok;
-maybe_collect_garbage(_, _) ->
+maybe_collect_garbage(_) ->
     ok.
 
 -spec reset_timer(undefined | reference()) -> reference().
