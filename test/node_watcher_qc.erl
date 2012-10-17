@@ -106,17 +106,21 @@ command(S) ->
            {call, ?MODULE, remote_service_down, [g_node()]},
            {call, ?MODULE, remote_service_down_disterl, [g_node()]},
            {call, ?MODULE, wait_for_bcast, []},
-           {call, ?MODULE, healthy_service, [g_service()]},
-           {call, ?MODULE, unhealthy_service, [g_service()]},
-           {call, ?MODULE, recovering_service, [g_service()]}%,
-           %{call, ?MODULE, faulty_health_check_callback_once, [g_service()]},
-           %{call, ?MODULE, faulty_health_check_callback_many, [g_service()]}
+           {call, ?MODULE, health_service, [g_service()]},
+           {call, ?MODULE, health_service_up, [g_service(), S]},
+           {call, ?MODULE, health_service_down, [g_service(), S]},
+           {call, ?MODULE, health_service_error, [g_service(), S]}
           ]).
 
 precondition(S, {call, _, local_service_kill, [Service, S]}) ->
     orddict:is_key(Service, S#state.service_pids);
 precondition(S, {call, _, wait_for_bcast, _}) ->
     is_node_up(node(), S);
+precondition(S, {call, _, Test, [Service, S]}) when
+    Test =:= health_service_up;
+    Test =:= health_service_down;
+    Test =:= health_service_error ->
+    is_node_up(node(), S) andalso lists:member(Service, S#state.service_healths);
 precondition(_, _) ->
     true.
 
@@ -124,17 +128,20 @@ precondition(_, _) ->
 next_state(S, Res, {call, _, local_service_up, [Service]}) ->
     S2 = service_up(node(), Service, S),
     Pids = orddict:store(Service, Res, S2#state.service_pids),
-    S2#state { service_pids = Pids };
+    Healths = orddict:erase(Service, S2#state.service_healths),
+    S2#state { service_pids = Pids, service_healths = Healths };
 
 next_state(S, _Res, {call, _, local_service_down, [Service]}) ->
     S2 = service_down(node(), Service, S),
     Pids = orddict:erase(Service, S2#state.service_pids),
-    S2#state { service_pids = Pids };
+    Healths = orddict:erase(Service, S2#state.service_healths),
+    S2#state { service_pids = Pids, service_healths = Healths };
 
 next_state(S, _Res, {call, _, local_service_kill, [Service, _]}) ->
     S2 = service_down(node(), Service, S),
     Pids = orddict:erase(Service, S2#state.service_pids),
-    S2#state { service_pids = Pids };
+    Healths = orddict:erase(Service, S2#state.service_healths),
+    S2#state { service_pids = Pids, service_healths = Healths };
 
 next_state(S, _Res, {call, _, local_node_up, []}) ->
     node_up(node(), S);
@@ -152,27 +159,27 @@ next_state(S, _Res, {call, _, Fn, [Node]})
 next_state(S, _Res, {call, _, wait_for_bcast, _}) ->
     S;
 
-next_state(S, Res, {call, _, healthy_service, [Service]}) ->
+next_state(S, Res, {call, _, health_service, [Service]}) ->
     S2 = service_up(node(), Service, S),
     Pids = orddict:store(Service, Res, S2#state.service_pids),
-    S2#state { service_pids = Pids };
+    Healths = orddict:store(Service, Res, S2#state.service_healths),
+    S2#state { service_pids = Pids, service_healths = Healths};
 
-next_state(S, Res, {call, M, unhealthy_service, [Service]}) ->
-    S;
-
-next_state(S, Res, {call, M, recovering_service, [Service]}) ->
+next_state(S, _Res, {call, _, health_service_up, [Service, _]}) ->
     S2 = service_up(node(), Service, S),
-    Pids = orddict:store(Service, Res, S2#state.service_pids),
+    Pid = orddict:fetch(Service, S2#state.service_healths),
+    Pids = orddict:store(Service, Pid, S2#state.service_pids),
     S2#state { service_pids = Pids };
 
-next_state(S, Res, {call, M, faulty_health_check_callback_once, [Service]}) ->
-    S;
+next_state(S, _Res, {call, _, health_service_down, [Service, _]}) ->
+    S2 = service_down(node(), Service, S),
+    Pids = orddict:erase(Service, S2#state.service_pids),
+    S2#state { service_pids = Pids };
 
-next_state(S, Res, {call, M, faulty_health_check_callback_many, [Service]}) ->
-    meck:expect(mod_health, callback, fun(Pid, error) when is_pid(Pid) ->
-        meck:exception(meck_boomed)
-    end),
-    next_state(S, Res, {call, M, local_service_up, [Service]});
+next_state(S, _Res, {call, _, health_service_error, [Service, _]}) ->
+    S2 = service_down(node(), Service, S),
+    Pids = orddict:erase(Service, S2#state.service_pids),
+    S2#state { service_pids = Pids };
 
 next_state(S, _Res, {call, _, ring_update, [Nodes]}) ->
     Peers = ordsets:del_element(node(), ordsets:from_list(Nodes)),
@@ -239,34 +246,33 @@ postcondition(S, {call, _, Fn, [Node]}, _Res)
 postcondition(S, {call, _, wait_for_bcast, _}, _Res) ->
     validate_broadcast(S, S, service);
 
-postcondition(S, {call, _, healthy_service, [Service]}, _Res) ->
+postcondition(S, {call, _, health_service, [Service]}, _Res) ->
     S2 = service_up(node(), Service, S),
     validate_broadcast(S, S2, service),
-    ?assert(meck:validate(mod_health)),
     deep_validate(S2);
 
-postcondition(S, {call, _, unhealthy_service, [Service]}, Res) ->
-    S2 = service_up(node(), Service, S),
-    S3 = service_down(node(), Service, S2),
-    validate_broadcasts([S,S2,S3,S3], service),
-    ?assert(meck:validate(mod_health)),
-    deep_validate(S3);
+postcondition(S, {call, _, health_service_up, [Service, _]}, _Res) ->
+    case is_service_up(node(), Service, S) of
+        true ->
+            deep_validate(S);
+        false ->
+            S2 = service_up(node(), Service, S),
+            ?assert(meck:validate(mod_health)),
+            validate_broadcast(S, S2, service),
+            deep_validate(S2)
+    end;
 
-postcondition(S, {call, _, recovering_service, [Service]}, _Res) ->
-    S2 = service_up(node(), Service, S),
-    S3 = service_down(node(), Service, S2),
-    S4 = service_up(node(), Service, S3),
-    validate_broadcasts([S, S2, S3, S4], service),
+postcondition(S, {call, _, health_service_down, [Service, _]}, _Res) ->
+    S2 = service_down(node(), Service, S),
     ?assert(meck:validate(mod_health)),
-    deep_validate(S4);
+    validate_broadcast(S, S2, service),
+    deep_validate(S2);
 
-postcondition(S, {call, _, faulty_health_check_callback_once, [_Service]}, _Res) ->
+postcondition(S, {call, _, health_service_error, [Service, _]}, _Res) ->
+    S2 = service_down(node(), Service, S),
     ?assert(meck:validate(mod_health)),
-    deep_validate(S);
-
-postcondition(S, {call, _, faulty_health_check_callback_many, [_Service]}, _REs) ->
-    ?assert(meck:validate(mod_health)),
-    deep_validate(S);
+    validate_broadcast(S, S2, service),
+    deep_validate(S2);
 
 postcondition(S, {call, _, ring_update, [Nodes]}, _Res) ->
     %% Ring update should generate a broadcast to all NEW peers
@@ -322,32 +328,6 @@ validate_broadcast(S0, Sfinal, Op, Bcasts) ->
             ?assertEqual([], Bcasts)
     end,
     true.
-
-validate_broadcasts(States, Op) ->
-    Bcasts = broadcasts(),
-    ?debugFmt("validate broadcats:\n"
-    "   broadcasts:  ~p\n"
-    "   states:  ~p", [Bcasts, States]),
-    validate_broadcasts(States, Op, Bcasts).
-
-validate_broadcasts([], _Op, []) ->
-    true;
-
-validate_broadcasts([_S], _Op, _Bcasts) ->
-    true;
-
-validate_broadcasts([S0, Sfinal | Tail], Op, []) ->
-    Transition = {is_node_up(node(), S0), is_node_up(node(), Sfinal), Op},
-    ?assertMatch({false, false, Op}, Transition),
-    validate_broadcasts([Sfinal | Tail], Op, []);
-
-validate_broadcasts([], _Op, Bcasts) ->
-    % there should be at least length(Bcasts) + 1 states to check.
-    ?assertEqual([], Bcasts);
-
-validate_broadcasts([S0, Sfinal | Tail], Op, [Bcast | BcastTail]) ->
-    validate_broadcast(S0, Sfinal, Op, [Bcast]),
-    validate_broadcasts([Sfinal | Tail], Op, BcastTail).
 
 
 %% ====================================================================
@@ -422,92 +402,57 @@ ring_update(Nodes) ->
     wait_for_avsn(Avsn0),
     ?ORDSET(Nodes).
 
-healthy_service(Service) ->
+health_service(Service) ->
+    Avsn0 = riak_core_node_watcher:avsn(),
     Pid = spawn(fun() -> service_loop() end),
+    ok = riak_core_node_watcher:service_up(Service, Pid, {mod_health, callback, [Pid]}, [{max_callback_failures, 1}, {check_interval, infinity}]),
+    wait_for_avsn(Avsn0),
+    Pid.
+
+health_service_up(Service, S) ->
     Self = self(),
-    meck:expect(mod_health, callback, fun (InPid, true) when is_pid(InPid) ->
-        Self ! {meck_done, InPid},
+    health_meck(fun(P1, P2) ->
+        ?assertEqual(P1, P2),
+        Self ! meck_done,
         true
     end),
-    ok = riak_core_node_watcher:service_up(Service, Pid, {mod_health, callback, [true]}),
+    Avsn0 = riak_core_node_watcher:avsn(),
     riak_core_node_watcher ! {check_health, Service},
-    receive
-        {meck_done, MeckInPid} ->
-            ?assertEqual(Pid, MeckInPid)
-    after 1000 ->
-        erlang:error(timeout)
-    end,
-    Pid.
+    receive meck_done -> ok after 100 -> erlang:error(timeout) end,
+    case is_service_up(node(), Service, S) of
+        true -> ok;
+        false -> wait_for_avsn(Avsn0)
+    end.
 
-unhealthy_service(Service) ->
-    Pid = spawn(fun() -> service_loop() end),
+health_service_down(Service, S) ->
     Self = self(),
-    meck:expect(mod_health, callback, fun (InPid, false) when is_pid(InPid) ->
-        Self ! {meck_done, InPid},
+    health_meck(fun(P1, P2) ->
+        ?assertEqual(P1, P2),
+        Self ! meck_done,
         false
     end),
-    ok = riak_core_node_watcher:service_up(Service, Pid, {mod_health, callback, [false]}),
+    Avsn0 = riak_core_node_watcher:avsn(),
     riak_core_node_watcher ! {check_health, Service},
-    receive
-        {meck_done, MeckInPid} ->
-            ?assertEqual(Pid, MeckInPid)
-    after 1000 ->
-        erlang:error(timeout)
-    end,
-    wait_for_bcast(),
-    Pid.
+    receive meck_done -> ok after 100 -> erlang:error(timeout) end,
+    case is_service_up(node(), Service, S) of
+        true -> wait_for_avsn(Avsn0);
+        false -> ok
+    end.
 
-recovering_service(Service) ->
-    Pid = spawn(fun() -> service_loop() end),
-    meck:new(flip_flop),
-    meck:expect(flip_flop, init, 1, {ok, false}),
-    meck:expect(flip_flop, handle_call, fun (next, _, S) ->
-        {reply, S, not S}
-    end),
-    meck:expect(flip_flop, next, fun(Pid) ->
-        gen_server:call(Pid, next)
-    end),
-    {ok, Flipper} = gen_server:start(flip_flop, [], []),
+health_service_error(Service, S) ->
     Self = self(),
-    meck:expect(mod_health, callback, fun(_Pid, _Args) ->
-        Out = flip_flop:next(Flipper),
+    health_meck(fun(P1, P2) ->
+        ?assertEqual(P1, P2),
         Self ! meck_done,
-        Out
+        meck:exception(badarg)
     end),
-    ok = riak_core_node_watcher:service_up(Service, Pid, {mod_health, callback, [meck_boom]}),
+    Avsn0 = riak_core_node_watcher:avsn(),
     riak_core_node_watcher ! {check_health, Service},
-    receive
-        meck_done ->
-            ok
-    after 1000 ->
-        meck:unload(flip_flop),
-        erlang:error(timeout)
-    end,
-    riak_core_node_watcher ! {check_health, Service},
-    receive
-        meck_done ->
-            ok
-    after 1000 ->
-        meck:unload(flip_flop),
-        erlang:error(timeout)
-    end,
-    meck:unload(flip_flop),
-    Pid.
-
-faulty_health_check_callback_once(Service) ->
-    Pid = spawn(fun() -> service_loop() end),
-    ok = riak_core_node_watcher:service_up(Service, Pid, {mod_health, callback, [error_once]}),
-    gen_server:cast(riak_core_node_watcher, {force_health_check, Service}),
-    gen_server:cast(riak_core_node_watcher, {force_health_check, Service}),
-    Pid.
-
-faulty_health_check_callback_many(Service) ->
-    Pid = spawn(fun() -> service_loop() end),
-    ok = riak_core_node_watcher:service_up(Service, Pid, {mod_health, callback, [error]}),
-    gen_server:cast(riak_core_node_watcher, {force_health_check, Service}),
-    gen_server:cast(riak_core_node_watcher, {force_health_check, Service}),
-    gen_server:cast(riak_core_node_watcher, {force_health_check, Service}),
-    Pid.
+    receive meck_done -> ok after 100 -> erlang:error(timeout) end,
+    case is_service_up(node(), Service, S) of
+        true -> wait_for_avsn(Avsn0);
+        false -> ok
+    end.
 
 
 %% ====================================================================
@@ -532,6 +477,10 @@ services_up(Node, Services, S) ->
 service_down(Node, Svc, S) ->
     S#state { services = ordsets:del_element({Node, Svc}, S#state.services) }.
 
+
+is_service_up(Node, Service, S) ->
+    Services = services(Node, S),
+    lists:member(Service, Services).
 
 is_node_up(Node, S) ->
     ordsets:is_element(Node, S#state.up_nodes).
@@ -594,6 +543,16 @@ all_services(Node, S) ->
 %% ====================================================================
 %% Internal functions
 %% ====================================================================
+
+health_meck(Fun) ->
+    try meck:new(mod_health) of
+        _ ->
+            ok
+    catch
+        error:{already_started, _} ->
+            ok
+    end,
+    meck:expect(mod_health, callback, Fun).
 
 on_broadcast(Nodes, _Name, Msg) ->
     Id = ets:update_counter(?MODULE, bcast_id, {2, 1}),
