@@ -87,7 +87,6 @@ handle_event({monitor, Pid, Type, _Info},
     %% Reset the inactivity timeout
     NewTimerRef = reset_timer(TimerRef),
     maybe_collect_garbage(Type),
-    erlang:garbage_collect(),
     {ok, State#state{timer_ref=NewTimerRef}};
 handle_event({monitor, Pid, Type, Info}, State=#state{timer_ref=TimerRef}) ->
     %% Reset the inactivity timeout
