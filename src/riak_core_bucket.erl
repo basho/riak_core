@@ -27,6 +27,7 @@
 
 -export([append_bucket_defaults/1,
          set_bucket/2,
+         clear_bucket/1,
          get_bucket/1,
          get_bucket/2,
          get_buckets/1,
@@ -83,6 +84,17 @@ set_bucket(Name, BucketProps0) ->
 merge_props(Overriding, Other) ->
     lists:ukeymerge(1, lists:ukeysort(1, Overriding),
                     lists:ukeysort(1, Other)).
+
+
+%% @spec clear_bucket(riak_object:bucket()) -> ok
+%% @doc Clear all properties in Bucket, resetting to defaults.
+clear_bucket(Name) ->
+    F = fun(Ring, _Args) ->
+                {new_ring, riak_core_ring:clear_meta({bucket,Name}, Ring)}
+        end,
+    {ok, _NewRing} = riak_core_ring_manager:ring_trans(F, undefined),
+    ok.
+
 
 %% @spec get_bucket(riak_object:bucket()) ->
 %%         {ok, BucketProps :: riak_core_bucketprops()}
@@ -156,5 +168,22 @@ simple_set_test() ->
     Bucket = get_bucket(a_bucket),
     riak_core_ring_manager:stop(),
     ?assertEqual(value, proplists:get_value(key, Bucket)).
+
+simple_clear_test() ->
+    application:load(riak_core),
+    %% appending an empty list of defaults makes up for the fact that
+    %% riak_core_app:start/2 is not called during eunit runs
+    %% (that's where the usual defaults are set at startup),
+    %% while also not adding any trash that might affect other tests
+    append_bucket_defaults([]),
+    riak_core_ring_events:start_link(),
+    riak_core_ring_manager:start_link(test),
+    ok = set_bucket(a_bucket,[{key,value}]),
+    BucketSet = get_bucket(a_bucket),
+    ok = clear_bucket(a_bucket),
+    BucketClear = get_bucket(a_bucket),
+    riak_core_ring_manager:stop(),
+    ?assertEqual(value, proplists:get_value(key, BucketSet)),
+    ?assertEqual(undefined, proplists:get_value(key, BucketClear)).
 
 -endif.
