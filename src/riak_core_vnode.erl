@@ -200,10 +200,6 @@ continue(State, NewModState) ->
 %% In the forwarding state, all vnode commands and coverage commands are
 %% forwarded to the new owner for processing.
 
-vnode_command(Sender, FOO, State) when is_tuple(FOO), element(1,FOO) == riak_core_fold_req_v1 ->
-    error_logger:warning_msg("Ha, caught a FOO ~p\n", [FOO]),
-    reply(Sender, {error, vnode_shutdown}),
-    continue(State);
 vnode_command(Sender, Request, State=#state{index=Index,
                                             mod=Mod,
                                             modstate=ModState,
@@ -269,10 +265,6 @@ vnode_coverage(Sender, Request, KeySpaces, State=#state{index=Index,
             {stop, Reason, State#state{modstate=NewModState}}
     end.
 
-vnode_handoff_command(Sender, FOO, State) when is_tuple(FOO), element(1,FOO) == riak_core_fold_req_v1 ->
-    error_logger:warning_msg("Ha, caught a FOO ~p\n", [FOO]),
-    reply(Sender, {error, vnode_shutdown}),
-    continue(State);
 vnode_handoff_command(Sender, Request, State=#state{index=Index,
                                                     mod=Mod,
                                                     modstate=ModState,
