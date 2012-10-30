@@ -54,7 +54,7 @@
                         service_pid :: pid(),
                         checking_pid :: pid(),
                         health_failures = 0 :: non_neg_integer(),
-                        callback_failures = 0,
+                        callback_failures = 0 :: non_neg_integer(),
                         interval_tref,
                         % how many seconds to wait after a check has
                         % finished before starting a new one
