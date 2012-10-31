@@ -107,6 +107,7 @@ command(S) ->
            {call, ?MODULE, remote_service_down_disterl, [g_node()]},
            {call, ?MODULE, wait_for_bcast, []},
            {call, ?MODULE, health_service, [g_service()]},
+           {call, ?MODULE, health_service_defaults, [g_service()]},
            {call, ?MODULE, health_service_up, [g_service(), S]},
            {call, ?MODULE, health_service_down, [g_service(), S]},
            {call, ?MODULE, health_service_error, [g_service(), S]}
@@ -159,11 +160,17 @@ next_state(S, _Res, {call, _, Fn, [Node]})
 next_state(S, _Res, {call, _, wait_for_bcast, _}) ->
     S;
 
-next_state(S, Res, {call, _, health_service, [Service]}) ->
+next_state(S, Res, {call, _, HPService, [Service]}) when HPService =:= health_service; HPService =:= health_service_defaults ->
     S2 = service_up(node(), Service, S),
     Pids = orddict:store(Service, Res, S2#state.service_pids),
     Healths = orddict:store(Service, Res, S2#state.service_healths),
     S2#state { service_pids = Pids, service_healths = Healths};
+
+%next_state(S, Res, {call, _, health_service_defaults, [Service]}) ->
+%    S2 = service_up(node(), Service, S),
+%    Pids = orddict:store(Service, Res, S2#state.service_pids),
+%    Healths = orddict:store(Service, Res, S2#state.service_healths),
+%    S2#state { service_pids = Pids, service_healths = Healths};
 
 next_state(S, _Res, {call, _, health_service_up, [Service, _]}) ->
     S2 = service_up(node(), Service, S),
@@ -247,6 +254,11 @@ postcondition(S, {call, _, wait_for_bcast, _}, _Res) ->
     validate_broadcast(S, S, service);
 
 postcondition(S, {call, _, health_service, [Service]}, _Res) ->
+    S2 = service_up(node(), Service, S),
+    validate_broadcast(S, S2, service),
+    deep_validate(S2);
+
+postcondition(S, {call, _, health_service_defaults, [Service]}, _Res) ->
     S2 = service_up(node(), Service, S),
     validate_broadcast(S, S2, service),
     deep_validate(S2);
@@ -406,6 +418,13 @@ health_service(Service) ->
     Avsn0 = riak_core_node_watcher:avsn(),
     Pid = spawn(fun() -> service_loop() end),
     ok = riak_core_node_watcher:service_up(Service, Pid, {mod_health, callback, [Pid]}, [{max_callback_failures, 1}, {check_interval, infinity}]),
+    wait_for_avsn(Avsn0),
+    Pid.
+
+health_service_defaults(Service) ->
+    Avsn0 = riak_core_node_watcher:avsn(),
+    Pid = spawn(fun() -> service_loop() end),
+    ok = riak_core_node_watcher:service_up(Service, Pid, {mod_health, callback, [Pid]}),
     wait_for_avsn(Avsn0),
     Pid.
 
