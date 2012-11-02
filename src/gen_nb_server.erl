@@ -1,5 +1,5 @@
 %% Copyright (c) 2009 Hypothetical Labs, Inc.
- 
+
 %% Permission is hereby granted, free of charge, to any person obtaining a copy
 %% of this software and associated documentation files (the "Software"), to deal
 %% in the Software without restriction, including without limitation the rights
@@ -17,29 +17,29 @@
 %% LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 %% OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 %% THE SOFTWARE.
- 
+
 -module(gen_nb_server).
- 
+
 -author('kevin@hypotheticalabs.com').
- 
+
 -behaviour(gen_server).
- 
+
 %% API
 -export([start_link/4]).
- 
+
 %% Behavior callbacks
 -export([behaviour_info/1]).
- 
+
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
- 
+
 -define(SERVER, ?MODULE).
- 
+
 -record(state, {cb,
                 sock,
                 server_state}).
- 
+
 %% @hidden
 behaviour_info(callbacks) ->
   [{init, 1},
@@ -49,10 +49,10 @@ behaviour_info(callbacks) ->
    {terminate, 2},
    {sock_opts, 0},
    {new_connection, 2}];
- 
+
 behaviour_info(_) ->
   undefined.
- 
+
 %% @spec start_link(CallbackModule, IpAddr, Port, InitParams) -> Result
 %% CallbackModule = atom()
 %% IpAddr = string()
@@ -62,7 +62,7 @@ behaviour_info(_) ->
 %% @doc Start server listening on IpAddr:Port
 start_link(CallbackModule, IpAddr, Port, InitParams) ->
   gen_server:start_link(?MODULE, [CallbackModule, IpAddr, Port, InitParams], []).
- 
+
 %% @hidden
 init([CallbackModule, IpAddr, Port, InitParams]) ->
   case CallbackModule:init(InitParams) of
@@ -77,7 +77,7 @@ init([CallbackModule, IpAddr, Port, InitParams]) ->
     Err ->
       Err
   end.
- 
+
 %% @hidden
 handle_call(Request, From, #state{cb=Callback, server_state=ServerState}=State) ->
   case Callback:handle_call(Request, From, ServerState) of
@@ -94,7 +94,7 @@ handle_call(Request, From, #state{cb=Callback, server_state=ServerState}=State) 
     {stop, Reason, Reply, NewServerState} ->
       {stop, Reason, Reply, State#state{server_state=NewServerState}}
   end.
- 
+
 %% @hidden
 handle_cast(Msg, #state{cb=Callback, server_state=ServerState}=State) ->
   case Callback:handle_cast(Msg, ServerState) of
@@ -105,7 +105,7 @@ handle_cast(Msg, #state{cb=Callback, server_state=ServerState}=State) ->
     {stop, Reason, NewServerState} ->
       {stop, Reason, State#state{server_state=NewServerState}}
   end.
- 
+
 %% @hidden
 handle_info({inet_async, ListSock, _Ref, {ok, CliSocket}}, #state{cb=Callback, server_state=ServerState}=State) ->
   inet_db:register_socket(CliSocket, inet_tcp),
@@ -116,7 +116,7 @@ handle_info({inet_async, ListSock, _Ref, {ok, CliSocket}}, #state{cb=Callback, s
     {stop, Reason, NewServerState} ->
       {stop, Reason, State#state{server_state=NewServerState}}
   end;
- 
+
 handle_info(Info, #state{cb=Callback, server_state=ServerState}=State) ->
   case Callback:handle_info(Info, ServerState) of
     {noreply, NewServerState} ->
