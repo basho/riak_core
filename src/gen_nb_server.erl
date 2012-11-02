@@ -142,20 +142,24 @@ code_change(_OldVsn, State, _Extra) ->
 %% @hidden
 %% @spec listen_on(CallbackModule, IpAddr, Port) -> Result
 %% CallbackModule = atom()
-%% IpAddr = string()
+%% IpAddr = string() | tuple()
 %% Port = integer()
 %% Result = {ok, port()} | {error, any()}
-listen_on(CallbackModule, IpAddrStr, Port) ->
-  case inet_parse:address(IpAddrStr) of
-    {ok, IpAddr} ->
-      SockOpts = [{ip, IpAddr}|CallbackModule:sock_opts()],
-      case gen_tcp:listen(Port, SockOpts) of
-        {ok, LSock} ->
-          {ok, _Ref} = prim_inet:async_accept(LSock, -1),
-          {ok, LSock};
+listen_on(CallbackModule, IpAddrStr, Port) when is_list(IpAddrStr) ->
+    case inet_parse:address(IpAddrStr) of
+        {ok, IpAddr} ->
+            listen_on(CallbackModule, IpAddr, Port);
         Err ->
-          Err
-      end;
-    Err ->
-      Err
-  end.
+            Err
+    end;
+listen_on(CallbackModule, IpAddr, Port) when is_tuple(IpAddr) andalso
+                                             (8 =:= size(IpAddr) orelse
+                                              4 =:= size(IpAddr)) ->
+    SockOpts = [{ip, IpAddr}|CallbackModule:sock_opts()],
+    case gen_tcp:listen(Port, SockOpts) of
+        {ok, LSock} ->
+            {ok, _Ref} = prim_inet:async_accept(LSock, -1),
+            {ok, LSock};
+        Err ->
+            Err
+    end.
