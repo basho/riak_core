@@ -506,7 +506,10 @@ update_meta(Key, Val, State) ->
 %% @doc Logical delete of a key in the cluster metadata dict
 -spec remove_meta(Key :: term(), State :: chstate()) -> chstate().
 remove_meta(Key, State) ->
-    update_meta(Key, '$removed', State).
+    case dict:find(Key, State?CHSTATE.meta) of
+        {ok, _} -> update_meta(Key, '$removed', State);
+       error -> State
+    end.
 
 %% @doc Return the current claimant.
 -spec claimant(State :: chstate()) -> node().
@@ -1354,6 +1357,7 @@ metadata_inequality_test() ->
 
 metadata_remove_test() ->
     Ring0 = fresh(2, node()),
+    ?assert(equal_rings(Ring0, remove_meta(key, Ring0))),
     Ring1 = update_meta(key,val,Ring0),
     timer:sleep(1001), % ensure that lastmod is at least one second later
     Ring2 = remove_meta(key,Ring1),
