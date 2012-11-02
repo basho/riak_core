@@ -508,7 +508,7 @@ update_meta(Key, Val, State) ->
 remove_meta(Key, State) ->
     case dict:find(Key, State?CHSTATE.meta) of
         {ok, _} -> update_meta(Key, '$removed', State);
-       error -> State
+        error -> State
     end.
 
 %% @doc Return the current claimant.
