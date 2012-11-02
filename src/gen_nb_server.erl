@@ -126,32 +126,25 @@ handle_info(Info, #state{cb=Callback, server_state=ServerState}=State) ->
     {stop, Reason, NewServerState} ->
       {stop, Reason, State#state{server_state=NewServerState}}
   end.
- 
+
 %% @hidden
 terminate(Reason, #state{cb=Callback, sock=Sock, server_state=ServerState}) ->
   gen_tcp:close(Sock),
   Callback:terminate(Reason, ServerState),
   ok.
- 
+
 %% @hidden
 code_change(_OldVsn, State, _Extra) ->
   {ok, State}.
- 
+
 %% Internal functions
- 
+
 %% @hidden
 %% @spec listen_on(CallbackModule, IpAddr, Port) -> Result
 %% CallbackModule = atom()
 %% IpAddr = string() | tuple()
 %% Port = integer()
 %% Result = {ok, port()} | {error, any()}
-listen_on(CallbackModule, IpAddrStr, Port) when is_list(IpAddrStr) ->
-    case inet_parse:address(IpAddrStr) of
-        {ok, IpAddr} ->
-            listen_on(CallbackModule, IpAddr, Port);
-        Err ->
-            Err
-    end;
 listen_on(CallbackModule, IpAddr, Port) when is_tuple(IpAddr) andalso
                                              (8 =:= size(IpAddr) orelse
                                               4 =:= size(IpAddr)) ->
@@ -161,5 +154,13 @@ listen_on(CallbackModule, IpAddr, Port) when is_tuple(IpAddr) andalso
             {ok, _Ref} = prim_inet:async_accept(LSock, -1),
             {ok, LSock};
         Err ->
+            Err
+    end;
+listen_on(CallbackModule, IpAddrStr, Port) ->
+    case inet_parse:address(IpAddrStr) of
+        {ok, IpAddr} ->
+            listen_on(CallbackModule, IpAddr, Port);
+        Err ->
+            lager:critical("Cannot start listener for ~p on invalid address ~p:~p", [CallbackModule, IpAddrStr, Port]),
             Err
     end.
