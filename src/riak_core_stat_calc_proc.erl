@@ -1,0 +1,132 @@
+%% -------------------------------------------------------------------
+%% riak_core_stat_calc_proc: a process that caches the value of a calculated
+%%  folsom stat. Purpose is it add more fine grained caching to stat calculation
+%%  and not to use a single process for stat calculation.
+%%
+%% Copyright (c) 2007-2012 Basho Technologies, Inc.  All Rights Reserved.
+%%
+%% This file is provided to you under the Apache License,
+%% Version 2.0 (the "License"); you may not use this file
+%% except in compliance with the License.  You may obtain
+%% a copy of the License at
+%%
+%%   http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing,
+%% software distributed under the License is distributed on an
+%% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+%% KIND, either express or implied.  See the License for the
+%% specific language governing permissions and limitations
+%% under the License.
+%%
+%% -------------------------------------------------------------------
+
+-module(riak_core_stat_calc_proc).
+
+-behaviour(gen_server).
+
+%% API
+-export([start_link/1, value/1,
+         stop/1]).
+
+%% gen_server callbacks
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2,
+         terminate/2, code_change/3]).
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
+%% @doc Cache item time to live in seconds
+-define(TTL, 5).
+
+-record(state, {stat, %% the stat name this proc manages
+                value, %% the current value (if calculated) of this stat
+                timestamp, %% the time the value was calculated
+                ttl,    %% How long, in seconds, to cache the stat
+                active, %% Pid of the process that is calculating the stat value
+                awaiting=[] %% list of processes waiting for a result
+               }).
+
+%%%===================================================================
+%%% API
+%%%===================================================================
+
+start_link(Stat) ->
+    gen_server:start_link(?MODULE, [Stat], []).
+
+value(Pid) ->
+    gen_server:call(Pid, value, infinity).
+
+stop(Pid) ->
+    gen_server:cast(Pid, stop).
+
+%%% gen server
+
+init([Stat]) ->
+    process_flag(trap_exit, true),
+    TTL = app_helper:get_env(riak_core, stat_cache_ttl, ?TTL),
+    {ok, #state{stat=Stat, ttl=TTL}}.
+
+handle_call(value, From, State0=#state{active=Active0, awaiting=Awaiting0,
+                                       stat=Stat, ttl=TTL, timestamp=TS, value=Value}) ->
+    Reply = case cache_get(TS, TTL) of
+                No when No == miss; No == stale ->
+                    {Active, Awaiting} = maybe_get_stat(Stat, From, Active0, Awaiting0 ),
+                    {noreply, State0#state{active=Active, awaiting=Awaiting}};
+                hit ->
+                    {reply, Value, State0}
+            end,
+    Reply;
+handle_call(_Request, _From, State) ->
+    Reply = ok,
+    {reply, Reply, State}.
+
+handle_cast({value, Value, TS}, State=#state{awaiting=Awaiting}) ->
+    [gen_server:reply(From, Value) || From <- Awaiting],
+    {noreply, State#state{value=Value, timestamp=TS, active=undefined, awaiting=[]}};
+handle_cast(stop, State) ->
+    {stop, normal, State};
+handle_cast(_Msg, State) ->
+    {noreply, State}.
+
+%% don't let a crashing stat calc crash the server
+handle_info({'EXIT', FromPid, Reason}, State=#state{active=FromPid, awaiting=Awaiting}) when Reason /= normal ->
+    [gen_server:reply(From, {error, Reason}) || From <- Awaiting],
+    {noreply, State#state{active=undefined, awaiting=[]}};
+handle_info(_Info, State) ->
+    {noreply, State}.
+
+terminate(_Reason, _State) ->
+    ok.
+
+code_change(_OldVsn, State, _Extra) ->
+    {ok, State}.
+
+%% internal
+cache_get(undefined, _TTL) ->
+    miss;
+cache_get(TS, TTL) ->
+    check_freshness(TS, TTL).
+
+check_freshness(TStamp, TTL) ->
+    case (TStamp + TTL) > folsom_utils:now_epoch() of
+        true ->
+             hit;
+        false ->
+            stale
+    end.
+
+maybe_get_stat(Stat, From, undefined, Awaiting) ->
+    %% if a getting stat value is not under way start one
+    Pid = do_calc_stat(Stat),
+    {Pid, [From|Awaiting]}.
+
+do_calc_stat(Stat) ->
+    ServerPid = self(),
+    spawn_link(
+      fun() ->
+              StatVal = riak_core_stat_q:calc_stat(Stat),
+              gen_server:cast(ServerPid, {value, StatVal, folsom_utils:now_epoch()}) end
+     ).
+

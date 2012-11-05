@@ -55,7 +55,10 @@
              riak_core_ring_util,
              riak_core_stat,
              riak_core_stat_cache,
+             riak_core_stat_calc_proc,
+             riak_core_stat_calc_sup,
              riak_core_stat_sup,
+             riak_core_stat_q,
              riak_core_stats_sup,
              riak_core_status,
              riak_core_sup,
@@ -73,6 +76,7 @@
              riak_core_vnode_worker,
              riak_core_vnode_worker_pool,
              riak_core_web,
+             riak_core_wm_stat,
              riak_core_wm_urlmap,
              supervisor_pre_r14b04,
              vclock
