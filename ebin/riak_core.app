@@ -76,7 +76,6 @@
              riak_core_vnode_worker,
              riak_core_vnode_worker_pool,
              riak_core_web,
-             riak_core_wm_stat,
              riak_core_wm_urlmap,
              supervisor_pre_r14b04,
              vclock
