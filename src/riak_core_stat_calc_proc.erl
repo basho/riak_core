@@ -21,6 +21,17 @@
 %%
 %% -------------------------------------------------------------------
 
+%% riak_core_stat_calc_proc: a cache and concurrency control.
+%%        there is no point in calculating the value of a stat if it
+%%        is already being done. Some histogram stats with many readings can
+%%        take seconds to calculate. This process caches a value for N (default 5)
+%%        seconds, and also spawns a process to calculate the stat's value
+%%        when needed. Any request for the value will either get the cached
+%%        value, spawn a process to calculate, if none is running, or wait for
+%%        the last spawned process to return.
+%%        The idea / execution is as per riak_core_stat_cache, except more
+%%        fine grained. This will replace that in future releases.
+
 -module(riak_core_stat_calc_proc).
 
 -behaviour(gen_server).
@@ -44,7 +55,7 @@
                 value, %% the current value (if calculated) of this stat
                 timestamp, %% the time the value was calculated
                 ttl,    %% How long, in seconds, to cache the stat
-                active, %% Pid of the process that is calculating the stat value
+                active, %% Pid of a process that is calculating the stat value
                 awaiting=[] %% list of processes waiting for a result
                }).
 
@@ -118,7 +129,7 @@ check_freshness(TStamp, TTL) ->
     end.
 
 maybe_get_stat(Stat, From, undefined, Awaiting) ->
-    %% if a getting stat value is not under way start one
+    %% if a process for  getting stat value is not underway start one
     Pid = do_calc_stat(Stat),
     {Pid, [From|Awaiting]}.
 

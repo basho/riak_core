@@ -18,22 +18,43 @@
 %%
 %% -------------------------------------------------------------------
 
+%% @doc riak_core_stat_q is an interface to query folsom stats
+%%      To use, call `get_stats/1` with a query `Path`.
+%%      A `Path` is a list of atoms. The module creates a set
+%%      of `ets:select/1` guards, one for each element in `Path`
+%%      For each stat that has a key that matches `Path` we calculate the
+%%      current value and return it. This module mkaes use of
+%%     `riak_core_stat_calc_proc`
+%%      to cache and limit stat calculations.
+
 -module(riak_core_stat_q).
 
 -compile(export_all).
 
--type path() :: [atom()].
+-type path() :: [] | [atom()].
 -type stats() :: [stat()].
 -type stat() :: {stat_name(), stat_value()}.
 -type stat_name() :: tuple().
 -type stat_value() :: integer() | [tuple()].
 
+%% @doc To allow for namespacing, and adding richer dimensions, stats
+%% are named with a tuple key. The key (like `{riak_kv, node, gets}` or
+%% `{riak_kv, vnode, puts, time}`) can
+%% be seen as an hierarchical path. With `riak_kv` at the root and
+%% the other elements as branches / leaves.
+%% This module allows us to get only the stats at and below a particular key
+%% `Path` is a list of atoms or the empty list.
+%% an example path might be `[riak_kv]` which will return every
+%% stat that has `riak_kv` in the first element of its key tuple.
+%% You may use the atom `'_'` at any point
+%% in `Path` as a wild card.
 -spec get_stats(path()) -> stats().
 get_stats(Path) ->
     %% get all the stats that are at Path
     NamesNTypes = names_and_types(Path),
     calculate_stats(NamesNTypes).
 
+%% @doc queries folsom's metrics table for stats that match our path
 names_and_types(Path) ->
     Guards = guards_from_path(Path),
     ets:select(folsom, [{{'$1','$2'}, Guards,['$_']}]).
@@ -61,12 +82,15 @@ size_guard(N) ->
 calculate_stats(NamesAndTypes) ->
     [{Name, get_stat(Stat)} || {Name, _Type}=Stat <- NamesAndTypes].
 
-%% Create/use a cache/calculation process
+%% Create/lookup a cache/calculation process
 get_stat(Stat) ->
     Pid = riak_core_stat_calc_sup:calc_proc(Stat),
     riak_core_stat_calc_proc:value(Pid).
 
 %% BAD uses internl knowledge of folsom metrics record
+%% This is a callback function used by
+%% riak_core_stat_calc_proc when it calculates a stats
+%% current value.
 calc_stat({Name, {metric, _Tags, gauge, _HistLen}}) ->
     GuageVal = folsom_metrics:get_metric_value(Name),
     calc_guage(GuageVal);
