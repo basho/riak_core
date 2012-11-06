@@ -102,6 +102,7 @@ behaviour_info(_Other) ->
           modstate :: term(),
           forward :: node(),
           handoff_node=none :: none | node(),
+          handoff_pid :: pid(),
           pool_pid :: pid() | undefined,
           pool_config :: tuple() | undefined,
           manager_event_timer :: reference(),
@@ -601,21 +602,29 @@ maybe_handoff(State=#state{modstate={deleted, _}}, _TargetNode) ->
     %% Modstate has been deleted, waiting for unregistered.  No handoff.
     continue(State);
 maybe_handoff(State=#state{index=Idx, mod=Mod, modstate=ModState,
-                           handoff_node=HN}, TargetNode) ->
-    case HN of
-        none ->
-            ok;
-        TargetNode ->
-            ok;
-        _ ->
-            lager:info("~s/~b: handoff request to ~p before "
-                       "finishing handoff to ~p", [Mod, Idx, TargetNode, HN])
-    end,
-    case Mod:handoff_starting(TargetNode, ModState) of
-        {true, NewModState} ->
-            start_handoff(State#state{modstate=NewModState}, TargetNode);
-        {false, NewModState} ->
-            continue(State, NewModState)
+                           handoff_node=HN, handoff_pid=HPid}, TargetNode) ->
+    ExistingHO = is_pid(HPid) andalso is_process_alive(HPid),
+    ValidHN = case HN of
+                  none ->
+                      true;
+                  TargetNode ->
+                      not ExistingHO;
+                  _ ->
+                      lager:info("~s/~b: handoff request to ~p before "
+                                 "finishing handoff to ~p",
+                                 [Mod, Idx, TargetNode, HN]),
+                      not ExistingHO
+              end,
+    case ValidHN of
+        true ->
+            case Mod:handoff_starting(TargetNode, ModState) of
+                {true, NewModState} ->
+                    start_handoff(State#state{modstate=NewModState}, TargetNode);
+                {false, NewModState} ->
+                    continue(State, NewModState)
+            end;
+        false ->
+            continue(State)
     end.
 
 start_handoff(State=#state{index=Idx, mod=Mod, modstate=ModState}, TargetNode) ->
@@ -625,8 +634,9 @@ start_handoff(State=#state{index=Idx, mod=Mod, modstate=ModState}, TargetNode) -
                                        handoff_node=TargetNode});
         {false, NewModState} ->
             case riak_core_handoff_manager:add_outbound(Mod,Idx,TargetNode,self()) of
-                {ok,_Pid} ->
+                {ok, Pid} ->
                     NewState = State#state{modstate=NewModState,
+                                           handoff_pid=Pid,
                                            handoff_node=TargetNode},
                     continue(NewState);
                 {error,_Reason} ->
