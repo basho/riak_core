@@ -23,6 +23,7 @@
 
 -behaviour(gen_server).
 
+-define(DEFUALT_HEALTH_CHECK_INTERVAL, 60000).
 %% API
 -export([start_link/0,
          service_up/2,
@@ -56,9 +57,9 @@
                         health_failures = 0 :: non_neg_integer(),
                         callback_failures = 0 :: non_neg_integer(),
                         interval_tref,
-                        % how many seconds to wait after a check has
+                        % how many milliseconds to wait after a check has
                         % finished before starting a new one
-                        check_interval = 60 :: timeout(),
+                        check_interval = ?DEFUALT_HEALTH_CHECK_INTERVAL :: timeout(),
                         max_callback_failures = 3,
                         max_health_failures = 1 }).
 
@@ -88,8 +89,8 @@ service_up(Id, Pid, MFA) ->
 %% result of a function in addition to usual monitoring. The function can
 %% be set to be called automatically every interval, or only explicitly.
 %% An explicit health check can be done using {@link check_health/1}. The
-%% check interval is expressed in seconds. If `infinity' is passed in, a
-%% check is never done automatically. The function used to check for
+%% check interval is expressed in milliseconds. If `infinity' is passed
+%% in, a check is never done automatically. The function used to check for
 %% health must return a boolean; if it does not, it is considered an error.
 %% A check has a default maximum health failures as 1, and maximum number
 %% of other callback errors as 3. Either of those being reached will cause
@@ -189,10 +190,10 @@ handle_call({service_up, Id, Pid, MFA, Options}, From, State) ->
     State2 = remove_health_check(Id, State1),
 
     %% install the health check
-    CheckInterval = proplists:get_value(check_interval, Options, 60),
+    CheckInterval = proplists:get_value(check_interval, Options, ?DEFUALT_HEALTH_CHECK_INTERVAL),
     IntervalTref = case CheckInterval of
         infinity -> undefined;
-        N -> erlang:send_after(N * 1000, self(), {check_health, Id})
+        N -> erlang:send_after(N, self(), {check_health, Id})
     end,
     CheckRec = #health_check{
         callback = MFA,
@@ -722,7 +723,7 @@ next_health_tref(_, infinity, _) ->
     undefined;
 next_health_tref(N, V, Service) ->
     Time = determine_time(N, V),
-    erlang:send_after(Time * 1000, self(), {check_health, Service}).
+    erlang:send_after(Time, self(), {check_health, Service}).
 
 determine_time(Failures, BaseInterval) when Failures < 4 ->
     BaseInterval;
