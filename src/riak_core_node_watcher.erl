@@ -83,7 +83,7 @@ service_up(Id, Pid, MFA) ->
 -type hc_max_callback_fails_opt() :: {max_callback_failures, non_neg_integer()}.
 -type hc_max_health_fails_opt() :: {max_health_failures, non_neg_integer()}.
 -type health_opt() :: hc_check_interval_opt() | hc_max_callback_fails_opt() | hc_max_health_fails_opt().
--type health_opts() :: health_opt().
+-type health_opts() :: [health_opt()].
 %% @doc Create a service that can be declared up or down based on the
 %% result of a function in addition to usual monitoring. The function can
 %% be set to be called automatically every interval, or only explicitly.
@@ -91,7 +91,7 @@ service_up(Id, Pid, MFA) ->
 %% check interval is expressed in seconds. If `infinity' is passed in, a
 %% check is never done automatically. The function used to check for
 %% health must return a boolean; if it does not, it is considered an error.
-%% A check has a default maxiumum health failures as 1, and maximum number
+%% A check has a default maximum health failures as 1, and maximum number
 %% of other callback errors as 3. Either of those being reached will cause
 %% the service to be marked as down. In the case of a health failure, the
 %% health function will continue to be called at increasing intervals.  In
@@ -118,7 +118,7 @@ service_down(Id) ->
     gen_server:call(?MODULE, {service_down, Id}, infinity).
 
 service_down(Id, true) ->
-    gen_server:call(?MODULE, {service_down, Id, health_check}, infintiy);
+    gen_server:call(?MODULE, {service_down, Id, health_check}, infinitiy);
 service_down(Id, false) ->
     service_down(Id).
 
