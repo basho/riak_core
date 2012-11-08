@@ -561,7 +561,7 @@ handle_check_msg(Msg, ServiceId, State) ->
             handle_check_return(CheckReturn, ServiceId, State)
     end.
 
-handle_check_return(ok, ServiceId, State) ->
+handle_check_return({remove, _Check}, ServiceId, State) ->
     Healths = orddict:erase(ServiceId, State#state.health_checks),
     State#state{health_checks = Healths};
 handle_check_return({ok, Check}, ServiceId, State) ->
@@ -589,9 +589,9 @@ remove_health_check(ServiceId, State) ->
     State#state{health_checks = Healths2}.
 
 %% health checks are an fsm to make mental modeling easier.
-%% There are X states:
+%% There are 3 states:
 %% waiting:  in between check intervals
-%% dormant:  Check interval disabled
+%% suspend:  Check interval disabled
 %% checking: health check in progress
 %% messages to handle:
 %% go dormant
@@ -599,128 +599,105 @@ remove_health_check(ServiceId, State) ->
 %% remove health check
 %% health check finished
 
-%% message handling when suspended
-health_fsm(resume, Service, #health_check{state = suspend} = InCheck) ->
+health_fsm(Msg, Service, #health_check{state = StateName} = Check) ->
+    {Reply, NextState, Check2} = health_fsm(StateName, Msg, Service, Check),
+    Check3 = Check2#health_check{state = NextState},
+    {Reply, Check3}.
+
+%% suspend state
+health_fsm(suspend, resume, Service, InCheck) ->
     #health_check{health_failures = N, check_interval = V} = InCheck,
     Tref = next_health_tref(N, V, Service),
     OutCheck = InCheck#health_check{
-        state = waiting,
         interval_tref = Tref
     },
-    {ok, OutCheck};
+    {ok, waiting, OutCheck};
 
-health_fsm(remove, _Service, #health_check{state = suspend}) ->
-    ok;
+health_fsm(suspend, remove, _Service, InCheck) ->
+    {remove, suspend, InCheck};
 
 %% message handling when checking state
-health_fsm(suspend, _Service, #health_check{state = checking} = InCheck) ->
+health_fsm(checking, suspend, _Service, InCheck) ->
     #health_check{checking_pid = Pid} = InCheck,
     erlang:erase(Pid),
-    {ok, InCheck#health_check{state = suspend, checking_pid = undefined}};
+    {ok, suspend, InCheck#health_check{checking_pid = undefined}};
 
-health_fsm(check_health, _Service, #health_check{state = checking} = InCheck) ->
-    {ok, InCheck};
+health_fsm(checking, check_health, _Service, InCheck) ->
+    {ok, checking, InCheck};
 
-health_fsm(remove, _Service, #health_check{state = checking} = InCheck) ->
+health_fsm(checking, remove, _Service, InCheck) ->
     #health_check{checking_pid = Pid} = InCheck,
-    erlang:erase(Pid),
-    ok;
+    {remove, checking, InCheck};
 
-health_fsm({'EXIT', Pid, normal}, Service, #health_check{checking_pid = Pid, health_failures = N, max_health_failures = M} = InCheck) when N >= M ->
-    Tref = next_health_tref(N, InCheck#health_check.check_interval, Service),
+health_fsm(checking, {'EXIT', Pid, Cause}, Service, #health_check{checking_pid = Pid} = InCheck) when Cause == normal; Cause == false ->
+    % correct exits of checking pid
+    #health_check{health_failures = HPFails, max_health_failures = HPMaxFails} = InCheck,
+    {Reply, HPFails1} = handle_fsm_exit(Cause, HPFails, HPMaxFails),
+    Tref = next_health_tref(HPFails1, InCheck#health_check.interval_tref, Service),
     OutCheck = InCheck#health_check{
-        state = waiting,
         checking_pid = undefined,
-        health_failures = 0,
-        callback_failures = 0,
+        health_failures = HPFails1,
         interval_tref = Tref
     },
-    {up, OutCheck};
+    {Reply, waiting, OutCheck};
 
-health_fsm({'EXIT', Pid, normal}, Service, #health_check{checking_pid = Pid, health_failures = N, max_health_failures = M} = InCheck) when N < M ->
-    Tref = next_health_tref(N, InCheck#health_check.check_interval, Service),
-    OutCheck = InCheck#health_check{
-        state = waiting,
-        checking_pid = undefined,
-        health_failures = 0,
-        callback_failures = 0,
-        interval_tref = Tref
-    },
-    {ok, OutCheck};
-
-health_fsm({'EXIT', Pid, false}, Service, #health_check{health_failures = N, max_health_failures = M, checking_pid = Pid} = InCheck) when N + 1 == M ->
-    Tref = next_health_tref(N, InCheck#health_check.check_interval, Service),
-    OutCheck = InCheck#health_check{
-        state = waiting,
-        checking_pid = undefined,
-        health_failures = N + 1,
-        callback_failures = 0,
-        interval_tref = Tref
-    },
-    {down, OutCheck};
-
-health_fsm({'EXIT', Pid, false}, Service, #health_check{health_failures = N, max_health_failures = M, checking_pid = Pid} = InCheck) when N >= M ->
-    Tref = next_health_tref(N, InCheck#health_check.check_interval, Service),
-    OutCheck = InCheck#health_check{
-        state = waiting,
-        checking_pid = undefined,
-        health_failures = N + 1,
-        callback_failures = 0,
-        interval_tref = Tref
-    },
-    {ok, OutCheck};
-
-health_fsm({'EXIT', Pid, false}, Service, #health_check{health_failures = N, checking_pid = Pid} = InCheck) ->
-    Tref = next_health_tref(N, InCheck#health_check.check_interval, Service),
-    OutCheck = InCheck#health_check{
-        state = waiting,
-        checking_pid = undefined,
-        health_failures = N + 1,
-        callback_failures = 0,
-        interval_tref = Tref
-    },
-    {ok, OutCheck};
-
-health_fsm({'EXIT', Pid, Cause}, Service, #health_check{checking_pid = Pid} = InCheck) ->
+health_fsm(checking, {'EXIT', Pid, Cause}, Service, #health_check{checking_pid = Pid} = InCheck) ->
     lager:error("health check process for ~p error'ed:  ~p", [Service, Cause]),
     Fails = InCheck#health_check.callback_failures + 1,
     if
         Fails == InCheck#health_check.max_callback_failures ->
             lager:error("health check callback for ~p failed too many times, disabling.", [Service]),
-            {down, InCheck#health_check{state = suspend, checking_pid = undefined, callback_failures = Fails}};
+            {down, suspend, InCheck#health_check{checking_pid = undefined, callback_failures = Fails}};
         Fails < InCheck#health_check.max_callback_failures ->
             #health_check{health_failures = N, check_interval = Inter} = InCheck,
             Tref = next_health_tref(N, Inter, Service), 
-            OutCheck = InCheck#health_check{state = waiting,
-                checking_pid = undefined, callback_failures = Fails,
-                interval_tref = Tref},
-            {ok, OutCheck};
+            OutCheck = InCheck#health_check{checking_pid = undefined,
+                callback_failures = Fails, interval_tref = Tref},
+            {ok, waiting, OutCheck};
         true ->
-            {ok, InCheck#health_check{checking_pid = undefined, callback_failures = Fails}}
+            % likely a late message, or a faker
+            {ok, suspend, InCheck#health_check{checking_pid = undefined, callback_failures = Fails}}
     end;
 
-%% message handling when in waiting state
-health_fsm(suspend, _Service, #health_check{state = waiting} = InCheck) ->
+%% message handling when in a waiting state
+health_fsm(waiting, suspend, _Service, InCheck) ->
     case InCheck#health_check.interval_tref of
         undefined -> ok;
         _ -> erlang:cancel_timer(InCheck#health_check.interval_tref)
     end,
-    {ok, InCheck#health_check{state = suspend, interval_tref = undefined}};
+    {ok, suspend, InCheck#health_check{interval_tref = undefined}};
 
-health_fsm(check_health, Service, #health_check{state = waiting} = InCheck) ->
+health_fsm(waiting, check_health, Service, InCheck) ->
     InCheck1 = start_health_check(Service, InCheck),
-    {ok, InCheck1};
+    {ok, checking, InCheck1};
 
-health_fsm(remove, _Service, #health_check{state = waiting, interval_tref = Tref}) ->
-    case Tref of
+health_fsm(waiting, remove, _Service, InCheck) ->
+    case InCheck#health_check.interval_tref of
         undefined -> ok;
-        _ -> erlang:cancel_timer(Tref)
+        Tref -> erlang:cancel_timer(Tref)
     end,
-    ok;
+    OutCheck = InCheck#health_check{interval_tref = undefined},
+    {remove, waiting, OutCheck};
 
 % fallthrough handling
-health_fsm(_Msg, _Service, Health) ->
-    {ok, Health}.
+health_fsm(_Msg, StateName, _Service, Health) ->
+    {ok, StateName, Health}.
+
+handle_fsm_exit(normal, HPFails, MaxHPFails) when HPFails >= MaxHPFails ->
+    % service was failed, but recovered
+    {up, 0, 0};
+
+handle_fsm_exit(normal, HPFails, MaxHPFails) when HPFails < MaxHPFails ->
+    % service never fully failed
+    {ok, 0, 0};
+
+handle_fsm_exit(false, HPFails, MaxHPFails) when HPFails + 1 == MaxHPFails ->
+    % service has failed enough to go down
+    {down, HPFails + 1, 0};
+
+handle_fsm_exit(false, HPFails, __) ->
+    % all other cases handled, this is health continues to fail
+    {ok, HPFails + 1, 0}.
 
 start_health_check(Service, #health_check{checking_pid = undefined} = CheckRec) ->
     {Mod, Func, Args} = CheckRec#health_check.callback,
