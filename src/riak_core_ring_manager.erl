@@ -52,8 +52,8 @@
         raw_ring
     }).
 
+-export([set_ring_global/1]). %% For EUnit testing purposes only
 -ifdef(TEST).
--export([set_ring_global/1]).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
