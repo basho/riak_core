@@ -31,6 +31,10 @@
 %% note this is in seconds
 -define(STATUS_INTERVAL, 2).
 
+-define(log_info(Str, Args),
+        lager:info("~p transfer of ~p from ~p ~p to ~p ~p failed " ++ Str,
+                   [Type, Module, SrcNode, SrcPartition, TargetNode,
+                    TargetPartition] ++ Args)).
 -define(log_fail(Str, Args),
         lager:error("~p transfer of ~p from ~p ~p to ~p ~p failed " ++ Str,
                     [Type, Module, SrcNode, SrcPartition, TargetNode,
@@ -153,7 +157,12 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
          R = riak_core_vnode_master:sync_command({SrcPartition, SrcNode},
                                                  Req,
                                                  VMaster, infinity),
-
+         if R == {error, vnode_shutdown} ->
+                 ?log_info("because the local vnode was shutdown", []),
+                 throw({be_quiet, error, local_vnode_shutdown_requested});
+            true ->
+                 ok                     % If not #ho_acc, get badmatch below
+         end,
          #ho_acc{error=ErrStatus,
                  module=Module,
                  parent=ParentPid,
@@ -211,6 +220,8 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
              gen_fsm:send_event(ParentPid, {handoff_error,
                                             fold_error, Reason}),
              exit({shutdown, {error, Reason}});
+         throw:{be_quiet, Err, Reason} ->
+             gen_fsm:send_event(ParentPid, {handoff_error, Err, Reason});
          Err:Reason ->
              ?log_fail("because of ~p:~p ~p",
                        [Err, Reason, erlang:get_stacktrace()]),
