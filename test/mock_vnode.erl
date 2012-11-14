@@ -135,7 +135,7 @@ handle_command(returnreply, _Sender, State = #state{counter=Counter}) ->
     {reply, returnreply, State#state{counter = Counter + 1}};
 handle_command(latereply, Sender, State = #state{counter=Counter}) ->
     spawn(fun() -> 
-                  timer:sleep(1),
+                  timer:sleep(100),
                   riak_core_vnode:reply(Sender, latereply)
           end),
     {noreply, State#state{counter = Counter + 1}};
@@ -161,15 +161,15 @@ init_worker(Index, Args, Props) ->
     {ok, #wstate{index=Index, args=Args, props=Props}}.
 
 handle_work({noreply, DonePid},  {raw, Ref, _EqcPid} = _Sender, State = #wstate{index=I}) ->
-    timer:sleep(1), % slow things down enough to cause issue on stops
+    timer:sleep(100), % slow things down enough to cause issue on stops
     DonePid ! {I, {ok, Ref}},
     {noreply, State};
 handle_work({reply, DonePid},  {raw, Ref, _EqcPid} = _Sender, State = #wstate{index=I}) ->
-    timer:sleep(1), % slow things down enough to cause issue on stops
+    timer:sleep(100), % slow things down enough to cause issue on stops
     DonePid ! {I, {ok, Ref}},
     {reply, asyncreply, State};
 handle_work({crash, DonePid},  {raw, Ref, _EqcPid} = _Sender, _State = #wstate{index=I}) ->
-    timer:sleep(1), % slow things down enough to cause issue on stops
+    timer:sleep(100), % slow things down enough to cause issue on stops
     %DonePid ! {I, {ok, Ref}},
     throw(deliberate_async_crash).
 

@@ -85,7 +85,7 @@ prop_simple() ->
             aggregate(command_names(Cmds),
                       begin
                           {H,{_SN,S},Res} = run_commands(?MODULE, Cmds),
-                          %timer:sleep(100), %% Adjust this to make shutdown sensitive stuff pass/fail
+                          timer:sleep(500), %% Adjust this to make shutdown sensitive stuff pass/fail
                           %% Do a sync operation on all the started vnodes
                           %% to ensure any of the noreply commands have executed before
                           %% stopping.
@@ -159,7 +159,7 @@ next_state_data(_From,_To,S=#qcst{started=Started, counters=Counters, crash_reas
 
     %% give the vnode a chance to shut down so that the index isn't present
     %% if the next command is to list the vnodes
-    timer:sleep(10),
+    timer:sleep(100),
     S#qcst{started=Started -- [Index],
            counters=orddict:store(Index, 0, Counters),
            crash_reasons=orddict:store(Index, undefined, CRs)};
