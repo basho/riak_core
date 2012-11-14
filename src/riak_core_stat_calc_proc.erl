@@ -131,6 +131,8 @@ check_freshness(TStamp, TTL) ->
 maybe_get_stat(Stat, From, undefined, Awaiting) ->
     %% if a process for  getting stat value is not underway start one
     Pid = do_calc_stat(Stat),
+    maybe_get_stat(Stat, From, Pid, Awaiting);
+maybe_get_stat(_Stat, From, Pid, Awaiting) ->
     {Pid, [From|Awaiting]}.
 
 do_calc_stat(Stat) ->
