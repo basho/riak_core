@@ -93,8 +93,6 @@ xfer({SrcPartition, SrcOwner}, {Module, TargetPartition}, FilterModFun) ->
 %% @doc Associate `Data' with the inbound handoff `Recv'.
 -spec set_recv_data(pid(), proplists:proplist()) -> ok.
 set_recv_data(Recv, Data) ->
-    %% Let this timeout and crash receiver if handoff mgr is
-    %% unresponsive.
     gen_server:call(?MODULE, {set_recv_data, Recv, Data}, infinity).
 
 status() ->
