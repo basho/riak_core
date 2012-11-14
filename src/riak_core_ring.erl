@@ -51,7 +51,8 @@
          rename_node/3,
          responsible_index/2,
          transfer_node/3,
-         update_meta/3]).
+         update_meta/3,
+         remove_meta/2]).
 
 -export([cluster_name/1,
          legacy_ring/1,
@@ -334,6 +335,8 @@ fresh(RingSize, NodeName) ->
 get_meta(Key, State) -> 
     case dict:find(Key, State?CHSTATE.meta) of
         error -> undefined;
+        {ok, '$removed'} -> undefined;
+        {ok, M} when M#meta_entry.value =:= '$removed' -> undefined;
         {ok, M} -> {ok, M#meta_entry.value}
     end.
 
@@ -498,6 +501,14 @@ update_meta(Key, Val, State) ->
                           meta=dict:store(Key, M, State?CHSTATE.meta)};
        true ->
             State
+    end.
+
+%% @doc Logical delete of a key in the cluster metadata dict
+-spec remove_meta(Key :: term(), State :: chstate()) -> chstate().
+remove_meta(Key, State) ->
+    case dict:find(Key, State?CHSTATE.meta) of
+        {ok, _} -> update_meta(Key, '$removed', State);
+        error -> State
     end.
 
 %% @doc Return the current claimant.
@@ -1343,6 +1354,17 @@ metadata_inequality_test() ->
                  get_meta(key,?CHSTATE{meta=
                             merge_meta(Ring2?CHSTATE.meta,
                                        Ring1?CHSTATE.meta)})).
+
+metadata_remove_test() ->
+    Ring0 = fresh(2, node()),
+    ?assert(equal_rings(Ring0, remove_meta(key, Ring0))),
+    Ring1 = update_meta(key,val,Ring0),
+    timer:sleep(1001), % ensure that lastmod is at least one second later
+    Ring2 = remove_meta(key,Ring1),
+    ?assertEqual(undefined, get_meta(key, Ring2)),
+    ?assertEqual(undefined, get_meta(key, ?CHSTATE{meta=merge_meta(Ring1?CHSTATE.meta, Ring2?CHSTATE.meta)})),
+    ?assertEqual(undefined, get_meta(key, ?CHSTATE{meta=merge_meta(Ring2?CHSTATE.meta, Ring1?CHSTATE.meta)})).
+
 rename_test() ->
     Ring0 = fresh(2, node()),
     Ring = rename_node(Ring0, node(), 'new@new'),

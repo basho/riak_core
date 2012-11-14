@@ -29,6 +29,7 @@
          set_bucket/2,
          get_bucket/1,
          get_bucket/2,
+         reset_bucket/1,
          get_buckets/1,
          merge_props/2,
          name/1,
@@ -109,6 +110,15 @@ get_bucket(Name, Ring) ->
              |app_helper:get_env(riak_core, default_bucket_props)];
         {ok, Bucket} -> Bucket
     end.
+
+%% @spec reset_bucket(binary()) -> ok
+%% @doc Reset the bucket properties for Bucket to the default settings
+reset_bucket(Bucket) ->
+    F = fun(Ring, _Args) ->
+                {new_ring, riak_core_ring:remove_meta({bucket, Bucket}, Ring)}
+        end,
+    {ok, _NewRing} = riak_core_ring_manager:ring_trans(F, undefined),
+    ok.
 
 %% @doc Get bucket properties `Props' for all the buckets in the given
 %%      `Ring'
