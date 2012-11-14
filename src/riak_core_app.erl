@@ -25,7 +25,7 @@
 -behaviour(application).
 
 %% Application callbacks
--export([start/2, stop/1]).
+-export([start/2, prep_stop/1, stop/1]).
 
 %% ===================================================================
 %% Application callbacks
@@ -94,5 +94,18 @@ start(_StartType, _StartArgs) ->
             {error, Reason}
     end.
 
+%% @doc Prepare to stop - called before the supervisor tree is shutdown
+prep_stop(_State) ->
+    try %% wrap with a try/catch - application carries on regardless,
+        %% no error message or logging about the failure otherwise.
+        lager:info("Stopping application riak_core - disabling web services.\n", []),
+        riak_core_sup:stop_webs()
+    catch
+        Type:Reason ->
+            lager:error("Stopping application riak_core - ~p:~p.\n", [Type, Reason])
+    end,
+    stopping.
+
 stop(_State) ->
+    lager:info("Stopped  application riak_core.\n", []),
     ok.
