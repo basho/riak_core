@@ -74,10 +74,10 @@ init([]) ->
     {ok, #state{excl=ordsets:new(), handoffs=[]}}.
 
 add_outbound(Module,Idx,Node,VnodePid) ->
-    gen_server:call(?MODULE,{add_outbound,Module,Idx,Node,VnodePid}).
+    gen_server:call(?MODULE,{add_outbound,Module,Idx,Node,VnodePid},infinity).
 
 add_inbound(SSLOpts) ->
-    gen_server:call(?MODULE,{add_inbound,SSLOpts}).
+    gen_server:call(?MODULE,{add_inbound,SSLOpts},infinity).
 
 %% @doc Initiate a transfer from `SrcPartition' to `TargetPartition'
 %%      for the given `Module' using the `FilterModFun' filter.
@@ -93,15 +93,13 @@ xfer({SrcPartition, SrcOwner}, {Module, TargetPartition}, FilterModFun) ->
 %% @doc Associate `Data' with the inbound handoff `Recv'.
 -spec set_recv_data(pid(), proplists:proplist()) -> ok.
 set_recv_data(Recv, Data) ->
-    %% Let this timeout and crash receiver if handoff mgr is
-    %% unresponsive.
-    gen_server:call(?MODULE, {set_recv_data, Recv, Data}).
+    gen_server:call(?MODULE, {set_recv_data, Recv, Data}, infinity).
 
 status() ->
     status(none).
 
 status(Filter) ->
-    gen_server:call(?MODULE, {status, Filter}).
+    gen_server:call(?MODULE, {status, Filter}, infinity).
 
 %% @doc Send status updates `Stats' to the handoff manager for a
 %%      particular handoff identified by `ModSrcTgt'.
@@ -110,10 +108,10 @@ status_update(ModSrcTgt, Stats) ->
     gen_server:cast(?MODULE, {status_update, ModSrcTgt, Stats}).
 
 set_concurrency(Limit) ->
-    gen_server:call(?MODULE,{set_concurrency,Limit}).
+    gen_server:call(?MODULE,{set_concurrency,Limit}, infinity).
 
 get_concurrency() ->
-    gen_server:call(?MODULE, get_concurrency).
+    gen_server:call(?MODULE, get_concurrency, infinity).
 
 %% @doc Kill the transfer of `ModSrcTarget' with `Reason'.
 -spec kill_xfer(node(), tuple(), any()) -> ok.
