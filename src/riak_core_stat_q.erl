@@ -19,35 +19,35 @@
 %% -------------------------------------------------------------------
 
 %% @doc riak_core_stat_q is an interface to query folsom stats
-%%      To use, call `get_stats/1` with a query `Path`.
-%%      A `Path` is a list of atoms. The module creates a set
-%%      of `ets:select/1` guards, one for each element in `Path`
-%%      For each stat that has a key that matches `Path` we calculate the
-%%      current value and return it. This module mkaes use of
-%%     `riak_core_stat_calc_proc`
+%%      To use, call `get_stats/1' with a query `Path'.
+%%      A `Path' is a list of atoms | binaries. The module creates a set
+%%      of `ets:select/1' guards, one for each element in `Path'
+%%      For each stat that has a key that matches `Path' we calculate the
+%%      current value and return it. This module makes use of
+%%     `riak_core_stat_calc_proc'
 %%      to cache and limit stat calculations.
 
 -module(riak_core_stat_q).
 
 -compile(export_all).
 
--type path() :: [] | [atom()].
+-type path() :: [] | [atom()|binary()].
 -type stats() :: [stat()].
 -type stat() :: {stat_name(), stat_value()}.
 -type stat_name() :: tuple().
 -type stat_value() :: integer() | [tuple()].
 
 %% @doc To allow for namespacing, and adding richer dimensions, stats
-%% are named with a tuple key. The key (like `{riak_kv, node, gets}` or
-%% `{riak_kv, vnode, puts, time}`) can
-%% be seen as an hierarchical path. With `riak_kv` at the root and
+%% are named with a tuple key. The key (like `{riak_kv, node, gets}' or
+%% `{riak_kv, vnode, puts, time}') can
+%% be seen as an hierarchical path. With `riak_kv' at the root and
 %% the other elements as branches / leaves.
-%% This module allows us to get only the stats at and below a particular key
-%% `Path` is a list of atoms or the empty list.
-%% an example path might be `[riak_kv]` which will return every
-%% stat that has `riak_kv` in the first element of its key tuple.
-%% You may use the atom `'_'` at any point
-%% in `Path` as a wild card.
+%% This module allows us to get only the stats at and below a particular key.
+%% `Path' is a list of atoms or the empty list.
+%% an example path might be `[riak_kv]' which will return every
+%% stat that has `riak_kv' in the first element of its key tuple.
+%% You may use the atom '_' at any point
+%% in `Path' as a wild card.
 -spec get_stats(path()) -> stats().
 get_stats(Path) ->
     %% get all the stats that are at Path
@@ -72,7 +72,7 @@ add_guards(['_'|Path], Guards, Cnt) ->
 add_guards([Elem|Path], Guards, Cnt) ->
    add_guards(Path, [guard(Elem, Cnt) | Guards], Cnt+1).
 
-guard(Elem, Cnt) when is_atom(Elem), Cnt > 0 ->
+guard(Elem, Cnt) when Cnt > 0 ->
     {'==', {element, Cnt, '$1'}, Elem}.
 
 -spec size_guard(pos_integer()) -> tuple().
@@ -89,7 +89,7 @@ get_stat(Stat) ->
 
 %% BAD uses internl knowledge of folsom metrics record
 %% This is a callback function used by
-%% riak_core_stat_calc_proc when it calculates a stats
+%% riak_core_stat_calc_proc when it calculates a stat's
 %% current value.
 calc_stat({Name, {metric, _Tags, gauge, _HistLen}}) ->
     GuageVal = folsom_metrics:get_metric_value(Name),
@@ -102,7 +102,7 @@ calc_stat({Name, {metric, _Tags, _Type, _HistLen}}) ->
 %% some crazy people put funs in folsom gauges
 %% so that they can have a consistent interface
 %% to access stats from disperate sources
-calc_guage(Val) when is_function(Val) ->
-    Val();
+calc_guage({function, Mod, Fun}) ->
+    Mod:Fun();
 calc_guage(Val) ->
     Val.
