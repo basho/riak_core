@@ -128,11 +128,8 @@ do_write_ringfile(Ring) ->
 
 do_write_ringfile(Ring, FN) ->
     ok = filelib:ensure_dir(FN),
-    TmpFN = FN ++ ".tmp", %% list comp. in find_latest_ringfile will skip
     try
-        ok = file:write_file(TmpFN, term_to_binary(Ring)),
-        Ring = read_ringfile(TmpFN),
-        ok = file:rename(TmpFN, FN)
+        ok = riak_core_util:replace_file(FN, term_to_binary(Ring))
     catch
         _:Err ->
             lager:error("Unable to write ring to \"~s\" - ~p\n", [FN, Err]),
