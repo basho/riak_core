@@ -25,6 +25,7 @@
 
 -export([moment/0,
          make_tmp_dir/0,
+         replace_file/2,
          compare_dates/2,
          reload_all/1,
          integer_to_list/2,
@@ -94,6 +95,23 @@ make_tmp_dir() ->
         false ->
             ok = file:make_dir(TempDir),
             TempDir
+    end.
+
+-spec replace_file(string(), iodata()) -> ok | {error, term()}.
+
+replace_file(FN, Data) ->
+    TmpFN = FN ++ ".tmp",
+    {ok, FH} = file:open(TmpFN, [write]),
+    try
+        ok = file:write(FH, Data),
+        ok = file:sync(FH),
+        ok = file:close(FH),
+        ok = file:rename(TmpFN, FN),
+        {ok, Contents} = file:read_file(FN),
+        true = (Contents == iolist_to_binary(Data)),
+        ok
+    catch _:Err ->
+            {error, Err}
     end.
 
 %% @spec integer_to_list(Integer :: integer(), Base :: integer()) ->
