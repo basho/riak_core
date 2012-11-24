@@ -31,6 +31,9 @@
 
 -compile(export_all).
 
+-export_type([path/0,
+              stat_name/0]).
+
 -type path() :: [] | [atom()|binary()].
 -type stats() :: [stat()].
 -type stat() :: {stat_name(), stat_value()}.
