@@ -230,11 +230,15 @@ reload_ring(live) ->
                     lager:critical("Failed to read ring file: ~p",
                                    [lager:posix_error(Reason)]),
                     throw({error, Reason});
-                Ring0 ->
+                Ring ->
                     %% Upgrade the ring data structure if necessary.
-                    lager:info("Upgrading legacy ring"),
-                    Ring = riak_core_ring:upgrade(Ring0),
-                    Ring
+                    case riak_core_ring:legacy_ring(Ring) of
+                        true ->
+                            lager:info("Upgrading legacy ring"),
+                            riak_core_ring:upgrade(Ring);
+                        false ->
+                            Ring
+                    end
             end;
         {error, not_found} ->
             lager:warning("No ring file available."),
