@@ -23,7 +23,7 @@
 
 -behaviour(gen_server).
 
--define(DEFUALT_HEALTH_CHECK_INTERVAL, 60000).
+-define(DEFAULT_HEALTH_CHECK_INTERVAL, 60000).
 %% API
 -export([start_link/0,
          service_up/2,
@@ -57,9 +57,9 @@
                         health_failures = 0 :: non_neg_integer(),
                         callback_failures = 0 :: non_neg_integer(),
                         interval_tref,
-                        % how many milliseconds to wait after a check has
-                        % finished before starting a new one
-                        check_interval = ?DEFUALT_HEALTH_CHECK_INTERVAL :: timeout(),
+                        %% how many milliseconds to wait after a check has
+                        %% finished before starting a new one
+                        check_interval = ?DEFAULT_HEALTH_CHECK_INTERVAL :: timeout(),
                         max_callback_failures = 3,
                         max_health_failures = 1 }).
 
@@ -83,7 +83,9 @@ service_up(Id, Pid, MFA) ->
 -type hc_check_interval_opt() :: {check_interval, timeout()}.
 -type hc_max_callback_fails_opt() :: {max_callback_failures, non_neg_integer()}.
 -type hc_max_health_fails_opt() :: {max_health_failures, non_neg_integer()}.
--type health_opt() :: hc_check_interval_opt() | hc_max_callback_fails_opt() | hc_max_health_fails_opt().
+-type health_opt() :: hc_check_interval_opt() |
+                      hc_max_callback_fails_opt() |
+                      hc_max_health_fails_opt().
 -type health_opts() :: [health_opt()].
 %% @doc Create a service that can be declared up or down based on the
 %% result of a function in addition to usual monitoring. The function can
@@ -102,9 +104,12 @@ service_up(Id, Pid, MFA) ->
 %% of the argument list provided. A service added this way is removed like
 %% any other, using {@link service_down/1}.
 %% @see service_up/2
--spec service_up(Id :: atom(), Pid :: pid(), Callback :: mfa(), Options :: health_opts()) -> 'ok'.
+-spec service_up(Id :: atom(), Pid :: pid(), Callback :: mfa(),
+                 Options :: health_opts()) -> 'ok'.
 service_up(Id, Pid, {Module, Function, Args}, Options) ->
-    gen_server:call(?MODULE, {service_up, Id, Pid, {Module, Function, Args}, Options}, infinity).
+    gen_server:call(?MODULE,
+                    {service_up, Id, Pid, {Module, Function, Args}, Options},
+                    infinity).
 
 %% @doc Force a health check for the given service.  If the service does
 %% not have a health check associated with it, this is ignored.  Resets the
@@ -190,7 +195,8 @@ handle_call({service_up, Id, Pid, MFA, Options}, From, State) ->
     State2 = remove_health_check(Id, State1),
 
     %% install the health check
-    CheckInterval = proplists:get_value(check_interval, Options, ?DEFUALT_HEALTH_CHECK_INTERVAL),
+    CheckInterval = proplists:get_value(check_interval, Options,
+                                        ?DEFAULT_HEALTH_CHECK_INTERVAL),
     IntervalTref = case CheckInterval of
         infinity -> undefined;
         N -> erlang:send_after(N, self(), {check_health, Id})
@@ -375,8 +381,8 @@ is_node_up(Node) ->
 node_up(Node, Services, State) ->
     case is_peer(Node, State) of
         true ->
-            %% Before we alter the ETS table, see if this node was previously down. In
-            %% that situation, we'll go ahead broadcast out.
+            %% Before we alter the ETS table, see if this node was previously
+            %% down. In that situation, we'll go ahead and broadcast out.
             S2 = case is_node_up(Node) of
                      false ->
                          broadcast([Node], State);
@@ -551,7 +557,7 @@ drop_service(ServiceId, State) ->
 handle_check_msg(_Msg, undefined, State) ->
     State;
 handle_check_msg(_Msg, _ServiceId, #state{status = down} = State) ->
-    % most likely a late message
+    %% most likely a late message
     State;
 handle_check_msg(Msg, ServiceId, State) ->
     case orddict:find(ServiceId, State#state.health_checks) of
@@ -629,8 +635,9 @@ health_fsm(checking, check_health, _Service, InCheck) ->
 health_fsm(checking, remove, _Service, InCheck) ->
     {remove, checking, InCheck};
 
-health_fsm(checking, {'EXIT', Pid, Cause}, Service, #health_check{checking_pid = Pid} = InCheck) when Cause == normal; Cause == false ->
-    % correct exits of checking pid
+health_fsm(checking, {'EXIT', Pid, Cause}, Service, #health_check{checking_pid = Pid} = InCheck)
+  when Cause == normal; Cause == false ->
+    %% correct exits of checking pid
     #health_check{health_failures = HPFails, max_health_failures = HPMaxFails} = InCheck,
     {Reply, HPFails1} = handle_fsm_exit(Cause, HPFails, HPMaxFails),
     Tref = next_health_tref(HPFails1, InCheck#health_check.check_interval, Service),
@@ -647,8 +654,10 @@ health_fsm(checking, {'EXIT', Pid, Cause}, Service, #health_check{checking_pid =
     Fails = InCheck#health_check.callback_failures + 1,
     if
         Fails == InCheck#health_check.max_callback_failures ->
-            lager:error("health check callback for ~p failed too many times, disabling.", [Service]),
-            {down, suspend, InCheck#health_check{checking_pid = undefined, callback_failures = Fails}};
+            lager:error("health check callback for ~p failed too "
+                        "many times, disabling.", [Service]),
+            {down, suspend, InCheck#health_check{checking_pid = undefined,
+                                                 callback_failures = Fails}};
         Fails < InCheck#health_check.max_callback_failures ->
             #health_check{health_failures = N, check_interval = Inter} = InCheck,
             Tref = next_health_tref(N, Inter, Service), 
@@ -656,8 +665,9 @@ health_fsm(checking, {'EXIT', Pid, Cause}, Service, #health_check{checking_pid =
                 callback_failures = Fails, interval_tref = Tref},
             {ok, waiting, OutCheck};
         true ->
-            % likely a late message, or a faker
-            {ok, suspend, InCheck#health_check{checking_pid = undefined, callback_failures = Fails}}
+            %% likely a late message, or a faker
+            {ok, suspend, InCheck#health_check{checking_pid = undefined,
+                                               callback_failures = Fails}}
     end;
 
 %% message handling when in a waiting state
@@ -680,24 +690,24 @@ health_fsm(waiting, remove, _Service, InCheck) ->
     OutCheck = InCheck#health_check{interval_tref = undefined},
     {remove, waiting, OutCheck};
 
-% fallthrough handling
+%% fallthrough handling
 health_fsm(_Msg, StateName, _Service, Health) ->
     {ok, StateName, Health}.
 
 handle_fsm_exit(normal, HPFails, MaxHPFails) when HPFails >= MaxHPFails ->
-    % service was failed, but recovered
+    %% service was failed, but recovered
     {up, 0};
 
 handle_fsm_exit(normal, HPFails, MaxHPFails) when HPFails < MaxHPFails ->
-    % service never fully failed
+    %% service never fully failed
     {ok, 0};
 
 handle_fsm_exit(false, HPFails, MaxHPFails) when HPFails + 1 == MaxHPFails ->
-    % service has failed enough to go down
+    %% service has failed enough to go down
     {down, HPFails + 1};
 
 handle_fsm_exit(false, HPFails, __) ->
-    % all other cases handled, this is health continues to fail
+    %% all other cases handled, this is health continues to fail
     {ok, HPFails + 1}.
 
 start_health_check(Service, #health_check{checking_pid = undefined} = CheckRec) ->
@@ -715,7 +725,9 @@ start_health_check(Service, #health_check{checking_pid = undefined} = CheckRec) 
         end
     end),
     erlang:put(CheckingPid, Service),
-    CheckRec#health_check{state = checking, checking_pid = CheckingPid, interval_tref = undefined};
+    CheckRec#health_check{state = checking,
+                          checking_pid = CheckingPid,
+                          interval_tref = undefined};
 start_health_check(_Service, Check) ->
     Check.
 
