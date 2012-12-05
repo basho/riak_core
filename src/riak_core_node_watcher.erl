@@ -627,17 +627,17 @@ health_fsm(checking, check_health, _Service, InCheck) ->
     {ok, checking, InCheck};
 
 health_fsm(checking, remove, _Service, InCheck) ->
-    #health_check{checking_pid = Pid} = InCheck,
     {remove, checking, InCheck};
 
 health_fsm(checking, {'EXIT', Pid, Cause}, Service, #health_check{checking_pid = Pid} = InCheck) when Cause == normal; Cause == false ->
     % correct exits of checking pid
     #health_check{health_failures = HPFails, max_health_failures = HPMaxFails} = InCheck,
     {Reply, HPFails1} = handle_fsm_exit(Cause, HPFails, HPMaxFails),
-    Tref = next_health_tref(HPFails1, InCheck#health_check.interval_tref, Service),
+    Tref = next_health_tref(HPFails1, InCheck#health_check.check_interval, Service),
     OutCheck = InCheck#health_check{
         checking_pid = undefined,
         health_failures = HPFails1,
+        callback_failures = 0,
         interval_tref = Tref
     },
     {Reply, waiting, OutCheck};
@@ -686,19 +686,19 @@ health_fsm(_Msg, StateName, _Service, Health) ->
 
 handle_fsm_exit(normal, HPFails, MaxHPFails) when HPFails >= MaxHPFails ->
     % service was failed, but recovered
-    {up, 0, 0};
+    {up, 0};
 
 handle_fsm_exit(normal, HPFails, MaxHPFails) when HPFails < MaxHPFails ->
     % service never fully failed
-    {ok, 0, 0};
+    {ok, 0};
 
 handle_fsm_exit(false, HPFails, MaxHPFails) when HPFails + 1 == MaxHPFails ->
     % service has failed enough to go down
-    {down, HPFails + 1, 0};
+    {down, HPFails + 1};
 
 handle_fsm_exit(false, HPFails, __) ->
     % all other cases handled, this is health continues to fail
-    {ok, HPFails + 1, 0}.
+    {ok, HPFails + 1}.
 
 start_health_check(Service, #health_check{checking_pid = undefined} = CheckRec) ->
     {Mod, Func, Args} = CheckRec#health_check.callback,
@@ -729,7 +729,7 @@ determine_time(Failures, BaseInterval) when Failures < 4 ->
     BaseInterval;
 
 determine_time(Failures, BaseInterval) when Failures < 11 ->
-    BaseInterval * (math:pow(Failures, 1.3));
+    erlang:trunc(BaseInterval * (math:pow(Failures, 1.3)));
 
 determine_time(Failures, BaseInterval) when Failures > 10 ->
     BaseInterval * 20.
