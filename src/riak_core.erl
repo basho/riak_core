@@ -22,7 +22,7 @@
 -module(riak_core).
 -export([stop/0, stop/1, join/1, join/5, staged_join/1, remove/1, down/1,
          leave/0, remove_from_cluster/1]).
--export([vnode_modules/0]).
+-export([vnode_modules/0, health_check/1]).
 -export([register/1, register/2, bucket_fixups/0, bucket_validators/0]).
 -export([stat_mods/0]).
 
@@ -296,6 +296,19 @@ stat_mods() ->
         {ok, Mods} -> Mods
     end.
 
+health_check(App) ->
+    case application:get_env(riak_core, health_checks) of
+        undefined ->
+            undefined;
+        {ok, Mods} ->
+            case lists:keyfind(App, 1, Mods) of
+                false ->
+                    undefined;
+                {App, MFA} ->
+                    MFA
+            end
+    end.
+
 %% Get the application name if not supplied, first by get_application
 %% then by searching by module name
 get_app(undefined, Module) ->
@@ -329,6 +342,9 @@ register(App, [{repl_helper, FixupMod}|T]) ->
 register(App, [{vnode_module, VNodeMod}|T]) ->
     register_mod(get_app(App, VNodeMod), VNodeMod, vnode_modules),
     register(App, T);
+register(App, [{health_check, HealthMFA}|T]) ->
+    register_metadata(get_app(App, HealthMFA), HealthMFA, health_checks),
+    register(App, T);
 register(App, [{bucket_validator, ValidationMod}|T]) ->
     register_mod(get_app(App, ValidationMod), ValidationMod, bucket_validators),
     register(App, T);
@@ -352,6 +368,15 @@ register_mod(App, Module, Type) when is_atom(Module), is_atom(Type) ->
         {ok, Mods} ->
             application:set_env(riak_core, Type,
                 lists:usort([{App,Module}|Mods]))
+    end.
+
+register_metadata(App, Value, Type) ->
+    case application:get_env(riak_core, Type) of
+        undefined ->
+            application:set_env(riak_core, Type, [{App,Value}]);
+        {ok, Values} ->
+            application:set_env(riak_core, Type,
+                lists:usort([{App,Value}|Values]))
     end.
 
 %% @spec add_guarded_event_handler(HandlerMod, Handler, Args) -> AddResult

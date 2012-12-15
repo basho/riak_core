@@ -72,6 +72,7 @@
 -define(XFER_EQ(A, ModSrcTgt), A#xfer_status.mod_src_target == ModSrcTgt).
 -define(XFER_COMPLETE(X), X#xfer_status.status == complete).
 -define(DEFAULT_OWNERSHIP_TRIGGER, 8).
+-define(ETS, ets_vnode_mgr).
 
 %% ===================================================================
 %% Public API
@@ -82,12 +83,6 @@ start_link() ->
 
 stop() ->
     gen_server:cast(?MODULE, stop).
-
-all_vnodes() ->
-    gen_server:call(?MODULE, all_vnodes).
-
-all_vnodes(Mod) ->
-    gen_server:call(?MODULE, {all_vnodes, Mod}).
 
 all_vnodes_status() ->
     gen_server:call(?MODULE, all_vnodes_status).
@@ -142,12 +137,6 @@ unregister_vnode(Index, VNodeMod) ->
 unregister_vnode(Index, Pid, VNodeMod) ->
     gen_server:cast(?MODULE, {unregister, Index, VNodeMod, Pid}).
 
-all_index_pid(VNodeMod) ->
-    gen_server:call(?MODULE, {all_index_pid, VNodeMod}, infinity).
-
-get_vnode_pid(Index, VNodeMod) ->
-    gen_server:call(?MODULE, {Index, VNodeMod, get_vnode}, infinity).
-
 start_vnode(Index, VNodeMod) ->
     gen_server:cast(?MODULE, {Index, VNodeMod, start_vnode}).
 
@@ -156,6 +145,64 @@ vnode_event(Mod, Idx, Pid, Event) ->
 
 get_tab() ->
     gen_server:call(?MODULE, get_tab, infinity).
+
+get_vnode_pid(Index, VNodeMod) ->
+    gen_server:call(?MODULE, {Index, VNodeMod, get_vnode}, infinity).
+
+%% ===================================================================
+%% ETS-based API: try to determine response by reading protected ETS
+%%                table, falling back to a vnode manager call if
+%%                ETS table is missing.
+%% ===================================================================
+
+all_vnodes() ->
+    case get_all_vnodes() of
+        [] ->
+            %% ETS error could produce empty list, call manager to be sure.
+            gen_server:call(?MODULE, all_vnodes);
+        Result ->
+            Result
+    end.
+
+all_vnodes(Mod) ->
+    case get_all_vnodes(Mod) of
+        [] ->
+            %% ETS error could produce empty list, call manager to be sure.
+            gen_server:call(?MODULE, {all_vnodes, Mod});
+        Result ->
+            Result
+    end.
+
+all_index_pid(VNodeMod) ->
+    case get_all_index_pid(VNodeMod, ets_error) of
+        ets_error ->
+            gen_server:call(?MODULE, {all_index_pid, VNodeMod}, infinity);
+        Result ->
+            Result
+    end.
+
+%% ===================================================================
+%% Protected ETS Accessors
+%% ===================================================================
+
+get_all_index_pid(Mod, Default) ->
+    try
+        [list_to_tuple(L)
+         || L <- ets:match(?ETS, {idxrec, '_', '$1', Mod, '$2', '_'})]
+    catch
+        _:_ ->
+            Default
+    end.
+
+get_all_vnodes() ->
+    Mods = [Mod || {_App, Mod} <- riak_core:vnode_modules()],
+    get_all_vnodes(Mods).
+
+get_all_vnodes(Mods) when is_list(Mods) ->
+    lists:flatmap(fun(Mod) -> get_all_vnodes(Mod) end, Mods);
+get_all_vnodes(Mod) ->
+    IdxPids = get_all_index_pid(Mod, []),
+    [{Mod, Idx, Pid} || {Idx, Pid} <- IdxPids].
 
 %% ===================================================================
 %% gen_server behaviour
@@ -169,7 +216,7 @@ init(_State) ->
                    known_modules=[], never_started=[], vnode_start_tokens=0,
                    repairs=[]},
     State2 = find_vnodes(State),
-    AllVNodes = get_all_vnodes(Mods, State2),
+    AllVNodes = get_all_vnodes(Mods),
     State3 = update_forwarding(AllVNodes, Mods, Ring, State2),
     State4 = update_handoff(AllVNodes, Ring, State3),
     schedule_management_timer(),
@@ -183,7 +230,7 @@ find_vnodes(State) ->
     VnodePids = [Pid || {_, Pid, worker, _}
                             <- supervisor:which_children(riak_core_vnode_sup),
                         is_pid(Pid) andalso is_process_alive(Pid)],
-    IdxTable = ets:new(ets_vnodes, [{keypos, 2}, private]),
+    IdxTable = ets:new(?ETS, [{keypos, 2}, named_table, protected]),
 
     %% If the vnode manager is being restarted, scan the existing
     %% vnode children and work out which module and index they are
@@ -214,13 +261,13 @@ handle_call(all_vnodes_status, _From, State) ->
     Reply = get_all_vnodes_status(State),
     {reply, Reply, State};
 handle_call(all_vnodes, _From, State) ->
-    Reply = get_all_vnodes(State),
+    Reply = get_all_vnodes(),
     {reply, Reply, State};
 handle_call({all_vnodes, Mod}, _From, State) ->
-    Reply = get_all_vnodes(Mod, State),
+    Reply = get_all_vnodes(Mod),
     {reply, Reply, State};
 handle_call({all_index_pid, Mod}, _From, State) ->
-    Reply = get_all_index_pid(Mod, State),
+    Reply = get_all_index_pid(Mod, []),
     {reply, Reply, State};
 handle_call({Partition, Mod, get_vnode}, _From, State) ->
     Pid = get_vnode(Partition, Mod, State),
@@ -336,7 +383,7 @@ handle_cast({unregister, Index, Mod, Pid}, #state{idxtab=T} = State) ->
 handle_cast({vnode_event, Mod, Idx, Pid, Event}, State) ->
     handle_vnode_event(Event, Mod, Idx, Pid, State);
 handle_cast(force_handoffs, State) ->
-    AllVNodes = get_all_vnodes(State),
+    AllVNodes = get_all_vnodes(),
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
     State2 = update_handoff(AllVNodes, Ring, State),
 
@@ -346,7 +393,7 @@ handle_cast(force_handoffs, State) ->
     {noreply, State2};
 handle_cast({ring_changed, Ring}, State) ->
     %% Update vnode forwarding state
-    AllVNodes = get_all_vnodes(State),
+    AllVNodes = get_all_vnodes(),
     Mods = [Mod || {_, Mod} <- riak_core:vnode_modules()],
     State2 = update_forwarding(AllVNodes, Mods, Ring, State),
 
@@ -376,7 +423,7 @@ handle_info(management_tick, State) ->
     schedule_management_timer(),
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
     Mods = [Mod || {_, Mod} <- riak_core:vnode_modules()],
-    AllVNodes = get_all_vnodes(Mods, State),
+    AllVNodes = get_all_vnodes(Mods),
     State2 = update_handoff(AllVNodes, Ring, State),
     Transfers = riak_core_ring:pending_changes(Ring),
 
@@ -447,25 +494,6 @@ trigger_ownership_handoff(Transfers, Mods, State) ->
                               not lists:member(Mod, CMods)],
     [maybe_trigger_handoff(Mod, Idx, State) || {Mod, Idx} <- Awaiting],
     ok.
-
-get_all_index_pid(Mod, State) ->
-    [list_to_tuple(L) 
-     || L <- ets:match(State#state.idxtab, {idxrec, '_', '$1', Mod, '$2', '_'})].
-
-get_all_vnodes(State) ->
-    Mods = [Mod || {_App, Mod} <- riak_core:vnode_modules()],
-    get_all_vnodes(Mods, State).
-
-get_all_vnodes(Mods, State) when is_list(Mods) ->
-    lists:flatmap(fun(Mod) -> get_all_vnodes(Mod, State) end, Mods);
-get_all_vnodes(Mod, State) ->
-    try get_all_index_pid(Mod, State) of
-        IdxPids ->
-            [{Mod, Idx, Pid} || {Idx, Pid} <- IdxPids]
-    catch
-        _:_ ->
-            []
-    end.
 
 %% @private
 idx2vnode(Idx, Mod, _State=#state{idxtab=T}) ->
@@ -622,10 +650,10 @@ maybe_trigger_handoff(Mod, Idx, Pid, _State=#state{handoff=HO}) ->
             ok
     end.
 
-get_all_vnodes_status(State=#state{forwarding=Forwarding, handoff=HO}) ->
+get_all_vnodes_status(#state{forwarding=Forwarding, handoff=HO}) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Owners = riak_core_ring:all_owners(Ring),
-    VNodes = get_all_vnodes(State),
+    VNodes = get_all_vnodes(),
     Mods = [Mod || {_App, Mod} <- riak_core:vnode_modules()],
 
     ThisNode = node(),
@@ -667,12 +695,7 @@ update_never_started(Ring, State) ->
                 end, State, riak_core:vnode_modules()).
 
 update_never_started(Mod, Indices, State) ->
-    IdxPids =
-        try
-            get_all_index_pid(Mod, State)
-        catch
-            _:_ -> []
-        end,
+    IdxPids = get_all_index_pid(Mod, []),
     AlreadyStarted = [Idx || {Idx, _Pid} <- IdxPids],
     NeverStarted = ordsets:subtract(ordsets:from_list(Indices),
                                     ordsets:from_list(AlreadyStarted)),
