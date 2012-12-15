@@ -129,7 +129,14 @@ ensure_vnodes_started({App,Mod}, Ring) ->
                                %% Mark the service as up.
                                SupName = list_to_atom(atom_to_list(App) ++ "_sup"),
                                SupPid = erlang:whereis(SupName),
-                               riak_core_node_watcher:service_up(App, SupPid),
+                               case riak_core:health_check(App) of
+                                   undefined ->
+                                       riak_core_node_watcher:service_up(App, SupPid);
+                                   HealthMFA ->
+                                       riak_core_node_watcher:service_up(App,
+                                                                         SupPid,
+                                                                         HealthMFA)
+                               end,
                                exit(normal);
                            {error, Reason} ->
                                lager:critical("Failed to start application: ~p", [App]),
