@@ -203,22 +203,28 @@ handle_call({service_up, Id, Pid, MFA, Options}, From, State) ->
 
     State2 = remove_health_check(Id, State1),
 
-    %% install the health check
-    CheckInterval = proplists:get_value(check_interval, Options,
+    case app_helper:get_env(riak_core, enable_health_checks, true) of
+        true ->
+            %% install the health check
+            CheckInterval = proplists:get_value(check_interval, Options,
                                         ?DEFAULT_HEALTH_CHECK_INTERVAL),
-    IntervalTref = case CheckInterval of
-        infinity -> undefined;
-        N -> erlang:send_after(N, self(), {check_health, Id})
+            IntervalTref = case CheckInterval of
+                               infinity -> undefined;
+                               N -> erlang:send_after(N, self(), {check_health, Id})
+                           end,
+            CheckRec = #health_check{
+              callback = MFA,
+              check_interval = CheckInterval,
+              service_pid = Pid,
+              max_health_failures = proplists:get_value(max_health_failures, Options, 1),
+              max_callback_failures = proplists:get_value(max_callback_failures, Options, 3),
+              interval_tref = IntervalTref
+             },
+            Healths = orddict:store(Id, CheckRec, State2#state.health_checks);
+        false ->
+            Healths = State2#state.health_checks
     end,
-    CheckRec = #health_check{
-        callback = MFA,
-        check_interval = CheckInterval,
-        service_pid = Pid,
-        max_health_failures = proplists:get_value(max_health_failures, Options, 1),
-        max_callback_failures = proplists:get_value(max_callback_failures, Options, 3),
-        interval_tref = IntervalTref
-    },
-    Healths = orddict:store(Id, CheckRec, State2#state.health_checks),
+
     {reply, ok, State2#state{health_checks = Healths}};
 
 handle_call({service_down, Id}, _From, State) ->
@@ -721,7 +727,7 @@ health_fsm(waiting, remove, _Service, InCheck) ->
     {remove, waiting, OutCheck};
 
 %% fallthrough handling
-health_fsm(_Msg, StateName, _Service, Health) ->
+health_fsm(StateName, _Msg, _Service, Health) ->
     {ok, StateName, Health}.
 
 handle_fsm_exit(true, HPFails, MaxHPFails) when HPFails >= MaxHPFails ->
