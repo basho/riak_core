@@ -56,7 +56,7 @@ simple_test_() ->
              [ok = application:set_env(riak_core, K, V) || {K,V} <- OldVars],
              ok
      end,
-     {timeout, 120,
+     {timeout, 180,
       ?_assertEqual(true, quickcheck(?QC_OUT(numtests(100, prop_simple()))))}}.
 
 setup_simple() ->
@@ -294,7 +294,12 @@ prepare(AsyncSize) ->
 
 
 start_vnode(I) ->
-    ok = mock_vnode:start_vnode(I).
+    ok = mock_vnode:start_vnode(I),
+    %% NOTE: The return value from this call is currently not being
+    %%       used.  This call is made to ensure that all msgs sent to
+    %%       the vnode mgr before this call have been handled.  This
+    %%       guarantees that the vnode mgr ets tab is up-to-date.
+    riak_core_vnode_manager:get_vnode_pid(I, mock_vnode).
 
 returnreply(Preflist) ->
     {ok, Ref} = mock_vnode:returnreply(Preflist),
