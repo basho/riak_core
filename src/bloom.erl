@@ -198,6 +198,9 @@ simple_shuffle(L) ->
     {_, L3} = lists:unzip(lists:keysort(1, L2)),
     L3.
 
+fixed_case_test_() ->
+    {timeout, 100, fun() -> fixed_case(bloom(5000), 5000, 0.001) end}.
+
 fixed_case(Bloom, Size, FalseRate) ->
     ?assert(bloom:capacity(Bloom) > Size),
     ?assertEqual(0, bloom:size(Bloom)),
@@ -226,7 +229,6 @@ scalable_case(Bloom, Size, FalseRate) ->
     ok.
 
 bloom_test() ->
-    fixed_case(bloom(5000), 5000, 0.001),
     scalable_case(sbf(1000, 0.2), 1000, 0.2),
     ok.
     
