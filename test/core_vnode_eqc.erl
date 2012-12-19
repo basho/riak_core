@@ -56,7 +56,7 @@ simple_test_() ->
              [ok = application:set_env(riak_core, K, V) || {K,V} <- OldVars],
              ok
      end,
-     {timeout, 120,
+     {timeout, 600,
       ?_assertEqual(true, quickcheck(?QC_OUT(numtests(100, prop_simple()))))}}.
 
 setup_simple() ->
@@ -159,7 +159,7 @@ next_state_data(_From,_To,S=#qcst{started=Started, counters=Counters, crash_reas
 
     %% give the vnode a chance to shut down so that the index isn't present
     %% if the next command is to list the vnodes
-    timer:sleep(100),
+    timer:sleep(200),
     S#qcst{started=Started -- [Index],
            counters=orddict:store(Index, 0, Counters),
            crash_reasons=orddict:store(Index, undefined, CRs)};
@@ -294,7 +294,12 @@ prepare(AsyncSize) ->
 
 
 start_vnode(I) ->
-    ok = mock_vnode:start_vnode(I).
+    ok = mock_vnode:start_vnode(I),
+    %% NOTE: The return value from this call is currently not being
+    %%       used.  This call is made to ensure that all msgs sent to
+    %%       the vnode mgr before this call have been handled.  This
+    %%       guarantees that the vnode mgr ets tab is up-to-date.
+    riak_core_vnode_manager:get_vnode_pid(I, mock_vnode).
 
 returnreply(Preflist) ->
     {ok, Ref} = mock_vnode:returnreply(Preflist),
