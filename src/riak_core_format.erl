@@ -25,6 +25,10 @@
          human_size_fmt/2,
          human_time_fmt/2]).
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 %% @doc Created a string `Str' based on the format string `FmtStr' and
 %%      list of args `Args'.
 -spec fmt(string(), list()) -> Str::string().
@@ -68,7 +72,7 @@ human_size(S, [M|_]) ->
 %%      duration in the form of `{Value, Units}'.
 -spec human_time(non_neg_integer()) -> {Value::number(), Units::string()}.
 human_time(Micros) ->
-    human_time(Micros, {1000, "us"}, [{1000, "ms"}, {1000, "s"}, {60, "min"}, {60, "hr"}, {24, "d"}]).
+    human_time(Micros, {1000, "us"}, [{1000, "ms"}, {60, "s"}, {60, "min"}, {24, "hr"}, {365, "d"}]).
 
 -spec human_time(non_neg_integer(), {pos_integer(), string()},
                  [{pos_integer(), string()}]) ->
@@ -77,3 +81,20 @@ human_time(T, {Divisor, Unit}, Units) when T < Divisor orelse Units == [] ->
     {float(T), Unit};
 human_time(T, {Divisor, _}, [Next|Units]) ->
     human_time(T / Divisor, Next, Units).
+
+-ifdef(TEST).
+human_time_fmt_test() ->
+    FiveUS  = 5,
+    FiveMS  = 5000,
+    FiveS   = 5000000,
+    FiveMin = FiveS * 60,
+    FiveHr  = FiveMin * 60,
+    FiveDay = FiveHr * 24,
+    [?assertEqual(Expect, human_time_fmt("~.1f", T))
+     || {T, Expect} <- [{FiveUS,  "5.0 us"},
+                        {FiveMS,  "5.0 ms"},
+                        {FiveS,   "5.0 s"},
+                        {FiveMin, "5.0 min"},
+                        {FiveHr,  "5.0 hr"},
+                        {FiveDay, "5.0 d"}]].
+-endif.
