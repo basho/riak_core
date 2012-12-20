@@ -74,10 +74,20 @@ init([]) ->
     {ok, #state{excl=ordsets:new(), handoffs=[]}}.
 
 add_outbound(Module,Idx,Node,VnodePid) ->
-    gen_server:call(?MODULE,{add_outbound,Module,Idx,Node,VnodePid},infinity).
+    case application:get_env(riak_core, disable_outbound_handoff) of
+        {ok, true} ->
+            {error, max_concurrency};
+        _ ->
+            gen_server:call(?MODULE,{add_outbound,Module,Idx,Node,VnodePid},infinity)
+    end.
 
 add_inbound(SSLOpts) ->
-    gen_server:call(?MODULE,{add_inbound,SSLOpts},infinity).
+    case application:get_env(riak_core, disable_inbound_handoff) of
+        {ok, true} ->
+            {error, max_concurrency};
+        _ ->
+            gen_server:call(?MODULE,{add_inbound,SSLOpts},infinity)
+    end.
 
 %% @doc Initiate a transfer from `SrcPartition' to `TargetPartition'
 %%      for the given `Module' using the `FilterModFun' filter.
