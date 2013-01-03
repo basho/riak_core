@@ -575,25 +575,29 @@ handle_info(Info, StateName, State=#state{mod=Mod,modstate=ModState}) ->
     end.
 
 terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState,
-        pool_pid=Pool}) when ?normal_reason(Reason) ->
+        pool_pid=Pool}) ->
     %% Shutdown if the pool is still alive and a normal `Reason' is
     %% given - there could be a race on delivery of the unregistered
     %% event and successfully shutting down the pool.
-    case is_pid(Pool) andalso is_process_alive(Pool) of
-        true ->
-            riak_core_vnode_worker_pool:shutdown_pool(Pool, 60000);
-        _ ->
-            ok
-    end,
-    case ModState of
-        %% Handoff completed, Mod:delete has been called, now terminate.
-        {deleted, ModState1} ->
-            Mod:terminate(Reason, ModState1);
-        _ ->
-            Mod:terminate(Reason, ModState)
-    end;
-terminate(_, _, _) ->
-    ok.
+    try
+        case is_pid(Pool) andalso is_process_alive(Pool) andalso ?normal_reason(Reason) of
+            true ->
+                riak_core_vnode_worker_pool:shutdown_pool(Pool, 60000);
+            _ ->
+                ok
+        end
+    catch C:T ->
+        lager:error("Error while shutting down vnode worker pool ~p:~p trace : ~p", 
+                    [C, T, erlang:get_stacktrace()])
+    after
+        case ModState of
+            %% Handoff completed, Mod:delete has been called, now terminate.
+            {deleted, ModState1} ->
+                Mod:terminate(Reason, ModState1);
+            _ ->
+                Mod:terminate(Reason, ModState)
+        end
+    end.
 
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
