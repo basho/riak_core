@@ -587,7 +587,8 @@ terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState,
                 ok
         end
     catch C:T ->
-        lager:error("Error while shutting down vnode worker pool ~p:~p", [C, T])
+        lager:error("Error while shutting down vnode worker pool ~p:~p trace : ~p", 
+                    [C, T, erlang:get_stacktrace()])
     after
         case ModState of
             %% Handoff completed, Mod:delete has been called, now terminate.
