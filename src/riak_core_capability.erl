@@ -412,7 +412,7 @@ negotiate_capabilities(Node, Override, State=#state{registered=Registered,
 renegotiate_capabilities(State=#state{supported=[]}) ->
     State;
 renegotiate_capabilities(State) ->
-    Caps = orddict:fetch(node(), State#state.supported),
+    Caps = get_supported(node(), State),
     Overrides = get_overrides(Caps),
     State2 = negotiate_capabilities(node(), Overrides, State),
     process_capability_changes(State#state.negotiated,
