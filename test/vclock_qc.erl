@@ -11,7 +11,7 @@
 -define(QC_OUT(P),
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 
--record(state,{vclock, model}).
+-record(state, {vclocks = []}).
 
 eqc_test_() ->
     ?_assert(eqc:quickcheck(?QC_OUT(prop_vclock()))).
@@ -19,28 +19,24 @@ eqc_test_() ->
 
 %% Initialize the state
 initial_state() ->
-    #state{vclock=vclock:fresh(),
-           model=new_model()
-          }.
+   #state{}.
 
 %% Command generator, S is the state
-command(S) ->
-    oneof([
-           {call, vclock, increment, [gen_actor_id(), S#state.vclock]},
-           {call, vclock, get_counter, [gen_actor_id(), S#state.vclock]},
-           {call, ?MODULE, merge, [gen_vclock(), S#state.vclock]}
-          ]).
+command(#state{vclocks=Vs}) ->
+    oneof([{call, ?MODULE, fresh, []}] ++
+          [{call, ?MODULE, increment, [gen_actor_id(), elements(Vs)]} || length(Vs) > 0] ++
+          [{call, ?MODULE, get_counter, [gen_actor_id(), elements(Vs)]} || length(Vs) > 0] ++
+          [{call, ?MODULE, merge, [list(elements(Vs))]} || length(Vs) > 0] ++ 
+          [{call, ?MODULE, descends, [elements(Vs), elements(Vs)]} || length(Vs) > 0]
+          ).
 
 %% Next state transformation, S is the current state
-next_state(S,V,{call,vclock,increment,[ActorId, _]}) ->
-    S#state{vclock=V,
-            model=orddict:update_counter(ActorId, 1, S#state.model)};
-next_state(S,_V,{call,vclock,get_counter,[_, _]}) ->
+next_state(S,_V,{call,_,get_counter,[_, _]}) ->
     S;
-next_state(S,V,{call,_,merge,[{O,_}, _VClock]}) ->
-    S#state{vclock=V, model=model_merge(S#state.model, O)};
-next_state(S,_V,{call,_,_,_}) ->
-    S.
+next_state(S,_V,{call,_,descends,[_, _]}) ->
+    S;
+next_state(#state{vclocks=Vs}=S,V,{call,_,_,_}) ->
+    S#state{vclocks=Vs ++ [V]}.
 
 %% Precondition, checked before command is added to the command sequence
 precondition(_S,{call,_,_,_}) ->
@@ -48,21 +44,17 @@ precondition(_S,{call,_,_,_}) ->
 
 %% Postcondition, checked after command has been evaluated
 %% OBS: S is the state before next_state(S,_,<command>)
-postcondition(#state{model=M},{call,vclock,increment,[ActorId, Vclock]},Res) ->
-    %% Partial ordering property (descends)
-    vclock:descends(Res,Vclock) andalso
-    %% Counter has been incremented
-        vclock:get_counter(ActorId, Res) == orddict:fetch(ActorId,M) + 1;
-postcondition(#state{model=M}, {call,vclock,get_counter,[ActorId, _]}, Res) ->
-    %% The counter for a given actor is the same as the model
-    Res == orddict:fetch(ActorId, M);
-postcondition(#state{model=M}, {call,_,merge,[{OM,Other},VClock]}, Res) ->
-    Merged = model_merge(M, OM),
-    %% The merged state has all the same actor counts
-    lists:all(fun(A) -> orddict:fetch(A,Merged) == vclock:get_counter(A,Res) end, 
-              ?ACTOR_IDS) andalso
-        %% The merged vector clock descends from both inputs
-        vclock:descends(Res, Other) andalso vclock:descends(Res, VClock);
+postcondition(_S, {call, _, get_counter, _}, {MRes, Res}) ->
+    MRes == Res;
+postcondition(_S, {call, _, descends, _}, {MRes, Res}) ->
+    MRes == Res;
+postcondition(_S, {call, _, merge, [Items]}, {MRes, Res}) ->
+    model_compare(MRes, Res) andalso 
+        lists:all(fun({_, V}) ->
+                          vclock:descends(Res, V)
+                  end, Items);
+postcondition(_S, _C, {MRes, Res}) ->
+    model_compare(MRes, Res);
 postcondition(_S, _C, _Res) ->
     true.
 
@@ -79,22 +71,54 @@ gen_actor_id() ->
     elements(?ACTOR_IDS).
 
 gen_vclock() ->
-    frequency([
-               {1, {new_model(), vclock:fresh()}},
-               {3, ?LAZY(gen_incr_vclock())}
-              ]).
+    ?SIZED(Size, gen_vclock(Size)).
 
-gen_incr_vclock() ->
+gen_vclock(Size) ->
+    ?LAZY(frequency([{1, {new_model(), vclock:fresh()}} ] ++ 
+              [ {3, gen_incr_vclock(Size - 1)} || Size > 0] ++
+              [ {1, gen_merged_vclock(Size div 2)} || Size > 0 ])).
+
+gen_merged_vclock(Size) ->
+    ?LETSHRINK([{AM, AV}, {BM, BV}],
+               [gen_vclock(Size), gen_vclock(Size)],
+               {model_merge(AM, BM), vclock:merge([AV, BV])}).
+
+gen_incr_vclock(Size) ->
     ?LET({Actor, {M,Vc}},
-         {gen_actor_id(), gen_vclock()},
-         {orddict:update_counter(Actor, 1, M), vclock:increment(Actor, Vc)}).
+         {gen_actor_id(), gen_vclock(Size)},
+         ?SHRINK({orddict:update_counter(Actor, 1, M), vclock:increment(Actor, Vc)}, [{M,Vc}])).
 
-merge({_,O}, V) ->
-    vclock:merge([O,V]).
+fresh() ->
+    {new_model(), vclock:fresh()}.
+
+descends({AM, AV}, {BM, BV}) ->
+    {lists:all(fun({Actor, Count}) ->
+                       Count >= orddict:fetch(Actor, BM)
+               end, 
+               AM),
+     vclock:descends(AV, BV)}.
+
+get_counter(A, {M, V}) ->
+    {orddict:fetch(A, M), vclock:get_counter(A, V)}.
+
+increment(A, {M, V}) ->
+    {orddict:update_counter(A, 1, M), vclock:increment(A, V)}.
+
+merge(List) ->
+    {Models, VClocks} = lists:unzip(List),
+    {lists:foldl(fun model_merge/2, new_model(), Models),
+     vclock:merge(VClocks)}.
 
 model_merge(M,OM) ->
     orddict:merge(fun(_K,A,B) -> erlang:max(A,B) end, M, OM).
 
 new_model() ->
     orddict:from_list([{ID, 0} || ID <- ?ACTOR_IDS]).
+
+model_compare(M, V) ->
+    lists:all(fun(A) -> 
+                      orddict:fetch(A,M) == vclock:get_counter(A,V) 
+              end, 
+              ?ACTOR_IDS).
+
 -endif.
