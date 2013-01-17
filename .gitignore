@@ -6,3 +6,5 @@ priv/*
 include/*_pb.hrl
 *~
 doc/*
+/.eqc-info
+/current_counterexample.eqc
