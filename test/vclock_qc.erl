@@ -1,11 +1,21 @@
 -module(vclock_qc).
 
+-ifdef(EQC).
+
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
--define(ACTOR_IDS, [a,b,c,d,e]).
+-include_lib("eunit/include/eunit.hrl").
 -compile(export_all).
 
+-define(ACTOR_IDS, [a,b,c,d,e]).
+-define(QC_OUT(P),
+        eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
+
 -record(state,{vclock, model}).
+
+eqc_test_() ->
+    ?_assert(eqc:quickcheck(?QC_OUT(prop_vclock()))).
+
 
 %% Initialize the state
 initial_state() ->
@@ -79,3 +89,4 @@ model_merge(M, V) ->
     orddict:map(fun(A,C) ->
                         erlang:max(C,vclock:get_counter(A, V)) 
                 end, M).
+-endif.
