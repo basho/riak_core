@@ -14,7 +14,9 @@
 -record(state, {vclocks = []}).
 
 eqc_test_() ->
-    ?_assert(eqc:quickcheck(?QC_OUT(prop_vclock()))).
+    {timeout,
+     60,
+     ?_assert(quickcheck(eqc:testing_time(20, more_commands(10,?QC_OUT(prop_vclock())))))}.
 
 
 %% Initialize the state
@@ -69,30 +71,12 @@ prop_vclock() ->
             begin
                 {H,S,Res} = run_commands(?MODULE,Cmds),
                 aggregate(command_names(Cmds),
-                          collect({num_vclocks, length(S#state.vclocks) div 10},
+                          collect({num_vclocks_div_10, length(S#state.vclocks) div 10},
                                   pretty_commands(?MODULE,Cmds, {H,S,Res}, Res == ok)))
             end).
 
 gen_actor_id() ->
     elements(?ACTOR_IDS).
-
-gen_vclock() ->
-    ?SIZED(Size, gen_vclock(Size)).
-
-gen_vclock(Size) ->
-    ?LAZY(frequency([{1, {new_model(), vclock:fresh()}} ] ++
-              [ {3, gen_incr_vclock(Size - 1)} || Size > 0] ++
-              [ {1, gen_merged_vclock(Size div 2)} || Size > 0 ])).
-
-gen_merged_vclock(Size) ->
-    ?LETSHRINK([{AM, AV}, {BM, BV}],
-               [gen_vclock(Size), gen_vclock(Size)],
-               {model_merge(AM, BM), vclock:merge([AV, BV])}).
-
-gen_incr_vclock(Size) ->
-    ?LET({Actor, {M,Vc}},
-         {gen_actor_id(), gen_vclock(Size)},
-         ?SHRINK({orddict:update_counter(Actor, 1, M), vclock:increment(Actor, Vc)}, [{M,Vc}])).
 
 fresh() ->
     {new_model(), vclock:fresh()}.
