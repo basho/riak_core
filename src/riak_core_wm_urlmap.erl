@@ -75,7 +75,7 @@ to_json(RD, Services) ->
     {mochijson:encode({struct, Services}), RD, Services}.
 
 service_list() ->
-    {ok, Dispatch} = application:get_env(webmachine, dispatch_list),
+    Dispatch = webmachine_router:get_routes(),
     lists:usort(
       [{atom_to_list(Resource), "/"++UriBase}
        || {[UriBase|_], Resource, _} <- Dispatch]).
