@@ -17,7 +17,7 @@
 -type predicate() :: fun((any()) -> boolean()).
 
 -type index() :: integer().
--type mod_src_tgt() :: {module(), index(), index()}.
+-type mod_src_tgt() :: {module(), index(), index()} | {undefined, undefined, undefined}.
 -type mod_partition() :: {module(), index()}.
 
 -record(handoff_status,
