@@ -118,18 +118,18 @@
 
 -define(CHSTATE, #chstate_v2).
 -record(chstate_v2, {
-    nodename :: node(),          % the Node responsible for this chstate
+    nodename :: term(),          % the Node responsible for this chstate
     vclock   :: vclock:vclock(), % for this chstate object, entries are
                                  % {Node, Ctr}
     chring   :: chash:chash(),   % chash ring of {IndexAsInt, Node} mappings
     meta     :: dict(),          % dict of cluster-wide other data (primarily
                                  % bucket N-value, etc)
 
-    clustername :: {node(), term()}, 
-    next     :: [{integer(), node(), node(), [module()], awaiting | complete}],
-    members  :: [{node(), {member_status(), vclock:vclock(), []}}],
-    claimant :: node(),
-    seen     :: [{node(), vclock:vclock()}],
+    clustername :: {term(), term()},
+    next     :: [{integer(), term(), term(), [module()], awaiting | complete}],
+    members  :: [{node(), {member_status(), vclock:vclock(), [{atom(), term()}]}}],
+    claimant :: term(),
+    seen     :: [{term(), vclock:vclock()}],
     rvsn     :: vclock:vclock()
 }). 
 
@@ -236,10 +236,11 @@ check_tainted(Ring=?CHSTATE{}, Msg) ->
 %%      differ and RingB's vclock is allowed to be equal or a direct
 %%      descendant of RingA's vclock. This matches the changes that the
 %%      fix-up logic may make to a ring.
+-spec nearly_equal(chstate(), chstate()) -> boolean().
 nearly_equal(RingA, RingB) ->
     TestVC = vclock:descends(RingB?CHSTATE.vclock, RingA?CHSTATE.vclock),
-    RingA2 = RingA?CHSTATE{vclock=[], meta=[]},
-    RingB2 = RingB?CHSTATE{vclock=[], meta=[]},
+    RingA2 = RingA?CHSTATE{vclock=undefined, meta=undefined},
+    RingB2 = RingB?CHSTATE{vclock=undefined, meta=undefined},
     TestRing = (RingA2 =:= RingB2),
     TestVC and TestRing.
 
@@ -425,7 +426,7 @@ random_other_active_node(State) ->
 
 %% @doc Incorporate another node's state into our view of the Riak world.
 -spec reconcile(ExternState :: chstate(), MyState :: chstate()) ->
-        {no_change, chstate()} | {new_ring, chstate()}.
+                       {no_change | new_ring, chstate()}.
 reconcile(ExternState, MyState) ->
     check_tainted(ExternState,
                   "Error: riak_core_ring/reconcile :: "
@@ -462,7 +463,7 @@ rename_node(State=?CHSTATE{chring=Ring, nodename=ThisNode, members=Members,
 
 %% @doc Determine the integer ring index responsible
 %%      for a chash key.
--spec responsible_index(chash:index(), chstate()) -> integer().
+-spec responsible_index(binary(), chstate()) -> integer().
 responsible_index(ChashKey, ?CHSTATE{chring=Ring}) ->
     <<IndexAsInt:160/integer>> = ChashKey,
     chash:next_index(IndexAsInt, Ring).
@@ -1237,10 +1238,12 @@ equal_cstate(StateA, StateB, Verbose) ->
 
     %% Clear fields checked manually and test remaining through equality.
     %% Note: We do not consider cluster name in equality.
-    StateA2=StateA?CHSTATE{nodename=ok, members=ok, vclock=ok, rvsn=ok,
-                           seen=ok, chring=ok, meta=ok, clustername=ok},
-    StateB2=StateB?CHSTATE{nodename=ok, members=ok, vclock=ok, rvsn=ok,
-                           seen=ok, chring=ok, meta=ok, clustername=ok},
+    StateA2=StateA?CHSTATE{nodename=undefined, members=undefined, vclock=undefined,
+                           rvsn=undefined, seen=undefined, chring=undefined,
+                           meta=undefined, clustername=undefined},
+    StateB2=StateB?CHSTATE{nodename=undefined, members=undefined, vclock=undefined,
+                           rvsn=undefined, seen=undefined, chring=undefined,
+                           meta=undefined, clustername=undefined},
     T5 = (StateA2 =:= StateB2),
 
     case Verbose of
