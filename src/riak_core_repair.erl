@@ -112,7 +112,7 @@ gen_range_fun(RangeMap, Default) ->
 %%      must fall into to be included for repair on the `Target'
 %%      partition.
 -spec gen_range_map(partition(), riak_core_ring:riak_core_ring(), list()) ->
-                           [{B::riak_object:bucket(), Range::hash_range()}].
+                           [{Bucket::binary(), Range::hash_range()}].
 gen_range_map(Target, Ring, NValMap) ->
     [{I, gen_range(Target, Ring, N)} || {I, N} <- NValMap, N > 1].
 
