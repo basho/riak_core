@@ -65,10 +65,10 @@
 -type chash_node() :: term().
 %% Indices into the ring, used as keys for object location, are binary
 %% representations of 160-bit integers.
--type index() :: binary().
--type index_as_int() :: integer().
+-type index() :: <<_:160>>.
+-type index_as_int() :: non_neg_integer().
 -type node_entry() :: {index_as_int(), chash_node()}.
--type num_partitions() :: integer().
+-type num_partitions() :: pos_integer().
 
 %% ===================================================================
 %% Public API

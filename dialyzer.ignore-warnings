@@ -1,0 +1,18 @@
+riak_core_pb.erl:52: The pattern <Default, _> can never match since previous clauses completely covered the type <_,'none'>
+riak_core_pb.erl:53: The pattern <Val, _> can never match since previous clauses completely covered the type <_,'none'>
+riak_core_pb.erl:55: The pattern <_, 'optional', 'undefined', _, _> can never match the type <1 | 2 | 3,'required',_,'bytes',[]>
+riak_core_pb.erl:57: The pattern <_, 'repeated', 'undefined', _, _> can never match the type <1 | 2 | 3,'required',_,'bytes',[]>
+riak_core_pb.erl:59: The pattern <_, 'repeated_packed', 'undefined', _, _> can never match the type <1 | 2 | 3,'required',_,'bytes',[]>
+riak_core_pb.erl:60: The pattern <_, 'repeated_packed', [], _, _> can never match the type <1 | 2 | 3,'required',_,'bytes',[]>
+riak_core_pb.erl:65: The pattern <_, 'repeated', [], _, Acc> can never match the type <1 | 2 | 3,'required',_,'bytes',[]>
+riak_core_pb.erl:68: The pattern <FNum, 'repeated', [Head | Tail], Type, Acc> can never match the type <1 | 2 | 3,'required',_,'bytes',[]>
+riak_core_pb.erl:71: The pattern <FNum, 'repeated_packed', Data, Type, _> can never match the type <1 | 2 | 3,'required',_,'bytes',[]>
+riak_core_pb.erl:86: The call riak_core_pb:enum_to_int(Type::'bytes',Data::atom()) will never return since it differs in the 1st argument from the success typing arguments: ('pikachu','value')
+riak_core_pb.erl:88: Function enum_to_int/2 has no local return
+riak_core_pb.erl:88: The pattern <'pikachu', 'value'> can never match the type <'bytes',atom()>
+riak_core_pb.erl:111: The pattern 'true' can never match the type 'false'
+riak_core_pb.erl:117: The pattern 'true' can never match the type 'false'
+riak_core_pb.erl:126: The pattern 'true' can never match the type 'false'
+riak_core_pb.erl:138: The pattern {_, _, Dict} can never match the type 'false'
+riak_core_pb.erl:151: The pattern <Binary, 'string'> can never match the type <'-infinity' | 'false' | 'infinity' | 'nan' | 'true' | binary() | [integer()] | number(),'bytes'>
+riak_core_pb.erl:171: The pattern <Types, [{Fnum, Bytes} | Tail], Acc> can never match the type <_,[],[{_,_}]>

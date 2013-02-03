@@ -46,8 +46,8 @@
 
 % Nodes can have any term() as a name, but they must differ from each other.
 -type   vclock_node() :: term().
--type   counter() :: integer().
--type   timestamp() :: integer().
+-type   counter() :: non_neg_integer().
+-type   timestamp() :: pos_integer().
 
 % @doc Create a brand new vclock.
 -spec fresh() -> vclock().
@@ -55,18 +55,19 @@ fresh() ->
     [].
 
 % @doc Return true if Va is a direct descendant of Vb, else false -- remember, a vclock is its own descendant!
--spec descends(Va :: vclock()|[], Vb :: vclock()|[]) -> boolean().
+-spec descends(Va :: vclock(), Vb :: vclock()) -> boolean().
 descends(_, []) ->
     % all vclocks descend from the empty vclock
     true;
-descends(Va, Vb) ->
-    [{NodeB, {CtrB, _T}}|RestB] = Vb,
-    case lists:keyfind(NodeB, 1, Va) of
+descends(Va, [{NodeB, {CtrB, _T}}|RestB]) ->
+    %%[{NodeB, {CtrB, _T}}|RestB] = Vb,
+    case catch lists:keyfind(NodeB, 1, Va) of
         false ->
             false;
         {_, {CtrA, _TSA}} ->
-            (CtrA >= CtrB) andalso descends(Va,RestB)
-        end.
+            (CtrA >= CtrB) andalso descends(Va,RestB);
+        _ -> cant_get_here_fu_dialyzer
+    end.
 
 % @doc Combine all VClocks in the input list into their least possible
 %      common descendant.

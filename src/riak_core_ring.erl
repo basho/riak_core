@@ -970,7 +970,6 @@ internal_reconcile(State, OtherState) ->
     State3 = State2?CHSTATE{seen=Seen},
     OtherState3 = OtherState2?CHSTATE{seen=Seen},
     SeenChanged = not equal_seen(State, State3),
-
     %% Try to reconcile based on vector clock, chosing the most recent state.
     VC1 = State3?CHSTATE.vclock,
     VC2 = OtherState3?CHSTATE.vclock,
@@ -987,7 +986,6 @@ internal_reconcile(State, OtherState) ->
         {_, false} ->
             VC3 = VMerge2
     end,
-
     Newer = vclock:descends(VC1, VC2),
     Older = vclock:descends(VC2, VC1),
     Equal = equal_cstate(State3, OtherState3),
@@ -1089,8 +1087,9 @@ reconcile_divergent_next(BaseNext, OtherNext) ->
                   end, BaseNext, MergedNext).
 
 %% @private
+-spec substitute(pos_integer(), list(tuple()), list(tuple())) -> term().
 substitute(Idx, TL1, TL2) ->
-    lists:map(fun(T) ->
+    lists:map(fun(T) when is_tuple(T) ->
                       Key = element(Idx, T),
                       case lists:keyfind(Key, Idx, TL2) of
                           false ->
@@ -1230,6 +1229,7 @@ update_seen(Node, CState=?CHSTATE{vclock=VClock, seen=Seen}) ->
 equal_cstate(StateA, StateB) ->
     equal_cstate(StateA, StateB, false).
 
+-spec equal_cstate(chstate(), chstate(), boolean()) -> boolean().
 equal_cstate(StateA, StateB, Verbose) ->
     T1 = equal_members(StateA?CHSTATE.members, StateB?CHSTATE.members),
     T2 = vclock:equal(StateA?CHSTATE.rvsn, StateB?CHSTATE.rvsn),
