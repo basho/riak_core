@@ -80,9 +80,11 @@ stop() ->
 rejoin(Node, Ring) ->
     gen_server:cast({?MODULE, Node}, {rejoin, Ring}).
 
+-spec legacy_gossip() -> boolean().
 legacy_gossip() ->
     gen_server:call(?MODULE, legacy_gossip).
 
+-spec legacy_gossip(node()) -> boolean().
 legacy_gossip(Node) ->
     gen_server:call(?MODULE, {legacy_gossip, Node}).
 

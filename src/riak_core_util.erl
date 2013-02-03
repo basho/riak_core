@@ -281,13 +281,13 @@ rpc_every_member_ann(Module, Function, Args, Timeout) ->
 
 %% @doc Perform an RPC call to a list of nodes in parallel, returning the
 %%      results in the same order as the input list.
--spec multi_rpc([node()], module(), function(), [any()]) -> [any()].
+-spec multi_rpc([node()], module(), atom(), [any()]) -> [any()].
 multi_rpc(Nodes, Mod, Fun, Args) ->
     multi_rpc(Nodes, Mod, Fun, Args, infinity).
 
 %% @doc Perform an RPC call to a list of nodes in parallel, returning the
 %%      results in the same order as the input list.
--spec multi_rpc([node()], module(), function(), [any()], timeout()) -> [any()].
+-spec multi_rpc([node()], module(), atom(), [any()], timeout()) -> [any()].
 multi_rpc(Nodes, Mod, Fun, Args, Timeout) ->
     pmap(fun(Node) ->
                  rpc:call(Node, Mod, Fun, Args, Timeout)
@@ -296,7 +296,7 @@ multi_rpc(Nodes, Mod, Fun, Args, Timeout) ->
 %% @doc Perform an RPC call to a list of nodes in parallel, returning the
 %%      results in the same order as the input list. Each result is tagged
 %%      with the corresponding node name.
--spec multi_rpc_ann([node()], module(), function(), [any()])
+-spec multi_rpc_ann([node()], module(), atom(), [any()])
                    -> [{node(), any()}].
 multi_rpc_ann(Nodes, Mod, Fun, Args) ->
     multi_rpc_ann(Nodes, Mod, Fun, Args, infinity).
@@ -304,7 +304,7 @@ multi_rpc_ann(Nodes, Mod, Fun, Args) ->
 %% @doc Perform an RPC call to a list of nodes in parallel, returning the
 %%      results in the same order as the input list. Each result is tagged
 %%      with the corresponding node name.
--spec multi_rpc_ann([node()], module(), function(), [any()], timeout())
+-spec multi_rpc_ann([node()], module(), atom(), [any()], timeout())
                    -> [{node(), any()}].
 multi_rpc_ann(Nodes, Mod, Fun, Args, Timeout) ->
     Results = multi_rpc(Nodes, Mod, Fun, Args, Timeout),
@@ -315,7 +315,7 @@ multi_rpc_ann(Nodes, Mod, Fun, Args, Timeout) ->
 %%      of nodes that are down/unreachable. The results will be returned in
 %%      the same order as the input list, and each result is tagged with the
 %%      corresponding node name.
--spec multicall_ann([node()], module(), function(), [any()])
+-spec multicall_ann([node()], module(), atom(), [any()])
                    -> {Results :: [{node(), any()}], Down :: [node()]}.
 multicall_ann(Nodes, Mod, Fun, Args) ->
     multicall_ann(Nodes, Mod, Fun, Args, infinity).
@@ -325,7 +325,7 @@ multicall_ann(Nodes, Mod, Fun, Args) ->
 %%      of nodes that are down/unreachable. The results will be returned in
 %%      the same order as the input list, and each result is tagged with the
 %%      corresponding node name.
--spec multicall_ann([node()], module(), function(), [any()], timeout())
+-spec multicall_ann([node()], module(), atom(), [any()], timeout())
                    -> {Results :: [{node(), any()}], Down :: [node()]}.
 multicall_ann(Nodes, Mod, Fun, Args, Timeout) ->
     L = multi_rpc_ann(Nodes, Mod, Fun, Args, Timeout),
@@ -388,7 +388,8 @@ orddict_delta(A, B) ->
 get_arch () -> string:to_lower(erlang:system_info(system_architecture)).
 
 %% Checks if this node is of a given architecture
--spec is_arch (atom()) -> boolean().
+-type arch() :: linux | darwin | sunos | solaris.
+-spec is_arch (arch()) -> boolean().
 is_arch (linux) -> string:str(get_arch(),"linux") > 0;
 is_arch (darwin) -> string:str(get_arch(),"darwin") > 0;
 is_arch (sunos) -> string:str(get_arch(),"sunos") > 0;

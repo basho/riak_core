@@ -1,5 +1,5 @@
 APPS = kernel stdlib sasl erts ssl tools os_mon runtime_tools crypto inets \
-	public_key mnesia syntax_tools compiler
+	public_key mnesia syntax_tools compiler snmp webtool xmerl
 COMBO_PLT = $(HOME)/.riak_core_combo_dialyzer_plt
 
 .PHONY: deps test
@@ -26,7 +26,7 @@ docs: deps
 
 build_plt: compile
 	dialyzer --build_plt --output_plt $(COMBO_PLT) --apps $(APPS) \
-		deps/*/ebin
+		deps/*/ebin 
 
 check_plt: compile
 	dialyzer --check_plt --plt $(COMBO_PLT) --apps $(APPS) \
@@ -37,6 +37,6 @@ dialyzer: compile
 	@echo Use "'make check_plt'" to check PLT prior to using this target.
 	@echo Use "'make build_plt'" to build PLT prior to using this target.
 	@echo
-	dialyzer --plt $(COMBO_PLT) ebin
+	dialyzer --plt $(COMBO_PLT) ebin  | fgrep -v -f ./dialyzer.ignore-warnings
 
 
