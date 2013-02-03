@@ -1,3 +1,4 @@
+supervisor_pre_r14b04.erl:1250: The call erlang:length('undefined' | pid()) will never return since it differs in the 1st argument from the success typing arguments: ([any()])
 riak_core_pb.erl:52: The pattern <Default, _> can never match since previous clauses completely covered the type <_,'none'>
 riak_core_pb.erl:53: The pattern <Val, _> can never match since previous clauses completely covered the type <_,'none'>
 riak_core_pb.erl:55: The pattern <_, 'optional', 'undefined', _, _> can never match the type <1 | 2 | 3,'required',_,'bytes',[]>
