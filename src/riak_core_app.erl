@@ -88,6 +88,9 @@ start(_StartType, _StartArgs) ->
             riak_core_capability:register({riak_core, staged_joins},
                                           [true, false],
                                           false),
+            riak_core_capability:register({riak_core, handoff_data_encoding},
+                                          [encode_zlib, encode_raw],
+                                          encode_raw),
 
             {ok, Pid};
         {error, Reason} ->
