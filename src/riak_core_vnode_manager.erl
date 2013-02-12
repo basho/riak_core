@@ -510,17 +510,24 @@ delmon(MonRef, _State=#state{idxtab=T}) ->
 add_vnode_rec(I,  _State=#state{idxtab=T}) -> ets:insert(T,I).
 
 %% @private
-get_vnode(Idx, Mod, State) ->
-    case idx2vnode(Idx, Mod, State) of
-        no_match ->
-            ForwardTo = get_forward(Mod, Idx, State),
-            {ok, Pid} = riak_core_vnode_sup:start_vnode(Mod, Idx, ForwardTo),
-            MonRef = erlang:monitor(process, Pid),
-            add_vnode_rec(#idxrec{key={Idx,Mod},idx=Idx,mod=Mod,pid=Pid,
-                                  monref=MonRef}, State),
-            Pid;
-        X -> X
-    end.
+get_vnode(Idx, Mod, State) when not is_list(Idx) ->
+    [Result] = get_vnode([Idx], Mod, State),
+    Result;
+get_vnode(IdxList, Mod, State) ->
+    Results = [case idx2vnode(Idx, Mod, State) of
+                   no_match ->
+                       ForwardTo = get_forward(Mod, Idx, State),
+                       {ok, Pid} = riak_core_vnode_sup:start_vnode(Mod, Idx, ForwardTo),
+                       MonRef = erlang:monitor(process, Pid),
+                       add_vnode_rec(#idxrec{key={Idx,Mod},idx=Idx,mod=Mod,pid=Pid,
+                                             monref=MonRef}, State),
+                       Pid;
+                   X -> X
+               end || Idx <- IdxList],
+    [begin
+         ok = riak_core_vnode:wait_for_init(Pid)
+     end || Pid <- Results, is_pid(Pid)],
+    Results.
 
 get_forward(Mod, Idx, #state{forwarding=Fwd}) ->
     case orddict:find({Mod, Idx}, Fwd) of

@@ -22,9 +22,12 @@
 -export([behaviour_info/1]).
 -export([start_link/3,
          start_link/4,
+         wait_for_init/1,
          send_command/2,
          send_command_after/2]).
 -export([init/1,
+         started/2,
+         started/3,
          active/2,
          active/3,
          handle_event/3,
@@ -94,8 +97,12 @@ behaviour_info(_Other) ->
 %% -spec handle_info(term(), term()) -> {ok, term()}
 
 -define(DEFAULT_TIMEOUT, 60000).
+%% Delay between process creation and real initialization stage.
+%% Ideally zero, but we need to make sure there is a context switch
+%% so heavy initialization is not done at process creation and linking time
+%% which would serialize all vnode creation.
+-define(INIT_TIMEOUT, 0).
 -define(LOCK_RETRY_TIMEOUT, 10000).
--define(MODSTATE, State#state{mod=Mod,modstate=ModState}).
 -record(state, {
           index :: partition(),
           mod :: module(),
@@ -106,7 +113,8 @@ behaviour_info(_Other) ->
           pool_pid :: pid() | undefined,
           pool_config :: tuple() | undefined,
           manager_event_timer :: reference(),
-          inactivity_timeout}).
+          inactivity_timeout :: non_neg_integer() 
+               }).
 
 start_link(Mod, Index, Forward) ->
     start_link(Mod, Index, 0, Forward).
@@ -130,6 +138,29 @@ send_command_after(Time, Request) ->
 
 init([Mod, Index, InitialInactivityTimeout, Forward]) ->
     process_flag(trap_exit, true),
+    State = #state{index=Index, mod=Mod, forward=Forward,
+                   inactivity_timeout=InitialInactivityTimeout},
+    {ok, started, State, ?INIT_TIMEOUT}.
+
+started(timeout, State =
+            #state{inactivity_timeout=InitialInactivityTimeout}) ->
+    case do_init(State) of
+        {error, Reason} ->
+            {stop, Reason};
+        {ok, State2} ->
+            {next_state, active, State2, InitialInactivityTimeout}
+    end.
+
+started(wait_for_init, _From, State =
+            #state{inactivity_timeout=InitialInactivityTimeout}) ->
+    case do_init(State) of
+        {ok, State2} ->
+            {reply, ok, active, State2, InitialInactivityTimeout};
+        {error, Reason} ->
+            {stop, Reason}
+    end.
+
+do_init(State = #state{index=Index, mod=Mod, forward=Forward}) ->
     {ModState, Props} = case Mod:init([Index]) of
         {ok, MS} -> {MS, []};
         {ok, MS, P} -> {MS, P};
@@ -137,7 +168,7 @@ init([Mod, Index, InitialInactivityTimeout, Forward]) ->
     end,
     case {ModState, Props} of
         {error, Reason} ->
-            {stop, Reason};
+            {error, Reason};
         _ ->
             case lists:keyfind(pool, 1, Props) of
                 {pool, WorkerModule, PoolSize, WorkerArgs}=PoolConfig ->
@@ -153,11 +184,14 @@ init([Mod, Index, InitialInactivityTimeout, Forward]) ->
             end,
             riak_core_handoff_manager:remove_exclusion(Mod, Index),
             Timeout = app_helper:get_env(riak_core, vnode_inactivity_timeout, ?DEFAULT_TIMEOUT),
-            State = #state{index=Index, mod=Mod, modstate=ModState, forward=Forward,
-                inactivity_timeout=Timeout, pool_pid=PoolPid, pool_config=PoolConfig},
+            State2 = State#state{modstate=ModState, inactivity_timeout=Timeout,
+                                 pool_pid=PoolPid, pool_config=PoolConfig},
             lager:debug("vnode :: ~p/~p :: ~p~n", [Mod, Index, Forward]),
-            {ok, active, State, InitialInactivityTimeout}
+            {ok, State2}
     end.
+
+wait_for_init(Vnode) ->
+    gen_fsm:sync_send_event(Vnode, wait_for_init, infinity).
 
 handoff_error(Vnode, Err, Reason) ->
     gen_fsm:send_event(Vnode, {handoff_error, Err, Reason}).
