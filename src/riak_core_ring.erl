@@ -798,7 +798,7 @@ disowning_indices(State, Node) ->
 disowned_during_resize(CState, Idx, Owner) ->
     %% catch error when index doesn't exist, we are disowning it if its going away
     NextOwner = try future_owner(CState, Idx)
-                catch _ -> undefined
+                catch _:_ -> undefined
                 end,
     case NextOwner of
         Owner -> false;

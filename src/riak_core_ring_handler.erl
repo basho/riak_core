@@ -37,6 +37,7 @@ handle_event({ring_update, Ring}, State) ->
     %% Make sure all vnodes are started...
     ensure_vnodes_started(Ring),
     maybe_start_vnode_proxies(Ring),
+    maybe_stop_vnode_proxies(Ring),
     riak_core_vnode_manager:ring_changed(Ring),
     riak_core_capability:ring_changed(Ring),
     {ok, State}.
@@ -183,5 +184,18 @@ maybe_start_vnode_proxies(Ring) ->
                                                                 Mod <- Mods],
             ok;
         false ->
+            ok
+    end.
+
+maybe_stop_vnode_proxies(Ring) ->
+    Mods = [M || {_, M} <- riak_core:vnode_modules()],
+    case riak_core_ring:pending_changes(Ring) of
+        [] ->
+            Idxs = [{I,M} || {I,_} <- riak_core_ring:all_owners(Ring), M <- Mods],
+            ProxySpecs = supervisor:which_children(riak_core_vnode_proxy_sup),
+            Running = [{I,M} || {{M,I},_,_,_} <- ProxySpecs, lists:member(M, Mods)],
+            ToShutdown = Running -- Idxs,
+            [riak_core_vnode_proxy_sup:stop_proxy(M,I) || {I, M} <- ToShutdown];
+        _ ->
             ok
     end.

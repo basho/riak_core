@@ -646,6 +646,10 @@ should_handoff(Ring, Mod, Idx) ->
         %% as fallbacks.
         {{fallback, _}, '$delete', _} ->
             Target = '$delete';
+        %% partitions that no longer exist after the ring has been resized (shrunk)
+        %% scheduled for deletion
+        {resized_primary, '$delete', _} ->
+            Target = '$delete';
         %% fallback vnode target is primary (For)
         {{fallback, For}, undefined, _} ->
             Target = For;
