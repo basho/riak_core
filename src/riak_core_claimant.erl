@@ -436,12 +436,11 @@ valid_force_replace_request(Node, NewNode, Changes, Ring) ->
     end.
 
 %% @private
-%% restrictions preventing resize to smaller ring and along
-%% with other operations are temporary
+%% restrictions preventing resize along with other operations are temporary
 valid_resize_request(NewRingSize, [], Ring) ->
-    case riak_core_ring:num_partitions(Ring) < NewRingSize of
+    case riak_core_ring:num_partitions(Ring) =/= NewRingSize of
         true -> true;
-        false -> {error, smaller_or_equal_ring}
+        false -> {error, same_size}
     end;
 valid_resize_request(_, _Changes, _) ->
     {error, non_empty_changes}.
@@ -565,8 +564,7 @@ maybe_compute_resize(Orig, MbResized) ->
     OrigSize = riak_core_ring:num_partitions(Orig),
     NewSize = riak_core_ring:num_partitions(MbResized),
 
-    %% restriction on expanding ring only is temprorary
-    case OrigSize < NewSize of
+    case OrigSize =/= NewSize of
         false -> MbResized;
         true -> compute_resize(Orig, MbResized)
     end.
@@ -577,12 +575,24 @@ compute_resize(Orig, Resized) ->
     %% original ring will be reset when changes are scheduled
     CState0 = riak_core_ring:future_ring(Resized),
 
+    Type = case riak_core_ring:num_partitions(Orig) < riak_core_ring:num_partitions(Resized) of
+        true -> larger;
+        false -> smaller
+    end,
+
     %% Each index in the original ring must perform several transfers
     %% to properly resize the ring. The first transfer for each index
     %% is scheduled here. Subsequent transfers are scheduled by vnode
     CState1 = lists:foldl(fun({Idx, _} = IdxOwner, CStateAcc) ->
-                                  NextOwner = riak_core_ring:index_owner(CStateAcc, Idx),
-                                  schedule_first_resize_transfer(IdxOwner, NextOwner, CStateAcc)
+                                  %% indexes being abandoned in a shrinking ring have
+                                  %% no next owner
+                                  NextOwner = try riak_core_ring:index_owner(CStateAcc, Idx)
+                                              catch error:badarg -> none
+                                              end,
+                                  schedule_first_resize_transfer(Type,
+                                                                 IdxOwner,
+                                                                 NextOwner,
+                                                                 CStateAcc)
                           end,
                           CState0,
                           riak_core_ring:all_owners(Orig)),
@@ -590,12 +600,15 @@ compute_resize(Orig, Resized) ->
     riak_core_ring:set_pending_resize(CState1, Orig).
 
 %% @private
-schedule_first_resize_transfer({Idx, Owner}=IdxOwner, Owner, Resized) ->
-    %% index is not being moved during resize, use first predecessor
-    %% will require minor change for shrinking ring (use first successor?)
+schedule_first_resize_transfer(smaller, {Idx,_}=IdxOwner, none, Resized) ->
+    %% partition no longer exists in new ring, use first successor
+    Target = hd(riak_core_ring:preflist(<<Idx:160/integer>>, Resized)),
+    riak_core_ring:schedule_resize_transfer(Resized, IdxOwner, Target);
+schedule_first_resize_transfer(_Type,{Idx, Owner}=IdxOwner, Owner, Resized) ->
+    %% partition is not being moved during resizing, use first predecessor
     Target = hd(chash:predecessors(Idx-1, riak_core_ring:chash(Resized))),
     riak_core_ring:schedule_resize_transfer(Resized, IdxOwner, Target);
-schedule_first_resize_transfer({Idx, _Owner}=IdxOwner, NextOwner, Resized) ->
+schedule_first_resize_transfer(_,{Idx, _Owner}=IdxOwner, NextOwner, Resized) ->
     %% index is being moved, schedule this resize transfer first
     riak_core_ring:schedule_resize_transfer(Resized, IdxOwner, {Idx, NextOwner}).
 

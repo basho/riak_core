@@ -400,20 +400,28 @@ filter({Key, Value}=_Filter) ->
 resize_transfer_filter(Ring, Src, Target) ->
     fun(K) ->
             Hashed = riak_core_util:chash_key(K),
-            riak_core_ring:is_future_index(Hashed,
-                                           Src,
-                                           Target,
-                                           Ring)
+            %% when the ring shrinks we may have data on this partition for which
+            %% it is not possible to determine a future index because the position
+            %% of Src in the current preflist is greater than the size of the future
+            %% ring. This data shouldn't be sent anywhere so catch the exception and
+            %% move on
+            try riak_core_ring:is_future_index(Hashed,
+                                               Src,
+                                               Target,
+                                               Ring)
+            catch error:_ -> false
+            end
     end.
 
 resize_transfer_notsent_fun(Ring, Src) ->
     fun(Key, Acc) -> record_seen_index(Ring, Src, Key, Acc) end.
 
 record_seen_index(Ring, Src, Key, Seen) ->
-    FutureIndex = riak_core_ring:future_index(riak_core_util:chash_key(Key),
-                                              Src,
-                                              Ring),
-    [FutureIndex | Seen].
+    try riak_core_ring:future_index(riak_core_util:chash_key(Key), Src, Ring) of
+        FutureIndex -> [FutureIndex | Seen]
+    catch
+        error:_ -> Seen
+    end.
 
 get_concurrency_limit () ->
     app_helper:get_env(riak_core,handoff_concurrency,?HANDOFF_CONCURRENCY).

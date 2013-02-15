@@ -592,6 +592,9 @@ mark_delete_complete(Idx, Mod) ->
                        Type = riak_core_ring:vnode_type(Ring, Idx),
                        {_, Next, Status} = riak_core_ring:next_owner(Ring, Idx),
                        case {Type, Next, Status} of
+                           {resized_primary, '$delete', awaiting} ->
+                               Ring3 = riak_core_ring:deletion_complete(Ring, Idx, Mod),
+                               {new_ring, Ring3};
                            {{fallback, _}, '$delete', awaiting} ->
                                Ring3 = riak_core_ring:deletion_complete(Ring, Idx, Mod),
                                {new_ring, Ring3};
