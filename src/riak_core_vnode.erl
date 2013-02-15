@@ -41,6 +41,7 @@
          set_forwarding/2,
          trigger_handoff/2,
          trigger_handoff/3,
+         trigger_delete/1,
          core_status/1,
          handoff_error/3]).
 
@@ -216,6 +217,9 @@ trigger_handoff(VNode, TargetIdx, TargetNode) ->
 
 trigger_handoff(VNode, TargetNode) ->
     gen_fsm:send_all_state_event(VNode, {trigger_handoff, TargetNode}).
+
+trigger_delete(VNode) ->
+    gen_fsm:send_all_state_event(VNode, trigger_delete).
 
 core_status(VNode) ->
     gen_fsm:sync_send_all_state_event(VNode, core_status).
@@ -426,6 +430,16 @@ active({trigger_handoff, TargetNode}, State) ->
     active({trigger_handoff, State#state.index, TargetNode}, State);
 active({trigger_handoff, TargetIdx, TargetNode}, State) ->
      maybe_handoff(TargetIdx, TargetNode, State);
+active(trigger_delete, State=#state{mod=Mod,modstate=ModState,index=Idx}) ->
+    case mark_delete_complete(Idx, Mod) of
+        {ok, _NewRing} ->
+            {ok, NewModState} = Mod:delete(ModState),
+            lager:debug("~p ~p vnode deleted", [Idx, Mod]);
+        _ -> NewModState = ModState
+    end,
+    maybe_shutdown_pool(State),
+    riak_core_vnode_manager:unregister_vnode(Idx, Mod),
+    continue(State#state{modstate={deleted,NewModState}});
 active(unregistered, State=#state{mod=Mod, index=Index}) ->
     %% Add exclusion so the ring handler will not try to spin this vnode
     %% up until it receives traffic.
@@ -545,13 +559,7 @@ finish_handoff(SeenIdxs, State=#state{mod=Mod,
             %% vnode master will spin up a new vnode on demand.
             %% Shutdown the async pool beforehand, don't want callbacks
             %% running on non-existant data.
-            case is_pid(Pool) of
-                true ->
-                    %% state.pool_pid will be cleaned up by handle_info message.
-                    riak_core_vnode_worker_pool:shutdown_pool(Pool, 60000);
-                _ ->
-                    ok
-            end,
+            maybe_shutdown_pool(State),
             {ok, NewModState} = Mod:delete(ModState),
             lager:debug("~p ~p vnode finished handoff and deleted.",
                         [Idx, Mod]),
@@ -564,10 +572,35 @@ finish_handoff(SeenIdxs, State=#state{mod=Mod,
                                  forward=HN})
     end.
 
+maybe_shutdown_pool(#state{pool_pid=Pool}) ->
+    case is_pid(Pool) of
+        true ->
+            %% state.pool_pid will be cleaned up by handle_info message.
+            riak_core_vnode_worker_pool:shutdown_pool(Pool, 60000);
+        _ ->
+            ok
+    end.
+
 resize_forwarding(#state{forward=F}) when is_list(F) ->
     F;
 resize_forwarding(_) ->
     [].
+
+mark_delete_complete(Idx, Mod) ->
+    Result = riak_core_ring_manager:ring_trans(
+               fun(Ring, _) ->
+                       Type = riak_core_ring:vnode_type(Ring, Idx),
+                       {_, Next, Status} = riak_core_ring:next_owner(Ring, Idx),
+                       case {Type, Next, Status} of
+                           {{fallback, _}, '$delete', awaiting} ->
+                               Ring3 = riak_core_ring:deletion_complete(Ring, Idx, Mod),
+                               {new_ring, Ring3};
+                           _ ->
+                               ignore
+                       end
+               end,
+               []),
+    Result.
 
 handle_event({set_forwarding, undefined}, _StateName,
              State=#state{modstate={deleted, _ModState}}) ->
@@ -614,6 +647,10 @@ handle_event({trigger_handoff, _TargetIdx, _TargetNode}, _StateName,
     continue(State);
 handle_event(R={trigger_handoff, _TargetIdx, _TargetNode}, _StateName, State) ->
     active(R, State);
+handle_event(trigger_delete, _StateName, State=#state{modstate={deleted,_}}) ->
+    continue(State);
+handle_event(trigger_delete, _StateName, State) ->
+    active(trigger_delete, State);
 handle_event(R=?VNODE_REQ{}, _StateName, State) ->
     active(R, State);
 handle_event(R=?COVERAGE_REQ{}, _StateName, State) ->

@@ -571,6 +571,8 @@ check_forward(Ring, Mod, Index) ->
         {Node, '$resize', _} ->
             Complete = riak_core_ring:complete_resize_transfers(Ring, {Index, Node}, Mod),
             {{Mod, Index}, Complete};
+        {Node, '$delete', _} ->
+            {{Mod, Index}, undefined};
         {Node, NextOwner, complete} ->
             {{Mod, Index}, NextOwner};
         _ ->
@@ -641,6 +643,11 @@ should_handoff(Ring, Mod, Idx) ->
         %% otherwise, if primary don't handoff
         {primary, _, _} ->
             Target = undefined;
+        %% partitions moved during resize and scheduled for deletion, indexes
+        %% that exist in both the original and resized ring that were moved appear
+        %% as fallbacks.
+        {{fallback, _}, '$delete', _} ->
+            Target = '$delete';
         %% fallback vnode target is primary (For)
         {{fallback, For}, undefined, _} ->
             Target = For;
@@ -651,8 +658,9 @@ should_handoff(Ring, Mod, Idx) ->
     case Target of
         undefined ->
             false;
-        '$resize' ->
-            {true, '$resize'};
+        Action when Action == '$resize' orelse
+                    Action == '$delete' ->
+            {true, Action};
         TargetNode ->
             case app_for_vnode_module(Mod) of
                 undefined -> false;
@@ -690,6 +698,8 @@ maybe_trigger_handoff(Mod, Idx, Pid, _State=#state{handoff=HO}) ->
                 {TargetIdx, TargetNode} ->
                     riak_core_vnode:trigger_handoff(Pid, TargetIdx, TargetNode)
             end;
+        {ok, '$delete'} ->
+            riak_core_vnode:trigger_delete(Pid);
         {ok, TargetNode} ->
             riak_core_vnode:trigger_handoff(Pid, TargetNode),
             ok;

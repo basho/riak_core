@@ -117,12 +117,14 @@
          resize_transfer_complete/4,
          complete_resize_transfers/3,
          is_resizing/1,
+         is_post_resize/1,
          is_resize_complete/1,
          future_index/3,
          is_future_index/4,
          future_owner/2,
          future_num_partitions/1,
-         vnode_type/2]).
+         vnode_type/2,
+         deletion_complete/3]).
 
 -export_type([riak_core_ring/0]).
 
@@ -412,8 +414,10 @@ num_partitions(State) ->
 
 -spec future_num_partitions(chstate()) -> integer().
 future_num_partitions(State=?CHSTATE{chring=CHRing}) ->
-    {ok, C} = get_meta('$resized_ring', CHRing, State),
-    chash:size(C).
+    case resized_ring(State) of
+        {ok, C} -> chash:size(C);
+        undefined -> chash:size(CHRing)
+    end.
 
 %% @doc Return the node that is responsible for a given chstate.
 -spec owner_node(State :: chstate()) -> Node :: term().
@@ -764,7 +768,7 @@ all_next_owners(CState) ->
             Next = riak_core_ring:pending_changes(CState),
             [{Idx, NextOwner} || {Idx, _, NextOwner, _, _} <- Next];
         true ->
-            {ok, FutureRing} = get_meta('$resized_ring', CState),
+            {ok, FutureRing} = resized_ring(CState),
             chash:nodes(FutureRing)
     end.
 
@@ -821,9 +825,7 @@ set_pending_resize(Resizing, Orig) ->
     %% resized ring is stored in ring metadata for later use
     FutureCHash = chash(Resizing),
     ResetRing = set_chash(Resizing, chash(Orig)),
-    update_meta('$resized_ring',
-                FutureCHash,
-                set_pending_changes(ResetRing, Next)).
+    set_resized_ring(set_pending_changes(ResetRing, Next), FutureCHash).
 
 -spec schedule_resize_transfer(chstate(),
                                {integer(), term()},
@@ -917,9 +919,16 @@ resize_transfer_complete(State, {SrcIdx, _}=Source, Target, Mod) ->
 
 -spec is_resizing(chstate()) -> boolean().
 is_resizing(State) ->
-    case get_meta('$resized_ring', State) of
+    case resized_ring(State) of
         undefined -> false;
         {ok, _} -> true
+    end.
+
+-spec is_post_resize(chstate()) -> boolean().
+is_post_resize(State) ->
+    case get_meta('$resized_ring', State) of
+        {ok, '$cleanup'} -> true;
+        _ -> false
     end.
 
 -spec is_resize_complete(chstate()) -> boolean().
@@ -934,6 +943,10 @@ complete_resize_transfers(State, Source, Mod) ->
     [Target || {Target, Mods, Status} <- resize_transfers(State, Source),
                Status =:= complete orelse ordsets:is_element(Mod, Mods)].
 
+-spec deletion_complete(chstate(), integer(), atom()) -> chstate().
+deletion_complete(State, Idx, Mod) ->
+    transfer_complete(State, Idx, Mod).
+
 resize_transfers(State, Source) ->
     {ok, Transfers} = get_meta({resize, Source}, [], State),
     Transfers.
@@ -943,6 +956,21 @@ set_resize_transfers(State, Source, Transfers) ->
 
 clear_resize_transfers(Source, State) ->
     remove_meta({resize, Source}, State).
+
+-spec resized_ring(chstate()) -> {ok, chash:chash()} | undefined.
+resized_ring(State) ->
+    case get_meta('$resized_ring', State) of
+        {ok, '$cleanup'} -> {ok, State?CHSTATE.chring};
+        {ok, CHRing} -> {ok, CHRing};
+        _ -> undefined
+    end.
+
+set_resized_ring(State, FutureCHash) ->
+    update_meta('$resized_ring', FutureCHash, State).
+
+cleanup_after_resize(State) ->
+    update_meta('$resized_ring', '$cleanup', State).
+
 
 -spec vnode_type(chstate(),integer()) -> primary |
                                          {fallback, term()} |
@@ -1079,11 +1107,30 @@ future_ring(State, false) ->
                             end
                     end, FutureState, Leaving),
     FutureState2?CHSTATE{next=[]};
-future_ring(State0, true) ->
-    {ok, FutureCHash} = get_meta('$resized_ring', State0),
-    State1 = remove_meta('$resized_ring', State0),
-    State2 = lists:foldl(fun clear_resize_transfers/2, State1, all_owners(State1)),
-    State2?CHSTATE{next=[],chring=FutureCHash}.
+future_ring(State0=?CHSTATE{next=OldNext}, true) ->
+    case is_post_resize(State0) of
+        false ->
+            {ok, FutureCHash} = resized_ring(State0),
+            State1 = cleanup_after_resize(State0),
+            State2 = lists:foldl(fun clear_resize_transfers/2, State1, all_owners(State1)),
+            Resized = State2?CHSTATE{chring=FutureCHash},
+            Next = lists:foldl(fun({Idx, Owner, '$resize', _, _}, Acc) ->
+                                       DeleteEntry = {Idx, Owner, '$delete', [], awaiting},
+                                       %% catch error when index doesn't exist in new ring
+                                       try index_owner(Resized, Idx) of
+                                           Owner -> Acc;
+                                           _ -> [DeleteEntry | Acc]
+                                       catch
+                                           error:_ -> [DeleteEntry | Acc]
+                                       end
+                               end,
+                               [],
+                               OldNext),
+            Resized?CHSTATE{next=Next};
+        true ->
+            State1 = remove_meta('$resized_ring', State0),
+            State1?CHSTATE{next=[]}
+    end.
 
 pretty_print(Ring, Opts) ->
     OptNumeric = lists:member(numeric, Opts),
