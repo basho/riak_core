@@ -13,7 +13,7 @@
         }).
 
 -type ho_stats() :: #ho_stats{}.
--type ho_type() :: ownership_handoff | hinted_handoff | repair.
+-type ho_type() :: ownership_handoff | hinted_handoff | repair | resize_transfer.
 -type predicate() :: fun((any()) -> boolean()).
 
 -type index() :: integer().

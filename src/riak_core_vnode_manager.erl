@@ -403,7 +403,9 @@ handle_cast({ring_changed, Ring}, State) ->
 
     %% Trigger ownership transfers.
     Transfers = riak_core_ring:pending_changes(Ring),
-    trigger_ownership_handoff(Transfers, Mods, State3),
+    trigger_ownership_handoff(Ring, Transfers, Mods, State3),
+
+    maybe_start_vnode_proxies(Ring, Mods),
 
     {noreply, State3};
 
@@ -436,7 +438,7 @@ handle_info(management_tick, State) ->
             _ ->
                 Repairs = State#state.repairs,
                 kill_repairs(Repairs, ownership_change),
-                trigger_ownership_handoff(Transfers, Mods, State2),
+                trigger_ownership_handoff(Ring, Transfers, Mods, State2),
                 State2#state{repairs=[]}
         end,
 
@@ -484,11 +486,16 @@ schedule_management_timer() ->
                                         10000),
     erlang:send_after(ManagementTick, ?MODULE, management_tick).
 
-trigger_ownership_handoff(Transfers, Mods, State) ->
-    Limit = app_helper:get_env(riak_core,
-                               forced_ownership_handoff,
-                               ?DEFAULT_OWNERSHIP_TRIGGER),
-    Throttle = lists:sublist(Transfers, Limit),
+trigger_ownership_handoff(Ring, Transfers, Mods, State) ->
+    case riak_core_ring:is_resizing(Ring) of
+        true ->
+            Limit = app_helper:get_env(riak_core,
+                                       forced_ownership_handoff,
+                                       ?DEFAULT_OWNERSHIP_TRIGGER),
+            Throttle = lists:sublist(Transfers, Limit);
+        false ->
+            Throttle = Transfers
+    end,
     Awaiting = [{Mod, Idx} || {Idx, Node, _, CMods, S} <- Throttle,
                               Mod <- Mods,
                               S =:= awaiting,
@@ -561,6 +568,9 @@ get_forward(Mod, Idx, #state{forwarding=Fwd}) ->
 check_forward(Ring, Mod, Index) ->
     Node = node(),
     case riak_core_ring:next_owner(Ring, Index, Mod) of
+        {Node, '$resize', _} ->
+            Complete = riak_core_ring:complete_resize_transfers(Ring, {Index, Node}, Mod),
+            {{Mod, Index}, Complete};
         {Node, NextOwner, complete} ->
             {{Mod, Index}, NextOwner};
         _ ->
@@ -615,11 +625,34 @@ update_handoff(AllVNodes, Ring, State) ->
 
 should_handoff(Ring, Mod, Idx) ->
     {_, NextOwner, _} = riak_core_ring:next_owner(Ring, Idx),
-    Owner = riak_core_ring:index_owner(Ring, Idx),
+    Type = riak_core_ring:vnode_type(Ring, Idx),
     Ready = riak_core_ring:ring_ready(Ring),
-    case determine_handoff_target(Ready, Owner, NextOwner) of
+    Me = node(),
+    case {Type, NextOwner, Ready} of
+        %% if primary and next owner is me, don't handoff
+        {primary, Me, _} ->
+            Target = undefined;
+        %% if primary, don't handoff if no next owner
+        {primary, undefined, _} ->
+            Target = undefined;
+        %% if primary and ring ready, target is next owner (may be undef)
+        {primary, _, true} ->
+            Target = NextOwner;
+        %% otherwise, if primary don't handoff
+        {primary, _, _} ->
+            Target = undefined;
+        %% fallback vnode target is primary (For)
+        {{fallback, For}, undefined, _} ->
+            Target = For;
+        %% otherwise don't handoff
+        {_, _, _} ->
+            Target = undefined
+    end,
+    case Target of
         undefined ->
             false;
+        '$resize' ->
+            {true, '$resize'};
         TargetNode ->
             case app_for_vnode_module(Mod) of
                 undefined -> false;
@@ -630,27 +663,6 @@ should_handoff(Ring, Mod, Idx) ->
                         true -> {true, TargetNode}
                     end
             end
-    end.
-
-determine_handoff_target(Ready, Owner, NextOwner) ->
-    Me = node(),
-    TargetNode = case {Ready, Owner, NextOwner} of
-                     {_, _, Me} ->
-                         Me;
-                     {_, Me, undefined} ->
-                         Me;
-                     {true, Me, _} ->
-                         NextOwner;
-                     {_, _, undefined} ->
-                         Owner;
-                     {_, _, _} ->
-                         Me
-                 end,
-    case TargetNode of
-        Me ->
-            undefined;
-        _ ->
-            TargetNode
     end.
 
 app_for_vnode_module(Mod) when is_atom(Mod) ->
@@ -671,6 +683,13 @@ maybe_trigger_handoff(Mod, Idx, State) ->
 
 maybe_trigger_handoff(Mod, Idx, Pid, _State=#state{handoff=HO}) ->
     case orddict:find({Mod, Idx}, HO) of
+        {ok, '$resize'} ->
+            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+            case riak_core_ring:awaiting_resize_transfer(Ring, {Idx, node()}, Mod) of
+                undefined -> ok;
+                {TargetIdx, TargetNode} ->
+                    riak_core_vnode:trigger_handoff(Pid, TargetIdx, TargetNode)
+            end;
         {ok, TargetNode} ->
             riak_core_vnode:trigger_handoff(Pid, TargetNode),
             ok;
@@ -749,6 +768,19 @@ maybe_start_vnodes(State=#state{vnode_start_tokens=Tokens,
             gen_server:cast(?MODULE, maybe_start_vnodes),
             State#state{vnode_start_tokens=Tokens-1,
                         never_started=NeverStarted2}
+    end.
+
+maybe_start_vnode_proxies(CState, Mods) ->
+    Larger =
+        riak_core_ring:num_partitions(CState) < riak_core_ring:future_num_partitions(CState),
+    case Larger of
+        true ->
+            FutureIdxs = riak_core_ring:all_next_owners(CState),
+            [riak_core_vnode_proxy_sup:start_proxy(Mod, Idx) || {Idx, _} <- FutureIdxs,
+                                                                Mod <- Mods],
+            ok;
+        false ->
+            ok
     end.
 
 -spec check_repairs(repairs()) -> Repairs2::repairs().
