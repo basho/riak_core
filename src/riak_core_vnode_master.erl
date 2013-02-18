@@ -117,16 +117,23 @@ sync_command({Index,Node}, Msg, VMaster, Timeout) ->
     %% Issue the call to the master, it will update the Sender with
     %% the From for handle_call so that the {reply} return gets
     %% sent here.
-    gen_server:call({VMaster, Node},
-                    make_request(Msg, {server, undefined, undefined}, Index), Timeout).
+    Request = make_request(Msg, {server, undefined, undefined}, Index),
+    case gen_server:call({VMaster, Node}, Request, Timeout) of
+        {vnode_error, {Error, _Args}} -> error(Error);
+        {vnode_error, Error} -> error(Error);
+        Else -> Else
+    end.
 
 %% Send a synchronous spawned command to an individual Index/Node combination.
 %% Will not return until the vnode has returned, but the vnode_master will
 %% continue to handle requests.
 sync_spawn_command({Index,Node}, Msg, VMaster) ->
-    gen_server:call({VMaster, Node},
-                    {spawn, make_request(Msg, {server, undefined, undefined}, Index)},
-                    infinity).
+    Request = make_request(Msg, {server, undefined, undefined}, Index),
+    case gen_server:call({VMaster, Node}, {spawn, Request}, infinity) of
+        {vnode_error, {Error, _Args}} -> error(Error);
+        {vnode_error, Error} -> error(Error);
+        Else -> Else
+    end.
 
 
 %% Make a request record - exported for use by legacy modules
