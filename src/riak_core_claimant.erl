@@ -122,7 +122,13 @@ replace(Node, NewNode) ->
 force_replace(Node, NewNode) ->
     stage(Node, {force_replace, NewNode}).
 
-%% @doc Stage a request to resize the ring %% TODO: moar doc
+%% @doc Stage a request to resize the ring. If committed, all nodes
+%%      will participate in resizing operation. Unlike other operations,
+%%      the new ring is not installed until all transfers have completed.
+%%      During that time requests continue to be routed to the old ring.
+%%      After completion, the new ring is installed and data is safely
+%%      removed from partitons no longer owner by a node or present
+%%      in the ring.
 -spec resize_ring(integer()) -> ok | {error, atom()}.
 resize_ring(NewRingSize) ->
     %% use the node making the request. it will be ignored
@@ -438,12 +444,13 @@ valid_force_replace_request(Node, NewNode, Changes, Ring) ->
 %% @private
 %% restrictions preventing resize along with other operations are temporary
 valid_resize_request(NewRingSize, [], Ring) ->
-    case riak_core_ring:num_partitions(Ring) =/= NewRingSize of
-        true -> true;
-        false -> {error, same_size}
-    end;
-valid_resize_request(_, _Changes, _) ->
-    {error, non_empty_changes}.
+    Capable = riak_core_capability:get({riak_core, resizable_ring}, false),
+    IsResizing = riak_core_ring:num_partitions(Ring) =/= NewRingSize,
+    case {Capable, IsResizing} of
+        {true, true} -> true;
+        {false, _} -> {error, not_capable};
+        {_, false} -> {error, same_size}
+    end.
 
 %% @private
 %% @doc Filter out any staged changes that are no longer valid. Changes
