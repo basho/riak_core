@@ -88,6 +88,9 @@ start(_StartType, _StartArgs) ->
             riak_core_capability:register({riak_core, staged_joins},
                                           [true, false],
                                           false),
+            riak_core_capability:register({riak_core, resizable_ring},
+                                          [true, false],
+                                          false),
 
             {ok, Pid};
         {error, Reason} ->
