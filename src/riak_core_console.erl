@@ -20,7 +20,7 @@
 
 -module(riak_core_console).
 -export([member_status/1, ring_status/1, print_member_status/2,
-         stage_leave/1, stage_remove/1, stage_replace/1,
+         stage_leave/1, stage_remove/1, stage_replace/1, stage_resize_ring/1,
          stage_force_replace/1, print_staged/1, commit_staged/1,
          clear_staged/1, transfer_limit/1, pending_claim_percentage/2,
          pending_nodes_and_claim_percentages/1]).
@@ -34,10 +34,11 @@ pending_nodes_and_claim_percentages(Ring) ->
 %% anticipated after the transitions have been completed.
 pending_claim_percentage(Ring, Node) ->
     RingSize = riak_core_ring:num_partitions(Ring),
+    FutureRingSize = riak_core_ring:future_num_partitions(Ring),
     Indices = riak_core_ring:indices(Ring, Node),
     NextIndices = riak_core_ring:future_indices(Ring, Node),
     RingPercent = length(Indices) * 100 / RingSize,
-    NextPercent = length(NextIndices) * 100 / RingSize,
+    NextPercent = length(NextIndices) * 100 / FutureRingSize,
     {RingPercent, NextPercent}.
 
 member_status([]) ->
@@ -316,6 +317,53 @@ stage_force_replace(Node1, Node2) ->
             error
     end.
 
+stage_resize_ring(["abort"]) ->
+    try
+        case riak_core_claimant:abort_resize() of
+            ok ->
+                io:format("Success: staged abort resize ring request~n"),
+                ok;
+            {error, not_resizing} ->
+                io:format("Failed: ring is not resizing or resize has completed"),
+                error
+        end
+    catch
+        Exception:Reason ->
+            lager:error("Abort resize ring request failed ~p:~p",
+                        [Exception, Reason]),
+            io:format("Abort resize ring request failed, see log for details~n"),
+            error
+    end;
+stage_resize_ring([SizeStr]) ->
+    try list_to_integer(SizeStr) of
+        Size -> stage_resize_ring(Size)
+    catch
+        error:badarg ->
+            io:format("Failed: Ring size must be an integer.")
+    end;
+stage_resize_ring(NewRingSize) ->
+    try
+        case riak_core_claimant:resize_ring(NewRingSize) of
+            ok ->
+                io:format("Success: staged resize ring request with new size: ~p~n",
+                          [NewRingSize]),
+                ok;
+            {error, not_capable} ->
+                io:format("Failed: at least one node is not capable of performing the operation~n"),
+                error;
+            {error, same_size} ->
+                io:format("Failed: current ring size is already ~p~n",
+                          [NewRingSize]),
+                error
+        end
+    catch
+        Exception:Reason ->
+            lager:error("Resize ring request failed ~p:~p",
+                        [Exception, Reason]),
+            io:format("Resize ring request failed, see log for details~n"),
+            error
+    end.
+
 clear_staged([]) ->
     try
         case riak_core_claimant:clear() of
@@ -361,9 +409,9 @@ print_staged([]) ->
 
 print_plan([], _, _) ->
     io:format("There are no staged changes~n");
-print_plan(Changes, _Ring, NextRings) ->
+print_plan(Changes, Ring, NextRings) ->
     io:format("~31..=s Staged Changes ~32..=s~n", ["", ""]),
-    io:format("Action         Nodes(s)~n"),
+    io:format("Action         Details(s)~n"),
     io:format("~79..-s~n", [""]),
 
     lists:map(fun({Node, join}) ->
@@ -375,7 +423,13 @@ print_plan(Changes, _Ring, NextRings) ->
                  ({Node, {replace, NewNode}}) ->
                       io:format("replace        ~p with ~p~n", [Node, NewNode]);
                  ({Node, {force_replace, NewNode}}) ->
-                      io:format("force-replace  ~p with ~p~n", [Node, NewNode])
+                      io:format("force-replace  ~p with ~p~n", [Node, NewNode]);
+                 ({_, {resize, NewRingSize}}) ->
+                      CurrentSize = riak_core_ring:num_partitions(Ring),
+                      io:format("resize-ring    ~p to ~p partitions~n",[CurrentSize,NewRingSize]);
+                 ({_, abort_resize}) ->
+                      CurrentSize = riak_core_ring:num_partitions(Ring),
+                      io:format("resize-ring    abort. current size: ~p~n", [CurrentSize])
               end, Changes),
     io:format("~79..-s~n", [""]),
     io:format("~n"),
@@ -434,6 +488,7 @@ output(Ring, NextRing) ->
     Pending = riak_core_ring:pending_changes(NextRing),
     Next = [{Idx, PrevOwner, NewOwner} || {Idx, PrevOwner, NewOwner, _, _} <- Pending],
     NextTally = tally(Next),
+    Resizing = riak_core_ring:is_resizing(NextRing),
 
     case Reassigned of
         [] ->
@@ -447,9 +502,11 @@ output(Ring, NextRing) ->
             ok
     end,
 
-    case Next of
-        [] ->
+    case {Resizing, Next} of
+        {_, []} ->
             ok;
+        {true, _} ->
+            io:format("Ring is resizing. see riak-admin ring-status for transfer details.~n");
         _ ->
             io:format("Transfers resulting from cluster changes: ~p~n",
                       [length(Next)]),
