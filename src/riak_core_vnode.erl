@@ -97,11 +97,6 @@ behaviour_info(_Other) ->
 %% -spec handle_info(term(), term()) -> {ok, term()}
 
 -define(DEFAULT_TIMEOUT, 60000).
-%% Delay between process creation and real initialization stage.
-%% Ideally zero, but we need to make sure there is a context switch
-%% so heavy initialization is not done at process creation and linking time
-%% which would serialize all vnode creation.
--define(INIT_TIMEOUT, 0).
 -define(LOCK_RETRY_TIMEOUT, 10000).
 -record(state, {
           index :: partition(),
@@ -140,15 +135,15 @@ init([Mod, Index, InitialInactivityTimeout, Forward]) ->
     process_flag(trap_exit, true),
     State = #state{index=Index, mod=Mod, forward=Forward,
                    inactivity_timeout=InitialInactivityTimeout},
-    {ok, started, State, ?INIT_TIMEOUT}.
+    {ok, started, State, 0}.
 
 started(timeout, State =
             #state{inactivity_timeout=InitialInactivityTimeout}) ->
     case do_init(State) of
-        {error, Reason} ->
-            {stop, Reason};
         {ok, State2} ->
-            {next_state, active, State2, InitialInactivityTimeout}
+            {next_state, active, State2, InitialInactivityTimeout};
+        {error, Reason} ->
+            {stop, Reason}
     end.
 
 started(wait_for_init, _From, State =
