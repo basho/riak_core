@@ -78,7 +78,7 @@ start(_StartType, _StartArgs) ->
             riak_core:register(riak_core, [{stat_mod, riak_core_stat}]),
             ok = riak_core_ring_events:add_guarded_handler(riak_core_ring_handler, []),
 
-            %% Register capabilities
+            %% Register capabilities (note: first setting in capability list is default ):
             riak_core_capability:register({riak_core, vnode_routing},
                                           [proxy, legacy],
                                           legacy,
@@ -89,7 +89,7 @@ start(_StartType, _StartArgs) ->
                                           [true, false],
                                           false),
             riak_core_capability:register({riak_core, handoff_data_encoding},
-                                          [encode_zlib, encode_raw],
+                                         [encode_raw, encode_zlib],
                                           encode_raw),
 
             {ok, Pid};

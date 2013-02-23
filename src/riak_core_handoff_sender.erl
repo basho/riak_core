@@ -272,7 +272,18 @@ visit_item(K, V, Acc) ->
 
     case Filter(K) of
         true ->
-            BinObj = Module:encode_handoff_item(K, V),
+lager:debug("JFW: riak_core_handoff_sender() filter(k) is true."),
+            { BinObj, EncodingMethod } = Module:encode_handoff_item(K, V),
+lager:debug("JFW: encoding method was ~p", [EncodingMethod]),
+lager:debug("JFW: BinObj is: ~p", [EncodingMethod]),
+       
+%% JFW: next, figure out what to do... 
+            case EncodingMethod of
+                encode_raw  -> false;
+                encode_zlib -> true;
+                _           -> throw({unimplemented_encoding_method, EncodingMethod})
+            end,
+
             M = <<?PT_MSG_OBJ:8,BinObj/binary>>,
             NumBytes = byte_size(M),
 
