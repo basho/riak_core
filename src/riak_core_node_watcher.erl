@@ -54,7 +54,7 @@
                  bcast_mod = {gen_server, abcast}}).
 
 -record(health_check, { state = 'waiting' :: 'waiting' | 'checking' | 'suspend',
-                        callback :: mfa(),
+                        callback :: {atom(), atom(), [any()]},
                         service_pid :: pid(),
                         checking_pid :: pid(),
                         health_failures = 0 :: non_neg_integer(),
