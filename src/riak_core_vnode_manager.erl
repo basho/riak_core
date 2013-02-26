@@ -59,8 +59,8 @@
 -type repairs() :: [repair()].
 
 -record(state, {idxtab,
-                forwarding :: [pid()],
-                handoff :: [{term(), integer(), pid(), node()}],
+                forwarding :: [{{module(), integer()}, term()}],
+                handoff :: [{{module(), integer()}, term()}],
                 known_modules :: [term()],
                 never_started :: [{integer(), term()}],
                 vnode_start_tokens :: integer(),
