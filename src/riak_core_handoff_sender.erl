@@ -273,6 +273,7 @@ visit_item(K, V, Acc) ->
     case Filter(K) of
         true ->
             BinObj = Module:encode_handoff_item(K, V),
+
             M = <<?PT_MSG_OBJ:8,BinObj/binary>>,
             NumBytes = byte_size(M),
 
