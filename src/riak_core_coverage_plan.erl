@@ -43,8 +43,8 @@
                   unavail_keyspaces :: [non_neg_integer()],
                   primaries :: all | pos_integer(),
                   results=[] :: [vnode()],
-                  ring=term(),
-                  index_increment=pos_integer(),
+                  ring :: term(),
+                  index_increment :: pos_integer(),
                   vnode_fun :: function(),
                   vnode_constraint :: all | allup
                  }).
@@ -97,11 +97,11 @@ create_plan(VNodeConstraint, NVal, Primaries, Offset, Service, MinimizationTarge
                                              DownVNode <- DownVNodes],
                        primaries=lists:min([Primaries, NVal]),
                        ring=Ring,
-                       index_increment=RingIndexInc
-                       vnode_constraint=VNodeConstraint
-                       vnode_fun=vnode_fun(Ring, RingIndexInc, PartitionCount))},
+                       index_increment=RingIndexInc,
+                       vnode_constraint=VNodeConstraint,
+                       vnode_fun=vnode_fun(Ring, RingIndexInc, PartitionCount)},
 
-    CoverageResult = find_coverage(Context, Context#context.primaries)
+    CoverageResult = find_coverage(Context, Context#context.primaries),
         %% find_coverage(AllKeySpaces,
         %%               Offset,
         %%               NVal,
@@ -210,6 +210,15 @@ get_vnode(Ring, RingIndexInc, PartitionCount, Position) ->
 find_coverage(#context{results=Results}, 0) ->
     {ok, Results};
 find_coverage(Context, PrimariesLeft) ->
+    #context{n_val=NVal,
+             partition_count=PartitionCount,
+             keyspaces=AllKeySpaces,
+             offset=Offset,
+             minimization_target=MinimizationTarget,
+             unavail_keyspaces=UnavailableKeySpaces,
+             primaries=Primaries,
+             results=ResultsAcc,
+             vnode_fun=VnodeFun} = Context,
     %% Calculate the available keyspaces. The list of keyspaces for
     %% each vnode that have already been covered by the plan are
     %% subtracted from the complete list of keyspaces so that coverage
@@ -229,9 +238,9 @@ find_coverage(Context, PrimariesLeft) ->
                                 ResultsAcc,
                                 VnodeFun,
                                 orddict:new(),
-                                MinimizeFor), ResultsAcc) of
+                                MinimizationTarget), ResultsAcc) of
         {ok, CoverageResults} ->
-            find_coverage(Context#context{primaries=Primaries-1);
+            find_coverage(Context#context{results=CoverageResults}, PrimariesLeft-1);
         Error ->
             Error
     end.
