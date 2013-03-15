@@ -382,7 +382,7 @@ choose_version({ClientProto,ClientVersions}=_CProtocol, HostProtocols) ->
                     {error,protocol_version_not_supported,Rest};
                 [{Major,CN,HN}] ->
                     {ok, {ClientProto,Major,CN,HN},Rest};
-                [{Major,CN,HN}, _] ->
+                [{Major,CN,HN} | _] ->
                     {ok, {ClientProto,Major,CN,HN},Rest}
             end
     end.
