@@ -18,7 +18,7 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @ doc fetches stats for registered modules and stores them
+%% @doc fetches stats for registered modules and stores them
 %% in an ets backed cache.
 %% Only ever allows one process at a time to calculate stats.
 %% Will always serve the stats that are in the cache.
@@ -37,6 +37,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+-type registered_app() :: {MFA::mfa(), RerfreshRateMillis::non_neg_integer()}.
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -46,6 +48,7 @@
 -define(REFRESH_RATE, 1).
 -define(REFRSH_MILLIS(N), timer:seconds(N)).
 -define(ENOTREG(App), {error, {not_registered, App}}).
+-define(DEFAULT_REG(Mod, RefreshRateMillis), {{Mod, produce_stats, []}, RefreshRateMillis}).
 
 -record(state, {tab, active=orddict:new(), apps=orddict:new()}).
 
@@ -61,7 +64,7 @@ register_app(App, {M, F, A}) ->
     register_app(App, {M, F, A}, RefreshRate).
 
 register_app(App, {M, F, A}, RefreshRateSecs) ->
-    gen_server:call(?SERVER, {register, App, {M, F, A}, ?REFRSH_MILLIS(RefreshRateSecs)}).
+    gen_server:call(?SERVER, {register, App, {{M, F, A}, ?REFRSH_MILLIS(RefreshRateSecs)}}).
 
 get_stats(App) ->
     gen_server:call(?SERVER, {get_stats, App}, infinity).
@@ -81,16 +84,16 @@ init([]) ->
     RefreshRateMillis = ?REFRSH_MILLIS(RefreshRateSecs),
     %% re-register mods, if this is a restart after a crash
     RegisteredMods = lists:foldl(fun({App, Mod}, Registered) ->
-                                         register_mod(App, Mod, produce_stats, [], RefreshRateMillis, Registered),
+                                         register_mod(App, ?DEFAULT_REG(Mod, RefreshRateMillis), Registered),
                                          schedule_get_stats(RefreshRateMillis, App, {Mod, produce_stats, []}) end,
                                  orddict:new(),
                                  riak_core:stat_mods()),
     {ok, #state{tab=Tab, apps=orddict:from_list(RegisteredMods)}}.
 
-handle_call({register, App, {Mod, Fun, Args}=MFA, RefreshRateMillis}, _From, State0=#state{apps=Apps0}) ->
+handle_call({register, App, {MFA, RefreshRateMillis}}, _From, State0=#state{apps=Apps0}) ->
     Apps = case registered(App, Apps0) of
                false ->
-                   Apps1 = register_mod(App, Mod, Fun, Args, RefreshRateMillis, Apps0),
+                   Apps1 = register_mod(App,{MFA, RefreshRateMillis}, Apps0),
                    schedule_get_stats(RefreshRateMillis, App, MFA),
                    Apps1;
                {true, _} ->
@@ -101,10 +104,10 @@ handle_call({get_stats, App}, From, State0=#state{apps=Apps, active=Active0, tab
     Reply = case registered(App, Apps) of
                 false ->
                     {reply, ?ENOTREG(App), State0};
-                {true, {M, F, A, _RefreshRateMillis}} ->
+                {true, {MFA, _RefreshRateMillis}} ->
                     case cache_get(App, Tab) of
-                        No when No == miss ->
-                            Active = maybe_get_stats(App, From, Active0, {M, F, A}),
+                        miss ->
+                            Active = maybe_get_stats(App, From, Active0, MFA),
                             {noreply, State0#state{active=Active}};
                         {hit, Stats, TS} ->
                             FreshnessStat = make_freshness_stat(App, TS),
@@ -113,14 +116,12 @@ handle_call({get_stats, App}, From, State0=#state{apps=Apps, active=Active0, tab
             end,
     Reply;
 handle_call({clear, App}, _From, State=#state{apps=Apps, tab=Tab}) ->
-    Reply = case registered(App, Apps) of
-                false ->
-                    {reply, ?ENOTREG(App), State};
-                {true, _} ->
-                    true = ets:delete(Tab, App),
-                    {reply, ok, State}
-            end,
-    Reply;
+    case registered(App, Apps) of
+        {true, _} ->
+            true = ets:delete(Tab, App);
+        _  -> ok
+    end,
+    {reply, ok, State};
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
@@ -135,8 +136,8 @@ handle_cast({stats, App, Stats, TS}, State0=#state{tab=Tab, active=Active, apps=
                 error ->
                     State0
             end,
-    {ok, {M, F, A, RefreshRateMillis}} = orddict:find(App, Apps),
-    schedule_get_stats(RefreshRateMillis, App, {M, F, A}),
+    {ok, {MFA, RefreshRateMillis}} = orddict:find(App, Apps),
+    schedule_get_stats(RefreshRateMillis, App, MFA),
     {noreply, State};
 handle_cast(stop, State) ->
     {stop, normal, State};
@@ -176,10 +177,12 @@ make_freshness_stat(App, TS) ->
 make_freshness_stat_name(App) ->
     list_to_atom(atom_to_list(App) ++ "_stat_ts").
 
-register_mod(App, Mod, Fun, Args, RefreshRateMillis, Apps) ->
+-spec register_mod(atom(), registered_app(), orddict:orddict()) -> orddict:orddict().
+register_mod(App, AppRegistration, Apps) ->
+    {{Mod, _, _}, _} = AppRegistration,
     folsom_metrics:new_histogram({?MODULE, Mod}),
     folsom_metrics:new_meter({?MODULE, App}),
-    orddict:store(App, {Mod, Fun, Args, RefreshRateMillis}, Apps).
+    orddict:store(App, AppRegistration, Apps).
 
 registered(App, Apps) ->
     registered(orddict:find(App, Apps)).
@@ -198,11 +201,11 @@ cache_get(App, Tab) ->
           end,
     Res.
 
-maybe_get_stats(App, From, Active, {M, F, A}) ->
+maybe_get_stats(App, From, Active, MFA) ->
     %% if a get stats is not under way start one
     Awaiting = case orddict:find(App, Active) of
                    error ->
-                       Pid = do_get_stats(App, {M, F, A}),
+                       Pid = do_get_stats(App, MFA),
                        {Pid, [From]};
                    {ok, {Pid, Froms}} ->
                        {Pid, [From|Froms]}
