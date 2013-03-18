@@ -124,7 +124,14 @@ ensure_vnodes_started({App,Mod}, Ring) ->
                        case riak_core:wait_for_application(App) of
                            ok ->
                                %% Start the vnodes.
-                               Mod:start_vnode(Startable),
+                               HasStartVnodes = lists:member({start_vnodes, 1},
+                                                             Mod:module_info(exports)),
+                               case HasStartVnodes of
+                                   true ->
+                                       Mod:start_vnodes(Startable);
+                                   false ->
+                                       [Mod:start_vnode(I) || I <- Startable]
+                               end,
 
                                %% Mark the service as up.
                                SupName = list_to_atom(atom_to_list(App) ++ "_sup"),
