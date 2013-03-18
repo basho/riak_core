@@ -20,7 +20,6 @@
 %%
 %% -------------------------------------------------------------------
 
-
 -module(riak_core_connection_mgr).
 -author("Chris Tilt").
 -behaviour(gen_server).
@@ -97,9 +96,7 @@
               
 
 %% connection manager state:
-%% cluster_finder := function that returns the ip address
 -record(state, {is_paused = false :: boolean(),
-                cluster_finder = fun() -> {error, undefined} end :: cluster_finder_fun(),
                 pending = [] :: [#req{}], % pending requests
                 %% endpoints :: {module(),ip_addr()} -> ep()
                 endpoints = orddict:new() :: orddict:orddict(), %% known endpoints w/status
@@ -112,8 +109,6 @@
          resume/0,
          pause/0,
          is_paused/0,
-         set_cluster_finder/1,
-         get_cluster_finder/0,
          connect/2, connect/3,
          disconnect/1,
          register_locator/2,
@@ -163,17 +158,6 @@ is_paused() ->
 -spec reset_backoff() -> 'ok'.
 reset_backoff() ->
     gen_server:cast(?SERVER, reset_backoff).
-
-%% @doc Specify a function that will return the IP/Port of our Cluster Manager.
-%% Connection Manager will call this function each time it wants to find the
-%% current ClusterManager
--spec(set_cluster_finder(cluster_finder_fun()) -> ok).
-set_cluster_finder(Fun) ->
-    gen_server:cast(?SERVER, {set_cluster_finder, Fun}).
-
-%% Return the current function that finds the Cluster Manager
-get_cluster_finder() ->
-    gen_server:call(?SERVER, get_cluster_finder).
 
 %% Register a locator - for the given Name and strategy it returns {ok, [{IP,Port}]}
 %% list of endpoints to connect to, in order. The list may be empty.  
@@ -238,9 +222,6 @@ init([]) ->
 
 handle_call(is_paused, _From, State) ->
     {reply, State#state.is_paused, State};
-
-handle_call(get_cluster_finder, _From, State) ->
-    {reply, State#state.cluster_finder, State};
 
 %% connect based on address. Return process id of helper
 handle_call({connect, Target, ClientSpec, Strategy}, _From, State) ->
@@ -312,9 +293,6 @@ handle_cast({disconnect, Target}, State) ->
 handle_cast(reset_backoff, State) ->
     NewEps = reset_backoff(State#state.endpoints),
     {noreply, State#state{endpoints = NewEps}};
-
-handle_cast({set_cluster_finder, FinderFun}, State) ->
-    {noreply, State#state{cluster_finder=FinderFun}};
 
 %% helper process says no endpoints were returned by the locators.
 %% helper process will schedule a retry.
