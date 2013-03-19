@@ -127,7 +127,12 @@ handle_call(_Request, _From, State) ->
     {reply, Reply, State}.
 
 %% @doc call back from process executig the stat calculation
-handle_cast({stats, App, Stats, TS}, State0=#state{tab=Tab, active=Active, apps=Apps}) ->
+handle_cast({stats, App, Stats0, TS}, State0=#state{tab=Tab, active=Active, apps=Apps}) ->
+    %% @TODO standardise stat mods return type with a behaviour
+    Stats = case Stats0 of
+                {App, Stats1} -> Stats1;
+                Stats1 -> Stats1
+            end,
     ets:insert(Tab, {App, TS, Stats}),
     State = case orddict:find(App, Active) of
                 {ok, {_Pid, Awaiting}} ->
