@@ -294,8 +294,8 @@ pmap(Fun, List, MaxP) when is_function(Fun), is_list(List), is_integer(MaxP) ->
         end,
     All = lists:foldl(Collect, Done, Pending),
     % Restore input order
-    Sorted = lists:sort(fun({I1, _}, {I2, _}) -> I1 < I2 end, All),
-    lists:map(fun({_, R}) -> R end, Sorted).
+    Sorted = lists:keysort(1, All),
+    [ R || {_, R} <- Sorted ].
 
 %% @doc Fold function for {@link pmap/3} that spawns up to a max number of
 %% workers to execute the mapping function over the input list.

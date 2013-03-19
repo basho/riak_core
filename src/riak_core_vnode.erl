@@ -135,7 +135,9 @@ init([Mod, Index, InitialInactivityTimeout, Forward]) ->
     process_flag(trap_exit, true),
     State = #state{index=Index, mod=Mod, forward=Forward,
                    inactivity_timeout=InitialInactivityTimeout},
-    case app_helper:get_env(riak_core, revert_parallel_vnode_init, false) of
+    %% Check if parallel disabled, if enabled (default)
+    %% we don't care about the actual number, so using magic 2.
+    case app_helper:get_env(riak_core, vnode_parallel_start, 2) =< 1 of
         true ->
             case do_init(State) of
                 {ok, State2} ->

@@ -536,12 +536,13 @@ get_vnode(IdxList, Mod, State) ->
                  lager:debug("VNode initialization ready ~p, ~p", [Pid, Idx]),
                  {Idx, Pid}
         end,
-    MaxStart = app_helper:get_env(riak_core, vnode_rolling_start,
+    MaxStart = app_helper:get_env(riak_core, vnode_parallel_start,
                                   ?DEFAULT_VNODE_ROLLING_START),
     Pairs = Started ++ riak_core_util:pmap(StartFun, NotStarted, MaxStart),
     % Return Pids in same order as input
+    PairsDict = dict:from_list(Pairs),
     [begin
-         {_, Pid} = lists:keyfind(Idx, 1, Pairs),
+         Pid = dict:fetch(Idx, PairsDict),
          MonRef = erlang:monitor(process, Pid),
          add_vnode_rec(#idxrec{key={Idx,Mod},idx=Idx,mod=Mod,pid=Pid,
                                monref=MonRef}, State),
