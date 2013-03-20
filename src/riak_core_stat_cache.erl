@@ -84,8 +84,7 @@ init([]) ->
     RefreshRateMillis = ?REFRSH_MILLIS(RefreshRateSecs),
     %% re-register mods, if this is a restart after a crash
     RegisteredMods = lists:foldl(fun({App, Mod}, Registered) ->
-                                         register_mod(App, ?DEFAULT_REG(Mod, RefreshRateMillis), Registered),
-                                         schedule_get_stats(RefreshRateMillis, App, {Mod, produce_stats, []}) end,
+                                         register_mod(App, ?DEFAULT_REG(Mod, RefreshRateMillis), Registered) end,
                                  orddict:new(),
                                  riak_core:stat_mods()),
     {ok, #state{tab=Tab, apps=orddict:from_list(RegisteredMods)}}.
@@ -93,9 +92,7 @@ init([]) ->
 handle_call({register, App, {MFA, RefreshRateMillis}}, _From, State0=#state{apps=Apps0}) ->
     Apps = case registered(App, Apps0) of
                false ->
-                   Apps1 = register_mod(App,{MFA, RefreshRateMillis}, Apps0),
-                   schedule_get_stats(RefreshRateMillis, App, MFA),
-                   Apps1;
+                   register_mod(App,{MFA, RefreshRateMillis}, Apps0);
                {true, _} ->
                    Apps0
            end,
@@ -174,7 +171,8 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% internal
 schedule_get_stats(After, App, MFA) ->
-    erlang:send_after(After, ?SERVER, {get_stats, {App, MFA}}).
+    Pid = self(),
+    erlang:send_after(After, Pid, {get_stats, {App, MFA}}).
 
 make_freshness_stat(App, TS) ->
     {make_freshness_stat_name(App), TS}.
@@ -183,11 +181,13 @@ make_freshness_stat_name(App) ->
     list_to_atom(atom_to_list(App) ++ "_stat_ts").
 
 -spec register_mod(atom(), registered_app(), orddict:orddict()) -> orddict:orddict().
-register_mod(App, AppRegistration, Apps) ->
-    {{Mod, _, _}, _} = AppRegistration,
+register_mod(App, AppRegistration, Apps0) ->
+    {{Mod, _, _}=MFA, RefreshRateMillis} = AppRegistration,
     folsom_metrics:new_histogram({?MODULE, Mod}),
     folsom_metrics:new_meter({?MODULE, App}),
-    orddict:store(App, AppRegistration, Apps).
+    Apps = orddict:store(App, AppRegistration, Apps0),
+    schedule_get_stats(RefreshRateMillis, App, MFA),
+    Apps.
 
 registered(App, Apps) ->
     registered(orddict:find(App, Apps)).
