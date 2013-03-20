@@ -2,7 +2,7 @@
 %%
 %% riak_core: Core Riak Application
 %%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -48,7 +48,11 @@
          multi_rpc_ann/5,
          multicall_ann/4,
          multicall_ann/5,
-         is_arch/1]).
+         is_arch/1,
+         format_ip_and_port/2,
+         peername/2,
+         sockname/2
+        ]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -471,6 +475,29 @@ is_arch (sunos) -> string:str(get_arch(),"sunos") > 0;
 is_arch (osx) -> is_arch(darwin);
 is_arch (solaris) -> is_arch(sunos);
 is_arch (Arch) -> throw({unsupported_architecture,Arch}).
+
+format_ip_and_port(Ip, Port) when is_list(Ip) ->
+    lists:flatten(io_lib:format("~s:~p",[Ip,Port]));
+format_ip_and_port(Ip, Port) when is_tuple(Ip) ->
+    lists:flatten(io_lib:format("~s:~p",[inet_parse:ntoa(Ip),
+                                         Port])).
+peername(Socket, Transport) ->
+    case Transport:peername(Socket) of
+        {ok, {Ip, Port}} ->
+            format_ip_and_port(Ip, Port);
+        {error, Reason} ->
+            %% just return a string so JSON doesn't blow up
+            lists:flatten(io_lib:format("error:~p", [Reason]))
+    end.
+
+sockname(Socket, Transport) ->
+    case Transport:sockname(Socket) of
+        {ok, {Ip, Port}} ->
+            format_ip_and_port(Ip, Port);
+        {error, Reason} ->
+            %% just return a string so JSON doesn't blow up
+            lists:flatten(io_lib:format("error:~p", [Reason]))
+    end.
 
 %% ===================================================================
 %% EUnit tests
