@@ -41,6 +41,7 @@
          rpc_every_member/4,
          rpc_every_member_ann/4,
          pmap/2,
+         pmap/3,
          multi_rpc/4,
          multi_rpc/5,
          multi_rpc_ann/4,
@@ -51,6 +52,7 @@
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
+-export([counter_loop/1,incr_counter/1,decr_counter/1]).
 -endif.
 
 %% R14 Compatibility
@@ -259,6 +261,83 @@ pmap(F, L) ->
     {_, L3} = lists:unzip(lists:keysort(1, L2)),
     L3.
 
+-record(pmap_acc,{
+                  mapper,
+                  fn,
+                  n_pending=0,
+                  pending=sets:new(),
+                  n_done=0,
+                  done=[],
+                  max_concurrent=1
+                  }).
+
+%% @doc Parallel map with a cap on the number of concurrent worker processes.
+%% Note: Worker processes are linked to the parent, so a crash propagates.
+-spec pmap(Fun::function(), List::list(), MaxP::integer()) -> list().
+pmap(Fun, List, MaxP) when MaxP < 1 ->
+    pmap(Fun, List, 1);
+pmap(Fun, List, MaxP) when is_function(Fun), is_list(List), is_integer(MaxP) ->
+    Mapper = self(),
+    #pmap_acc{pending=Pending, done=Done} =
+                 lists:foldl(fun pmap_worker/2,
+                             #pmap_acc{mapper=Mapper,
+                                       fn=Fun,
+                                       max_concurrent=MaxP},
+                             List),
+    All = pmap_collect_rest(Pending, Done),
+    % Restore input order
+    Sorted = lists:keysort(1, All),
+    [ R || {_, R} <- Sorted ].
+
+%% @doc Fold function for {@link pmap/3} that spawns up to a max number of
+%% workers to execute the mapping function over the input list.
+pmap_worker(X, Acc = #pmap_acc{n_pending=NP,
+                               pending=Pending,
+                               n_done=ND,
+                               max_concurrent=MaxP,
+                               mapper=Mapper,
+                               fn=Fn})
+  when NP < MaxP ->
+    Worker =
+        spawn_link(fun() ->
+                           R = Fn(X),
+                           Mapper ! {pmap_result, self(), {NP+ND, R}}
+                   end),
+    Acc#pmap_acc{n_pending=NP+1, pending=sets:add_element(Worker, Pending)};
+pmap_worker(X, Acc = #pmap_acc{n_pending=NP,
+                               pending=Pending,
+                               n_done=ND,
+                               done=Done,
+                               max_concurrent=MaxP})
+  when NP == MaxP ->
+    {Result, NewPending} = pmap_collect_one(Pending),
+    pmap_worker(X, Acc#pmap_acc{n_pending=NP-1, pending=NewPending,
+                                n_done=ND+1, done=[Result|Done]}).
+
+%% @doc Waits for one pending pmap task to finish
+pmap_collect_one(Pending) ->
+    receive
+        {pmap_result, Pid, Result} ->
+            Size = sets:size(Pending),
+            NewPending = sets:del_element(Pid, Pending),
+            case sets:size(NewPending) of
+                Size ->
+                    pmap_collect_one(Pending);
+                _ ->
+                    {Result, NewPending}
+            end
+    end.
+
+pmap_collect_rest(Pending, Done) ->
+    case sets:size(Pending) of
+        0 ->
+            Done;
+        _ ->
+            {Result, NewPending} = pmap_collect_one(Pending),
+            pmap_collect_rest(NewPending, [Result | Done])
+    end.
+
+
 %% @spec rpc_every_member(atom(), atom(), [term()], integer()|infinity)
 %%          -> {Results::[term()], BadNodes::[node()]}
 %% @doc Make an RPC call to the given module and function on each
@@ -453,6 +532,73 @@ build_tree_test() ->
     ?assertEqual(ATree, build_tree(2, Flat, [])),
     ?assertEqual(CTree, build_tree(2, Flat, [cycles])),
     ok.
+
+
+counter_loop(N) ->
+    receive
+        {up, Pid} ->
+            N2=N+1,
+            Pid ! {counter_value, N2},
+            counter_loop(N2);
+        down ->
+            counter_loop(N-1);
+        exit ->
+            exit(normal)
+    end.
+
+incr_counter(CounterPid) ->
+    CounterPid ! {up, self()},
+    receive
+        {counter_value, N} -> N
+    after
+        3000 ->
+            ?assert(false)
+    end.
+
+decr_counter(CounterPid) ->
+    CounterPid ! down.
+
+bounded_pmap_test_() ->
+    Fun1 = fun(X) -> X+2 end,
+    Tests =
+    fun(CountPid) ->
+        GFun = fun(Max) ->
+                    fun(X) ->
+                            ?assert(incr_counter(CountPid) =< Max),
+                            timer:sleep(1),
+                            decr_counter(CountPid),
+                            Fun1(X)
+                    end
+               end,
+        [
+         fun() ->
+             ?assertEqual(lists:seq(Fun1(1), Fun1(N)),
+                          pmap(GFun(MaxP),
+                               lists:seq(1, N), MaxP))
+         end ||
+         MaxP <- lists:seq(1,20),
+         N <- lists:seq(0,10)
+        ]
+    end,
+    {setup,
+      fun() ->
+          Pid = spawn_link(?MODULE, counter_loop, [0]),
+          monitor(process, Pid),
+          Pid
+      end,
+      fun(Pid) ->
+          Pid ! exit,
+          receive
+              {'DOWN', _Ref, process, Pid, _Info} -> ok
+          after
+                  3000 ->
+                  ?debugMsg("pmap counter process did not go down in time"),
+                  ?assert(false)
+          end,
+          ok
+      end,
+      Tests
+     }.
 
 -endif.
 
