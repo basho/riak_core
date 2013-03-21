@@ -83,29 +83,49 @@ size_guard(N) ->
     {'>=', {size, '$1'}, N}.
 
 calculate_stats(NamesAndTypes) ->
-    [{Name, get_stat(Stat)} || {Name, _Type}=Stat <- NamesAndTypes].
+    [{Name, get_stat({Name, Type})} || {Name, {metric, _, Type, _}} <- NamesAndTypes].
 
 %% Create/lookup a cache/calculation process
 get_stat(Stat) ->
     Pid = riak_core_stat_calc_sup:calc_proc(Stat),
     riak_core_stat_calc_proc:value(Pid).
 
-%% BAD uses internl knowledge of folsom metrics record
-%% This is a callback function used by
-%% riak_core_stat_calc_proc when it calculates a stat's
-%% current value.
-calc_stat({Name, {metric, _Tags, gauge, _HistLen}}) ->
-    GuageVal = folsom_metrics:get_metric_value(Name),
-    calc_guage(GuageVal);
-calc_stat({Name, {metric, _Tags, histogram, _HistLen}}) ->
-    folsom_metrics:get_histogram_statistics(Name);
-calc_stat({Name, {metric, _Tags, _Type, _HistLen}}) ->
-    folsom_metrics:get_metric_value(Name).
+%% Encapsulate getting a stat value from folsom.
+%%
+%% If for any reason we can't get a stats value
+%% return 'unavailable'.
+%% @TODO experience shows that once a stat is
+%% broken it stays that way. Should we delete
+%% stats that are broken?
+calc_stat({Name, gauge}) ->
+    try
+        GaugeVal = folsom_metrics:get_metric_value(Name),
+        calc_gauge(GaugeVal)
+    catch ErrClass:ErrReason ->
+            log_error(Name, ErrClass, ErrReason),
+            unavailable
+    end;
+calc_stat({Name, histogram}) ->
+    try
+        folsom_metrics:get_histogram_statistics(Name)
+    catch ErrClass:ErrReason ->
+            log_error(Name, ErrClass, ErrReason),
+            unavailable
+    end;
+calc_stat({Name, _Type}) ->
+    try folsom_metrics:get_metric_value(Name)
+    catch ErrClass:ErrReason ->
+            log_error(Name, ErrClass, ErrReason),
+            unavailable
+    end.
+
+log_error(StatName, ErrClass, ErrReason) ->
+    lager:error("Failed to calculate stat ~p with ~p:~p", [StatName, ErrClass, ErrReason]).
 
 %% some crazy people put funs in folsom gauges
 %% so that they can have a consistent interface
 %% to access stats from disperate sources
-calc_guage({function, Mod, Fun}) ->
+calc_gauge({function, Mod, Fun}) ->
     Mod:Fun();
-calc_guage(Val) ->
+calc_gauge(Val) ->
     Val.
