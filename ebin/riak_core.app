@@ -82,6 +82,7 @@
              riak_core_connection,
              riak_core_service_mgr,
              riak_core_tcp_mon,
+             riak_core_ssl_util,
              supervisor_pre_r14b04,
              vclock
             ]},
