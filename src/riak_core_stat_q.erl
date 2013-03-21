@@ -99,25 +99,33 @@ get_stat(Stat) ->
 %% stats that are broken?
 calc_stat({Name, gauge}) ->
     try
-        GuageVal = folsom_metrics:get_metric_value(Name),
-        calc_guage(GuageVal)
-    catch _:_ ->
+        GaugeVal = folsom_metrics:get_metric_value(Name),
+        calc_gauge(GaugeVal)
+    catch ErrClass:ErrReason ->
+            log_error(Name, ErrClass, ErrReason),
             unavailable
     end;
 calc_stat({Name, histogram}) ->
     try
         folsom_metrics:get_histogram_statistics(Name)
-    catch _:_ -> unavailable
+    catch ErrClass:ErrReason ->
+            log_error(Name, ErrClass, ErrReason),
+            unavailable
     end;
 calc_stat({Name, _Type}) ->
     try folsom_metrics:get_metric_value(Name)
-    catch _:_ -> unavailable
+    catch ErrClass:ErrReason ->
+            log_error(Name, ErrClass, ErrReason),
+            unavailable
     end.
+
+log_error(StatName, ErrClass, ErrReason) ->
+    lager:error("Failed to calculate stat ~p with ~p:~p", [StatName, ErrClass, ErrReason]).
 
 %% some crazy people put funs in folsom gauges
 %% so that they can have a consistent interface
 %% to access stats from disperate sources
-calc_guage({function, Mod, Fun}) ->
+calc_gauge({function, Mod, Fun}) ->
     Mod:Fun();
-calc_guage(Val) ->
+calc_gauge(Val) ->
     Val.
