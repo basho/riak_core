@@ -120,7 +120,7 @@ calc_stat({Name, _Type}) ->
     end.
 
 log_error(StatName, ErrClass, ErrReason) ->
-    lager:error("Failed to calculate stat ~p with ~p:~p", [StatName, ErrClass, ErrReason]).
+    lager:warning("Failed to calculate stat ~p with ~p:~p", [StatName, ErrClass, ErrReason]).
 
 %% some crazy people put funs in folsom gauges
 %% so that they can have a consistent interface
