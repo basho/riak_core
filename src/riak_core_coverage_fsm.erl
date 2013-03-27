@@ -112,7 +112,9 @@ behaviour_info(_) ->
                 required_responses :: pos_integer(),
                 response_count=0 :: non_neg_integer(),
                 timeout :: timeout(),
-                vnode_master :: atom()
+                vnode_master :: atom(),
+                plan_fun :: function(),
+                process_fun :: function()
                }).
 
 %% ===================================================================
@@ -153,9 +155,12 @@ test_link(Mod, From, RequestArgs, _Options, StateProps) ->
 init([Mod,
       From={_, ReqId, _},
       RequestArgs]) ->
+    Exports = Mod:module_info(exports),
     {Request, VNodeSelector, NVal, PrimaryVNodeCoverage,
      NodeCheckService, VNodeMaster, Timeout, ModState} =
         Mod:init(From, RequestArgs),
+    PlanFun = plan_callback(Mod, Exports),
+    ProcessFun = process_results_callback(Mod, Exports),
     StateData = #state{mod=Mod,
                        mod_state=ModState,
                        node_check_service=NodeCheckService,
@@ -165,7 +170,9 @@ init([Mod,
                        request=Request,
                        req_id=ReqId,
                        timeout=Timeout,
-                       vnode_master=VNodeMaster},
+                       vnode_master=VNodeMaster,
+                       plan_fun = PlanFun,
+                       process_fun = ProcessFun},
     {ok, initialize, StateData, 0};
 init({test, Args, StateProps}) ->
     %% Call normal init
@@ -194,7 +201,8 @@ initialize(timeout, StateData0=#state{mod=Mod,
                                       request=Request,
                                       req_id=ReqId,
                                       timeout=Timeout,
-                                      vnode_master=VNodeMaster}) ->
+                                      vnode_master=VNodeMaster,
+                                      plan_fun = PlanFun}) ->
     CoveragePlan = riak_core_coverage_plan:create_plan(VNodeSelector,
                                                        NVal,
                                                        PVC,
@@ -204,13 +212,14 @@ initialize(timeout, StateData0=#state{mod=Mod,
         {error, Reason} ->
             Mod:finish({error, Reason}, ModState);
         {CoverageVNodes, FilterVNodes} ->
+            {ok, UpModState} = PlanFun(CoverageVNodes, ModState),
             Sender = {fsm, ReqId, self()},
             riak_core_vnode_master:coverage(Request,
                                             CoverageVNodes,
                                             FilterVNodes,
                                             Sender,
                                             VNodeMaster),
-            StateData = StateData0#state{coverage_vnodes=CoverageVNodes},
+            StateData = StateData0#state{coverage_vnodes=CoverageVNodes, mod_state=UpModState},
             {next_state, waiting_results, StateData, Timeout}
     end.
 
@@ -220,8 +229,9 @@ waiting_results({{ReqId, VNode}, Results},
                                  mod=Mod,
                                  mod_state=ModState,
                                  req_id=ReqId,
-                                 timeout=Timeout}) ->
-    case Mod:process_results(Results, ModState) of
+                                 timeout=Timeout,
+                                 process_fun = ProcessFun}) ->
+    case ProcessFun(VNode, Results, ModState) of
         {ok, UpdModState} ->
             UpdStateData = StateData#state{mod_state=UpdModState},
             {next_state, waiting_results, UpdStateData, Timeout};
@@ -272,3 +282,31 @@ terminate(Reason, _StateName, _State) ->
 %% @private
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
+
+plan_callback(Mod, Exports) ->
+    case exports(plan, Exports) of
+        true ->
+            fun(CoverageVNodes, ModState) ->
+                    Mod:plan(CoverageVNodes, ModState) end;
+        _ -> fun(_, ModState) ->
+                     {ok, ModState} end
+    end.
+
+process_results_callback(Mod, Exports) ->
+    case exports_arity(process_results, 3, Exports) of
+        true ->
+            fun(VNode, Results, ModState) ->
+                    Mod:process_results(VNode, Results, ModState) end;
+        false ->
+            fun(_VNode, Results, ModState) ->
+                    Mod:process_results(Results, ModState) end
+    end.
+
+exports(Function, Exports) ->
+    proplists:is_defined(Function, Exports).
+
+exports_arity(Function, Arity, Exports) ->
+    case proplists:get_all_values(Function, Exports) of
+        [] -> false;
+        L -> lists:member(Arity, L)
+    end.
