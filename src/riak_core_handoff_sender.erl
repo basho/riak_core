@@ -304,9 +304,10 @@ visit_item(K, V, Acc) ->
             ItemQueue2 = [BinObj | ItemQueue],
             ItemQueueByteSize2 = ItemQueueByteSize + byte_size(BinObj),
 
-ItemQueueByteSizeSendThreshold = 1024*1024, %%JFW 4096,
+            %% Unit size is bytes:
+            HandoffBatchThreshold = app_helper:get_env(riak_core, handoff_batch_threshold, 1024*1024),
 
-            case ItemQueueByteSize2 =< ItemQueueByteSizeSendThreshold of
+            case ItemQueueByteSize2 =< HandoffBatchThreshold of
                 true -> 
                          Acc#ho_acc{item_queue=ItemQueue2,
                                     item_queue_byte_size=ItemQueueByteSize2};
