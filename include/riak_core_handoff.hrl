@@ -3,6 +3,7 @@
 -define(PT_MSG_OLDSYNC, 2).
 -define(PT_MSG_SYNC, 3).
 -define(PT_MSG_CONFIGURE, 4).
+-define(PT_MSG_BATCH, 5).
 
 -record(ho_stats,
         {

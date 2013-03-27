@@ -43,16 +43,19 @@
 %% Accumulator for the visit item HOF
 -record(ho_acc,
         {
-          ack            :: non_neg_integer(),
-          error          :: ok | {error, any()},
-          filter         :: function(),
-          module         :: module(),
-          parent         :: pid(),
-          socket         :: any(),
-          src_target     :: {non_neg_integer(), non_neg_integer()},
-          stats          :: #ho_stats{},
-          tcp_mod        :: module(),
-          total          :: non_neg_integer()
+          ack                  :: non_neg_integer(),
+          error                :: ok | {error, any()},
+          filter               :: function(),
+          module               :: module(),
+          parent               :: pid(),
+          socket               :: any(),
+          src_target           :: {non_neg_integer(), non_neg_integer()},
+          stats                :: #ho_stats{},
+          tcp_mod              :: module(),
+          total                :: non_neg_integer(),
+          total_bytes          :: non_neg_integer(),
+          item_queue           :: [binary()],
+          item_queue_byte_size :: non_neg_integer()
         }).
 
 %%%===================================================================
@@ -144,19 +147,35 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                                       parent=ParentPid,
                                       socket=Socket,
                                       src_target={SrcPartition, TargetPartition},
-                                      stats=Stats,
+                                      stats=Stats,                                
                                       tcp_mod=TcpMod,
-                                      total=0}},
-
+                                      total_bytes=0,
+                                      total=0,
+                                      item_queue=[],
+                                      item_queue_byte_size=0}},                             
 
          %% IFF the vnode is using an async worker to perform the fold
          %% then sync_command will return error on vnode crash,
          %% otherwise it will wait forever but vnode crash will be
          %% caught by handoff manager.  I know, this is confusing, a
          %% new handoff system will be written soon enough.
-         R = riak_core_vnode_master:sync_command({SrcPartition, SrcNode},
+
+%% JFW: Don't forget to remove timing code when we're done:
+{ElapsedTime, R} = timer:tc(fun () -> 
+    AccRecord =     riak_core_vnode_master:sync_command({SrcPartition, SrcNode},
                                                  Req,
                                                  VMaster, infinity),
+
+    send_objects(AccRecord#ho_acc.item_queue, AccRecord)
+end),
+
+Bytes = R#ho_acc.total_bytes,
+Objs = R#ho_acc.total,
+ElapsedSeconds = ElapsedTime/1000000,
+Throughput = Bytes / ElapsedSeconds,
+lager:info("JFW: stats output after ~p seconds (~pms): ~p bytes in ~p objects; throughput: ~p bytes/second ~n", [ElapsedSeconds, ElapsedTime, Bytes, Objs, Throughput]),
+
+
          if R == {error, vnode_shutdown} ->
                  ?log_info("because the local vnode was shutdown", []),
                  throw({be_quiet, error, local_vnode_shutdown_requested});
@@ -260,34 +279,83 @@ visit_item(K, V, Acc=#ho_acc{ack=?ACK_COUNT}) ->
             Acc#ho_acc{ack=0, error={error, Reason}, stats=Stats3}
     end;
 visit_item(K, V, Acc) ->
-    #ho_acc{ack=Ack,
+
+    case get(prof) of
+        undefined -> 
+                put(prof, true),
+                io:format("JFW: starting profile~n"),
+                eprof:start_profiling([self()]);
+
+        _ -> ok
+    end,
+
+    #ho_acc{
             filter=Filter,
             module=Module,
-            socket=Sock,
-            src_target={SrcPartition, TargetPartition},
-            stats=Stats,
-            tcp_mod=TcpMod,
-            total=Total
+            total=Total,
+            item_queue=ItemQueue,
+            item_queue_byte_size=ItemQueueByteSize
            } = Acc,
 
     case Filter(K) of
         true ->
             BinObj = Module:encode_handoff_item(K, V),
-            M = <<?PT_MSG_OBJ:8,BinObj/binary>>,
+
+            ItemQueue2 = [BinObj | ItemQueue],
+            ItemQueueByteSize2 = ItemQueueByteSize + byte_size(BinObj),
+
+ItemQueueByteSizeSendThreshold = 1024*1024, %%JFW 4096,
+
+            case ItemQueueByteSize2 =< ItemQueueByteSizeSendThreshold of
+                true -> 
+                         Acc#ho_acc{item_queue=ItemQueue2,
+                                    item_queue_byte_size=ItemQueueByteSize2};
+
+                false -> send_objects(ItemQueue2, Acc)
+            end;
+
+        false ->
+            Acc#ho_acc{error=ok, total=Total+1}
+    end.
+
+send_objects([], Acc) ->
+    Acc;
+send_objects(ItemsReverseList, Acc) ->
+
+    Items = lists:reverse(ItemsReverseList),
+
+    #ho_acc{ack=Ack,
+            module=Module,
+            socket=Sock,
+            src_target={SrcPartition, TargetPartition},
+            stats=Stats,
+            tcp_mod=TcpMod,
+            total=Total,
+            total_bytes=TotalBytes
+           } = Acc,
+
+            NObjects = length(Items),
+            ObjectList = term_to_binary(Items),
+
+            M = <<?PT_MSG_BATCH:8, ObjectList/binary>>,
+
             NumBytes = byte_size(M),
 
+%%JFW: TODO: length of list in stats (new incr_objs()) or track #objs/make count a tuple
             Stats2 = incr_bytes(incr_objs(Stats), NumBytes),
+
             Stats3 = maybe_send_status({Module, SrcPartition, TargetPartition}, Stats2),
 
             case TcpMod:send(Sock, M) of
                 ok ->
-                    Acc#ho_acc{ack=Ack+1, error=ok, stats=Stats3, total=Total+1};
+                    Acc#ho_acc{ack=Ack+1, error=ok, stats=Stats3, 
+                               total=Total+NObjects,
+                               total_bytes=TotalBytes+NumBytes,
+                               item_queue=[],
+                               item_queue_byte_size=0};
                 {error, Reason} ->
                     Acc#ho_acc{error={error, Reason}, stats=Stats3}
-            end;
-        false ->
-            Acc#ho_acc{error=ok, total=Total+1}
-    end.
+            end.
 
 get_handoff_ip(Node) when is_atom(Node) ->
     case rpc:call(Node, riak_core_handoff_listener, get_handoff_ip, [],

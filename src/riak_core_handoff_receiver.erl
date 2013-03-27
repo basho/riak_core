@@ -102,6 +102,12 @@ process_message(?PT_MSG_INIT, MsgData, State=#state{vnode_mod=VNodeMod}) ->
             {vnode_pid, VNode}],
     riak_core_handoff_manager:set_recv_data(self(), Data),
     State#state{partition=Partition, vnode=VNode};
+
+process_message(?PT_MSG_BATCH, MsgData, State) ->
+    lists:foldl(fun(Obj, StateAcc) -> process_message(?PT_MSG_OBJ, Obj, StateAcc) end, 
+                State,
+                binary_to_term(MsgData));
+
 process_message(?PT_MSG_OBJ, MsgData, State=#state{vnode=VNode, count=Count}) ->
     Msg = {handoff_data, MsgData},
     case gen_fsm:sync_send_all_state_event(VNode, Msg, 60000) of
