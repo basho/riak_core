@@ -52,9 +52,12 @@
           src_target           :: {non_neg_integer(), non_neg_integer()},
           stats                :: #ho_stats{},
           tcp_mod              :: module(),
-          total                :: non_neg_integer(),
+
+          total_objects        :: non_neg_integer(),
           total_bytes          :: non_neg_integer(),
+
           item_queue           :: [binary()],
+          item_queue_length    :: non_neg_integer(),
           item_queue_byte_size :: non_neg_integer()
         }).
 
@@ -149,9 +152,12 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                                       src_target={SrcPartition, TargetPartition},
                                       stats=Stats,                                
                                       tcp_mod=TcpMod,
+
                                       total_bytes=0,
-                                      total=0,
+                                      total_objects=0,
+
                                       item_queue=[],
+                                      item_queue_length=0,
                                       item_queue_byte_size=0}},                             
 
          %% IFF the vnode is using an async worker to perform the fold
@@ -166,14 +172,15 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                                                  Req,
                                                  VMaster, infinity),
 
+    %% Send any straggler entries remaining in the buffer:
     send_objects(AccRecord#ho_acc.item_queue, AccRecord)
 end),
 
-Bytes = R#ho_acc.total_bytes,
-Objs = R#ho_acc.total,
+TotalBytes = R#ho_acc.total_bytes,
+TotalObjs = R#ho_acc.total_objects,
 ElapsedSeconds = ElapsedTime/1000000,
-Throughput = Bytes / ElapsedSeconds,
-lager:info("JFW: stats output after ~p seconds (~pms): ~p bytes in ~p objects; throughput: ~p bytes/second ~n", [ElapsedSeconds, ElapsedTime, Bytes, Objs, Throughput]),
+Throughput = TotalBytes / ElapsedSeconds,
+lager:info("JFW: stats output after ~p seconds (~pms): ~p bytes in ~p objects; throughput: ~p bytes/second ~n", [ElapsedSeconds, ElapsedTime, TotalBytes, TotalObjs, Throughput]),
 
 
          if R == {error, vnode_shutdown} ->
@@ -186,7 +193,7 @@ lager:info("JFW: stats output after ~p seconds (~pms): ~p bytes in ~p objects; t
                  module=Module,
                  parent=ParentPid,
                  tcp_mod=TcpMod,
-                 total=SentCount} = R,
+                 total_objects=SentCount} = R,
 
          case ErrStatus of
              ok ->
@@ -292,8 +299,9 @@ visit_item(K, V, Acc) ->
     #ho_acc{
             filter=Filter,
             module=Module,
-            total=Total,
+            total_objects=TotalObjects,
             item_queue=ItemQueue,
+            item_queue_length=ItemQueueLength,
             item_queue_byte_size=ItemQueueByteSize
            } = Acc,
 
@@ -302,21 +310,24 @@ visit_item(K, V, Acc) ->
             BinObj = Module:encode_handoff_item(K, V),
 
             ItemQueue2 = [BinObj | ItemQueue],
+            ItemQueueLength2 = ItemQueueLength + 1,
             ItemQueueByteSize2 = ItemQueueByteSize + byte_size(BinObj),
+
+            Acc2 = Acc#ho_acc{item_queue_length=ItemQueueLength2,
+                              item_queue_byte_size=ItemQueueByteSize2},
 
             %% Unit size is bytes:
             HandoffBatchThreshold = app_helper:get_env(riak_core, handoff_batch_threshold, 1024*1024),
 
             case ItemQueueByteSize2 =< HandoffBatchThreshold of
                 true -> 
-                         Acc#ho_acc{item_queue=ItemQueue2,
-                                    item_queue_byte_size=ItemQueueByteSize2};
+                         Acc2#ho_acc{item_queue=ItemQueue2};
 
-                false -> send_objects(ItemQueue2, Acc)
+                false -> send_objects(ItemQueue2, Acc2)
             end;
 
         false ->
-            Acc#ho_acc{error=ok, total=Total+1}
+            Acc#ho_acc{error=ok, total_objects=TotalObjects+1}
     end.
 
 send_objects([], Acc) ->
@@ -331,28 +342,30 @@ send_objects(ItemsReverseList, Acc) ->
             src_target={SrcPartition, TargetPartition},
             stats=Stats,
             tcp_mod=TcpMod,
-            total=Total,
-            total_bytes=TotalBytes
+
+            total_objects=TotalObjects,
+            total_bytes=TotalBytes,
+            item_queue_length=NObjects
            } = Acc,
 
-            NObjects = length(Items),
             ObjectList = term_to_binary(Items),
 
             M = <<?PT_MSG_BATCH:8, ObjectList/binary>>,
 
             NumBytes = byte_size(M),
 
-%%JFW: TODO: length of list in stats (new incr_objs()) or track #objs/make count a tuple
-            Stats2 = incr_bytes(incr_objs(Stats), NumBytes),
+            Stats2 = incr_bytes(incr_objs(Stats, NObjects), NumBytes),
 
             Stats3 = maybe_send_status({Module, SrcPartition, TargetPartition}, Stats2),
 
             case TcpMod:send(Sock, M) of
                 ok ->
                     Acc#ho_acc{ack=Ack+1, error=ok, stats=Stats3, 
-                               total=Total+NObjects,
+                               total_objects=TotalObjects+NObjects,
                                total_bytes=TotalBytes+NumBytes,
+
                                item_queue=[],
+                               item_queue_length=0,
                                item_queue_byte_size=0};
                 {error, Reason} ->
                     Acc#ho_acc{error={error, Reason}, stats=Stats3}
@@ -435,10 +448,10 @@ incr_bytes(Stats=#ho_stats{bytes=Bytes}, NumBytes) ->
 
 %% @private
 %%
-%% @doc Increment `Stats' object count by 1.
--spec incr_objs(ho_stats()) -> NewStats::ho_stats().
-incr_objs(Stats=#ho_stats{objs=Objs}) ->
-    Stats#ho_stats{objs=Objs+1}.
+%% @doc Increment `Stats' object count by NObjs:
+-spec incr_objs(ho_stats(), non_neg_integer()) -> NewStats::ho_stats().
+incr_objs(Stats=#ho_stats{objs=Objs}, NObjs) ->
+    Stats#ho_stats{objs=Objs+NObjs}.
 
 %% @private
 %%
