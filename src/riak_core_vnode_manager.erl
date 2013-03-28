@@ -59,8 +59,8 @@
 -type repairs() :: [repair()].
 
 -record(state, {idxtab,
-                forwarding :: [pid()],
-                handoff :: [{term(), integer(), pid(), node()}],
+                forwarding :: [{{module(), integer()}, term()}],
+                handoff :: [{{module(), integer()}, term()}],
                 known_modules :: [term()],
                 never_started :: [{integer(), term()}],
                 vnode_start_tokens :: integer(),
@@ -73,6 +73,7 @@
 -define(XFER_COMPLETE(X), X#xfer_status.status == complete).
 -define(DEFAULT_OWNERSHIP_TRIGGER, 8).
 -define(ETS, ets_vnode_mgr).
+-define(DEFAULT_VNODE_ROLLING_START, 16).
 
 %% ===================================================================
 %% Public API
@@ -439,7 +440,8 @@ handle_info(management_tick, State) ->
                 State2#state{repairs=[]}
         end,
 
-    MaxStart = app_helper:get_env(riak_core, vnode_rolling_start, 16),
+    MaxStart = app_helper:get_env(riak_core, vnode_rolling_start,
+                                  ?DEFAULT_VNODE_ROLLING_START),
     State4 = State3#state{vnode_start_tokens=MaxStart},
     State5 = maybe_start_vnodes(Ring, State4),
 
@@ -510,17 +512,42 @@ delmon(MonRef, _State=#state{idxtab=T}) ->
 add_vnode_rec(I,  _State=#state{idxtab=T}) -> ets:insert(T,I).
 
 %% @private
-get_vnode(Idx, Mod, State) ->
-    case idx2vnode(Idx, Mod, State) of
-        no_match ->
-            ForwardTo = get_forward(Mod, Idx, State),
-            {ok, Pid} = riak_core_vnode_sup:start_vnode(Mod, Idx, ForwardTo),
-            MonRef = erlang:monitor(process, Pid),
-            add_vnode_rec(#idxrec{key={Idx,Mod},idx=Idx,mod=Mod,pid=Pid,
-                                  monref=MonRef}, State),
-            Pid;
-        X -> X
-    end.
+-spec get_vnode(Idx::integer() | [integer()], Mod::term(), State:: #state{}) ->
+          pid() | [pid()].
+get_vnode(Idx, Mod, State) when not is_list(Idx) ->
+    [Result] = get_vnode([Idx], Mod, State),
+    Result;
+get_vnode(IdxList, Mod, State) ->
+    Initial =
+        [case idx2vnode(Idx, Mod, State) of
+             no_match -> Idx;
+             Pid      -> {Idx, Pid}
+         end
+        || Idx <- IdxList],
+    {NotStarted, Started} = lists:partition(fun erlang:is_integer/1, Initial),
+    StartFun =
+        fun(Idx) ->
+                 ForwardTo = get_forward(Mod, Idx, State),
+                 lager:debug("Will start VNode for partition ~p", [Idx]),
+                 {ok, Pid} =
+                     riak_core_vnode_sup:start_vnode(Mod, Idx, ForwardTo),
+                 lager:debug("Started VNode, waiting for initialization to complete ~p, ~p ", [Pid, Idx]),
+                 ok = riak_core_vnode:wait_for_init(Pid),
+                 lager:debug("VNode initialization ready ~p, ~p", [Pid, Idx]),
+                 {Idx, Pid}
+        end,
+    MaxStart = app_helper:get_env(riak_core, vnode_rolling_start,
+                                  ?DEFAULT_VNODE_ROLLING_START),
+    Pairs = Started ++ riak_core_util:pmap(StartFun, NotStarted, MaxStart),
+    % Return Pids in same order as input
+    [begin
+         {_, Pid} = lists:keyfind(Idx, 1, Pairs),
+         MonRef = erlang:monitor(process, Pid),
+         add_vnode_rec(#idxrec{key={Idx,Mod},idx=Idx,mod=Mod,pid=Pid,
+                               monref=MonRef}, State),
+         Pid
+     end || Idx <- IdxList].
+
 
 get_forward(Mod, Idx, #state{forwarding=Fwd}) ->
     case orddict:find({Mod, Idx}, Fwd) of

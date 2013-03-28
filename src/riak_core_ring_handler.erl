@@ -121,27 +121,23 @@ ensure_vnodes_started({App,Mod}, Ring) ->
                        end,
 
                        %% Let the app finish starting...
-                       case riak_core:wait_for_application(App) of
-                           ok ->
-                               %% Start the vnodes.
-                               [Mod:start_vnode(I) || I <- Startable],
+                       ok = riak_core:wait_for_application(App),
 
-                               %% Mark the service as up.
-                               SupName = list_to_atom(atom_to_list(App) ++ "_sup"),
-                               SupPid = erlang:whereis(SupName),
-                               case riak_core:health_check(App) of
-                                   undefined ->
-                                       riak_core_node_watcher:service_up(App, SupPid);
-                                   HealthMFA ->
-                                       riak_core_node_watcher:service_up(App,
-                                                                         SupPid,
-                                                                         HealthMFA)
-                               end,
-                               exit(normal);
-                           {error, Reason} ->
-                               lager:critical("Failed to start application: ~p", [App]),
-                               throw({error, Reason})
-                       end
+                       %% Start the vnodes.
+                       Mod:start_vnode(Startable),
+
+                       %% Mark the service as up.
+                       SupName = list_to_atom(atom_to_list(App) ++ "_sup"),
+                       SupPid = erlang:whereis(SupName),
+                       case riak_core:health_check(App) of
+                           undefined ->
+                               riak_core_node_watcher:service_up(App, SupPid);
+                           HealthMFA ->
+                               riak_core_node_watcher:service_up(App,
+                                                                 SupPid,
+                                                                 HealthMFA)
+                       end,
+                       exit(normal)
                end),
     Startable.
 

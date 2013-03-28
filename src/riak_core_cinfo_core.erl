@@ -59,8 +59,7 @@ latest_ringfile(CPid) ->
     cluster_info:format(CPid, "File contents:\n~p\n", [binary_to_term(Contents)]).
 
 active_partitions(CPid) ->
-    Pids = [Pid || {_,Pid,_,_} <- supervisor:which_children(riak_core_vnode_sup)],
-    Vnodes = [riak_core_vnode:get_mod_index(Pid) || Pid <- Pids],
+    Vnodes = [{Mod, Idx} || {Mod, Idx, _Pid} <- riak_core_vnode_manager:all_vnodes()],
     Partitions = lists:foldl(fun({_,P}, Ps) -> 
                                      ordsets:add_element(P, Ps)
                              end, ordsets:new(), Vnodes),

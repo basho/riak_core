@@ -22,7 +22,23 @@
 -export([member_status/1, ring_status/1, print_member_status/2,
          stage_leave/1, stage_remove/1, stage_replace/1,
          stage_force_replace/1, print_staged/1, commit_staged/1,
-         clear_staged/1, transfer_limit/1]).
+         clear_staged/1, transfer_limit/1, pending_claim_percentage/2,
+         pending_nodes_and_claim_percentages/1]).
+
+%% @doc Return list of nodes, current and future claim.
+pending_nodes_and_claim_percentages(Ring) ->
+    Nodes = lists:keysort(2, riak_core_ring:all_member_status(Ring)),
+    [{Node, pending_claim_percentage(Ring, Node)} || Node <- Nodes].
+
+%% @doc Return for a given ring and node, percentage currently owned and
+%% anticipated after the transitions have been completed.
+pending_claim_percentage(Ring, Node) ->
+    RingSize = riak_core_ring:num_partitions(Ring),
+    Indices = riak_core_ring:indices(Ring, Node),
+    NextIndices = riak_core_ring:future_indices(Ring, Node),
+    RingPercent = length(Indices) * 100 / RingSize,
+    NextPercent = length(NextIndices) * 100 / RingSize,
+    {RingPercent, NextPercent}.
 
 member_status([]) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -39,24 +55,20 @@ print_member_status(Ring, LegacyGossip) ->
     io:format("Status     Ring    Pending    Node~n"),
     io:format("~79..-s~n", [""]),
     AllStatus = lists:keysort(2, riak_core_ring:all_member_status(Ring)),
-    RingSize = riak_core_ring:num_partitions(Ring),
     IsPending = ([] /= riak_core_ring:pending_changes(Ring)),
 
     {Joining, Valid, Down, Leaving, Exiting} =
         lists:foldl(fun({Node, Status},
                         {Joining0, Valid0, Down0, Leaving0, Exiting0}) ->
-                            Indices = riak_core_ring:indices(Ring, Node),
-                            NextIndices =
-                                riak_core_ring:future_indices(Ring, Node),
-                            RingPercent = length(Indices) * 100 / RingSize,
-                            NextPercent = length(NextIndices) * 100 / RingSize,
-
                             StatusOut =
                                 case orddict:fetch(Node, LegacyGossip) of
                                     true -> "(legacy)";
                                     false -> Status
                                 end,
-                            
+
+                            {RingPercent, NextPercent} =
+                                pending_claim_percentage(Ring, Node),
+
                             case IsPending of
                                 true ->
                                     io:format("~-8s  ~5.1f%    ~5.1f%    ~p~n",
