@@ -166,22 +166,12 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
          %% caught by handoff manager.  I know, this is confusing, a
          %% new handoff system will be written soon enough.
 
-%% JFW: Don't forget to remove timing code when we're done:
-{ElapsedTime, R} = timer:tc(fun () -> 
-    AccRecord =     riak_core_vnode_master:sync_command({SrcPartition, SrcNode},
-                                                 Req,
-                                                 VMaster, infinity),
+         AccRecord = riak_core_vnode_master:sync_command({SrcPartition, SrcNode},
+                                                         Req,
+                                                         VMaster, infinity),
 
-    %% Send any straggler entries remaining in the buffer:
-    send_objects(AccRecord#ho_acc.item_queue, AccRecord)
-end),
-
-TotalBytes = R#ho_acc.total_bytes,
-TotalObjs = R#ho_acc.total_objects,
-ElapsedSeconds = ElapsedTime/1000000,
-Throughput = TotalBytes / ElapsedSeconds,
-lager:info("JFW: stats output after ~p seconds (~pms): ~p bytes in ~p objects; throughput: ~p bytes/second ~n", [ElapsedSeconds, ElapsedTime, TotalBytes, TotalObjs, Throughput]),
-
+         %% Send any straggler entries remaining in the buffer:
+         send_objects(AccRecord#ho_acc.item_queue, AccRecord),
 
          if R == {error, vnode_shutdown} ->
                  ?log_info("because the local vnode was shutdown", []),
@@ -286,16 +276,6 @@ visit_item(K, V, Acc=#ho_acc{ack=?ACK_COUNT}) ->
             Acc#ho_acc{ack=0, error={error, Reason}, stats=Stats3}
     end;
 visit_item(K, V, Acc) ->
-
-    case get(prof) of
-        undefined -> 
-                put(prof, true),
-                io:format("JFW: starting profile~n"),
-                eprof:start_profiling([self()]);
-
-        _ -> ok
-    end,
-
     #ho_acc{
             filter=Filter,
             module=Module,
