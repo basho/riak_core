@@ -23,11 +23,11 @@
 %% @doc Listens on a single TCP port and negotiates which protocol to start
 %% on a new connection. Ranch is used to create a connection pool and accept
 %% new socket connections. When a connection is accepted, the client supplies
-%% a hello with thier revision and capabilities. The server replies in kind.
+%% a hello with their revision and capabilities. The server replies in kind.
 %% The client then sends the service they wish to use, and which versions of
 %% the service they support. The server will find the highest major version in
 %% common, and highest major version in common. If there is no major version in
-%% common, the connectin fails. Minor versions do not need to match. On a
+%% common, the connection fails. Minor versions do not need to match. On a
 %% success, the server sends the Major version, Client minor version, and
 %% Host minor version to the client. After that, the registered
 %% module:function/5 is called and control of the socket passed to it.
