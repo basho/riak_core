@@ -182,7 +182,7 @@ sync_connect_status(_Parent, {IP,Port}, {ClientProtocol, {Options, Module, Args}
             {error, Reason}
     end.
 
-%% Negotiate the highest common major protocol revisision with the connected server.
+%% Negotiate the highest common major protocol revision with the connected server.
 %% client -> server : Prefs List = {SubProto, [{Major, Minor}]}
 %% server -> client : selected version = {SubProto, {Major, HostMinor, ClientMinor}}
 %%
