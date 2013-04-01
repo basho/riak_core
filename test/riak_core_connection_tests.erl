@@ -108,14 +108,14 @@ conection_test_() ->
             ServiceSpec = {ServiceProto, {?TCP_OPTIONS, ?MODULE, test1service, ExpectedRevs}},
             riak_core_service_mgr:register_service(ServiceSpec, {round_robin,?MAX_CONS}),
 
-            % test protocal match
+            % test protocol match
             ClientProtocol = {test1proto, [{0,1},{1,1}]},
             ClientSpec = {ClientProtocol, {?TCP_OPTIONS, ?MODULE, [{1,1},{1,0}]}},
             riak_core_connection:connect(?TEST_ADDR, ClientSpec),
             timer:sleep(1000)
         end},
 
-        {"failed protocal match", fun() ->
+        {"failed protocol match", fun() ->
             %% start service
             SubProtocol = {{test1protoFailed, [{2,1}, {1,0}]},
                            {?TCP_OPTIONS, ?MODULE, test1service, failed_host_args}},

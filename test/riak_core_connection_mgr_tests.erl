@@ -88,7 +88,7 @@ connections_test_() ->
     end,
     fun(_) -> [
 
-        {"regsiter remote locator", fun() ->
+        {"register remote locator", fun() ->
             register_remote_locator(),
             Target = {?REMOTE_LOCATOR_TYPE, ?REMOTE_CLUSTER_NAME},
             Strategy = default,
