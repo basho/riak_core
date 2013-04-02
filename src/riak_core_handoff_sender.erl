@@ -173,7 +173,7 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
          %% Send any straggler entries remaining in the buffer:
          send_objects(AccRecord#ho_acc.item_queue, AccRecord),
 
-         if R == {error, vnode_shutdown} ->
+         if AccRecord == {error, vnode_shutdown} ->
                  ?log_info("because the local vnode was shutdown", []),
                  throw({be_quiet, error, local_vnode_shutdown_requested});
             true ->
@@ -183,7 +183,7 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                  module=Module,
                  parent=ParentPid,
                  tcp_mod=TcpMod,
-                 total_objects=SentCount} = R,
+                 total_objects=SentCount} = AccRecord,
 
          case ErrStatus of
              ok ->
