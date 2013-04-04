@@ -480,7 +480,8 @@ mark_handoff_complete(SrcIdx, Target, SeenIdxs, Mod, resize_transfer) ->
                                                                                Source,
                                                                                Target,
                                                                                Mod),
-                               {new_ring, Ring3};
+                               %% local ring optimization (see below)
+                               {set_only, Ring3};
                            _ ->
                                ignore
                        end
@@ -594,10 +595,12 @@ mark_delete_complete(Idx, Mod) ->
                        case {Type, Next, Status} of
                            {resized_primary, '$delete', awaiting} ->
                                Ring3 = riak_core_ring:deletion_complete(Ring, Idx, Mod),
-                               {new_ring, Ring3};
+                               %% Use local ring optimization like mark_handoff_complete
+                               {set_only, Ring3};
                            {{fallback, _}, '$delete', awaiting} ->
                                Ring3 = riak_core_ring:deletion_complete(Ring, Idx, Mod),
-                               {new_ring, Ring3};
+                               %% Use local ring optimization like mark_handoff_complete
+                               {set_only, Ring3};
                            _ ->
                                ignore
                        end
