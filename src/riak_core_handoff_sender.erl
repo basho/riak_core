@@ -43,7 +43,7 @@
 %% Accumulator for the visit item HOF
 -record(ho_acc,
         {
-          ack                  :: non_neg_integer(),
+          ack                  :: non_neg_integer(),  
           error                :: ok | {error, any()},
           filter               :: function(),
           module               :: module(),
@@ -58,7 +58,9 @@
 
           item_queue           :: [binary()],
           item_queue_length    :: non_neg_integer(),
-          item_queue_byte_size :: non_neg_integer()
+          item_queue_byte_size :: non_neg_integer(),
+
+          acksync_threshold    :: non_neg_integer()
         }).
 
 %%%===================================================================
@@ -120,6 +122,8 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
 
          RecvTimeout = get_handoff_receive_timeout(),
 
+         AckSyncThreshold = app_helper:get_env(riak_core, handoff_acksync_threshold, 25),
+
          %% Now that handoff_concurrency applies to both outbound and
          %% inbound conns there is a chance that the receiver may
          %% decide to reject the senders attempt to start a handoff.
@@ -143,7 +147,8 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
          Stats = #ho_stats{interval_end=future_now(get_status_interval())},
 
          Req = ?FOLD_REQ{foldfun=fun visit_item/3,
-                         acc0=#ho_acc{ack=0,
+                         acc0=#ho_acc{
+                                      ack=0,
                                       error=ok,
                                       filter=Filter,
                                       module=Module,
@@ -158,7 +163,11 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
 
                                       item_queue=[],
                                       item_queue_length=0,
-                                      item_queue_byte_size=0}},                             
+                                      item_queue_byte_size=0,
+
+                                      acksync_threshold=AckSyncThreshold
+                                     }
+                        },                             
 
          %% IFF the vnode is using an async worker to perform the fold
          %% then sync_command will return error on vnode crash,
@@ -166,12 +175,12 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
          %% caught by handoff manager.  I know, this is confusing, a
          %% new handoff system will be written soon enough.
 
-         AccRecord = riak_core_vnode_master:sync_command({SrcPartition, SrcNode},
-                                                         Req,
-                                                         VMaster, infinity),
+         AccRecord0 = riak_core_vnode_master:sync_command({SrcPartition, SrcNode},
+                                                          Req,
+                                                          VMaster, infinity),
 
          %% Send any straggler entries remaining in the buffer:
-         send_objects(AccRecord#ho_acc.item_queue, AccRecord),
+        AccRecord  = send_objects(AccRecord0#ho_acc.item_queue, AccRecord0),
 
          if AccRecord == {error, vnode_shutdown} ->
                  ?log_info("because the local vnode was shutdown", []),
@@ -248,7 +257,7 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
 %% Since we can't abort the fold, this clause is just a no-op.
 visit_item(_K, _V, Acc=#ho_acc{error={error, _Reason}}) ->
     Acc;
-visit_item(K, V, Acc=#ho_acc{ack=?ACK_COUNT}) ->
+visit_item(K, V, Acc = #ho_acc{ack = _AccSyncThreshold, acksync_threshold = _AccSyncThreshold}) ->
     #ho_acc{module=Module,
             socket=Sock,
             src_target={SrcPartition, TargetPartition},
@@ -300,9 +309,7 @@ visit_item(K, V, Acc) ->
             HandoffBatchThreshold = app_helper:get_env(riak_core, handoff_batch_threshold, 1024*1024),
 
             case ItemQueueByteSize2 =< HandoffBatchThreshold of
-                true -> 
-                         Acc2#ho_acc{item_queue=ItemQueue2};
-
+                true  -> Acc2#ho_acc{item_queue=ItemQueue2};
                 false -> send_objects(ItemQueue2, Acc2)
             end;
 
@@ -335,7 +342,6 @@ send_objects(ItemsReverseList, Acc) ->
             NumBytes = byte_size(M),
 
             Stats2 = incr_bytes(incr_objs(Stats, NObjects), NumBytes),
-
             Stats3 = maybe_send_status({Module, SrcPartition, TargetPartition}, Stats2),
 
             case TcpMod:send(Sock, M) of
