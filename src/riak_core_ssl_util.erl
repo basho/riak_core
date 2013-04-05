@@ -41,14 +41,14 @@ maybe_use_ssl(App) ->
         {cacerts, load_certs(app_helper:get_env(App, cacertdir, undefined))},
         {depth, app_helper:get_env(App, ssl_depth, 1)},
         {verify_fun, {fun verify_ssl/3,
-                get_my_common_name(app_helper:get_env(App, certfile,
-                        undefined))}},
+                {App, get_my_common_name(app_helper:get_env(App, certfile,
+                                                       undefined))}}},
         {verify, verify_peer},
         {fail_if_no_peer_cert, true},
         {secure_renegotiate, true} %% both sides are erlang, so we can force this
     ],
     Enabled = app_helper:get_env(App, ssl_enabled, false) == true,
-    case validate_ssl_config(Enabled, SSLOpts) of
+    case validate_ssl_config(App, Enabled, SSLOpts) of
         true ->
             SSLOpts;
         {error, Reason} ->
@@ -60,45 +60,45 @@ maybe_use_ssl(App) ->
     end.
 
 
-validate_ssl_config(false, _) ->
+validate_ssl_config(_App, false, _) ->
     %% ssl is disabled
     false;
-validate_ssl_config(true, []) ->
+validate_ssl_config(_App, true, []) ->
     %% all options validated
     true;
-validate_ssl_config(true, [{certfile, CertFile}|Rest]) ->
+validate_ssl_config(App, true, [{certfile, CertFile}|Rest]) ->
     case filelib:is_regular(CertFile) of
         true ->
-            validate_ssl_config(true, Rest);
+            validate_ssl_config(App, true, Rest);
         false ->
             {error, lists:flatten(io_lib:format("Certificate ~p is not a file",
                                                 [CertFile]))}
     end;
-validate_ssl_config(true, [{keyfile, KeyFile}|Rest]) ->
+validate_ssl_config(App, true, [{keyfile, KeyFile}|Rest]) ->
     case filelib:is_regular(KeyFile) of
         true ->
-            validate_ssl_config(true, Rest);
+            validate_ssl_config(App, true, Rest);
         false ->
             {error, lists:flatten(io_lib:format("Key ~p is not a file",
                                                 [KeyFile]))}
     end;
-validate_ssl_config(true, [{cacerts, CACerts}|Rest]) ->
+validate_ssl_config(App, true, [{cacerts, CACerts}|Rest]) ->
     case CACerts of
         undefined ->
             {error, lists:flatten(
                     io_lib:format("CA cert dir ~p is invalid",
-                                  [app_helper:get_env(riak_repl, cacertdir,
+                                  [app_helper:get_env(App, cacertdir,
                                                       undefined)]))};
         [] ->
             {error, lists:flatten(
                     io_lib:format("Unable to load any CA certificates from ~p",
-                                  [app_helper:get_env(riak_repl, cacertdir,
+                                  [app_helper:get_env(App, cacertdir,
                                                       undefined)]))};
         Certs when is_list(Certs) ->
-            validate_ssl_config(true, Rest)
+            validate_ssl_config(App, true, Rest)
     end;
-validate_ssl_config(true, [_|Rest]) ->
-    validate_ssl_config(true, Rest).
+validate_ssl_config(App, true, [_|Rest]) ->
+    validate_ssl_config(App, true, Rest).
 
 upgrade_client_to_ssl(Socket, App) ->
     case maybe_use_ssl(App) of
@@ -164,10 +164,8 @@ verify_ssl(_, valid, UserState) ->
 verify_ssl(_, valid_peer, undefined) ->
     lager:error("Unable to determine local certificate's common name"),
     {fail, bad_local_common_name};
-verify_ssl(Cert, valid_peer, MyCommonName) ->
-
+verify_ssl(Cert, valid_peer, {App, MyCommonName}) ->
     CommonName = get_common_name(Cert),
-
     case string:to_lower(CommonName) == string:to_lower(MyCommonName) of
         true ->
             lager:error("Peer certificate's common name matches local "
@@ -175,7 +173,7 @@ verify_ssl(Cert, valid_peer, MyCommonName) ->
             {fail, duplicate_common_name};
         _ ->
             case validate_common_name(CommonName,
-                    app_helper:get_env(riak_repl, peer_common_name_acl, "*")) of
+                    app_helper:get_env(App, peer_common_name_acl, "*")) of
                 {true, Filter} ->
                     lager:info("SSL connection from ~s granted by ACL ~s",
                         [CommonName, Filter]),
