@@ -18,27 +18,37 @@
 %%
 %% -------------------------------------------------------------------
 
+%% @doc fetches stats for registered modules and stores them
+%% in an ets backed cache.
+%% Only ever allows one process at a time to calculate stats.
+%% Will always serve the stats that are in the cache.
+%% Adds a stat `{stat_mod_ts, timestamp()}' to the stats returned
+%% from `get_stats/1' which is the time those stats were calculated.
+
 -module(riak_core_stat_cache).
 
 -behaviour(gen_server).
 
-
 %% API
 -export([start_link/0, get_stats/1, register_app/2, register_app/3,
-        stop/0]).
+        clear_cache/1, stop/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
+
+-type registered_app() :: {MFA::mfa(), RerfreshRateMillis::non_neg_integer()}.
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
 -define(SERVER, ?MODULE).
-%% @doc Cache item time to live in seconds
--define(TTL, 5).
+%% @doc Cache item refresh rate in seconds
+-define(REFRESH_RATE, 1).
+-define(REFRSH_MILLIS(N), timer:seconds(N)).
 -define(ENOTREG(App), {error, {not_registered, App}}).
+-define(DEFAULT_REG(Mod, RefreshRateMillis), {{Mod, produce_stats, []}, RefreshRateMillis}).
 
 -record(state, {tab, active=orddict:new(), apps=orddict:new()}).
 
@@ -50,14 +60,17 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 register_app(App, {M, F, A}) ->
-    TTL = app_helper:get_env(riak_core, stat_cache_ttl, ?TTL),
-    register_app(App, {M, F, A}, TTL).
+    RefreshRate = app_helper:get_env(riak_core, stat_cache_ttl, ?REFRESH_RATE),
+    register_app(App, {M, F, A}, RefreshRate).
 
-register_app(App, {M, F, A}, TTL) ->
-    gen_server:call(?SERVER, {register, App, {M, F, A}, TTL}).
+register_app(App, {M, F, A}, RefreshRateSecs) ->
+    gen_server:call(?SERVER, {register, App, {{M, F, A}, ?REFRSH_MILLIS(RefreshRateSecs)}}).
 
 get_stats(App) ->
     gen_server:call(?SERVER, {get_stats, App}, infinity).
+
+clear_cache(App) ->
+    gen_server:call(?SERVER, {clear, App}, infinity).
 
 stop() ->
     gen_server:cast(?SERVER, stop).
@@ -67,18 +80,19 @@ stop() ->
 init([]) ->
     process_flag(trap_exit, true),
     Tab = ets:new(?MODULE, [protected, set, named_table]),
-    TTL = app_helper:get_env(riak_core, stat_cache_ttl, ?TTL),
+    RefreshRateSecs = app_helper:get_env(riak_core, stat_cache_ttl, ?REFRESH_RATE),
+    RefreshRateMillis = ?REFRSH_MILLIS(RefreshRateSecs),
     %% re-register mods, if this is a restart after a crash
-    RegisteredMods = lists:foldl(fun({App, Mod}, Registerd) ->
-                                         register_mod(App, Mod, produce_stats, [], TTL, Registerd) end,
+    RegisteredMods = lists:foldl(fun({App, Mod}, Registered) ->
+                                         register_mod(App, ?DEFAULT_REG(Mod, RefreshRateMillis), Registered) end,
                                  orddict:new(),
                                  riak_core:stat_mods()),
     {ok, #state{tab=Tab, apps=orddict:from_list(RegisteredMods)}}.
 
-handle_call({register, App, {Mod, Fun, Args}, TTL}, _From, State0=#state{apps=Apps0}) ->
+handle_call({register, App, {MFA, RefreshRateMillis}}, _From, State0=#state{apps=Apps0}) ->
     Apps = case registered(App, Apps0) of
                false ->
-                   register_mod(App, Mod, Fun, Args, TTL, Apps0);
+                   register_mod(App,{MFA, RefreshRateMillis}, Apps0);
                {true, _} ->
                    Apps0
            end,
@@ -87,29 +101,45 @@ handle_call({get_stats, App}, From, State0=#state{apps=Apps, active=Active0, tab
     Reply = case registered(App, Apps) of
                 false ->
                     {reply, ?ENOTREG(App), State0};
-                {true, {M, F, A, TTL}} ->
-                    case cache_get(App, Tab, TTL) of
-                        No when No == miss; No == stale ->
-                            Active = maybe_get_stats(App, From, Active0, {M, F, A}),
+                {true, {MFA, _RefreshRateMillis}} ->
+                    case cache_get(App, Tab) of
+                        miss ->
+                            Active = maybe_get_stats(App, From, Active0, MFA),
                             {noreply, State0#state{active=Active}};
                         {hit, Stats, TS} ->
-                            {reply, {ok, Stats, TS}, State0}
+                            FreshnessStat = make_freshness_stat(App, TS),
+                            {reply, {ok, [FreshnessStat | Stats], TS}, State0}
                     end
             end,
     Reply;
+handle_call({clear, App}, _From, State=#state{apps=Apps, tab=Tab}) ->
+    case registered(App, Apps) of
+        {true, _} ->
+            true = ets:delete(Tab, App);
+        _  -> ok
+    end,
+    {reply, ok, State};
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
 
-handle_cast({stats, App, Stats, TS}, State0=#state{tab=Tab, active=Active}) ->
+%% @doc call back from process executig the stat calculation
+handle_cast({stats, App, Stats0, TS}, State0=#state{tab=Tab, active=Active, apps=Apps}) ->
+    %% @TODO standardise stat mods return type with a behaviour
+    Stats = case Stats0 of
+                {App, Stats1} -> Stats1;
+                Stats1 -> Stats1
+            end,
     ets:insert(Tab, {App, TS, Stats}),
     State = case orddict:find(App, Active) of
                 {ok, {_Pid, Awaiting}} ->
-                    [gen_server:reply(From, {ok, Stats, TS}) || From <- Awaiting],
+                    [gen_server:reply(From, {ok, [make_freshness_stat(App, TS) |Stats], TS}) || From <- Awaiting, From /= ?SERVER],
                     State0#state{active=orddict:erase(App, Active)};
                 error ->
                     State0
             end,
+    {ok, {MFA, RefreshRateMillis}} = orddict:find(App, Apps),
+    schedule_get_stats(RefreshRateMillis, App, MFA),
     {noreply, State};
 handle_cast(stop, State) ->
     {stop, normal, State};
@@ -122,10 +152,14 @@ handle_info({'EXIT', FromPid, Reason}, State0=#state{active=Active}) when Reason
                  not_found ->
                      {stop, Reason, State0};
                  {ok, {App, Awaiting}} ->
-                     [gen_server:reply(From, {error, Reason}) || From <- Awaiting],
+                     [gen_server:reply(From, {error, Reason}) || From <- Awaiting, From /= ?SERVER],
                      {noreply, State0#state{active=orddict:erase(App, Active)}}
              end,
      Reply;
+%% @doc callback on timer timeout to keep cache fresh
+handle_info({get_stats, {App, MFA}}, State) ->
+    Active =  maybe_get_stats(App, ?SERVER, State#state.active, MFA),
+    {noreply, State#state{active=Active}};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -136,10 +170,24 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %% internal
-register_mod(App, Mod, Fun, Args, TTL, Apps) ->
+schedule_get_stats(After, App, MFA) ->
+    Pid = self(),
+    erlang:send_after(After, Pid, {get_stats, {App, MFA}}).
+
+make_freshness_stat(App, TS) ->
+    {make_freshness_stat_name(App), TS}.
+
+make_freshness_stat_name(App) ->
+    list_to_atom(atom_to_list(App) ++ "_stat_ts").
+
+-spec register_mod(atom(), registered_app(), orddict:orddict()) -> orddict:orddict().
+register_mod(App, AppRegistration, Apps0) ->
+    {{Mod, _, _}=MFA, RefreshRateMillis} = AppRegistration,
     folsom_metrics:new_histogram({?MODULE, Mod}),
     folsom_metrics:new_meter({?MODULE, App}),
-    orddict:store(App, {Mod, Fun, Args, TTL}, Apps).
+    Apps = orddict:store(App, AppRegistration, Apps0),
+    schedule_get_stats(RefreshRateMillis, App, MFA),
+    Apps.
 
 registered(App, Apps) ->
     registered(orddict:find(App, Apps)).
@@ -149,28 +197,20 @@ registered(error) ->
 registered({ok, Val}) ->
     {true, Val}.
 
-cache_get(App, Tab, TTL) ->
+cache_get(App, Tab) ->
     Res = case ets:lookup(Tab, App) of
               [] ->
                   miss;
-              [Hit] ->
-                  check_freshness(Hit, TTL)
+              [{App, TStamp, Stats}] ->
+                  {hit, Stats, TStamp}
           end,
     Res.
 
-check_freshness({_App, TStamp, Stats}, TTL) ->
-    case (TStamp + TTL) > folsom_utils:now_epoch() of
-        true ->
-             {hit, Stats, TStamp};
-        false ->
-            stale
-    end.
-
-maybe_get_stats(App, From, Active, {M, F, A}) ->
+maybe_get_stats(App, From, Active, MFA) ->
     %% if a get stats is not under way start one
     Awaiting = case orddict:find(App, Active) of
                    error ->
-                      Pid = do_get_stats(App, {M, F, A}),
+                       Pid = do_get_stats(App, MFA),
                        {Pid, [From]};
                    {ok, {Pid, Froms}} ->
                        {Pid, [From|Froms]}
@@ -194,7 +234,10 @@ awaiting_for_pid(Pid, Active) ->
 -ifdef(TEST).
 
 -define(MOCKS, [folsom_utils, riak_core_stat, riak_kv_stat]).
--define(STATS, [{stat1, 0, stat2, 1, stat3, 2}]).
+-define(STATS, [{stat1, 0}, {stat2, 1}, {stat3, 2}]).
+
+cached(App, Time) ->
+    [make_freshness_stat(App, Time) | ?STATS].
 
 cache_test_() ->
     {setup,
@@ -228,8 +271,8 @@ register() ->
     riak_core_stat_cache:register_app(riak_core, {riak_core_stat, produce_stats, []}, 5),
     riak_core_stat_cache:register_app(riak_kv, {riak_kv_stat, produce_stats, []}, 5),
     NonSuch = riak_core_stat_cache:get_stats(nonsuch),
-    ?assertEqual({ok, ?STATS, Now}, riak_core_stat_cache:get_stats(riak_core)),
-    ?assertEqual({ok, ?STATS, Now}, riak_core_stat_cache:get_stats(riak_kv)),
+    ?assertEqual({ok, cached(riak_core, Now), Now}, riak_core_stat_cache:get_stats(riak_core)),
+    ?assertEqual({ok, cached(riak_kv, Now), Now}, riak_core_stat_cache:get_stats(riak_kv)),
     ?assertEqual(?ENOTREG(nonsuch), NonSuch),
     %% and check the cache has the correct values
     [?assertEqual([{App, Now, ?STATS}], ets:lookup(riak_core_stat_cache, App))
@@ -242,15 +285,17 @@ register() ->
 
 get_cached() ->
     Now = tick(1000, 0),
-    [?assertEqual({ok, ?STATS, Now}, riak_core_stat_cache:get_stats(riak_core))
+    [?assertEqual({ok, cached(riak_core, Now), Now}, riak_core_stat_cache:get_stats(riak_core))
      || _ <- lists:seq(1, 20)],
     ?assertEqual(1, meck:num_calls(riak_core_stat, produce_stats, [])).
 
 get_expired() ->
-    Now = tick(1000, ?TTL+?TTL),
-    [?assertEqual({ok, ?STATS, Now}, riak_core_stat_cache:get_stats(riak_core))
+    CalcTime = 1000,
+    _Expired = tick(CalcTime, ?REFRESH_RATE+?REFRESH_RATE),
+    [?assertEqual({ok, cached(riak_core, CalcTime), CalcTime}, riak_core_stat_cache:get_stats(riak_core))
      || _ <- lists:seq(1, 20)],
-    ?assertEqual(2, meck:num_calls(riak_core_stat, produce_stats, [])).
+    %% Stale stats should no longer trigger a stat calculation
+    ?assertEqual(1, meck:num_calls(riak_core_stat, produce_stats, [])).
 
 serialize_calls() ->
     %% many processes can call get stats at once
@@ -262,13 +307,17 @@ serialize_calls() ->
     %% call get stats for core to show the server is not blocked
     %% return from the kv call and show a) all have same result
     %% b) only one call to produce_stats
+    %% But ONLY in the case that the cache is empty. At any other time,
+    %% that cached answer should be returned.
+    riak_core_stat_cache:clear_cache(riak_kv),
     Procs = 20,
+    Then = 1000,
     Now = tick(2000, 0),
     meck:expect(riak_kv_stat, produce_stats, fun() -> register(blocked, self()), receive release -> ?STATS  end end),
     Coordinator = self(),
     Collector  = spawn_link(fun() -> collect_results(Coordinator, [], Procs) end),
     Pids = [spawn_link(fun() -> Stats = riak_core_stat_cache:get_stats(riak_kv), Collector ! {res, Stats} end) || _ <- lists:seq(1, Procs)],
-    ?assertEqual({ok, ?STATS, Now}, riak_core_stat_cache:get_stats(riak_core)),
+    ?assertEqual({ok, cached(riak_core, Then), Then}, riak_core_stat_cache:get_stats(riak_core)),
     [?assertEqual({status, waiting}, process_info(Pid, status)) || Pid <- Pids],
 
     timer:sleep(100), %% time for register
@@ -284,18 +333,20 @@ serialize_calls() ->
 
     [?assertEqual(undefined, process_info(Pid)) || Pid <- Pids],
     ?assertEqual(Procs, length(Results)),
-    [?assertEqual({ok, ?STATS, Now}, Res) || Res <- Results],
+    [?assertEqual({ok, cached(riak_kv, Now), Now}, Res) || Res <- Results],
     ?assertEqual(2, meck:num_calls(riak_kv_stat, produce_stats, [])).
 
 crasher() ->
+    riak_core_stat_cache:clear_cache(riak_kv),
     Pid = whereis(riak_core_stat_cache),
+    Then = tick(1000, 0),
     Now = tick(10000, 0),
     meck:expect(riak_core_stat, produce_stats, fun() ->
                                                        ?STATS end),
     meck:expect(riak_kv_stat, produce_stats, fun() -> erlang:error(boom)  end),
     ?assertMatch({error, {boom, _Stack}}, riak_core_stat_cache:get_stats(riak_kv)),
     ?assertEqual(Pid, whereis(riak_core_stat_cache)),
-    ?assertEqual({ok, ?STATS, Now}, riak_core_stat_cache:get_stats(riak_core)).
+    ?assertEqual({ok, cached(riak_core, Then), Then}, riak_core_stat_cache:get_stats(riak_core)).
 
 tick(Moment, IncrBy) ->
     meck:expect(folsom_utils, now_epoch, fun() -> Moment + IncrBy end),

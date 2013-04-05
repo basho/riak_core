@@ -269,7 +269,7 @@ pmap(F, L) ->
                   mapper,
                   fn,
                   n_pending=0,
-                  pending=[],
+                  pending=sets:new(),
                   n_done=0,
                   done=[],
                   max_concurrent=1
@@ -288,18 +288,10 @@ pmap(Fun, List, MaxP) when is_function(Fun), is_list(List), is_integer(MaxP) ->
                                        fn=Fun,
                                        max_concurrent=MaxP},
                              List),
-    % Collect pending work
-    Collect =
-        fun(Pid, Acc) ->
-                receive
-                    {pmap_result, Pid, R} ->
-                        [R|Acc]
-                end
-        end,
-    All = lists:foldl(Collect, Done, Pending),
+    All = pmap_collect_rest(Pending, Done),
     % Restore input order
-    Sorted = lists:sort(fun({I1, _}, {I2, _}) -> I1 < I2 end, All),
-    lists:map(fun({_, R}) -> R end, Sorted).
+    Sorted = lists:keysort(1, All),
+    [ R || {_, R} <- Sorted ].
 
 %% @doc Fold function for {@link pmap/3} that spawns up to a max number of
 %% workers to execute the mapping function over the input list.
@@ -315,7 +307,7 @@ pmap_worker(X, Acc = #pmap_acc{n_pending=NP,
                            R = Fn(X),
                            Mapper ! {pmap_result, self(), {NP+ND, R}}
                    end),
-    Acc#pmap_acc{n_pending=NP+1, pending=[Worker|Pending]};
+    Acc#pmap_acc{n_pending=NP+1, pending=sets:add_element(Worker, Pending)};
 pmap_worker(X, Acc = #pmap_acc{n_pending=NP,
                                pending=Pending,
                                n_done=ND,
@@ -327,15 +319,26 @@ pmap_worker(X, Acc = #pmap_acc{n_pending=NP,
                                 n_done=ND+1, done=[Result|Done]}).
 
 %% @doc Waits for one pending pmap task to finish
-pmap_collect_one(Pending = [_First|_More]) ->
+pmap_collect_one(Pending) ->
     receive
         {pmap_result, Pid, Result} ->
-            case lists:member(Pid, Pending) of
-                true ->
-                    {Result, lists:delete(Pid, Pending)};
-                false ->
-                    pmap_collect_one(Pending)
+            Size = sets:size(Pending),
+            NewPending = sets:del_element(Pid, Pending),
+            case sets:size(NewPending) of
+                Size ->
+                    pmap_collect_one(Pending);
+                _ ->
+                    {Result, NewPending}
             end
+    end.
+
+pmap_collect_rest(Pending, Done) ->
+    case sets:size(Pending) of
+        0 ->
+            Done;
+        _ ->
+            {Result, NewPending} = pmap_collect_one(Pending),
+            pmap_collect_rest(NewPending, [Result | Done])
     end.
 
 
