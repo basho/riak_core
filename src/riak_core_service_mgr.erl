@@ -282,19 +282,63 @@ dispatch_service(Listener, Socket, Transport, _Args) ->
     ok = Transport:setopts(Socket, ?CONNECT_OPTIONS),
     %% Version 1.0 capabilities just passes our clustername
     MyName = riak_core_connection:symbolic_clustername(),
-    MyCaps = [{clustername, MyName}],
+    ssl:start(),
+    SSLEnabled = app_helper:get_env(riak_core, ssl_enabled, false),
+    MyCaps = [{clustername, MyName}, {ssl_enabled, SSLEnabled}],
     case exchange_handshakes_with(client, Socket, Transport, MyCaps) of
-        {ok,Props} ->
-            %% get latest set of registered services from gen_server and do negotiation
-            Services = gen_server:call(?SERVER, get_services),
-            SubProtocols = [Protocol || {_Key,{Protocol,_Strategy}} <- Services],
-            ?TRACE(?debugFmt("started dispatch_service with protocols: ~p",
-                             [SubProtocols])),
-            Negotiated = negotiate_proto_with_client(Socket, Transport, SubProtocols),
-            ?TRACE(?debugFmt("negotiated = ~p", [Negotiated])),
-            start_negotiated_service(Socket, Transport, Negotiated, Props);
+        {ok,TheirCaps} ->
+            case try_ssl(Socket, Transport, MyCaps, TheirCaps) of
+                {error, _Reason} = Error ->
+                    Error;
+                {NewTransport, NewSocket} ->
+                    %% get latest set of registered services from gen_server
+                    %% and do negotiation
+                    Services = gen_server:call(?SERVER, get_services),
+                    SubProtocols = [Protocol ||
+                        {_Key,{Protocol,_Strategy}} <- Services],
+                    lager:debug("started dispatch_service with protocols: ~p",
+                        [SubProtocols]),
+                    Negotiated = negotiate_proto_with_client(NewSocket, NewTransport,
+                        SubProtocols),
+                    lager:debug("negotiated = ~p", [Negotiated]),
+                    start_negotiated_service(NewSocket, NewTransport, Negotiated,
+                        TheirCaps)
+            end;
         Error ->
             Error
+    end.
+
+try_ssl(Socket, Transport, MyCaps, TheirCaps) ->
+    MySSL = proplists:get_value(ssl_enabled, TheirCaps, false),
+    TheirSSL = proplists:get_value(ssl_enabled, MyCaps, false),
+    MyName = proplists:get_value(clustername, MyCaps),
+    TheirName = proplists:get_value(clustername, TheirCaps),
+    Res = case {MySSL, TheirSSL} of
+        {true, false} ->
+            lager:warning("~p requested SSL, but ~p doesn't support it",
+                [MyName, TheirName]),
+            {error, no_ssl};
+        {false, true} ->
+            lager:warning("~p requested SSL but ~p doesn't support it",
+                [TheirName, MyName]),
+            {error, no_ssl};
+        {true, true} ->
+            lager:info("~p and ~p agreed to use SSL", [MyName, TheirName]),
+            ssl:start(),
+            case riak_core_ssl_util:maybe_use_ssl(riak_core) of
+                false ->
+                    {ranch_tcp, Socket};
+                Config ->
+                    case riak_core_ssl_util:upgrade_server_to_ssl(Socket, riak_core) of
+                        {ok, S} ->
+                            {ranch_ssl, S};
+                        Other ->
+                            Other
+                    end
+            end;
+        {false, false} ->
+            lager:info("~p and ~p agreed to not use SSL", [MyName, TheirName]),
+            {Transport, Socket}
     end.
 
 %% start user's module:function and transfer socket to it's process.
@@ -308,9 +352,10 @@ start_negotiated_service(Socket, Transport,
                          {NegotiatedProtocols, {Options, Module, Function, Args}},
                          Props) ->
     %% Set requested Tcp socket options now that we've finished handshake phase
-    ?TRACE(?debugFmt("Setting user options on service side; ~p", [Options])),
-    ?TRACE(?debugFmt("negotiated protocols: ~p", [NegotiatedProtocols])),
+    lager:debug("Setting user options on service side; ~p", [Options]),
+    lager:debug("negotiated protocols: ~p", [NegotiatedProtocols]),
     Transport:setopts(Socket, Options),
+
     %% call service body function for matching protocol. The callee should start
     %% a process or gen_server or such, and return {ok, pid()}.
     case Module:Function(Socket, Transport, NegotiatedProtocols, Args, Props) of

@@ -145,26 +145,34 @@ sync_connect_status(_Parent, {IP,Port}, {ClientProtocol, {Options, Module, Args}
         {ok, Socket} ->
             ?TRACE(?debugFmt("Setting system options on client side: ~p", [?CONNECT_OPTIONS])),
             Transport:setopts(Socket, ?CONNECT_OPTIONS),
+            SSLEnabled = app_helper:get_env(riak_core, ssl_enabled, false),
             %% handshake to make sure it's a riak sub-protocol dispatcher
             MyName = symbolic_clustername(),
-            MyCaps = [{clustername, MyName}],
+            MyCaps = [{clustername, MyName}, {ssl_enabled, SSLEnabled}],
             case exchange_handshakes_with(host, Socket, Transport, MyCaps) of
-                {ok,Props} ->
-                    %% ask for protocol, see what host has
-                    case negotiate_proto_with_server(Socket, Transport, ClientProtocol) of
-                        {ok,HostProtocol} ->
-                            %% set client's requested Tcp options
-                            ?TRACE(?debugFmt("Setting user options on client side; ~p", [Options])),
-                            Transport:setopts(Socket, Options),
-                            %% notify requester of connection and negotiated protocol from host
-                            %% pass back returned value in case problem detected on connection
-                            %% by module.  requestor is responsible for transferring control
-                            %% of the socket.
-                            Module:connected(Socket, Transport, {IP, Port}, HostProtocol, Args, Props);
+                {ok,TheirCaps} ->
+                    case try_ssl(Socket, Transport, MyCaps, TheirCaps) of
                         {error, Reason} ->
-                            ?TRACE(?debugFmt("negotiate_proto_with_server returned: ~p", [{error,Reason}])),
-                            %% Module:connect_failed(ClientProtocol, {error, Reason}, Args),
-                            {error, Reason}
+                            {error, Reason};
+                        {NewTransport, NewSocket} ->
+                            %% ask for protocol, see what host has
+                            case negotiate_proto_with_server(NewSocket, NewTransport, ClientProtocol) of
+                                {ok,HostProtocol} ->
+                                    %% set client's requested Tcp options
+                                    ?TRACE(?debugFmt("Setting user options on client side; ~p", [Options])),
+                                    %% notify requester of connection and negotiated protocol from host
+                                    %% pass back returned value in case problem detected on connection
+                                    %% by module.  requestor is responsible for transferring control
+                                    %% of the socket.
+                                    NewTransport:setopts(NewSocket, Options),
+                                    Module:connected(NewSocket, NewTransport,
+                                        {IP, Port}, HostProtocol,
+                                        Args, TheirCaps);
+                                {error, Reason} ->
+                                    ?TRACE(?debugFmt("negotiate_proto_with_server returned: ~p", [{error,Reason}])),
+                                    %% Module:connect_failed(ClientProtocol, {error, Reason}, Args),
+                                    {error, Reason}
+                            end
                     end;
                 {error, closed} ->
                     %% socket got closed, don't report this
@@ -181,6 +189,37 @@ sync_connect_status(_Parent, {IP,Port}, {ClientProtocol, {Options, Module, Args}
             %% Module:connect_failed(ClientProtocol, {error, Reason}, Args),
             {error, Reason}
     end.
+
+try_ssl(Socket, Transport, MyCaps, TheirCaps) ->
+    MySSL = proplists:get_value(ssl_enabled, TheirCaps, false),
+    TheirSSL = proplists:get_value(ssl_enabled, MyCaps, false),
+    MyName = proplists:get_value(clustername, MyCaps),
+    TheirName = proplists:get_value(clustername, TheirCaps),
+    case {MySSL, TheirSSL} of
+        {true, false} ->
+            lager:warning("~p requested SSL, but ~p doesn't support it",
+                [MyName, TheirName]),
+            {error, no_ssl};
+        {false, true} ->
+            lager:warning("~p requested SSL but ~p doesn't support it",
+                [TheirName, MyName]),
+            {error, no_ssl};
+        {false, false} ->
+            lager:info("~p and ~p agreed to not use SSL", [MyName, TheirName]),
+            {Transport, Socket};
+        {true, true} ->
+            lager:info("~p and ~p agreed to use SSL", [MyName, TheirName]),
+            ssl:start(),
+            case riak_core_ssl_util:upgrade_client_to_ssl(Socket, riak_core) of
+                {ok, SSLSocket} ->
+                    {ranch_ssl, SSLSocket};
+                {error, Reason} ->
+                    lager:error("Error negotiating SSL between ~p and ~p: ~p",
+                        [MyName, TheirName, Reason]),
+                    {error, Reason}
+            end
+      end.
+
 
 %% Negotiate the highest common major protocol revision with the connected server.
 %% client -> server : Prefs List = {SubProto, [{Major, Minor}]}
