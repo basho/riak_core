@@ -188,11 +188,14 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
             true ->
                  ok                     % If not #ho_acc, get badmatch below
          end,
-         #ho_acc{error=ErrStatus,
+         #ho_acc{
+                 error=ErrStatus,
                  module=Module,
                  parent=ParentPid,
                  tcp_mod=TcpMod,
-                 total_objects=SentCount} = AccRecord,
+                 total_objects=TotalObjects,
+                 total_bytes=TotalBytes
+                } = AccRecord,
 
          case ErrStatus of
              ok ->
@@ -214,11 +217,11 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
 
                  FoldTimeDiff = end_fold_time(StartFoldTime),
 
+ThroughputBytes = TotalBytes/FoldTimeDiff,
                  lager:info("~p transfer of ~p from ~p ~p to ~p ~p"
-                            " completed: sent ~p objects in ~.2f seconds",
-                            [Type, Module, SrcNode, SrcPartition,
-                             TargetNode, TargetPartition, SentCount,
-                             FoldTimeDiff]),
+                            " completed: sent ~s bytes in ~p objects in ~.2f seconds (~s/second)",
+                            [Type, Module, SrcNode, SrcPartition, TargetNode, TargetPartition, 
+                            riak_core_format:human_size_fmt("~.2f", TotalBytes), TotalObjects, FoldTimeDiff, riak_core_format:human_size_fmt("~.2f", ThroughputBytes)]),
 
                  case Type of
                      repair -> ok;
