@@ -87,12 +87,12 @@ validate_ssl_config(true, [{cacerts, CACerts}|Rest]) ->
         undefined ->
             {error, lists:flatten(
                     io_lib:format("CA cert dir ~p is invalid",
-                                  [app_helper:get_env(riak_repl, cacertdir,
+                                  [app_helper:get_env(riak_core, cacertdir,
                                                       undefined)]))};
         [] ->
             {error, lists:flatten(
                     io_lib:format("Unable to load any CA certificates from ~p",
-                                  [app_helper:get_env(riak_repl, cacertdir,
+                                  [app_helper:get_env(riak_core, cacertdir,
                                                       undefined)]))};
         Certs when is_list(Certs) ->
             validate_ssl_config(true, Rest)
@@ -175,7 +175,7 @@ verify_ssl(Cert, valid_peer, MyCommonName) ->
             {fail, duplicate_common_name};
         _ ->
             case validate_common_name(CommonName,
-                    app_helper:get_env(riak_repl, peer_common_name_acl, "*")) of
+                    app_helper:get_env(riak_core, peer_common_name_acl, "*")) of
                 {true, Filter} ->
                     lager:info("SSL connection from ~s granted by ACL ~s",
                         [CommonName, Filter]),
