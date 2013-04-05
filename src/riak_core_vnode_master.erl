@@ -26,10 +26,12 @@
 -include("riak_core_vnode.hrl").
 -behaviour(gen_server).
 -export([start_link/1, start_link/2, start_link/3, get_vnode_pid/2,
-         start_vnode/2, command/3, command/4, sync_command/3,
+         start_vnode/2,
+         command/3, command/4,
+         command_unreliable/3, command_unreliable/4,
+         sync_command/3, sync_command/4,
          coverage/5,
          command_return_vnode/4,
-         sync_command/4,
          sync_spawn_command/3, make_request/3,
          make_coverage_request/4, all_nodes/1, reg_name/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -64,23 +66,39 @@ get_vnode_pid(Index, VNodeMod) ->
     riak_core_vnode_manager:get_vnode_pid(Index, VNodeMod).
 
 command(Preflist, Msg, VMaster) ->
-    command(Preflist, Msg, ignore, VMaster).
+    command2(Preflist, Msg, ignore, VMaster, normal).
+
+command_unreliable(Preflist, Msg, VMaster) ->
+    command2(Preflist, Msg, ignore, VMaster, unreliable).
+
+command(PrefListOrCmd, Msg, Sender, VMaster) ->
+    command2(PrefListOrCmd, Msg, Sender, VMaster, normal).
+
+command_unreliable(PrefListOrCmd, Msg, Sender, VMaster) ->
+    command2(PrefListOrCmd, Msg, Sender, VMaster, unreliable).
 
 %% Send the command to the preflist given with responses going to Sender
-command([], _Msg, _Sender, _VMaster) ->
+command2([], _Msg, _Sender, _VMaster, _How) ->
     ok;
-command([{Index, Pid}|Rest], Msg, Sender, VMaster) when is_pid(Pid) ->
-    gen_fsm:send_event(Pid, make_request(Msg, Sender, Index)),
-    command(Rest, Msg, Sender, VMaster);
-command([{Index,Node}|Rest], Msg, Sender, VMaster) ->
-    proxy_cast({VMaster, Node}, make_request(Msg, Sender, Index)),
-    command(Rest, Msg, Sender, VMaster);
 
-%% Send the command to an individual Index/Node combination
-command({Index, Pid}, Msg, Sender, _VMaster) when is_pid(Pid) ->
-    gen_fsm:send_event(Pid, make_request(Msg, Sender, Index));
-command({Index,Node}, Msg, Sender, VMaster) ->
-    proxy_cast({VMaster, Node}, make_request(Msg, Sender, Index)).
+command2([{Index, Pid}|Rest], Msg, Sender, VMaster, How=normal)
+  when is_pid(Pid) ->
+    gen_fsm:send_event(Pid, make_request(Msg, Sender, Index)),
+    command2(Rest, Msg, Sender, VMaster, How);
+
+command2([{Index, Pid}|Rest], Msg, Sender, VMaster, How=unreliable)
+  when is_pid(Pid) ->
+    riak_core_send_msg:send_event_unreliable(Pid, make_request(Msg, Sender,
+                                                               Index)),
+    command2(Rest, Msg, Sender, VMaster, How);
+command2([{Index,Node}|Rest], Msg, Sender, VMaster, How) ->
+    proxy_cast({VMaster, Node}, make_request(Msg, Sender, Index), How),
+    command2(Rest, Msg, Sender, VMaster, How);
+
+command2(DestTuple, Msg, Sender, VMaster, How) when is_tuple(DestTuple) ->
+    %% Final case, tuple = single destination ... so make a list and
+    %% resubmit to this function.
+    command2([DestTuple], Msg, Sender, VMaster, How).
 
 %% Send a command to a covering set of vnodes
 coverage(Msg, CoverageVNodes, Keyspaces, {Type, Ref, From}, VMaster)
@@ -161,26 +179,43 @@ init([Service, VNodeMod, LegacyMod, _RegName]) ->
                 vnode_mod=VNodeMod,
                 legacy=LegacyMod}}.
 
-proxy_cast({VMaster, Node}, Req) ->
+proxy_cast(Who, Req) ->
+    proxy_cast(Who, Req, normal).
+
+proxy_cast({VMaster, Node}, Req, How) ->
     case riak_core_capability:get({riak_core, vnode_routing}, legacy) of
         legacy ->
-            gen_server:cast({VMaster, Node}, Req);
+            if How == normal ->
+                    gen_server:cast({VMaster, Node}, Req);
+               How == unreliable ->
+                    riak_core_send_msg:cast_unreliable({VMaster, Node}, Req)
+            end;
         proxy ->
-            do_proxy_cast({VMaster, Node}, Req)
+            do_proxy_cast({VMaster, Node}, Req, How)
     end.
 
-do_proxy_cast({VMaster, Node}, Req=?VNODE_REQ{index=Idx}) ->
+do_proxy_cast({VMaster, Node}, Req=?VNODE_REQ{index=Idx}, How) ->
     Mod = vmaster_to_vmod(VMaster),
     Proxy = riak_core_vnode_proxy:reg_name(Mod, Idx, Node),
-    gen_fsm:send_event(Proxy, Req),
+    send_an_event(Proxy, Req, How),
     ok;
-do_proxy_cast({VMaster, Node}, Req=?COVERAGE_REQ{index=Idx}) ->
+do_proxy_cast({VMaster, Node}, Req=?COVERAGE_REQ{index=Idx}, How) ->
     Mod = vmaster_to_vmod(VMaster),
     Proxy = riak_core_vnode_proxy:reg_name(Mod, Idx, Node),
-    gen_fsm:send_event(Proxy, Req),
+    send_an_event(Proxy, Req, How),
     ok;
-do_proxy_cast({VMaster, Node}, Other) ->
-    gen_server:cast({VMaster, Node}, Other).
+do_proxy_cast({VMaster, Node}, Other, How) ->
+    send_a_cast({VMaster, Node}, Other, How).
+
+send_an_event(Dest, Event, normal) ->
+    gen_fsm:send_event(Dest, Event);
+send_an_event(Dest, Event, unreliable) ->
+    riak_core_send_msg:send_event_unreliable(Dest, Event).
+
+send_a_cast(Dest, Msg, normal) ->
+    gen_server:cast(Dest, Msg);
+send_a_cast(Dest, Msg, unreliable) ->
+    riak_core_send_msg:cast_unreliable(Dest, Msg).
 
 handle_cast({wait_for_service, Service}, State) ->
     case Service of
