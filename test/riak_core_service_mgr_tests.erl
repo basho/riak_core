@@ -51,6 +51,7 @@ service_test_() ->
         {ok, _Pid} = riak_core_service_mgr:start_link(?TEST_ADDR)
     end,
     fun(_) ->
+        application:stop(ranch),
         case whereis(riak_core_service_manager) of
             Pid when is_pid(Pid) ->
                 riak_core_service_mgr:stop(),
