@@ -8,12 +8,8 @@
 %% handoff_perftool:go(5, {10000, 1000}).
 %%
 
-%% JFW: code:add_path("/home/jesse/work/basho/src/riak_test-jfw-encoding_capability/current/deps/riak_core/contrib"), l(handoff_perftool).
-
 -module(handoff_perftool).
  
-%% JFW: -compile(export_all).
-
 -export([
             go/0, go/1, go/2,
 
