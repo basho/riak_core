@@ -216,12 +216,14 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                  end,
 
                  FoldTimeDiff = end_fold_time(StartFoldTime),
+                ThroughputBytes = TotalBytes/FoldTimeDiff,
 
-ThroughputBytes = TotalBytes/FoldTimeDiff,
                  lager:info("~p transfer of ~p from ~p ~p to ~p ~p"
-                            " completed: sent ~s bytes in ~p objects in ~.2f seconds (~s/second)",
+                            " completed: sent ~s bytes in ~p objects"
+                            " in ~.2f seconds (~s/second)",
                             [Type, Module, SrcNode, SrcPartition, TargetNode, TargetPartition, 
-                            riak_core_format:human_size_fmt("~.2f", TotalBytes), TotalObjects, FoldTimeDiff, riak_core_format:human_size_fmt("~.2f", ThroughputBytes)]),
+                            riak_core_format:human_size_fmt("~.2f", TotalBytes), TotalObjects, 
+                            FoldTimeDiff, riak_core_format:human_size_fmt("~.2f", ThroughputBytes)]),
 
                  case Type of
                      repair -> ok;
