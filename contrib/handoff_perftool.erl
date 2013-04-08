@@ -44,10 +44,13 @@ go(NVnodes, {NObjs, ValueSize}) ->
         true  -> true
     end,
 
-    NSecondaries = lists:sublist(get_secondaries(), NVnodes),
+    %% Select the requested number of secondaries from the whole list:
+    TargetSecondaries = lists:sublist(get_secondaries(), NVnodes),
+
+io:format("JFW: TargetSecondaries: ~p~n", [TargetSecondaries]),
 
     io:format("Seeding ~p objects of size ~p to ~p nodes...~n", [NObjs, ValueSize, NVnodes]),
-    lists:map(fun(Secondary) -> seed_data({NObjs, ValueSize}, Secondary) end, NSecondaries),
+    lists:map(fun(Secondary) -> seed_data({NObjs, ValueSize}, Secondary) end, TargetSecondaries),
 
     io:format("Done seeding, forcing handoff.~n"),
     riak_core_vnode_manager:force_handoffs(),
@@ -56,9 +59,9 @@ go(NVnodes, {NObjs, ValueSize}) ->
 
     true.
 
+%% Select secondary handoff vnodes (ones we don't own):
 get_secondaries() ->
     get_secondaries(get_ring_owners(), node()).
-
 get_secondaries(RingOwners, Node) ->
     [Index || {Index, RingOwner} <- RingOwners, RingOwner =/= Node].
 
@@ -72,18 +75,16 @@ get_ring_owners() ->
 
 %%%%%%%%%%
 
+%% Construct test handoff objects and send them to the requested vnode:
 seed_data({0, _Size}, _SecondarySHA1) ->
     ok;
- 
 seed_data({NEntries, Size}, SecondarySHA1) ->
-
-    io:format("Seeding ~p entries of ~p bytes to vnode ~p.~n", [NEntries, Size, SecondarySHA1]),
 
     RObj = finalize_object(riak_object:new(<<"test_bucket">>,
                                            <<NEntries:64/integer>>,
                                            %% <<NEntries:64/integer>>)),
                                            random_binary(Size, <<>>))),
-    %% io:format("RO: ~p~n", [RObj]),
+
     riak_kv_vnode:local_put(SecondarySHA1, RObj),
  
     seed_data({NEntries - 1, Size}, SecondarySHA1).
