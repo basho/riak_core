@@ -317,6 +317,23 @@ stage_force_replace(Node1, Node2) ->
             error
     end.
 
+stage_resize_ring(["abort"]) ->
+    try
+        case riak_core_claimant:abort_resize() of
+            ok ->
+                io:format("Success: staged abort resize ring request~n"),
+                ok;
+            {error, not_resizing} ->
+                io:format("Failed: ring is not resizing or resize has completed"),
+                error
+        end
+    catch
+        Exception:Reason ->
+            lager:error("Abort resize ring request failed ~p:~p",
+                        [Exception, Reason]),
+            io:format("Abort resize ring request failed, see log for details~n"),
+            error
+    end;
 stage_resize_ring([SizeStr]) ->
     try list_to_integer(SizeStr) of
         Size -> stage_resize_ring(Size)

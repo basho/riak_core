@@ -109,16 +109,22 @@
          reconcile_members/2,
          is_primary/2,
          chash/1,
+         set_chash/2,
          resize/2,
          set_pending_resize/2,
+         set_pending_resize_abort/1,
+         maybe_abort_resize/1,
          schedule_resize_transfer/3,
          awaiting_resize_transfer/3,
          resize_transfer_status/4,
          resize_transfer_complete/4,
          complete_resize_transfers/3,
+         reschedule_resize_transfers/3,
          is_resizing/1,
          is_post_resize/1,
          is_resize_complete/1,
+         resized_ring/1,
+         set_resized_ring/2,
          future_index/3,
          is_future_index/4,
          future_owner/2,
@@ -827,6 +833,25 @@ set_pending_resize(Resizing, Orig) ->
     ResetRing = set_chash(Resizing, chash(Orig)),
     set_resized_ring(set_pending_changes(ResetRing, Next), FutureCHash).
 
+-spec maybe_abort_resize(chstate()) -> {boolean(), chstate()}.
+maybe_abort_resize(State0) ->
+    Resizing = is_resizing(State0),
+    PostResize = is_post_resize(State0),
+    PendingAbort = is_resize_aborted(State0),
+    case PendingAbort andalso Resizing andalso not PostResize of
+        true ->
+            State1 = State0?CHSTATE{next=[]},
+            State2 = clear_all_resize_transfers(State1),
+            {true, remove_meta('$resized_ring', State2)};
+        false ->
+            {false, State0}
+    end.
+
+
+-spec set_pending_resize_abort(chstate()) -> chstate().
+set_pending_resize_abort(State) ->
+    update_meta('$resized_ring_abort', true, State).
+
 -spec schedule_resize_transfer(chstate(),
                                {integer(), term()},
                                integer() | {integer(), term()}) -> chstate().
@@ -844,6 +869,49 @@ schedule_resize_transfer(State, Source, Target) ->
                                         {Target, ordsets:new(), awaiting}),
             set_resize_transfers(State, Source, Transfers1)
     end.
+
+-spec reschedule_resize_transfers(chstate(), [integer()], term(), term()) -> chstate().
+reschedule_resize_transfers(State=?CHSTATE{next=Next}, Node, NewNode) ->
+    F = fun({Idx, N, '$resize', _Mods, _Status}, StateAcc) when N =:= Node ->
+                NewEntry = {Idx, NewNode, '$resize', ordsets:new(), awaiting},
+                NewState = reschedule_all_resize_transfers(StateAcc, Idx, Node, NewNode),
+                {NewEntry, NewState};
+           ({Idx, OtherNode, '$resize', _Mods, _Status}=Entry, StateAcc) ->
+                {Changed, NewState} = reschedule_resize_transfers({Idx, OtherNode}, Node,
+                                                                  NewNode, StateAcc),
+                case Changed of
+                    true ->
+                        NewEntry = {Idx, OtherNode, '$resize', ordsets:new(), awaiting},
+                        {NewEntry, NewState};
+                    false ->
+                        {Entry, StateAcc}
+                end
+        end,
+    {NewNext, NewState} = lists:mapfoldl(F, State, Next),
+    NewState?CHSTATE{next=NewNext}.
+
+reschedule_resize_transfers(Source, Node, NewNode, State) ->
+    F = fun(Transfer, Acc) ->
+                {NewXfer, NewAcc} = reschedule_resize_transfer(Transfer, Node, NewNode),
+                {NewXfer, NewAcc orelse Acc}
+        end,
+    {ResizeTransfers, Changed} = lists:mapfoldl(F, false, resize_transfers(State, Source)),
+    {Changed, set_resize_transfers(State, Source, ResizeTransfers)}.
+
+reschedule_resize_transfer({{Idx, Target}, _, _}, Target, NewNode) ->
+    {{{Idx, NewNode}, ordsets:new(), awaiting}, true};
+reschedule_resize_transfer(Transfer, _, _) ->
+    {Transfer, false}.
+
+reschedule_all_resize_transfers(State, Idx, Node, NewNode) ->
+    OldSource = {Idx, Node},
+    NewSource = {Idx, NewNode},
+    Transfers = resize_transfers(State, OldSource),
+    F = fun({I,N}) when N =:= Node -> {I,NewNode};
+           (T) -> T
+        end,
+    NewTransfers = [{F(Target), ordsets:new(), awaiting} || {Target, _, _} <- Transfers],
+    set_resize_transfers(clear_resize_transfers(OldSource, State), NewSource, NewTransfers).
 
 %% @doc returns the first awaiting resize_transfer for a {SourceIdx, SourceNode}
 %%      pair. If all transfers for the pair are complete, undefined is returned
@@ -931,6 +999,13 @@ is_post_resize(State) ->
         _ -> false
     end.
 
+-spec is_resize_aborted(chstate()) -> boolean().
+is_resize_aborted(State) ->
+    case get_meta('$resized_ring_abort', State) of
+        {ok, true} -> true;
+        _ -> false
+    end.
+
 -spec is_resize_complete(chstate()) -> boolean().
 is_resize_complete(?CHSTATE{next=Next}) ->
     not lists:any(fun({_, _, _, _, awaiting}) -> true;
@@ -954,6 +1029,9 @@ resize_transfers(State, Source) ->
 set_resize_transfers(State, Source, Transfers) ->
     update_meta({resize, Source}, Transfers, State).
 
+clear_all_resize_transfers(State) ->
+    lists:foldl(fun clear_resize_transfers/2, State, all_owners(State)).
+
 clear_resize_transfers(Source, State) ->
     remove_meta({resize, Source}, State).
 
@@ -965,6 +1043,7 @@ resized_ring(State) ->
         _ -> undefined
     end.
 
+-spec set_resized_ring(chstate(), chash:chash()) -> chstate().
 set_resized_ring(State, FutureCHash) ->
     update_meta('$resized_ring', FutureCHash, State).
 
@@ -1112,7 +1191,7 @@ future_ring(State0=?CHSTATE{next=OldNext}, true) ->
         false ->
             {ok, FutureCHash} = resized_ring(State0),
             State1 = cleanup_after_resize(State0),
-            State2 = lists:foldl(fun clear_resize_transfers/2, State1, all_owners(State1)),
+            State2 = clear_all_resize_transfers(State1),
             Resized = State2?CHSTATE{chring=FutureCHash},
             Next = lists:foldl(fun({Idx, Owner, '$resize', _, _}, Acc) ->
                                        DeleteEntry = {Idx, Owner, '$delete', [], awaiting},

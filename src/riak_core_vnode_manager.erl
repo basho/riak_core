@@ -629,34 +629,39 @@ should_handoff(Ring, Mod, Idx) ->
     {_, NextOwner, _} = riak_core_ring:next_owner(Ring, Idx),
     Type = riak_core_ring:vnode_type(Ring, Idx),
     Ready = riak_core_ring:ring_ready(Ring),
+    IsResizing = riak_core_ring:is_resizing(Ring),
     Me = node(),
-    case {Type, NextOwner, Ready} of
+    case {Type, NextOwner, Ready, IsResizing} of
         %% if primary and next owner is me, don't handoff
-        {primary, Me, _} ->
+        {primary, Me, _, _} ->
             Target = undefined;
         %% if primary, don't handoff if no next owner
-        {primary, undefined, _} ->
+        {primary, undefined, _, _} ->
             Target = undefined;
         %% if primary and ring ready, target is next owner (may be undef)
-        {primary, _, true} ->
+        {primary, _, true, _} ->
             Target = NextOwner;
         %% otherwise, if primary don't handoff
-        {primary, _, _} ->
+        {primary, _, _, _} ->
             Target = undefined;
         %% partitions moved during resize and scheduled for deletion, indexes
         %% that exist in both the original and resized ring that were moved appear
         %% as fallbacks.
-        {{fallback, _}, '$delete', _} ->
+        {{fallback, _}, '$delete', _, _} ->
             Target = '$delete';
         %% partitions that no longer exist after the ring has been resized (shrunk)
         %% scheduled for deletion
-        {resized_primary, '$delete', _} ->
+        {resized_primary, '$delete', _, _} ->
+            Target = '$delete';
+        %% partitions that would have existed in a ring whose expansion was aborted
+        %% and are still running need to be cleaned up after and shutdown
+        {resized_primary, _, _, false} ->
             Target = '$delete';
         %% fallback vnode target is primary (For)
-        {{fallback, For}, undefined, _} ->
+        {{fallback, For}, undefined, _, _} ->
             Target = For;
         %% otherwise don't handoff
-        {_, _, _} ->
+        {_, _, _, _} ->
             Target = undefined
     end,
     case Target of
