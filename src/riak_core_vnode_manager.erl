@@ -405,8 +405,6 @@ handle_cast({ring_changed, Ring}, State) ->
     Transfers = riak_core_ring:pending_changes(Ring),
     trigger_ownership_handoff(Ring, Transfers, Mods, State3),
 
-    maybe_start_vnode_proxies(Ring, Mods),
-
     {noreply, State3};
 
 handle_cast(maybe_start_vnodes, State) ->
@@ -787,19 +785,6 @@ maybe_start_vnodes(State=#state{vnode_start_tokens=Tokens,
             gen_server:cast(?MODULE, maybe_start_vnodes),
             State#state{vnode_start_tokens=Tokens-1,
                         never_started=NeverStarted2}
-    end.
-
-maybe_start_vnode_proxies(CState, Mods) ->
-    Larger =
-        riak_core_ring:num_partitions(CState) < riak_core_ring:future_num_partitions(CState),
-    case Larger of
-        true ->
-            FutureIdxs = riak_core_ring:all_next_owners(CState),
-            [riak_core_vnode_proxy_sup:start_proxy(Mod, Idx) || {Idx, _} <- FutureIdxs,
-                                                                Mod <- Mods],
-            ok;
-        false ->
-            ok
     end.
 
 -spec check_repairs(repairs()) -> Repairs2::repairs().
