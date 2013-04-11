@@ -25,6 +25,13 @@
         code_change/3]).
 -export([start_link/1, handle_work/4, handle_work/5]).
 
+-ifdef(PULSE).
+-compile(export_all).
+-compile({parse_transform, pulse_instrument}).
+-compile({pulse_replace_module, [{gen_fsm, pulse_gen_fsm},
+                                 {gen_server, pulse_gen_server}]}).
+-endif.
+
 -record(state, {
         module :: atom(),
         modstate :: any()

@@ -30,6 +30,12 @@
 %% API
 -export([start_link/5, stop/2, shutdown_pool/2, handle_work/3]).
 
+-ifdef(PULSE).
+-compile(export_all).
+-compile({parse_transform, pulse_instrument}).
+-compile({pulse_replace_module, [{gen_fsm, pulse_gen_fsm}]}).
+-endif.
+
 -record(state, {
         queue = queue:new(),
         pool :: pid(),
