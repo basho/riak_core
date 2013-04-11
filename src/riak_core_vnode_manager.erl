@@ -403,7 +403,7 @@ handle_cast({ring_changed, Ring}, State) ->
 
     %% Trigger ownership transfers.
     Transfers = riak_core_ring:pending_changes(Ring),
-    trigger_ownership_handoff(Ring, Transfers, Mods, State3),
+    trigger_ownership_handoff(Transfers, Mods, State3),
 
     {noreply, State3};
 
@@ -436,7 +436,7 @@ handle_info(management_tick, State) ->
             _ ->
                 Repairs = State#state.repairs,
                 kill_repairs(Repairs, ownership_change),
-                trigger_ownership_handoff(Ring, Transfers, Mods, State2),
+                trigger_ownership_handoff(Transfers, Mods, State2),
                 State2#state{repairs=[]}
         end,
 
@@ -484,16 +484,11 @@ schedule_management_timer() ->
                                         10000),
     erlang:send_after(ManagementTick, ?MODULE, management_tick).
 
-trigger_ownership_handoff(Ring, Transfers, Mods, State) ->
-    case riak_core_ring:is_resizing(Ring) of
-        true ->
-            Limit = app_helper:get_env(riak_core,
-                                       forced_ownership_handoff,
-                                       ?DEFAULT_OWNERSHIP_TRIGGER),
-            Throttle = lists:sublist(Transfers, Limit);
-        false ->
-            Throttle = Transfers
-    end,
+trigger_ownership_handoff(Transfers, Mods, State) ->
+    Limit = app_helper:get_env(riak_core,
+                               forced_ownership_handoff,
+                               ?DEFAULT_OWNERSHIP_TRIGGER),
+    Throttle = lists:sublist(Transfers, Limit),
     Awaiting = [{Mod, Idx} || {Idx, Node, _, CMods, S} <- Throttle,
                               Mod <- Mods,
                               S =:= awaiting,
