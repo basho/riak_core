@@ -397,9 +397,9 @@ filter({Key, Value}=_Filter) ->
             end
     end.
 
-resize_transfer_filter(Ring, Src, Target) ->
+resize_transfer_filter(Ring, Mod, Src, Target) ->
     fun(K) ->
-            Hashed = riak_core_util:chash_key(K),
+            {_, Hashed} = Mod:object_info(K),
             %% when the ring shrinks we may have data on this partition for which
             %% it is not possible to determine a future index because the position
             %% of Src in the current preflist is greater than the size of the future
@@ -413,11 +413,12 @@ resize_transfer_filter(Ring, Src, Target) ->
             end
     end.
 
-resize_transfer_notsent_fun(Ring, Src) ->
-    fun(Key, Acc) -> record_seen_index(Ring, Src, Key, Acc) end.
+resize_transfer_notsent_fun(Ring, Mod, Src) ->
+    fun(Key, Acc) -> record_seen_index(Ring, Mod, Src, Key, Acc) end.
 
-record_seen_index(Ring, Src, Key, Seen) ->
-    try riak_core_ring:future_index(riak_core_util:chash_key(Key), Src, Ring) of
+record_seen_index(Ring, Mod, Src, Key, Seen) ->
+    {_, Hashed} = Mod:object_info(Key),
+    try riak_core_ring:future_index(Hashed, Src, Ring) of
         FutureIndex -> [FutureIndex | Seen]
     catch
         error:_ -> Seen
@@ -481,9 +482,9 @@ send_handoff(HOType, {Mod, Src, Target}, Node, Vnode, HS, {Filter, FilterModFun}
                             HONotSentFun = undefined;
                         resize_transfer ->
                             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-                            HOFilter = resize_transfer_filter(Ring, Src, Target),
+                            HOFilter = resize_transfer_filter(Ring, Mod, Src, Target),
                             HOAcc0 = [],
-                            HONotSentFun = resize_transfer_notsent_fun(Ring, Src);
+                            HONotSentFun = resize_transfer_notsent_fun(Ring, Mod, Src);
                         _ ->
                             HOFilter = none,
                             HOAcc0 = undefined,
