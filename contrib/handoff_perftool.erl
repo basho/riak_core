@@ -6,15 +6,14 @@
 %% code:add_path("/home/user/path-to-handoff_perftool"), l(handoff_perftool). 
 %% handoff_perftool:go({10000, 1000}).
 %% handoff_perftool:go(5, {10000, 1000}).
+%% handoff_perftool:go(1, {10000, 1000}, strategy_roundrobin).
 %%
-
-%% JFW: code:add_path("/home/jesse/work/basho/src/riak_test-jfw-encoding_capability/current/deps/riak_core/contrib"), l(handoff_perftool).
-
 
 -module(handoff_perftool).
  
 -export([
-            go/0, go/1, go/2,
+            %% If we get any more options, we should use something associative rather than adding more options:
+            go/0, go/1, go/2, go/3,
 
             force_encoding/2,
             get_ring_members/0,
@@ -32,8 +31,8 @@
 -endif.
 
 %% JFW: hack until we can get this to play nicely with rebar:
-info_log(Message) -> lager:log(info, self(), Message).
-info_log(Message, Params) -> lager:log(info, self(), Message, Params).
+log_info(Message) -> lager:log(info, self(), Message).
+log_info(Message, Params) -> lager:log(info, self(), Message, Params).
 
 go() -> 
     go(1, {10000, 1000}).
@@ -51,15 +50,15 @@ go(NVnodes, {NObjs, ValueSize}, GatherStrategy, ConcurrencyN) ->
 
     Targets = gather_targets(NVnodes, GatherStrategy),
 
-    lager:info("Seeding ~p objects of size ~p to ~p nodes by strategy ~p...~n", [NObjs, ValueSize, NVnodes, GatherStrategy]),
+    log_info("Seeding ~p objects of size ~p to ~p nodes by strategy ~p...~n", [NObjs, ValueSize, NVnodes, GatherStrategy]),
     lists:map(fun(Target) -> seed_data({NObjs, ValueSize}, Target) end, Targets),
-    lager:info("Done seeding.~n"),
+    log_info("Done seeding.~n"),
 
     OldConcurrencyN = set_handoff_concurrency(ConcurrencyN),
 
-    lager:info("Forcing handoff.~n"),
+    log_info("Forcing handoff.~n"),
     riak_core_vnode_manager:force_handoffs(),
-    lager:info("Done forcing handoff.~n"),
+    log_info("Done forcing handoff.~n"),
 
     %% Be a friendly citizen and restore the original concurrency settings:
     set_handoff_concurrency(OldConcurrencyN),
@@ -73,6 +72,7 @@ go(NVnodes, {NObjs, ValueSize}, GatherStrategy, ConcurrencyN) ->
 %%
 
 gather_targets(NVnodes, GatherStrategy) ->
+    log_info("Using gather strategy ~p.~n", [GatherStrategy]),
     case GatherStrategy of 
         strategy_other_owner -> gather_vnodes_1(NVnodes);
         strategy_roundrobin  -> gather_vnodes_rr(NVnodes);
@@ -92,10 +92,28 @@ gather_vnodes_1(NVnodes) ->
     lists:sublist(get_secondaries(), NVnodes).
 
 %% Construct a list of target vnodes such that we select a total of N vnodes from different nodes,
-%% round-robin fashion:
+%% round-robin fashion.
+%%      Note: This algorithm is surely inefficient, but N is expected to be small.
 gather_vnodes_rr(NVnodes) ->
-    Secondaries = get_secondaries(),
-    lager:info("JFW: gather_vnodes_rr: choosing from ~p secondaries", [Secondaries]).
+
+
+    %% Map owners to their vnode ids (not including ourselves):
+    HandoffMap = dict:erase(node(), lists:foldl(fun({NodeID, NodeName}, AccDict) ->
+                                                    dict:append(NodeName, NodeID, AccDict)
+                                                end, 
+                                                dict:new(), get_ring_owners())),
+
+    HandoffMembers = lists:dropwhile(fun(NodeName) -> node() == NodeName end, get_ring_members()),
+
+    %% Find the smallest set in the group:
+    {_MinKey, MinLen} = dict:fold(fun shortest_bucket/3, { undef, infinity }, HandoffMap),
+
+    case MinLen < NVnodes of
+        false -> ok;
+        true  -> erlang:throw("Requested more vnodes than available in smallest target")
+    end,
+
+    interpolate_values(MinLen, HandoffMembers, HandoffMap, []).
 
 %%
 %% Selection utilities:
@@ -169,21 +187,21 @@ make_vtag(Now) ->
     riak_core_util:integer_to_list(HashAsNum,62).
 
 %%
-%% Other helper functions:
+%% Other handoff-helper functions:
 %%
 
 %% Fiddle with the cluster's handoff concurrency:
 set_handoff_concurrency(ConcurrencyN) when is_integer(ConcurrencyN) ->
     OriginalConcurrencyN = get_handoff_concurrency(),
-    lager:info("Prior concurrency setting ~p, setting to ~p.~n", [OriginalConcurrencyN, ConcurrencyN]),
+    log_info("Prior concurrency setting ~p, setting to ~p.~n", [OriginalConcurrencyN, ConcurrencyN]),
     rpc:multicall(riak_core_handoff_manager, set_concurrency, [ConcurrencyN]),
-    lager:info("Done setting concurrency.~n"),
+    log_info("Done setting concurrency.~n"),
     OriginalConcurrencyN;
 
 set_handoff_concurrency(ConcurrencySettings) when is_list(ConcurrencySettings) ->
-    lager:info("Restoring concurrency settings to ~p.~n", [ConcurrencySettings]),
+    log_info("Restoring concurrency settings to ~p.~n", [ConcurrencySettings]),
     rpc:multicall(riak_core_handoff_manager, set_concurrency, ConcurrencySettings),
-    lager:info("Done restoring concurrency settings.~n");
+    log_info("Done restoring concurrency settings.~n");
 
 set_handoff_concurrency(use_existing_concurrency) ->
     use_existing_concurrency.
@@ -194,9 +212,9 @@ get_handoff_concurrency() ->
 %% Force use of a particular particular handoff encoding method:
 force_encoding(Node, HandoffEncoding) ->
     case HandoffEncoding of
-        default -> lager:info("Using default encoding type."), true;
+        default -> log_info("Using default encoding type."), true;
 
-        _       -> lager:info("Forcing encoding type to ~p.", [HandoffEncoding]),
+        _       -> log_info("Forcing encoding type to ~p.", [HandoffEncoding]),
                    OverrideData =
                     [
                       { riak_core,
@@ -220,3 +238,37 @@ force_encoding(Node, HandoffEncoding) ->
     end,
     ok.
 
+%%
+%% General helper functions:
+%%
+
+%% N-way interpolation:
+interpolate_values(0, _SourceKeys, _SourceMap, Acc) ->
+    Acc;
+
+interpolate_values(N, SourceKeys, SourceMap, Acc) ->
+    { OutputAcc, OutputSourceMap } = 
+        lists:foldl(fun(Key, { InnerAcc, InnerSourceMap }) ->
+                        { Value, NewSourceMap } = pop_value(Key, InnerSourceMap),
+                        { lists:append(InnerAcc, Value), NewSourceMap }
+                    end,
+                    { Acc, SourceMap },
+                    SourceKeys),
+    interpolate_values(N - 1, SourceKeys, OutputSourceMap, OutputAcc).
+
+%% Collect the first value for a given key, then return the value and the mutated map:
+pop_value(Key, SourceMap) ->
+    Values = dict:fetch(Key, SourceMap),
+    { Value, NewValues } = lists:split(1, Values),
+    NewSourceMap = dict:store(Key, NewValues, SourceMap),
+    { Value, NewSourceMap }.
+
+%% Find the key and shortest length of "buckets" in a map of lists:
+shortest_bucket(Key, ValueList, { _, infinity}) -> 
+    { Key, length(ValueList) };
+shortest_bucket(Key, ValueList, { MinKey, MinLen }) ->
+    L = length(ValueList),
+    case L < MinLen of
+        false -> { MinKey, MinLen };
+        true  -> { Key, L } 
+    end.
