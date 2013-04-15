@@ -16,6 +16,27 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
+
+%% @doc This is a wrapper around a poolboy pool, that implements a
+%% queue. That is, this process maintains a queue of work, and checks
+%% workers out of a poolboy pool to consume it.
+%%
+%% The workers it uses send two messages to this process.
+%%
+%% The first message is at startup, the bare atom
+%% `worker_started'. This is a clue to this process that a worker was
+%% just added to the poolboy pool, so a checkout request has a chance
+%% of succeeding. This is most useful after an old worker has exited -
+%% `worker_started' is a trigger guaranteed to arrive at a time that
+%% will mean an immediate poolboy:checkout will not beat the worker
+%% into the pool.
+%%
+%% The second message is when the worker finishes work it has been
+%% handed, the two-tuple, `{checkin, WorkerPid}'. This message gives
+%% this process the choice of whether to give the worker more work or
+%% check it back into poolboy's pool at this point. Note: the worker
+%% should *never* call poolboy:checkin itself, because that will
+%% confuse (or cause a race) with this module's checkout management.
 -module(riak_core_vnode_worker_pool).
 
 -behaviour(gen_fsm).
@@ -29,6 +50,12 @@
 
 %% API
 -export([start_link/5, stop/2, shutdown_pool/2, handle_work/3]).
+
+-ifdef(PULSE).
+-compile(export_all).
+-compile({parse_transform, pulse_instrument}).
+-compile({pulse_replace_module, [{gen_fsm, pulse_gen_fsm}]}).
+-endif.
 
 -record(state, {
         queue = queue:new(),
@@ -52,7 +79,7 @@ shutdown_pool(Pid, Wait) ->
 
 init([WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps]) ->
     {ok, Pid} = poolboy:start_link([{worker_module, riak_core_vnode_worker},
-            {worker_args, [VNodeIndex, WorkerArgs, WorkerProps]},
+            {worker_args, [VNodeIndex, WorkerArgs, WorkerProps, self()]},
             {worker_callback_mod, WorkerMod},
             {size, PoolSize}, {max_overflow, 0}]),
     {ok, ready, #state{pool=Pid}}.
@@ -66,7 +93,7 @@ ready({work, Work, From} = Msg, #state{pool=Pool, queue=Q, monitors=Monitors} = 
             {next_state, queueing, State#state{queue=queue:in(Msg, Q)}};
         Pid when is_pid(Pid) ->
             NewMonitors = monitor_worker(Pid, From, Work, Monitors),
-            riak_core_vnode_worker:handle_work(Pid, Pool, Work, From),
+            riak_core_vnode_worker:handle_work(Pid, Work, From),
             {next_state, ready, State#state{monitors=NewMonitors}}
     end;
 ready(_Event, State) ->
@@ -90,8 +117,9 @@ shutdown({work, _Work, From}, State) ->
 shutdown(_Event, State) ->
     {next_state, shutdown, State}.
 
-handle_event({checkin, Pid}, shutdown, #state{monitors=Monitors0} = State) ->
+handle_event({checkin, Pid}, shutdown, #state{pool=Pool, monitors=Monitors0} = State) ->
     Monitors = demonitor_worker(Pid, Monitors0),
+    poolboy:checkin(Pool, Pid),
     case Monitors of
         [] -> %% work all done, time to exit!
             {stop, shutdown, State};
@@ -101,19 +129,32 @@ handle_event({checkin, Pid}, shutdown, #state{monitors=Monitors0} = State) ->
 handle_event({checkin, Worker}, _, #state{pool = Pool, queue=Q, monitors=Monitors} = State) ->
     case queue:out(Q) of
         {{value, {work, Work, From}}, Rem} ->
-            case poolboy:checkout(Pool, false) of
-                full ->
-                    {next_state, queueing, State#state{queue=Q,
-                            monitors=Monitors}};
-                Pid when is_pid(Pid) ->
-                    NewMonitors = monitor_worker(Pid, From, Work, Monitors),
-                    riak_core_vnode_worker:handle_work(Pid, Pool, Work, From),
-                    {next_state, queueing, State#state{queue=Rem,
-                            monitors=NewMonitors}}
-            end;
+            %% there is outstanding work to do - instead of checking
+            %% the worker back in, just hand it more work to do
+            NewMonitors = monitor_worker(Worker, From, Work, Monitors),
+            riak_core_vnode_worker:handle_work(Worker, Work, From),
+            {next_state, queueing, State#state{queue=Rem,
+                                               monitors=NewMonitors}};
         {empty, Empty} ->
             NewMonitors = demonitor_worker(Worker, Monitors),
+            poolboy:checkin(Pool, Worker),
             {next_state, ready, State#state{queue=Empty, monitors=NewMonitors}}
+    end;
+handle_event(worker_start, StateName, #state{pool=Pool, queue=Q, monitors=Monitors}=State) ->
+    %% a new worker just started - if we have work pending, try to do it
+    case queue:out(Q) of
+        {{value, {work, Work, From}}, Rem} ->
+            case poolboy:checkout(Pool, false) of
+                full ->
+                    {next_state, queueing, State};
+                Pid when is_pid(Pid) ->
+                    NewMonitors = monitor_worker(Pid, From, Work, Monitors),
+                    riak_core_vnode_worker:handle_work(Pid, Work, From),
+                    {next_state, queueing, State#state{queue=Rem, monitors=NewMonitors}}
+            end;
+        {empty, _} ->
+            %% StateName might be either 'ready' or 'shutdown'
+            {next_state, StateName, State}
     end;
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
@@ -144,9 +185,9 @@ handle_info({'DOWN', _Ref, _, Pid, Info}, StateName, #state{monitors=Monitors} =
         {Pid, _, From, Work} ->
             riak_core_vnode:reply(From, {error, {worker_crash, Info, Work}}),
             NewMonitors = lists:keydelete(Pid, 1, Monitors),
-            %% pretend a worker just checked in so that any queued work can
-            %% sent to the new worker just started to replace this dead one
-            gen_fsm:send_all_state_event(self(), {checkin, undefined}),
+            %% trigger to do more work will be 'worker_start' message
+            %% when poolboy replaces this worker (if not a 'checkin'
+            %% or 'handle_work')
             {next_state, StateName, State#state{monitors=NewMonitors}};
         false ->
             {next_state, StateName, State}

@@ -51,6 +51,13 @@
          current_state/1]).
 -endif.
 
+-ifdef(PULSE).
+-compile(export_all).
+-compile({parse_transform, pulse_instrument}).
+-compile({pulse_replace_module, [{gen_fsm, pulse_gen_fsm},
+                                 {gen_server, pulse_gen_server}]}).
+-endif.
+
 -define(normal_reason(R),
         (R == normal orelse R == shutdown orelse
                                             (is_tuple(R) andalso element(1,R) == shutdown))).
