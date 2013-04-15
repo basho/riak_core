@@ -561,6 +561,11 @@ get_forward(Mod, Idx, #state{forwarding=Fwd}) ->
 check_forward(Ring, Mod, Index) ->
     Node = node(),
     case riak_core_ring:next_owner(Ring, Index, Mod) of
+        {Node, '$resize', _} ->
+            Complete = riak_core_ring:complete_resize_transfers(Ring, {Index, Node}, Mod),
+            {{Mod, Index}, Complete};
+        {Node, '$delete', _} ->
+            {{Mod, Index}, undefined};
         {Node, NextOwner, complete} ->
             {{Mod, Index}, NextOwner};
         _ ->
@@ -615,11 +620,49 @@ update_handoff(AllVNodes, Ring, State) ->
 
 should_handoff(Ring, Mod, Idx) ->
     {_, NextOwner, _} = riak_core_ring:next_owner(Ring, Idx),
-    Owner = riak_core_ring:index_owner(Ring, Idx),
+    Type = riak_core_ring:vnode_type(Ring, Idx),
     Ready = riak_core_ring:ring_ready(Ring),
-    case determine_handoff_target(Ready, Owner, NextOwner) of
+    IsResizing = riak_core_ring:is_resizing(Ring),
+    Me = node(),
+    case {Type, NextOwner, Ready, IsResizing} of
+        %% if primary and next owner is me, don't handoff
+        {primary, Me, _, _} ->
+            Target = undefined;
+        %% if primary, don't handoff if no next owner
+        {primary, undefined, _, _} ->
+            Target = undefined;
+        %% if primary and ring ready, target is next owner (may be undef)
+        {primary, _, true, _} ->
+            Target = NextOwner;
+        %% otherwise, if primary don't handoff
+        {primary, _, _, _} ->
+            Target = undefined;
+        %% partitions moved during resize and scheduled for deletion, indexes
+        %% that exist in both the original and resized ring that were moved appear
+        %% as fallbacks.
+        {{fallback, _}, '$delete', _, _} ->
+            Target = '$delete';
+        %% partitions that no longer exist after the ring has been resized (shrunk)
+        %% scheduled for deletion
+        {resized_primary, '$delete', _, _} ->
+            Target = '$delete';
+        %% partitions that would have existed in a ring whose expansion was aborted
+        %% and are still running need to be cleaned up after and shutdown
+        {resized_primary, _, _, false} ->
+            Target = '$delete';
+        %% fallback vnode target is primary (For)
+        {{fallback, For}, undefined, _, _} ->
+            Target = For;
+        %% otherwise don't handoff
+        {_, _, _, _} ->
+            Target = undefined
+    end,
+    case Target of
         undefined ->
             false;
+        Action when Action == '$resize' orelse
+                    Action == '$delete' ->
+            {true, Action};
         TargetNode ->
             case app_for_vnode_module(Mod) of
                 undefined -> false;
@@ -630,27 +673,6 @@ should_handoff(Ring, Mod, Idx) ->
                         true -> {true, TargetNode}
                     end
             end
-    end.
-
-determine_handoff_target(Ready, Owner, NextOwner) ->
-    Me = node(),
-    TargetNode = case {Ready, Owner, NextOwner} of
-                     {_, _, Me} ->
-                         Me;
-                     {_, Me, undefined} ->
-                         Me;
-                     {true, Me, _} ->
-                         NextOwner;
-                     {_, _, undefined} ->
-                         Owner;
-                     {_, _, _} ->
-                         Me
-                 end,
-    case TargetNode of
-        Me ->
-            undefined;
-        _ ->
-            TargetNode
     end.
 
 app_for_vnode_module(Mod) when is_atom(Mod) ->
@@ -671,6 +693,15 @@ maybe_trigger_handoff(Mod, Idx, State) ->
 
 maybe_trigger_handoff(Mod, Idx, Pid, _State=#state{handoff=HO}) ->
     case orddict:find({Mod, Idx}, HO) of
+        {ok, '$resize'} ->
+            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+            case riak_core_ring:awaiting_resize_transfer(Ring, {Idx, node()}, Mod) of
+                undefined -> ok;
+                {TargetIdx, TargetNode} ->
+                    riak_core_vnode:trigger_handoff(Pid, TargetIdx, TargetNode)
+            end;
+        {ok, '$delete'} ->
+            riak_core_vnode:trigger_delete(Pid);
         {ok, TargetNode} ->
             riak_core_vnode:trigger_handoff(Pid, TargetNode),
             ok;

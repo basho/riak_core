@@ -52,7 +52,10 @@
           src_target     :: {non_neg_integer(), non_neg_integer()},
           stats          :: #ho_stats{},
           tcp_mod        :: module(),
-          total          :: non_neg_integer()
+          total          :: non_neg_integer(),
+          type           :: ho_type(),
+          notsent_acc    :: term(),
+          notsent_fun    :: function()
         }).
 
 %%%===================================================================
@@ -77,7 +80,6 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
     SrcNode = node(),
     SrcPartition = get_src_partition(Opts),
     TargetPartition = get_target_partition(Opts),
-
      try
          Filter = get_filter(Opts),
          [_Name,Host] = string:tokens(atom_to_list(TargetNode), "@"),
@@ -135,6 +137,8 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
          ok = TcpMod:send(Socket, M),
          StartFoldTime = os:timestamp(),
          Stats = #ho_stats{interval_end=future_now(get_status_interval())},
+         UnsentAcc0 = get_notsent_acc0(Opts),
+         UnsentFun = get_notsent_fun(Opts),
 
          Req = ?FOLD_REQ{foldfun=fun visit_item/3,
                          acc0=#ho_acc{ack=0,
@@ -146,7 +150,10 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                                       src_target={SrcPartition, TargetPartition},
                                       stats=Stats,
                                       tcp_mod=TcpMod,
-                                      total=0}},
+                                      total=0,
+                                      type=Type,
+                                      notsent_acc=UnsentAcc0,
+                                      notsent_fun=UnsentFun}},
 
 
          %% IFF the vnode is using an async worker to perform the fold
@@ -167,7 +174,9 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                  module=Module,
                  parent=ParentPid,
                  tcp_mod=TcpMod,
-                 total=SentCount} = R,
+                 stats=FinalStats,
+                 total=SentCount,
+                 notsent_acc=NotSentAcc} = R,
 
          case ErrStatus of
              ok ->
@@ -190,13 +199,15 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                  FoldTimeDiff = end_fold_time(StartFoldTime),
 
                  lager:info("~p transfer of ~p from ~p ~p to ~p ~p"
-                            " completed: sent ~p objects in ~.2f seconds",
+                            " completed: sent ~p of ~p objects in ~.2f seconds",
                             [Type, Module, SrcNode, SrcPartition,
-                             TargetNode, TargetPartition, SentCount,
+                             TargetNode, TargetPartition, FinalStats#ho_stats.objs, SentCount,
                              FoldTimeDiff]),
 
                  case Type of
                      repair -> ok;
+                     resize_transfer -> gen_fsm:send_event(ParentPid, {resize_transfer_complete,
+                                                                       NotSentAcc});
                      _ -> gen_fsm:send_event(ParentPid, handoff_complete)
                  end;
              {error, ErrReason} ->
@@ -267,7 +278,9 @@ visit_item(K, V, Acc) ->
             src_target={SrcPartition, TargetPartition},
             stats=Stats,
             tcp_mod=TcpMod,
-            total=Total
+            total=Total,
+            notsent_acc=NotSentAcc,
+            notsent_fun=NotSentFun
            } = Acc,
 
     case Filter(K) of
@@ -286,7 +299,7 @@ visit_item(K, V, Acc) ->
                     Acc#ho_acc{error={error, Reason}, stats=Stats3}
             end;
         false ->
-            Acc#ho_acc{error=ok, total=Total+1}
+            Acc#ho_acc{error=ok,total=Total+1,notsent_acc=NotSentFun(K, NotSentAcc)}
     end.
 
 get_handoff_ip(Node) when is_atom(Node) ->
@@ -397,6 +410,15 @@ get_src_partition(Opts) ->
 
 get_target_partition(Opts) ->
     proplists:get_value(target_partition, Opts).
+
+get_notsent_acc0(Opts) ->
+    proplists:get_value(notsent_acc0, Opts).
+
+get_notsent_fun(Opts) ->
+    case proplists:get_value(notsent_fun, Opts) of
+        none -> fun(_, _) -> undefined end;
+        Fun -> Fun
+    end.
 
 -spec get_filter(proplists:proplist()) -> predicate().
 get_filter(Opts) ->
