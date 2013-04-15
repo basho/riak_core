@@ -260,7 +260,6 @@ continue(State, NewModState) ->
 %% requests are passed to handle_handoff_command.
 forward_or_vnode_command(Sender, Request, State=#state{forward=Forward,
                                                        mod=Mod,
-                                                       handoff_target=HT,
                                                        index=Index}) ->
     Resizing = is_list(Forward),
     case Resizing of
@@ -270,24 +269,25 @@ forward_or_vnode_command(Sender, Request, State=#state{forward=Forward,
             RequestHash = undefined
     end,
     case {Forward, RequestHash} of
-        %% no forwarding
+        %% typical vnode operation, no forwarding set, handle request locally
         {undefined, _} -> vnode_command(Sender, Request, State);
         %% implicit forwarding after ownership_transfer/hinted_handoff
-        {F, _} when not is_list(F) -> vnode_forward(HT, Sender, Request, State);
-        %% during resize we can't forward a request w/o request hash
+        {F, _} when not is_list(F) -> vnode_forward({Index, Forward}, Sender, Request, State);
+        %% during resize we can't forward a request w/o request hash, always handle locally
         {_, undefined} -> vnode_command(Sender, Request, State);
         %% possible forwarding during ring resizing
         {_, _} ->
             %% during ring resizing if we have completed a transfer to the index that will
             %% handle request in future ring we forward to it. Otherwise we delegate
             %% to the local vnode like other requests during handoff
+            %% TODO: how to handle all resize ops completed case (need an extra check here)
             {ok, R} = riak_core_ring_manager:get_my_ring(),
             FutureIndex = riak_core_ring:future_index(RequestHash, Index, R),
             case lists:keyfind(FutureIndex, 1, Forward) of
-                false -> vnode_handoff_command(Sender, Request, RequestHash, State);
-                {FutureIndex, FutureOwner} ->
-                    vnode_forward({FutureIndex, FutureOwner}, Sender,
-                                  {resize_forward,Request}, State)
+                false -> vnode_command(Sender, Request, State);
+                {FutureIndex, FutureOwner} -> vnode_handoff_command(Sender, Request,
+                                                                    {FutureIndex, FutureOwner},
+                                                                    State)
             end
     end.
 
@@ -347,11 +347,12 @@ vnode_coverage(Sender, Request, KeySpaces, State=#state{index=Index,
             {stop, Reason, State#state{modstate=NewModState}}
     end.
 
-vnode_handoff_command(Sender, Request, RequestHash, State=#state{mod=Mod,
-                                                                 index=Index,
-                                                                 modstate=ModState,
-                                                                 handoff_target=HOTarget,
-                                                                 pool_pid=Pool}) ->
+vnode_handoff_command(Sender, Request, ForwardTo,
+                      State=#state{mod=Mod,
+                                   modstate=ModState,
+                                   handoff_target=HOTarget,
+                                   handoff_type=HOType,
+                                   pool_pid=Pool}) ->
     case Mod:handle_handoff_command(Request, Sender, ModState) of
         {reply, Reply, NewModState} ->
             reply(Sender, Reply),
@@ -364,15 +365,16 @@ vnode_handoff_command(Sender, Request, RequestHash, State=#state{mod=Mod,
             riak_core_vnode_worker_pool:handle_work(Pool, Work, From),
             continue(State, NewModState);
         {forward, NewModState} ->
-            case RequestHash of
-                undefined ->
-                    vnode_forward(HOTarget, Sender, Request, State);
-                _ ->
-                    {ok, R} = riak_core_ring_manager:get_my_ring(),
-                    FutureIndex = riak_core_ring:future_index(RequestHash, Index, R),
-                    FutureOwner = riak_core_ring:future_owner(R, FutureIndex),
-                    vnode_forward({FutureIndex, FutureOwner}, Sender,
-                                  {resize_forward, Request}, State)
+            case HOType of
+                %% resize op and transfer ongoing
+                resize_transfer -> vnode_forward(ForwardTo, Sender,
+                                                 {resize_forward, Request}, State);
+                %% resize op ongoing, no resize transfer ongoing, arrive here
+                %% via forward_or_vnode_command
+                undefined -> vnode_forward(ForwardTo, Sender,
+                                           {resize_forward, Request}, State);
+                %% normal explicit forwarding during owhership transfer
+                _ -> vnode_forward(HOTarget, Sender, Request, State)
             end,
             continue(State, NewModState);
         {drop, NewModState} ->
@@ -403,10 +405,37 @@ active(?VNODE_REQ{sender=Sender, request=Request},
     forward_or_vnode_command(Sender, Request, State);
 active(?VNODE_REQ{sender=Sender, request=Request},
                   State=#state{handoff_type=resize_transfer,
+                               handoff_target={HOIdx,HONode},
+                               index=Index,
+                               forward=Forward,
                                mod=Mod}) ->
-    vnode_handoff_command(Sender, Request, Mod:request_hash(Request), State);
+    RequestHash = Mod:request_hash(Request),
+    case RequestHash of
+        %% will never have enough information to forward request so only handle locally
+        undefined -> vnode_command(Sender, Request, State);
+        _ ->
+            {ok, R} = riak_core_ring_manager:get_my_ring(),
+            FutureIndex = riak_core_ring:future_index(RequestHash, Index, R),
+            case FutureIndex of
+                %% request for portion of keyspace currently being transferred
+                HOIdx -> vnode_handoff_command(Sender, Request,
+                                               {HOIdx, HONode}, State);
+                %% some portions of keyspace already transferred
+                _Other when is_list(Forward) ->
+                    case lists:keyfind(FutureIndex, 1, Forward) of
+                        %% request not in transferred portion
+                        false -> vnode_command(Sender, Request, State);
+                        %% request in transferred portion
+                        {FutureIndex, FutureOwner} ->
+                            vnode_handoff_command(Sender, Request,
+                                                  {FutureIndex, FutureOwner}, State)
+                    end;
+                %% no other portions of keyspace transferred
+                _Other -> vnode_command(Sender, Request, State)
+            end
+    end;
 active(?VNODE_REQ{sender=Sender, request=Request},State) ->
-    vnode_handoff_command(Sender, Request, undefined, State);
+    vnode_handoff_command(Sender, Request, State#state.handoff_target, State);
 active(handoff_complete, State) ->
     State2 = start_manager_event_timer(handoff_complete, State),
     continue(State2);
