@@ -156,6 +156,7 @@ init([Mod,
     {Request, VNodeSelector, NVal, PrimaryVNodeCoverage,
      NodeCheckService, VNodeMaster, Timeout, ModState} =
         Mod:init(From, RequestArgs),
+    gen_fsm:start_timer(Timeout, {timer_expired, Timeout}),
     StateData = #state{mod=Mod,
                        mod_state=ModState,
                        node_check_service=NodeCheckService,
@@ -164,7 +165,7 @@ init([Mod,
                        pvc = PrimaryVNodeCoverage,
                        request=Request,
                        req_id=ReqId,
-                       timeout=Timeout,
+                       timeout=infinity,
                        vnode_master=VNodeMaster},
     {ok, initialize, StateData, 0};
 init({test, Args, StateProps}) ->
@@ -240,6 +241,8 @@ waiting_results({{ReqId, VNode}, Results},
             Mod:finish(Error, ModState),
             {stop, Error, StateData}
     end;
+waiting_results({timeout, _, _}, #state{mod=Mod, mod_state=ModState}) ->
+    Mod:finish({error, timeout}, ModState);
 waiting_results(timeout, #state{mod=Mod, mod_state=ModState}) ->
     Mod:finish({error, timeout}, ModState).
 
