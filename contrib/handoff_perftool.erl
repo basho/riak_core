@@ -15,7 +15,6 @@
             %% If we get any more options, we should use something associative rather than adding more options:
             go/0, go/1, go/2, go/3,
 
-            force_encoding/2,
             get_ring_members/0,
             get_ring_owners/0
         ]).
@@ -29,6 +28,8 @@
 -ifndef(MD_LASTMOD).
  -define(MD_LASTMOD,  <<"X-Riak-Last-Modified">>).
 -endif.
+
+-define(HARNESS, (rt:config(rt_harness))).
 
 %% JFW: hack until we can get this to play nicely with rebar:
 log_info(Message) -> lager:log(info, self(), Message).
@@ -96,7 +97,6 @@ gather_vnodes_1(NVnodes) ->
 %%      Note: This algorithm is surely inefficient, but N is expected to be small.
 gather_vnodes_rr(NVnodes) ->
 
-
     %% Map owners to their vnode ids (not including ourselves):
     HandoffMap = dict:erase(node(), lists:foldl(fun({NodeID, NodeName}, AccDict) ->
                                                     dict:append(NodeName, NodeID, AccDict)
@@ -113,7 +113,7 @@ gather_vnodes_rr(NVnodes) ->
         true  -> erlang:throw("Requested more vnodes than available in smallest target")
     end,
 
-    interpolate_values(MinLen, HandoffMembers, HandoffMap, []).
+    merge_values(MinLen, HandoffMembers, HandoffMap, []).
 
 %%
 %% Selection utilities:
@@ -209,44 +209,15 @@ set_handoff_concurrency(use_existing_concurrency) ->
 get_handoff_concurrency() ->
     rpc:multicall(riak_core_handoff_manager, get_concurrency, []).
 
-%% Force use of a particular particular handoff encoding method:
-force_encoding(Node, HandoffEncoding) ->
-    case HandoffEncoding of
-        default -> log_info("Using default encoding type."), true;
-
-        _       -> log_info("Forcing encoding type to ~p.", [HandoffEncoding]),
-                   OverrideData =
-                    [
-                      { riak_core,
-                            [
-                                { override_capability,
-                                        [
-                                          { handoff_data_encoding,
-                                                [
-                                                  {    use, HandoffEncoding},
-                                                  { prefer, HandoffEncoding}
-                                                ]
-                                          }
-                                        ]
-                                }
-                            ]
-                      }
-                    ],
-
-                   rt:update_app_config(Node, OverrideData)
-
-    end,
-    ok.
-
 %%
 %% General helper functions:
 %%
 
-%% N-way interpolation:
-interpolate_values(0, _SourceKeys, _SourceMap, Acc) ->
+%% N-way merge:
+merge_values(0, _SourceKeys, _SourceMap, Acc) ->
     Acc;
 
-interpolate_values(N, SourceKeys, SourceMap, Acc) ->
+merge_values(N, SourceKeys, SourceMap, Acc) ->
     { OutputAcc, OutputSourceMap } = 
         lists:foldl(fun(Key, { InnerAcc, InnerSourceMap }) ->
                         { Value, NewSourceMap } = pop_value(Key, InnerSourceMap),
@@ -254,7 +225,7 @@ interpolate_values(N, SourceKeys, SourceMap, Acc) ->
                     end,
                     { Acc, SourceMap },
                     SourceKeys),
-    interpolate_values(N - 1, SourceKeys, OutputSourceMap, OutputAcc).
+    merge_values(N - 1, SourceKeys, OutputSourceMap, OutputAcc).
 
 %% Collect the first value for a given key, then return the value and the mutated map:
 pop_value(Key, SourceMap) ->
