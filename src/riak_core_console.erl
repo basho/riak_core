@@ -23,7 +23,7 @@
          stage_leave/1, stage_remove/1, stage_replace/1,
          stage_force_replace/1, print_staged/1, commit_staged/1,
          clear_staged/1, transfer_limit/1, pending_claim_percentage/2,
-         pending_nodes_and_claim_percentages/1]).
+         pending_nodes_and_claim_percentages/1, transfers/1]).
 
 %% @doc Return list of nodes, current and future claim.
 pending_nodes_and_claim_percentages(Ring) ->
@@ -192,6 +192,160 @@ unreachable_status(Down) ->
               "forcibly remove the nodes from the cluster (riak-admin~n"
               "force-remove NODE) to allow the remaining nodes to settle.~n"),
     ok.
+
+%% Provide a list of nodes with pending partition transfers (i.e. any secondary vnodes)
+%% and list any owned vnodes that are *not* running
+-spec(transfers([string()]) -> ok).
+transfers([]) ->
+    try
+        {DownNodes, Pending} = riak_core_status:transfers(),
+        case DownNodes of
+            [] -> ok;
+            _  -> io:format("Nodes ~p are currently down.\n", [DownNodes])
+        end,
+        F = fun({waiting_to_handoff, Node, Count}, Acc) ->
+                io:format("~p waiting to handoff ~p partitions\n", [Node, Count]),
+                Acc + 1;
+            ({stopped, Node, Count}, Acc) ->
+                io:format("~p does not have ~p primary partitions running\n", [Node, Count]),
+                Acc + 1
+        end,
+        case lists:foldl(F, 0, Pending) of
+            0 ->
+                io:format("No transfers active\n"),
+                ok;
+            _ ->
+                error
+        end
+    catch
+        Exception:Reason ->
+            lager:error("Transfers failed ~p:~p", [Exception,
+                    Reason]),
+            io:format("Transfers failed, see log for details~n"),
+            error
+    end,
+
+    %% Now display active transfers
+    {Xfers, Down} = riak_core_status:all_active_transfers(),
+
+    DisplayXfer =
+        fun({{Mod, Partition}, Node, outbound, active, _Status}) ->
+                print_v1_status(Mod, Partition, Node);
+
+           ({status_v2, Status}) ->
+                %% Display base status
+                Type = proplists:get_value(type, Status),
+                Mod = proplists:get_value(mod, Status),
+                SrcPartition = proplists:get_value(src_partition, Status),
+                TargetPartition = proplists:get_value(target_partition, Status),
+                StartTS = proplists:get_value(start_ts, Status),
+                SrcNode = proplists:get_value(src_node, Status),
+                TargetNode = proplists:get_value(target_node, Status),
+
+                print_v2_status(Type, Mod, {SrcPartition, TargetPartition}, StartTS),
+
+                %% Get info about stats if there is any yet
+                Stats = proplists:get_value(stats, Status),
+
+                print_stats(SrcNode, TargetNode, Stats),
+                io:format("~n");
+
+           (_) ->
+                ignore
+        end,
+    DisplayDown =
+        fun(Node) ->
+                io:format("Node ~p could not be contacted~n", [Node])
+        end,
+
+    io:format("~nActive Transfers:~n~n", []),
+    [DisplayXfer(Xfer) || Xfer <- lists:flatten(Xfers)],
+
+    io:format("~n"),
+    [DisplayDown(Node) || Node <- Down].
+
+print_v2_status(Type, Mod, {SrcPartition, TargetPartition}, StartTS) ->
+    StartTSStr = datetime_str(StartTS),
+    Running = timer:now_diff(os:timestamp(), StartTS),
+    RunningStr = riak_core_format:human_time_fmt("~.2f", Running),
+
+    io:format("transfer type: ~s~n", [Type]),
+    io:format("vnode type: ~p~n", [Mod]),
+    case Type of
+        repair ->
+            io:format("source partition: ~p~n", [SrcPartition]),
+            io:format("target partition: ~p~n", [TargetPartition]);
+        _ ->
+            io:format("partition: ~p~n", [TargetPartition])
+    end,
+    io:format("started: ~s [~s ago]~n", [StartTSStr, RunningStr]).
+
+print_v1_status(Mod, Partition, Node) ->
+    io:format("vnode type: ~p~n", [Mod]),
+    io:format("partition: ~p~n", [Partition]),
+    io:format("target node: ~p~n~n", [Node]).
+
+print_stats(SrcNode, TargetNode, no_stats) ->
+    ToFrom = riak_core_format:fmt("~16s ~s ~16s",
+                                  [SrcNode, progress(0.0, 30), TargetNode]),
+    Width = length(ToFrom),
+
+    io:format("last update: no updates seen~n"),
+    print_size(undefined),
+    io:format("objects transferred: unknown~n~n"),
+    io:format("~s~n", [string:centre("unknown", Width)]),
+    io:format("~s~n", [ToFrom]),
+    io:format("~s~n", [string:centre("unknown", Width)]);
+print_stats(SrcNode, TargetNode, Stats) ->
+    ObjsS = proplists:get_value(objs_per_s, Stats),
+    BytesS = proplists:get_value(bytes_per_s, Stats),
+    LastUpdate = proplists:get_value(last_update, Stats),
+    Diff = timer:now_diff(os:timestamp(), LastUpdate),
+    DiffStr = riak_core_format:human_time_fmt("~.2f", Diff),
+    Objs = proplists:get_value(objs_total, Stats),
+    ObjsSStr = riak_core_format:fmt("~p Objs/s", [ObjsS]),
+    ByteStr = riak_core_format:human_size_fmt("~.2f", BytesS) ++ "/s",
+    TS = datetime_str(LastUpdate),
+    Size = proplists:get_value(size, Stats),
+    DonePctDecimal = proplists:get_value(pct_done_decimal, Stats),
+    ToFrom = riak_core_format:fmt("~16s ~s ~16s",
+                                  [SrcNode, progress(DonePctDecimal, 30), TargetNode]),
+    Width = length(ToFrom),
+    io:format("last update: ~s [~s ago]~n", [TS, DiffStr]),
+    print_size(Size),
+    io:format("objects transferred: ~p~n~n", [Objs]),
+    io:format("~s~n", [string:centre(ObjsSStr, Width)]),
+    io:format("~s~n", [ToFrom]),
+    io:format("~s~n", [string:centre(ByteStr, Width)]).
+
+print_size(undefined) ->
+    io:format("total size: unknown~n");
+print_size({Objs, objects}) ->
+    io:format("total size: ~p objects~n", [Objs]);
+print_size({Bytes, bytes}) ->
+    io:format("total size: ~p bytes~n", [Bytes]).
+
+progress(undefined, MaxSize) ->
+    FormatStr = progress_fmt(progress_size(MaxSize), 0), %% this is wrong, need - 6 refactor
+    riak_core_format:fmt(FormatStr, ["", "", "N/A"]);
+progress(PctDecimal, MaxSize) ->
+    ProgressTotalSize = progress_size(MaxSize),
+    ProgressSize = trunc(PctDecimal * ProgressTotalSize),
+    PadSize = ProgressTotalSize - ProgressSize,
+    FormatStr = progress_fmt(ProgressSize, PadSize),
+    riak_core_format:fmt(FormatStr, ["", "", integer_to_list(trunc(PctDecimal * 100))]).
+
+progress_size(MaxSize) ->
+    MaxSize - 7. %% 7 fixed characters in progress bar
+
+progress_fmt(ArrowSize, PadSize) ->
+    riak_core_format:fmt("|~~~p..=s~~~p.. s| ~~3.. s%", [ArrowSize, PadSize]).
+
+datetime_str({_Mega, _Secs, _Micro}=Now) ->
+    datetime_str(calendar:now_to_datetime(Now));
+datetime_str({{Year, Month, Day}, {Hour, Min, Sec}}) ->
+    riak_core_format:fmt("~4..0B-~2..0B-~2..0B ~2..0B:~2..0B:~2..0B",
+                         [Year,Month,Day,Hour,Min,Sec]).
 
 stage_leave([]) ->
     stage_leave(node());
