@@ -684,18 +684,21 @@ start_handoff(State=#state{index=Idx, mod=Mod, modstate=ModState}, TargetNode) -
         {true, NewModState} ->
             finish_handoff(State#state{modstate=NewModState,
                                        handoff_node=TargetNode});
+        {false, Size, NewModState} ->
+            start_handoff(State#state{modstate=NewModState}, TargetNode, [{size, Size}]);
         {false, NewModState} ->
-            case riak_core_handoff_manager:add_outbound(Mod,Idx,TargetNode,self()) of
-                {ok, Pid} ->
-                    NewState = State#state{modstate=NewModState,
-                                           handoff_pid=Pid,
-                                           handoff_node=TargetNode},
-                    continue(NewState);
-                {error,_Reason} ->
-                    continue(State#state{modstate=NewModState})
-            end
+            start_handoff(State#state{modstate=NewModState}, TargetNode, [])
     end.
 
+start_handoff(State=#state{mod=Mod, index=Idx}, TargetNode, Opts) ->
+    case riak_core_handoff_manager:add_outbound(Mod,Idx,TargetNode,self(),Opts) of
+        {ok, Pid} ->
+            NewState = State#state{handoff_pid=Pid,
+                                   handoff_node=TargetNode},
+            continue(NewState);
+        {error,_Reason} ->
+            continue(State)
+    end.
 
 %% @doc Send a reply to a vnode request.  If
 %%      the Ref is undefined just send the reply
