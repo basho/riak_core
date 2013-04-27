@@ -32,7 +32,7 @@ init([]) ->
     {ok, {{one_for_one, 5, 10}, []}}.
 
 %% start a process for the given stat
-%% @see `riak_core_stat_calc_proc`
+%% {@see riak_core_stat_calc_proc}
 calc_proc(Stat) ->
     Ref = calc_proc_ref(Stat),
     Pid = case supervisor:start_child(?MODULE, Ref) of

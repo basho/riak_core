@@ -759,11 +759,11 @@ stop_manager_event_timer(#state{manager_event_timer=T}) ->
 
 -ifdef(TEST).
 
-%% @doc Start the garbage collection server
+%% Start the garbage collection server
 test_link(Mod, Index) ->
     gen_fsm:start_link(?MODULE, [Mod, Index, 0, node()], []).
 
-%% @doc Get the current state of the fsm for testing inspection
+%% Get the current state of the fsm for testing inspection
 -spec current_state(pid()) -> {atom(), #state{}} | {error, term()}.
 current_state(Pid) ->
     gen_fsm:sync_send_all_state_event(Pid, current_state).
