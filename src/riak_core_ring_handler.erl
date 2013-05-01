@@ -193,8 +193,7 @@ maybe_stop_vnode_proxies(Ring) ->
         [] ->
             Idxs = [{I,M} || {I,_} <- riak_core_ring:all_owners(Ring), M <- Mods],
             ProxySpecs = supervisor:which_children(riak_core_vnode_proxy_sup),
-            Running = [{I,M} || {{M,I},Pid,_,_} <- ProxySpecs,
-                            is_pid(Pid) andalso is_process_alive(Pid)],
+            Running = [{I,M} || {{M,I},_,_,_} <- ProxySpecs, lists:member(M, Mods)],
             ToShutdown = Running -- Idxs,
             [riak_core_vnode_proxy_sup:stop_proxy(M,I) || {I, M} <- ToShutdown];
         _ ->
