@@ -126,6 +126,7 @@
          resized_ring/1,
          set_resized_ring/2,
          future_index/3,
+         future_index/4,
          is_future_index/4,
          future_owner/2,
          future_num_partitions/1,
@@ -534,30 +535,76 @@ responsible_index(ChashKey, ?CHSTATE{chring=Ring}) ->
 %%      for `CHashKey' in the future ring. For regular transitions
 %%      the returned index will always be `OrigIdx'. If the ring is
 %%      resizing the index may be different
--spec future_index(chash:index(), integer(), chstate()) -> integer().
+-spec future_index(chash:index(),
+                   integer(),
+                   chstate()) -> integer() | undefined.
 future_index(CHashKey, OrigIdx, State) ->
-    FutureState = future_ring(State),
-    Preflist = preflist(CHashKey, State),
-    FuturePreflist = preflist(CHashKey, FutureState),
-    Position = preflist_position(Preflist, OrigIdx),
-    {FutureIdx, _} = lists:nth(Position, FuturePreflist),
-    FutureIdx.
+    future_index(CHashKey, OrigIdx, undefined, State).
+
+-spec future_index(chash:index(),
+                   integer(),
+                   undefined | integer(),
+                   chstate()) -> integer() | undefined.
+future_index(CHashKey, OrigIdx, NValCheck, State) ->
+    <<CHashInt:160/integer>> = CHashKey,
+    OrigCount = num_partitions(State),
+    NextCount = future_num_partitions(State),
+    OrigInc = chash:ring_increment(OrigCount),
+    NextInc = chash:ring_increment(NextCount),
+
+    %% Determine position in the ring of partition that owns key (head of preflist)
+    %% Position is 1-based starting from partition (0 + ring increment), e.g.
+    %% index 0 is always position N.
+    OwnerPos = ((CHashInt div OrigInc) + 1),
+
+    %% Determine position of the source partition in the ring
+    %% if OrigIdx is 0 we know the position is OrigCount (number of partitions)
+    OrigPos = case OrigIdx of
+                  0 -> OrigCount;
+                  _ -> OrigIdx div OrigInc
+              end,
+
+    %% The distance between the key's owner (head of preflist) and the source partition
+    %% is the position of the source in the preflist, the distance may be negative
+    %% in which case we have wrapped around the ring. distance of zero means the source
+    %% is the head of the preflist.
+    OrigDist = case OrigPos - OwnerPos of
+                  P when P < 0 -> OrigCount + P;
+                  P -> P
+               end,
+
+    %% In the case that the ring is shrinking the future index for a key whose position
+    %% in the preflist is >= ring size may be calculated, any transfer is invalid in
+    %% this case, return undefined. The position may also be >= an optional N value for
+    %% the key, if this is true undefined is also returned
+    case check_invalid_future_index(OrigDist, NextCount, NValCheck) of
+        true -> undefined;
+        false ->
+            %% Determine the partition (head of preflist) that will own the key in the future ring
+            FuturePos =  ((CHashInt div NextInc) + 1),
+            NextOwner = FuturePos * NextInc,
+
+            %% Determine the partition that the key should be transferred to (has same position
+            %% in future preflist as source partition does in current preflist)
+            RingTop = trunc(math:pow(2,160)-1),
+            case NextOwner + (NextInc * OrigDist) of
+                FutureIndex when FutureIndex >= RingTop -> FutureIndex - RingTop;
+                FutureIndex -> FutureIndex
+            end
+    end.
+
+check_invalid_future_index(OrigDist, NextCount, NValCheck) ->
+    OverRingSize = OrigDist >= NextCount,
+    OverNVal = case NValCheck of
+                   undefined -> false;
+                   _ -> OrigDist >= NValCheck
+               end,
+    OverRingSize orelse OverNVal.
 
 -spec is_future_index(chash:index(), integer(), integer(), chstate()) -> boolean().
 is_future_index(CHashKey, OrigIdx, TargetIdx, State) ->
-    FutureIndex = future_index(CHashKey, OrigIdx, State),
+    FutureIndex = future_index(CHashKey, OrigIdx, undefined, State),
     FutureIndex =:= TargetIdx.
-
-%% @private
-%% returns a 1-based index that is the position of `Idx' in `Preflist'
-preflist_position(Preflist, Idx) ->
-    preflist_position(Preflist, Idx, 1).
-
-%% @private
-preflist_position([{Idx, _} | _], Idx, Acc) ->
-    Acc;
-preflist_position([_ | Rest], Idx, Acc) ->
-    preflist_position(Rest, Idx, Acc+1).
 
 -spec transfer_node(Idx :: integer(), Node :: term(), MyState :: chstate()) ->
            chstate().
@@ -1930,8 +1977,8 @@ resize_test() ->
     Key = <<0:160/integer>>,
     OrigIdx = element(1, hd(preflist(Key, Ring0))),
     %% for non-resize transitions index should be the same
-    ?assertEqual(OrigIdx, future_index(Key, OrigIdx, Ring0)),
-    ?assertEqual(element(1, hd(preflist(Key, Ring2))), future_index(Key, OrigIdx, Ring3)).
+    ?assertEqual(OrigIdx, future_index(Key, OrigIdx, undefined, Ring0)),
+    ?assertEqual(element(1, hd(preflist(Key, Ring2))), future_index(Key, OrigIdx, undefined, Ring3)).
 
 resize_xfer_test_() ->
     {setup,
