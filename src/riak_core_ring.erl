@@ -816,14 +816,8 @@ future_indices(State, Node) ->
 
 -spec all_next_owners(chstate()) -> [{integer(), term()}].
 all_next_owners(CState) ->
-    case is_resizing(CState) of
-        false ->
-            Next = riak_core_ring:pending_changes(CState),
-            [{Idx, NextOwner} || {Idx, _, NextOwner, _, _} <- Next];
-        true ->
-            {ok, FutureRing} = resized_ring(CState),
-            chash:nodes(FutureRing)
-    end.
+    Next = riak_core_ring:pending_changes(CState),
+    [{Idx, NextOwner} || {Idx, _, NextOwner, _, _} <- Next].
 
 %% @private
 change_owners(CState, Reassign) ->

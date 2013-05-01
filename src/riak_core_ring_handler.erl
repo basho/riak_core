@@ -179,7 +179,7 @@ maybe_start_vnode_proxies(Ring) ->
     Larger = Size < FutureSize,
     case Larger of
         true ->
-            FutureIdxs = riak_core_ring:all_next_owners(Ring),
+            FutureIdxs = riak_core_ring:all_owners(riak_core_ring:future_ring(Ring)),
             [riak_core_vnode_proxy_sup:start_proxy(Mod, Idx) || {Idx, _} <- FutureIdxs,
                                                                 Mod <- Mods],
             ok;
