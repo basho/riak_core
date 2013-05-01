@@ -400,28 +400,34 @@ filter({Key, Value}=_Filter) ->
 resize_transfer_filter(Ring, Mod, Src, Target) ->
     fun(K) ->
             {_, Hashed} = Mod:object_info(K),
-            %% when the ring shrinks we may have data on this partition for which
-            %% it is not possible to determine a future index because the position
-            %% of Src in the current preflist is greater than the size of the future
-            %% ring. This data shouldn't be sent anywhere so catch the exception and
-            %% move on
-            try riak_core_ring:is_future_index(Hashed,
-                                               Src,
-                                               Target,
-                                               Ring)
-            catch error:_ -> false
-            end
+            riak_core_ring:is_future_index(Hashed,
+                                           Src,
+                                           Target,
+                                           Ring)
     end.
 
 resize_transfer_notsent_fun(Ring, Mod, Src) ->
-    fun(Key, Acc) -> record_seen_index(Ring, Mod, Src, Key, Acc) end.
+    Shrinking = riak_core_ring:num_partitions(Ring) > riak_core_ring:future_num_partitions(Ring),
+    case Shrinking of
+        false -> NValMap = DefaultN = undefined;
+        true ->
+            NValMap = riak_core_bucket:bucket_nval_map(Ring),
+            DefaultN = riak_core_bucket:default_object_nval()
+    end,
+    fun(Key, Acc) -> record_seen_index(Ring, Shrinking, NValMap, DefaultN, Mod, Src, Key, Acc) end.
 
-record_seen_index(Ring, Mod, Src, Key, Seen) ->
-    {_, Hashed} = Mod:object_info(Key),
-    try riak_core_ring:future_index(Hashed, Src, Ring) of
-        FutureIndex -> [FutureIndex | Seen]
-    catch
-        error:_ -> Seen
+record_seen_index(Ring, Shrinking, NValMap, DefaultN, Mod, Src, Key, Seen) ->
+    {Bucket, Hashed} = Mod:object_info(Key),
+    CheckNVal = case Shrinking of
+                    false -> undefined;
+                    true -> proplists:get_value(Bucket, NValMap, DefaultN)
+                end,
+    case riak_core_ring:future_index(Hashed, Src, CheckNVal, Ring) of
+        undefined -> Seen;
+        FutureIndex ->
+            lager:info("resize transfer from ~p recording ~p as seen for key ~p",
+                       [Src, FutureIndex, Key]),
+            ordsets:add_element(FutureIndex, Seen)
     end.
 
 get_concurrency_limit () ->
@@ -483,7 +489,7 @@ send_handoff(HOType, {Mod, Src, Target}, Node, Vnode, HS, {Filter, FilterModFun}
                         resize_transfer ->
                             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
                             HOFilter = resize_transfer_filter(Ring, Mod, Src, Target),
-                            HOAcc0 = [],
+                            HOAcc0 = ordsets:new(),
                             HONotSentFun = resize_transfer_notsent_fun(Ring, Mod, Src);
                         _ ->
                             HOFilter = none,

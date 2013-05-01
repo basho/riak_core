@@ -504,7 +504,7 @@ mark_handoff_complete(SrcIdx, Target, SeenIdxs, Mod, resize_transfer) ->
                                                                                    Source,
                                                                                    SeenIdx)
                                    end,
-                               Ring2 = lists:foldl(F, Ring, SeenIdxs),
+                               Ring2 = lists:foldl(F, Ring, ordsets:to_list(SeenIdxs)),
                                Ring3 = riak_core_ring:resize_transfer_complete(Ring2,
                                                                                Source,
                                                                                Target,
