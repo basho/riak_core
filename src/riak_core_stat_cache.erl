@@ -221,7 +221,8 @@ do_get_stats(App, {M, F, A}) ->
     spawn_link(fun() ->
                        Stats = folsom_metrics:histogram_timed_update({?MODULE, M}, M, F, A),
                        folsom_metrics:notify_existing_metric({?MODULE, App}, 1, meter),
-                       gen_server:cast(?MODULE, {stats, App, Stats, folsom_utils:now_epoch()}) end).
+                       gen_server:cast(?MODULE, {stats, App, Stats,
+                                                 riak_core_util:moment()}) end).
 
 awaiting_for_pid(Pid, Active) ->
     case  [{App, Awaiting} || {App, {Proc, Awaiting}} <- orddict:to_list(Active),

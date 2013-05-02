@@ -24,6 +24,7 @@
 -module(riak_core_util).
 
 -export([moment/0,
+         moment_to_local_datetime/1,
          make_tmp_dir/0,
          replace_file/2,
          compare_dates/2,
@@ -71,6 +72,12 @@
 %%      number of seconds from year 0 to now, universal time, in
 %%      the gregorian calendar.
 moment() -> calendar:datetime_to_gregorian_seconds(calendar:universal_time()).
+
+%% @spec moment_to_local_datetime(moment()) -> calendar:datetime()
+%% @doc Convert a moment to a datetime in local time.
+moment_to_local_datetime(M) ->
+    calendar:universal_time_to_local_time(calendar:gregorian_seconds_to_datetime(M)).
+
 
 %% @spec compare_dates(string(), string()) -> boolean()
 %% @doc Compare two RFC1123 date strings or two now() tuples (or one
