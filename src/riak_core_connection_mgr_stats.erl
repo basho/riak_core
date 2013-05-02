@@ -120,13 +120,21 @@ format_stat({{?APP, StatName, ProtocolId},[{count,N},{one,_W}]}) when is_atom(Pr
     {atom_to_list(ProtocolId)  ++ "_" ++ atom_to_list(StatName), N};
 format_stat({{?APP, StatName, Addr, ProtocolId, total},N}) when is_atom(ProtocolId) ->
     {string_of_ipaddr(Addr)
-     ++ "_" ++ atom_to_list(ProtocolId) 
+     ++ "_" ++ atom_to_list(ProtocolId)
      ++ "_" ++ atom_to_list(StatName)
      ++ "_total", N};
 format_stat({{?APP, StatName, Addr, ProtocolId},[{count,N},{one,_W}]}) when is_atom(ProtocolId) ->
     {string_of_ipaddr(Addr)
-     ++ "_" ++ atom_to_list(ProtocolId) 
-     ++ "_" ++ atom_to_list(StatName), N}.
+     ++ "_" ++ atom_to_list(ProtocolId)
+     ++ "_" ++ atom_to_list(StatName), N};
+format_stat({riak_conn_mgr_stats_stat_ts, N}) ->
+    T = riak_core_format:human_time_fmt("~.2f", N),
+    {"riak_conn_mgr_stats_stat_ts", T};
+format_stat({StateName, N}) ->
+    {atom_to_list(StateName), N};
+format_stat(_) ->
+    [].
+
 
 string_of_ipaddr({IP, Port}) when is_list(IP) ->
     lists:flatten(io_lib:format("~s:~p", [IP, Port]));
