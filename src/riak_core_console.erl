@@ -286,16 +286,10 @@ print_v1_status(Mod, Partition, Node) ->
     io:format("target node: ~p~n~n", [Node]).
 
 print_stats(SrcNode, TargetNode, no_stats) ->
-    ToFrom = riak_core_format:fmt("~16s ~s ~16s",
-                                  [SrcNode, progress(0.0, 30), TargetNode]),
-    Width = length(ToFrom),
-
     io:format("last update: no updates seen~n"),
     print_size(undefined),
     io:format("objects transferred: unknown~n~n"),
-    io:format("~s~n", [string:centre("unknown", Width)]),
-    io:format("~s~n", [ToFrom]),
-    io:format("~s~n", [string:centre("unknown", Width)]);
+    print_arrowbox(SrcNode, TargetNode, "unknown", "unknown", 0.0);
 print_stats(SrcNode, TargetNode, Stats) ->
     ObjsS = proplists:get_value(objs_per_s, Stats),
     BytesS = proplists:get_value(bytes_per_s, Stats),
@@ -308,15 +302,10 @@ print_stats(SrcNode, TargetNode, Stats) ->
     TS = datetime_str(LastUpdate),
     Size = proplists:get_value(size, Stats),
     DonePctDecimal = proplists:get_value(pct_done_decimal, Stats),
-    ToFrom = riak_core_format:fmt("~16s ~s ~16s",
-                                  [SrcNode, progress(DonePctDecimal, 30), TargetNode]),
-    Width = length(ToFrom),
     io:format("last update: ~s [~s ago]~n", [TS, DiffStr]),
     print_size(Size),
     io:format("objects transferred: ~p~n~n", [Objs]),
-    io:format("~s~n", [string:centre(ObjsSStr, Width)]),
-    io:format("~s~n", [ToFrom]),
-    io:format("~s~n", [string:centre(ByteStr, Width)]).
+    print_arrowbox(SrcNode, TargetNode, ObjsSStr, ByteStr, DonePctDecimal).
 
 print_size(undefined) ->
     io:format("total size: unknown~n");
@@ -324,6 +313,60 @@ print_size({Objs, objects}) ->
     io:format("total size: ~p objects~n", [Objs]);
 print_size({Bytes, bytes}) ->
     io:format("total size: ~p bytes~n", [Bytes]).
+
+-define(ARROW, "=======> ").
+
+print_arrowbox(Src0, Target0, Objs, Bytes, Progress) ->
+    {SCont1, SCont2} = wrap(Src0),
+    {TCont1, TCont2} = wrap(Target0),
+
+    Src = case SCont1 of
+              "" -> string:centre(Src0, 25);
+              _ -> Src0
+          end,
+    Target = case TCont1 of
+                 "" -> string:centre(Target0, 25);
+                 _ -> Target0
+             end,
+    
+    ToFrom = riak_core_format:fmt("~25s ~10s ~25s",
+                                  [Src, ?ARROW, Target]),
+    Width = length(ToFrom),
+
+    Prog = progress(Progress, 50),
+
+    io:format("~s~n", [string:centre(Objs, Width)]),
+    io:format("~s~n", [ToFrom]),
+    Fmt = "~-25s ~10s ~-25s~n",
+    case SCont1 /= "" orelse TCont1 /= "" of
+        true -> 
+            io:format(Fmt, [SCont1, "", TCont1]);
+        _ -> ok
+    end, 
+    case SCont2 /= "" orelse TCont2 /= "" of
+        true -> 
+            io:format(Fmt, [SCont2, "", TCont2]);
+        _ -> ok
+    end, 
+    io:format("~s~n", [string:centre("     "++Prog, Width)]),
+    io:format("~s~n", [string:centre(Bytes, Width)]).
+    
+
+wrap(String) ->
+    Len = length(String),
+    case Len of
+        N when N > 50 ->
+            One = lists:sublist(String, 26, 25),
+            Two = lists:sublist(String, 51, 25),
+            {One, Two};
+        N when N >= 25,
+               N =< 50->
+            One = lists:sublist(String, 26, 25),
+            {One, ""};
+        _ -> 
+            {"", ""}
+    end.
+
 
 progress(undefined, MaxSize) ->
     FormatStr = progress_fmt(progress_size(MaxSize), 0), %% this is wrong, need - 6 refactor
