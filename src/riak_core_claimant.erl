@@ -453,10 +453,20 @@ valid_force_replace_request(Node, NewNode, Changes, Ring) ->
 valid_resize_request(NewRingSize, [], Ring) ->
     Capable = riak_core_capability:get({riak_core, resizable_ring}, false),
     IsResizing = riak_core_ring:num_partitions(Ring) =/= NewRingSize,
-    case {Capable, IsResizing} of
-        {true, true} -> true;
-        {false, _} -> {error, not_capable};
-        {_, false} -> {error, same_size}
+
+    %% NOTE/TODO: the checks below are a stop-gap measure to limit the changes
+    %%            made by the introduction of ring resizing. future implementation
+    %%            should allow applications to register with some flag indicating support
+    %%            for dynamic ring, if all registered applications support it
+    %%            the cluster is capable. core knowing about search/kv is :(
+    ControlRunning = app_helper:get_env(riak_control, enabled, false),
+    SearchRunning = app_helper:get_env(riak_search, enabled, false),
+    case {ControlRunning, SearchRunning, Capable, IsResizing} of
+        {false, false, true, true} -> true;
+        {true, _, _, _} -> {error, control_running};
+        {_,  true, _, _} -> {error, search_running};
+        {_, _, false, _} -> {error, not_capable};
+        {_, _, _, false} -> {error, same_size}
     end.
 
 

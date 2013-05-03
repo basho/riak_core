@@ -354,6 +354,12 @@ stage_resize_ring(NewRingSize) ->
             {error, same_size} ->
                 io:format("Failed: current ring size is already ~p~n",
                           [NewRingSize]),
+                error;
+            {error, control_running} ->
+                io:format("Failed: cannot resize ring with Riak Control running~n"),
+                error;
+            {error, search_running} ->
+                io:format("Failed: cannot resize ring with Riak Search~n"),
                 error
         end
     catch
