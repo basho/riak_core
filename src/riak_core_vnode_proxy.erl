@@ -21,7 +21,26 @@
          unregister_vnode/3, command_return_vnode/2]).
 -export([system_continue/3, system_terminate/4, system_code_change/4]).
 
--record(state, {mod, index, vnode_pid, vnode_mref}).
+-include("riak_core_vnode.hrl").
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
+-record(state, {mod                    :: atom(),
+                index                  :: partition(),
+                vnode_pid              :: pid(),
+                vnode_mref             :: reference(),
+                check_mailbox          :: non_neg_integer(),
+                check_threshold        :: pos_integer() | undefined,
+                check_counter          :: non_neg_integer(),
+                check_interval         :: pos_integer(),
+                check_request_interval :: non_neg_integer(),
+                check_request          :: undefined | sent | ignore
+               }).
+
+-define(DEFAULT_CHECK_INTERVAL, 5000).
+-define(DEFAULT_OVERLOAD_THRESHOLD, 10000).
 
 reg_name(Mod, Index) ->
     ModBin = atom_to_binary(Mod, latin1),
@@ -39,7 +58,43 @@ start_link(Mod, Index) ->
 init([Parent, RegName, Mod, Index]) ->
     erlang:register(RegName, self()),
     proc_lib:init_ack(Parent, {ok, self()}),
-    State = #state{mod=Mod, index=Index},
+
+    Interval = app_helper:get_env(riak_core,
+                                  vnode_check_interval,
+                                  ?DEFAULT_CHECK_INTERVAL),
+    RequestInterval = app_helper:get_env(riak_core,
+                                         vnode_check_request_interval,
+                                         Interval div 2),
+    Threshold = app_helper:get_env(riak_core,
+                                   vnode_overload_threshold,
+                                   ?DEFAULT_OVERLOAD_THRESHOLD),
+
+    SafeInterval =
+        case (Threshold == undefined) orelse (Interval < Threshold) of
+            true ->
+                Interval;
+            false ->
+                lager:warning("Setting riak_core/vnode_check_interval to ~b",
+                              [Threshold div 2]),
+                Threshold div 2
+        end,
+    SafeRequestInterval =
+        case RequestInterval < SafeInterval of
+            true ->
+                RequestInterval;
+            false ->
+                lager:warning("Setting riak_core/vnode_check_request_interval "
+                              "to ~b", [SafeInterval div 2]),
+                SafeInterval div 2
+        end,
+
+    State = #state{mod=Mod,
+                   index=Index,
+                   check_mailbox=0,
+                   check_counter=0,
+                   check_threshold=Threshold,
+                   check_interval=SafeInterval,
+                   check_request_interval=SafeRequestInterval},
     loop(Parent, State).
 
 unregister_vnode(Mod, Index, Pid) ->
@@ -86,7 +141,7 @@ loop(Parent, State) ->
             {noreply, NewState} = handle_cast(Msg, State),
             loop(Parent, NewState);
         {'DOWN', _Mref, process, _Pid, _} ->
-            NewState = State#state{vnode_pid=undefined, vnode_mref=undefined},
+            NewState = forget_vnode(State),
             loop(Parent, NewState);
         {system, From, Msg} ->
             sys:handle_system_msg(Msg, From, Parent, ?MODULE, [], State);
@@ -110,16 +165,128 @@ handle_cast({unregister_vnode, Pid}, State) ->
     %% unregister event anyway -- the vnode manager requires it.
     gen_fsm:send_event(Pid, unregistered),
     catch demonitor(State#state.vnode_mref, [flush]),
-    NewState = State#state{vnode_pid=undefined, vnode_mref=undefined},
+    NewState = forget_vnode(State),
     {noreply, NewState};
+handle_cast({vnode_proxy_pong, Pid, Msgs}, State=#state{vnode_pid=VNodePid,
+                                                        check_request=RequestState,
+                                                        check_mailbox=Mailbox}) ->
+    ValidReply = (Pid =:= VNodePid) and (RequestState =:= sent),
+    NewState = case ValidReply of
+                   true ->
+                       State#state{check_mailbox=Mailbox - Msgs,
+                                   check_request=undefined,
+                                   check_counter=0};
+                   _ ->
+                       State#state{check_request=undefined}
+               end,
+    {noreply, NewState};
+
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
 %% @private
-handle_proxy(Msg, State) ->
+handle_proxy(Msg, State=#state{check_threshold=undefined}) ->
     {Pid, NewState} = get_vnode_pid(State),
     Pid ! Msg,
-    {noreply, NewState}.
+    {noreply, NewState};
+handle_proxy(Msg, State=#state{check_counter=Counter,
+                               check_mailbox=Mailbox,
+                               check_interval=Interval,
+                               check_request_interval=RequestInterval,
+                               check_request=RequestState,
+                               check_threshold=Threshold}) ->
+    %%
+    %% NOTE: This function is intentionally written as it is for performance
+    %%       reasons -- the vnode proxy is on the critical path of Riak and
+    %%       must be fast enough to shed already queued work even under
+    %%       extreme overload conditions. Things that are intentional: the
+    %%       use of a monolithic function rather than separate smaller
+    %%       functions; exporting values from case statements rather than
+    %%       generating + pattern matching on intermediary tuples; and
+    %%       updating State once at the very end of the function to ensure
+    %%       that State is only copied once rather than multiple times.
+    %%
+    %%       When changing this function, please run:
+    %%         erts_debug:df(riak_core_vnode_proxy)
+    %%       and look over the generated riak_core_vnode_proxy.dis file to
+    %%       ensure unnecessary work is not being performed needlessly.
+    %%
+    case State#state.vnode_pid of
+        undefined ->
+            {Pid, State2} = get_vnode_pid(State);
+        KnownPid ->
+            Pid = KnownPid,
+            State2 = State
+    end,
+
+    Counter2 = Counter + 1,
+    case Counter2 of
+        RequestInterval ->
+            %% Ping the vnode in hopes that we get a pong back before hitting
+            %% the hard query interval and triggering an expensive process_info
+            %% call. A successful pong from the vnode means that all messages
+            %% sent before the ping have already been handled and therefore
+            %% we can adjust our mailbox estimate accordingly.
+            case RequestState of
+                undefined ->
+                    Pid ! {'$vnode_proxy_ping', self(), Mailbox + 1},
+                    RequestState2 = sent,
+                    Mailbox2 = Mailbox + 2;
+                _ ->
+                    Mailbox2 = Mailbox + 1,
+                    RequestState2 = RequestState
+            end,
+            Counter3 = Counter2;
+        Interval ->
+            %% Time to directly check the mailbox size. This operation may
+            %% be extremely expensive. If the vnode is currently active,
+            %% the proxy will be descheduled until the vnode finishes
+            %% execution and becomes descheduled itself.
+            {_, L} =
+                erlang:process_info(Pid, message_queue_len),
+            Counter3 = 0,
+            Mailbox2 = L,
+            RequestState2 = case RequestState of
+                                sent ->
+                                    %% Ignore pending ping response as it is
+                                    %% no longer valid nor useful.
+                                    ignore;
+                                _ ->
+                                    RequestState
+                            end;
+        _ ->
+            Counter3 = Counter2,
+            Mailbox2 = Mailbox + 1,
+            RequestState2 = RequestState
+    end,
+
+    case Mailbox2 =< Threshold of
+        true ->
+            Pid ! Msg;
+        false ->
+            handle_overload(Msg, State)
+    end,
+
+    {noreply, State2#state{check_counter=Counter3,
+                           check_mailbox=Mailbox2,
+                           check_request=RequestState2}}.
+
+handle_overload(Msg, #state{mod=Mod, index=Index}) ->
+    riak_core_stat:update(dropped_vnode_requests),
+    case Msg of
+        {'$gen_event', ?VNODE_REQ{sender=Sender, request=Request}} ->
+            catch(Mod:handle_overload_command(Request, Sender, Index));
+        _ ->
+            ok
+    end.
+
+%% @private
+forget_vnode(State) ->
+    State#state{vnode_pid=undefined,
+                vnode_mref=undefined,
+                check_mailbox=0,
+                check_counter=0,
+                check_request=undefined}.
 
 %% @private
 get_vnode_pid(State=#state{mod=Mod, index=Index, vnode_pid=undefined}) ->
@@ -129,3 +296,114 @@ get_vnode_pid(State=#state{mod=Mod, index=Index, vnode_pid=undefined}) ->
     {Pid, NewState};
 get_vnode_pid(State=#state{vnode_pid=Pid}) ->
     {Pid, State}.
+
+-ifdef(TEST).
+
+fake_loop() ->
+    receive
+        block ->
+            fake_loop_block();
+        slow ->
+            fake_loop_slow();
+        {get_count, Pid} ->
+            Pid ! {count, erlang:get(count)},
+            fake_loop();
+        _Msg ->
+            Count = case erlang:get(count) of
+                        undefined -> 0;
+                        Val -> Val
+                    end,
+            put(count, Count+1),
+            fake_loop()
+    end.
+
+fake_loop_slow() ->
+    timer:sleep(100),
+    receive
+        _Msg ->
+            Count = case erlang:get(count) of
+                        undefined -> 0;
+                        Val -> Val
+                    end,
+            put(count, Count+1),
+            fake_loop_slow()
+    end.
+
+fake_loop_block() ->
+    receive
+        unblock ->
+            fake_loop()
+    end.
+
+overload_test_() ->
+    {foreach,
+     fun() ->
+             VnodePid = spawn(fun fake_loop/0),
+             meck:new(riak_core_vnode_manager, [passthrough]),
+             meck:expect(riak_core_vnode_manager, get_vnode_pid,
+                         fun(_Index, fakemod) -> {ok, VnodePid};
+                            (Index, Mod) -> meck:passthrough([Index, Mod])
+                         end),
+             {ok, ProxyPid} = riak_core_vnode_proxy:start_link(fakemod, 0),
+             unlink(ProxyPid),
+             {VnodePid, ProxyPid}
+     end,
+     fun({VnodePid, ProxyPid}) ->
+             meck:unload(riak_core_vnode_manager),
+             exit(VnodePid, kill),
+             exit(ProxyPid, kill)
+     end,
+     [
+      fun({VnodePid, ProxyPid}) ->
+              {"should not discard in normal operation",
+               fun() ->
+                       [ProxyPid ! hello || _ <- lists:seq(1, 50000)],
+                       %% synchronize on the mailbox
+                       Reply = gen:call(ProxyPid, '$vnode_proxy_call', sync),
+                       ?assertEqual({ok, ok}, Reply),
+                       VnodePid ! {get_count, self()},
+                       receive
+                           {count, Count} ->
+                               %% 50000 messages + 1 unanswered vnode_proxy_ping
+                               ?assertEqual(50001, Count)
+                       end
+               end
+              }
+      end,
+      fun({VnodePid, ProxyPid}) ->
+              {"should discard during overflow",
+               fun() ->
+                       VnodePid ! block,
+                       [ProxyPid ! hello || _ <- lists:seq(1, 50000)],
+                       %% synchronize on the mailbox
+                       Reply = gen:call(ProxyPid, '$vnode_proxy_call', sync),
+                       ?assertEqual({ok, ok}, Reply),
+                       VnodePid ! unblock,
+                       VnodePid ! {get_count, self()},
+                       receive
+                           {count, Count} ->
+                               %% Threshold + 1 unanswered vnode_proxy_ping
+                               ?assertEqual(?DEFAULT_OVERLOAD_THRESHOLD + 1, Count)
+                       end
+               end
+              }
+      end,
+      fun({VnodePid, ProxyPid}) ->
+              {"should tolerate slow vnodes",
+               fun() ->
+                       VnodePid ! slow,
+                       [ProxyPid ! hello || _ <- lists:seq(1, 50000)],
+                       %% synchronize on the mailbox
+                       Reply = gen:call(ProxyPid, '$vnode_proxy_call', sync),
+                       ?assertEqual({ok, ok}, Reply),
+                       %% check that the outstanding message count is
+                       %% reasonable
+                       {message_queue_len, L} =
+                           erlang:process_info(VnodePid, message_queue_len),
+                       %% Threshold + 1 unanswered vnode_proxy_ping
+                       ?assert(L =< (?DEFAULT_OVERLOAD_THRESHOLD + 1))
+               end
+              }
+      end
+     ]}.
+-endif.

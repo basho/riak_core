@@ -556,6 +556,9 @@ handle_sync_event(core_status, _From, StateName, State=#state{index=Index,
         end,
     {reply, {Mode, Status}, StateName, State, State#state.inactivity_timeout}.
 
+handle_info({'$vnode_proxy_ping', From, Msgs}, StateName, State) ->
+    riak_core_vnode_proxy:cast(From, {vnode_proxy_pong, self(), Msgs}),
+    {next_state, StateName, State, State#state.inactivity_timeout};
 
 handle_info({'EXIT', Pid, Reason},
             _StateName,
