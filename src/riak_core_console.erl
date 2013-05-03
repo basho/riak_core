@@ -316,7 +316,9 @@ print_size({Bytes, bytes}) ->
 
 -define(ARROW, "=======> ").
 
-print_arrowbox(Src0, Target0, Objs, Bytes, Progress) ->
+print_arrowbox(SrcAtom, TargetAtom, Objs, Bytes, Progress) ->
+    Src0 = atom_to_list(SrcAtom),
+    Target0 = atom_to_list(TargetAtom),
     {SCont1, SCont2} = wrap(Src0),
     {TCont1, TCont2} = wrap(Target0),
 
