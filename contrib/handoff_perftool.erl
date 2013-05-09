@@ -4,9 +4,9 @@
 %% Usage example (in the Erlang shell):
 %%
 %% code:add_path("/home/user/path-to-handoff_perftool"), l(handoff_perftool). 
-%% handoff_perftool:go({10000, 1000}).
-%% handoff_perftool:go(5, {10000, 1000}).
-%% handoff_perftool:go(1, {10000, 1000}, strategy_roundrobin).
+%% handoff_perftool:go({10000, 1000}).                          % use 10000 objects of 1000 bytes each
+%% handoff_perftool:go(5, {10000, 1000}).                       % use 5 vnodes and 10000 objects of 1000 bytes each
+%% handoff_perftool:go(1, {10000, 1000}, strategy_roundrobin).  % 1 vnode, 10k objects of 1k each, round-robin strategy
 %%
 
 -module(handoff_perftool).
@@ -85,7 +85,7 @@ gather_vnodes_1(NVnodes) ->
     Secondaries = get_secondaries(),
 
     case length(Secondaries) >= NVnodes of
-        false -> erlang:throw("Insufficent vnodes for requested test");
+        false -> erlang:throw("Insufficent vnodes for requested test (have ~p secondaries, require ~p)", [length(Secondaries), NVnodes]);
         true  -> true
     end,
 
