@@ -856,9 +856,17 @@ maybe_handoff(TargetIdx, TargetNode,
               end,
     case ValidHN of
         true ->
-            case Mod:handoff_starting(Target, ModState) of
+            {ok, R} = riak_core_ring_manager:get_my_ring(),
+            Resizing = riak_core_ring:is_resizing(R),
+            Primary = riak_core_ring:is_primary(R, {Idx, node()}),
+            HOType = case {Resizing, Primary} of
+                         {true, _} -> resize_transfer;
+                         {_, true} -> ownership_transfer;
+                         {_, false} -> hinted_handoff
+                     end,
+            case Mod:handoff_starting({HOType, Target}, ModState) of
                 {true, NewModState} ->
-                    start_handoff(TargetIdx, TargetNode,State#state{modstate=NewModState});
+                    start_handoff(HOType, TargetIdx, TargetNode,State#state{modstate=NewModState});
                 {false, NewModState} ->
                     continue(State, NewModState)
             end;
@@ -866,28 +874,20 @@ maybe_handoff(TargetIdx, TargetNode,
             continue(State)
     end.
 
-start_handoff(TargetIdx, TargetNode,
-              State=#state{index=Idx, mod=Mod, modstate=ModState}) ->
-    {ok, R} = riak_core_ring_manager:get_my_ring(),
-    Resizing = riak_core_ring:is_resizing(R),
-    Primary = riak_core_ring:is_primary(R, {Idx, node()}),
-    HOType = case {Resizing, Primary} of
-                 {true, _} -> resize_transfer;
-                 {_, true} -> ownership_transfer;
-                 {_, false} -> hinted_handoff
-             end,
+start_handoff(HOType, TargetIdx, TargetNode,
+              State=#state{mod=Mod, modstate=ModState}) ->
     case Mod:is_empty(ModState) of
         {true, NewModState} ->
             finish_handoff(State#state{modstate=NewModState,
                                        handoff_type=HOType,
                                        handoff_target={TargetIdx, TargetNode}});
         {false, NewModState} ->
-            NewState = start_handoff(HOType, TargetIdx, TargetNode, State),
+            NewState = start_outbound(HOType, TargetIdx, TargetNode, State),
             continue(NewState#state{modstate=NewModState})
     end.
 
 
-start_handoff(HOType, TargetIdx, TargetNode, State=#state{index=Idx,mod=Mod}) ->
+start_outbound(HOType, TargetIdx, TargetNode, State=#state{index=Idx,mod=Mod}) ->
     case riak_core_handoff_manager:add_outbound(HOType,Mod,Idx,TargetIdx,TargetNode,self()) of
         {ok, Pid} ->
             State#state{handoff_pid=Pid,
