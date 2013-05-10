@@ -8,6 +8,7 @@
              app_helper,
              bloom,
              chash,
+             chashbin,
              gen_nb_server,
              riak_core_gen_server,
              json_pp,

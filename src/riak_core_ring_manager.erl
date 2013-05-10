@@ -30,6 +30,8 @@
          start_link/1,
          get_my_ring/0,
          get_raw_ring/0,
+         get_chash_bin/0,
+         get_bucket_meta/1,
          refresh_my_ring/0,
          refresh_ring/2,
          set_my_ring/1,
@@ -114,6 +116,25 @@ refresh_ring(Node, ClusterName) ->
 set_my_ring(Ring) ->
     gen_server:call(?MODULE, {set_my_ring, Ring}, infinity).
 
+%% @doc Return metadata for the given bucket
+get_bucket_meta(Bucket) ->
+    case ets:lookup(?ETS, {bucket, Bucket}) of
+        [] ->
+            undefined;
+        [{_, undefined}] ->
+            undefined;
+        [{_, Meta}] ->
+            {ok, Meta}
+    end.
+
+%% @doc Return the {@link chashbin} generated from the current ring
+get_chash_bin() ->
+    case ets:lookup(?ETS, chashbin) of
+        [{chashbin, CHBin}] ->
+            {ok, CHBin};
+        _ ->
+            {error, no_ring}
+    end.
 
 %% @spec write_ringfile() -> ok
 write_ringfile() ->
@@ -472,9 +493,19 @@ set_ring_global(Ring) ->
     %% relied upon for any non-local ring operations.
     TaintedRing = riak_core_ring:set_tainted(FixedRing),
     %% store the modified ring in mochiglobal
+    OldBuckets = ets:select(?ETS, [{{{bucket, '$1'}, '_'}, [], ['$1']}]),
+    BucketDefaults = [{{bucket, Bucket}, undefined} || Bucket <- OldBuckets],
+    BucketMeta =
+        [{{bucket, Bucket}, Meta}
+         || Bucket <- riak_core_ring:get_buckets(TaintedRing),
+            {ok,Meta} <- [riak_core_ring:get_meta({bucket, Bucket}, TaintedRing)]],
+    BucketMeta2 = lists:ukeysort(1, BucketMeta ++ BucketDefaults),
+    CHBin = chashbin:create(riak_core_ring:chash(TaintedRing)),
     Actions = [{ring, TaintedRing},
-               {raw_ring, Ring}],
+               {raw_ring, Ring},
+               {chashbin, CHBin} | BucketMeta2],
     ets:insert(?ETS, Actions),
+    ets:match_delete(?ETS, {{bucket, '_'}, undefined}),
     case mochiglobal:get(?RING_KEY) of
         ets ->
             ok;

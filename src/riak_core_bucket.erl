@@ -96,15 +96,18 @@ merge_props(Overriding, Other) ->
 %% </pre>
 %%
 get_bucket(Name) ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    get_bucket(Name, Ring).
-
+    Meta = riak_core_ring_manager:get_bucket_meta(Name),
+    get_bucket_props(Name, Meta).
 
 %% @spec get_bucket(Name, Ring::riak_core_ring:riak_core_ring()) ->
 %%          BucketProps :: riak_core_bucketprops()
 %% @private
 get_bucket(Name, Ring) ->
-    case riak_core_ring:get_meta({bucket, Name}, Ring) of
+    Meta = riak_core_ring:get_meta({bucket, Name}, Ring),
+    get_bucket_props(Name, Meta).
+
+get_bucket_props(Name, Meta) ->
+    case Meta of
         undefined ->
             [{name, Name}
              |app_helper:get_env(riak_core, default_bucket_props)];
