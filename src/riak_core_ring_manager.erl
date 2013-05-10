@@ -49,13 +49,19 @@
 
 -record(state, {
         mode,
-        raw_ring
+        raw_ring,
+        ring_changed_time,
+        inactivity_timer
     }).
 
--export([set_ring_global/1]). %% For EUnit testing purposes only
+-export([setup_ets/1, cleanup_ets/1, set_ring_global/1]). %% For EUnit testing
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
+
+-define(ETS, ets_riak_core_ring_manager).
+
+-define(PROMOTE_TIMEOUT, 90000).
 
 %% ===================================================================
 %% Public API
@@ -72,13 +78,30 @@ start_link(test) ->
 
 %% @spec get_my_ring() -> {ok, riak_core_ring:riak_core_ring()} | {error, Reason}
 get_my_ring() ->
-    case mochiglobal:get(?RING_KEY) of
+    Ring = case mochiglobal:get(?RING_KEY) of
+               ets ->
+                   case ets:lookup(?ETS, ring) of
+                       [{_, RingETS}] ->
+                           RingETS;
+                       _ ->
+                           undefined
+                   end;
+               RingMochi ->
+                   RingMochi
+           end,
+    case Ring of
         Ring when is_tuple(Ring) -> {ok, Ring};
         undefined -> {error, no_ring}
     end.
 
 get_raw_ring() ->
-    gen_server:call(?MODULE, get_raw_ring, infinity).
+    try
+        Ring = ets:lookup_element(?ETS, raw_ring, 2),
+        {ok, Ring}
+    catch
+        _:_ ->
+            gen_server:call(?MODULE, get_raw_ring, infinity)
+    end.
 
 %% @spec refresh_my_ring() -> ok
 refresh_my_ring() ->
@@ -215,10 +238,11 @@ stop() ->
 %% ===================================================================
 
 init([Mode]) ->
+    setup_ets(Mode),
     Ring = reload_ring(Mode),
-    set_ring_global(Ring),
+    State = set_ring(Ring, #state{mode = Mode}),
     riak_core_ring_events:ring_update(Ring),
-    {ok, #state{mode = Mode, raw_ring=Ring}}.
+    {ok, State}.
 
 reload_ring(test) ->
     riak_core_ring:fresh(16,node());
@@ -253,12 +277,12 @@ handle_call(get_raw_ring, _From, #state{raw_ring=Ring} = State) ->
     {reply, {ok, Ring}, State};
 handle_call({set_my_ring, RingIn}, _From, State) ->
     Ring = riak_core_ring:upgrade(RingIn),
-    prune_write_notify_ring(Ring),
-    {reply,ok,State#state{raw_ring=Ring}};
+    State2 = prune_write_notify_ring(Ring, State),
+    {reply,ok,State2};
 handle_call(refresh_my_ring, _From, State) ->
     %% This node is leaving the cluster so create a fresh ring file
     FreshRing = riak_core_ring:fresh(),
-    set_ring_global(FreshRing),
+    State2 = set_ring(FreshRing, State),
     %% Make sure the fresh ring gets written before stopping
     do_write_ringfile(FreshRing),
 
@@ -266,20 +290,20 @@ handle_call(refresh_my_ring, _From, State) ->
     %% so we can safely stop now.
     riak_core:stop("node removal completed, exiting."),
 
-    {reply,ok,State#state{raw_ring=FreshRing}};
+    {reply,ok,State2};
 handle_call({ring_trans, Fun, Args}, _From, State=#state{raw_ring=Ring}) ->
     case catch Fun(Ring, Args) of
         {new_ring, NewRing} ->
-            prune_write_notify_ring(NewRing),
+            State2 = prune_write_notify_ring(NewRing, State),
             riak_core_gossip:random_recursive_gossip(NewRing),
-            {reply, {ok, NewRing}, State#state{raw_ring=NewRing}};
+            {reply, {ok, NewRing}, State2};
         {set_only, NewRing} ->
-            prune_write_ring(NewRing),
-            {reply, {ok, NewRing}, State#state{raw_ring=NewRing}};
+            State2 = prune_write_ring(NewRing, State),
+            {reply, {ok, NewRing}, State2};
         {reconciled_ring, NewRing} ->
-            prune_write_notify_ring(NewRing),
+            State2 = prune_write_notify_ring(NewRing, State),
             riak_core_gossip:recursive_gossip(NewRing),
-            {reply, {ok, NewRing}, State#state{raw_ring=NewRing}};
+            {reply, {ok, NewRing}, State2};
         ignore ->
             {reply, not_changed, State};
         {ignore, Reason} ->
@@ -291,8 +315,8 @@ handle_call({ring_trans, Fun, Args}, _From, State=#state{raw_ring=Ring}) ->
     end;
 handle_call({set_cluster_name, Name}, _From, State=#state{raw_ring=Ring}) ->
     NewRing = riak_core_ring:set_cluster_name(Ring, Name),
-    prune_write_notify_ring(NewRing),
-    {reply, ok, State#state{raw_ring=NewRing}}.
+    State2 = prune_write_notify_ring(NewRing, State),
+    {reply, ok, State2}.
 
 handle_cast(stop, State) ->
     {stop,normal,State};
@@ -317,6 +341,20 @@ handle_cast(write_ringfile, State=#state{raw_ring=Ring}) ->
     {noreply,State}.
 
 
+handle_info(inactivity_timeout, State=#state{ring_changed_time=Then}) ->
+    DeltaUS = erlang:max(0, timer:now_diff(os:timestamp(), Then)),
+    DeltaMS = DeltaUS div 1000,
+    case DeltaMS >= ?PROMOTE_TIMEOUT of
+        true ->
+            lager:debug("Promoting ring after ~p", [DeltaMS]),
+            promote_ring(),
+            State2 = State#state{inactivity_timer=undefined},
+            {noreply, State2};
+        false ->
+            Remaining = ?PROMOTE_TIMEOUT - DeltaMS,
+            State2 = set_timer(Remaining, State),
+            {noreply, State2}
+    end;
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -366,6 +404,36 @@ run_fixups([{App, Fixup}|T], BucketName, BucketProps) ->
     end,
     run_fixups(T, BucketName, BP).
 
+set_ring(Ring, State) ->
+    set_ring_global(Ring),
+    Now = os:timestamp(),
+    State2 = State#state{raw_ring=Ring, ring_changed_time=Now},
+    State3 = maybe_set_timer(?PROMOTE_TIMEOUT, State2),
+    State3.
+
+maybe_set_timer(Duration, State=#state{inactivity_timer=undefined}) ->
+    set_timer(Duration, State);
+maybe_set_timer(_Duration, State) ->
+    State.
+
+set_timer(Duration, State) ->
+    Timer = erlang:send_after(Duration, self(), inactivity_timeout),
+    State#state{inactivity_timer=Timer}.
+
+setup_ets(Mode) ->
+    %% Destroy prior version of ETS table. This is necessary for certain
+    %% eunit tests, but is unneeded for normal Riak operation.
+    catch ets:delete(?ETS),
+    Access = case Mode of
+                 live -> protected;
+                 test -> public
+             end,
+    ets:new(?ETS, [named_table, Access, {read_concurrency, true}]),
+    ets:insert(?ETS, [{changes, 0}, {promoted, 0}]),
+    ok.
+
+cleanup_ets(test) ->
+    ets:delete(?ETS).
 
 %% Set the ring in mochiglobal.  Exported during unit testing
 %% to make test setup simpler - no need to spin up a riak_core_ring_manager
@@ -404,18 +472,33 @@ set_ring_global(Ring) ->
     %% relied upon for any non-local ring operations.
     TaintedRing = riak_core_ring:set_tainted(FixedRing),
     %% store the modified ring in mochiglobal
-    mochiglobal:put(?RING_KEY, TaintedRing).
+    Actions = [{ring, TaintedRing},
+               {raw_ring, Ring}],
+    ets:insert(?ETS, Actions),
+    case mochiglobal:get(?RING_KEY) of
+        ets ->
+            ok;
+        _ ->
+            mochiglobal:put(?RING_KEY, ets)
+    end,
+    ok.
+
+promote_ring() ->
+    {ok, Ring} = get_my_ring(),
+    mochiglobal:put(?RING_KEY, Ring).
 
 %% Persist a new ring file, set the global value and notify any listeners
-prune_write_notify_ring(Ring) ->
-    prune_write_ring(Ring),
-    riak_core_ring_events:ring_update(Ring).
+prune_write_notify_ring(Ring, State) ->
+    State2 = prune_write_ring(Ring, State),
+    riak_core_ring_events:ring_update(Ring),
+    State2.
 
-prune_write_ring(Ring) ->
+prune_write_ring(Ring, State) ->
     riak_core_ring:check_tainted(Ring, "Error: Persisting tainted ring"),
     riak_core_ring_manager:prune_ringfiles(),
     do_write_ringfile(Ring),
-    set_ring_global(Ring).
+    State2 = set_ring(Ring, State),
+    State2.
 
 %% ===================================================================
 %% Unit tests
@@ -442,17 +525,22 @@ prune_list_test() ->
     ?assertEqual(PrunedList2, prune_list(TSList2)).    
 
 set_ring_global_test() ->
+    setup_ets(test),
     application:set_env(riak_core,ring_creation_size, 4),
     Ring = riak_core_ring:fresh(),
     set_ring_global(Ring),
-    ?assert(riak_core_ring:nearly_equal(Ring, mochiglobal:get(?RING_KEY))).
+    promote_ring(),
+    ?assert(riak_core_ring:nearly_equal(Ring, mochiglobal:get(?RING_KEY))),
+    cleanup_ets(test).
 
 set_my_ring_test() ->
+    setup_ets(test),
     application:set_env(riak_core,ring_creation_size, 4),
     Ring = riak_core_ring:fresh(),
     set_ring_global(Ring),
     {ok, MyRing} = get_my_ring(),
-    ?assert(riak_core_ring:nearly_equal(Ring, MyRing)).
+    ?assert(riak_core_ring:nearly_equal(Ring, MyRing)),
+    cleanup_ets(test).
 
 refresh_my_ring_test() ->
     Core_Settings = [{ring_creation_size, 4},
