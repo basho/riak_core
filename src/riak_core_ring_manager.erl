@@ -24,7 +24,7 @@
 
 -module(riak_core_ring_manager).
 -define(RING_KEY, riak_ring).
--behaviour(riak_core_gen_server).
+-behaviour(gen_server).
 
 -export([start_link/0,
          start_link/1,
@@ -62,12 +62,12 @@
 %% ===================================================================
 
 start_link() ->
-    riak_core_gen_server:start_link({local, ?MODULE}, ?MODULE, [live], []).
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [live], []).
 
 
 %% Testing entry point
 start_link(test) ->
-    riak_core_gen_server:start_link({local, ?MODULE}, ?MODULE, [test], []).
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [test], []).
 
 
 %% @spec get_my_ring() -> {ok, riak_core_ring:riak_core_ring()} | {error, Reason}
@@ -78,29 +78,29 @@ get_my_ring() ->
     end.
 
 get_raw_ring() ->
-    riak_core_gen_server:call(?MODULE, get_raw_ring, infinity).
+    gen_server:call(?MODULE, get_raw_ring, infinity).
 
 %% @spec refresh_my_ring() -> ok
 refresh_my_ring() ->
-    riak_core_gen_server:call(?MODULE, refresh_my_ring, infinity).
+    gen_server:call(?MODULE, refresh_my_ring, infinity).
 
 refresh_ring(Node, ClusterName) ->
-    riak_core_gen_server:cast({?MODULE, Node}, {refresh_my_ring, ClusterName}).
+    gen_server:cast({?MODULE, Node}, {refresh_my_ring, ClusterName}).
 
 %% @spec set_my_ring(riak_core_ring:riak_core_ring()) -> ok
 set_my_ring(Ring) ->
-    riak_core_gen_server:call(?MODULE, {set_my_ring, Ring}, infinity).
+    gen_server:call(?MODULE, {set_my_ring, Ring}, infinity).
 
 
 %% @spec write_ringfile() -> ok
 write_ringfile() ->
-    riak_core_gen_server:cast(?MODULE, write_ringfile).
+    gen_server:cast(?MODULE, write_ringfile).
 
 ring_trans(Fun, Args) ->
-    riak_core_gen_server:call(?MODULE, {ring_trans, Fun, Args}, infinity).
+    gen_server:call(?MODULE, {ring_trans, Fun, Args}, infinity).
 
 set_cluster_name(Name) ->
-    riak_core_gen_server:call(?MODULE, {set_cluster_name, Name}, infinity).
+    gen_server:call(?MODULE, {set_cluster_name, Name}, infinity).
 
 %% @doc Exposed for support/debug purposes. Forces the node to change its
 %%      ring in a manner that will trigger reconciliation on gossip.
@@ -207,7 +207,7 @@ prune_ringfiles() ->
 
 %% @private (only used for test instances)
 stop() ->
-    riak_core_gen_server:cast(?MODULE, stop).
+    gen_server:cast(?MODULE, stop).
 
 
 %% ===================================================================
