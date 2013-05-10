@@ -255,14 +255,20 @@ vnode_command(Sender, Request, State=#state{index=Index,
                                             forward=Forward,
                                             pool_pid=Pool}) ->
     %% Check if we should forward
-    case Forward of
+    Action = case Forward of
         undefined ->
-            Action = Mod:handle_command(Request, Sender, ModState);
+            case catch Mod:handle_command(Request, Sender, ModState) of
+                {'EXIT', ExitReason} ->
+                    reply(Sender, {vnode_error, ExitReason}),
+                    lager:error("~p command failed ~p", [Mod, ExitReason]),
+                    {stop, ExitReason, ModState};
+                Else -> Else
+            end;
         NextOwner ->
             lager:debug("Forwarding ~p -> ~p: ~p~n", [node(), NextOwner, Index]),
             riak_core_vnode_master:command({Index, NextOwner}, Request, Sender,
                                            riak_core_vnode_master:reg_name(Mod)),
-            Action = continue
+            continue
     end,
     case Action of
         continue ->

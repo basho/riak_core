@@ -34,7 +34,9 @@
          asyncnoreply/2,
          asyncreply/2,
          asynccrash/2,
-         crash/1,
+         crash/1, 
+         spawn_error/2,
+         sync_error/2,
          get_crash_reason/1,
          stop/1]).
 -export([init/1,
@@ -94,6 +96,12 @@ asynccrash(Preflist, AsyncDonePid) ->
 crash(Preflist) ->
     riak_core_vnode_master:sync_command(Preflist, crash, ?MASTER).
 
+spawn_error(Preflist, Cmd) ->
+    riak_core_vnode_master:sync_spawn_command(Preflist, {sync_error, Cmd}, ?MASTER).
+
+sync_error(Preflist, Cmd) ->
+    riak_core_vnode_master:sync_command(Preflist, {sync_error, Cmd}, ?MASTER).
+
 get_crash_reason(Preflist) ->
     riak_core_vnode_master:sync_command(Preflist, get_crash_reason, ?MASTER).
 
@@ -119,6 +127,16 @@ handle_command(get_counter, _Sender, State) ->
     {reply, {ok, State#state.counter}, State};
 handle_command(get_crash_reason, _Sender, State) ->
     {reply, {ok, State#state.crash_reason}, State};
+handle_command({sync_error, error}, _Sender, State) ->
+    erlang:error(core_breach),
+    {reply, ok, State};
+handle_command({sync_error, exit}, _Sender, State) ->
+    erlang:exit(core_breach),
+    {reply, ok, State};
+handle_command({sync_error, badthrow}, _Sender, State) ->
+    erlang:throw({reply, {error, terrible}, State}); %% emulate gen_server
+handle_command({sync_error, goodthrow}, _Sender, State) ->
+    erlang:throw({reply, ok, State}); %% emulate gen_server
 
 handle_command(crash, _Sender, State) ->
     spawn_link(fun() -> exit(State#state.index) end),
