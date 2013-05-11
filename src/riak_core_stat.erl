@@ -106,6 +106,9 @@ update1(gossip_received) ->
 update1(rings_reconciled) ->
     folsom_metrics:notify_existing_metric({?APP, rings_reconciled}, 1, spiral);
 
+update1(dropped_vnode_requests) ->
+    folsom_metrics:notify_existing_metric({?APP, dropped_vnode_requests_total}, {inc, 1}, counter);
+
 update1(converge_timer_begin) ->
     folsom_metrics:notify_existing_metric({?APP, converge_delay}, timer_start, duration);
 update1(converge_timer_end) ->
@@ -123,6 +126,7 @@ stats() ->
      {gossip_received, spiral},
      {rejected_handoffs, counter},
      {handoff_timeouts, counter},
+     {dropped_vnode_requests_total, counter},
      {converge_delay, duration},
      {rebalance_delay, duration}].
 
