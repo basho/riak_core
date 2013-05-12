@@ -59,8 +59,8 @@
 -type repairs() :: [repair()].
 
 -record(state, {idxtab,
-                forwarding :: [{{module(), integer()}, term()}],
-                handoff :: [{{module(), integer()}, term()}],
+                forwarding :: dict(),
+                handoff :: dict(),
                 known_modules :: [term()],
                 never_started :: [{integer(), term()}],
                 vnode_start_tokens :: integer(),
@@ -207,7 +207,7 @@ get_all_vnodes(Mod) ->
 init(_State) ->
     {ok, Ring, CHBin} = riak_core_ring_manager:get_raw_ring_chashbin(),
     Mods = [Mod || {_, Mod} <- riak_core:vnode_modules()],
-    State = #state{forwarding=[], handoff=[],
+    State = #state{forwarding=dict:new(), handoff=dict:new(),
                    known_modules=[], never_started=[], vnode_start_tokens=0,
                    repairs=[]},
     State2 = find_vnodes(State),
@@ -439,11 +439,11 @@ handle_vnode_event(inactive, Mod, Idx, Pid, State) ->
     maybe_trigger_handoff(Mod, Idx, Pid, State),
     {noreply, State};
 handle_vnode_event(handoff_complete, Mod, Idx, Pid, State) ->
-    NewHO = orddict:erase({Mod, Idx}, State#state.handoff),
+    NewHO = dict:erase({Mod, Idx}, State#state.handoff),
     gen_fsm:send_all_state_event(Pid, finish_handoff),
     {noreply, State#state{handoff=NewHO}};
 handle_vnode_event(handoff_error, Mod, Idx, Pid, State) ->
-    NewHO = orddict:erase({Mod, Idx}, State#state.handoff),
+    NewHO = dict:erase({Mod, Idx}, State#state.handoff),
     gen_fsm:send_all_state_event(Pid, cancel_handoff),
     {noreply, State#state{handoff=NewHO}}.
 
@@ -572,7 +572,7 @@ get_vnode(IdxList, Mod, State) ->
 
 
 get_forward(Mod, Idx, #state{forwarding=Fwd}) ->
-    case orddict:find({Mod, Idx}, Fwd) of
+    case dict:find({Mod, Idx}, Fwd) of
         {ok, ForwardTo} ->
             ForwardTo;
         _ ->
@@ -589,30 +589,34 @@ check_forward(Ring, Mod, Index) ->
     end.
 
 compute_forwarding(Mods, Ring) ->
-    {AllIndices, _} = lists:unzip(riak_core_ring:all_owners(Ring)),
+    AllIndices = [Index || {Index, _} <- riak_core_ring:all_owners(Ring)],
     Forwarding = [check_forward(Ring, Mod, Index) || Index <- AllIndices,
                                                      Mod <- Mods],
-    orddict:from_list(Forwarding).
+    dict:from_list(Forwarding).
 
 update_forwarding(AllVNodes, Mods, Ring,
                   State=#state{forwarding=Forwarding}) ->
     NewForwarding = compute_forwarding(Mods, Ring),
 
     %% Inform vnodes that have changed forwarding status
-    VNodes = lists:sort([{{Mod, Idx}, Pid} || {Mod, Idx, Pid} <- AllVNodes]),
-    Diff = NewForwarding -- Forwarding,
-    [change_forward(VNodes, Mod, Idx, ForwardTo)
-     || {{Mod, Idx}, ForwardTo} <- Diff],
+    VNodes = dict:from_list([{{Mod, Idx}, Pid} || {Mod, Idx, Pid} <- AllVNodes]),
+    Diff = dict:filter(fun(K,V) ->
+                               dict:find(K, Forwarding) /= {ok, V}
+                       end, NewForwarding),
+    dict:fold(fun({Mod, Idx}, ForwardTo, _) ->
+                      change_forward(VNodes, Mod, Idx, ForwardTo),
+                      ok
+              end, ok, Diff),
 
     State#state{forwarding=NewForwarding}.
 
 update_forwarding({Mod, Idx}, Ring, State=#state{forwarding=Forwarding}) ->
     {_, ForwardTo} = check_forward(Ring, Mod, Idx),
-    NewForwarding = orddict:store({Mod, Idx}, ForwardTo, Forwarding),
+    NewForwarding = dict:store({Mod, Idx}, ForwardTo, Forwarding),
     State#state{forwarding=NewForwarding}.
 
 change_forward(VNodes, Mod, Idx, ForwardTo) ->
-    case orddict:find({Mod, Idx}, VNodes) of
+    case dict:find({Mod, Idx}, VNodes) of
         error ->
             ok;
         {ok, Pid} ->
@@ -631,7 +635,7 @@ update_handoff(AllVNodes, Ring, CHBin, State) ->
                                        {true, TargetNode} ->
                                            [{{Mod, Idx}, TargetNode}]
                                    end || {Mod, Idx, _Pid} <- AllVNodes]),
-            State#state{handoff=orddict:from_list(NewHO)}
+            State#state{handoff=dict:from_list(NewHO)}
     end.
 
 should_handoff(Ring, CHBin, Mod, Idx) ->
@@ -691,7 +695,7 @@ maybe_trigger_handoff(Mod, Idx, State) ->
     maybe_trigger_handoff(Mod, Idx, Pid, State).
 
 maybe_trigger_handoff(Mod, Idx, Pid, _State=#state{handoff=HO}) ->
-    case orddict:find({Mod, Idx}, HO) of
+    case dict:find({Mod, Idx}, HO) of
         {ok, TargetNode} ->
             riak_core_vnode:trigger_handoff(Pid, TargetNode),
             ok;
@@ -716,9 +720,11 @@ get_all_vnodes_status(#state{forwarding=Forwarding, handoff=HO}) ->
     Types2 = lists:keysort(1, Types),
     Pids = [{{Mod, Idx}, {pid, Pid}} || {Mod, Idx, Pid} <- VNodes],
     Pids2 = lists:keysort(1, Pids),
-    Forwarding2 = [{MI, {forwarding, Node}} || {MI,Node} <- Forwarding,
+    Forwarding1 = lists:sort(dict:to_list(Forwarding)),
+    Forwarding2 = [{MI, {forwarding, Node}} || {MI,Node} <- Forwarding1,
                                                Node /= undefined],
-    Handoff2 = [{MI, {should_handoff, Node}} || {MI,Node} <- HO],
+    Handoff1 = lists:sort(dict:to_list(HO)),
+    Handoff2 = [{MI, {should_handoff, Node}} || {MI,Node} <- Handoff1],
 
     MergeFn = fun(_, V1, V2) when is_list(V1) and is_list(V2) ->
                       V1 ++ V2;
@@ -732,16 +738,18 @@ get_all_vnodes_status(#state{forwarding=Forwarding, handoff=HO}) ->
                          end, Types2, [Pids2, Forwarding2, Handoff2]),
     Status.
 
-update_never_started(Ring, State) ->
-    {Indices, _} = lists:unzip(riak_core_ring:all_owners(Ring)),
-    lists:foldl(fun({_App, Mod}, StateAcc) ->
-                        case lists:member(Mod, StateAcc#state.known_modules) of
-                            false ->
-                                update_never_started(Mod, Indices, StateAcc);
-                            true ->
-                                StateAcc
-                        end
-                end, State, riak_core:vnode_modules()).
+update_never_started(Ring, State=#state{known_modules=KnownMods}) ->
+    UnknownMods = [Mod || {_App, Mod} <- riak_core:vnode_modules(),
+                          not lists:member(Mod, KnownMods)],
+    case UnknownMods of
+        [] ->
+            State;
+        _ ->
+            Indices = [Idx || {Idx, _} <- riak_core_ring:all_owners(Ring)],
+            lists:foldl(fun(Mod, StateAcc) ->
+                                update_never_started(Mod, Indices, StateAcc)
+                        end, State, UnknownMods)
+    end.
 
 update_never_started(Mod, Indices, State) ->
     IdxPids = get_all_index_pid(Mod, []),
