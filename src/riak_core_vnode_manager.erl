@@ -463,8 +463,10 @@ code_change(_OldVsn, State, _Extra) ->
 maybe_ring_changed(RingID, Ring, CHBin, State=#state{last_ring_id=LastID}) ->
     case RingID of
         LastID ->
+            maybe_ensure_vnodes_started(Ring),
             State;
         _ ->
+            ensure_vnodes_started(Ring),
             State2 = ring_changed(Ring, CHBin, State),
             State2#state{last_ring_id=RingID}
     end.
@@ -482,6 +484,21 @@ ring_changed(Ring, CHBin, State) ->
     Transfers = riak_core_ring:pending_changes(Ring),
     trigger_ownership_handoff(Transfers, Mods, State3),
     State3.
+
+maybe_ensure_vnodes_started(Ring) ->
+    ExitingStates = [leaving, exiting, invalid],
+    Status = riak_core_ring:member_status(Ring, node()),
+    case lists:member(Status, ExitingStates) of
+        true ->
+            ensure_vnodes_started(Ring);
+        _ ->
+            ok
+    end.
+
+ensure_vnodes_started(Ring) ->
+    spawn(fun() ->
+                  riak_core_ring_handler:ensure_vnodes_started(Ring)
+          end).
 
 schedule_management_timer() ->
     ManagementTick = app_helper:get_env(riak_core,

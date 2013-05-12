@@ -217,14 +217,10 @@ handle_cast({del_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
     {noreply, State#state{excl=Excl2}};
 
 handle_cast({add_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
-    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
-    case riak_core_ring:my_indices(Ring) of
-        [] ->
-            %% Trigger a ring update to ensure the node shuts down
-            riak_core_ring_events:ring_update(Ring);
-        _ ->
-            ok
-    end,
+    %% Note: This function used to trigger a ring event after adding an
+    %% exclusion to ensure that an exiting node would eventually shutdown
+    %% after all vnodes had finished handoff. This behavior is now handled
+    %% by riak_core_vnode_manager:maybe_ensure_vnodes_started
     Excl2 = ordsets:add_element({Mod, Idx}, Excl),
     {noreply, State#state{excl=Excl2}};
 
