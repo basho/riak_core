@@ -36,8 +36,6 @@ init([]) ->
 handle_event({ring_update, Ring}, State) ->
     %% Make sure all vnodes are started...
     ensure_vnodes_started(Ring),
-    riak_core_vnode_manager:ring_changed(Ring),
-    riak_core_capability:ring_changed(Ring),
     {ok, State}.
 
 handle_call(_Event, State) ->

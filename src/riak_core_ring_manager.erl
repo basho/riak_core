@@ -32,6 +32,7 @@
          get_raw_ring/0,
          get_raw_ring_chashbin/0,
          get_chash_bin/0,
+         get_ring_id/0,
          get_bucket_meta/1,
          refresh_my_ring/0,
          refresh_ring/2,
@@ -126,6 +127,14 @@ refresh_ring(Node, ClusterName) ->
 %% @spec set_my_ring(riak_core_ring:riak_core_ring()) -> ok
 set_my_ring(Ring) ->
     gen_server:call(?MODULE, {set_my_ring, Ring}, infinity).
+
+get_ring_id() ->
+    case ets:lookup(?ETS, id) of
+        [{_, Id}] ->
+            Id;
+        _ ->
+            {0,0}
+    end.
 
 %% @doc Return metadata for the given bucket
 get_bucket_meta(Bucket) ->
@@ -464,11 +473,24 @@ setup_ets(Mode) ->
                  test -> public
              end,
     ets:new(?ETS, [named_table, Access, {read_concurrency, true}]),
-    ets:insert(?ETS, [{changes, 0}, {promoted, 0}]),
+    Id = reset_ring_id(),
+    ets:insert(?ETS, [{changes, 0}, {promoted, 0}, {id, Id}]),
     ok.
 
 cleanup_ets(test) ->
     ets:delete(?ETS).
+
+reset_ring_id() ->
+    %% Maintain ring id epoch using mochiglobal to ensure ring id remains
+    %% monotonic even if the riak_core_ring_manager crashes and restarts
+    Epoch = case mochiglobal:get(riak_ring_id_epoch) of
+                undefined ->
+                    0;
+                Value ->
+                    Value
+            end,
+    mochiglobal:put(riak_ring_id_epoch, Epoch + 1),
+    {Epoch + 1, 0}.
 
 %% Set the ring in mochiglobal.  Exported during unit testing
 %% to make test setup simpler - no need to spin up a riak_core_ring_manager
@@ -515,8 +537,10 @@ set_ring_global(Ring) ->
             {ok,Meta} <- [riak_core_ring:get_meta({bucket, Bucket}, TaintedRing)]],
     BucketMeta2 = lists:ukeysort(1, BucketMeta ++ BucketDefaults),
     CHBin = chashbin:create(riak_core_ring:chash(TaintedRing)),
+    {Epoch, Id} = ets:lookup_element(?ETS, id, 2),
     Actions = [{ring, TaintedRing},
                {raw_ring, Ring},
+               {id, {Epoch,Id+1}},
                {chashbin, CHBin} | BucketMeta2],
     ets:insert(?ETS, Actions),
     ets:match_delete(?ETS, {{bucket, '_'}, undefined}),

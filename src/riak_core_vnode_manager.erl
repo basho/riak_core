@@ -27,7 +27,7 @@
 -export([start_link/0, stop/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
--export([all_vnodes/0, all_vnodes/1, all_vnodes_status/0, ring_changed/1,
+-export([all_vnodes/0, all_vnodes/1, all_vnodes_status/0,
          force_handoffs/0, repair/3, repair_status/1, xfer_complete/2,
          kill_repairs/1]).
 -export([all_index_pid/1, get_vnode_pid/2, start_vnode/2,
@@ -64,6 +64,7 @@
                 known_modules :: [term()],
                 never_started :: [{integer(), term()}],
                 vnode_start_tokens :: integer(),
+                last_ring_id :: term(),
                 repairs :: repairs()
                }).
 
@@ -118,13 +119,6 @@ xfer_complete(Origin, Xfer) ->
 
 kill_repairs(Reason) ->
     gen_server:cast(?MODULE, {kill_repairs, Reason}).
-
-ring_changed(_TaintedRing) ->
-    %% The ring passed into ring events is the locally modified tainted ring.
-    %% Since the vnode manager uses operations that cannot work on the
-    %% tainted ring, we must retreive the raw ring directly.
-    {ok, Ring, CHBin} = riak_core_ring_manager:get_raw_ring_chashbin(),
-    gen_server:cast(?MODULE, {ring_changed, Ring, CHBin}).
 
 %% @doc Provided for support/debug purposes. Forces all running vnodes to start
 %%      handoff. Limited by handoff_concurrency setting and therefore may need
@@ -392,20 +386,6 @@ handle_cast(force_handoffs, State) ->
      || {Mod, Idx, Pid} <- AllVNodes],
 
     {noreply, State2};
-handle_cast({ring_changed, Ring, CHBin}, State) ->
-    %% Update vnode forwarding state
-    AllVNodes = get_all_vnodes(),
-    Mods = [Mod || {_, Mod} <- riak_core:vnode_modules()],
-    State2 = update_forwarding(AllVNodes, Mods, Ring, State),
-
-    %% Update handoff state
-    State3 = update_handoff(AllVNodes, Ring, CHBin, State2),
-
-    %% Trigger ownership transfers.
-    Transfers = riak_core_ring:pending_changes(Ring),
-    trigger_ownership_handoff(Transfers, Mods, State3),
-
-    {noreply, State3};
 
 handle_cast(maybe_start_vnodes, State) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -420,9 +400,11 @@ handle_cast({kill_repairs, Reason}, State) ->
 handle_cast(_, State) ->
     {noreply, State}.
 
-handle_info(management_tick, State) ->
+handle_info(management_tick, State0) ->
     schedule_management_timer(),
+    RingID = riak_core_ring_manager:get_ring_id(),
     {ok, Ring, CHBin} = riak_core_ring_manager:get_raw_ring_chashbin(),
+    State = maybe_ring_changed(RingID, Ring, CHBin, State0),
     Mods = [Mod || {_, Mod} <- riak_core:vnode_modules()],
     AllVNodes = get_all_vnodes(Mods),
     State2 = update_handoff(AllVNodes, Ring, CHBin, State),
@@ -477,6 +459,29 @@ code_change(_OldVsn, State, _Extra) ->
 %% ===================================================================
 %% Internal functions
 %% ===================================================================
+
+maybe_ring_changed(RingID, Ring, CHBin, State=#state{last_ring_id=LastID}) ->
+    case RingID of
+        LastID ->
+            State;
+        _ ->
+            State2 = ring_changed(Ring, CHBin, State),
+            State2#state{last_ring_id=RingID}
+    end.
+
+ring_changed(Ring, CHBin, State) ->
+    %% Update vnode forwarding state
+    AllVNodes = get_all_vnodes(),
+    Mods = [Mod || {_, Mod} <- riak_core:vnode_modules()],
+    State2 = update_forwarding(AllVNodes, Mods, Ring, State),
+
+    %% Update handoff state
+    State3 = update_handoff(AllVNodes, Ring, CHBin, State2),
+
+    %% Trigger ownership transfers.
+    Transfers = riak_core_ring:pending_changes(Ring),
+    trigger_ownership_handoff(Transfers, Mods, State3),
+    State3.
 
 schedule_management_timer() ->
     ManagementTick = app_helper:get_env(riak_core,
