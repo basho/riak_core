@@ -30,6 +30,7 @@
          start_link/1,
          get_my_ring/0,
          get_raw_ring/0,
+         get_raw_ring_chashbin/0,
          get_chash_bin/0,
          get_bucket_meta/1,
          refresh_my_ring/0,
@@ -103,6 +104,16 @@ get_raw_ring() ->
     catch
         _:_ ->
             gen_server:call(?MODULE, get_raw_ring, infinity)
+    end.
+
+get_raw_ring_chashbin() ->
+    try
+        Ring = ets:lookup_element(?ETS, raw_ring, 2),
+        {ok, CHBin} = get_chash_bin(),
+        {ok, Ring, CHBin}
+    catch
+        _:_ ->
+            gen_server:call(?MODULE, get_raw_ring_chashbin, infinity)
     end.
 
 %% @spec refresh_my_ring() -> ok
@@ -296,6 +307,9 @@ reload_ring(live) ->
 
 handle_call(get_raw_ring, _From, #state{raw_ring=Ring} = State) ->
     {reply, {ok, Ring}, State};
+handle_call(get_raw_ring_chashbin, _From, #state{raw_ring=Ring} = State) ->
+    {ok, CHBin} = get_chash_bin(),
+    {reply, {ok, Ring, CHBin}, State};
 handle_call({set_my_ring, RingIn}, _From, State) ->
     Ring = riak_core_ring:upgrade(RingIn),
     State2 = prune_write_notify_ring(Ring, State),

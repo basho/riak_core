@@ -123,8 +123,8 @@ ring_changed(_TaintedRing) ->
     %% The ring passed into ring events is the locally modified tainted ring.
     %% Since the vnode manager uses operations that cannot work on the
     %% tainted ring, we must retreive the raw ring directly.
-    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
-    gen_server:cast(?MODULE, {ring_changed, Ring}).
+    {ok, Ring, CHBin} = riak_core_ring_manager:get_raw_ring_chashbin(),
+    gen_server:cast(?MODULE, {ring_changed, Ring, CHBin}).
 
 %% @doc Provided for support/debug purposes. Forces all running vnodes to start
 %%      handoff. Limited by handoff_concurrency setting and therefore may need
@@ -211,7 +211,7 @@ get_all_vnodes(Mod) ->
 
 %% @private
 init(_State) ->
-    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
+    {ok, Ring, CHBin} = riak_core_ring_manager:get_raw_ring_chashbin(),
     Mods = [Mod || {_, Mod} <- riak_core:vnode_modules()],
     State = #state{forwarding=[], handoff=[],
                    known_modules=[], never_started=[], vnode_start_tokens=0,
@@ -219,7 +219,7 @@ init(_State) ->
     State2 = find_vnodes(State),
     AllVNodes = get_all_vnodes(Mods),
     State3 = update_forwarding(AllVNodes, Mods, Ring, State2),
-    State4 = update_handoff(AllVNodes, Ring, State3),
+    State4 = update_handoff(AllVNodes, Ring, CHBin, State3),
     schedule_management_timer(),
     {ok, State4}.
 
@@ -385,21 +385,21 @@ handle_cast({vnode_event, Mod, Idx, Pid, Event}, State) ->
     handle_vnode_event(Event, Mod, Idx, Pid, State);
 handle_cast(force_handoffs, State) ->
     AllVNodes = get_all_vnodes(),
-    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
-    State2 = update_handoff(AllVNodes, Ring, State),
+    {ok, Ring, CHBin} = riak_core_ring_manager:get_raw_ring_chashbin(),
+    State2 = update_handoff(AllVNodes, Ring, CHBin, State),
 
     [maybe_trigger_handoff(Mod, Idx, Pid, State2)
      || {Mod, Idx, Pid} <- AllVNodes],
 
     {noreply, State2};
-handle_cast({ring_changed, Ring}, State) ->
+handle_cast({ring_changed, Ring, CHBin}, State) ->
     %% Update vnode forwarding state
     AllVNodes = get_all_vnodes(),
     Mods = [Mod || {_, Mod} <- riak_core:vnode_modules()],
     State2 = update_forwarding(AllVNodes, Mods, Ring, State),
 
     %% Update handoff state
-    State3 = update_handoff(AllVNodes, Ring, State2),
+    State3 = update_handoff(AllVNodes, Ring, CHBin, State2),
 
     %% Trigger ownership transfers.
     Transfers = riak_core_ring:pending_changes(Ring),
@@ -408,7 +408,7 @@ handle_cast({ring_changed, Ring}, State) ->
     {noreply, State3};
 
 handle_cast(maybe_start_vnodes, State) ->
-    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     State2 = maybe_start_vnodes(Ring, State),
     {noreply, State2};
 
@@ -422,10 +422,10 @@ handle_cast(_, State) ->
 
 handle_info(management_tick, State) ->
     schedule_management_timer(),
-    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
+    {ok, Ring, CHBin} = riak_core_ring_manager:get_raw_ring_chashbin(),
     Mods = [Mod || {_, Mod} <- riak_core:vnode_modules()],
     AllVNodes = get_all_vnodes(Mods),
-    State2 = update_handoff(AllVNodes, Ring, State),
+    State2 = update_handoff(AllVNodes, Ring, CHBin, State),
     Transfers = riak_core_ring:pending_changes(Ring),
 
     %% Kill/cancel any repairs during ownership changes
@@ -598,12 +598,12 @@ change_forward(VNodes, Mod, Idx, ForwardTo) ->
             ok
     end.
 
-update_handoff(AllVNodes, Ring, State) ->
+update_handoff(AllVNodes, Ring, CHBin, State) ->
     case riak_core_ring:ring_ready(Ring) of
         false ->
             State;
         true ->
-            NewHO = lists:flatten([case should_handoff(Ring, Mod, Idx) of
+            NewHO = lists:flatten([case should_handoff(Ring, CHBin, Mod, Idx) of
                                        false ->
                                            [];
                                        {true, TargetNode} ->
@@ -612,9 +612,9 @@ update_handoff(AllVNodes, Ring, State) ->
             State#state{handoff=orddict:from_list(NewHO)}
     end.
 
-should_handoff(Ring, Mod, Idx) ->
+should_handoff(Ring, CHBin, Mod, Idx) ->
     {_, NextOwner, _} = riak_core_ring:next_owner(Ring, Idx),
-    Owner = riak_core_ring:index_owner(Ring, Idx),
+    Owner = chashbin:index_owner(Idx, CHBin),
     Ready = riak_core_ring:ring_ready(Ring),
     case determine_handoff_target(Ready, Owner, NextOwner) of
         undefined ->
