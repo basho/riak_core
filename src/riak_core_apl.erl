@@ -25,7 +25,8 @@
 -module(riak_core_apl).
 -export([active_owners/1, active_owners/2,
          get_apl/3, get_apl/4, get_apl_ann/3, get_apl_ann/4,
-         get_primary_apl/3, get_primary_apl/4
+         get_primary_apl/3, get_primary_apl/4,
+         first_up/2, offline_owners/1, offline_owners/2
         ]).
 
 -export_type([preflist/0, preflist2/0]).
@@ -128,6 +129,28 @@ get_primary_apl(DocIdx, N, Ring, UpNodes) ->
     {Primaries, _} = lists:split(N, Preflist),
     {Up, _} = check_up(Primaries, UpNodes1, [], []),
     Up.
+
+%% Return the first entry that is up in the preflist for `DocIdx'. This
+%% will crash if all owning nodes are offline.
+first_up(DocIdx, Service) ->
+    CHBin = riak_core_ring_manager:get_chash_bin(),
+    Itr = chashbin:iterator(DocIdx, CHBin),
+    UpSet = ordsets:from_list(riak_core_node_watcher:nodes(Service)),
+    Itr2 = chashbin:itr_next_while(fun({_P, Node}) ->
+                                           not ordsets:is_element(Node, UpSet)
+                                   end, Itr),
+    chashbin:itr_value(Itr2).
+
+offline_owners(Service) ->
+    {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
+    offline_owners(Service, CHBin).
+
+offline_owners(Service, CHBin) ->
+    UpSet = ordsets:from_list(riak_core_node_watcher:nodes(Service)),
+    DownVNodes = chashbin:to_list_filter(fun({_Index, Node}) ->
+                                                 not is_up(Node, UpSet)
+                                         end, CHBin),
+    DownVNodes.
 
 %% Split a preference list into up and down lists
 -spec check_up(preflist(), [node()], preflist2(), preflist()) -> {preflist2(), preflist()}.
