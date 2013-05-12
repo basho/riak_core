@@ -111,17 +111,32 @@ make_tmp_dir() ->
 
 replace_file(FN, Data) ->
     TmpFN = FN ++ ".tmp",
-    {ok, FH} = file:open(TmpFN, [write]),
+    {ok, FH} = file:open(TmpFN, [write, raw]),
     try
         ok = file:write(FH, Data),
         ok = file:sync(FH),
         ok = file:close(FH),
         ok = file:rename(TmpFN, FN),
-        {ok, Contents} = file:read_file(FN),
+        {ok, Contents} = read_file(FN),
         true = (Contents == iolist_to_binary(Data)),
         ok
     catch _:Err ->
             {error, Err}
+    end.
+
+%% @doc Similar to {@link file:read_file} but uses raw file I/O
+read_file(FName) ->
+    {ok, FD} = file:open(FName, [read, raw, binary]),
+    IOList = read_file(FD, []),
+    file:close(FD),
+    {ok, iolist_to_binary(IOList)}.
+
+read_file(FD, Acc) ->
+    case file:read(FD, 4096) of
+        {ok, Data} ->
+            read_file(FD, [Data|Acc]);
+        eof ->
+            lists:reverse(Acc)
     end.
 
 %% @spec integer_to_list(Integer :: integer(), Base :: integer()) ->
