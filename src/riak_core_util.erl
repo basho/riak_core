@@ -48,6 +48,7 @@
          multi_rpc_ann/5,
          multicall_ann/4,
          multicall_ann/5,
+         shuffle/1,
          is_arch/1]).
 
 -ifdef(TEST).
@@ -458,6 +459,12 @@ orddict_delta(A, B) ->
                                   true
                           end, Merged),
     Diff.
+
+shuffle(L) ->
+    N = 134217727, %% Largest small integer on 32-bit Erlang
+    L2 = [{random:uniform(N), E} || E <- L],
+    L3 = [E || {_, E} <- lists:sort(L2)],
+    L3.
 
 %% Returns a forced-lowercase architecture for this node
 -spec get_arch () -> string().

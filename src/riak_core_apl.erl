@@ -24,7 +24,7 @@
 %% -------------------------------------------------------------------
 -module(riak_core_apl).
 -export([active_owners/1, active_owners/2,
-         get_apl/3, get_apl/4, get_apl_ann/4,
+         get_apl/3, get_apl/4, get_apl_ann/3, get_apl_ann/4,
          get_primary_apl/3, get_primary_apl/4
         ]).
 
@@ -38,6 +38,8 @@
 -type ring() :: riak_core_ring:riak_core_ring().
 -type preflist() :: [{index(), node()}].
 -type preflist2() :: [{{index(), node()}, primary|fallback}].
+-type iterator() :: term().
+-type chashbin() :: term().
 
 %% Return preflist of all active primary nodes (with no
 %% substituion of fallbacks).  Used to simulate a
@@ -57,8 +59,15 @@ active_owners(Ring, UpNodes) ->
 %% Get the active preflist taking account of which nodes are up
 -spec get_apl(binary(), n_val(), atom()) -> preflist().
 get_apl(DocIdx, N, Service) ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    get_apl(DocIdx, N, Ring, riak_core_node_watcher:nodes(Service)).
+    {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
+    get_apl_chbin(DocIdx, N, CHBin, riak_core_node_watcher:nodes(Service)).
+
+%% Get the active preflist taking account of which nodes are up
+%% for a given chash/upnodes list
+-spec get_apl_chbin(binary(), n_val(), ring(), [node()]) -> preflist().
+get_apl_chbin(DocIdx, N, CHBin, UpNodes) ->
+    [{Partition, Node} || {{Partition, Node}, _Type} <-
+                              get_apl_ann_chbin(DocIdx, N, CHBin, UpNodes)].
 
 %% Get the active preflist taking account of which nodes are up
 %% for a given ring/upnodes list
@@ -66,6 +75,23 @@ get_apl(DocIdx, N, Service) ->
 get_apl(DocIdx, N, Ring, UpNodes) ->
     [{Partition, Node} || {{Partition, Node}, _Type} <- 
                               get_apl_ann(DocIdx, N, Ring, UpNodes)].
+
+%% Get the active preflist taking account of which nodes are up
+%% and annotate each node with type of primary/fallback
+get_apl_ann(DocIdx, N, UpNodes) ->
+    {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
+    get_apl_ann_chbin(DocIdx, N, CHBin, UpNodes).
+
+%% Get the active preflist taking account of which nodes are up
+%% for a given chash/upnodes list and annotate each node with type of
+%% primary/fallback
+-spec get_apl_ann_chbin(binary(), n_val(), chashbin(), [node()]) -> preflist2().
+get_apl_ann_chbin(DocIdx, N, CHBin, UpNodes) ->
+    UpNodes1 = ordsets:from_list(UpNodes),
+    Itr = chashbin:iterator(DocIdx, CHBin),
+    {Primaries, Itr2} = chashbin:itr_pop(N, Itr),
+    {Up, Pangs} = check_up(Primaries, UpNodes1, [], []),
+    Up ++ find_fallbacks_chbin(Pangs, Itr2, UpNodes1, []).
 
 %% Get the active preflist taking account of which nodes are up
 %% for a given ring/upnodes list and annotate each node with type of
@@ -82,8 +108,17 @@ get_apl_ann(DocIdx, N, Ring, UpNodes) ->
 %% Same as get_apl, but returns only the primaries.
 -spec get_primary_apl(binary(), n_val(), atom()) -> preflist2().
 get_primary_apl(DocIdx, N, Service) ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    get_primary_apl(DocIdx, N, Ring, riak_core_node_watcher:nodes(Service)).
+    {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
+    get_primary_apl_chbin(DocIdx, N, CHBin, riak_core_node_watcher:nodes(Service)).
+
+%% Same as get_apl, but returns only the primaries.
+-spec get_primary_apl_chbin(binary(), n_val(), chashbin(), [node()]) -> preflist2().
+get_primary_apl_chbin(DocIdx, N, CHBin, UpNodes) ->
+    UpNodes1 = ordsets:from_list(UpNodes),
+    Itr = chashbin:iterator(DocIdx, CHBin),
+    {Primaries, _} = chashbin:itr_pop(N, Itr),
+    {Up, _} = check_up(Primaries, UpNodes1, [], []),
+    Up.
 
 %% Same as get_apl, but returns only the primaries.
 -spec get_primary_apl(binary(), n_val(), ring(), [node()]) -> preflist2().
@@ -119,6 +154,23 @@ find_fallbacks([{Partition, _Node}|Rest]=Pangs, [{_,FN}|Fallbacks], UpNodes, Sec
                            [{{Partition, FN}, fallback} | Secondaries]);
         false ->
             find_fallbacks(Pangs, Fallbacks, UpNodes, Secondaries)
+    end.
+
+%% Find fallbacks for downed nodes in the preference list
+-spec find_fallbacks_chbin(preflist(), iterator(),[node()], preflist2()) -> preflist2().
+find_fallbacks_chbin([], _Fallbacks, _UpNodes, Secondaries) ->
+    lists:reverse(Secondaries);
+find_fallbacks_chbin(_, done, _UpNodes, Secondaries) ->
+    lists:reverse(Secondaries);
+find_fallbacks_chbin([{Partition, _Node}|Rest]=Pangs, Itr, UpNodes, Secondaries) ->
+    {_, FN} = chashbin:itr_value(Itr),
+    Itr2 = chashbin:itr_next(Itr),
+    case is_up(FN, UpNodes) of
+        true ->
+            find_fallbacks_chbin(Rest, Itr2, UpNodes,
+                                 [{{Partition, FN}, fallback} | Secondaries]);
+        false ->
+            find_fallbacks_chbin(Pangs, Itr2, UpNodes, Secondaries)
     end.
 
 %% Return true if a node is up
@@ -247,6 +299,38 @@ six_node_test() ->
                   {456719261665907161938651510223838443642478919680, 'dev5@127.0.0.1'}],
               get_apl(DocIdx, 3, Ring, Nodes -- ['dev3@127.0.0.1'])),
 
+    ok.
+
+chbin_test_() ->
+    {timeout, 60, fun chbin_test_scenario/0}.
+
+chbin_test_scenario() ->
+    [chbin_test_scenario(Size, NumNodes)
+     || Size     <- [32, 64, 128],
+        NumNodes <- [1, 2, 3, 4, 5, 8, Size div 4]],
+    ok.
+
+chbin_test_scenario(Size, NumNodes) ->
+    RingTop = 1 bsl 160,
+    Ring = riak_core_test_util:fake_ring(Size, NumNodes),
+    Nodes = riak_core_ring:all_members(Ring),
+    CHash = riak_core_ring:chash(Ring),
+    CHBin = chashbin:create(CHash),
+    Inc = chash:ring_increment(Size),
+    HashKeys = [<<X:160/integer>> || X <- lists:seq(0, RingTop, Inc div 2)],
+    Shuffled = riak_core_util:shuffle(Nodes),
+    _ = CHBin,
+    [begin
+         Up = max(0, NumNodes - Down),
+         UpNodes = lists:sublist(Shuffled, Up),
+         ?assertEqual(get_apl(HashKey, N, Ring, UpNodes),
+                      get_apl_chbin(HashKey, N, CHBin, UpNodes)),
+         ?assertEqual(get_primary_apl(HashKey, N, Ring, UpNodes),
+                      get_primary_apl_chbin(HashKey, N, CHBin, UpNodes)),
+         ok
+     end || HashKey <- HashKeys,
+            N <- [1, 2, 3, 4],
+            Down <- [0, 1, 2, Size div 2, Size-1, Size]],
     ok.
 
 -endif.
