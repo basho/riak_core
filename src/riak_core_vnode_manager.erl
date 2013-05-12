@@ -588,10 +588,25 @@ check_forward(Ring, Mod, Index) ->
             {{Mod, Index}, undefined}
     end.
 
+check_forward_precomputed(Completed, Mod, Index) ->
+    case dict:find({Mod, Index}, Completed) of
+        {ok, NextOwner} ->
+            {{Mod, Index}, NextOwner};
+        _ ->
+            {{Mod, Index}, undefined}
+    end.
+
 compute_forwarding(Mods, Ring) ->
     AllIndices = [Index || {Index, _} <- riak_core_ring:all_owners(Ring)],
-    Forwarding = [check_forward(Ring, Mod, Index) || Index <- AllIndices,
-                                                     Mod <- Mods],
+    Node = node(),
+    CL = [{{Mod, Idx}, NextOwner}
+          || Mod <- Mods,
+             {Idx, Owner, NextOwner} <- riak_core_ring:completed_next_owners(Mod, Ring),
+             Owner =:= Node],
+    Completed = dict:from_list(CL),
+    Forwarding =
+        [check_forward_precomputed(Completed, Mod, Index) || Index <- AllIndices,
+                                                             Mod <- Mods],
     dict:from_list(Forwarding).
 
 update_forwarding(AllVNodes, Mods, Ring,
