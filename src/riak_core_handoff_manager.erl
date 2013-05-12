@@ -71,7 +71,7 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 init([]) ->
-    {ok, #state{excl=ordsets:new(), handoffs=[]}}.
+    {ok, #state{excl=sets:new(), handoffs=[]}}.
 
 add_outbound(Module,Idx,Node,VnodePid) ->
     case application:get_env(riak_core, disable_outbound_handoff) of
@@ -146,7 +146,7 @@ get_exclusions(Module) ->
 %%%===================================================================
 
 handle_call({get_exclusions, Module}, _From, State=#state{excl=Excl}) ->
-    Reply =  [I || {M, I} <- ordsets:to_list(Excl), M =:= Module],
+    Reply =  [I || {M, I} <- sets:to_list(Excl), M =:= Module],
     {reply, {ok, Reply}, State};
 handle_call({add_outbound,Mod,Idx,Node,Pid},_From,State=#state{handoffs=HS}) ->
     case send_handoff(Mod,Idx,Node,Pid,HS) of
@@ -213,7 +213,7 @@ handle_call(get_concurrency, _From, State) ->
     {reply, Concurrency, State}.
 
 handle_cast({del_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
-    Excl2 = ordsets:del_element({Mod, Idx}, Excl),
+    Excl2 = sets:del_element({Mod, Idx}, Excl),
     {noreply, State#state{excl=Excl2}};
 
 handle_cast({add_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
@@ -221,7 +221,7 @@ handle_cast({add_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
     %% exclusion to ensure that an exiting node would eventually shutdown
     %% after all vnodes had finished handoff. This behavior is now handled
     %% by riak_core_vnode_manager:maybe_ensure_vnodes_started
-    Excl2 = ordsets:add_element({Mod, Idx}, Excl),
+    Excl2 = sets:add_element({Mod, Idx}, Excl),
     {noreply, State#state{excl=Excl2}};
 
 handle_cast({status_update, ModSrcTgt, StatsUpdate}, State=#state{handoffs=HS}) ->
