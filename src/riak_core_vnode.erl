@@ -291,6 +291,8 @@ forward_or_vnode_command(Sender, Request, State=#state{forward=Forward,
             end
     end.
 
+vnode_command(_Sender, _Request, State=#state{modstate={deleted,_}}) ->
+    continue(State);
 vnode_command(Sender, Request, State=#state{mod=Mod,
                                             modstate=ModState,
                                             pool_pid=Pool}) ->
