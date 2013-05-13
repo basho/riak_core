@@ -424,10 +424,7 @@ record_seen_index(Ring, Shrinking, NValMap, DefaultN, Mod, Src, Key, Seen) ->
                 end,
     case riak_core_ring:future_index(Hashed, Src, CheckNVal, Ring) of
         undefined -> Seen;
-        FutureIndex ->
-            lager:info("resize transfer from ~p recording ~p as seen for key ~p",
-                       [Src, FutureIndex, Key]),
-            ordsets:add_element(FutureIndex, Seen)
+        FutureIndex -> ordsets:add_element(FutureIndex, Seen)
     end.
 
 get_concurrency_limit () ->
