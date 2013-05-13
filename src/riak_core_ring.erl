@@ -883,7 +883,8 @@ maybe_abort_resize(State0) ->
         true ->
             State1 = State0?CHSTATE{next=[]},
             State2 = clear_all_resize_transfers(State1),
-            {true, remove_meta('$resized_ring', State2)};
+            State3 = remove_meta('$resized_ring_abort', State2),
+            {true, remove_meta('$resized_ring', State3)};
         false ->
             {false, State0}
     end.
