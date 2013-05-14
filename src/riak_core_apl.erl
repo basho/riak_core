@@ -51,7 +51,7 @@ active_owners(Service) ->
 
 -spec active_owners(ring(), [node()]) -> preflist().
 active_owners(Ring, UpNodes) ->
-    UpNodes1 = ordsets:from_list(UpNodes),
+    UpNodes1 = UpNodes,
     Primaries = riak_core_ring:all_owners(Ring),
     {Up, _Pangs} = check_up(Primaries, UpNodes1, [], []),
     Up.
@@ -87,7 +87,7 @@ get_apl_ann(DocIdx, N, UpNodes) ->
 %% primary/fallback
 -spec get_apl_ann_chbin(binary(), n_val(), chashbin(), [node()]) -> preflist2().
 get_apl_ann_chbin(DocIdx, N, CHBin, UpNodes) ->
-    UpNodes1 = ordsets:from_list(UpNodes),
+    UpNodes1 = UpNodes,
     Itr = chashbin:iterator(DocIdx, CHBin),
     {Primaries, Itr2} = chashbin:itr_pop(N, Itr),
     {Up, Pangs} = check_up(Primaries, UpNodes1, [], []),
@@ -98,7 +98,7 @@ get_apl_ann_chbin(DocIdx, N, CHBin, UpNodes) ->
 %% primary/fallback
 -spec get_apl_ann(binary(), n_val(), ring(), [node()]) -> preflist2().
 get_apl_ann(DocIdx, N, Ring, UpNodes) ->
-    UpNodes1 = ordsets:from_list(UpNodes),
+    UpNodes1 = UpNodes,
     Preflist = riak_core_ring:preflist(DocIdx, Ring),
 
     {Primaries, Fallbacks} = lists:split(N, Preflist),
@@ -114,7 +114,7 @@ get_primary_apl(DocIdx, N, Service) ->
 %% Same as get_apl, but returns only the primaries.
 -spec get_primary_apl_chbin(binary(), n_val(), chashbin(), [node()]) -> preflist2().
 get_primary_apl_chbin(DocIdx, N, CHBin, UpNodes) ->
-    UpNodes1 = ordsets:from_list(UpNodes),
+    UpNodes1 = UpNodes,
     Itr = chashbin:iterator(DocIdx, CHBin),
     {Primaries, _} = chashbin:itr_pop(N, Itr),
     {Up, _} = check_up(Primaries, UpNodes1, [], []),
@@ -123,7 +123,7 @@ get_primary_apl_chbin(DocIdx, N, CHBin, UpNodes) ->
 %% Same as get_apl, but returns only the primaries.
 -spec get_primary_apl(binary(), n_val(), ring(), [node()]) -> preflist2().
 get_primary_apl(DocIdx, N, Ring, UpNodes) ->
-    UpNodes1 = ordsets:from_list(UpNodes),
+    UpNodes1 = UpNodes,
     Preflist = riak_core_ring:preflist(DocIdx, Ring),
     {Primaries, _} = lists:split(N, Preflist),
     {Up, _} = check_up(Primaries, UpNodes1, [], []),
@@ -175,7 +175,7 @@ find_fallbacks_chbin([{Partition, _Node}|Rest]=Pangs, Itr, UpNodes, Secondaries)
 
 %% Return true if a node is up
 is_up(Node, UpNodes) ->
-    ordsets:is_element(Node, UpNodes).
+    lists:member(Node, UpNodes).
 
 -ifdef(TEST).
 
