@@ -77,7 +77,8 @@ gather_targets(NVnodes, GatherStrategy) ->
     case GatherStrategy of 
         strategy_other_owner -> gather_vnodes_1(NVnodes);
         strategy_roundrobin  -> gather_vnodes_rr(NVnodes);
-        _ -> erlang:throw("Invalid gather strategy " ++ GatherStrategy)
+        _ -> log_info("Invalid gather strategy " ++ GatherStrategy),
+             erlang:throw(invalid_gather_strategy)
     end.
 
 %% Construct a list of target vnodes such that we select from vnodes that we don't own:
@@ -85,7 +86,8 @@ gather_vnodes_1(NVnodes) ->
     Secondaries = get_secondaries(),
 
     case length(Secondaries) >= NVnodes of
-        false -> erlang:throw("Insufficent vnodes for requested test (have ~p secondaries, require ~p)", [length(Secondaries), NVnodes]);
+        false -> log_info("Insufficent vnodes for requested test (have ~p secondaries, require ~p)", [length(Secondaries), NVnodes]),
+                 erlang:throw(insufficient_vnodes);
         true  -> true
     end,
 
@@ -110,7 +112,8 @@ gather_vnodes_rr(NVnodes) ->
 
     case MinLen < NVnodes of
         false -> ok;
-        true  -> erlang:throw("Requested more vnodes than available in smallest target")
+        true  -> log_info("Requested more vnodes than available in smallest target"),
+                 erlang:throw(requested_too_many_vnodes)
     end,
 
     merge_values(MinLen, HandoffMembers, HandoffMap, []).
