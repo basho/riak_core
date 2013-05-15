@@ -180,7 +180,7 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                                                           VMaster, infinity),
 
          %% Send any straggler entries remaining in the buffer:
-        AccRecord  = send_objects(AccRecord0#ho_acc.item_queue, AccRecord0),
+        AccRecord = send_objects(AccRecord0#ho_acc.item_queue, AccRecord0),
 
          if AccRecord == {error, vnode_shutdown} ->
                  ?log_info("because the local vnode was shutdown", []),
