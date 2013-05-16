@@ -394,6 +394,7 @@ updown() ->
         lists:seq(1,10000)),
     receive
         finished -> ok;
+        {'EXIT', _, normal} -> ok;
         X -> io:format(user, "Unexpected message received ~p~n", [X]),
             ?assert(fail)
     end.
