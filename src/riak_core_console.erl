@@ -262,7 +262,8 @@ transfers([]) ->
     [DisplayXfer(Xfer) || Xfer <- lists:flatten(Xfers)],
 
     io:format("~n"),
-    [DisplayDown(Node) || Node <- Down].
+    [DisplayDown(Node) || Node <- Down],
+    ok.
 
 print_v2_status(Type, Mod, {SrcPartition, TargetPartition}, StartTS) ->
     StartTSStr = datetime_str(StartTS),
