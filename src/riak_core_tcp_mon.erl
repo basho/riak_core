@@ -399,7 +399,7 @@ updown() ->
             ?assert(fail)
     end.
 nodeupdown_test_() ->
-       {timeout, 30, fun updown/0}.
+       {timeout, 60, fun updown/0}.
 
 kill_and_wait(Atom) when is_atom(Atom) ->
     kill_and_wait(whereis(Atom));
