@@ -78,7 +78,6 @@ start(_StartType, _StartArgs) ->
             riak_core:register(riak_core, [{stat_mod, riak_core_stat}]),
             ok = riak_core_ring_events:add_guarded_handler(riak_core_ring_handler, []),
 
-            %% Register capabilities
             riak_core_capability:register({riak_core, vnode_routing},
                                           [proxy, legacy],
                                           legacy,
