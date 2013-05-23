@@ -23,7 +23,8 @@
 -module(riak_core_format).
 -export([fmt/2,
          human_size_fmt/2,
-         human_time_fmt/2]).
+         human_time_fmt/2,
+         epoch_to_datetime/1]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -51,6 +52,13 @@ human_time_fmt(Fmt, Micros) ->
     Fmt2 = Fmt ++ " ~s",
     {Value, Units} = human_time(Micros),
     fmt(Fmt2, [Value, Units]).
+
+%% @doc Convert a folsom_utils:now_epoch() to a universal datetime
+-spec epoch_to_datetime(non_neg_integer()) -> calendar:datetime().
+epoch_to_datetime(S) ->
+    Epoch = {{1970,1,1},{0,0,0}},
+    Seconds = calendar:datetime_to_gregorian_seconds(Epoch) + S,
+    calendar:gregorian_seconds_to_datetime(Seconds).
 
 %%%===================================================================
 %%% Private
