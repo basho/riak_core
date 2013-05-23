@@ -172,9 +172,8 @@ init(Props) ->
                     clear_after = proplists:get_value(clear_after, Props, ?DEFAULT_LIMIT)},
     DistCtrl = erlang:system_info(dist_ctrl),
     State = lists:foldl(fun({Node,Port}, DatState) ->
-            {noreply, add_dist_conn(Node, Port, DatState)}
-
-                        end, State0, DistCtrl),
+            add_dist_conn(Node, Port, DatState)
+    end, State0, DistCtrl),
    {ok, schedule_tick(State)}.
 
 handle_call(status, _From, State = #state{conns = Conns,
