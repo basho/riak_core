@@ -609,7 +609,8 @@ simple_handoff () ->
     %% clear handoff_concurrency and make sure a handoff fails
     ?assertEqual(ok,set_concurrency(0)),
     ?assertEqual({error,max_concurrency},add_inbound([])),
-    ?assertEqual({error,max_concurrency},add_outbound(riak_kv,0,node(),self())),
+    ?assertEqual({error,max_concurrency},add_outbound(ownership_transfer,riak_kv_vnode,
+                                                      0,node(),self())),
 
     %% allow for a single handoff
     ?assertEqual(ok,set_concurrency(1)),
