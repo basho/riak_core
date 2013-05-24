@@ -623,41 +623,7 @@ should_handoff(Ring, Mod, Idx) ->
     Type = riak_core_ring:vnode_type(Ring, Idx),
     Ready = riak_core_ring:ring_ready(Ring),
     IsResizing = riak_core_ring:is_resizing(Ring),
-    Me = node(),
-    case {Type, NextOwner, Ready, IsResizing} of
-        %% if primary and next owner is me, don't handoff
-        {primary, Me, _, _} ->
-            Target = undefined;
-        %% if primary, don't handoff if no next owner
-        {primary, undefined, _, _} ->
-            Target = undefined;
-        %% if primary and ring ready, target is next owner (may be undef)
-        {primary, _, true, _} ->
-            Target = NextOwner;
-        %% otherwise, if primary don't handoff
-        {primary, _, _, _} ->
-            Target = undefined;
-        %% partitions moved during resize and scheduled for deletion, indexes
-        %% that exist in both the original and resized ring that were moved appear
-        %% as fallbacks.
-        {{fallback, _}, '$delete', _, _} ->
-            Target = '$delete';
-        %% partitions that no longer exist after the ring has been resized (shrunk)
-        %% scheduled for deletion
-        {resized_primary, '$delete', _, _} ->
-            Target = '$delete';
-        %% partitions that would have existed in a ring whose expansion was aborted
-        %% and are still running need to be cleaned up after and shutdown
-        {resized_primary, _, _, false} ->
-            Target = '$delete';
-        %% fallback vnode target is primary (For)
-        {{fallback, For}, undefined, _, _} ->
-            Target = For;
-        %% otherwise don't handoff
-        {_, _, _, _} ->
-            Target = undefined
-    end,
-    case Target of
+    case determine_handoff_target(Type, NextOwner, Ready, IsResizing) of
         undefined ->
             false;
         Action when Action == '$resize' orelse
@@ -674,6 +640,34 @@ should_handoff(Ring, Mod, Idx) ->
                     end
             end
     end.
+
+determine_handoff_target(Type, NextOwner, Ready, IsResizing) ->
+    Me = node(),
+    case {Type, NextOwner, Ready, IsResizing} of
+        %% if primary and next owner is me, don't handoff
+        {primary, Me, _, _} -> undefined;
+        %% if primary, don't handoff if no next owner
+        {primary, undefined, _, _} -> undefined;
+        %% if primary and ring ready, target is next owner (may be undef)
+        {primary, _, true, _} -> NextOwner;
+        %% otherwise, if primary don't handoff
+        {primary, _, _, _} -> undefined;
+        %% partitions moved during resize and scheduled for deletion, indexes
+        %% that exist in both the original and resized ring that were moved appear
+        %% as fallbacks.
+        {{fallback, _}, '$delete', _, _} -> '$delete';
+        %% partitions that no longer exist after the ring has been resized (shrunk)
+        %% scheduled for deletion
+        {resized_primary, '$delete', _, _} -> '$delete';
+        %% partitions that would have existed in a ring whose expansion was aborted
+        %% and are still running need to be cleaned up after and shutdown
+        {resized_primary, _, _, false} -> '$delete';
+        %% fallback vnode target is primary (For)
+        {{fallback, For}, undefined, _, _} -> For;
+        %% otherwise don't handoff
+        {_, _, _, _} -> undefined
+    end.
+
 
 app_for_vnode_module(Mod) when is_atom(Mod) ->
     case application:get_env(riak_core, vnode_modules) of

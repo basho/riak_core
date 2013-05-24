@@ -488,10 +488,6 @@ filter_changes(Changes, Ring) ->
                    end, Changes).
 
 %% @private
-filter_changes_pred(_, {resize, _}, _, _) ->
-    true;
-filter_changes_pred(_, abort_resize, _, _) ->
-    true;
 filter_changes_pred(Node, {Change, NewNode}, Changes, Ring)
   when (Change == replace) or (Change == force_replace) ->
     IsMember = (riak_core_ring:member_status(Ring, Node) /= invalid),
@@ -605,9 +601,14 @@ maybe_compute_resize(Orig, MbResized) ->
     end.
 
 %% @private
+%% @doc Adjust resized ring and schedule first resize transfers.
+%% Because riak_core_ring:resize/2 modifies the chash structure
+%% directly the ring calculated in this plan (`Resized') is used
+%% to determine the future ring but the changes are applied to
+%% the currently installed ring (`Orig') so that the changes to
+%% the chash are not committed to the ring manager
 compute_resize(Orig, Resized) ->
-    %% work with the resized and balanced ring, the
-    %% original ring will be reset when changes are scheduled
+    %% need to operate on balanced, future ring (apply changes determined by claim)
     CState0 = riak_core_ring:future_ring(Resized),
 
     Type = case riak_core_ring:num_partitions(Orig) < riak_core_ring:num_partitions(Resized) of
@@ -635,16 +636,22 @@ compute_resize(Orig, Resized) ->
     riak_core_ring:set_pending_resize(CState1, Orig).
 
 %% @private
+%% @doc determine the first resize transfer a partition should perform with
+%% the goal of ensuring the transfer will actually have data to send to the
+%% target.
 schedule_first_resize_transfer(smaller, {Idx,_}=IdxOwner, none, Resized) ->
-    %% partition no longer exists in new ring, use first successor
+    %% partition no longer exists in shrunk ring, first successor will be
+    %% new owner of its data
     Target = hd(riak_core_ring:preflist(<<Idx:160/integer>>, Resized)),
     riak_core_ring:schedule_resize_transfer(Resized, IdxOwner, Target);
 schedule_first_resize_transfer(_Type,{Idx, Owner}=IdxOwner, Owner, Resized) ->
-    %% partition is not being moved during resizing, use first predecessor
+    %% partition is not being moved during expansion, first predecessor will
+    %% own at least a portion of its data
     Target = hd(chash:predecessors(Idx-1, riak_core_ring:chash(Resized))),
     riak_core_ring:schedule_resize_transfer(Resized, IdxOwner, Target);
 schedule_first_resize_transfer(_,{Idx, _Owner}=IdxOwner, NextOwner, Resized) ->
-    %% index is being moved, schedule this resize transfer first
+    %% partition is being moved during expansion, schedule transfer to partition
+    %% on new owner since it will still own some of its data
     riak_core_ring:schedule_resize_transfer(Resized, IdxOwner, {Idx, NextOwner}).
 
 %% @private
