@@ -331,8 +331,8 @@ vnode_handoff_command(Sender, Request, State=#state{index=Index,
             riak_core_vnode_worker_pool:handle_work(Pool, Work, From),
             continue(State, NewModState);
         {forward, NewModState} ->
-            riak_core_vnode_master:command({Index, HN}, Request, Sender,
-                                           riak_core_vnode_master:reg_name(Mod)),
+            riak_core_vnode_master:command_unreliable(
+             {Index,HN}, Request, Sender, riak_core_vnode_master:reg_name(Mod)),
             continue(State, NewModState);
         {drop, NewModState} ->
             continue(State, NewModState);
@@ -684,36 +684,40 @@ start_handoff(State=#state{index=Idx, mod=Mod, modstate=ModState}, TargetNode) -
         {true, NewModState} ->
             finish_handoff(State#state{modstate=NewModState,
                                        handoff_node=TargetNode});
+        {false, Size, NewModState} ->
+            start_handoff(State#state{modstate=NewModState}, TargetNode, [{size, Size}]);
         {false, NewModState} ->
-            case riak_core_handoff_manager:add_outbound(Mod,Idx,TargetNode,self()) of
-                {ok, Pid} ->
-                    NewState = State#state{modstate=NewModState,
-                                           handoff_pid=Pid,
-                                           handoff_node=TargetNode},
-                    continue(NewState);
-                {error,_Reason} ->
-                    continue(State#state{modstate=NewModState})
-            end
+            start_handoff(State#state{modstate=NewModState}, TargetNode, [])
     end.
 
+start_handoff(State=#state{mod=Mod, index=Idx}, TargetNode, Opts) ->
+    case riak_core_handoff_manager:add_outbound(Mod,Idx,TargetNode,self(),Opts) of
+        {ok, Pid} ->
+            NewState = State#state{handoff_pid=Pid,
+                                   handoff_node=TargetNode},
+            continue(NewState);
+        {error,_Reason} ->
+            continue(State)
+    end.
 
 %% @doc Send a reply to a vnode request.  If
 %%      the Ref is undefined just send the reply
 %%      for compatibility with pre-0.12 requestors.
 %%      If Ref is defined, send it along with the
 %%      reply.
+%%      NOTE: We *always* send the reply using unreliable delivery.
 %%
 -spec reply(sender(), term()) -> any().
 reply({fsm, undefined, From}, Reply) ->
-    gen_fsm:send_event(From, Reply);
+    riak_core_send_msg:send_event_unreliable(From, Reply);
 reply({fsm, Ref, From}, Reply) ->
-    gen_fsm:send_event(From, {Ref, Reply});
+    riak_core_send_msg:send_event_unreliable(From, {Ref, Reply});
 reply({server, undefined, From}, Reply) ->
-    gen_server:reply(From, Reply);
+    riak_core_send_msg:reply_unreliable(From, Reply);
 reply({server, Ref, From}, Reply) ->
-    gen_server:reply(From, {Ref, Reply});
+    riak_core_send_msg:reply_unreliable(From, {Ref, Reply});
 reply({raw, Ref, From}, Reply) ->
-    From ! {Ref, Reply};
+    riak_core_send_msg:bang_unreliable(From, {Ref, Reply});
 reply(ignore, _Reply) ->
     ok.
 

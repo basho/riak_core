@@ -3,6 +3,7 @@
 -define(PT_MSG_OLDSYNC, 2).
 -define(PT_MSG_SYNC, 3).
 -define(PT_MSG_CONFIGURE, 4).
+-define(PT_MSG_BATCH, 5).
 
 -record(ho_stats,
         {
@@ -34,6 +35,7 @@
           vnode_mon             :: reference(),
           type                  :: ho_type(),
           req_origin            :: node(),
-          filter_mod_fun        :: {module(), atom()}
+          filter_mod_fun        :: {module(), atom()},
+          size                  :: {non_neg_integer(), bytes | objects}
         }).
 -type handoff_status() :: #handoff_status{}.

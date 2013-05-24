@@ -126,7 +126,18 @@ format_stat({{?APP, StatName, Addr, ProtocolId, total},N}) when is_atom(Protocol
 format_stat({{?APP, StatName, Addr, ProtocolId},[{count,N},{one,_W}]}) when is_atom(ProtocolId) ->
     {string_of_ipaddr(Addr)
      ++ "_" ++ atom_to_list(ProtocolId) 
-     ++ "_" ++ atom_to_list(StatName), N}.
+     ++ "_" ++ atom_to_list(StatName), N};
+format_stat({riak_conn_mgr_stats_stat_ts, S}) ->
+    UnivTime = riak_core_format:epoch_to_datetime(S),
+    {{Year, Month, Day}, {Hour, Min, Sec}} = calendar:universal_time_to_local_time(UnivTime),
+    Fmt = riak_core_format:fmt("~4..0B-~2..0B-~2..0B ~2..0B:~2..0B:~2..0B",
+                         [Year, Month, Day, Hour, Min, Sec]),
+    {"riak_conn_mgr_stats_stat_ts", Fmt};
+format_stat({StateName, N}) ->
+    {atom_to_list(StateName), N};
+format_stat(_) ->
+    [].
+
 
 string_of_ipaddr({IP, Port}) when is_list(IP) ->
     lists:flatten(io_lib:format("~s:~p", [IP, Port]));

@@ -33,7 +33,7 @@
         ]).
 
 %% handoff api
--export([add_outbound/4,
+-export([add_outbound/5,
          add_inbound/1,
          xfer/3,
          kill_xfer/3,
@@ -73,12 +73,12 @@ start_link() ->
 init([]) ->
     {ok, #state{excl=ordsets:new(), handoffs=[]}}.
 
-add_outbound(Module,Idx,Node,VnodePid) ->
+add_outbound(Module,Idx,Node,VnodePid,Opts) ->
     case application:get_env(riak_core, disable_outbound_handoff) of
         {ok, true} ->
             {error, max_concurrency};
         _ ->
-            gen_server:call(?MODULE,{add_outbound,Module,Idx,Node,VnodePid},infinity)
+            gen_server:call(?MODULE,{add_outbound,Module,Idx,Node,VnodePid,Opts},infinity)
     end.
 
 add_inbound(SSLOpts) ->
@@ -148,8 +148,8 @@ get_exclusions(Module) ->
 handle_call({get_exclusions, Module}, _From, State=#state{excl=Excl}) ->
     Reply =  [I || {M, I} <- ordsets:to_list(Excl), M =:= Module],
     {reply, {ok, Reply}, State};
-handle_call({add_outbound,Mod,Idx,Node,Pid},_From,State=#state{handoffs=HS}) ->
-    case send_handoff(Mod,Idx,Node,Pid,HS) of
+handle_call({add_outbound,Mod,Idx,Node,Pid,Opts},_From,State=#state{handoffs=HS}) ->
+    case send_handoff(Mod,Idx,Node,Pid,HS,Opts) of
         {ok,Handoff=#handoff_status{transport_pid=Sender}} ->
             HS2 = HS ++ [Handoff],
             {reply, {ok,Sender}, State#state{handoffs=HS2}};
@@ -247,7 +247,7 @@ handle_cast({send_handoff, Mod, {Src, Target}, ReqOrigin,
     %% TODO: make a record?
     {ok, VNode} = riak_core_vnode_manager:get_vnode_pid(Src, Mod),
     case send_handoff({Mod, Src, Target}, ReqOrigin, VNode, HS,
-                      {Filter, FMF}, ReqOrigin) of
+                      {Filter, FMF}, ReqOrigin, []) of
         {ok, Handoff} ->
             HS2 = HS ++ [Handoff],
             {noreply, State#state{handoffs=HS2}};
@@ -348,7 +348,6 @@ build_status(HO) ->
                     status=Status,
                     timestamp=StartTS,
                     transport_pid=TPid,
-                    stats=Stats,
                     type=Type}=HO,
     {status_v2, [{mod, Mod},
                  {src_partition, SrcP},
@@ -359,24 +358,40 @@ build_status(HO) ->
                  {status, Status},
                  {start_ts, StartTS},
                  {sender_pid, TPid},
-                 {stats, calc_stats(Stats, StartTS)},
+                 {stats, calc_stats(HO)},
                  {type, Type}]}.
 
-calc_stats(Stats, StartTS) ->
+calc_stats(#handoff_status{stats=Stats,timestamp=StartTS,size=Size}) ->
     case dict:find(last_update, Stats) of
         error ->
             no_stats;
         {ok, LastUpdate} ->
             Objs = dict:fetch(objs, Stats),
             Bytes = dict:fetch(bytes, Stats),
+            CalcSize = get_size(Size),
+            Done = calc_pct_done(Objs, Bytes, CalcSize),
             ElapsedS = timer:now_diff(LastUpdate, StartTS) / 1000000,
             ObjsS = round(Objs / ElapsedS),
             BytesS = round(Bytes / ElapsedS),
             [{objs_total, Objs},
              {objs_per_s, ObjsS},
              {bytes_per_s, BytesS},
-             {last_update, LastUpdate}]
+             {last_update, LastUpdate},
+             {size, CalcSize},
+             {pct_done_decimal, Done}]
     end.
+
+get_size({F, dynamic}) ->
+    F();
+get_size(S) ->
+    S.
+
+calc_pct_done(_, _, undefined) ->
+    undefined;
+calc_pct_done(Objs, _, {Size, objects}) ->
+    Objs / Size;
+calc_pct_done(_, Bytes, {Size, bytes}) ->
+    Bytes / Size.
 
 filter(none) ->
     fun(_) -> true end;
@@ -399,8 +414,8 @@ handoff_concurrency_limit_reached () ->
     ActiveSenders=proplists:get_value(active,Senders),
     get_concurrency_limit() =< (ActiveReceivers + ActiveSenders).
 
-send_handoff(Mod, Partition, Node, Pid, HS) ->
-    send_handoff({Mod, Partition, Partition}, Node, Pid, HS, {none, none}, none).
+send_handoff(Mod, Partition, Node, Pid, HS, Opts) ->
+    send_handoff({Mod, Partition, Partition}, Node, Pid, HS, {none, none}, none, Opts).
 
 %% @private
 %%
@@ -415,7 +430,7 @@ send_handoff(Mod, Partition, Node, Pid, HS) ->
                           {ok, handoff_status()}
                               | {error, max_concurrency}
                               | {false, handoff_status()}.
-send_handoff({Mod, Src, Target}, Node, Vnode, HS, {Filter, FilterModFun}, Origin) ->
+send_handoff({Mod, Src, Target}, Node, Vnode, HS, {Filter, FilterModFun}, Origin, Opts) ->
     case handoff_concurrency_limit_reached() of
         true ->
             {error, max_concurrency};
@@ -466,6 +481,7 @@ send_handoff({Mod, Src, Target}, Node, Vnode, HS, {Filter, FilterModFun}, Origin
                                                                            Node)
                     end,
                     PidM = monitor(process, Pid),
+                    Size = validate_size(proplists:get_value(size, Opts)),
 
                     %% successfully started up a new sender handoff
                     {ok, #handoff_status{ transport_pid=Pid,
@@ -481,7 +497,8 @@ send_handoff({Mod, Src, Target}, Node, Vnode, HS, {Filter, FilterModFun}, Origin
                                           stats=dict:new(),
                                           type=HOType,
                                           req_origin=Origin,
-                                          filter_mod_fun=FilterModFun
+                                          filter_mod_fun=FilterModFun,
+                                          size=Size
                                         }
                     };
 
@@ -520,6 +537,16 @@ update_stats(StatsUpdate, Stats) ->
     Stats2 = dict:update_counter(objs, Objs, Stats),
     Stats3 = dict:update_counter(bytes, Bytes, Stats2),
     dict:store(last_update, LU, Stats3).
+
+validate_size(Size={N, U}) when is_number(N) andalso
+                           N > 0 andalso
+                           (U =:= bytes orelse U =:= objects) ->
+    Size;
+validate_size(Size={F, dynamic}) when is_function(F) ->
+    Size;
+validate_size(_) ->
+    undefined.
+
 
 %% @private
 %%
