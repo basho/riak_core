@@ -159,6 +159,7 @@ init([Mod,
     {Request, VNodeSelector, NVal, PrimaryVNodeCoverage,
      NodeCheckService, VNodeMaster, Timeout, ModState} =
         Mod:init(From, RequestArgs),
+    gen_fsm:start_timer(Timeout, {timer_expired, Timeout}),
     PlanFun = plan_callback(Mod, Exports),
     ProcessFun = process_results_callback(Mod, Exports),
     StateData = #state{mod=Mod,
@@ -169,7 +170,7 @@ init([Mod,
                        pvc = PrimaryVNodeCoverage,
                        request=Request,
                        req_id=ReqId,
-                       timeout=Timeout,
+                       timeout=infinity,
                        vnode_master=VNodeMaster,
                        plan_fun = PlanFun,
                        process_fun = ProcessFun},
@@ -250,6 +251,8 @@ waiting_results({{ReqId, VNode}, Results},
             Mod:finish(Error, ModState),
             {stop, Error, StateData}
     end;
+waiting_results({timeout, _, _}, #state{mod=Mod, mod_state=ModState}) ->
+    Mod:finish({error, timeout}, ModState);
 waiting_results(timeout, #state{mod=Mod, mod_state=ModState}) ->
     Mod:finish({error, timeout}, ModState).
 
