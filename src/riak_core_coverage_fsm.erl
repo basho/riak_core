@@ -306,7 +306,4 @@ exports(Function, Exports) ->
     proplists:is_defined(Function, Exports).
 
 exports_arity(Function, Arity, Exports) ->
-    case proplists:get_all_values(Function, Exports) of
-        [] -> false;
-        L -> lists:member(Arity, L)
-    end.
+    lists:member(Arity, proplists:get_all_values(Function, Exports)).
