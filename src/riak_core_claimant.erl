@@ -461,12 +461,14 @@ valid_resize_request(NewRingSize, [], Ring) ->
     %%            the cluster is capable. core knowing about search/kv is :(
     ControlRunning = app_helper:get_env(riak_control, enabled, false),
     SearchRunning = app_helper:get_env(riak_search, enabled, false),
-    case {ControlRunning, SearchRunning, Capable, IsResizing} of
-        {false, false, true, true} -> true;
-        {true, _, _, _} -> {error, control_running};
-        {_,  true, _, _} -> {error, search_running};
-        {_, _, false, _} -> {error, not_capable};
-        {_, _, _, false} -> {error, same_size}
+    NodeCount = length(riak_core_ring:all_members(Ring)),
+    case {ControlRunning, SearchRunning, Capable, IsResizing, NodeCount} of
+        {false, false, true, true, N} when N > 1 -> true;
+        {true, _, _, _, _} -> {error, control_running};
+        {_,  true, _, _, _} -> {error, search_running};
+        {_, _, false, _, _} -> {error, not_capable};
+        {_, _, _, false, _} -> {error, same_size};
+        {_, _, _, _, 1} -> {error, single_node}
     end.
 
 
