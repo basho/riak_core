@@ -360,6 +360,9 @@ stage_resize_ring(NewRingSize) ->
                 error;
             {error, search_running} ->
                 io:format("Failed: cannot resize ring with Riak Search~n"),
+                error;
+            {error, single_node} ->
+                io:format("Failed: cannot resize single node~n"),
                 error
         end
     catch
