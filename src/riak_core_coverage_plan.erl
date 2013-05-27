@@ -117,7 +117,7 @@ create_plan(VNodeSelector, NVal, PVC, ReqId, Service) ->
             end
     end.
 
-%% private
+%% @private
 load_nif() ->
     SOPath = case code:priv_dir(riak_core) of
                  {error, _} ->
@@ -154,7 +154,7 @@ find_coverage(Offset, NVal, PartitionCount, UnavailableKeySpaces, PVC) ->
 
 %% @private
 find_coverage_fast(_Offset, _NVal, _UnavailableKeySpaces, _PVC) ->
-    erlang:error(nit_not_loaded).
+    erlang:nif_error(nif_not_loaded).
 
 %% @private
 find_coverage(AllKeySpaces, Offset, NVal, PartitionCount, UnavailableKeySpaces, PVC, []) ->
