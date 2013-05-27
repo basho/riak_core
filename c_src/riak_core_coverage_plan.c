@@ -12,6 +12,7 @@
 struct state {
   unsigned int offset;
   unsigned int nval;
+  uint64_t coverage[BASE];
 };
 
 typedef unsigned char vnode_t;
@@ -68,11 +69,11 @@ static unsigned int covers(uint64_t key_spaces,
     return cover_num;
 }
 
-static void next_node(uint64_t key_spaces,
-		      uint64_t vnodes,
-		      state_t *state,
-		      vnode_t *max_vnode,
-		      unsigned int *max_cover_num)
+static void next_vnode(uint64_t key_spaces,
+		       uint64_t available_key_spaces,
+		       state_t *state,
+		       vnode_t *max_vnode,
+		       unsigned int *max_cover_num)
 {
     vnode_t vnode;
     unsigned int cover_num;
@@ -82,8 +83,8 @@ static void next_node(uint64_t key_spaces,
 
     while (tie_breaker < BASE) {
 	vnode = vnode_by_tie_breaker(tie_breaker, state);
-	if (intersect(vnodes, singleton(vnode)) != EMPTY_SET) {
-	    cover_num = covers(key_spaces, vnode, state);
+	if (intersect(available_key_spaces, singleton(vnode)) != EMPTY_SET) {
+	    cover_num = covers(subtract(key_spaces, state->coverage[vnode]), vnode, state);
 	    if (cover_num == state->nval) {
 		*max_vnode = vnode;
 		*max_cover_num = cover_num;
@@ -139,34 +140,27 @@ static ERL_NIF_TERM coverage_to_list(ErlNifEnv* env, uint64_t coverage[BASE])
     return tail;
 }
 
-static ERL_NIF_TERM find_coverage_vnodes(ErlNifEnv* env,
-					 uint64_t key_spaces,
-					 uint64_t available_key_spaces,
-					 state_t *state,
-					 uint64_t coverage[BASE])
+static uint64_t find_coverage_vnodes(ErlNifEnv* env,
+				     uint64_t key_spaces,
+				     uint64_t available_key_spaces,
+				     state_t *state)
 {
     vnode_t vnode;
     unsigned int cover_num;
     uint64_t covers;
 
     while (1) {
-	if (key_spaces == EMPTY_SET) {
-	    return enif_make_tuple2(env, enif_make_atom(env, "ok"),
-				    coverage_to_list(env, coverage));
-	} else if (available_key_spaces == EMPTY_SET) {
-	    return enif_make_tuple3(env,
-				    enif_make_atom(env, "insufficient_vnodes_available"),
-				    bitmask_to_list(env, key_spaces),
-				    coverage_to_list(env, coverage));
+	if (key_spaces == EMPTY_SET || available_key_spaces == EMPTY_SET) {
+	    return (uint64_t) key_spaces;
 	} else {
-	    next_node(key_spaces, available_key_spaces, state, &vnode, &cover_num);
+	    next_vnode(key_spaces, available_key_spaces, state, &vnode, &cover_num);
 	    if (cover_num == 0) {
 		/* out of vnodes */
 		available_key_spaces = EMPTY_SET;
 	    } else {
-		covers = n_keyspaces(vnode, state);
+		covers = subtract(n_keyspaces(vnode, state), state->coverage[vnode]);
 		available_key_spaces = subtract(available_key_spaces, singleton(vnode));
-		coverage[vnode] = intersect(key_spaces, covers);
+		state->coverage[vnode] |= (uint64_t) intersect(key_spaces, covers);
 		key_spaces = subtract(key_spaces, covers);
 	    }
 	}
@@ -195,20 +189,34 @@ static ERL_NIF_TERM find_coverage(ErlNifEnv* env, int argc,
 {
     uint64_t unavailable_key_spaces;
     uint64_t all_key_spaces;
+    uint64_t result_key_spaces;
     uint64_t vnodes;
-    uint64_t coverage[BASE] = {0};
-    state_t state;
-
-    if (argc == 3) {
+    unsigned int pvc = 0;
+    state_t state = {.coverage = {0}};
+    
+    if (argc == 4) {
 	if (enif_get_uint(env, argv[0], &state.offset) &&
 	    enif_get_uint(env, argv[1], &state.nval) &&
 	    enif_is_list(env, argv[2]) &&
+	    enif_get_uint(env, argv[3], &pvc) &&
 	    list_to_bitmask(env, argv[2], &unavailable_key_spaces))
 	    {
 		all_key_spaces = UINT64_MAX;
 		vnodes = subtract(all_key_spaces, unavailable_key_spaces);
-		return find_coverage_vnodes(env, all_key_spaces,
-					    vnodes, &state, coverage);
+		do {
+		    result_key_spaces = find_coverage_vnodes(env, all_key_spaces,
+							     vnodes, &state);
+		    pvc--;
+		} while (pvc > 0 && result_key_spaces == EMPTY_SET);
+		if (result_key_spaces == EMPTY_SET)
+		    return enif_make_tuple2(env, enif_make_atom(env, "ok"),
+					    coverage_to_list(env, state.coverage));
+		else
+		    return enif_make_tuple3(env,
+					    enif_make_atom(env,
+							   "insufficient_vnodes_available"),
+					    bitmask_to_list(env, result_key_spaces),
+					    coverage_to_list(env, state.coverage));
 	    } else {
 	    return enif_make_badarg(env);
 	}
@@ -219,7 +227,7 @@ static ERL_NIF_TERM find_coverage(ErlNifEnv* env, int argc,
 
 static ErlNifFunc nif_funcs[] =
     {
-	{"find_coverage_fast", 3, find_coverage}
+	{"find_coverage_fast", 4, find_coverage}
     };
 
 ERL_NIF_INIT(riak_core_coverage_plan, nif_funcs, load, NULL, NULL, NULL)

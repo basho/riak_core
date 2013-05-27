@@ -138,22 +138,22 @@ load_nif() ->
 %% ====================================================================
 %% @private
 find_coverage(Offset, NVal, PartitionCount, UnavailableKeySpaces, PVC) ->
-    case {lists:min([PVC, NVal]), PartitionCount} of
-        {1, 64} ->
-            find_coverage_fast(Offset, NVal, UnavailableKeySpaces);
-        {Min, _} ->
+    case PartitionCount of
+        64 ->
+            find_coverage_fast(Offset, NVal, UnavailableKeySpaces, PVC);
+        _ ->
             AllKeySpaces = lists:seq(0, PartitionCount - 1),
             find_coverage(AllKeySpaces,
                           Offset,
                           NVal,
                           PartitionCount,
                           UnavailableKeySpaces,
-                          Min,
+                          PVC,
                           [])
     end.
 
 %% @private
-find_coverage_fast(_Offset, _NVal, _UnavailableKeySpaces) ->
+find_coverage_fast(_Offset, _NVal, _UnavailableKeySpaces, _PVC) ->
     erlang:error(nit_not_loaded).
 
 %% @private
