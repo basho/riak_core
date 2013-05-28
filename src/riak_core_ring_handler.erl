@@ -36,6 +36,7 @@ init([]) ->
 handle_event({ring_update, Ring}, State) ->
     %% Make sure all vnodes are started...
     ensure_vnodes_started(Ring),
+    maybe_start_vnode_proxies(Ring),
     riak_core_vnode_manager:ring_changed(Ring),
     riak_core_capability:ring_changed(Ring),
     {ok, State}.
@@ -168,4 +169,19 @@ startable_vnodes(Mod, Ring) ->
                 RO ->
                     [RO | riak_core_ring:my_indices(Ring)]
             end
+    end.
+
+maybe_start_vnode_proxies(Ring) ->
+    Mods = [M || {_,M} <- riak_core:vnode_modules()],
+    Size = riak_core_ring:num_partitions(Ring),
+    FutureSize = riak_core_ring:future_num_partitions(Ring),
+    Larger = Size < FutureSize,
+    case Larger of
+        true ->
+            FutureIdxs = riak_core_ring:all_next_owners(Ring),
+            [riak_core_vnode_proxy_sup:start_proxy(Mod, Idx) || {Idx, _} <- FutureIdxs,
+                                                                Mod <- Mods],
+            ok;
+        false ->
+            ok
     end.
