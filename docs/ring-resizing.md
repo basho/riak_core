@@ -134,6 +134,83 @@ its data. Because of this assumption, this also means that reads can
 be performed locally and not forwarded the entire time the ring is
 resizing.
 
+The following describes the reasoning for the above in more
+detail. During ring resizing a vnode can be in one of four states:
+
+1. *resize operation* for partition not yet started, ring resizing ongoing
+1. *resize operation* ongoing, no *resize transfer* ongoing
+1. *resize operation* ongoing, *resize transfer* ongoing
+1. *resize operation* for partition complete, ring resizing ongoing
+
+In each of these states, and based on several conditions, the vnode
+will take one of two actions:
+
+1. handle request locally only, no forwarding -- `Mod:handle_command`
+1. option to handle locally + option to forward -- `Mod:handle_handoff_command`
+
+The table below details the action taken by the vnode in a specific
+state and based on the progress of the partition's *resize operation*:
+
+<table>
+<tr>
+<th>State</td>
+<th>Condition</td>
+<th>Action</td>
+<th>Notes</td>
+</tr>
+<tr>
+<td>1</td>
+<td>none</td>
+<td>handle_command</td>
+<td>writes will be transferred to future owner via future resize transfer</td>
+</tr>
+<tr>
+<td>2</td>
+<td>req. for key in portition of keyspace not yet transferred</td>
+<td>handle_command</td>
+<td>writes will be transferred to future owner via future resize transfer</td>
+</tr>
+<tr>
+<td>2</td>
+<td>req. for key in portition of keyspace already transferred</td>
+<td>handle_handoff_command</td>
+<td>writes need be performed locally and remote, reads can be done locally</td>
+</tr>
+<tr>
+<td>3</td>
+<td>req. for key in portition of keyspace not yet transferred</td>
+<td>handle_command</td>
+<td>writes will be transferred to future owner via future resize transfer</td>
+</tr>
+<tr>
+<td>3</td>
+<td>req. for key in portition of keyspace already transferred</td>
+<td>handle_handoff_command</td>
+<td>writes need be performed locally and remote, reads can be done locally</td>
+</tr>
+<tr>
+<td>3</td>
+<td>req. for key in portition of keyspace being transferred</td>
+<td>handle_handoff_command</td>
+<td>writes need be performed locally and remote, reads can be done locally</td>
+</tr>
+<tr>
+<td>4</td>
+<td>req. for key in portion of keyspace transferred</td>
+<td>handle_handoff_command</td>
+<td>writes need be performed locally and remote, reads can be done locally</td>
+</tr>
+<tr>
+<td>4</td>
+<td>req. for key in portion of keyspace not transferred</td>
+<td>handle_handoff_command</td>
+<td>occurs if max N val used by cluster changes during operation.
+writes need be performed locally and remote, reads can be done locally. this case is
+not handled by the current implementation (the N-value should not be enlarged during resize)
+</td>
+</tr>
+</table>
+
 What partition to forward to is determined in the same manner that
 *resize transfers* use to determine the proper target partition for an
 unsent key.
@@ -142,7 +219,7 @@ All coverage requests are handled locally.
 
 ### Application Changes
 
-There are two changes that must be made to any `riak_core` application
+There are three changes that must be made to any `riak_core` application
 that wishes to support dynamic ring:
 
 1. A function `object_info(term()) -> {undefined | binary(),binary()}`
@@ -157,6 +234,20 @@ defined. The function takes the request being processed as an argument
 and should return the hashed value of the key the request will act
 upon or `undefined`. If `undefined` is returned, the request will never be
 forwarded during ring resizing (`handle_command` will always be called).
+3. A function `nval_map(riak_core_ring:riak_core_ring()) -> [{binary(), integer()}]`
+must be defined. The function takes the current ring and should return a proplist
+containing bucket/n-val pairs. For any buckets not included the default N value
+will be used. This function is used when the ring is shrinking to ensure the N-value
+isn't implicitly enlarged during the transition, it is not used during expansion.
+
+One other minor change made to the vnode interface, regardless of
+whether or not resizing is being used, is the first argument
+of`handoff_starting/2` is now passed as `{HOType, {Idx, Node}}`.
+`HOType` is one of `ownership_transfer`, `hinted_handoff` or
+`resize_transfer`. The `Idx` being transferred to is always the index
+of the current partition, except in the case of `resize_transfer`.
+`Node` is the node being transferred to (this used to be the argument
+passed into `handoff_starting/2`).
 
 ### Cleaning Up
 
