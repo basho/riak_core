@@ -426,7 +426,7 @@ send_handoff(Mod, Partition, Node, Pid, HS, Opts) ->
 %%      can't be sent on completion.
 -spec send_handoff({module(), index(), index()}, node(),
                    pid(), list(),
-                   {predicate() | none, {module(), atom()} | none}, node()) ->
+                   {predicate() | none, {module(), atom()} | none}, node(), list()) ->
                           {ok, handoff_status()}
                               | {error, max_concurrency}
                               | {false, handoff_status()}.

@@ -135,7 +135,7 @@ is_registered(ProtocolId) ->
 
 %% @doc Register a callback function that will get called periodically or
 %% when the connection status of services changes. The function will
-%% receive a list of tuples: {<protocol-id>, <stats>} where stats
+%% receive a list of tuples: {&lt;protocol-id&gt;, &lt;stats&gt;} where stats
 %% holds the number of open connections that have been accepted  for that
 %% protocol type. This can be used to report load, in the form of
 %% connected-ness, for each protocol type, to remote clusters, e.g.,

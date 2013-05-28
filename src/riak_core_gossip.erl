@@ -88,7 +88,7 @@ legacy_gossip(Node) ->
 
 %% @doc Determine if any of the `Nodes' are using legacy gossip by querying
 %%      each node's capability directly over RPC. The proper way to check
-%%      for legacy gossip is to use {@link legacy/gossip/1}. This function
+%%      for legacy gossip is to use {@link legacy_gossip/1}. This function
 %%      is used to support staged clustering in `riak_core_claimant'.
 any_legacy_gossip(_Ring, []) ->
     false;
