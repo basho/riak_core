@@ -81,7 +81,7 @@ join(false, _, Node, Rejoin, Auto) ->
         pang ->
             {error, not_reachable};
         pong ->
-            case rpc:call(Node, riak_core_gossip, legacy_gossip, []) of
+            case false of
                 true ->
                     legacy_join(Node);
                 _ ->
