@@ -97,6 +97,7 @@
          next_owner/1,
          next_owner/2,
          next_owner/3,
+         completed_next_owners/2,
          all_next_owners/1,
          change_owners/2,
          handoff_complete/3,
@@ -355,7 +356,8 @@ get_buckets(State) ->
 %% @doc Return the node that owns the given index.
 -spec index_owner(State :: chstate(), Idx :: integer()) -> Node :: term().
 index_owner(State, Idx) ->
-    hd([Owner || {I, Owner} <- ?MODULE:all_owners(State), I =:= Idx]).
+    {Idx, Owner} = lists:keyfind(Idx, 1, all_owners(State)),
+    Owner.
 
 %% @doc Return all partition indices owned by the node executing this function.
 -spec my_indices(State :: chstate()) -> [integer()].
@@ -715,7 +717,11 @@ next_owner(State, Idx) ->
 -spec next_owner(State :: chstate(), Idx :: integer(),
                  Mod :: module()) -> pending_change().
 next_owner(State, Idx, Mod) ->
-    case lists:keyfind(Idx, 1, State?CHSTATE.next) of
+    NInfo = lists:keyfind(Idx, 1, State?CHSTATE.next),
+    next_owner_status(NInfo, Mod).
+
+next_owner_status(NInfo, Mod) ->
+    case NInfo of
         false ->
             {undefined, undefined, undefined};
         {_, Owner, NextOwner, _Transfers, complete} ->
@@ -732,6 +738,10 @@ next_owner(State, Idx, Mod) ->
 %% @private
 next_owner({_, Owner, NextOwner, _Transfers, Status}) ->
     {Owner, NextOwner, Status}.
+
+completed_next_owners(Mod, ?CHSTATE{next=Next}) ->
+    [{Idx, O, NO} || NInfo={Idx, _, _, _, _} <- Next,
+                     {O, NO, complete} <- [next_owner_status(NInfo, Mod)]].
 
 %% @doc Returns true if all cluster members have seen the current ring.
 -spec ring_ready(State :: chstate()) -> boolean().

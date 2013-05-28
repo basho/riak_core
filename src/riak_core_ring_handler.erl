@@ -20,6 +20,7 @@
 %% gen_event callbacks
 -export([init/1, handle_event/2, handle_call/2,
          handle_info/2, terminate/2, code_change/3]).
+-export([ensure_vnodes_started/1]).
 -record(state, {}).
 
 
@@ -33,11 +34,7 @@ init([]) ->
     ensure_vnodes_started(Ring),
     {ok, #state{}}.
 
-handle_event({ring_update, Ring}, State) ->
-    %% Make sure all vnodes are started...
-    ensure_vnodes_started(Ring),
-    riak_core_vnode_manager:ring_changed(Ring),
-    riak_core_capability:ring_changed(Ring),
+handle_event({ring_update, _Ring}, State) ->
     {ok, State}.
 
 handle_call(_Event, State) ->
