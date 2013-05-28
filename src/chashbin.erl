@@ -104,9 +104,9 @@ index_owner(Idx, CHBin) ->
     case itr_value(exact_iterator(Idx, CHBin)) of
         {Idx, Owner} ->
             Owner;
-        Other ->
+        _ ->
             %% Match the behavior for riak_core_ring:index_owner/2
-            throw({badmatch, Idx, Other})
+            exit({badmatch, false})
     end.
 
 %% @doc Return the number of partitions in a given `chashbin'
@@ -125,10 +125,10 @@ iterator(first, CHBin) ->
     #iterator{pos=0,
               start=0,
               chbin=CHBin};
-iterator(<<Idx:160/integer>>, CHBin) ->
-    iterator(Idx, CHBin);
-iterator(Idx, CHBin) ->
-    Pos = responsible_position(Idx, CHBin),
+iterator(<<HashKey:160/integer>>, CHBin) ->
+    iterator(HashKey, CHBin);
+iterator(HashKey, CHBin) ->
+    Pos = responsible_position(HashKey, CHBin),
     #iterator{pos=Pos,
               start=Pos,
               chbin=CHBin}.

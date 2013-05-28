@@ -21,6 +21,44 @@
 %% -------------------------------------------------------------------
 
 %% @doc the local view of the cluster's ring configuration
+%%
+%% Numerous processes concurrently read and access the ring in a
+%% variety of time sensitive code paths. To make this efficient,
+%% `riak_core' uses `mochiglobal' which exploits the Erlang constant
+%% pool to provide constant-time access to the ring without needing
+%% to copy data into individual process heaps.
+%%
+%% However, updating a `mochiglobal' value is very slow, and becomes slower
+%% the larger the item being stored. With large rings, the delay can
+%% become too long during periods of high ring churn, where hundreds of
+%% ring events are being triggered a second.
+%%
+%% As of Riak 1.4, `riak_core' uses a hybrid approach to solve this
+%% problem. When a ring is first written, it is written to a shared ETS
+%% table. If no ring events have occurred for 90 seconds, the ring is
+%% then promoted to `mochiglobal'.  This provides fast updates during
+%% periods of ring churn, while eventually providing very fast reads
+%% after the ring stabilizes. The downside is that reading from the ETS
+%% table before promotion is slower than `mochiglobal', and requires
+%% copying the ring into individual process heaps.
+%%
+%% To alleviate the slow down while in the ETS phase, `riak_core'
+%% exploits the fact that most time sensitive operations access the ring
+%% in order to read only a subset of its data: bucket properties and
+%% partition ownership. Therefore, these pieces of information are
+%% extracted from the ring and stored in the ETS table as well to
+%% minimize copying overhead. Furthermore, the partition ownership
+%% information (represented by the {@link chash} structure) is converted
+%% into a binary {@link chashbin} structure before being stored in the
+%% ETS table. This `chashbin' structure is fast to copy between processes
+%% due to off-heap binary sharing. Furthermore, this structure provides a
+%% secondary benefit of being much faster than the traditional `chash'
+%% structure for normal operations.
+%%
+%% As of Riak 1.4, it is therefore recommended that operations that
+%% can be performed by directly using the bucket properties API or
+%% `chashbin' structure do so using those methods rather than
+%% retrieving the ring via `get_my_ring/0' or `get_raw_ring/0'.
 
 -module(riak_core_ring_manager).
 -define(RING_KEY, riak_ring).
@@ -492,7 +530,7 @@ reset_ring_id() ->
     mochiglobal:put(riak_ring_id_epoch, Epoch + 1),
     {Epoch + 1, 0}.
 
-%% Set the ring in mochiglobal.  Exported during unit testing
+%% Set the ring in mochiglobal/ETS.  Exported during unit testing
 %% to make test setup simpler - no need to spin up a riak_core_ring_manager
 %% process.
 set_ring_global(Ring) ->
@@ -528,7 +566,14 @@ set_ring_global(Ring) ->
     %% Mark ring as tainted to check if it is ever leaked over gossip or
     %% relied upon for any non-local ring operations.
     TaintedRing = riak_core_ring:set_tainted(FixedRing),
-    %% store the modified ring in mochiglobal
+
+    %% Extract bucket properties and place into ETS table. We want all bucket
+    %% additions, modifications, and deletions to appear in a single atomic
+    %% operation. Since ETS does not provide a means to change + delete
+    %% multiple values in a single operation, we emulate the deletion by
+    %% overwriting all deleted buckets with the "undefined" atom that has
+    %% special meaning in `riak_core_bucket:get_bucket_props/2`. We then
+    %% cleanup these values in a subsequent `ets:match_delete`.
     OldBuckets = ets:select(?ETS, [{{{bucket, '$1'}, '_'}, [], ['$1']}]),
     BucketDefaults = [{{bucket, Bucket}, undefined} || Bucket <- OldBuckets],
     BucketMeta =

@@ -500,7 +500,12 @@ maybe_ensure_vnodes_started(Ring) ->
 
 ensure_vnodes_started(Ring) ->
     spawn(fun() ->
-                  riak_core_ring_handler:ensure_vnodes_started(Ring)
+                  try
+                      riak_core_ring_handler:ensure_vnodes_started(Ring)
+                  catch
+                      T:R ->
+                          lager:error("~p", [{T, R, erlang:get_stacktrace()}])
+                  end
           end).
 
 schedule_management_timer() ->
