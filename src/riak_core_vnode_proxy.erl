@@ -336,7 +336,7 @@ fake_loop_block() ->
     end.
 
 overload_test_() ->
-    {foreach,
+    {timeout, 900, {foreach,
      fun() ->
              VnodePid = spawn(fun fake_loop/0),
              meck:new(riak_core_vnode_manager, [passthrough]),
@@ -355,11 +355,11 @@ overload_test_() ->
      end,
      [
       fun({VnodePid, ProxyPid}) ->
-              {"should not discard in normal operation",
+              {"should not discard in normal operation", timeout, 60,
                fun() ->
                        [ProxyPid ! hello || _ <- lists:seq(1, 50000)],
                        %% synchronize on the mailbox
-                       Reply = gen:call(ProxyPid, '$vnode_proxy_call', sync),
+                       Reply = gen:call(ProxyPid, '$vnode_proxy_call', sync, infinity),
                        ?assertEqual({ok, ok}, Reply),
                        VnodePid ! {get_count, self()},
                        receive
@@ -371,12 +371,12 @@ overload_test_() ->
               }
       end,
       fun({VnodePid, ProxyPid}) ->
-              {"should discard during overflow",
+              {"should discard during overflow", timeout, 60,
                fun() ->
                        VnodePid ! block,
                        [ProxyPid ! hello || _ <- lists:seq(1, 50000)],
                        %% synchronize on the mailbox
-                       Reply = gen:call(ProxyPid, '$vnode_proxy_call', sync),
+                       Reply = gen:call(ProxyPid, '$vnode_proxy_call', sync, infinity),
                        ?assertEqual({ok, ok}, Reply),
                        VnodePid ! unblock,
                        VnodePid ! {get_count, self()},
@@ -389,12 +389,12 @@ overload_test_() ->
               }
       end,
       fun({VnodePid, ProxyPid}) ->
-              {"should tolerate slow vnodes",
+              {"should tolerate slow vnodes", timeout, 60,
                fun() ->
                        VnodePid ! slow,
                        [ProxyPid ! hello || _ <- lists:seq(1, 50000)],
                        %% synchronize on the mailbox
-                       Reply = gen:call(ProxyPid, '$vnode_proxy_call', sync),
+                       Reply = gen:call(ProxyPid, '$vnode_proxy_call', sync, infinity),
                        ?assertEqual({ok, ok}, Reply),
                        %% check that the outstanding message count is
                        %% reasonable
@@ -405,5 +405,5 @@ overload_test_() ->
                end
               }
       end
-     ]}.
+     ]}}.
 -endif.
