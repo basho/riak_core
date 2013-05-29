@@ -109,7 +109,30 @@
          reconcile_names/2,
          reconcile_members/2,
          is_primary/2,
-         chash/1]).
+         chash/1,
+         set_chash/2,
+         resize/2,
+         set_pending_resize/2,
+         set_pending_resize_abort/1,
+         maybe_abort_resize/1,
+         schedule_resize_transfer/3,
+         awaiting_resize_transfer/3,
+         resize_transfer_status/4,
+         resize_transfer_complete/4,
+         complete_resize_transfers/3,
+         reschedule_resize_transfers/3,
+         is_resizing/1,
+         is_post_resize/1,
+         is_resize_complete/1,
+         resized_ring/1,
+         set_resized_ring/2,
+         future_index/3,
+         future_index/4,
+         is_future_index/4,
+         future_owner/2,
+         future_num_partitions/1,
+         vnode_type/2,
+         deletion_complete/3]).
 
 -export_type([riak_core_ring/0]).
 
@@ -257,6 +280,9 @@ is_primary(Ring, IdxNode) ->
 chash(?CHSTATE{chring=CHash}) ->
     CHash.
 
+set_chash(State, CHash) ->
+    State?CHSTATE{chring=CHash}.
+
 %% @doc Produce a list of all nodes that are members of the cluster
 -spec all_members(State :: chstate()) -> [Node :: term()].
 all_members(?CHSTATE{members=Members}) ->
@@ -331,6 +357,18 @@ fresh(RingSize, NodeName) ->
              vclock=VClock,
              meta=dict:new()}.
 
+%% @doc change the size of the ring to `NewRingSize'. If the ring
+%%      is larger than the current ring any new indexes will be owned
+%%      by a dummy host
+-spec resize(chstate(), integer()) -> chstate().
+resize(State, NewRingSize) ->
+    NewRing = lists:foldl(fun({Idx,Owner}, RingAcc) ->
+                                  chash:update(Idx, Owner, RingAcc)
+                          end,
+                          chash:fresh(NewRingSize, '$dummyhost@resized'),
+                          all_owners(State)),
+    set_chash(State, NewRing).
+
 % @doc Return a value from the cluster metadata dict
 -spec get_meta(Key :: term(), State :: chstate()) -> 
     {ok, term()} | undefined.
@@ -340,6 +378,13 @@ get_meta(Key, State) ->
         {ok, '$removed'} -> undefined;
         {ok, M} when M#meta_entry.value =:= '$removed' -> undefined;
         {ok, M} -> {ok, M#meta_entry.value}
+    end.
+
+-spec get_meta(term(), term(), chstate()) -> {ok, term()}.
+get_meta(Key, Default, State) ->
+    case get_meta(Key, State) of
+        undefined -> {ok, Default};
+        Res -> Res
     end.
 
 %% @doc return the names of all the custom buckets stored in the ring.
@@ -359,6 +404,13 @@ index_owner(State, Idx) ->
     {Idx, Owner} = lists:keyfind(Idx, 1, all_owners(State)),
     Owner.
 
+%% @doc Return the node that will own this index after transtions have completed
+%%      this function will error if the ring is shrinking and Idx no longer exists
+%%      in it
+-spec future_owner(chstate(), integer()) -> term().
+future_owner(State, Idx) ->
+    index_owner(future_ring(State), Idx).
+
 %% @doc Return all partition indices owned by the node executing this function.
 -spec my_indices(State :: chstate()) -> [integer()].
 my_indices(State) ->
@@ -368,6 +420,13 @@ my_indices(State) ->
 -spec num_partitions(State :: chstate()) -> integer().
 num_partitions(State) ->
     chash:size(State?CHSTATE.chring).
+
+-spec future_num_partitions(chstate()) -> integer().
+future_num_partitions(State=?CHSTATE{chring=CHRing}) ->
+    case resized_ring(State) of
+        {ok, C} -> chash:size(C);
+        undefined -> chash:size(CHRing)
+    end.
 
 %% @doc Return the node that is responsible for a given chstate.
 -spec owner_node(State :: chstate()) -> Node :: term().
@@ -469,6 +528,86 @@ rename_node(State=?CHSTATE{chring=Ring, nodename=ThisNode, members=Members,
 responsible_index(ChashKey, ?CHSTATE{chring=Ring}) ->
     <<IndexAsInt:160/integer>> = ChashKey,
     chash:next_index(IndexAsInt, Ring).
+
+%% @doc Given a key and an index in the current ring, determine
+%%      which index will own the key in the future ring. `OrigIdx'
+%%      may or may not be the responsible index for that key
+%%      (`OrigIdx' may not be the first index in `CHashKey''s preflist).
+%%      The returned index will be in the same position in the preflist
+%%      for `CHashKey' in the future ring. For regular transitions
+%%      the returned index will always be `OrigIdx'. If the ring is
+%%      resizing the index may be different
+-spec future_index(chash:index(),
+                   integer(),
+                   chstate()) -> integer() | undefined.
+future_index(CHashKey, OrigIdx, State) ->
+    future_index(CHashKey, OrigIdx, undefined, State).
+
+-spec future_index(chash:index(),
+                   integer(),
+                   undefined | integer(),
+                   chstate()) -> integer() | undefined.
+future_index(CHashKey, OrigIdx, NValCheck, State) ->
+    <<CHashInt:160/integer>> = CHashKey,
+    OrigCount = num_partitions(State),
+    NextCount = future_num_partitions(State),
+    OrigInc = chash:ring_increment(OrigCount),
+    NextInc = chash:ring_increment(NextCount),
+
+    %% Determine position in the ring of partition that owns key (head of preflist)
+    %% Position is 1-based starting from partition (0 + ring increment), e.g.
+    %% index 0 is always position N.
+    OwnerPos = ((CHashInt div OrigInc) + 1),
+
+    %% Determine position of the source partition in the ring
+    %% if OrigIdx is 0 we know the position is OrigCount (number of partitions)
+    OrigPos = case OrigIdx of
+                  0 -> OrigCount;
+                  _ -> OrigIdx div OrigInc
+              end,
+
+    %% The distance between the key's owner (head of preflist) and the source partition
+    %% is the position of the source in the preflist, the distance may be negative
+    %% in which case we have wrapped around the ring. distance of zero means the source
+    %% is the head of the preflist.
+    OrigDist = case OrigPos - OwnerPos of
+                  P when P < 0 -> OrigCount + P;
+                  P -> P
+               end,
+
+    %% In the case that the ring is shrinking the future index for a key whose position
+    %% in the preflist is >= ring size may be calculated, any transfer is invalid in
+    %% this case, return undefined. The position may also be >= an optional N value for
+    %% the key, if this is true undefined is also returned
+    case check_invalid_future_index(OrigDist, NextCount, NValCheck) of
+        true -> undefined;
+        false ->
+            %% Determine the partition (head of preflist) that will own the key in the future ring
+            FuturePos =  ((CHashInt div NextInc) + 1),
+            NextOwner = FuturePos * NextInc,
+
+            %% Determine the partition that the key should be transferred to (has same position
+            %% in future preflist as source partition does in current preflist)
+            RingTop = trunc(math:pow(2,160)-1),
+            (NextOwner + (NextInc * OrigDist)) rem RingTop
+    end.
+
+check_invalid_future_index(OrigDist, NextCount, NValCheck) ->
+    OverRingSize = OrigDist >= NextCount,
+    OverNVal = case NValCheck of
+                   undefined -> false;
+                   _ -> OrigDist >= NValCheck
+               end,
+    OverRingSize orelse OverNVal.
+
+%% Takes the hashed value for a key and any partition, `OrigIdx',
+%% in the current preflist for the key. Returns true if `TargetIdx'
+%% is in the same position in the future preflist for that key.
+%% @see future_index/4
+-spec is_future_index(chash:index(), integer(), integer(), chstate()) -> boolean().
+is_future_index(CHashKey, OrigIdx, TargetIdx, State) ->
+    FutureIndex = future_index(CHashKey, OrigIdx, undefined, State),
+    FutureIndex =:= TargetIdx.
 
 -spec transfer_node(Idx :: integer(), Node :: term(), MyState :: chstate()) ->
            chstate().
@@ -676,10 +815,9 @@ indices(State, Node) ->
 %%      pending ownership transfers have completed.
 -spec future_indices(State :: chstate(), Node :: node()) -> [integer()].
 future_indices(State, Node) ->
-    FutureState = change_owners(State, all_next_owners(State)),
-    indices(FutureState, Node).
+    indices(future_ring(State), Node).
 
-%% @private
+-spec all_next_owners(chstate()) -> [{integer(), term()}].
 all_next_owners(CState) ->
     Next = riak_core_ring:pending_changes(CState),
     [{Idx, NextOwner} || {Idx, _, NextOwner, _, _} <- Next].
@@ -687,13 +825,35 @@ all_next_owners(CState) ->
 %% @private
 change_owners(CState, Reassign) ->
     lists:foldl(fun({Idx, NewOwner}, CState0) ->
-                        riak_core_ring:transfer_node(Idx, NewOwner, CState0)
+                        %% if called for indexes not in the current ring (during resizing)
+                        %% ignore the error
+                        try riak_core_ring:transfer_node(Idx, NewOwner, CState0)
+                        catch
+                            error:{badmatch, _} -> CState0
+                        end
                 end, CState, Reassign).
 
 %% @doc Return all indices that a node is scheduled to give to another.
 disowning_indices(State, Node) ->
-    [Idx || {Idx, Owner, _NextOwner, _Mods, _Status} <- State?CHSTATE.next,
-            Owner =:= Node].
+    case is_resizing(State) of
+        false ->
+            [Idx || {Idx, Owner, _NextOwner, _Mods, _Status} <- State?CHSTATE.next,
+                    Owner =:= Node];
+        true ->
+            [Idx || {Idx, Owner} <- all_owners(State),
+                    Owner =:= Node,
+                    disowned_during_resize(State, Idx, Owner)]
+    end.
+
+disowned_during_resize(CState, Idx, Owner) ->
+    %% catch error when index doesn't exist, we are disowning it if its going away
+    NextOwner = try future_owner(CState, Idx)
+                catch _:_ -> undefined
+                end,
+    case NextOwner of
+        Owner -> false;
+        _  -> true
+    end.
 
 %% @doc Returns a list of all pending ownership transfers.
 pending_changes(State) ->
@@ -702,6 +862,273 @@ pending_changes(State) ->
 
 set_pending_changes(State, Transfers) ->
     State?CHSTATE{next=Transfers}.
+
+%% @doc Given a ring, `Resizing', that has been resized (and presumably rebalanced)
+%%      schedule a resize transition for `Orig'.
+-spec set_pending_resize(chstate(), chstate()) -> chstate().
+set_pending_resize(Resizing, Orig) ->
+    %% all existing indexes must transfer data when the ring is being resized
+    Next = [{Idx, Owner, '$resize', [], awaiting} ||
+               {Idx, Owner} <- riak_core_ring:all_owners(Orig)],
+    %% Resizing is assumed to have a modified chring, we need to put back
+    %% the original chring to not install the resized one pre-emptively. The
+    %% resized ring is stored in ring metadata for later use
+    FutureCHash = chash(Resizing),
+    ResetRing = set_chash(Resizing, chash(Orig)),
+    set_resized_ring(set_pending_changes(ResetRing, Next), FutureCHash).
+
+-spec maybe_abort_resize(chstate()) -> {boolean(), chstate()}.
+maybe_abort_resize(State) ->
+    Resizing = is_resizing(State),
+    PostResize = is_post_resize(State),
+    PendingAbort = is_resize_aborted(State),
+    case PendingAbort andalso Resizing andalso not PostResize of
+        true ->
+            State1 = State?CHSTATE{next=[]},
+            State2 = clear_all_resize_transfers(State1),
+            State3 = remove_meta('$resized_ring_abort', State2),
+            {true, remove_meta('$resized_ring', State3)};
+        false ->
+            {false, State}
+    end.
+
+
+-spec set_pending_resize_abort(chstate()) -> chstate().
+set_pending_resize_abort(State) ->
+    update_meta('$resized_ring_abort', true, State).
+
+-spec schedule_resize_transfer(chstate(),
+                               {integer(), term()},
+                               integer() | {integer(), term()}) -> chstate().
+schedule_resize_transfer(State, Source, TargetIdx) when is_integer(TargetIdx) ->
+    TargetNode = index_owner(future_ring(State), TargetIdx),
+    schedule_resize_transfer(State, Source, {TargetIdx, TargetNode});
+schedule_resize_transfer(State, Source, Source) ->
+    State;
+schedule_resize_transfer(State, Source, Target) ->
+    Transfers = resize_transfers(State, Source),
+    %% ignore if we have already scheduled a transfer from source -> target
+    case lists:keymember(Target, 1, Transfers) of
+        true -> State;
+        false ->
+            Transfers1 = lists:keystore(Target, 1, Transfers,
+                                        {Target, ordsets:new(), awaiting}),
+            set_resize_transfers(State, Source, Transfers1)
+    end.
+
+%% @doc reassign all outbound and inbound resize transfers from `Node' to `NewNode'
+-spec reschedule_resize_transfers(chstate(), term(), term()) -> chstate().
+reschedule_resize_transfers(State=?CHSTATE{next=Next}, Node, NewNode) ->
+    {NewNext, NewState} = lists:mapfoldl(
+                            fun(Entry, StateAcc) -> reschedule_resize_operation(Node, NewNode,
+                                                                                Entry, StateAcc)
+                            end,
+                            State, Next),
+    NewState?CHSTATE{next=NewNext}.
+
+reschedule_resize_operation(N, NewNode, {Idx, N, '$resize', _Mods, _Status}, State) ->
+    NewEntry = {Idx, NewNode, '$resize', ordsets:new(), awaiting},
+    NewState = reschedule_outbound_resize_transfers(State, Idx, N, NewNode),
+    {NewEntry, NewState};
+reschedule_resize_operation(Node, NewNode,
+                           {Idx, OtherNode, '$resize', _Mods, _Status}=Entry,
+                            State) ->
+    {Changed, NewState} = reschedule_inbound_resize_transfers({Idx, OtherNode}, Node,
+                                                              NewNode, State),
+    case Changed of
+        true ->
+            NewEntry = {Idx, OtherNode, '$resize', ordsets:new(), awaiting},
+            {NewEntry, NewState};
+        false ->
+            {Entry, State}
+    end.
+
+reschedule_inbound_resize_transfers(Source, Node, NewNode, State) ->
+    F = fun(Transfer, Acc) ->
+                {NewXfer, NewAcc} = reschedule_inbound_resize_transfer(Transfer, Node, NewNode),
+                {NewXfer, NewAcc orelse Acc}
+        end,
+    {ResizeTransfers, Changed} = lists:mapfoldl(F, false, resize_transfers(State, Source)),
+    {Changed, set_resize_transfers(State, Source, ResizeTransfers)}.
+
+reschedule_inbound_resize_transfer({{Idx, Target}, _, _}, Target, NewNode) ->
+    {{{Idx, NewNode}, ordsets:new(), awaiting}, true};
+reschedule_inbound_resize_transfer(Transfer, _, _) ->
+    {Transfer, false}.
+
+reschedule_outbound_resize_transfers(State, Idx, Node, NewNode) ->
+    OldSource = {Idx, Node},
+    NewSource = {Idx, NewNode},
+    Transfers = resize_transfers(State, OldSource),
+    F = fun({I,N}) when N =:= Node -> {I,NewNode};
+           (T) -> T
+        end,
+    NewTransfers = [{F(Target), ordsets:new(), awaiting} || {Target, _, _} <- Transfers],
+    set_resize_transfers(clear_resize_transfers(OldSource, State), NewSource, NewTransfers).
+
+%% @doc returns the first awaiting resize_transfer for a {SourceIdx, SourceNode}
+%%      pair. If all transfers for the pair are complete, undefined is returned
+-spec awaiting_resize_transfer(chstate(), {integer(), term()}, atom()) ->
+                                      {integer(), term()} | undefined.
+awaiting_resize_transfer(State, Source, Mod) ->
+    ResizeTransfers = resize_transfers(State, Source),
+    Awaiting = [{Target, Mods, Status} || {Target, Mods, Status} <- ResizeTransfers,
+                                          Status =/= complete,
+                                          not ordsets:is_element(Mod, Mods)],
+    case Awaiting of
+        [] -> undefined;
+        [{Target, _, _} | _] -> Target
+    end.
+
+%% @doc return the status of a resize_transfer for `Source' (an index-node pair). undefined
+%%      is returned if no such transfer is scheduled. complete is returned if the transfer
+%%      is marked as such or `Mod' is contained in the completed modules set. awaiting is
+%%      returned otherwise
+-spec resize_transfer_status(chstate(), {integer(), term()}, {integer(), term()}, atom()) ->
+                                    awaiting | complete | undefined.
+resize_transfer_status(State, Source, Target, Mod) ->
+    ResizeTransfers = resize_transfers(State, Source),
+    IsComplete = case lists:keyfind(Target, 1, ResizeTransfers) of
+                     false -> undefined;
+                     {Target, _, complete} -> true;
+                     {Target, Mods, awaiting} -> ordsets:is_element(Mod, Mods)
+                 end,
+    case IsComplete of
+        true -> complete;
+        false -> awaiting;
+        undefined -> undefined
+    end.
+
+%% @doc mark a resize_transfer from `Source' to `Target' for `Mod' complete.
+%%      if all transfers for `Source' are complete, the corresponding entry
+%%      in next is marked complete. This requires any other resize_transfers
+%%      for `Source' that need to be started to be scheduled before calling
+%%      this fuction
+-spec resize_transfer_complete(chstate(),
+                               {integer(),term()},
+                               {integer(),term()},
+                               atom()) -> chstate().
+resize_transfer_complete(State, {SrcIdx, _}=Source, Target, Mod) ->
+    ResizeTransfers = resize_transfers(State, Source),
+    Transfer = lists:keyfind(Target, 1, ResizeTransfers),
+    case Transfer of
+        {Target, Mods, Status} ->
+            VNodeMods =
+                ordsets:from_list([VMod || {_, VMod} <- riak_core:vnode_modules()]),
+            Mods2 = ordsets:add_element(Mod, Mods),
+            Status2 = case {Status, Mods2} of
+                          {complete, _} -> complete;
+                          {awaiting, VNodeMods} -> complete;
+                          _ -> awaiting
+                      end,
+            ResizeTransfers2 = lists:keyreplace(Target, 1, ResizeTransfers,
+                                                {Target, Mods2, Status2}),
+            State1 = set_resize_transfers(State, Source, ResizeTransfers2),
+            AllComplete = lists:all(fun({_, _, complete}) -> true;
+                                       ({_, Ms, awaiting}) -> ordsets:is_element(Mod, Ms)
+                                    end, ResizeTransfers2),
+            case AllComplete of
+                true ->
+                    transfer_complete(State1, SrcIdx, Mod);
+                false -> State1
+            end;
+        _ -> State
+    end.
+
+-spec is_resizing(chstate()) -> boolean().
+is_resizing(State) ->
+    case resized_ring(State) of
+        undefined -> false;
+        {ok, _} -> true
+    end.
+
+-spec is_post_resize(chstate()) -> boolean().
+is_post_resize(State) ->
+    case get_meta('$resized_ring', State) of
+        {ok, '$cleanup'} -> true;
+        _ -> false
+    end.
+
+-spec is_resize_aborted(chstate()) -> boolean().
+is_resize_aborted(State) ->
+    case get_meta('$resized_ring_abort', State) of
+        {ok, true} -> true;
+        _ -> false
+    end.
+
+-spec is_resize_complete(chstate()) -> boolean().
+is_resize_complete(?CHSTATE{next=Next}) ->
+    not lists:any(fun({_, _, _, _, awaiting}) -> true;
+                     ({_, _, _, _, complete}) -> false
+                  end,
+                  Next).
+
+-spec complete_resize_transfers(chstate(), {integer(),term()}, atom()) -> [{integer(),term()}].
+complete_resize_transfers(State, Source, Mod) ->
+    [Target || {Target, Mods, Status} <- resize_transfers(State, Source),
+               Status =:= complete orelse ordsets:is_element(Mod, Mods)].
+
+-spec deletion_complete(chstate(), integer(), atom()) -> chstate().
+deletion_complete(State, Idx, Mod) ->
+    transfer_complete(State, Idx, Mod).
+
+-spec resize_transfers(chstate(), {integer(), term()}) ->
+                              [{{integer(),term()}, ordsets:ordset(), awaiting | complete}].
+resize_transfers(State, Source) ->
+    {ok, Transfers} = get_meta({resize, Source}, [], State),
+    Transfers.
+
+-spec set_resize_transfers(chstate(),
+                           {integer(), term()},
+                           [{{integer(),term()},ordsets:ordset(),awaiting | complete}]) -> chstate().
+set_resize_transfers(State, Source, Transfers) ->
+    update_meta({resize, Source}, Transfers, State).
+
+clear_all_resize_transfers(State) ->
+    lists:foldl(fun clear_resize_transfers/2, State, all_owners(State)).
+
+clear_resize_transfers(Source, State) ->
+    remove_meta({resize, Source}, State).
+
+-spec resized_ring(chstate()) -> {ok, chash:chash()} | undefined.
+resized_ring(State) ->
+    case get_meta('$resized_ring', State) of
+        {ok, '$cleanup'} -> {ok, State?CHSTATE.chring};
+        {ok, CHRing} -> {ok, CHRing};
+        _ -> undefined
+    end.
+
+-spec set_resized_ring(chstate(), chash:chash()) -> chstate().
+set_resized_ring(State, FutureCHash) ->
+    update_meta('$resized_ring', FutureCHash, State).
+
+cleanup_after_resize(State) ->
+    update_meta('$resized_ring', '$cleanup', State).
+
+
+-spec vnode_type(chstate(),integer()) -> primary |
+                                         {fallback, term()} |
+                                         future_primary |
+                                         resized_primary.
+vnode_type(State, Idx) ->
+    vnode_type(State, Idx, node()).
+
+vnode_type(State, Idx, Node) ->
+    try index_owner(State, Idx) of
+        Node ->
+            primary;
+        Owner ->
+            case next_owner(State, Idx) of
+                {_, Node, _} ->
+                    future_primary;
+                _ ->
+                    {fallback, Owner}
+            end
+    catch
+        error:{badmatch, _} ->
+            %% idx doesn't exist so must be an index in a resized ring
+            resized_primary
+    end.
 
 %% @doc Return details for a pending partition ownership change.
 -spec next_owner(State :: chstate(), Idx :: integer()) -> pending_change().
@@ -802,7 +1229,11 @@ ring_changed(Node, State) ->
 
 %% @doc Return the ring that will exist after all pending ownership transfers
 %%      have completed.
+-spec future_ring(chstate()) -> chstate().
 future_ring(State) ->
+    future_ring(State, is_resizing(State)).
+
+future_ring(State, false) ->
     FutureState = change_owners(State, all_next_owners(State)),
     %% Individual nodes will move themselves from leaving to exiting if they
     %% have no ring ownership, this is implemented in riak_core_ring_handler.
@@ -817,7 +1248,31 @@ future_ring(State) ->
                                     StateAcc
                             end
                     end, FutureState, Leaving),
-    FutureState2?CHSTATE{next=[]}.
+    FutureState2?CHSTATE{next=[]};
+future_ring(State0=?CHSTATE{next=OldNext}, true) ->
+    case is_post_resize(State0) of
+        false ->
+            {ok, FutureCHash} = resized_ring(State0),
+            State1 = cleanup_after_resize(State0),
+            State2 = clear_all_resize_transfers(State1),
+            Resized = State2?CHSTATE{chring=FutureCHash},
+            Next = lists:foldl(fun({Idx, Owner, '$resize', _, _}, Acc) ->
+                                       DeleteEntry = {Idx, Owner, '$delete', [], awaiting},
+                                       %% catch error when index doesn't exist in new ring
+                                       try index_owner(Resized, Idx) of
+                                           Owner -> Acc;
+                                           _ -> [DeleteEntry | Acc]
+                                       catch
+                                           error:{badmatch, _} -> [DeleteEntry | Acc]
+                                       end
+                               end,
+                               [],
+                               OldNext),
+            Resized?CHSTATE{next=Next};
+        true ->
+            State1 = remove_meta('$resized_ring', State0),
+            State1?CHSTATE{next=[]}
+    end.
 
 pretty_print(Ring, Opts) ->
     OptNumeric = lists:member(numeric, Opts),
@@ -1519,5 +1974,77 @@ reconcile_next_test() ->
              {1, nodeA, nodeB, [], awaiting},
              {2, nodeA, nodeB, [riak_kv_vnode, riak_pipe_vnode], complete}],
     ?assertEqual(Next6, reconcile_divergent_next(Next4, Next5)).
+
+resize_test() ->
+    Ring0 = fresh(4, a),
+    Ring1 = resize(Ring0, 8),
+    Ring2 = resize(Ring0, 2),
+    ?assertEqual(8, num_partitions(Ring1)),
+    ?assertEqual(2, num_partitions(Ring2)),
+    valid_resize(Ring0, Ring1),
+    valid_resize(Ring0, Ring1),
+
+    Ring3 = set_pending_resize(Ring2, Ring0),
+    ?assertEqual(num_partitions(Ring0), num_partitions(Ring3)),
+    ?assertEqual(num_partitions(Ring2), future_num_partitions(Ring3)),
+    ?assertEqual(num_partitions(Ring2), num_partitions(future_ring(Ring3))),
+
+    Key = <<0:160/integer>>,
+    OrigIdx = element(1, hd(preflist(Key, Ring0))),
+    %% for non-resize transitions index should be the same
+    ?assertEqual(OrigIdx, future_index(Key, OrigIdx, undefined, Ring0)),
+    ?assertEqual(element(1, hd(preflist(Key, Ring2))), future_index(Key, OrigIdx, undefined, Ring3)).
+
+resize_xfer_test_() ->
+    {setup,
+     fun() ->
+             meck:new(riak_core, [passthrough]),
+             meck:expect(riak_core, vnode_modules,
+                         fun() -> [{some_app, fake_vnode}, {other_app, other_vnode}] end)
+     end,
+     fun(_) -> meck:unload(riak_core) end,
+     fun test_resize_xfers/0}.
+
+test_resize_xfers() ->
+    Ring0 = riak_core_ring:fresh(4, a),
+    Ring1 = set_pending_resize(resize(Ring0, 8), Ring0),
+    Source1 = {0, a},
+    Target1 = {730750818665451459101842416358141509827966271488, a},
+    TargetIdx2 = 365375409332725729550921208179070754913983135744,
+    Ring2 = schedule_resize_transfer(Ring1, Source1, Target1),
+    ?assertEqual(Target1, awaiting_resize_transfer(Ring2, Source1, fake_vnode)),
+    ?assertEqual(awaiting, resize_transfer_status(Ring2, Source1, Target1, fake_vnode)),
+    %% use Target1 since we haven't used it as a source index
+    ?assertEqual(undefined, awaiting_resize_transfer(Ring2, Target1, fake_vnode)),
+    ?assertEqual(undefined, resize_transfer_status(Ring2, Target1, Source1, fake_vnode)),
+
+    Ring3 = schedule_resize_transfer(Ring2, Source1, TargetIdx2),
+    Ring4 = resize_transfer_complete(Ring3, Source1, Target1, fake_vnode),
+    ?assertEqual({TargetIdx2, a}, awaiting_resize_transfer(Ring4, Source1, fake_vnode)),
+    ?assertEqual(awaiting, resize_transfer_status(Ring4, Source1, {TargetIdx2, a}, fake_vnode)),
+    ?assertEqual(complete, resize_transfer_status(Ring4, Source1, Target1, fake_vnode)),
+
+    Ring5 = resize_transfer_complete(Ring4, Source1, {TargetIdx2, a}, fake_vnode),
+    {_, '$resize', Status1} = next_owner(Ring5, 0, fake_vnode),
+    ?assertEqual(complete, Status1),
+
+    Ring6 = resize_transfer_complete(Ring5, Source1, {TargetIdx2, a}, other_vnode),
+    Ring7 = resize_transfer_complete(Ring6, Source1, Target1, other_vnode),
+    {_, '$resize', Status2} = next_owner(Ring7, 0, fake_vnode),
+    ?assertEqual(complete, Status2),
+    {_, '$resize', Status3} = next_owner(Ring7, 0, other_vnode),
+    ?assertEqual(complete, Status3),
+    {_, '$resize', complete} = next_owner(Ring7, 0).
+
+valid_resize(Ring0, Ring1) ->
+    lists:foreach(fun({Idx, Owner}) ->
+                          case lists:keyfind(Idx, 1, all_owners(Ring0)) of
+                              false ->
+                                  ?assertEqual('$dummyhost@resized', Owner);
+                              {Idx, OrigOwner} ->
+                                  ?assertEqual(OrigOwner, Owner)
+                          end
+                  end,
+                  all_owners(Ring1)).
 
 -endif.

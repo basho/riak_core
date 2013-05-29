@@ -34,7 +34,10 @@ init([]) ->
     ensure_vnodes_started(Ring),
     {ok, #state{}}.
 
-handle_event({ring_update, _Ring}, State) ->
+
+handle_event({ring_update, Ring}, State) ->
+    maybe_start_vnode_proxies(Ring),
+    maybe_stop_vnode_proxies(Ring),
     {ok, State}.
 
 handle_call(_Event, State) ->
@@ -165,4 +168,32 @@ startable_vnodes(Mod, Ring) ->
                 RO ->
                     [RO | riak_core_ring:my_indices(Ring)]
             end
+    end.
+
+maybe_start_vnode_proxies(Ring) ->
+    Mods = [M || {_,M} <- riak_core:vnode_modules()],
+    Size = riak_core_ring:num_partitions(Ring),
+    FutureSize = riak_core_ring:future_num_partitions(Ring),
+    Larger = Size < FutureSize,
+    case Larger of
+        true ->
+            FutureIdxs = riak_core_ring:all_owners(riak_core_ring:future_ring(Ring)),
+            [riak_core_vnode_proxy_sup:start_proxy(Mod, Idx) || {Idx, _} <- FutureIdxs,
+                                                                Mod <- Mods],
+            ok;
+        false ->
+            ok
+    end.
+
+maybe_stop_vnode_proxies(Ring) ->
+    Mods = [M || {_, M} <- riak_core:vnode_modules()],
+    case riak_core_ring:pending_changes(Ring) of
+        [] ->
+            Idxs = [{I,M} || {I,_} <- riak_core_ring:all_owners(Ring), M <- Mods],
+            ProxySpecs = supervisor:which_children(riak_core_vnode_proxy_sup),
+            Running = [{I,M} || {{M,I},_,_,_} <- ProxySpecs, lists:member(M, Mods)],
+            ToShutdown = Running -- Idxs,
+            [riak_core_vnode_proxy_sup:stop_proxy(M,I) || {I, M} <- ToShutdown];
+        _ ->
+            ok
     end.

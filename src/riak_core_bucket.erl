@@ -31,6 +31,8 @@
          get_bucket/2,
          reset_bucket/1,
          get_buckets/1,
+         bucket_nval_map/1,
+         default_object_nval/0,
          merge_props/2,
          name/1,
          n_val/1]).
@@ -130,6 +132,17 @@ reset_bucket(Bucket) ->
 get_buckets(Ring) ->
     Names = riak_core_ring:get_buckets(Ring),
     [get_bucket(Name, Ring) || Name <- Names].
+
+%% @doc returns a proplist containing all buckets and their respective N values
+-spec bucket_nval_map(riak_core_ring:riak_core_ring()) -> [{binary(),integer()}].
+bucket_nval_map(Ring) ->
+    [{riak_core_bucket:name(B), riak_core_bucket:n_val(B)} ||
+        B <- riak_core_bucket:get_buckets(Ring)].
+
+%% @doc returns the default n value for buckets that have not explicitly set the property
+-spec default_object_nval() -> integer().
+default_object_nval() ->
+    riak_core_bucket:n_val(riak_core_config:default_bucket_props()).
 
 %% @private
 -spec validate_props(BucketProps::list({PropName::atom(), Value::any()}),

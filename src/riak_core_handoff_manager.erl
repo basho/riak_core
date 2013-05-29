@@ -33,7 +33,8 @@
         ]).
 
 %% handoff api
--export([add_outbound/5,
+-export([add_outbound/6,
+         add_outbound/7,
          add_inbound/1,
          xfer/3,
          kill_xfer/3,
@@ -73,12 +74,21 @@ start_link() ->
 init([]) ->
     {ok, #state{excl=sets:new(), handoffs=[]}}.
 
-add_outbound(Module,Idx,Node,VnodePid,Opts) ->
+-spec add_outbound(ho_type(),atom(),integer(),term(),pid(),[{atom(),term()}]) ->
+                          {ok, pid()} | {error, term()}.
+add_outbound(HOType,Module,Idx,Node,VnodePid,Opts) ->
+    add_outbound(HOType,Module,Idx,Idx,Node,VnodePid,Opts).
+
+-spec add_outbound(ho_type(),atom(),integer(),integer(),term(),pid(),[{atom,term()}]) ->
+                          {ok, pid()} | {error, term()}.
+add_outbound(HOType,Module,SrcIdx,TargetIdx,Node,VnodePid,Opts) ->
     case application:get_env(riak_core, disable_outbound_handoff) of
         {ok, true} ->
             {error, max_concurrency};
         _ ->
-            gen_server:call(?MODULE,{add_outbound,Module,Idx,Node,VnodePid,Opts},infinity)
+            gen_server:call(?MODULE,
+                            {add_outbound,HOType,Module,SrcIdx,TargetIdx,Node,VnodePid,Opts},
+                            infinity)
     end.
 
 add_inbound(SSLOpts) ->
@@ -96,7 +106,7 @@ xfer({SrcPartition, SrcOwner}, {Module, TargetPartition}, FilterModFun) ->
     %% NOTE: This will not work with old nodes
     ReqOrigin = node(),
     gen_server:cast({?MODULE, SrcOwner},
-                    {send_handoff, Module,
+                    {send_handoff, repair, Module,
                      {SrcPartition, TargetPartition},
                      ReqOrigin, FilterModFun}).
 
@@ -148,8 +158,9 @@ get_exclusions(Module) ->
 handle_call({get_exclusions, Module}, _From, State=#state{excl=Excl}) ->
     Reply =  [I || {M, I} <- sets:to_list(Excl), M =:= Module],
     {reply, {ok, Reply}, State};
-handle_call({add_outbound,Mod,Idx,Node,Pid,Opts},_From,State=#state{handoffs=HS}) ->
-    case send_handoff(Mod,Idx,Node,Pid,HS,Opts) of
+handle_call({add_outbound,Type,Mod,SrcIdx,TargetIdx,Node,Pid,Opts},_From,
+            State=#state{handoffs=HS}) ->
+    case send_handoff(Type,{Mod,SrcIdx,TargetIdx},Node,Pid,HS,Opts) of
         {ok,Handoff=#handoff_status{transport_pid=Sender}} ->
             HS2 = HS ++ [Handoff],
             {reply, {ok,Sender}, State#state{handoffs=HS2}};
@@ -236,13 +247,13 @@ handle_cast({status_update, ModSrcTgt, StatsUpdate}, State=#state{handoffs=HS}) 
             {noreply, State#state{handoffs=HS2}}
     end;
 
-handle_cast({send_handoff, Mod, {Src, Target}, ReqOrigin,
+handle_cast({send_handoff, Type, Mod, {Src, Target}, ReqOrigin,
              {FilterMod, FilterFun}=FMF},
             State=#state{handoffs=HS}) ->
     Filter = FilterMod:FilterFun(Target),
     %% TODO: make a record?
     {ok, VNode} = riak_core_vnode_manager:get_vnode_pid(Src, Mod),
-    case send_handoff({Mod, Src, Target}, ReqOrigin, VNode, HS,
+    case send_handoff(Type, {Mod, Src, Target}, ReqOrigin, VNode, HS,
                       {Filter, FMF}, ReqOrigin, []) of
         {ok, Handoff} ->
             HS2 = HS ++ [Handoff],
@@ -399,6 +410,36 @@ filter({Key, Value}=_Filter) ->
             end
     end.
 
+resize_transfer_filter(Ring, Mod, Src, Target) ->
+    fun(K) ->
+            {_, Hashed} = Mod:object_info(K),
+            riak_core_ring:is_future_index(Hashed,
+                                           Src,
+                                           Target,
+                                           Ring)
+    end.
+
+resize_transfer_notsent_fun(Ring, Mod, Src) ->
+    Shrinking = riak_core_ring:num_partitions(Ring) > riak_core_ring:future_num_partitions(Ring),
+    case Shrinking of
+        false -> NValMap = DefaultN = undefined;
+        true ->
+            NValMap = Mod:nval_map(Ring),
+            DefaultN = riak_core_bucket:default_object_nval()
+    end,
+    fun(Key, Acc) -> record_seen_index(Ring, Shrinking, NValMap, DefaultN, Mod, Src, Key, Acc) end.
+
+record_seen_index(Ring, Shrinking, NValMap, DefaultN, Mod, Src, Key, Seen) ->
+    {Bucket, Hashed} = Mod:object_info(Key),
+    CheckNVal = case Shrinking of
+                    false -> undefined;
+                    true -> proplists:get_value(Bucket, NValMap, DefaultN)
+                end,
+    case riak_core_ring:future_index(Hashed, Src, CheckNVal, Ring) of
+        undefined -> Seen;
+        FutureIndex -> ordsets:add_element(FutureIndex, Seen)
+    end.
+
 get_concurrency_limit () ->
     app_helper:get_env(riak_core,handoff_concurrency,?HANDOFF_CONCURRENCY).
 
@@ -410,8 +451,8 @@ handoff_concurrency_limit_reached () ->
     ActiveSenders=proplists:get_value(active,Senders),
     get_concurrency_limit() =< (ActiveReceivers + ActiveSenders).
 
-send_handoff(Mod, Partition, Node, Pid, HS, Opts) ->
-    send_handoff({Mod, Partition, Partition}, Node, Pid, HS, {none, none}, none, Opts).
+send_handoff(HOType, ModSrcTarget, Node, Pid, HS,Opts) ->
+    send_handoff(HOType, ModSrcTarget, Node, Pid, HS, {none, none}, none, Opts).
 
 %% @private
 %%
@@ -420,13 +461,13 @@ send_handoff(Mod, Partition, Node, Pid, HS, Opts) ->
 %%      function which is a predicate applied to the key.  The
 %%      `Origin' is the node this request originated from so a reply
 %%      can't be sent on completion.
--spec send_handoff({module(), index(), index()}, node(),
+-spec send_handoff(ho_type(), {module(), index(), index()}, node(),
                    pid(), list(),
-                   {predicate() | none, {module(), atom()} | none}, node()) ->
+                   {predicate() | none, {module(), atom()} | none}, node(), [{atom(), term()}]) ->
                           {ok, handoff_status()}
                               | {error, max_concurrency}
                               | {false, handoff_status()}.
-send_handoff({Mod, Src, Target}, Node, Vnode, HS, {Filter, FilterModFun}, Origin, Opts) ->
+send_handoff(HOType, {Mod, Src, Target}, Node, Vnode, HS, {Filter, FilterModFun}, Origin, Opts) ->
     case handoff_concurrency_limit_reached() of
         true ->
             {error, max_concurrency};
@@ -439,7 +480,7 @@ send_handoff({Mod, Src, Target}, Node, Vnode, HS, {Filter, FilterModFun}, Origin
                         {false,Handoff};
                     #handoff_status{transport_pid=Sender} ->
                         %% found a running handoff with a different vnode
-                        %% source or a different arget ndoe, kill the current
+                        %% source or a different target node, kill the current
                         %% one and the new one will start up
                         erlang:exit(Sender,resubmit_handoff_change),
                         true
@@ -448,34 +489,31 @@ send_handoff({Mod, Src, Target}, Node, Vnode, HS, {Filter, FilterModFun}, Origin
             case ShouldHandoff of
                 true ->
                     VnodeM = monitor(process, Vnode),
-                    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-                    %% assumes local node is doing the sending
-                    Primary = riak_core_ring:is_primary(Ring, {Src, node()}),
-                    HOType = if Primary ->
-                                     if Src == Target -> ownership_handoff;
-                                        true -> repair
-                                     end;
-                                true -> hinted_handoff
-                             end,
-
                     %% start the sender process
+                    BaseOpts = [{src_partition, Src}, {target_partition, Target}],
                     case HOType of
                         repair ->
-                            {ok, Pid} =
-                                riak_core_handoff_sender_sup:start_repair(Mod,
-                                                                          Src,
-                                                                          Target,
-                                                                          Vnode,
-                                                                          Node,
-                                                                          Filter);
+                            HOFilter = Filter,
+                            HOAcc0 = undefined,
+                            HONotSentFun = undefined;
+                        resize_transfer ->
+                            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+                            HOFilter = resize_transfer_filter(Ring, Mod, Src, Target),
+                            HOAcc0 = ordsets:new(),
+                            HONotSentFun = resize_transfer_notsent_fun(Ring, Mod, Src);
                         _ ->
-                            {ok,Pid} =
-                                riak_core_handoff_sender_sup:start_handoff(HOType,
-                                                                           Mod,
-                                                                           Target,
-                                                                           Vnode,
-                                                                           Node)
+                            HOFilter = none,
+                            HOAcc0 = undefined,
+                            HONotSentFun = undefined
                     end,
+                    HOOpts = [{filter, HOFilter},
+                              {notsent_acc0, HOAcc0},
+                              {notsent_fun, HONotSentFun} | BaseOpts],
+                    {ok, Pid} = riak_core_handoff_sender_sup:start_sender(HOType,
+                                                                          Mod,
+                                                                          Node,
+                                                                          Vnode,
+                                                                          HOOpts),
                     PidM = monitor(process, Pid),
                     Size = validate_size(proplists:get_value(size, Opts)),
 
@@ -596,7 +634,8 @@ simple_handoff () ->
     %% clear handoff_concurrency and make sure a handoff fails
     ?assertEqual(ok,set_concurrency(0)),
     ?assertEqual({error,max_concurrency},add_inbound([])),
-    ?assertEqual({error,max_concurrency},add_outbound(riak_kv,0,node(),self())),
+    ?assertEqual({error,max_concurrency},add_outbound(ownership_transfer,riak_kv_vnode,
+                                                      0,node(),self(),[])),
 
     %% allow for a single handoff
     ?assertEqual(ok,set_concurrency(1)),

@@ -599,14 +599,24 @@ get_forward(Mod, Idx, #state{forwarding=Fwd}) ->
 check_forward(Ring, Mod, Index) ->
     Node = node(),
     case riak_core_ring:next_owner(Ring, Index, Mod) of
+        {Node, '$resize', _} ->
+            Complete = riak_core_ring:complete_resize_transfers(Ring, {Index, Node}, Mod),
+            {{Mod, Index}, Complete};
+        {Node, '$delete', _} ->
+            {{Mod, Index}, undefined};
         {Node, NextOwner, complete} ->
             {{Mod, Index}, NextOwner};
         _ ->
             {{Mod, Index}, undefined}
     end.
 
-check_forward_precomputed(Completed, Mod, Index) ->
+check_forward_precomputed(Completed, Mod, Index, Node, Ring) ->
     case dict:find({Mod, Index}, Completed) of
+        {ok, '$resize'} ->
+            Complete = riak_core_ring:complete_resize_transfers(Ring, {Index, Node}, Mod),
+            {{Mod, Index}, Complete};
+        {ok, '$delete'} ->
+            {{Mod, Index}, undefined};
         {ok, NextOwner} ->
             {{Mod, Index}, NextOwner};
         _ ->
@@ -614,16 +624,15 @@ check_forward_precomputed(Completed, Mod, Index) ->
     end.
 
 compute_forwarding(Mods, Ring) ->
-    AllIndices = [Index || {Index, _} <- riak_core_ring:all_owners(Ring)],
     Node = node(),
     CL = [{{Mod, Idx}, NextOwner}
           || Mod <- Mods,
              {Idx, Owner, NextOwner} <- riak_core_ring:completed_next_owners(Mod, Ring),
              Owner =:= Node],
     Completed = dict:from_list(CL),
-    Forwarding =
-        [check_forward_precomputed(Completed, Mod, Index) || Index <- AllIndices,
-                                                             Mod <- Mods],
+    Forwarding = [check_forward_precomputed(Completed, Mod, I, N, Ring)
+                  || {I, N} <- riak_core_ring:all_owners(Ring),
+                     Mod <- Mods],
     dict:from_list(Forwarding).
 
 update_forwarding(AllVNodes, Mods, Ring,
@@ -670,13 +679,17 @@ update_handoff(AllVNodes, Ring, CHBin, State) ->
             State#state{handoff=dict:from_list(NewHO)}
     end.
 
-should_handoff(Ring, CHBin, Mod, Idx) ->
+should_handoff(Ring, _CHBin, Mod, Idx) ->
     {_, NextOwner, _} = riak_core_ring:next_owner(Ring, Idx),
-    Owner = chashbin:index_owner(Idx, CHBin),
+    Type = riak_core_ring:vnode_type(Ring, Idx),
     Ready = riak_core_ring:ring_ready(Ring),
-    case determine_handoff_target(Ready, Owner, NextOwner) of
+    IsResizing = riak_core_ring:is_resizing(Ring),
+    case determine_handoff_target(Type, NextOwner, Ready, IsResizing) of
         undefined ->
             false;
+        Action when Action == '$resize' orelse
+                    Action == '$delete' ->
+            {true, Action};
         TargetNode ->
             case app_for_vnode_module(Mod) of
                 undefined -> false;
@@ -689,26 +702,33 @@ should_handoff(Ring, CHBin, Mod, Idx) ->
             end
     end.
 
-determine_handoff_target(Ready, Owner, NextOwner) ->
+determine_handoff_target(Type, NextOwner, Ready, IsResizing) ->
     Me = node(),
-    TargetNode = case {Ready, Owner, NextOwner} of
-                     {_, _, Me} ->
-                         Me;
-                     {_, Me, undefined} ->
-                         Me;
-                     {true, Me, _} ->
-                         NextOwner;
-                     {_, _, undefined} ->
-                         Owner;
-                     {_, _, _} ->
-                         Me
-                 end,
-    case TargetNode of
-        Me ->
-            undefined;
-        _ ->
-            TargetNode
+    case {Type, NextOwner, Ready, IsResizing} of
+        %% if primary and next owner is me, don't handoff
+        {primary, Me, _, _} -> undefined;
+        %% if primary, don't handoff if no next owner
+        {primary, undefined, _, _} -> undefined;
+        %% if primary and ring ready, target is next owner (may be undef)
+        {primary, _, true, _} -> NextOwner;
+        %% otherwise, if primary don't handoff
+        {primary, _, _, _} -> undefined;
+        %% partitions moved during resize and scheduled for deletion, indexes
+        %% that exist in both the original and resized ring that were moved appear
+        %% as fallbacks.
+        {{fallback, _}, '$delete', _, _} -> '$delete';
+        %% partitions that no longer exist after the ring has been resized (shrunk)
+        %% scheduled for deletion
+        {resized_primary, '$delete', _, _} -> '$delete';
+        %% partitions that would have existed in a ring whose expansion was aborted
+        %% and are still running need to be cleaned up after and shutdown
+        {resized_primary, _, _, false} -> '$delete';
+        %% fallback vnode target is primary (For)
+        {{fallback, For}, undefined, _, _} -> For;
+        %% otherwise don't handoff
+        {_, _, _, _} -> undefined
     end.
+
 
 app_for_vnode_module(Mod) when is_atom(Mod) ->
     case application:get_env(riak_core, vnode_modules) of
@@ -728,6 +748,15 @@ maybe_trigger_handoff(Mod, Idx, State) ->
 
 maybe_trigger_handoff(Mod, Idx, Pid, _State=#state{handoff=HO}) ->
     case dict:find({Mod, Idx}, HO) of
+        {ok, '$resize'} ->
+            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+            case riak_core_ring:awaiting_resize_transfer(Ring, {Idx, node()}, Mod) of
+                undefined -> ok;
+                {TargetIdx, TargetNode} ->
+                    riak_core_vnode:trigger_handoff(Pid, TargetIdx, TargetNode)
+            end;
+        {ok, '$delete'} ->
+            riak_core_vnode:trigger_delete(Pid);
         {ok, TargetNode} ->
             riak_core_vnode:trigger_handoff(Pid, TargetNode),
             ok;
