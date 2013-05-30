@@ -133,7 +133,7 @@ get_primary_apl(DocIdx, N, Ring, UpNodes) ->
 %% Return the first entry that is up in the preflist for `DocIdx'. This
 %% will crash if all owning nodes are offline.
 first_up(DocIdx, Service) ->
-    CHBin = riak_core_ring_manager:get_chash_bin(),
+    {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
     Itr = chashbin:iterator(DocIdx, CHBin),
     UpSet = ordsets:from_list(riak_core_node_watcher:nodes(Service)),
     Itr2 = chashbin:itr_next_while(fun({_P, Node}) ->
