@@ -340,7 +340,7 @@ crasher() ->
     riak_core_stat_cache:clear_cache(riak_kv),
     Pid = whereis(riak_core_stat_cache),
     Then = tick(1000, 0),
-    Now = tick(10000, 0),
+    %% Now = tick(10000, 0),
     meck:expect(riak_core_stat, produce_stats, fun() ->
                                                        ?STATS end),
     meck:expect(riak_kv_stat, produce_stats, fun() -> erlang:error(boom)  end),

@@ -81,8 +81,7 @@
          get/1,
          get/2,
          all/0,
-         update_ring/1,
-         ring_changed/1]).
+         update_ring/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -98,6 +97,7 @@
 -type registered() :: [{capability(), #capability{}}].
 
 -record(state, {registered :: registered(),
+                last_ring_id :: term(),
                 supported :: [{node(), [{capability(), [mode()]}]}],
                 unknown :: [node()],
                 negotiated :: [{capability(), mode()}]
@@ -179,12 +179,6 @@ update_ring(Ring) ->
             add_supported_to_ring(node(), Supported, Ring)
     end.
 
-%% @doc Internal callback used by `riak_core_ring_handler' to notify the
-%%      capability manager of a new ring
-%% @hidden
-ring_changed(Ring) ->
-    gen_server:call(?MODULE, {ring_changed, Ring}, infinity).
-
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -210,23 +204,20 @@ handle_call({register, Capability, Info}, _From, State) ->
     publish_supported(State4),
     update_local_cache(State4),
     save_registered(State4#state.registered),
-    {reply, ok, State4};
-
-handle_call({ring_changed, Ring}, _From, State) ->
-    State2 = update_supported(Ring, State),
-    {reply, ok, State2}.
+    {reply, ok, State4}.
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info(tick, State) ->
     schedule_tick(),
-    State2 =
+    State2 = maybe_update_supported(State),
+    State3 =
         lists:foldl(fun(Node, StateAcc) ->
                             add_node(Node, [], StateAcc)
-                    end, State, State#state.unknown),
-    State3 = renegotiate_capabilities(State2),
-    {noreply, State3};
+                    end, State2, State2#state.unknown),
+    State4 = renegotiate_capabilities(State3),
+    {noreply, State4};
 
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -240,6 +231,16 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+maybe_update_supported(State=#state{last_ring_id=LastID}) ->
+    case riak_core_ring_manager:get_ring_id() of
+        LastID ->
+            State;
+        RingID ->
+            {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+            State2 = update_supported(Ring, State),
+            State2#state{last_ring_id=RingID}
+    end.
 
 capability_info(Supported, Default, Legacy) ->
     #capability{supported=Supported, default=Default, legacy=Legacy}.

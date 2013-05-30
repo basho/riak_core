@@ -47,11 +47,14 @@
 
 service_test_() ->
     {timeout, 60000, {setup, fun() ->
+        riak_core_ring_events:start_link(),
+        riak_core_ring_manager:start_link(test),
         ok = application:start(ranch),
         {ok, _Pid} = riak_core_service_mgr:start_link(?TEST_ADDR)
     end,
     fun(_) ->
         application:stop(ranch),
+        riak_core_ring_manager:stop(),
         case whereis(riak_core_service_manager) of
             Pid when is_pid(Pid) ->
                 riak_core_service_mgr:stop(),
