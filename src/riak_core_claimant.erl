@@ -260,6 +260,8 @@ generate_plan(Changes, Ring, State=#state{seed=Seed}) ->
     case compute_all_next_rings(Changes, Seed, Ring) of
         legacy ->
             {{error, legacy}, State};
+        {error, invalid_resize_claim} ->
+            {{error, invalid_resize_claim}, State};
         {ok, NextRings} ->
             {_, NextRing} = hd(NextRings),
             State2 = State#state{next_ring=NextRing},
@@ -462,13 +464,15 @@ valid_resize_request(NewRingSize, [], Ring) ->
     ControlRunning = app_helper:get_env(riak_control, enabled, false),
     SearchRunning = app_helper:get_env(riak_search, enabled, false),
     NodeCount = length(riak_core_ring:all_members(Ring)),
-    case {ControlRunning, SearchRunning, Capable, IsResizing, NodeCount} of
-        {false, false, true, true, N} when N > 1 -> true;
-        {true, _, _, _, _} -> {error, control_running};
-        {_,  true, _, _, _} -> {error, search_running};
-        {_, _, false, _, _} -> {error, not_capable};
-        {_, _, _, false, _} -> {error, same_size};
-        {_, _, _, _, 1} -> {error, single_node}
+    Changes = length(riak_core_ring:pending_changes(Ring)) > 0,
+    case {ControlRunning, SearchRunning, Capable, IsResizing, NodeCount, Changes} of
+        {false, false, true, true, N, false} when N > 1 -> true;
+        {true, _, _, _, _, _} -> {error, control_running};
+        {_,  true, _, _, _, _} -> {error, search_running};
+        {_, _, false, _, _, _} -> {error, not_capable};
+        {_, _, _, false, _, _} -> {error, same_size};
+        {_, _, _, _, 1, _} -> {error, single_node};
+        {_, _, _, _, _, true} -> {error, pending_changes}
     end.
 
 
@@ -565,6 +569,8 @@ compute_all_next_rings(Changes, Seed, Ring, Acc) ->
     case compute_next_ring(Changes, Seed, Ring) of
         {legacy, _} ->
             legacy;
+        {error, invalid_resize_claim}=Err ->
+            Err;
         {ok, NextRing} ->
             Acc2 = [{Ring, NextRing}|Acc],
             case not same_plan(Ring, NextRing) of
@@ -583,12 +589,15 @@ compute_next_ring(Changes, Seed, Ring) ->
     Ring2 = apply_changes(Ring, Changes),
     {_, Ring3} = maybe_handle_joining(node(), Ring2),
     {_, Ring4} = do_claimant_quiet(node(), Ring3, Replacing, Seed),
-    Ring5 = maybe_compute_resize(Ring, Ring4),
+    {Valid, Ring5} = maybe_compute_resize(Ring, Ring4),
     Members = riak_core_ring:all_members(Ring5),
-    case riak_core_gossip:any_legacy_gossip(Ring5, Members) of
-        true ->
+    AnyLegacy = riak_core_gossip:any_legacy_gossip(Ring5, Members),
+    case {Valid, AnyLegacy} of
+        {false, _} ->
+            {error, invalid_resize_claim};
+        {true, true} ->
             {legacy, Ring};
-        false ->
+        {true, false} ->
             {ok, Ring5}
     end.
 
@@ -598,8 +607,8 @@ maybe_compute_resize(Orig, MbResized) ->
     NewSize = riak_core_ring:num_partitions(MbResized),
 
     case OrigSize =/= NewSize of
-        false -> MbResized;
-        true -> compute_resize(Orig, MbResized)
+        false -> {true, MbResized};
+        true -> validate_resized_ring(compute_resize(Orig, MbResized))
     end.
 
 %% @private
@@ -655,6 +664,25 @@ schedule_first_resize_transfer(_,{Idx, _Owner}=IdxOwner, NextOwner, Resized) ->
     %% partition is being moved during expansion, schedule transfer to partition
     %% on new owner since it will still own some of its data
     riak_core_ring:schedule_resize_transfer(Resized, IdxOwner, {Idx, NextOwner}).
+
+%% @doc verify that resized ring was properly claimed (no owners are the dummy
+%%      resized owner) in both the current and future ring
+validate_resized_ring(Ring) ->
+    FutureRing = riak_core_ring:future_ring(Ring),
+    Owners = riak_core_ring:all_owners(Ring),
+    FutureOwners = riak_core_ring:all_owners(FutureRing),
+    Members = riak_core_ring:all_members(Ring),
+    FutureMembers = riak_core_ring:all_members(FutureRing),
+    Invalid1 = [{Idx, Owner} || {Idx, Owner} <- Owners,
+                               not lists:member(Owner, Members)],
+    Invalid2 = [{Idx, Owner} || {Idx, Owner} <- FutureOwners,
+                                not lists:member(Owner, FutureMembers)],
+    case Invalid1 ++ Invalid2 of
+        [] ->
+            {true, Ring};
+        _ ->
+            {false, Ring}
+    end.
 
 %% @private
 apply_changes(Ring, Changes) ->

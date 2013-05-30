@@ -563,6 +563,9 @@ stage_resize_ring(NewRingSize) ->
                 error;
             {error, single_node} ->
                 io:format("Failed: cannot resize single node~n"),
+                error;
+            {error, pending_changes} ->
+                io:format("Failed: there are pending changes. Try again once completed~n"),
                 error
         end
     catch
@@ -606,6 +609,11 @@ print_staged([]) ->
         {error, ring_not_ready} ->
             io:format("Cannot plan until cluster state has converged.~n"
                       "Check 'Ring Ready' in 'riak-admin ring_status'~n");
+        {error, invalid_resize_claim} ->
+            io:format("Unable to claim some partitions in resized ring.~n"
+                      "Check that there are no pending changes in 'riak-admin ring-status'~n"
+                      "If there are, try again once they are completed~n"
+                      "Otherwise try again shortly.~n");
         {ok, Changes, NextRings} ->
             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
             %% The last next ring is always the final ring after all changes,
