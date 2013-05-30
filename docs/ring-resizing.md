@@ -6,19 +6,19 @@ has completed. The second is facilitating that transition.
 ### The Claimant
 
 Determining what the future ring will look like when resizing is
-primarly about determining future ownership. Like normal cluster
+primarily about determining future ownership. Like normal cluster
 operations this is the responsibility of `riak_core_claimant`.  Ring
-resizing is also staged, planned, and commited via th claimant. The
+resizing is also staged, planned, and committed via the claimant. The
 claimant determines the ownership of the future ring and what
 transfers will be necessary to safely make the transition. How the
 future ring is determined is slightly different though, and is described
 below.
 
 If the ring is expanded all the existing partitions will be in bolth
-the old and new ring. The new parittions are initially assigned to a
+the old and new ring. The new partitions are initially assigned to a
 dummy node, before being assigned through claim. If the ring is
 shrunk, some partitions will be removed. The claimant does this and
-then runs the ring through claim, rebalcing it. Some existing
+then runs the ring through claim, rebalancing it. Some existing
 partitions may change owners as part of this process.
 
 Like other ownership changes, after the claimant determines the future
@@ -41,10 +41,10 @@ provides the ability to cancel while resizing is in-flight.
 ### Transfer Scheduling
 
 To safely transition the cluster between different sized rings,
-partitions must transfer there data not only to new owners of the
-same partitions but to different partitions. This is because when the
+partitions must transfer their data not only to new owners of the
+same partitions, but to different partitions. This is because when the
 size of the ring changes so does every preflist. The figure below
-illustrates this for a couple bucket/key pairs.
+illustrates this for a couple of bucket/key pairs.
 
 ![preflist](http://data.riakcs.net:8080/jrw-public/dynamic-ring/expand-preflist.png)
 
@@ -68,7 +68,7 @@ that determines ownership in the new ring. The claimant schedules a
 single *resize operation* for each vnode in the existing ring. The
 *resize operation* is an entry in the next list with a special value,
 `$resize`, in the next owner field. It is intended to indicate the
-existing vnode has several actual tranfers to complete before it has
+existing vnode has several actual transfers to complete before it has
 safely handed off all of its data. The claimant will also schedule a
 single *resize transfer* for each index. The *resize transfer*
 represents a single handoff of a portion of the keyspace between two
@@ -76,8 +76,8 @@ partitions, that may or may not have different owners (most likely
 they will). The *resize transfer* that is scheduled depends on several
 factors:
 
-1. If the ring is shrinking and the partition will no longer exist in the new ring,
-the transfer is scheduled to the owner of the first successor.
+1. If the ring is shrinking and the partition will no longer exist in the
+new ring, the transfer is scheduled to the owner of the first successor.
 1. If the ring is expanding and the existing partition is not being
 moved to a new owner, the transfer is scheduled to the owner for the
 first predecessor.
@@ -88,9 +88,9 @@ A *resize transfer* is similar to repair in that not all keys are
 transferred. Since repair was added to Riak, the handoff subsystem has
 had the ability to take a filter function which determines which keys
 will be sent. This implementation augments that support to allow an
-addtional function to be provided, which is called when a key is not
+additional function to be provided, which is called when a key is not
 sent. *Resize transfers* use this to determine when a key should be
-sent to the partition it is transfering to and to determine what
+sent to the partition it is transferring to and to determine what
 partitions unsent keys need to be transferred to before the *resize
 operation* can complete. This list of partitions is used to schedule
 further *resize transfers*. This is performed for each *resize
@@ -117,8 +117,8 @@ the source partition in the current preflist is chosen.
 Like ownership transfer, vnodes may forward requests to the new owner
 during and after handoff (until the ownership change is
 installed). But there are some differences. Ownership transfer
-involves only a single new owner and always attemps to progress to the
-future ring. Ring resizing is cancelable and this requires some special
+involves only a single new owner and always attempts to progress to the
+future ring. Ring resizing can be canceled, and this requires some special
 handling to not lose writes in this case.
 
 Typical forwarding comes in two flavors: *explicit*
@@ -127,7 +127,7 @@ only uses *explicit* forwarding. *Explicit* forwarding gives the local
 vnode the option to effect a write locally before possibly choosing to
 forward it on to the new owner. *Implicit* forwarding does not -- all
 requests are immediately forwarded.  Since, the *resize operation* can
-be cancelled at any time, and since the time a vnode forwards during
+be canceled at any time, and since the time a vnode forwards during
 the operation is significant, it is necessary to allow the local vnode
 to perform the write before forwarding even after transferring all of
 its data. Because of this assumption, this also means that reads can
@@ -145,8 +145,8 @@ detail. During ring resizing a vnode can be in one of four states:
 In each of these states, and based on several conditions, the vnode
 will take one of two actions:
 
-1. handle request locally only, no forwarding -- `Mod:handle_command`
-1. option to handle locally + option to forward -- `Mod:handle_handoff_command`
+1. Handle request locally only, no forwarding -- `Mod:handle_command`
+1. Option to handle locally + option to forward -- `Mod:handle_handoff_command`
 
 The table below details the action taken by the vnode in a specific
 state and based on the progress of the partition's *resize operation*:
@@ -162,50 +162,50 @@ state and based on the progress of the partition's *resize operation*:
 <td>1</td>
 <td>none</td>
 <td>handle_command</td>
-<td>writes will be transferred to future owner via future resize transfer</td>
+<td>Writes will be transferred to future owner via future resize transfer</td>
 </tr>
 <tr>
 <td>2</td>
-<td>req. for key in portition of keyspace not yet transferred</td>
+<td>Request for key in portion of keyspace not yet transferred</td>
 <td>handle_command</td>
-<td>writes will be transferred to future owner via future resize transfer</td>
+<td>Writes will be transferred to future owner via future resize transfer</td>
 </tr>
 <tr>
 <td>2</td>
-<td>req. for key in portition of keyspace already transferred</td>
+<td>Request for key in portion of keyspace already transferred</td>
 <td>handle_handoff_command</td>
-<td>writes need be performed locally and remote, reads can be done locally</td>
+<td>Writes need be performed locally and remote, reads can be done locally</td>
 </tr>
 <tr>
 <td>3</td>
-<td>req. for key in portition of keyspace not yet transferred</td>
+<td>Request for key in portion of keyspace not yet transferred</td>
 <td>handle_command</td>
-<td>writes will be transferred to future owner via future resize transfer</td>
+<td>Writes will be transferred to future owner via future resize transfer</td>
 </tr>
 <tr>
 <td>3</td>
-<td>req. for key in portition of keyspace already transferred</td>
+<td>Request for key in portion of keyspace already transferred</td>
 <td>handle_handoff_command</td>
-<td>writes need be performed locally and remote, reads can be done locally</td>
+<td>Writes need be performed locally and remote, reads can be done locally</td>
 </tr>
 <tr>
 <td>3</td>
-<td>req. for key in portition of keyspace being transferred</td>
+<td>Request for key in portion of keyspace being transferred</td>
 <td>handle_handoff_command</td>
-<td>writes need be performed locally and remote, reads can be done locally</td>
+<td>Writes need be performed locally and remote, reads can be done locally</td>
 </tr>
 <tr>
 <td>4</td>
-<td>req. for key in portion of keyspace transferred</td>
+<td>Request for key in portion of keyspace transferred</td>
 <td>handle_handoff_command</td>
-<td>writes need be performed locally and remote, reads can be done locally</td>
+<td>Writes need be performed locally and remote, reads can be done locally</td>
 </tr>
 <tr>
 <td>4</td>
-<td>req. for key in portion of keyspace not transferred</td>
+<td>Request for key in portion of keyspace not transferred</td>
 <td>handle_handoff_command</td>
-<td>occurs if max N val used by cluster changes during operation.
-writes need be performed locally and remote, reads can be done locally. this case is
+<td>Occurs if max N val used by cluster changes during operation.
+Writes need be performed locally and remote, reads can be done locally. This case is
 not handled by the current implementation (the N-value should not be enlarged during resize)
 </td>
 </tr>
@@ -242,7 +242,7 @@ isn't implicitly enlarged during the transition, it is not used during expansion
 
 One other minor change made to the vnode interface, regardless of
 whether or not resizing is being used, is the first argument
-of`handoff_starting/2` is now passed as `{HOType, {Idx, Node}}`.
+of `handoff_starting/2` is now passed as `{HOType, {Idx, Node}}`.
 `HOType` is one of `ownership_transfer`, `hinted_handoff` or
 `resize_transfer`. The `Idx` being transferred to is always the index
 of the current partition, except in the case of `resize_transfer`.
