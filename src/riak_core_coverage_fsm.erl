@@ -159,7 +159,7 @@ init([Mod,
     {Request, VNodeSelector, NVal, PrimaryVNodeCoverage,
      NodeCheckService, VNodeMaster, Timeout, ModState} =
         Mod:init(From, RequestArgs),
-    gen_fsm:start_timer(Timeout, {timer_expired, Timeout}),
+    maybe_start_timeout_timer(Timeout),
     PlanFun = plan_callback(Mod, Exports),
     ProcessFun = process_results_callback(Mod, Exports),
     StateData = #state{mod=Mod,
@@ -191,6 +191,13 @@ init({test, Args, StateProps}) ->
     %% Enter into the execute state, skipping any code that relies on the
     %% state of the rest of the system
     {ok, waiting_results, TestStateData, 0}.
+
+%% @private
+maybe_start_timeout_timer(infinity) ->
+    ok;
+maybe_start_timeout_timer(Timeout) ->
+    gen_fsm:start_timer(Timeout, {timer_expired, Timeout}).
+
 
 %% @private
 initialize(timeout, StateData0=#state{mod=Mod,
