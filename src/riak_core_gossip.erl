@@ -81,24 +81,17 @@ rejoin(Node, Ring) ->
     gen_server:cast({?MODULE, Node}, {rejoin, Ring}).
 
 legacy_gossip() ->
-    gen_server:call(?MODULE, legacy_gossip).
+    false.
 
-legacy_gossip(Node) ->
-    gen_server:call(?MODULE, {legacy_gossip, Node}).
+legacy_gossip(_Node) ->
+    false.
 
 %% @doc Determine if any of the `Nodes' are using legacy gossip by querying
 %%      each node's capability directly over RPC. The proper way to check
 %%      for legacy gossip is to use {@link legacy/gossip/1}. This function
 %%      is used to support staged clustering in `riak_core_claimant'.
-any_legacy_gossip(_Ring, []) ->
-    false;
-any_legacy_gossip(Ring, [Node|Nodes]) ->
-    case rpc_gossip_version(Ring, Node) of
-        ?LEGACY_RING_VSN ->
-            true;
-        _ ->
-            any_legacy_gossip(Ring, Nodes)
-    end.
+any_legacy_gossip(_Ring, _Nodes) ->
+    false.
 
 %% @doc Gossip state to a random node in the ring.
 random_gossip(Ring) ->
@@ -153,17 +146,6 @@ init(_State) ->
                                          gossip_tokens=Tokens}),
     {ok, State}.
 
-handle_call(legacy_gossip, _From, State) ->
-    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
-    Reply = check_legacy_gossip(Ring, State),
-    {reply, Reply, State};
-
-handle_call({legacy_gossip, Node}, _From, State) ->
-    {ok, MyRing} = riak_core_ring_manager:get_raw_ring(),
-    State2 = update_known_versions(MyRing, State),
-    Reply = known_legacy_gossip(Node, State2),
-    {reply, Reply, State2};
-
 handle_call(_, _From, State) ->
     {reply, ok, State}.
 
@@ -179,29 +161,8 @@ update_gossip_version(Ring) ->
             Ring2
     end.
 
-known_legacy_gossip(Node, State) ->
-    case orddict:find(Node, State#state.gossip_versions) of
-        error ->
-            true;
-        {ok, ?LEGACY_RING_VSN} ->
-            true;
-        _ ->
-            false
-    end.
-
-check_legacy_gossip(Ring, State) ->
-    {ok, MyRing} = riak_core_ring_manager:get_raw_ring(),
-    State2 = update_known_versions(MyRing, State),
-    case riak_core_ring:legacy_ring(Ring) of
-        true ->
-            true;
-        false ->
-            %% If any member is using legacy gossip, then we use legacy gossip.
-            Members = riak_core_ring:all_members(Ring),
-            Legacy = [known_legacy_gossip(Node, State2) || Node <- Members],
-            Result = lists:any(fun(E) -> E =:= true end, Legacy),
-            Result
-    end.
+check_legacy_gossip(_Ring, _State) ->
+    false.
 
 update_known_version(Node, {OtherRing, GVsns}) ->
     case riak_core_ring:get_member_meta(OtherRing, Node, gossip_vsn) of
@@ -222,14 +183,11 @@ update_known_versions(OtherRing, State=#state{gossip_versions=GVsns}) ->
                               {OtherRing, GVsns},
                               riak_core_ring:all_members(OtherRing)),
     State#state{gossip_versions=GVsns2}.
-    
+
 gossip_version() ->
-    case app_helper:get_env(riak_core, legacy_gossip) of
-        true ->
-            ?LEGACY_RING_VSN;
-        _ ->
-            ?CURRENT_RING_VSN
-    end.
+    %% Now that we can safely assume all nodes support capabilities, this
+    %% should be replaced with a capability someday.
+    ?CURRENT_RING_VSN.
 
 rpc_gossip_version(Ring, Node) ->
     GossipVsn = riak_core_ring:get_member_meta(Ring, Node, gossip_vsn),

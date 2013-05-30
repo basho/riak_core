@@ -143,14 +143,16 @@ ordered_from(Index, {NumPartitions, Nodes}) ->
 
 %% @doc Given an object key, return all NodeEntries in reverse order
 %%      starting at Index.
--spec predecessors(Index :: index(), CHash :: chash()) -> [node_entry()].
+-spec predecessors(Index :: index() | index_as_int(), CHash :: chash()) -> [node_entry()].
 predecessors(Index, CHash) ->
     {NumPartitions, _Nodes} = CHash,
     predecessors(Index, CHash, NumPartitions).
 %% @doc Given an object key, return the next N NodeEntries in reverse order
 %%      starting at Index.
--spec predecessors(Index :: index(), CHash :: chash(), N :: integer())
+-spec predecessors(Index :: index() | index_as_int(), CHash :: chash(), N :: integer())
                   -> [node_entry()].
+predecessors(Index, CHash, N) when is_integer(Index) ->
+    predecessors(<<Index:160/integer>>, CHash, N);
 predecessors(Index, CHash, N) ->
     Num = max_n(N, CHash),
     {Res, _} = lists:split(Num, lists:reverse(ordered_from(Index,CHash))),

@@ -313,7 +313,7 @@ try_ssl(Socket, Transport, MyCaps, TheirCaps) ->
     TheirSSL = proplists:get_value(ssl_enabled, MyCaps, false),
     MyName = proplists:get_value(clustername, MyCaps),
     TheirName = proplists:get_value(clustername, TheirCaps),
-    Res = case {MySSL, TheirSSL} of
+    _Res = case {MySSL, TheirSSL} of
         {true, false} ->
             lager:warning("~p requested SSL, but ~p doesn't support it",
                 [MyName, TheirName]),
@@ -328,7 +328,7 @@ try_ssl(Socket, Transport, MyCaps, TheirCaps) ->
             case riak_core_ssl_util:maybe_use_ssl(riak_core) of
                 false ->
                     {ranch_tcp, Socket};
-                Config ->
+                _Config ->
                     case riak_core_ssl_util:upgrade_server_to_ssl(Socket, riak_core) of
                         {ok, S} ->
                             {ranch_ssl, S};

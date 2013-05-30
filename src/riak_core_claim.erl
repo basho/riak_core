@@ -1076,9 +1076,11 @@ circular_distance(I1, I2, Q) ->
 -ifdef(TEST).
 
 wants_claim_test() ->
+    riak_core_ring_manager:setup_ets(test),
     riak_core_test_util:setup_mockring1(),
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     ?assertEqual({yes, 1}, default_wants_claim(Ring)),
+    riak_core_ring_manager:cleanup_ets(test),
     riak_core_ring_manager:stop().
 
 find_biggest_hole_test() ->

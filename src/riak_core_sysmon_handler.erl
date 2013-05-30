@@ -166,8 +166,10 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
-format_pretty_proc_info(Pid) ->
-    format_pretty_proc_info(Pid, current_function).
+%% Enabling warnings_as_errors prevents a build since this function is
+%% dead code. To be safe, commenting out rather than deleting.
+%% format_pretty_proc_info(Pid) ->
+%%     format_pretty_proc_info(Pid, current_function).
 
 format_pretty_proc_info(Pid, Acf) ->
     try
@@ -182,8 +184,10 @@ format_pretty_proc_info(Pid, Acf) ->
             [Pid, X, 20, Y, 20, erlang:get_stacktrace()]}
     end.
 
-get_pretty_proc_info(Pid) ->
-    get_pretty_proc_info(Pid, current_function).
+%% Enabling warnings_as_errors prevents a build since this function is
+%% dead code. To be safe, commenting out rather than deleting.
+%% get_pretty_proc_info(Pid) ->
+%%     get_pretty_proc_info(Pid, current_function).
 
 get_pretty_proc_info(Pid, Acf) ->
     case process_info(Pid, [registered_name, initial_call, current_function,

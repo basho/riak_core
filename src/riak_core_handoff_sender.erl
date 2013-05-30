@@ -60,7 +60,12 @@
           item_queue_length    :: non_neg_integer(),
           item_queue_byte_size :: non_neg_integer(),
 
-          acksync_threshold    :: non_neg_integer()
+          acksync_threshold    :: non_neg_integer(),
+
+          type                 :: ho_type(),
+
+          notsent_acc          :: term(),
+          notsent_fun          :: function()
         }).
 
 %%%===================================================================
@@ -85,7 +90,6 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
     SrcNode = node(),
     SrcPartition = get_src_partition(Opts),
     TargetPartition = get_target_partition(Opts),
-
      try
          Filter = get_filter(Opts),
          [_Name,Host] = string:tokens(atom_to_list(TargetNode), "@"),
@@ -145,6 +149,8 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
          ok = TcpMod:send(Socket, M),
          StartFoldTime = os:timestamp(),
          Stats = #ho_stats{interval_end=future_now(get_status_interval())},
+         UnsentAcc0 = get_notsent_acc0(Opts),
+         UnsentFun = get_notsent_fun(Opts),
 
          Req = ?FOLD_REQ{foldfun=fun visit_item/3,
                          acc0=#ho_acc{
@@ -165,7 +171,11 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                                       item_queue_length=0,
                                       item_queue_byte_size=0,
 
-                                      acksync_threshold=AckSyncThreshold
+                                      acksync_threshold=AckSyncThreshold,
+
+                                      type=Type,
+                                      notsent_acc=UnsentAcc0,
+                                      notsent_fun=UnsentFun
                                      }
                         },                             
 
@@ -189,13 +199,14 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                  ok                     % If not #ho_acc, get badmatch below
          end,
          #ho_acc{
-                 error=ErrStatus,
-                 module=Module,
-                 parent=ParentPid,
-                 tcp_mod=TcpMod,
-                 total_objects=TotalObjects,
-                 total_bytes=TotalBytes
-                } = AccRecord,
+           error=ErrStatus,
+           module=Module,
+           parent=ParentPid,
+           tcp_mod=TcpMod,
+           total_objects=TotalObjects,
+           total_bytes=TotalBytes,
+           stats=FinalStats,
+           notsent_acc=NotSentAcc} = AccRecord,
 
          case ErrStatus of
              ok ->
@@ -219,14 +230,16 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                 ThroughputBytes = TotalBytes/FoldTimeDiff,
 
                  lager:info("~p transfer of ~p from ~p ~p to ~p ~p"
-                            " completed: sent ~s bytes in ~p objects"
+                            " completed: sent ~s bytes in ~p of ~p objects"
                             " in ~.2f seconds (~s/second)",
                             [Type, Module, SrcNode, SrcPartition, TargetNode, TargetPartition, 
-                            riak_core_format:human_size_fmt("~.2f", TotalBytes), TotalObjects, 
-                            FoldTimeDiff, riak_core_format:human_size_fmt("~.2f", ThroughputBytes)]),
-
+                            riak_core_format:human_size_fmt("~.2f", TotalBytes),
+                             FinalStats#ho_stats.objs, TotalObjects, FoldTimeDiff,
+                             riak_core_format:human_size_fmt("~.2f", ThroughputBytes)]),
                  case Type of
                      repair -> ok;
+                     resize_transfer -> gen_fsm:send_event(ParentPid, {resize_transfer_complete,
+                                                                       NotSentAcc});
                      _ -> gen_fsm:send_event(ParentPid, handoff_complete)
                  end;
              {error, ErrReason} ->
@@ -296,7 +309,9 @@ visit_item(K, V, Acc) ->
             total_objects=TotalObjects,
             item_queue=ItemQueue,
             item_queue_length=ItemQueueLength,
-            item_queue_byte_size=ItemQueueByteSize
+            item_queue_byte_size=ItemQueueByteSize,
+            notsent_fun=NotSentFun,
+            notsent_acc=NotSentAcc
            } = Acc,
 
     case Filter(K) of
@@ -319,7 +334,9 @@ visit_item(K, V, Acc) ->
             end;
 
         false ->
-            Acc#ho_acc{error=ok, total_objects=TotalObjects+1}
+            Acc#ho_acc{error=ok,
+                       total_objects=TotalObjects+1,
+                       notsent_acc=NotSentFun(K, NotSentAcc)}
     end.
 
 send_objects([], Acc) ->
@@ -340,27 +357,26 @@ send_objects(ItemsReverseList, Acc) ->
             item_queue_length=NObjects
            } = Acc,
 
-            ObjectList = term_to_binary(Items),
+    ObjectList = term_to_binary(Items),
 
-            M = <<?PT_MSG_BATCH:8, ObjectList/binary>>,
-
-            NumBytes = byte_size(M),
-
-            Stats2 = incr_bytes(incr_objs(Stats, NObjects), NumBytes),
-            Stats3 = maybe_send_status({Module, SrcPartition, TargetPartition}, Stats2),
-
-            case TcpMod:send(Sock, M) of
-                ok ->
-                    Acc#ho_acc{ack=Ack+1, error=ok, stats=Stats3, 
-                               total_objects=TotalObjects+NObjects,
-                               total_bytes=TotalBytes+NumBytes,
-
-                               item_queue=[],
-                               item_queue_length=0,
-                               item_queue_byte_size=0};
-                {error, Reason} ->
-                    Acc#ho_acc{error={error, Reason}, stats=Stats3}
-            end.
+    M = <<?PT_MSG_BATCH:8, ObjectList/binary>>,
+    
+    NumBytes = byte_size(M),
+    
+    Stats2 = incr_bytes(incr_objs(Stats, NObjects), NumBytes),
+    Stats3 = maybe_send_status({Module, SrcPartition, TargetPartition}, Stats2),
+    
+    case TcpMod:send(Sock, M) of
+        ok ->
+            Acc#ho_acc{ack=Ack+1, error=ok, stats=Stats3, 
+                       total_objects=TotalObjects+NObjects,
+                       total_bytes=TotalBytes+NumBytes,
+                       item_queue=[],
+                       item_queue_length=0,
+                       item_queue_byte_size=0};
+        {error, Reason} ->
+            Acc#ho_acc{error={error, Reason}, stats=Stats3}
+    end.
 
 get_handoff_ip(Node) when is_atom(Node) ->
     case rpc:call(Node, riak_core_handoff_listener, get_handoff_ip, [],
@@ -470,6 +486,15 @@ get_src_partition(Opts) ->
 
 get_target_partition(Opts) ->
     proplists:get_value(target_partition, Opts).
+
+get_notsent_acc0(Opts) ->
+    proplists:get_value(notsent_acc0, Opts).
+
+get_notsent_fun(Opts) ->
+    case proplists:get_value(notsent_fun, Opts) of
+        none -> fun(_, _) -> undefined end;
+        Fun -> Fun
+    end.
 
 -spec get_filter(proplists:proplist()) -> predicate().
 get_filter(Opts) ->

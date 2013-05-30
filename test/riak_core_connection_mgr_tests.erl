@@ -78,12 +78,15 @@ register_empty_locator() ->
 connections_test_() ->
     {timeout, 6000, {setup, fun() ->
         ok = application:start(ranch),
+        riak_core_ring_events:start_link(),
+        riak_core_ring_manager:start_link(test),
         {ok, _} = riak_core_service_mgr:start_link(?REMOTE_CLUSTER_ADDR),
         {ok, _} = riak_core_connection_mgr:start_link()
     end,
     fun(_) ->
         riak_core_connection_mgr:stop(),
         riak_core_service_mgr:stop(),
+        riak_core_ring_manager:stop(),
         application:stop(ranch)
     end,
     fun(_) -> [

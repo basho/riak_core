@@ -168,7 +168,7 @@ handle_work({reply, DonePid},  {raw, Ref, _EqcPid} = _Sender, State = #wstate{in
     timer:sleep(100), % slow things down enough to cause issue on stops
     DonePid ! {I, {ok, Ref}},
     {reply, asyncreply, State};
-handle_work({crash, DonePid},  {raw, Ref, _EqcPid} = _Sender, _State = #wstate{index=I}) ->
+handle_work({crash, _DonePid},  {raw, _Ref, _EqcPid} = _Sender, _State = #wstate{index=_I}) ->
     timer:sleep(100), % slow things down enough to cause issue on stops
     %DonePid ! {I, {ok, Ref}},
     throw(deliberate_async_crash).
