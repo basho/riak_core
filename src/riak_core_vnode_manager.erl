@@ -421,7 +421,7 @@ handle_info(management_tick, State0) ->
             _ ->
                 Repairs = State#state.repairs,
                 kill_repairs(Repairs, ownership_change),
-                trigger_ownership_handoff(Transfers, Mods, State2),
+                trigger_ownership_handoff(Transfers, Mods, Ring, State2),
                 State2#state{repairs=[]}
         end,
 
@@ -485,7 +485,7 @@ ring_changed(Ring, CHBin, State) ->
 
     %% Trigger ownership transfers.
     Transfers = riak_core_ring:pending_changes(Ring),
-    trigger_ownership_handoff(Transfers, Mods, State3),
+    trigger_ownership_handoff(Transfers, Mods, Ring, State3),
     State3.
 
 maybe_ensure_vnodes_started(Ring) ->
@@ -514,11 +514,9 @@ schedule_management_timer() ->
                                         10000),
     erlang:send_after(ManagementTick, ?MODULE, management_tick).
 
-trigger_ownership_handoff(Transfers, Mods, State) ->
-    Limit = app_helper:get_env(riak_core,
-                               forced_ownership_handoff,
-                               ?DEFAULT_OWNERSHIP_TRIGGER),
-    Throttle = lists:sublist(Transfers, Limit),
+trigger_ownership_handoff(Transfers, Mods, Ring, State) ->
+    IsResizing = riak_core_ring:is_resizing(Ring),
+    Throttle = limit_ownership_handoff(Transfers, IsResizing),
     Awaiting = [{Mod, Idx} || {Idx, Node, _, CMods, S} <- Throttle,
                               Mod <- Mods,
                               S =:= awaiting,
@@ -526,6 +524,22 @@ trigger_ownership_handoff(Transfers, Mods, State) ->
                               not lists:member(Mod, CMods)],
     [maybe_trigger_handoff(Mod, Idx, State) || {Mod, Idx} <- Awaiting],
     ok.
+
+limit_ownership_handoff(Transfers, IsResizing) ->
+    Limit = app_helper:get_env(riak_core,
+                               forced_ownership_handoff,
+                               ?DEFAULT_OWNERSHIP_TRIGGER),
+    limit_ownership_handoff(Limit, Transfers, IsResizing).
+
+limit_ownership_handoff(Limit, Transfers, false) ->
+    lists:sublist(Transfers, Limit);
+limit_ownership_handoff(Limit, Transfers, true) ->
+    %% if we are resizing: filter out completed resize operations,
+    %% since they remain in the list until all are complete. then
+    %% treat transfers as normal
+    Filtered = [Transfer || {_,_,_,_,Status}=Transfer <- Transfers,
+                            Status =:= awaiting],
+    limit_ownership_handoff(Limit, Filtered, false).
 
 %% @private
 idx2vnode(Idx, Mod, _State=#state{idxtab=T}) ->
