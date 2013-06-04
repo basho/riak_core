@@ -97,6 +97,8 @@ behaviour_info(callbacks) ->
 behaviour_info(_) ->
     undefined.
 
+-define(DEFAULT_TIMEOUT, 60000*8).
+
 -type req_id() :: non_neg_integer().
 -type from() :: {atom(), req_id(), pid()}.
 
@@ -195,6 +197,8 @@ init({test, Args, StateProps}) ->
 %% @private
 maybe_start_timeout_timer(infinity) ->
     ok;
+maybe_start_timeout_timer(Bad) when not is_integer(Bad) ->
+    maybe_start_timeout_timer(?DEFAULT_TIMEOUT);
 maybe_start_timeout_timer(Timeout) ->
     gen_fsm:start_timer(Timeout, {timer_expired, Timeout}).
 
