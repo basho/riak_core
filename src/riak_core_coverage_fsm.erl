@@ -199,8 +199,6 @@ maybe_start_timeout_timer(infinity) ->
     ok;
 maybe_start_timeout_timer(Bad) when not is_integer(Bad) ->
     maybe_start_timeout_timer(?DEFAULT_TIMEOUT);
-maybe_start_timeout_timer(undefined) ->
-    maybe_start_timeout_timer(?DEFAULT_TIMEOUT);
 maybe_start_timeout_timer(Timeout) ->
     gen_fsm:start_timer(Timeout, {timer_expired, Timeout}).
 
