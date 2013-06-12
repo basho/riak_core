@@ -47,6 +47,7 @@
 %% @doc Cache item refresh rate in seconds
 -define(REFRESH_RATE, 1).
 -define(REFRSH_MILLIS(N), timer:seconds(N)).
+-define(MAX_REFRESH, timer:seconds(60)).
 -define(ENOTREG(App), {error, {not_registered, App}}).
 -define(DEFAULT_REG(Mod, RefreshRateMillis), {{Mod, produce_stats, []}, RefreshRateMillis}).
 
@@ -140,20 +141,25 @@ handle_cast({stats, App, Stats0, TS}, State0=#state{tab=Tab, active=Active, apps
             end,
     {ok, {MFA, RefreshRateMillis}} = orddict:find(App, Apps),
     schedule_get_stats(RefreshRateMillis, App, MFA),
-    {noreply, State};
+    Apps2 = clear_fail_count(App, Apps),
+    {noreply, State#state{apps=Apps2}};
 handle_cast(stop, State) ->
     {stop, normal, State};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
 %% don't let a crashing stat mod crash the cache
-handle_info({'EXIT', FromPid, Reason}, State0=#state{active=Active}) when Reason /= normal ->
+handle_info({'EXIT', FromPid, Reason}, State0=#state{active=Active, apps=Apps}) when Reason /= normal ->
      Reply = case awaiting_for_pid(FromPid, Active) of
                  not_found ->
                      {stop, Reason, State0};
                  {ok, {App, Awaiting}} ->
                      [gen_server:reply(From, {error, Reason}) || From <- Awaiting, From /= ?SERVER],
-                     {noreply, State0#state{active=orddict:erase(App, Active)}}
+                     {ok, {MFA, RefreshRateMillis}} = orddict:find(App, Apps),
+                     Apps2 = update_fail_count(App, Apps),
+                     FailCnt = get_fail_count(App, Apps2),
+                     schedule_get_stats(RefreshRateMillis, App, MFA, FailCnt),
+                     {noreply, State0#state{active=orddict:erase(App, Active), apps=Apps2}}
              end,
      Reply;
 %% @doc callback on timer timeout to keep cache fresh
@@ -170,9 +176,32 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 %% internal
+get_fail_count(App, Apps) ->
+    case orddict:find([App, fail], Apps) of
+        {ok, Cnt} ->
+            Cnt;
+        error ->
+            0
+    end.
+
+clear_fail_count(App, Apps) ->
+    orddict:erase([App, fail], Apps).
+
+update_fail_count(App, Apps) ->
+    orddict:update_counter([App, fail], 1, Apps).
+
 schedule_get_stats(After, App, MFA) ->
     Pid = self(),
     erlang:send_after(After, Pid, {get_stats, {App, MFA}}).
+
+schedule_get_stats(After, Apps, MFA, 0) ->
+    schedule_get_stats(After, Apps, MFA);
+schedule_get_stats(After, Apps, MFA, FailCnt) ->
+    Millis = back_off(After, FailCnt),
+    schedule_get_stats(Millis, Apps, MFA).
+
+back_off(After, FailCnt) ->
+    min(After * (1 bsl FailCnt), ?MAX_REFRESH).
 
 make_freshness_stat(App, TS) ->
     {make_freshness_stat_name(App), TS}.
