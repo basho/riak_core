@@ -784,6 +784,8 @@ handle_info({'EXIT', Pid, Reason},
             continue(State#state{pool_pid=NewPoolPid})
         end;
 
+handle_info({'DOWN',_Ref,process,_Pid,normal}, _StateName, State) ->
+    continue(State);
 handle_info(Info, _StateName,
             State=#state{mod=Mod,modstate={deleted, _},index=Index}) ->
     lager:info("~p ~p ignored handle_info ~p - vnode unregistering\n",
