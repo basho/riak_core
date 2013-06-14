@@ -169,12 +169,19 @@ safe_trunc(X) ->
 %% Provide aggregate stats for vnode queues.  Compute instantaneously for now,
 %% may need to cache if stats are called heavily (multiple times per seconds)
 vnodeq_stats() ->
-    VnodesInfo = [{Service, element(2, erlang:process_info(Pid, message_queue_len))} ||
+    VnodesInfo = [{Service, vnodeq_len(Pid)} ||
                      {Service, _Index, Pid} <- riak_core_vnode_manager:all_vnodes()],
     ServiceInfo = lists:foldl(fun({S,MQL}, A) ->
                                       orddict:append_list(S, [MQL], A)
                               end, orddict:new(), VnodesInfo),
     lists:flatten([vnodeq_aggregate(S, MQLs) || {S, MQLs} <- ServiceInfo]).
+
+vnodeq_len(Pid) ->
+    try
+        element(2, erlang:process_info(Pid, message_queue_len))
+    catch _ ->
+            0
+    end.
 
 vnodeq_aggregate(_Service, []) ->
     []; % no vnodes, no stats
