@@ -334,9 +334,13 @@ visit_item(K, V, Acc) ->
             end;
 
         false ->
+            NewNotSentAcc = case NotSentFun of
+                undefined -> undefined;
+                _ -> NotSentFun(K, NotSentAcc)
+            end,
             Acc#ho_acc{error=ok,
                        total_objects=TotalObjects+1,
-                       notsent_acc=NotSentFun(K, NotSentAcc)}
+                       notsent_acc=NewNotSentAcc}
     end.
 
 send_objects([], Acc) ->
