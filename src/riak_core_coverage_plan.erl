@@ -216,7 +216,6 @@ find_coverage(Context, PrimariesLeft) ->
              offset=Offset,
              minimization_target=MinimizationTarget,
              unavail_keyspaces=UnavailableKeySpaces,
-             primaries=Primaries,
              results=ResultsAcc,
              vnode_fun=VnodeFun} = Context,
     %% Calculate the available keyspaces. The list of keyspaces for
