@@ -1139,7 +1139,8 @@ remove_node(CState, Node, Status, Replacing, Seed, Log, Indices) ->
 
 replace_node_during_resize(CState0, Node, NewNode) ->
     PostResize = riak_core_ring:is_post_resize(CState0),
-    replace_node_during_resize(CState0, Node, NewNode, PostResize).
+    CState1 = replace_node_during_resize(CState0, Node, NewNode, PostResize),
+    riak_core_ring:increment_ring_version(riak_core_ring:claimant(CState1), CState1).
 
 replace_node_during_resize(CState0, Node, NewNode, false) -> %% ongoing xfers
     %% for each of the indices being moved from Node to NewNode, reschedule resize
