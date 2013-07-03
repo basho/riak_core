@@ -54,15 +54,15 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 stop() ->
-    gen_server:call(?SERVER, stop).
+    gen_server:call(?SERVER, stop, infinity).
 
 reset() ->
-    gen_server:call(?SERVER, reset).
+    gen_server:call(?SERVER, reset, infinity).
 
 %% Set up a filter on trace messages to the list of [{M, F}]s.  The
 %% tracer function should return a list of events to log
 filter(MFs, Filter) ->
-    gen_server:call(?SERVER, {filter, MFs, Filter}).
+    gen_server:call(?SERVER, {filter, MFs, Filter}, infinity).
 
 %% Collect traces
 collect() ->
@@ -72,15 +72,15 @@ collect(Duration) ->
     collect(Duration, nodes()).
 
 collect(Duration, Nodes) ->
-    gen_server:call(?SERVER, {collect, Duration,  Nodes}).
+    gen_server:call(?SERVER, {collect, Duration,  Nodes}, infinity).
 
 %% Stop collection
 stop_collect() ->
-    gen_server:call(?SERVER, stop_collect).
+    gen_server:call(?SERVER, stop_collect, infinity).
 
 %% Return the trace
 results() ->
-    gen_server:call(?SERVER, results).
+    gen_server:call(?SERVER, results, infinity).
 
 all_events({trace, Pid, call, {M,F,A}}) ->
     [{node(Pid), {M,F,A}}].
@@ -128,7 +128,7 @@ handle_call({collect, Duration, Nodes}, _From, State) ->
                                          {Mega, Secs, Micro} = os:timestamp(),
                                          Ts = 1000000 * (1000000 * Mega + Secs) + Micro,
                                          TsEntries = [{Ts, E} || E <- Entries],
-                                         gen_server:call(Pid,  {traces, TsEntries})
+                                         gen_server:call(Pid,  {traces, TsEntries}, infinity)
                                  end,
                                  Pid
                          end, self()}),
