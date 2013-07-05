@@ -23,9 +23,11 @@
 %% @doc Various ssl functions for the Riak Core Connection Manager
 -module(riak_core_ssl_util).
 
+-include_lib("kernel/include/file.hrl").
 -include_lib("public_key/include/OTP-PUB-KEY.hrl").
 
 -export([maybe_use_ssl/1,
+         validate_ssl_config/1,
          upgrade_client_to_ssl/2,
          upgrade_server_to_ssl/2]).
 
@@ -47,58 +49,65 @@ maybe_use_ssl(App) ->
         {fail_if_no_peer_cert, true},
         {secure_renegotiate, true} %% both sides are erlang, so we can force this
     ],
-    Enabled = app_helper:get_env(App, ssl_enabled, false) == true,
-    case validate_ssl_config(App, Enabled, SSLOpts) of
-        true ->
-            SSLOpts;
-        {error, Reason} ->
-            lager:error("Error, invalid SSL configuration: ~s", [Reason]),
-            false;
+    case app_helper:get_env(App, ssl_enabled, false) == true of
         false ->
             %% not all the SSL options are configured, use TCP
-            false
+            false;
+        true ->
+            case validate_ssl_config(SSLOpts) of
+                {ok, Options} ->
+                    Options;
+                {error, Reason} ->
+                    lager:error("Error, invalid SSL configuration: ~s", [Reason]),
+                    false
+            end
     end.
 
+validate_ssl_config(Opts) ->
+    validate_ssl_config(Opts, []).
 
-validate_ssl_config(_App, false, _) ->
-    %% ssl is disabled
-    false;
-validate_ssl_config(_App, true, []) ->
-    %% all options validated
-    true;
-validate_ssl_config(App, true, [{certfile, CertFile}|Rest]) ->
-    case filelib:is_regular(CertFile) of
+validate_ssl_config([], Acc) ->
+    {ok, Acc};
+validate_ssl_config([{certfile, CertFile}|Rest], Acc) ->
+    case file_is_readable(CertFile) of
         true ->
-            validate_ssl_config(App, true, Rest);
-        false ->
-            {error, lists:flatten(io_lib:format("Certificate ~p is not a file",
-                                                [CertFile]))}
+            validate_ssl_config(Rest, [{certfile, CertFile}|Acc]);
+        {error, Reason} ->
+            {error, lists:flatten(io_lib:format("Certificate ~p is not readable: ~s",
+                                                [CertFile, posix_error(Reason)]))}
     end;
-validate_ssl_config(App, true, [{keyfile, KeyFile}|Rest]) ->
-    case filelib:is_regular(KeyFile) of
+validate_ssl_config([{keyfile, KeyFile}|Rest], Acc) ->
+    case file_is_readable(KeyFile) of
         true ->
-            validate_ssl_config(App, true, Rest);
-        false ->
-            {error, lists:flatten(io_lib:format("Key ~p is not a file",
-                                                [KeyFile]))}
+            validate_ssl_config(Rest, [{keyfile, KeyFile}|Acc]);
+        {error, Reason} ->
+            {error, lists:flatten(io_lib:format("Key ~p is not readable ~p",
+                                                [KeyFile, posix_error(Reason)]))}
     end;
-validate_ssl_config(App, true, [{cacerts, CACerts}|Rest]) ->
+validate_ssl_config([{cacertfile, CAFile}|Rest], Acc) ->
+    case file_is_readable(CAFile) of
+        true ->
+            validate_ssl_config(Rest, [{cacertfile, CAFile}|Acc]);
+        {error, Reason} ->
+            {error, lists:flatten(io_lib:format("CA certificate ~p is not readable ~p",
+                                                [CAFile, posix_error(Reason)]))}
+    end;
+validate_ssl_config([{cacertdir, CACertDir}|Rest], Acc) ->
+    CACerts = load_certs(CACertDir),
     case CACerts of
         undefined ->
             {error, lists:flatten(
                     io_lib:format("CA cert dir ~p is invalid",
-                                  [app_helper:get_env(App, cacertdir,
-                                                      undefined)]))};
+                                  [CACertDir]))};
         [] ->
             {error, lists:flatten(
                     io_lib:format("Unable to load any CA certificates from ~p",
-                                  [app_helper:get_env(App, cacertdir,
-                                                      undefined)]))};
+                                  [CACertDir]))};
         Certs when is_list(Certs) ->
-            validate_ssl_config(App, true, Rest)
+            validate_ssl_config(Rest, [{cacerts, Certs}|Acc])
     end;
-validate_ssl_config(App, true, [_|Rest]) ->
-    validate_ssl_config(App, true, Rest).
+validate_ssl_config([_|Rest], Acc) ->
+    validate_ssl_config(Rest, Acc).
 
 upgrade_client_to_ssl(Socket, App) ->
     case maybe_use_ssl(App) of
@@ -240,6 +249,34 @@ validate_common_name(CN, [Filter|Filters]) ->
             end
     end.
 
+
+file_is_readable(FileName) ->
+    case file:read_file_info(FileName) of
+        {ok, FI} ->
+            case FI#file_info.type == regular of
+                false ->
+                    %% will never return 'symlink' type because we did not use
+                    %% read_link_info
+                    {error, eisdir};
+                true ->
+                    case FI#file_info.access == read orelse
+                          FI#file_info.access == read_write of
+                        false ->
+                            {error, eaccess};
+                        true ->
+                            true
+                    end
+            end;
+        Err ->
+            Err
+    end.
+
+%% borrowed from lager, with modifications
+posix_error(Error) ->
+    case erl_posix_msg:message(Error) of
+        "unknown POSIX error" -> lists:flatten(io_lib:format("~p", [Error]));
+        Message -> Message
+    end.
 
 %% ===================================================================
 %% EUnit tests

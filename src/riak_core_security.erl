@@ -78,7 +78,7 @@ prettyprint_users(Users) ->
 
 match_source([], _User, _PeerIP) ->
     {error, no_matching_sources};
-match_source([{{UserName, {IP,Mask}, Source}, Options}|Tail], User, PeerIP) ->
+match_source([{{UserName, {IP,Mask}}, Source, Options}|Tail], User, PeerIP) ->
     case (UserName == all orelse
           UserName == User) andalso
         mask_address(IP, Mask) == mask_address(PeerIP, Mask) of
@@ -133,6 +133,11 @@ group_sources(Sources) ->
                 MaskA > MaskB
         end, R2).
 
+print_sources() ->
+    Meta = get_meta(),
+    Sources = lookup(sources, Meta, []),
+    print_sources(Sources).
+
 print_sources(Sources) ->
     GS = group_sources(Sources),
     table:print([{users, 20}, {cidr, 10}, {source, 10}, {options, 10}],
@@ -140,6 +145,12 @@ print_sources(Sources) ->
                   atom_to_list(Source), io_lib:format("~p", [Options])] ||
             {Users, CIDR, Source, Options} <- GS]).
 
+print_users() ->
+    Meta = get_meta(),
+    Users = lookup(users, Meta, []),
+    table:print([{username, 20}, {options, 10}],
+                [[Username, io_lib:format("~p", [Options])] ||
+            {Username, Options} <- Users]).
 
 %% TODO a context should only be valid for a short time, eg. 5 seconds.
 %% Or perhaps every grant change should increment some value on the user
@@ -168,7 +179,7 @@ authenticate(Username, Password, PeerIP) ->
                             {ok, get_context(Username, Meta)};
                         password ->
                             %% pull the password out of the userdata
-                            case lookup(password, UserData) of
+                            case lookup("password", UserData) of
                                 undefined ->
                                     lager:warning("User ~p is configured for "
                                                   "password authentication, but has "

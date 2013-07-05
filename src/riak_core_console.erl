@@ -23,7 +23,8 @@
          stage_leave/1, stage_remove/1, stage_replace/1, stage_resize_ring/1,
          stage_force_replace/1, print_staged/1, commit_staged/1,
          clear_staged/1, transfer_limit/1, pending_claim_percentage/2,
-         transfers/1]).
+         transfers/1, add_user/1, add_source/1, print_users/1,
+         print_sources/1]).
 
 %% @doc Return for a given ring and node, percentage currently owned and
 %% anticipated after the transitions have been completed.
@@ -820,3 +821,37 @@ check_limit(Str) ->
         _:_ ->
             {false, 0}
     end.
+
+add_user([Username|Options]) ->
+    riak_core_security:add_user(Username, parse_options(Options)).
+
+add_source([Users, CIDR, Source | Options]) ->
+    Unames = case string:tokens(Users, ",") of
+        ["all"] ->
+            all;
+        Other ->
+            Other
+    end,
+    riak_core_security:add_source(Unames, parse_cidr(CIDR),
+                                  list_to_atom(Source),
+                                  parse_options(Options)).
+
+print_users([]) ->
+    riak_core_security:print_users().
+
+print_sources([]) ->
+    riak_core_security:print_sources().
+
+parse_options(Options) ->
+    parse_options(Options, []).
+
+parse_options([], Acc) ->
+    Acc;
+parse_options([H|T], Acc) ->
+    [Key, Value] = string:tokens(H, "="),
+    parse_options(T, [{Key, Value}|Acc]).
+
+parse_cidr(CIDR) ->
+    [IP, Mask] = string:tokens(CIDR, "/"),
+    {ok, Addr} = inet_parse:address(IP),
+    {Addr, list_to_integer(Mask)}.
