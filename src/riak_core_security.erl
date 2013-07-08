@@ -156,12 +156,62 @@ print_users() ->
 %% Or perhaps every grant change should increment some value on the user
 %% information so we can detect when we need to re-pull the context.
 get_context(Username, Meta) ->
-    Empty = term_to_binary([]),
-    Grants = lookup(Username, lookup(grants, Meta, []), Empty),
-    Revokes = lookup(Username, lookup(revokes, Meta, []), Empty),
-    %% XXX this is more or less pseudocode since we don't have a structure for
-    %% grants yet
-    lists:keymerge(1, binary_to_term(Grants), binary_to_term(Revokes)).
+    Grants = lookup(Username, lookup(grants, Meta, []), []),
+    Revokes = lookup(Username, lookup(revokes, Meta, []), []),
+    {Grants, Revokes, os:timestamp()}.
+
+check_permission(Permission, Bucket, Context) ->
+    {Grants, Revokes, _Expiry} = Context,
+    %% TODO check context is still valid
+    MatchG = match_grant(Bucket, Grants),
+    MatchR = match_grant(Bucket, Revokes),
+    case MatchG /= undefined andalso
+        (lists:member(Permission, MatchG) orelse MatchG == 'all') of
+        true ->
+            %% ok, permission is present, check for revokes
+            case MatchR /= undefined andalso
+                (lists:member(Permission, MatchR) orelse MatchR == 'all') of
+                true ->
+                    %% oh snap, it was revoked
+                    {false, Context};
+                false ->
+                    %% not revoked, yay
+                    {true, Context}
+            end;
+        false ->
+            %% no applicable grant
+            {false, Context}
+    end.
+
+
+match_grant(Bucket, Grants) ->
+    %% find the first grant that matches the bucket name
+    lists:foldl(fun({B, P}, undefined) ->
+                case lists:last(B) == $* of
+                    true ->
+                        L = lists:length(B) - 1,
+                        case string:substr(Bucket, 1, L) ==
+                             string:substr(B, 1, L) of
+                            true ->
+                                P;
+                            false ->
+                                undefined
+                        end;
+                    false ->
+                        case Bucket == B of
+                            true ->
+                                P;
+                            false ->
+                                undefined
+                        end
+                end;
+            (_, Acc) ->
+                Acc
+        end, undefined, lists:sort(fun({A, _}, {B, _}) ->
+                    %% sort by descending bucket length, so more specific
+                    %% matches come first
+                    length(A) > length(B)
+            end, Grants)).
 
 authenticate(Username, Password, PeerIP) ->
     Meta = get_meta(),
@@ -223,6 +273,55 @@ add_user(Username, Options) ->
         _ ->
             {error, user_exists}
     end.
+
+add_grant(all, Bucket, Grants) ->
+    %% all is always valid
+    Meta = get_meta(),
+    put_meta(add_grant_int([all], Bucket, Grants, Meta)),
+    ok;
+add_grant([H|_T]=UserList, Bucket, Grants) when is_list(H) ->
+    %% list of lists, weeeee
+    %% validate the users...
+    Meta = get_meta(),
+    Users = lookup(users, Meta, []),
+    Valid = lists:foldl(fun(User, ok) ->
+                    case lists:keymember(User, 1, Users) of
+                        true ->
+                            ok;
+                        false ->
+                            {error, {unknown_user, User}}
+                    end;
+                (_User, Acc) ->
+                    Acc
+            end, ok, UserList),
+    Valid2 = case Valid of
+        ok ->
+            validate_permissions(Grants);
+        Other ->
+            Other
+    end,
+    case Valid2 of
+        ok ->
+            %% add a source for each user
+            put_meta(add_grant_int(UserList, Bucket, Grants, Meta)),
+            ok;
+        Error ->
+            Error
+    end;
+add_grant(User, Bucket, Grants) ->
+    %% single user
+    add_grant([User], Bucket, Grants).
+
+add_grant_int([], _, _, Meta) ->
+    Meta;
+add_grant_int([User|Users], Bucket, Permissions, Meta) ->
+    Grants = lookup(grants, Meta, []),
+    UserGrants = lookup(User, Grants, []),
+    NewMeta = stash(grants, {grants, stash(User, {User, stash(Bucket, {Bucket,
+                                                                      Permissions},
+                                                             UserGrants)},
+                                           Grants)}, Meta),
+    add_grant_int(Users, Bucket, Permissions, NewMeta).
 
 add_source(all, CIDR, Source, Options) ->
     %% all is always valid
@@ -290,4 +389,29 @@ rm_source_int([User|Users], CIDR, Meta) ->
 %% XXX this is a stub for now, should tie in JoeD's stuff for validation
 validate_options(Options) ->
     {ok, Options}.
+
+validate_permissions(Perms) ->
+    KnownPermissions = app_helper:get_env(riak_core, permissions, []),
+    validate_permissions(Perms, KnownPermissions).
+
+validate_permissions([], _) ->
+    ok;
+validate_permissions([Perm|T], Known) ->
+    case string:tokens(Perm, ".") of
+        [App, P] ->
+            try {list_to_existing_atom(App), list_to_existing_atom(P)} of
+                {AppAtom, PAtom} ->
+                    case lists:member(PAtom, lookup(AppAtom, Known, [])) of
+                        true ->
+                            validate_permissions(T, Known);
+                        false ->
+                            {error, {unknown_permission, Perm}}
+                    end
+            catch
+                error:badarg ->
+                            {error, {unknown_permission, Perm}}
+            end;
+        _ ->
+            {error, {unknown_permission, Perm}}
+    end.
 

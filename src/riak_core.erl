@@ -350,10 +350,12 @@ register(App, [{bucket_validator, ValidationMod}|T]) ->
     register(App, T);
 register(App, [{stat_mod, StatMod}|T]) ->
     register_mod(App, StatMod, stat_mods),
+    register(App, T);
+register(App, [{permissions, Permissions}|T]) ->
+    register_mod(App, Permissions, permissions),
     register(App, T).
 
-
-register_mod(App, Module, Type) when is_atom(Module), is_atom(Type) ->
+register_mod(App, Module, Type) when is_atom(Type) ->
     case Type of
         vnode_modules ->
             riak_core_vnode_proxy_sup:start_proxies(Module);
@@ -378,6 +380,8 @@ register_metadata(App, Value, Type) ->
             application:set_env(riak_core, Type,
                 lists:usort([{App,Value}|Values]))
     end.
+
+
 
 %% @spec add_guarded_event_handler(HandlerMod, Handler, Args) -> AddResult
 %%       HandlerMod = module()
