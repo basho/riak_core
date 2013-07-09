@@ -158,31 +158,38 @@ print_users() ->
 get_context(Username, Meta) ->
     Grants = lookup(Username, lookup(grants, Meta, []), []),
     Revokes = lookup(Username, lookup(revokes, Meta, []), []),
-    {Grants, Revokes, os:timestamp()}.
+    {Username, Grants, Revokes, os:timestamp()}.
 
 check_permission(Permission, Bucket, Context) ->
-    {Grants, Revokes, _Expiry} = Context,
+    {_Username, Grants, Revokes, _Expiry} = Context,
     %% TODO check context is still valid
-    MatchG = match_grant(Bucket, Grants),
-    MatchR = match_grant(Bucket, Revokes),
-    case MatchG /= undefined andalso
-        (lists:member(Permission, MatchG) orelse MatchG == 'all') of
-        true ->
-            %% ok, permission is present, check for revokes
-            case MatchR /= undefined andalso
-                (lists:member(Permission, MatchR) orelse MatchR == 'all') of
+    case match_grant(Bucket, Grants) of
+        {B, MatchG} ->
+            case MatchG /= undefined andalso
+                (lists:member(Permission, MatchG) orelse MatchG == 'all') of
                 true ->
-                    %% oh snap, it was revoked
-                    {false, Context};
+                    %% ok, permission is present, check for revokes
+                    MatchR = lookup(B, Revokes, undefined),
+                    case MatchR /= undefined andalso
+                        (lists:member(Permission, MatchR) orelse MatchR == 'all') of
+                        true ->
+                            %% oh snap, it was revoked
+                            {false, Context};
+                        false ->
+                            %% not revoked, yay
+                            {true, Context}
+                    end;
                 false ->
-                    %% not revoked, yay
-                    {true, Context}
+                    %% no applicable grant
+                    {false, Context}
             end;
-        false ->
-            %% no applicable grant
+        undefined ->
+            %% no grants for this user at all
             {false, Context}
     end.
 
+get_username({Username, _Grants, _Revokes, _Expiry}) ->
+    Username.
 
 match_grant(Bucket, Grants) ->
     %% find the first grant that matches the bucket name
@@ -193,14 +200,14 @@ match_grant(Bucket, Grants) ->
                         case string:substr(Bucket, 1, L) ==
                              string:substr(B, 1, L) of
                             true ->
-                                P;
+                                {B, P};
                             false ->
                                 undefined
                         end;
                     false ->
                         case Bucket == B of
                             true ->
-                                P;
+                                {B, P};
                             false ->
                                 undefined
                         end
@@ -277,8 +284,12 @@ add_user(Username, Options) ->
 add_grant(all, Bucket, Grants) ->
     %% all is always valid
     Meta = get_meta(),
-    put_meta(add_grant_int([all], Bucket, Grants, Meta)),
-    ok;
+    case validate_permissions(Grants) of
+        ok ->
+            put_meta(add_grant_int([all], Bucket, Grants, Meta));
+        Error ->
+            Error
+    end;
 add_grant([H|_T]=UserList, Bucket, Grants) when is_list(H) ->
     %% list of lists, weeeee
     %% validate the users...
@@ -317,11 +328,97 @@ add_grant_int([], _, _, Meta) ->
 add_grant_int([User|Users], Bucket, Permissions, Meta) ->
     Grants = lookup(grants, Meta, []),
     UserGrants = lookup(User, Grants, []),
+    BucketPermissions = lookup(Bucket, UserGrants, []),
+    NewPerms = lists:umerge(lists:sort(BucketPermissions),
+                            lists:sort(Permissions)),
     NewMeta = stash(grants, {grants, stash(User, {User, stash(Bucket, {Bucket,
-                                                                      Permissions},
+                                                                      NewPerms},
                                                              UserGrants)},
                                            Grants)}, Meta),
     add_grant_int(Users, Bucket, Permissions, NewMeta).
+
+add_revoke(all, Bucket, Revokes) ->
+    %% all is always valid
+    Meta = get_meta(),
+    case validate_permissions(Revokes) of
+        ok ->
+            case add_revoke_int([all], Bucket, revokes, Meta) of
+                {ok, NewMeta} ->
+                    put_meta(NewMeta),
+                    ok;
+                Error2 ->
+                    Error2
+            end;
+        Error ->
+            Error
+    end;
+add_revoke([H|_T]=UserList, Bucket, Revokes) when is_list(H) ->
+    %% list of lists, weeeee
+    %% validate the users...
+    Meta = get_meta(),
+    Users = lookup(users, Meta, []),
+    Valid = lists:foldl(fun(User, ok) ->
+                    case lists:keymember(User, 1, Users) of
+                        true ->
+                            ok;
+                        false ->
+                            {error, {unknown_user, User}}
+                    end;
+                (_User, Acc) ->
+                    Acc
+            end, ok, UserList),
+    Valid2 = case Valid of
+        ok ->
+            validate_permissions(Revokes);
+        Other ->
+            Other
+    end,
+    case Valid2 of
+        ok ->
+            %% add a source for each user
+            case add_revoke_int(UserList, Bucket, Revokes, Meta) of
+                {ok, NewMeta} ->
+                    put_meta(NewMeta),
+                    ok;
+                Error2 ->
+                    Error2
+            end;
+        Error ->
+            Error
+    end;
+add_revoke(User, Bucket, Revokes) ->
+    %% single user
+    add_revoke([User], Bucket, Revokes).
+
+add_revoke_int([], _, _, Meta) ->
+    {ok, Meta};
+add_revoke_int([User|Users], Bucket, Permissions, Meta) ->
+    Revokes = lookup(revokes, Meta, []),
+    UserRevokes = lookup(User, Revokes, []),
+    Grants = lookup(grants, Meta, []),
+    UserGrants = lookup(User, Grants, []),
+
+    %% check if there is currently a GRANT we can revoke
+    case lookup(Bucket, UserGrants) of
+        undefined ->
+            %% can't REVOKE what wasn't GRANTED
+            add_revoke_int(Users, Bucket, Permissions, Meta);
+        GrantedPermissions ->
+            ToRevoke = [X || X <- Permissions, Y <- GrantedPermissions, X == Y],
+            RevokedPermissions = lookup(Bucket, UserRevokes, []),
+            NewRevokes = lists:umerge(lists:sort(ToRevoke),
+                                      lists:sort(RevokedPermissions)),
+
+            %% Now, in an ideal world, we'd try to do a strongly-consistent
+            %% write to simply update the GRANT list, andf if that failed,
+            %% we'd write to the REVOKE list. For testing purposes, we'll just
+            %% write a REVOKE for now.
+            NewMeta = stash(revokes, {revokes, stash(User, {User, stash(Bucket, {Bucket,
+                                                                                 NewRevokes},
+                                                                        UserRevokes)},
+                                                     Revokes)}, Meta),
+            add_revoke_int(Users, Bucket, Permissions, NewMeta)
+    end.
 
 add_source(all, CIDR, Source, Options) ->
     %% all is always valid
