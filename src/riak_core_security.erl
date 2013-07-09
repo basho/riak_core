@@ -189,7 +189,7 @@ match_grant(Bucket, Grants) ->
     lists:foldl(fun({B, P}, undefined) ->
                 case lists:last(B) == $* of
                     true ->
-                        L = lists:length(B) - 1,
+                        L = length(B) - 1,
                         case string:substr(Bucket, 1, L) ==
                              string:substr(B, 1, L) of
                             true ->
