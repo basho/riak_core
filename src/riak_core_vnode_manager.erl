@@ -552,7 +552,7 @@ idx2vnode(Idx, Mod, _State=#state{idxtab=T}) ->
 delmon(MonRef, _State=#state{idxtab=T}) ->
     case ets:lookup(T, MonRef) of
         [#monrec{key=Key}] ->
-            ets:delete(T, Key),
+            ets:match_delete(T, {idxrec, Key, '_', '_', '_', MonRef}),
             ets:delete(T, MonRef);
         [] ->
             ets:match_delete(T, {idxrec, '_', '_', '_', '_', MonRef})
@@ -597,7 +597,10 @@ get_vnode(IdxList, Mod, State) ->
          IdxRec = #idxrec{key={Idx,Mod},idx=Idx,mod=Mod,pid=Pid,
                           monref=MonRef},
          MonRec = #monrec{monref=MonRef, key={Idx,Mod}},
-         add_vnode_rec([IdxRec, MonRec], State),
+         add_vnode_rec([IdxRec, MonRec], State)
+     end || Idx <- NotStarted],
+    [begin
+         Pid = dict:fetch(Idx, PairsDict),
          Pid
      end || Idx <- IdxList].
 
