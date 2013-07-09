@@ -102,7 +102,7 @@ lookup(IndexAsInt, CHash) ->
 %%      considered the same name.
 -spec key_of(ObjectName :: term()) -> index().
 key_of(ObjectName) ->    
-    crypto:sha(term_to_binary(ObjectName)).
+    crypto:hash(sha, term_to_binary(ObjectName)).
 
 %% @doc Return all Nodes that own any partitions in the ring.
 -spec members(CHash :: chash()) -> [chash_node()].

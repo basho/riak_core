@@ -324,7 +324,7 @@ getkids(Tree) ->
     [V || {_K,V} <- orddict:to_list(Tree#merk.children)].
 
 sha(X) ->
-    crypto:sha(term_to_binary(X)).
+    crypto:hash(sha, term_to_binary(X)).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
