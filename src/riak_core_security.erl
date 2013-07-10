@@ -220,7 +220,7 @@ match_grant(Bucket, Grants) ->
                     length(A) > length(B)
             end, Grants)).
 
-authenticate(Username, Password, PeerIP) ->
+authenticate(Username, Password, ConnInfo) ->
     Meta = get_meta(),
     Users = lookup(users, Meta, []),
     case lookup(Username, Users) of
@@ -228,7 +228,8 @@ authenticate(Username, Password, PeerIP) ->
             {error, unknown_user};
         UserData ->
             Sources = sort_sources(lookup(sources, Meta, [])),
-            case match_source(Sources, Username, PeerIP) of
+            case match_source(Sources, Username,
+                              proplists:get_value(ip, ConnInfo)) of
                 {ok, Source, _Options} ->
                     case Source of
                         trust ->
@@ -249,6 +250,20 @@ authenticate(Username, Password, PeerIP) ->
                                             {ok, get_context(Username, Meta)};
                                         false ->
                                             {error, bad_password}
+                                    end
+                            end;
+                        certificate ->
+                            case proplists:get_value(common_name, ConnInfo) of
+                                undefined ->
+                                    {error, no_common_name};
+                                CN ->
+                                    %% TODO postgres support a map from
+                                    %% common-name to username, should we?
+                                    case CN == Username of
+                                        true ->
+                                            {ok, get_context(Username, Meta)};
+                                        false ->
+                                            {error, common_name_mismatch}
                                     end
                             end;
                         Source ->

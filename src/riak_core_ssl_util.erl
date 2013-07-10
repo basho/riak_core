@@ -29,7 +29,9 @@
 -export([maybe_use_ssl/1,
          validate_ssl_config/1,
          upgrade_client_to_ssl/2,
-         upgrade_server_to_ssl/2]).
+         upgrade_server_to_ssl/2,
+         get_common_name/1
+        ]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
