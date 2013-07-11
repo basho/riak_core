@@ -97,12 +97,20 @@ lookup(IndexAsInt, CHash) ->
     {IndexAsInt, X} = proplists:lookup(IndexAsInt, Nodes),
     X.
 
+-ifdef(new_hash).
+sha(Bin) ->
+    crypto:hash(sha, Bin).
+-else.
+sha(Bin) ->
+    crypto:sha(Bin).
+-endif.
+
 %% @doc Given any term used to name an object, produce that object's key
 %%      into the ring.  Two names with the same SHA-1 hash value are
 %%      considered the same name.
 -spec key_of(ObjectName :: term()) -> index().
 key_of(ObjectName) ->    
-    crypto:hash(sha, term_to_binary(ObjectName)).
+    sha(term_to_binary(ObjectName)).
 
 %% @doc Return all Nodes that own any partitions in the ring.
 -spec members(CHash :: chash()) -> [chash_node()].

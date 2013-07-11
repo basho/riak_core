@@ -176,11 +176,19 @@ integer_to_list(I0, Base, R0) ->
 	    integer_to_list(I1, Base, R1)
     end.
 
+-ifdef(new_hash).
+sha(Bin) ->
+    crypto:hash(sha, Bin).
+-else.
+sha(Bin) ->
+    crypto:sha(Bin).
+-endif.
+
 %% @spec unique_id_62() -> string()
 %% @doc Create a random identifying integer, returning its string
 %%      representation in base 62.
 unique_id_62() ->
-    Rand = crypto:hash(sha, term_to_binary({make_ref(), os:timestamp()})),
+    Rand = sha(term_to_binary({make_ref(), os:timestamp()})),
     <<I:160/integer>> = Rand,
     integer_to_list(I, 62).
 
