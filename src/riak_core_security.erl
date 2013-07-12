@@ -8,7 +8,8 @@ initial_config() ->
     [{users, []},
      {sources, []},
      {grants, []},
-     {revokes, []}
+     {revokes, []},
+     {epoch, os:timestamp()}
     ].
 
 get_meta() ->
@@ -152,40 +153,48 @@ print_users() ->
                 [[Username, io_lib:format("~p", [Options])] ||
             {Username, Options} <- Users]).
 
-%% TODO a context should only be valid for a short time, eg. 5 seconds.
-%% Or perhaps every grant change should increment some value on the user
-%% information so we can detect when we need to re-pull the context.
+%% Contexts are only valid until the GRANT epoch changes, and it will change
+%% whenever a GRANT or a REVOKE is performed. This is a little coarse grained
+%% right now, but it'll do for the moment.
 get_context(Username, Meta) ->
     Grants = lookup(Username, lookup(grants, Meta, []), []),
     Revokes = lookup(Username, lookup(revokes, Meta, []), []),
-    {Username, Grants, Revokes, os:timestamp()}.
+    {Username, Grants, Revokes, lookup(epoch, Meta)}.
 
 check_permission(Permission, Bucket, Context) ->
-    {_Username, Grants, Revokes, _Expiry} = Context,
-    %% TODO check context is still valid
-    case match_grant(Bucket, Grants) of
-        {B, MatchG} ->
-            case MatchG /= undefined andalso
-                (lists:member(Permission, MatchG) orelse MatchG == 'all') of
-                true ->
-                    %% ok, permission is present, check for revokes
-                    MatchR = lookup(B, Revokes, undefined),
-                    case MatchR /= undefined andalso
-                        (lists:member(Permission, MatchR) orelse MatchR == 'all') of
+    Meta = get_meta(),
+    Epoch = lookup(epoch, Meta),
+    {Username, Grants, Revokes, CtxEpoch} = Context,
+    case Epoch == CtxEpoch of
+        false ->
+            %% context has expired
+            check_permission(Permission, Bucket, get_context(Username, Meta));
+        true ->
+            %% TODO check context is still valid
+            case match_grant(Bucket, Grants) of
+                {B, MatchG} ->
+                    case MatchG /= undefined andalso
+                        (lists:member(Permission, MatchG) orelse MatchG == 'all') of
                         true ->
-                            %% oh snap, it was revoked
-                            {false, Context};
+                            %% ok, permission is present, check for revokes
+                            MatchR = lookup(B, Revokes, undefined),
+                            case MatchR /= undefined andalso
+                                (lists:member(Permission, MatchR) orelse MatchR == 'all') of
+                                true ->
+                                    %% oh snap, it was revoked
+                                    {false, Context};
+                                false ->
+                                    %% not revoked, yay
+                                    {true, Context}
+                            end;
                         false ->
-                            %% not revoked, yay
-                            {true, Context}
+                            %% no applicable grant
+                            {false, Context}
                     end;
-                false ->
-                    %% no applicable grant
+                undefined ->
+                    %% no grants for this user at all
                     {false, Context}
-            end;
-        undefined ->
-            %% no grants for this user at all
-            {false, Context}
+            end
     end.
 
 get_username({Username, _Grants, _Revokes, _Expiry}) ->
@@ -301,7 +310,8 @@ add_grant(all, Bucket, Grants) ->
     Meta = get_meta(),
     case validate_permissions(Grants) of
         ok ->
-            put_meta(add_grant_int([all], Bucket, Grants, Meta));
+            put_meta(stash(epoch, {epoch, os:timestamp()},
+                           add_grant_int([all], Bucket, Grants, Meta)));
         Error ->
             Error
     end;
@@ -329,7 +339,8 @@ add_grant([H|_T]=UserList, Bucket, Grants) when is_list(H) ->
     case Valid2 of
         ok ->
             %% add a source for each user
-            put_meta(add_grant_int(UserList, Bucket, Grants, Meta)),
+            put_meta(stash(epoch, {epoch, os:timestamp()},
+                           add_grant_int(UserList, Bucket, Grants, Meta))),
             ok;
         Error ->
             Error
@@ -359,7 +370,7 @@ add_revoke(all, Bucket, Revokes) ->
         ok ->
             case add_revoke_int([all], Bucket, revokes, Meta) of
                 {ok, NewMeta} ->
-                    put_meta(NewMeta),
+                    put_meta(stash(epoch, {epoch, os:timestamp()}, NewMeta)),
                     ok;
                 Error2 ->
                     Error2
@@ -393,7 +404,7 @@ add_revoke([H|_T]=UserList, Bucket, Revokes) when is_list(H) ->
             %% add a source for each user
             case add_revoke_int(UserList, Bucket, Revokes, Meta) of
                 {ok, NewMeta} ->
-                    put_meta(NewMeta),
+                    put_meta(stash(epoch, {epoch, os:timestamp()}, NewMeta)),
                     ok;
                 Error2 ->
                     Error2
