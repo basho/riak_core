@@ -23,12 +23,7 @@
          stage_leave/1, stage_remove/1, stage_replace/1, stage_resize_ring/1,
          stage_force_replace/1, print_staged/1, commit_staged/1,
          clear_staged/1, transfer_limit/1, pending_claim_percentage/2,
-         pending_nodes_and_claim_percentages/1, transfers/1]).
-
-%% @doc Return list of nodes, current and future claim.
-pending_nodes_and_claim_percentages(Ring) ->
-    Nodes = lists:keysort(2, riak_core_ring:all_member_status(Ring)),
-    [{Node, pending_claim_percentage(Ring, Node)} || Node <- Nodes].
+         transfers/1]).
 
 %% @doc Return for a given ring and node, percentage currently owned and
 %% anticipated after the transitions have been completed.
