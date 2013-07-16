@@ -7,7 +7,7 @@
 -define(SALT_LENGTH, 16).
 -define(DERIVED_LENGTH, 32).
 -define(HASH_ITERATIONS, 65536).
--define(HASH_FUNCTION, {hmac, sha512}).
+-define(HASH_FUNCTION, {hmac, sha}).
 
 initial_config() ->
     %[{users, [{"andrew", [{password, "foo"}]}]},
@@ -525,12 +525,13 @@ validate_options(Options) ->
             lager:info("Hashing password: ~p", [Pass]),
             {ok, HashedPass, Algorithm, HashFunction, Salt, Iterations, DerivedLength} =  hash_password(Pass),
             %% Add to options 
-            NewOptions = stash(hash, [{hash_pass, HashedPass},
-                                     {algorithm, Algorithm},
-                                     {hash_func, HashFunction},
-                                     {salt, Salt},
-                                     {iterations, Iterations},
-                                     {length, DerivedLength}],
+            NewOptions = stash(hash, {hash, 
+                                      [{hash_pass, HashedPass},
+                                       {algorithm, Algorithm},
+                                       {hash_func, HashFunction},
+                                       {salt, Salt},
+                                       {iterations, Iterations},
+                                       {length, DerivedLength}]},
                                Options),
             {ok, NewOptions}
     end.
