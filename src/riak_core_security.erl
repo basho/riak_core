@@ -3,6 +3,12 @@
 %% TODO
 -compile(export_all).
 
+%% TOOD should make these configurable
+-define(SALT_LENGTH, 16).
+-define(DERIVED_LENGTH, 32).
+-define(HASH_ITERATIONS, 65536).
+-define(HASH_FUNCTION, {hmac, sha512}).
+
 initial_config() ->
     %[{users, [{"andrew", [{password, "foo"}]}]},
     [{users, []},
@@ -511,7 +517,42 @@ rm_source_int([User|Users], CIDR, Meta) ->
 
 %% XXX this is a stub for now, should tie in JoeD's stuff for validation
 validate_options(Options) ->
-    {ok, Options}.
+    %% Check if password is an option
+    case lookup("password", Options) of
+        undefined ->
+            {ok, Options};
+        Pass ->
+            lager:info("Hashing password: ~p", [Pass]),
+            {ok, HashedPass, Algorithm, HashFunction, Salt, Iterations, DerivedLength} =  hash_password(Pass),
+            %% Add to options 
+            NewOptions = stash(hash, [{hash_pass, HashedPass},
+                                     {algorithm, Algorithm},
+                                     {hash_func, HashFunction},
+                                     {salt, Salt},
+                                     {iterations, Iterations},
+                                     {length, DerivedLength}],
+                               Options),
+            {ok, NewOptions}
+    end.
+            
+            
+hash_password(Password) ->
+    %% TODO: Do something more with the salt?
+    %% Generate salt the simple way
+    Salt = crypto:rand_bytes(?SALT_LENGTH),
+    
+    BinaryPass = list_to_binary(Password),
+    
+    %% Hash the original password
+    lager:info("Calling pbkdf2 with the following:"),
+    lager:info("hash_func = ~p", [?HASH_FUNCTION]),
+    lager:info("password = ~p", [BinaryPass]),
+    lager:info("salt = ~p", [Salt]),
+    lager:info("iterations = ~p", [?HASH_ITERATIONS]),
+    lager:info("length = ~p", [?DERIVED_LENGTH]),
+    {ok, HashedPass} = pbkdf2:pbkdf2(?HASH_FUNCTION, BinaryPass, Salt, ?HASH_ITERATIONS, ?DERIVED_LENGTH),
+    {ok, HashedPass, <<"pbkdf2">>, ?HASH_FUNCTION, Salt, ?HASH_ITERATIONS, ?DERIVED_LENGTH}.
+    
 
 validate_permissions(Perms) ->
     KnownPermissions = app_helper:get_env(riak_core, permissions, []),
