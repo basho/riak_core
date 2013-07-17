@@ -51,11 +51,17 @@ set_socket(Pid, Socket) ->
     riak_core_gen_server:call(Pid, {set_socket, Socket}).
 
 init([SslOpts]) ->
-    {ok, #state{ssl_opts = SslOpts,
-                tcp_mod  = if SslOpts /= [] -> ssl;
-                              true          -> gen_tcp
-                           end,
-                timeout_len = app_helper:get_env(riak_core, handoff_receive_timeout, ?RECV_TIMEOUT)}}.
+    LockMeta = [{direction, inbound}],
+    case riak_core_bg_manager:get_lock(handoff, LockMeta) of
+        max_concurrency -> {stop, max_concurrency};
+        ok ->
+            TimeoutLen = app_helper:get_env(riak_core, handoff_receive_timeout, ?RECV_TIMEOUT),
+            {ok, #state{ssl_opts = SslOpts,
+                        tcp_mod  = if SslOpts /= [] -> ssl;
+                                      true          -> gen_tcp
+                                   end,
+                        timeout_len = TimeoutLen}}
+    end.
 
 handle_call({set_socket, Socket0}, _From, State = #state{ssl_opts = SslOpts}) ->
     SockOpts = [{active, once}, {packet, 4}, {header, 1}],
