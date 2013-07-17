@@ -56,6 +56,7 @@ restart_webs() ->
 init([]) ->
     Children = lists:flatten(
                  [?CHILD(riak_core_sysmon_minder, worker),
+                  ?CHILD(riak_core_bg_manager, worker),
                   ?CHILD(riak_core_vnode_sup, supervisor, 305000),
                   ?CHILD(riak_core_eventhandler_sup, supervisor),
                   ?CHILD(riak_core_ring_events, worker),
