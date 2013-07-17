@@ -50,6 +50,7 @@
              riak_core_node_watcher,
              riak_core_node_watcher_events,
              riak_core_pb,
+             riak_core_pw_auth,
              riak_core_repair,
              riak_core_ring,
              riak_core_ring_events,
