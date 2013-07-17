@@ -358,7 +358,6 @@ enable_lock(LockType, State) ->
     update_lock_enabled(LockType, true, State).
 
 disable_lock(LockType, State) ->
-    %% TODO: should we also kill all processes that hold the lock/release all locks?
     update_lock_enabled(LockType, false, State).
 
 update_lock_enabled(LockType, Value, State) ->
@@ -368,8 +367,6 @@ update_lock_enabled(LockType, Value, State) ->
                      State).
 
 update_concurrency_limit(LockType, Limit, State) ->
-    %% TODO: if Limit < Number of Currently held locks, should we kill # Held - Limit
-    %%       processes and release their locks
     update_lock_info(LockType,
                      fun(LockInfo) -> LockInfo#lock_info{concurrency_limit=Limit} end,
                      ?DEFAULT_LOCK_INFO#lock_info{concurrency_limit=Limit},
