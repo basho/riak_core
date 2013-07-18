@@ -272,9 +272,16 @@ authenticate(Username, Password, ConnInfo) ->
                                                   "password authentication, but has "
                                                   "no password", [Username]),
                                     {error, missing_password};
-                                Pass ->
-                                    %% This should be bcrypted or something...
-                                    case Password == Pass of
+                                PasswordData ->
+                                    HashedPass = lookup(hash_pass, PasswordData),
+                                    HashFunction = lookup(hash_func, PasswordData),
+                                    Salt = lookup(salt, PasswordData),
+                                    Iterations = lookup(iterations, PasswordData),
+                                    case riak_core_pw_auth:check_password(Password,
+                                                                          HashedPass,
+                                                                          HashFunction,
+                                                                          Salt,
+                                                                          Iterations) of
                                         true ->
                                             {ok, get_context(Username, Meta)};
                                         false ->
@@ -550,24 +557,33 @@ validate_options(Options) ->
         undefined ->
             {ok, Options};
         Pass ->
-            lager:info("Hashing password: ~p", [Pass]),
-            case riak_core_pw_auth:hash_password(Pass) of
-                {ok, HashedPass, Algorithm, HashFunction, Salt, Iterations, DerivedLength} ->
-                    %% Add to options 
-                    NewOptions = stash(hash, {hash, 
-                                              [{hash_pass, HashedPass},
-                                               {algorithm, Algorithm},
-                                               {hash_func, HashFunction},
-                                               {salt, Salt},
-                                               {iterations, Iterations},
-                                               {length, DerivedLength}]},
-                                       Options),
+            case validate_password_option(Pass, Options) of
+                {ok, NewOptions} ->
+                    %% Do not continue to store the plaintext password
                     {ok, NewOptions};
-                {error, Error} ->
-                    {error, Error}
+                {error, _E} ->
+                    {error, _E}
             end
     end.
-            
+
+%% Handle 'password' option if given
+validate_password_option(Pass, Options) ->
+    lager:info("Hashing password: ~p", [Pass]),
+    case riak_core_pw_auth:hash_password(Pass) of
+        {ok, HashedPass, AuthName, HashFunction, Salt, Iterations} ->
+            %% Add to options
+            NewOptions = stash("password", {"password",
+                                            [{hash_pass, HashedPass},
+                                             {auth_name, AuthName},
+                                             {hash_func, HashFunction},
+                                             {salt, Salt},
+                                             {iterations, Iterations}]},
+                               Options),
+            {ok, NewOptions};
+        {error, Error} ->
+            {error, Error}
+    end.
+
 
 validate_permissions(Perms) ->
     KnownPermissions = app_helper:get_env(riak_core, permissions, []),
@@ -593,4 +609,3 @@ validate_permissions([Perm|T], Known) ->
         _ ->
             {error, {unknown_permission, Perm}}
     end.
-

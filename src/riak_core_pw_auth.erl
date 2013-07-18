@@ -20,28 +20,36 @@
 
 -module(riak_core_pw_auth).
 
-%% TODO
--compile(export_all).
+-export([hash_password/1, check_password/5]).
 
-%% TOOD should make these configurable
+%% TOOD should make these configurable in app.config
 -define(SALT_LENGTH, 16).
--define(DERIVED_LENGTH, 32).
 -define(HASH_ITERATIONS, 65536).
--define(HASH_FUNCTION, {hmac, sha}).
+%% TODO this should call a default_hash_func() function to get default based on erlang version
+-define(HASH_FUNCTION, sha).
+-define(AUTH_NAME, pbkdf2).
 
-hash_password(Password) ->
-    %% TODO: Do something more with the salt?
-    %% Generate salt the simple way
+%% @doc Hash a plaintext password, returning hashed password and algorithm details
+hash_password(EnteredPassword) ->
+    % TODO: Do something more with the salt?
+    % Generate salt the simple way
     Salt = crypto:rand_bytes(?SALT_LENGTH),
-    
-    BinaryPass = list_to_binary(Password),
-    
-    %% Hash the original password
-    lager:info("Calling pbkdf2 with the following:"),
-    lager:info("hash_func = ~p", [?HASH_FUNCTION]),
-    lager:info("password = ~p", [BinaryPass]),
-    lager:info("salt = ~p", [Salt]),
-    lager:info("iterations = ~p", [?HASH_ITERATIONS]),
-    lager:info("length = ~p", [?DERIVED_LENGTH]),
-    {ok, HashedPass} = pbkdf2:pbkdf2(?HASH_FUNCTION, BinaryPass, Salt, ?HASH_ITERATIONS, ?DERIVED_LENGTH),
-    {ok, HashedPass, <<"pbkdf2">>, ?HASH_FUNCTION, Salt, ?HASH_ITERATIONS, ?DERIVED_LENGTH}.
+
+    BinaryPass = list_to_binary(EnteredPassword),
+
+    % Hash the original password and store as hex
+    {ok, HashedPass} = pbkdf2:pbkdf2(?HASH_FUNCTION, BinaryPass, Salt, ?HASH_ITERATIONS),
+    HexPass = pbkdf2:to_hex(HashedPass),
+    {ok, HexPass, ?AUTH_NAME, ?HASH_FUNCTION, Salt, ?HASH_ITERATIONS}.
+
+
+%% @doc Check a plaintext password with a hashed password
+check_password(EnteredPassword, HashedPassword, HashFunction, Salt, HashIterations) ->
+
+    % Passwords are stored as binaries
+    BinaryPass = list_to_binary(EnteredPassword),
+
+    % Hash EnteredPassword to compare to HashedPassword
+    {ok, HashedPass} = pbkdf2:pbkdf2(HashFunction, BinaryPass, Salt, HashIterations),
+    HexPass = pbkdf2:to_hex(HashedPass),
+    pbkdf2:compare_secure(HexPass, HashedPassword).
