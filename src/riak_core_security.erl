@@ -259,7 +259,7 @@ authenticate(Username, Password, ConnInfo) ->
             Sources = sort_sources(lookup(sources, Meta, [])),
             case match_source(Sources, Username,
                               proplists:get_value(ip, ConnInfo)) of
-                {ok, Source, _Options} ->
+                {ok, Source, SourceOptions} ->
                     case Source of
                         trust ->
                             %% trust always authenticates
@@ -296,10 +296,24 @@ authenticate(Username, Password, ConnInfo) ->
                                     end
                             end;
                         Source ->
-                            lager:warning("User ~p is configured with unknown "
-                                          "authentication source ~p",
-                                          [Username, Source]),
-                            {error, unknown_source}
+                            %% check for a dynamically registered auth module
+                            AuthMods = app_helper:get_env(riak_core,
+                                                          auth_mods, []),
+                            case proplists:get_value(Source, AuthMods) of
+                                undefined ->
+                                    lager:warning("User ~p is configured with unknown "
+                                                  "authentication source ~p",
+                                                  [Username, Source]),
+                                    {error, unknown_source};
+                                AuthMod ->
+                                    case AuthMod:auth(Username, Password,
+                                                      UserData, SourceOptions) of
+                                        ok ->
+                                            {ok, get_context(Username, Meta)};
+                                        error ->
+                                            {error, bad_password}
+                                    end
+                            end
                     end;
                 {error, Reason} ->
                     {error, Reason}
