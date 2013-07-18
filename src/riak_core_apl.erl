@@ -325,7 +325,7 @@ six_node_test() ->
     ok.
 
 chbin_test_() ->
-    {timeout, 60, fun chbin_test_scenario/0}.
+    {timeout, 180, fun chbin_test_scenario/0}.
 
 chbin_test_scenario() ->
     [chbin_test_scenario(Size, NumNodes)
