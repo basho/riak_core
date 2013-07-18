@@ -22,7 +22,6 @@
 %% TODO
 -compile(export_all).
 
-
 initial_config() ->
     %[{users, [{"andrew", [{password, "foo"}]}]},
     [{users, []},
