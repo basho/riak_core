@@ -323,7 +323,7 @@ contains_node(Tree,Node) ->
 getkids(Tree) ->
     [V || {_K,V} <- orddict:to_list(Tree#merk.children)].
 
--ifdef(new_hash).
+-ifndef(old_hash).
 sha(X) ->
     crypto:hash(sha, term_to_binary(X)).
 -else.

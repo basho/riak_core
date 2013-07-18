@@ -97,7 +97,7 @@ lookup(IndexAsInt, CHash) ->
     {IndexAsInt, X} = proplists:lookup(IndexAsInt, Nodes),
     X.
 
--ifdef(new_hash).
+-ifndef(old_hash).
 sha(Bin) ->
     crypto:hash(sha, Bin).
 -else.
