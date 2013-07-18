@@ -562,7 +562,6 @@ validate_options(Options) ->
 
 %% Handle 'password' option if given
 validate_password_option(Pass, Options) ->
-    lager:info("Hashing password: ~p", [Pass]),
     case riak_core_pw_auth:hash_password(Pass) of
         {ok, HashedPass, AuthName, HashFunction, Salt, Iterations} ->
             %% Add to options, replacing plaintext password
