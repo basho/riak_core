@@ -557,13 +557,7 @@ validate_options(Options) ->
         undefined ->
             {ok, Options};
         Pass ->
-            case validate_password_option(Pass, Options) of
-                {ok, NewOptions} ->
-                    %% Do not continue to store the plaintext password
-                    {ok, NewOptions};
-                {error, _E} ->
-                    {error, _E}
-            end
+            validate_password_option(Pass, Options)
     end.
 
 %% Handle 'password' option if given
@@ -571,7 +565,7 @@ validate_password_option(Pass, Options) ->
     lager:info("Hashing password: ~p", [Pass]),
     case riak_core_pw_auth:hash_password(Pass) of
         {ok, HashedPass, AuthName, HashFunction, Salt, Iterations} ->
-            %% Add to options
+            %% Add to options, replacing plaintext password
             NewOptions = stash("password", {"password",
                                             [{hash_pass, HashedPass},
                                              {auth_name, AuthName},
