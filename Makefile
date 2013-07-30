@@ -7,7 +7,7 @@ PULSE_TESTS = worker_pool_pulse
 
 all: deps compile
 
-compile:
+compile:	
 	./rebar compile
 
 deps:
@@ -19,7 +19,7 @@ clean:
 distclean: clean
 	./rebar delete-deps
 
-test: all
+test: all	
 	./rebar skip_deps=true eunit
 
 # You should 'clean' before your first run of this target

@@ -323,8 +323,13 @@ contains_node(Tree,Node) ->
 getkids(Tree) ->
     [V || {_K,V} <- orddict:to_list(Tree#merk.children)].
 
+-ifndef(old_hash).
+sha(X) ->
+    crypto:hash(sha, term_to_binary(X)).
+-else.
 sha(X) ->
     crypto:sha(term_to_binary(X)).
+-endif.
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
