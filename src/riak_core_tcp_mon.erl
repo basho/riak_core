@@ -206,7 +206,7 @@ handle_info({nodeup, Node, _InfoList}, State) ->
             lager:error("Could not get dist for ~p\n~p\n", [Node, DistCtrl]),
             {noreply, State};
         Port ->
-            {noreply, add_dist_conn(Port, Node, State)}
+            {noreply, add_dist_conn(Node, Port, State)}
     end;
 
 handle_info({nodedown, Node, _InfoList}, State) ->
