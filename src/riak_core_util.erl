@@ -52,8 +52,12 @@
          is_arch/1,
          format_ip_and_port/2,
          peername/2,
-         sockname/2
+         sockname/2,
+         make_fold_req/2,
+         make_fold_req/4
         ]).
+
+-include("riak_core_vnode.hrl").
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -531,6 +535,17 @@ sockname(Socket, Transport) ->
             %% just return a string so JSON doesn't blow up
             lists:flatten(io_lib:format("error:~p", [Reason]))
     end.
+
+make_fold_req(FoldFun, Acc0) ->
+    make_fold_req(FoldFun, Acc0, false, []).
+
+make_fold_req(FoldFun, Acc0, Forwardable, Opts)
+  when is_function(FoldFun, 3)
+       andalso (Forwardable == true orelse Forwardable == true)
+       andalso is_list(Opts) ->
+    %% TODO: Capability negotiation goes here, to figure out which version #
+    %% of the riak_core_fold_req_v* record to use.
+    ?FOLD_REQ{foldfun=FoldFun, acc0=Acc0, forwardable=Forwardable, opts=Opts}.
 
 %% ===================================================================
 %% EUnit tests
