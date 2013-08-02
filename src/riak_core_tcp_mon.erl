@@ -76,16 +76,16 @@ start_link(Props) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, Props, []).
 
 monitor(Socket, Tag, Transport) ->
-    gen_server:call(?MODULE, {monitor, Socket, Tag, Transport}).
+    gen_server:call(?MODULE, {monitor, Socket, Tag, Transport}, infinity).
 
 status() ->
-    gen_server:call(?MODULE, status).
+    gen_server:call(?MODULE, status, infinity).
 
 status(Timeout) ->
     gen_server:call(?MODULE, status, Timeout).
 
 socket_status(Socket) ->
-  gen_server:call(?MODULE, {socket_status, Socket}).
+  gen_server:call(?MODULE, {socket_status, Socket}, infinity).
 
 format() ->
     Status = status(),
