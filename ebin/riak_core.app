@@ -86,7 +86,13 @@
              riak_core_tcp_mon,
              riak_core_ssl_util,
              supervisor_pre_r14b04,
-             vclock
+             vclock,
+             dvvset,
+             riak_core_metadata,
+             riak_core_metadata_object,
+             riak_core_metadata_manager,
+             riak_core_broadcast,
+             riak_core_broadcast_handler
             ]},
   {registered, []},
   {included_applications, [folsom]},
