@@ -27,7 +27,8 @@
 -module(riak_core_coverage_plan).
 
 %% API
--export([create_plan/5]).
+-export([create_plan/5, load_nif/0]).
+-on_load(load_nif/0).
 
 -type index() :: non_neg_integer().
 -type req_id() :: non_neg_integer().
@@ -59,7 +60,6 @@ create_plan(VNodeSelector, NVal, PVC, ReqId, Service) ->
     Offset = ReqId rem NVal,
 
     RingIndexInc = chash:ring_increment(PartitionCount),
-    AllKeySpaces = lists:seq(0, PartitionCount - 1),
     UnavailableKeySpaces = [(DownVNode div RingIndexInc) || DownVNode <- DownVNodes],
     %% Create function to map coverage keyspaces to
     %% actual VNode indexes and determine which VNode
@@ -87,13 +87,11 @@ create_plan(VNodeSelector, NVal, PVC, ReqId, Service) ->
     %% The offset value serves as a tiebreaker in the
     %% compare_next_vnode function and is used to distribute
     %% work to different sets of VNodes.
-    CoverageResult = find_coverage(AllKeySpaces,
-                                   Offset,
+    CoverageResult = find_coverage(Offset,
                                    NVal,
                                    PartitionCount,
                                    UnavailableKeySpaces,
-                                   lists:min([PVC, NVal]),
-                                   []),
+                                   lists:min([PVC, NVal])),
     case CoverageResult of
         {ok, CoveragePlan} ->
             %% Assemble the data structures required for
@@ -110,9 +108,44 @@ create_plan(VNodeSelector, NVal, PVC, ReqId, Service) ->
             end
     end.
 
+%% @private
+load_nif() ->
+    SOPath = case code:priv_dir(riak_core) of
+                 {error, _} ->
+                     filename:join(["priv", "lib"]);
+                 Path ->
+                     filename:join([Path, "lib"])
+             end,
+    case catch erlang:load_nif(
+                 filename:join([SOPath, atom_to_list(?MODULE)]), 0) of
+        ok ->
+            ok;
+        Err ->
+            lager:error("Failed to load NIF ~p: ~p", [?MODULE, Err])
+    end.
+
 %% ====================================================================
 %% Internal functions
 %% ====================================================================
+%% @private
+find_coverage(Offset, NVal, PartitionCount, UnavailableKeySpaces, PVC) ->
+    case PartitionCount of
+        64 ->
+            find_coverage_fast(Offset, NVal, UnavailableKeySpaces, PVC);
+        _ ->
+            AllKeySpaces = lists:seq(0, PartitionCount - 1),
+            find_coverage(AllKeySpaces,
+                          Offset,
+                          NVal,
+                          PartitionCount,
+                          UnavailableKeySpaces,
+                          PVC,
+                          [])
+    end.
+
+%% @private
+find_coverage_fast(_Offset, _NVal, _UnavailableKeySpaces, _PVC) ->
+    erlang:nif_error(nif_not_loaded).
 
 %% @private
 find_coverage(AllKeySpaces, Offset, NVal, PartitionCount, UnavailableKeySpaces, PVC, []) ->
