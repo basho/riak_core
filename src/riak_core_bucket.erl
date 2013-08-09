@@ -35,7 +35,8 @@
          default_object_nval/0,
          merge_props/2,
          name/1,
-         n_val/1]).
+         n_val/1,
+         default_bucket_props/0]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
