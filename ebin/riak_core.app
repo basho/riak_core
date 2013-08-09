@@ -43,6 +43,7 @@
              riak_core_handoff_sender,
              riak_core_handoff_sender_sup,
              riak_core_handoff_sup,
+             riak_core_mochiglobal,
              riak_core_nodeid,
              riak_core_node_watcher,
              riak_core_node_watcher_events,
