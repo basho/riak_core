@@ -11,7 +11,6 @@
              chashbin,
              gen_nb_server,
              riak_core_gen_server,
-             json_pp,
              merkerl,
              riak_core_priority_queue,
              process_proxy,
