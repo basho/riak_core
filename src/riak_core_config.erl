@@ -26,7 +26,7 @@
 -module(riak_core_config).
 
 
--export([http_ip_and_port/0, ring_state_dir/0, ring_creation_size/0,
+-export([ring_state_dir/0, ring_creation_size/0,
          default_bucket_props/0, cluster_name/0, gossip_interval/0,
          target_n_val/0]).
 
@@ -37,32 +37,6 @@
 %% ===================================================================
 %% Public API
 %% ===================================================================
-
-%% @spec http_ip_and_port() -> {string(), integer()} | error
-%% @doc Get the HTTP IP address and port number environment variables.
-http_ip_and_port() ->
-    case get_riak_core_env(http) of
-        [{WebIp, WebPort} | _] ->            
-            {WebIp, WebPort};
-        [] ->
-            error;
-        undefined ->
-            %% Fallback to pre-0.14 HTTP config.                                                                                                                        
-            %% TODO: Remove in 0.16                                                                                                                                     
-            WebIp = get_riak_core_env(web_ip),
-            WebPort = get_riak_core_env(web_port),
-            if
-                WebIp == undefined ->
-                    error;
-                WebPort == undefined ->
-                    error;
-                true ->
-                    lager:warning("Found HTTP config for riak_core using pre-0.14 config "
-                        "values; please update the config file to use new HTTP "
-                        "binding configuration values."),
-                    {WebIp, WebPort}
-            end
-    end.
 
 %% @spec ring_state_dir() -> string() | undefined
 %% @doc Get the ring_state_dir environment variable.
@@ -109,7 +83,6 @@ riak_core_config_test_() ->
       fun setup/0,
       fun cleanup/1,
       [
-       fun http_ip_and_port_test_case/0,
        fun default_bucket_props_test_case/0,
        fun target_n_val_test_case/0,
        fun gossip_interval_test_case/0,
@@ -119,19 +92,6 @@ riak_core_config_test_() ->
        fun non_existent_var_test_case/0
       ]
     }.
-
-http_ip_and_port_test_case() ->
-    ?assertEqual(error, http_ip_and_port()),
-    %% Test the pre-0.14 style config
-    application:set_env(riak_core, web_ip, "127.0.0.1"),
-    application:set_env(riak_core, web_port, 8098),
-    ?assertEqual({"127.0.0.1", 8098}, http_ip_and_port()),
-    %% Test the config for 0.14 and later
-    application:set_env(riak_core, http, [{"localhost", 9000}]),
-    ?assertEqual({"localhost", 9000}, http_ip_and_port()),
-
-    [application:unset_env(riak_core, K) || K <- [web_ip, web_port, http]],
-    ok.
 
 default_bucket_props_test_case() ->
     DefaultBucketProps = [{allow_mult,false},

@@ -79,8 +79,6 @@
              riak_core_vnode_sup,
              riak_core_vnode_worker,
              riak_core_vnode_worker_pool,
-             riak_core_web,
-             riak_core_wm_urlmap,
              riak_core_connection_mgr,
              riak_core_connection_mgr_stats,
              riak_core_connection,
