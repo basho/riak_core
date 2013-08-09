@@ -35,7 +35,8 @@
          default_object_nval/0,
          merge_props/2,
          name/1,
-         n_val/1]).
+         n_val/1,
+         default_bucket_props/0]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -48,7 +49,7 @@
 %%      behavior, to allow settings from app.config to override any
 %%      hard-coded values.
 append_bucket_defaults(Items) when is_list(Items) ->
-    OldDefaults = app_helper:get_env(riak_core, default_bucket_props, []),
+    OldDefaults = default_bucket_props(),
     NewDefaults = merge_props(OldDefaults, Items),
     FixedDefaults = case riak_core:bucket_fixups() of
         [] -> NewDefaults;
@@ -112,9 +113,13 @@ get_bucket_props(Name, Meta) ->
     case Meta of
         undefined ->
             [{name, Name}
-             |app_helper:get_env(riak_core, default_bucket_props)];
+             |default_bucket_props()];
         {ok, Bucket} -> Bucket
     end.
+
+%% @doc Returns the default bucket properties.
+default_bucket_props() ->
+    app_helper:get_env(riak_core, default_bucket_props, []).
 
 %% @spec reset_bucket(binary()) -> ok
 %% @doc Reset the bucket properties for Bucket to the default settings
@@ -142,7 +147,7 @@ bucket_nval_map(Ring) ->
 %% @doc returns the default n value for buckets that have not explicitly set the property
 -spec default_object_nval() -> integer().
 default_object_nval() ->
-    riak_core_bucket:n_val(riak_core_config:default_bucket_props()).
+    riak_core_bucket:n_val(default_bucket_props()).
 
 %% @private
 -spec validate_props(BucketProps::list({PropName::atom(), Value::any()}),
