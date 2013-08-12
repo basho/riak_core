@@ -41,10 +41,19 @@
 -include("riak_core_metadata.hrl").
 
 -define(SERVER, ?MODULE).
--define(MM_DETS, mm_dets).
--define(MM_ETS, mm_ets).
 
--record(state, {serverid :: term()}).
+-record(state, {
+          %% identifier used in logical clocks
+          serverid   :: term(),
+
+          %% where data files are stored
+          data_root  :: file:filename(),
+
+          %% an ets table holding references to per
+          %% full-prefix ets tables
+          ets_tabs   :: ets:tab()
+
+         }).
 
 -type mm_path_opt()     :: {data_dir, file:name_all()}.
 -type mm_nodename_opt() :: {nodename, term()}.
@@ -76,7 +85,8 @@ start_link(Opts) ->
 %% for a subsequent call to put/3 the context can be obtained using
 %% riak_core_metadata_object:context/1. Values can obtained w/ riak_core_metadata_object:values/1.
 -spec get(metadata_pkey()) -> metadata_object() | undefined.
-get(PKey) ->
+get({{Prefix, SubPrefix}, _Key}=PKey) when is_binary(Prefix) andalso
+                                           is_binary(SubPrefix) ->
     gen_server:call(?SERVER, {get, PKey}).
 
 %% @doc Sets the value of a prefixed key. The most recently read context (see get/1)
@@ -85,7 +95,8 @@ get(PKey) ->
 put(PKey, undefined, Value) ->
     %% nil is an empty version vector for dvvset
     put(PKey, [], Value);
-put(PKey, Context, Value) ->
+put({{Prefix, SubPrefix}, _Key}=PKey, Context, Value) when is_binary(Prefix) andalso
+                                                           is_binary(SubPrefix) ->
     gen_server:call(?SERVER, {put, PKey, Context, Value}).
 
 %%%===================================================================
@@ -159,10 +170,12 @@ init([Opts]) ->
             {stop, no_data_dir};
         DataRoot ->
             Nodename = proplists:get_value(nodename, Opts, node()),
-            State = #state{serverid=Nodename},
-            State2 = init_disk_storage(DataRoot, State),
-            State3 = init_mem_storage(State2),
-            {ok, State3}
+            State = #state{serverid=Nodename,
+                           data_root=DataRoot,
+                           ets_tabs=new_ets_tab()},
+            %% TODO: should do this out-of-band from startup so we don't block
+            init_from_files(State),
+            {ok, State}
     end.
 
 %% @private
@@ -204,8 +217,9 @@ handle_info(_Info, State) ->
 
 %% @private
 -spec terminate(term(), #state{}) -> term().
-terminate(_Reason, _State) ->
-    ok = dets:close(?MM_DETS).
+terminate(_Reason, State) ->
+    close_dets_files(State),
+    ok.
 
 
 %% @private
@@ -230,31 +244,98 @@ read_merge_write(PKey, Obj, State) ->
             {true, NewState}
     end.
 
-%% TODO: ets storage
-store(PKey, Metadata, State) ->
-    dets:insert(?MM_DETS, [{PKey, Metadata}]),
+store({FullPrefix, Key}, Metadata, State) ->
+    maybe_init_ets(FullPrefix, State),
+    maybe_init_dets(FullPrefix, State),
+
+    Objs = [{Key, Metadata}],
+    ets:insert(ets_tab(FullPrefix, State), Objs),
+    ok = dets:insert(dets_tabname(FullPrefix), Objs),
     {Metadata, State}.
 
-%% TODO: add in ets lookup
-read(Key, _State) ->
-    case dets:lookup(?MM_DETS, Key) of
+read({FullPrefix, Key}, State=#state{}) ->
+    case ets_tab(FullPrefix, State) of
+        undefined -> undefined;
+        TabId -> read(Key, TabId)
+    end;
+read(Key, TabId) ->
+    case ets:lookup(TabId, Key) of
         [] -> undefined;
         [{Key, MetaRec}] -> MetaRec
     end.
 
-init_disk_storage(DataRoot, State) ->
-    DetsFile = dets_file(DataRoot),
-    ok = filelib:ensure_dir(DetsFile),
-    {ok, ?MM_DETS} = dets:open_file(?MM_DETS, [{file, DetsFile}]),
+init_from_files(State) ->
+    %% TODO: do this in parallel
+    dets_fold_filenames(fun init_from_file/2,
+                        State,
+                        State).
+
+init_from_file(FileName, State) ->
+    TabName = dets_filename_to_tabname(FileName),
+    FullPrefix = dets_tabname_to_prefix(TabName),
+    {ok, TabName} = dets:open_file(TabName, [{file, FileName}]),
+    TabId = init_ets(FullPrefix, State),
+    dets:to_ets(TabName, TabId),
     State.
 
-init_mem_storage(State) ->
-    ?MM_ETS = ets:new(?MM_ETS, [named_table]),
-%    dets:to_ets(?MM_DETS, ?MM_ETS),
-    State.
+ets_tab(FullPrefix, #state{ets_tabs=Tabs}) ->
+    case ets:lookup(Tabs, FullPrefix) of
+        [] -> undefined;
+        [{FullPrefix, TabId}] -> TabId
+    end.
 
-dets_file(DataRoot) ->
-    filename:join(DataRoot, "metadata").
+maybe_init_ets(FullPrefix, State) ->
+    case ets_tab(FullPrefix, State) of
+        undefined -> init_ets(FullPrefix, State);
+        _TabId -> ok
+    end.
+
+init_ets(FullPrefix, #state{ets_tabs=Tabs}) ->
+    TabId = new_ets_tab(),
+    ets:insert(Tabs, [{FullPrefix, TabId}]),
+    TabId.
+
+new_ets_tab() ->
+    ets:new(undefined, []).
+
+maybe_init_dets(FullPrefix, State) ->
+    case dets:info(dets_tabname(FullPrefix)) of
+        undefined -> init_dets(FullPrefix, State);
+        _ -> State
+    end.
+
+init_dets(FullPrefix, #state{data_root=DataRoot}) ->
+    TabName = dets_tabname(FullPrefix),
+    FileName = dets_file(DataRoot, FullPrefix),
+    ok = filelib:ensure_dir(FileName),
+    {ok, TabName} = dets:open_file(TabName, [{file, FileName}]).
+
+close_dets_files(State) ->
+    dets_fold_filenames(fun close_dets_file/2,
+                        undefined,
+                        State).
+
+close_dets_file(FileName, _Acc) ->
+    dets:close(dets_filename_to_tabname(FileName)).
+
+dets_tabname(FullPrefix) -> {?MODULE, FullPrefix}.
+dets_tabname_to_prefix({?MODULE, FullPrefix}) ->  FullPrefix.
+
+dets_file(DataRoot, FullPrefix) ->
+    filename:join(DataRoot, dets_filename(FullPrefix)).
+
+dets_filename({Prefix, SubPrefix}) ->
+    io_lib:format("~s-~s.dets", [Prefix, SubPrefix]).
+
+dets_filename_to_tabname(FileName) ->
+    [PrefixStr,SubPrefixStr, _] = string:tokens(FileName, [$-, $.]),
+    Prefix = list_to_binary(PrefixStr),
+    SubPrefix = list_to_binary(SubPrefixStr),
+    dets_tabname({Prefix, SubPrefix}).
+
+dets_fold_filenames(Fun, Acc0, #state{data_root=DataRoot}) ->
+    Files = filelib:wildcard("*.dets", DataRoot),
+    lists:foldl(Fun, Acc0, Files).
 
 data_root(Opts) ->
     case proplists:get_value(data_dir, Opts) of

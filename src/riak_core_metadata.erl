@@ -36,10 +36,10 @@
 -type put_opts()            :: [].
 
 
-%% @doc same as get(Prefix, Key, [])
+%% @doc same as get(FullPrefix, Key, [])
 -spec get(metadata_prefix(), metadata_key()) -> metadata_value() | undefined.
-get(Prefix, Key) ->
-    get(Prefix, Key, []).
+get(FullPrefix, Key) ->
+    get(FullPrefix, Key, []).
 
 %% @doc Retrieves the local value stored at the given prefix and key.
 %%
@@ -51,8 +51,9 @@ get(Prefix, Key) ->
 %% NOTE: an update will be broadcast if conflicts are resolved. any further conflicts generated
 %% by concurrenct writes during resolution are not resolved
 -spec get(metadata_prefix(), metadata_key(), get_opts()) -> metadata_value().
-get(Prefix, Key, Opts) ->
-    PKey = prefixed_key(Prefix, Key),
+get({Prefix, SubPrefix}=FullPrefix, Key, Opts) when is_binary(Prefix) andalso
+                                                    is_binary(SubPrefix) ->
+    PKey = prefixed_key(FullPrefix, Key),
     Default = get_option(default, Opts, undefined),
     ResolveMethod = get_option(resolver, Opts, lww),
     case riak_core_metadata_manager:get(PKey) of
@@ -60,17 +61,18 @@ get(Prefix, Key, Opts) ->
         Existing -> maybe_resolve(PKey, Existing, ResolveMethod)
     end.
 
-%% @doc same as put(Prefix, Key, Value, [])
+%% @doc same as put(FullPrefix, Key, Value, [])
 -spec put(metadata_prefix(), metadata_key(), metadata_value()) -> ok.
-put(Prefix, Key, Value) ->
-    put(Prefix, Key, Value, []).
+put(FullPrefix, Key, Value) ->
+    put(FullPrefix, Key, Value, []).
 
 %% @doc Stores the value at the given prefix and key locally and then triggers a
 %% broadcast to notify other nodes in the cluster. Currently, there are no put
 %% options
 -spec put(metadata_prefix(), metadata_key(), metadata_value(), put_opts()) -> ok.
-put(Prefix, Key, Value, _Opts) ->
-    PKey = prefixed_key(Prefix, Key),
+put({Prefix, SubPrefix}=FullPrefix, Key, Value, _Opts) when is_binary(Prefix) andalso
+                                                            is_binary(SubPrefix) ->
+    PKey = prefixed_key(FullPrefix, Key),
     CurrentContext = current_context(PKey),
     Updated = riak_core_metadata_manager:put(PKey, CurrentContext, Value),
     broadcast(PKey, Updated).
@@ -109,8 +111,8 @@ broadcast(PKey, Obj) ->
 
 %% @private
 -spec prefixed_key(metadata_prefix(), metadata_key()) -> metadata_pkey().
-prefixed_key(Prefix, Key) ->
-    {Prefix, Key}.
+prefixed_key(FullPrefix, Key) ->
+    {FullPrefix, Key}.
 
 get_option(Key, Opts, Default) ->
     proplists:get_value(Key, Opts, Default).
