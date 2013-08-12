@@ -21,6 +21,13 @@
 
 -export([get/2,
          get/3,
+         fold/3,
+         iterator/1,
+         itr_next/1,
+         itr_done/1,
+         itr_key_values/1,
+         itr_key/1,
+         itr_values/1,
          put/3,
          put/4]).
 
@@ -60,6 +67,58 @@ get({Prefix, SubPrefix}=FullPrefix, Key, Opts) when is_binary(Prefix) andalso
         undefined -> Default;
         Existing -> maybe_resolve(PKey, Existing, ResolveMethod)
     end.
+
+%% @spec Fold over all keys and values stored under a given prefix/subprefix
+-spec fold(fun(({metadata_key(), [metadata_value()]}) -> any()), any(), metadata_prefix()) ->
+                  any().
+fold(Fun, Acc0, FullPrefix) ->
+    It = iterator(FullPrefix),
+    fold_it(Fun, Acc0, It).
+
+fold_it(Fun, Acc, It) ->
+    case itr_done(It) of
+        true -> Acc;
+        false ->
+            Next = Fun(itr_key_values(It), Acc),
+            fold_it(Fun, Next, itr_next(It))
+    end.
+
+%% @doc Return an iterator pointing to the first key stored under a prefix
+-spec iterator(metadata_prefix()) -> riak_core_metadata_manager:iterator().
+iterator({Prefix, SubPrefix}=FullPrefix) when is_binary(Prefix) andalso
+                                              is_binary(SubPrefix) ->
+    riak_core_metadata_manager:iterator(FullPrefix).
+
+%% @doc Advances the iterator
+-spec itr_next(riak_core_metadata_manager:iterator()) -> riak_core_metadata_manager:iterator().
+itr_next(It) ->
+    riak_core_metadata_manager:iterate(It).
+
+%% @doc Returns true if there is nothing more to iterate over
+-spec itr_done(riak_core_metadata_manager:iterator()) -> boolean().
+itr_done(It) ->
+    riak_core_metadata_manager:iterator_done(It).
+
+%% @doc Return the key and all sibling values pointed at by the iterator. Before
+%% calling this function, check the iterator is not complete w/ itr_done/1.
+-spec itr_key_values(riak_core_metadata_manager:iterator()) -> {metadata_key(), [metadata_value()]}.
+itr_key_values(It) ->
+    {Key, Obj} = riak_core_metadata_manager:iterator_value(It),
+    {Key, riak_core_metadata_object:values(Obj)}.
+
+%% @doc Return the key pointed at by the iterator. Before
+%% calling this function, check the iterator is not complete w/ itr_done/1.
+-spec itr_key(riak_core_metadata_manager:iterator()) -> metadata_key().
+itr_key(It) ->
+    {Key, _} = itr_key_values(It),
+    Key.
+
+%% @doc Return all sibling values pointed at by the iterator. Before
+%% calling this function, check the iterator is not complete w/ itr_done/1.
+-spec itr_values(riak_core_metadata_manager:iterator()) -> [metadata_value()].
+itr_values(It) ->
+    {_, Values} = itr_key_values(It),
+    Values.
 
 %% @doc same as put(FullPrefix, Key, Value, [])
 -spec put(metadata_prefix(), metadata_key(), metadata_value()) -> ok.

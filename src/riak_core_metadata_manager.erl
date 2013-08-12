@@ -26,6 +26,10 @@
 -export([start_link/0,
          start_link/1,
          get/1,
+         iterator/1,
+         iterate/1,
+         iterator_value/1,
+         iterator_done/1,
          put/3]).
 
 %% riak_core_broadcast_handler callbacks
@@ -37,6 +41,8 @@
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
+
+-export_type([metadata_iterator/0]).
 
 -include("riak_core_metadata.hrl").
 
@@ -52,8 +58,17 @@
           %% an ets table holding references to per
           %% full-prefix ets tables
           ets_tabs   :: ets:tab()
-
          }).
+
+-record(metadata_iterator, {
+          prefix :: metadata_prefix(),
+          pos    :: term(),
+          obj    :: {metadata_key(), metadata_object()},
+          done   :: boolean(),
+          tab    :: ets:tab()
+         }).
+
+-opaque metadata_iterator() :: #metadata_iterator{}.
 
 -type mm_path_opt()     :: {data_dir, file:name_all()}.
 -type mm_nodename_opt() :: {nodename, term()}.
@@ -88,6 +103,26 @@ start_link(Opts) ->
 get({{Prefix, SubPrefix}, _Key}=PKey) when is_binary(Prefix) andalso
                                            is_binary(SubPrefix) ->
     gen_server:call(?SERVER, {get, PKey}).
+
+%% @doc Return an iterator pointing to the first key stored under a prefix
+-spec iterator(metadata_prefix()) -> metadata_iterator().
+iterator({Prefix, SubPrefix}=FullPrefix) when is_binary(Prefix) andalso
+                                              is_binary(SubPrefix) ->
+    gen_server:call(?SERVER, {iterator, FullPrefix}).
+
+
+%% @doc advance the iterator by one key
+-spec iterate(metadata_iterator()) -> metadata_iterator().
+iterate(Iterator) ->
+    gen_server:call(?SERVER, {iterate, Iterator}).
+
+%% @doc return the key and object pointed to by the iterator
+-spec iterator_value(metadata_iterator()) -> {metadata_key(), metadata_object()}.
+iterator_value(#metadata_iterator{obj=Obj}) -> Obj.
+
+%% @doc returns true if there are no more keys to iterate over
+-spec iterator_done(metadata_iterator()) -> boolean().
+iterator_done(#metadata_iterator{done=Done}) -> Done.
 
 %% @doc Sets the value of a prefixed key. The most recently read context (see get/1)
 %% should be passed as the second argument to prevent unneccessary siblings.
@@ -195,6 +230,12 @@ handle_call({merge, PKey, Obj}, _From, State) ->
 handle_call({get, PKey}, _From, State) ->
     Result = read(PKey, State),
     {reply, Result, State};
+handle_call({iterator, FullPrefix}, _From, State) ->
+    Iterator = iterator(FullPrefix, State),
+    {reply, Iterator, State};
+handle_call({iterate, Iterator}, _From, State) ->
+    Next = next_iterator(Iterator),
+    {reply, Next, State};
 handle_call({is_stale, PKey, Context}, _From, State) ->
     Existing = read(PKey, State),
     IsStale = riak_core_metadata_object:is_stale(Context, Existing),
@@ -230,6 +271,48 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+iterator(FullPrefix, State) ->
+    case ets_tab(FullPrefix, State) of
+        undefined -> empty_iterator(FullPrefix, undefined);
+        Tab -> new_iterator(FullPrefix, Tab)
+    end.
+
+next_iterator(It=#metadata_iterator{done=true}) ->
+    It;
+next_iterator(It=#metadata_iterator{pos=Pos}) ->
+    next_iterator(It, ets:match_object(Pos)).
+
+next_iterator(It, '$end_of_table') ->
+    It#metadata_iterator{done=true,
+                         pos=undefined,
+                         obj=undefined};
+next_iterator(It, {[Next], Cont}) ->
+    It#metadata_iterator{pos=Cont,
+                         obj=Next}.
+
+empty_iterator(FullPrefix, Tab) ->
+    #metadata_iterator{
+                prefix=FullPrefix,
+                pos=undefined,
+                obj=undefined,
+                done=true,
+                tab=Tab
+               }.
+
+new_iterator(FullPrefix, Tab) ->
+    new_iterator(FullPrefix, Tab, ets:match_object(Tab, '_', 1)).
+
+new_iterator(FullPrefix, Tab, '$end_of_table') ->
+    empty_iterator(FullPrefix, Tab);
+new_iterator(FullPrefix, Tab, {[First], Cont}) ->
+    #metadata_iterator{
+              prefix=FullPrefix,
+              pos=Cont,
+              obj=First,
+              done=false,
+              tab=Tab
+             }.
+
 read_modify_write(PKey, Context, Value, State=#state{serverid=ServerId}) ->
     Existing = read(PKey, State),
     Modified = riak_core_metadata_object:modify(Existing, Context, Value, ServerId),
