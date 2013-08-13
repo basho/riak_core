@@ -31,8 +31,11 @@
          itr_key/1,
          itr_values/1,
          itr_value/1,
+         itr_default/1,
          put/3,
-         put/4]).
+         put/4,
+         delete/2,
+         delete/3]).
 
 -include("riak_core_metadata.hrl").
 
@@ -46,7 +49,9 @@
 
 %% Iterator Types
 -type it_opt_resolver()     :: {resolver, metadata_resolver() | lww}.
--type it_opt()              :: it_opt_resolver().
+-type it_opt_default_fun()  :: fun((metadata_key()) -> metadata_value()).
+-type it_opt_default()      :: {default, metadata_value() | it_opt_default_fun()}.
+-type it_opt()              :: it_opt_resolver() | it_opt_default().
 -type it_opts()             :: [it_opt()].
 -type fold_opts()           :: it_opts().
 -opaque iterator()          :: {riak_core_metadata_manager:metadata_iterator(), it_opts()}.
@@ -82,11 +87,14 @@ get({Prefix, SubPrefix}=FullPrefix, Key, Opts)
     ResolveMethod = get_option(resolver, Opts, lww),
     case riak_core_metadata_manager:get(PKey) of
         undefined -> Default;
-        Existing -> maybe_resolve(PKey, Existing, ResolveMethod)
+        Existing ->
+            maybe_tombstone(maybe_resolve(PKey, Existing, ResolveMethod), Default)
     end.
 
 %% @spec same as fold(Fun, Acc0, FullPrefix, []).
--spec fold(fun(({metadata_key(), [metadata_value()] | metadata_value()}, any()) -> any()),
+-spec fold(fun(({metadata_key(),
+                 [metadata_value() | metadata_tombstone()] |
+                 metadata_value() | metadata_tombstone()}, any()) -> any()),
            any(),
            metadata_prefix()) -> any().
 fold(Fun, Acc0, FullPrefix) ->
@@ -94,7 +102,9 @@ fold(Fun, Acc0, FullPrefix) ->
 
 %% @spec Fold over all keys and values stored under a given prefix/subprefix. Available
 %% options are the same as those provided to iterator/2.
--spec fold(fun(({metadata_key(), [metadata_value()] | metadata_value()}, any()) -> any()),
+-spec fold(fun(({metadata_key(),
+                 [metadata_value() | metadata_tombstone()] |
+                 metadata_value() | metadata_tombstone()}, any()) -> any()),
            any(),
            metadata_prefix(),
            fold_opts()) -> any().
@@ -123,6 +133,12 @@ iterator(FullPrefix) ->
 %%               is performed when values are retrieved (see itr_value/1 and itr_key_values/1).
 %%               If no resolver is provided no resolution is performed. The default is to
 %%               not provide a resolver.
+%%   * default: Used when the value an iterator points to is a tombstone. default is
+%%              either an arity-1 function or a value. If a function, the key the iterator
+%%              points to is passed as the argument and the result is returned in place
+%%              of the tombstone. If default is a value, the value is returned in place of
+%%              the tombstone. This applies when using functions such as itr_values/1 and
+%%              itr_key_values/1.
 -spec iterator(metadata_prefix(), it_opts()) -> iterator().
 iterator({Prefix, SubPrefix}=FullPrefix, Opts)
   when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
@@ -155,16 +171,20 @@ itr_done({It, _Opts}) ->
 %% before calling itr_next/1 on the iterator (at which point the function can be called
 %% once more).
 -spec itr_key_values(riak_core_metadata_manager:iterator()) ->
-                            {metadata_key(), [metadata_value()] | metadata_value()}.
+                            {metadata_key(),
+                             [metadata_value() | metadata_tombstone()] |
+                             metadata_value() |
+                             metadata_tombstone()}.
 itr_key_values({It, Opts}) ->
+    Default = itr_default({It, Opts}),
     {Key, Obj} = riak_core_metadata_manager:iterator_value(It),
     case proplists:get_value(resolver, Opts) of
         undefined ->
-            {Key, riak_core_metadata_object:values(Obj)};
+            {Key, maybe_tombstones(riak_core_metadata_object:values(Obj), Default)};
         Resolver ->
             Prefix = riak_core_metadata_manager:iterator_prefix(It),
             PKey = prefixed_key(Prefix, Key),
-            Value = maybe_resolve(PKey, Obj, Resolver),
+            Value = maybe_tombstone(maybe_resolve(PKey, Obj, Resolver), Default),
             {Key, Value}
     end.
 
@@ -179,10 +199,11 @@ itr_key({It, _Opts}) ->
 %% @doc Return all sibling values pointed at by the iterator. Before
 %% calling this function, check the iterator is not complete w/ itr_done/1.
 %% No conflict resolution will be performed as a result of calling this function.
--spec itr_values(iterator()) -> [metadata_value()].
-itr_values({It, _Opts}) ->
+-spec itr_values(iterator()) -> [metadata_value() | metadata_tombstone()].
+itr_values({It, Opts}) ->
+    Default = itr_default({It, Opts}),
     {_, Obj} = riak_core_metadata_manager:iterator_value(It),
-    riak_core_metadata_object:values(Obj).
+    maybe_tombstones(riak_core_metadata_object:values(Obj), Default).
 
 %% @doc Return a single value pointed at by the iterator. If there are conflicts and
 %% a resolver was specified in the options when creating this iterator, they will be
@@ -193,21 +214,34 @@ itr_values({It, _Opts}) ->
 %% NOTE: if resolution may be performed this function must be called at most once
 %% before calling itr_next/1 on the iterator (at which point the function can be called
 %% once more).
--spec itr_value(iterator()) -> metadata_value() | {error, conflict}.
+-spec itr_value(iterator()) -> metadata_value() | metadata_tombstone() | {error, conflict}.
 itr_value({It, Opts}) ->
+    Default = itr_default({It, Opts}),
     {Key, Obj} = riak_core_metadata_manager:iterator_value(It),
     case proplists:get_value(resolver, Opts) of
         undefined ->
             case riak_core_metadata_object:value_count(Obj) of
                 1 ->
-                    riak_core_metadata_object:value(Obj);
+                    maybe_tombstone(riak_core_metadata_object:value(Obj), Default);
                 _ ->
                     {error, conflict}
             end;
         Resolver ->
             Prefix = riak_core_metadata_manager:iterator_prefix(It),
             PKey = prefixed_key(Prefix, Key),
-            maybe_resolve(PKey, Obj, Resolver)
+            maybe_tombstone(maybe_resolve(PKey, Obj, Resolver), Default)
+    end.
+
+%% @doc Returns the value returned when an iterator points to a tombstone. If the default
+%% used when creating the given iterator is a function it will be applied to the current
+%% key the iterator points at. If no default was provided the tombstone value was returned.
+%% This function should only be called after checking itr_done/1.
+-spec itr_default(iterator()) -> metadata_tombstone() | metadata_value() | it_opt_default_fun().
+itr_default({_, Opts}=It) ->
+    case proplists:get_value(default, Opts, ?TOMBSTONE) of
+        Fun when is_function(Fun) ->
+            Fun(itr_key(It));
+        Val -> Val
     end.
 
 %% @doc same as put(FullPrefix, Key, Value, [])
@@ -234,15 +268,30 @@ put({Prefix, SubPrefix}=FullPrefix, Key, ValueOrFun, _Opts)
     Updated = riak_core_metadata_manager:put(PKey, CurrentContext, ValueOrFun),
     broadcast(PKey, Updated).
 
+%% @doc same as delete(FullPrefix, Key, [])
+-spec delete(metadata_prefix(), metadata_key()) -> ok.
+delete(FullPrefix, Key) ->
+    delete(FullPrefix, Key, []).
+
+%% @doc Removes the value associated with the given prefix and key locally and then
+%% triggers a broradcast to notify other nodes in the cluster. Currently there are
+%% no delete options
+%%
+%% NOTE: currently deletion is logical and no GC is performed.
+-spec delete(metadata_prefix(), metadata_key(), delete_opts()) -> ok.
+delete(FullPrefix, Key, _Opts) ->
+    put(FullPrefix, Key, ?TOMBSTONE, []).
+
+%%%===================================================================
+%%% Internal functions
+%%%===================================================================
+
+%% @private
 current_context(PKey) ->
     case riak_core_metadata_manager:get(PKey) of
         undefined -> riak_core_metadata_object:empty_context();
         CurrentMeta -> riak_core_metadata_object:context(CurrentMeta)
     end.
-
-%%%===================================================================
-%%% Internal functions
-%%%===================================================================
 
 %% @private
 maybe_resolve(PKey, Existing, Method) ->
@@ -259,6 +308,16 @@ maybe_resolve(PKey, Existing, _, Method) ->
     Stored = riak_core_metadata_manager:put(PKey, RContext, RValue),
     broadcast(PKey, Stored),
     RValue.
+
+%% @private
+maybe_tombstones(Values, Default) ->
+    [maybe_tombstone(Value, Default) || Value <- Values].
+
+%% @private
+maybe_tombstone(?TOMBSTONE, Default) ->
+    Default;
+maybe_tombstone(Value, _Default) ->
+    Value.
 
 %% @private
 broadcast(PKey, Obj) ->
