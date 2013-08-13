@@ -199,20 +199,27 @@ itr_value({It, Opts}) ->
     end.
 
 %% @doc same as put(FullPrefix, Key, Value, [])
--spec put(metadata_prefix(), metadata_key(), metadata_value()) -> ok.
-put(FullPrefix, Key, Value) ->
-    put(FullPrefix, Key, Value, []).
+-spec put(metadata_prefix(), metadata_key(), metadata_value() | metadata_modifier()) -> ok.
+put(FullPrefix, Key, ValueOrFun) ->
+    put(FullPrefix, Key, ValueOrFun, []).
 
-%% @doc Stores the value at the given prefix and key locally and then triggers a
-%% broadcast to notify other nodes in the cluster. Currently, there are no put
-%% options
--spec put(metadata_prefix(), metadata_key(), metadata_value(), put_opts()) -> ok.
-put({Prefix, SubPrefix}=FullPrefix, Key, Value, _Opts)
+%% @doc Stores or updates the value at the given prefix and key locally and then
+%% triggers a broadcast to notify other nodes in the cluster. Currently, there
+%% are no put options
+%%
+%% NOTE: because the third argument to this function can be a metadata_modifier(),
+%% used to resolve conflicts on write, metadata values cannot be functions.
+%% To store functions in metadata wrap them in another type like a tuple.
+-spec put(metadata_prefix(),
+          metadata_key(),
+          metadata_value() | metadata_modifier(),
+          put_opts()) -> ok.
+put({Prefix, SubPrefix}=FullPrefix, Key, ValueOrFun, _Opts)
   when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
        (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
     PKey = prefixed_key(FullPrefix, Key),
     CurrentContext = current_context(PKey),
-    Updated = riak_core_metadata_manager:put(PKey, CurrentContext, Value),
+    Updated = riak_core_metadata_manager:put(PKey, CurrentContext, ValueOrFun),
     broadcast(PKey, Updated).
 
 current_context(PKey) ->

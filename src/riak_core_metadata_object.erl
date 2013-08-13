@@ -59,11 +59,18 @@ context({metadata, Object}) ->
 empty_context() -> [].
 
 %% @doc modifies a potentially existing object, setting its value and updating
-%% the causual history
+%% the causual history. If a function is provided as the third argument
+%% then this function also is used for conflict resolution. The difference
+%% between this function and resolve/2 is that the logical clock is advanced in the
+%% case of this function. Additionally, the resolution functions are slightly different.
 -spec modify(metadata_object() | undefined,
              metadata_context(),
-             metadata_value(),
+             metadata_value() | metadata_modifier(),
              term()) -> metadata_object().
+modify(undefined, Context, Fun, ServerId) when is_function(Fun) ->
+    modify(undefined, Context, Fun(undefined), ServerId);
+modify(Obj, Context, Fun, ServerId) when is_function(Fun) ->
+    modify(Obj, Context, Fun(values(Obj)), ServerId);
 modify(undefined, _Context, Value, ServerId) ->
     %% Ignore the context since we dont have a value, its invalid if not
     %% empty anyways, so give it a valid one

@@ -133,14 +133,16 @@ iterator_done(#metadata_iterator{done=Done}) -> Done.
 
 %% @doc Sets the value of a prefixed key. The most recently read context (see get/1)
 %% should be passed as the second argument to prevent unneccessary siblings.
--spec put(metadata_pkey(), metadata_context() | undefined, metadata_value()) -> metadata_object().
-put(PKey, undefined, Value) ->
+-spec put(metadata_pkey(),
+          metadata_context() | undefined,
+          metadata_value() | metadata_modifier()) -> metadata_object().
+put(PKey, undefined, ValueOrFun) ->
     %% nil is an empty version vector for dvvset
-    put(PKey, [], Value);
-put({{Prefix, SubPrefix}, _Key}=PKey, Context, Value)
+    put(PKey, [], ValueOrFun);
+put({{Prefix, SubPrefix}, _Key}=PKey, Context, ValueOrFun)
   when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
        (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
-    gen_server:call(?SERVER, {put, PKey, Context, Value}).
+    gen_server:call(?SERVER, {put, PKey, Context, ValueOrFun}).
 
 %%%===================================================================
 %%% riak_core_broadcast_handler callbacks
@@ -230,8 +232,8 @@ init([Opts]) ->
                          {noreply, #state{}, non_neg_integer()} |
                          {stop, term(), term(), #state{}} |
                          {stop, term(), #state{}}.
-handle_call({put, PKey, Context, Value}, _From, State) ->
-    {Result, NewState} = read_modify_write(PKey, Context, Value, State),
+handle_call({put, PKey, Context, ValueOrFun}, _From, State) ->
+    {Result, NewState} = read_modify_write(PKey, Context, ValueOrFun, State),
     {reply, Result, NewState};
 handle_call({merge, PKey, Obj}, _From, State) ->
     {Result, NewState} = read_merge_write(PKey, Obj, State),
@@ -323,9 +325,9 @@ new_iterator(FullPrefix, Tab, {[First], Cont}) ->
               tab=Tab
              }.
 
-read_modify_write(PKey, Context, Value, State=#state{serverid=ServerId}) ->
+read_modify_write(PKey, Context, ValueOrFun, State=#state{serverid=ServerId}) ->
     Existing = read(PKey, State),
-    Modified = riak_core_metadata_object:modify(Existing, Context, Value, ServerId),
+    Modified = riak_core_metadata_object:modify(Existing, Context, ValueOrFun, ServerId),
     store(PKey, Modified, State).
 
 read_merge_write(PKey, Obj, State) ->
