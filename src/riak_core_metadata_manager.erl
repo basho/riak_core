@@ -26,7 +26,7 @@
 -export([start_link/0,
          start_link/1,
          get/1,
-         iterator/1,
+         iterator/2,
          iterate/1,
          iterator_prefix/1,
          iterator_value/1,
@@ -65,6 +65,7 @@
 
 -record(metadata_iterator, {
           prefix :: metadata_prefix(),
+          match  :: term(),
           pos    :: term(),
           obj    :: {metadata_key(), metadata_object()},
           done   :: boolean(),
@@ -107,11 +108,20 @@ get({{Prefix, SubPrefix}, _Key}=PKey) when (is_binary(Prefix) orelse is_atom(Pre
                                            (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
     gen_server:call(?SERVER, {get, PKey}).
 
-%% @doc Return an iterator pointing to the first key stored under a prefix
--spec iterator(metadata_prefix()) -> metadata_iterator().
-iterator({Prefix, SubPrefix}=FullPrefix) when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
-                                              (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
-    gen_server:call(?SERVER, {iterator, FullPrefix}).
+%% @doc Return an iterator for keys stored under a prefix. If KeyMatch is undefined then
+%% all keys will may be visted by the iterator. Otherwise only keys matching KeyMatch will be
+%% visited.
+%%
+%% KeyMatch can be either:
+%%   * an erlang term - which will be matched exactly against a key
+%%   * '_' - which is equivalent to undefined
+%%   * an erlang tuple containing terms and '_' - if tuples are used as keys
+%%   * this can be used to iterate over some subset of keys
+-spec iterator(metadata_prefix() , term()) -> metadata_iterator().
+iterator({Prefix, SubPrefix}=FullPrefix, KeyMatch)
+  when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
+       (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
+    gen_server:call(?SERVER, {iterator, FullPrefix, KeyMatch}).
 
 
 %% @doc advance the iterator by one key
@@ -241,8 +251,8 @@ handle_call({merge, PKey, Obj}, _From, State) ->
 handle_call({get, PKey}, _From, State) ->
     Result = read(PKey, State),
     {reply, Result, State};
-handle_call({iterator, FullPrefix}, _From, State) ->
-    Iterator = iterator(FullPrefix, State),
+handle_call({iterator, FullPrefix, KeyMatch}, _From, State) ->
+    Iterator = iterator(FullPrefix, KeyMatch, State),
     {reply, Iterator, State};
 handle_call({iterate, Iterator}, _From, State) ->
     Next = next_iterator(Iterator),
@@ -283,10 +293,10 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-iterator(FullPrefix, State) ->
+iterator(FullPrefix, KeyMatch, State) ->
     case ets_tab(FullPrefix, State) of
-        undefined -> empty_iterator(FullPrefix, undefined);
-        Tab -> new_iterator(FullPrefix, Tab)
+        undefined -> empty_iterator(FullPrefix, KeyMatch, undefined);
+        Tab -> new_iterator(FullPrefix, KeyMatch, Tab)
     end.
 
 next_iterator(It=#metadata_iterator{done=true}) ->
@@ -302,28 +312,36 @@ next_iterator(It, {[Next], Cont}) ->
     It#metadata_iterator{pos=Cont,
                          obj=Next}.
 
-empty_iterator(FullPrefix, Tab) ->
+empty_iterator(FullPrefix, KeyMatch, Tab) ->
     #metadata_iterator{
                 prefix=FullPrefix,
+                match=KeyMatch,
                 pos=undefined,
                 obj=undefined,
                 done=true,
                 tab=Tab
                }.
 
-new_iterator(FullPrefix, Tab) ->
-    new_iterator(FullPrefix, Tab, ets:match_object(Tab, '_', 1)).
+new_iterator(FullPrefix, KeyMatch, Tab) ->
+    ObjectMatch = iterator_match(KeyMatch),
+    new_iterator(FullPrefix, KeyMatch, Tab, ets:match_object(Tab, ObjectMatch, 1)).
 
-new_iterator(FullPrefix, Tab, '$end_of_table') ->
-    empty_iterator(FullPrefix, Tab);
-new_iterator(FullPrefix, Tab, {[First], Cont}) ->
+new_iterator(FullPrefix, KeyMatch, Tab, '$end_of_table') ->
+    empty_iterator(FullPrefix, KeyMatch, Tab);
+new_iterator(FullPrefix, KeyMatch, Tab, {[First], Cont}) ->
     #metadata_iterator{
               prefix=FullPrefix,
+              match=KeyMatch,
               pos=Cont,
               obj=First,
               done=false,
               tab=Tab
              }.
+
+iterator_match(undefined) ->
+    '_';
+iterator_match(KeyMatch) ->
+    {KeyMatch, '_'}.
 
 read_modify_write(PKey, Context, ValueOrFun, State=#state{serverid=ServerId}) ->
     Existing = read(PKey, State),

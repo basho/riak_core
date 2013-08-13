@@ -51,7 +51,8 @@
 -type it_opt_resolver()     :: {resolver, metadata_resolver() | lww}.
 -type it_opt_default_fun()  :: fun((metadata_key()) -> metadata_value()).
 -type it_opt_default()      :: {default, metadata_value() | it_opt_default_fun()}.
--type it_opt()              :: it_opt_resolver() | it_opt_default().
+-type it_opt_keymatch()     :: {match, term()}.
+-type it_opt()              :: it_opt_resolver() | it_opt_default() | it_opt_keymatch().
 -type it_opts()             :: [it_opt()].
 -type fold_opts()           :: it_opts().
 -opaque iterator()          :: {riak_core_metadata_manager:metadata_iterator(), it_opts()}.
@@ -139,11 +140,14 @@ iterator(FullPrefix) ->
 %%              of the tombstone. If default is a value, the value is returned in place of
 %%              the tombstone. This applies when using functions such as itr_values/1 and
 %%              itr_key_values/1.
+%%   * match: A tuple containing erlang terms and '_'s. Match can be used to iterate
+%%            over a subset of keys -- assuming the keys stored are tuples
 -spec iterator(metadata_prefix(), it_opts()) -> iterator().
 iterator({Prefix, SubPrefix}=FullPrefix, Opts)
   when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
        (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
-    It = riak_core_metadata_manager:iterator(FullPrefix),
+    KeyMatch = proplists:get_value(match, Opts),
+    It = riak_core_metadata_manager:iterator(FullPrefix, KeyMatch),
     {It, Opts}.
 
 %% @doc Advances the iterator
