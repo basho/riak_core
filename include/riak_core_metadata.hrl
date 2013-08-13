@@ -1,4 +1,4 @@
--type metadata_prefix()     :: {binary(), binary()}.
+-type metadata_prefix()     :: {binary() | atom(), binary() | atom()}.
 -type metadata_key()        :: any().
 -type metadata_pkey()       :: {metadata_prefix(), metadata_key()}.
 -type metadata_value()      :: any().

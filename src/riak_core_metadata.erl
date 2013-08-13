@@ -58,8 +58,9 @@ get(FullPrefix, Key) ->
 %% NOTE: an update will be broadcast if conflicts are resolved. any further conflicts generated
 %% by concurrenct writes during resolution are not resolved
 -spec get(metadata_prefix(), metadata_key(), get_opts()) -> metadata_value().
-get({Prefix, SubPrefix}=FullPrefix, Key, Opts) when is_binary(Prefix) andalso
-                                                    is_binary(SubPrefix) ->
+get({Prefix, SubPrefix}=FullPrefix, Key, Opts)
+  when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
+       (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
     PKey = prefixed_key(FullPrefix, Key),
     Default = get_option(default, Opts, undefined),
     ResolveMethod = get_option(resolver, Opts, lww),
@@ -85,8 +86,8 @@ fold_it(Fun, Acc, It) ->
 
 %% @doc Return an iterator pointing to the first key stored under a prefix
 -spec iterator(metadata_prefix()) -> riak_core_metadata_manager:iterator().
-iterator({Prefix, SubPrefix}=FullPrefix) when is_binary(Prefix) andalso
-                                              is_binary(SubPrefix) ->
+iterator({Prefix, SubPrefix}=FullPrefix) when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
+                                              (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
     riak_core_metadata_manager:iterator(FullPrefix).
 
 %% @doc Advances the iterator
@@ -129,8 +130,9 @@ put(FullPrefix, Key, Value) ->
 %% broadcast to notify other nodes in the cluster. Currently, there are no put
 %% options
 -spec put(metadata_prefix(), metadata_key(), metadata_value(), put_opts()) -> ok.
-put({Prefix, SubPrefix}=FullPrefix, Key, Value, _Opts) when is_binary(Prefix) andalso
-                                                            is_binary(SubPrefix) ->
+put({Prefix, SubPrefix}=FullPrefix, Key, Value, _Opts)
+  when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
+       (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
     PKey = prefixed_key(FullPrefix, Key),
     CurrentContext = current_context(PKey),
     Updated = riak_core_metadata_manager:put(PKey, CurrentContext, Value),

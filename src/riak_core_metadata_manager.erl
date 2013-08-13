@@ -47,6 +47,8 @@
 -include("riak_core_metadata.hrl").
 
 -define(SERVER, ?MODULE).
+-define(MANIFEST, cluster_meta_manifest).
+-define(MANIFEST_FILENAME, "manifest.dets").
 
 -record(state, {
           %% identifier used in logical clocks
@@ -100,14 +102,14 @@ start_link(Opts) ->
 %% for a subsequent call to put/3 the context can be obtained using
 %% riak_core_metadata_object:context/1. Values can obtained w/ riak_core_metadata_object:values/1.
 -spec get(metadata_pkey()) -> metadata_object() | undefined.
-get({{Prefix, SubPrefix}, _Key}=PKey) when is_binary(Prefix) andalso
-                                           is_binary(SubPrefix) ->
+get({{Prefix, SubPrefix}, _Key}=PKey) when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
+                                           (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
     gen_server:call(?SERVER, {get, PKey}).
 
 %% @doc Return an iterator pointing to the first key stored under a prefix
 -spec iterator(metadata_prefix()) -> metadata_iterator().
-iterator({Prefix, SubPrefix}=FullPrefix) when is_binary(Prefix) andalso
-                                              is_binary(SubPrefix) ->
+iterator({Prefix, SubPrefix}=FullPrefix) when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
+                                              (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
     gen_server:call(?SERVER, {iterator, FullPrefix}).
 
 
@@ -130,8 +132,9 @@ iterator_done(#metadata_iterator{done=Done}) -> Done.
 put(PKey, undefined, Value) ->
     %% nil is an empty version vector for dvvset
     put(PKey, [], Value);
-put({{Prefix, SubPrefix}, _Key}=PKey, Context, Value) when is_binary(Prefix) andalso
-                                                           is_binary(SubPrefix) ->
+put({{Prefix, SubPrefix}, _Key}=PKey, Context, Value)
+  when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
+       (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
     gen_server:call(?SERVER, {put, PKey, Context, Value}).
 
 %%%===================================================================
@@ -208,6 +211,7 @@ init([Opts]) ->
             State = #state{serverid=Nodename,
                            data_root=DataRoot,
                            ets_tabs=new_ets_tab()},
+            init_manifest(State),
             %% TODO: should do this out-of-band from startup so we don't block
             init_from_files(State),
             {ok, State}
@@ -258,8 +262,9 @@ handle_info(_Info, State) ->
 
 %% @private
 -spec terminate(term(), #state{}) -> term().
-terminate(_Reason, State) ->
-    close_dets_files(State),
+terminate(_Reason, _State) ->
+    close_dets_tabs(),
+    close_manifest(),
     ok.
 
 
@@ -333,7 +338,7 @@ store({FullPrefix, Key}, Metadata, State) ->
 
     Objs = [{Key, Metadata}],
     ets:insert(ets_tab(FullPrefix, State), Objs),
-    ok = dets:insert(dets_tabname(FullPrefix), Objs),
+    ok = dets_insert(dets_tabname(FullPrefix), Objs),
     {Metadata, State}.
 
 read({FullPrefix, Key}, State=#state{}) ->
@@ -347,15 +352,21 @@ read(Key, TabId) ->
         [{Key, MetaRec}] -> MetaRec
     end.
 
+init_manifest(State) ->
+    ManifestFile = filename:join(State#state.data_root, ?MANIFEST_FILENAME),
+    ok = filelib:ensure_dir(ManifestFile),
+    {ok, ?MANIFEST} = dets:open_file(?MANIFEST, [{file, ManifestFile}]).
+
+close_manifest() ->
+    dets:close(?MANIFEST).
+
 init_from_files(State) ->
     %% TODO: do this in parallel
-    dets_fold_filenames(fun init_from_file/2,
-                        State,
-                        State).
+    dets_fold_tabnames(fun init_from_file/2, State).
 
-init_from_file(FileName, State) ->
-    TabName = dets_filename_to_tabname(FileName),
+init_from_file(TabName, State) ->
     FullPrefix = dets_tabname_to_prefix(TabName),
+    FileName = dets_file(State#state.data_root, FullPrefix),
     {ok, TabName} = dets:open_file(TabName, [{file, FileName}]),
     TabId = init_ets(FullPrefix, State),
     dets:to_ets(TabName, TabId),
@@ -390,16 +401,18 @@ maybe_init_dets(FullPrefix, State) ->
 init_dets(FullPrefix, #state{data_root=DataRoot}) ->
     TabName = dets_tabname(FullPrefix),
     FileName = dets_file(DataRoot, FullPrefix),
-    ok = filelib:ensure_dir(FileName),
-    {ok, TabName} = dets:open_file(TabName, [{file, FileName}]).
+    {ok, TabName} = dets:open_file(TabName, [{file, FileName}]),
+    dets_insert(?MANIFEST, [{FullPrefix, TabName, FileName}]).
 
-close_dets_files(State) ->
-    dets_fold_filenames(fun close_dets_file/2,
-                        undefined,
-                        State).
+close_dets_tabs() ->
+    dets_fold_tabnames(fun close_dets_tab/2, undefined).
 
-close_dets_file(FileName, _Acc) ->
-    dets:close(dets_filename_to_tabname(FileName)).
+close_dets_tab(TabName, _Acc) ->
+    dets:close(TabName).
+
+dets_insert(TabName, Objs) ->
+    ok = dets:insert(TabName, Objs),
+    ok = dets:sync(TabName).
 
 dets_tabname(FullPrefix) -> {?MODULE, FullPrefix}.
 dets_tabname_to_prefix({?MODULE, FullPrefix}) ->  FullPrefix.
@@ -407,18 +420,30 @@ dets_tabname_to_prefix({?MODULE, FullPrefix}) ->  FullPrefix.
 dets_file(DataRoot, FullPrefix) ->
     filename:join(DataRoot, dets_filename(FullPrefix)).
 
-dets_filename({Prefix, SubPrefix}) ->
-    io_lib:format("~s-~s.dets", [Prefix, SubPrefix]).
+dets_filename({Prefix, SubPrefix}=FullPrefix) ->
+    MD5Prefix = dets_filename_part(Prefix),
+    MD5SubPrefix = dets_filename_part(SubPrefix),
+    Trailer = dets_filename_trailer(FullPrefix),
+    io_lib:format("~s-~s-~s.dets", [MD5Prefix, MD5SubPrefix, Trailer]).
 
-dets_filename_to_tabname(FileName) ->
-    [PrefixStr,SubPrefixStr, _] = string:tokens(FileName, [$-, $.]),
-    Prefix = list_to_binary(PrefixStr),
-    SubPrefix = list_to_binary(SubPrefixStr),
-    dets_tabname({Prefix, SubPrefix}).
+dets_filename_part(Part) when is_atom(Part) ->
+    dets_filename_part(list_to_binary(atom_to_list(Part)));
+dets_filename_part(Part) when is_binary(Part) ->
+    <<MD5Int:128/integer>> = crypto:md5(Part),
+    riak_core_util:integer_to_list(MD5Int, 16).
 
-dets_fold_filenames(Fun, Acc0, #state{data_root=DataRoot}) ->
-    Files = filelib:wildcard("*.dets", DataRoot),
-    lists:foldl(Fun, Acc0, Files).
+dets_filename_trailer(FullPrefix) ->
+    [dets_filename_trailer_part(Part) || Part <- tuple_to_list(FullPrefix)].
+
+dets_filename_trailer_part(Part) when is_atom(Part) ->
+    "1";
+dets_filename_trailer_part(Part) when is_binary(Part)->
+    "0".
+
+dets_fold_tabnames(Fun, Acc0) ->
+    dets:foldl(fun({_FullPrefix, TabName, _FileName}, Acc) ->
+                       Fun(TabName, Acc)
+               end, Acc0, ?MANIFEST).
 
 data_root(Opts) ->
     case proplists:get_value(data_dir, Opts) of
