@@ -823,18 +823,24 @@ check_limit(Str) ->
     end.
 
 add_user([Username|Options]) ->
-    riak_core_security:add_user(Username, parse_options(Options)).
+    riak_core_security:add_user(list_to_binary(Username), parse_options(Options)).
 
 add_source([Users, CIDR, Source | Options]) ->
     Unames = case string:tokens(Users, ",") of
         ["all"] ->
             all;
         Other ->
-            Other
+            [list_to_binary(O) || O <- Other]
     end,
-    riak_core_security:add_source(Unames, parse_cidr(CIDR),
+    case riak_core_security:add_source(Unames, parse_cidr(CIDR),
                                   list_to_atom(Source),
-                                  parse_options(Options)).
+                                  parse_options(Options)) of
+        ok ->
+            ok;
+        Error ->
+            io:format("~p~n", [Error]),
+            Error
+    end.
 
 grant([Grants, "ON", Bucket, "TO", Users]) ->
     Unames = case string:tokens(Users, ",") of

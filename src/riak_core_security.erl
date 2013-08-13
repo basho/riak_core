@@ -93,7 +93,9 @@ prettyprint_cidr({Addr, Mask}) ->
 
 prettyprint_users([all]) ->
     "all";
-prettyprint_users(Users) ->
+prettyprint_users(Users0) ->
+    %% my kingdom for an iolist join...
+    Users = [binary_to_list(U) || U <- Users0],
     string:join(Users, ", ").
 
 match_source([], _User, _PeerIP) ->
@@ -130,7 +132,7 @@ sort_sources(Sources) ->
 
 %% group users sharing the same CIDR/Source/Options
 group_sources(Sources) ->
-    D = lists:foldl(fun({{User, CIDR}, Source, Options}, Acc) ->
+    D = lists:foldl(fun({User, CIDR, Source, Options}, Acc) ->
                 dict:append({CIDR, Source, Options}, User, Acc)
         end, dict:new(), Sources),
     R1 = [{Users, CIDR, Source, Options} || {{CIDR, Source, Options}, Users} <-
@@ -154,8 +156,10 @@ group_sources(Sources) ->
         end, R2).
 
 print_sources() ->
-    Meta = get_meta(),
-    Sources = lookup(sources, Meta, []),
+    Sources = riak_core_metadata:fold(fun({{Username, CIDR}, [{Source, Options}]}, Acc) ->
+                                    [{Username, CIDR, Source, Options}|Acc]
+                            end, [], {<<"security">>, <<"sources">>}),
+
     print_sources(Sources).
 
 print_sources(Sources) ->
@@ -166,8 +170,9 @@ print_sources(Sources) ->
             {Users, CIDR, Source, Options} <- GS]).
 
 print_users() ->
-    Meta = get_meta(),
-    Users = lookup(users, Meta, []),
+    Users = riak_core_metadata:fold(fun({Username, Options}, Acc) ->
+                                    [{Username, Options}|Acc]
+                            end, [], {<<"security">>, <<"roles">>}),
     table:print([{username, 20}, {options, 10}],
                 [[Username, io_lib:format("~p", [Options])] ||
             {Username, Options} <- Users]).
@@ -327,16 +332,13 @@ authenticate(Username, Password, ConnInfo) ->
     end.
 
 add_user(Username, Options) ->
-    Meta = get_meta(),
-    Users = lookup(users, Meta, []),
-    case lookup(Username, Users) of
+    User = riak_core_metadata:get({<<"security">>, <<"roles">>}, Username),
+    case User of
         undefined ->
             case validate_options(Options) of
                 {ok, NewOptions} ->
-                    put_meta(stash(users, {users, stash(Username,
-                                                        {Username, NewOptions},
-                                                        Users)},
-                                   Meta)),
+                    riak_core_metadata:put({<<"security">>, <<"roles">>},
+                                           Username, NewOptions),
                     ok;
                 Error ->
                     Error
@@ -488,29 +490,32 @@ add_revoke_int([User|Users], Bucket, Permissions, Meta) ->
 
 add_source(all, CIDR, Source, Options) ->
     %% all is always valid
-    Meta = get_meta(),
-    put_meta(add_source_int([all], anchor_mask(CIDR), Source, Options, Meta)),
+    add_source_int([all], anchor_mask(CIDR), Source, Options),
     ok;
-add_source([H|_T]=UserList, CIDR, Source, Options) when is_list(H) ->
+add_source([H|_T]=UserList, CIDR, Source, Options) when is_binary(H) ->
     %% list of lists, weeeee
     %% validate the users...
-    Meta = get_meta(),
-    Users = lookup(users, Meta, []),
-    Valid = lists:foldl(fun(User, ok) ->
-                    case lists:keymember(User, 1, Users) of
-                        true ->
-                            ok;
-                        false ->
-                            {error, {unknown_user, User}}
-                    end;
-                (_User, Acc) ->
-                    Acc
-            end, ok, UserList),
+    io:format("Unames ~p~n", [UserList]),
+    UnknownUsers = riak_core_metadata:fold(fun({Username, _}, Acc) ->
+                                                   io:format("user ~p~n",
+                                                             [Username]),
+                                                   io:format("acc ~p~n",
+                                                             [Acc]),
+                                                   Acc -- [Username]
+                                           end, UserList, {<<"security">>,
+                                           <<"roles">>}),
+    Valid = case UnknownUsers of
+                [] ->
+                    ok;
+                _ ->
+                    {error, {unknown_users, UnknownUsers}}
+            end,
+
     case Valid of
         ok ->
             %% add a source for each user
-            put_meta(add_source_int(UserList, anchor_mask(CIDR), Source,
-                                    Options, Meta)),
+            add_source_int(UserList, anchor_mask(CIDR), Source,
+                                    Options),
             ok;
         Error ->
             Error
@@ -519,14 +524,12 @@ add_source(User, CIDR, Source, Options) ->
     %% single user
     add_source([User], CIDR, Source, Options).
 
-add_source_int([], _, _, _, Meta) ->
-    Meta;
-add_source_int([User|Users], CIDR, Source, Options, Meta) ->
-    Sources = lookup(sources, Meta, []),
-    NewMeta = stash(sources, {sources, stash({User, CIDR}, {{User, CIDR},
-                                                            Source, Options},
-                                             Sources)}, Meta),
-    add_source_int(Users, CIDR, Source, Options, NewMeta).
+add_source_int([], _, _, _) ->
+    ok;
+add_source_int([User|Users], CIDR, Source, Options) ->
+    riak_core_metadata:put({<<"security">>, <<"sources">>}, {User, CIDR},
+                           {Source, Options}),
+    add_source_int(Users, CIDR, Source, Options).
 
 rm_source(all, CIDR) ->
     Meta = get_meta(),
