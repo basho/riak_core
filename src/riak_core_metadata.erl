@@ -23,15 +23,19 @@
          get/3,
          fold/3,
          iterator/1,
+         iterator/2,
          itr_next/1,
          itr_done/1,
          itr_key_values/1,
          itr_key/1,
          itr_values/1,
+         itr_value/1,
          put/3,
          put/4]).
 
 -include("riak_core_metadata.hrl").
+
+-export_type([iterator/0]).
 
 %% Get Option Types
 -type get_opt_default_val() :: {default, metadata_value()}.
@@ -39,9 +43,19 @@
 -type get_opt()             :: get_opt_default_val() | get_opt_resolver().
 -type get_opts()            :: [get_opt()].
 
+%% Iterator Types
+-type it_opt_resolver()     :: {resolver, metadata_resolver() | lww}.
+-type it_opt()              :: it_opt_resolver().
+-type it_opts()             :: [it_opt()].
+-opaque iterator()          :: {riak_core_metadata_manager:metadata_iterator(), it_opts()}.
+
 %% Put Option Types
 -type put_opts()            :: [].
 
+%% Delete Option types
+-type delete_opts()         :: [].
+
+-define(TOMBSTONE, '$deleted').
 
 %% @doc same as get(FullPrefix, Key, [])
 -spec get(metadata_prefix(), metadata_key()) -> metadata_value() | undefined.
@@ -84,42 +98,105 @@ fold_it(Fun, Acc, It) ->
             fold_it(Fun, Next, itr_next(It))
     end.
 
+%% @doc same as iterator(FullPrefix, []).
+-spec iterator(metadata_prefix()) -> iterator().
+iterator(FullPrefix) ->
+    iterator(FullPrefix, []).
+
 %% @doc Return an iterator pointing to the first key stored under a prefix
--spec iterator(metadata_prefix()) -> riak_core_metadata_manager:iterator().
-iterator({Prefix, SubPrefix}=FullPrefix) when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
-                                              (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
-    riak_core_metadata_manager:iterator(FullPrefix).
+%%
+%% iterator/2 can take the following options:
+%%   * resolver: either the atom `lww' or a function that resolves conflicts if they
+%%               are encounted (see get/3 for more details). Conflict resolution
+%%               is performed when values are retrieved (see itr_value/1 and itr_key_values/1).
+%%               If no resolver is provided no resolution is performed. The default is to
+%%               not provide a resolver.
+-spec iterator(metadata_prefix(), it_opts()) -> iterator().
+iterator({Prefix, SubPrefix}=FullPrefix, Opts)
+  when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
+       (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
+    It = riak_core_metadata_manager:iterator(FullPrefix),
+    {It, Opts}.
 
 %% @doc Advances the iterator
--spec itr_next(riak_core_metadata_manager:iterator()) -> riak_core_metadata_manager:iterator().
-itr_next(It) ->
-    riak_core_metadata_manager:iterate(It).
+-spec itr_next(iterator()) -> iterator().
+itr_next({It, Opts}) ->
+    It1 = riak_core_metadata_manager:iterate(It),
+    {It1, Opts}.
 
 %% @doc Returns true if there is nothing more to iterate over
--spec itr_done(riak_core_metadata_manager:iterator()) -> boolean().
-itr_done(It) ->
+-spec itr_done(iterator()) -> boolean().
+itr_done({It, _Opts}) ->
     riak_core_metadata_manager:iterator_done(It).
 
-%% @doc Return the key and all sibling values pointed at by the iterator. Before
-%% calling this function, check the iterator is not complete w/ itr_done/1.
--spec itr_key_values(riak_core_metadata_manager:iterator()) -> {metadata_key(), [metadata_value()]}.
-itr_key_values(It) ->
+%% @doc Return the key and value(s) pointed at by the iterator. Before
+%% calling this function, check the iterator is not complete w/ itr_done/1. If a resolver
+%% was passed to iterator/0 when creating the given iterator, siblings will be resolved
+%% using the given function or last-write-wins (if `lww' is passed as the resolver). If
+%% no resolver was used then no conflict resolution will take place. If conflicts are
+%% resolved, the resolved value is written to local metadata and a broadcast is submitted
+%% to update other nodes in the cluster. A single value is returned as the second element
+%% of the tuple in this case. If no resolution takes place then a list of values will be
+%% returned as the second element (even if there is only a single sibling).
+%%
+%% NOTE: if resolution may be performed this function must be called at most once
+%% before calling itr_next/1 on the iterator (at which point the function can be called
+%% once more).
+-spec itr_key_values(riak_core_metadata_manager:iterator()) ->
+                            {metadata_key(), [metadata_value()] | metadata_value()}.
+itr_key_values({It, Opts}) ->
     {Key, Obj} = riak_core_metadata_manager:iterator_value(It),
-    {Key, riak_core_metadata_object:values(Obj)}.
+    case proplists:get_value(resolver, Opts) of
+        undefined ->
+            {Key, riak_core_metadata_object:values(Obj)};
+        Resolver ->
+            Prefix = riak_core_metadata_manager:iterator_prefix(It),
+            PKey = prefixed_key(Prefix, Key),
+            Value = maybe_resolve(PKey, Obj, Resolver),
+            {Key, Value}
+    end.
 
 %% @doc Return the key pointed at by the iterator. Before
 %% calling this function, check the iterator is not complete w/ itr_done/1.
--spec itr_key(riak_core_metadata_manager:iterator()) -> metadata_key().
-itr_key(It) ->
-    {Key, _} = itr_key_values(It),
+%% No conflict resolution will be performed as a result of calling this function.
+-spec itr_key(iterator()) -> metadata_key().
+itr_key({It, _Opts}) ->
+    {Key, _} = riak_core_metadata_manager:iterator_value(It),
     Key.
 
 %% @doc Return all sibling values pointed at by the iterator. Before
 %% calling this function, check the iterator is not complete w/ itr_done/1.
--spec itr_values(riak_core_metadata_manager:iterator()) -> [metadata_value()].
-itr_values(It) ->
-    {_, Values} = itr_key_values(It),
-    Values.
+%% No conflict resolution will be performed as a result of calling this function.
+-spec itr_values(iterator()) -> [metadata_value()].
+itr_values({It, _Opts}) ->
+    {_, Obj} = riak_core_metadata_manager:iterator_value(It),
+    riak_core_metadata_object:values(Obj).
+
+%% @doc Return a single value pointed at by the iterator. If there are conflicts and
+%% a resolver was specified in the options when creating this iterator, they will be
+%% resolved. Otherwise, and error is returned. If conflicts are resolved, the resolved
+%% value is written locally and a broadcast is performed to update other nodes
+%% in the cluster
+%%
+%% NOTE: if resolution may be performed this function must be called at most once
+%% before calling itr_next/1 on the iterator (at which point the function can be called
+%% once more).
+-spec itr_value(iterator()) -> metadata_value() | {error, conflict}.
+itr_value({It, Opts}) ->
+    {Key, Obj} = riak_core_metadata_manager:iterator_value(It),
+    case proplists:get_value(resolver, Opts) of
+        undefined ->
+            case riak_core_metadata_object:value_count(Obj) of
+                1 ->
+                    riak_core_metadata_object:value(Obj);
+                _ ->
+                    {error, conflict}
+            end;
+        Resolver ->
+            Prefix = riak_core_metadata_manager:iterator_prefix(It),
+            PKey = prefixed_key(Prefix, Key),
+            maybe_resolve(PKey, Obj, Resolver)
+    end.
 
 %% @doc same as put(FullPrefix, Key, Value, [])
 -spec put(metadata_prefix(), metadata_key(), metadata_value()) -> ok.

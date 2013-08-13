@@ -28,6 +28,7 @@
          get/1,
          iterator/1,
          iterate/1,
+         iterator_prefix/1,
          iterator_value/1,
          iterator_done/1,
          put/3]).
@@ -117,6 +118,10 @@ iterator({Prefix, SubPrefix}=FullPrefix) when (is_binary(Prefix) orelse is_atom(
 -spec iterate(metadata_iterator()) -> metadata_iterator().
 iterate(Iterator) ->
     gen_server:call(?SERVER, {iterate, Iterator}).
+
+%% @doc return the full prefix being iterated by this iterator
+-spec iterator_prefix(metadata_iterator()) -> metadata_prefix().
+iterator_prefix(#metadata_iterator{prefix=Prefix}) -> Prefix.
 
 %% @doc return the key and object pointed to by the iterator
 -spec iterator_value(metadata_iterator()) -> {metadata_key(), metadata_object()}.
