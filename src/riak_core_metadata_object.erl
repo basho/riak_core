@@ -98,7 +98,9 @@ resolve({metadata, Object}, lww) ->
     LWW = fun ({_,TS1}, {_,TS2}) -> TS1 =< TS2 end,
     {metadata, dvvset:lww(LWW, Object)};
 resolve({metadata, Existing}, Reconcile) when is_function(Reconcile) ->
-    {metadata, dvvset:reconcile(fun({A, _}, {B, _}) -> Reconcile(A, B) end, Existing)}.
+    ResolveFun = fun({A, _}, {B, _}) -> timestamped_value(Reconcile(A, B)) end,
+    F = fun([Value | Rest]) -> lists:foldl(ResolveFun, Value, Rest) end,
+    {metadata, dvvset:reconcile(F, Existing)}.
 
 %% @doc Determines if the given context (version vector) is causually newer than
 %% an existing object. If the object missing or if the context does not represent
