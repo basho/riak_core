@@ -177,13 +177,38 @@ print_users() ->
                 [[Username, io_lib:format("~p", [Options])] ||
             {Username, Options} <- Users]).
 
+print_user(User) ->
+    case riak_core_metadata:get({<<"security">>, <<"roles">>}, User) of
+        undefined ->
+            io:format("No such role ~p", [User]),
+            {error, {unknown_role, User}};
+        _U ->
+            _Ctx = get_context(User)
+    end.
+
 %% Contexts are only valid until the GRANT epoch changes, and it will change
 %% whenever a GRANT or a REVOKE is performed. This is a little coarse grained
 %% right now, but it'll do for the moment.
-get_context(Username, Meta) ->
-    Grants = lookup(Username, lookup(grants, Meta, []), []),
-    Revokes = lookup(Username, lookup(revokes, Meta, []), []),
-    {Username, Grants, Revokes, lookup(epoch, Meta)}.
+get_context(Username) when is_binary(Username) ->
+    Grants = accumulate_grants(Username),
+    {Username, Grants, [], now()}.
+
+accumulate_grants(Role) ->
+    {Grants, _Seen} = accumulate_grants([Role], [], []),
+    Grants.
+
+accumulate_grants([], Seen, Acc) ->
+    {Acc, Seen};
+accumulate_grants([Role|Roles], Seen, Acc) ->
+    Options = riak_core_metadata:get({<<"security">>, <<"roles">>}, Role),
+    NestedRoles = [R || R <- lookup("roles", Options), not lists:member(R, Seen)],
+    {NewAcc, NewSeen} = accumulate_grants(NestedRoles, [Role|Seen], Acc),
+
+    Grants = riak_core_metadata:fold(fun({{R, Bucket}, [Permissions]}, A) ->
+                                             [{{R, Bucket}, Permissions}|A]
+                                     end, [], {<<"security">>, <<"grants">>},
+                                     [{match, {Role, '_'}}]),
+    accumulate_grants(Roles, NewSeen, [Grants|NewAcc]).
 
 check_permission(Permission, Bucket, Context) ->
     Meta = get_meta(),
@@ -192,7 +217,7 @@ check_permission(Permission, Bucket, Context) ->
     case Epoch == CtxEpoch of
         false ->
             %% context has expired
-            check_permission(Permission, Bucket, get_context(Username, Meta));
+            check_permission(Permission, Bucket, get_context(Username));
         true ->
             %% TODO check context is still valid
             case match_grant(Bucket, Grants) of
@@ -267,7 +292,7 @@ authenticate(Username, Password, ConnInfo) ->
                     case Source of
                         trust ->
                             %% trust always authenticates
-                            {ok, get_context(Username, Meta)};
+                            {ok, get_context(Username)};
                         password ->
                             %% pull the password out of the userdata
                             case lookup("password", UserData) of
@@ -287,7 +312,7 @@ authenticate(Username, Password, ConnInfo) ->
                                                                           Salt,
                                                                           Iterations) of
                                         true ->
-                                            {ok, get_context(Username, Meta)};
+                                            {ok, get_context(Username)};
                                         false ->
                                             {error, bad_password}
                                     end
@@ -301,7 +326,7 @@ authenticate(Username, Password, ConnInfo) ->
                                     %% common-name to username, should we?
                                     case CN == Username of
                                         true ->
-                                            {ok, get_context(Username, Meta)};
+                                            {ok, get_context(Username)};
                                         false ->
                                             {error, common_name_mismatch}
                                     end
@@ -320,7 +345,7 @@ authenticate(Username, Password, ConnInfo) ->
                                     case AuthMod:auth(Username, Password,
                                                       UserData, SourceOptions) of
                                         ok ->
-                                            {ok, get_context(Username, Meta)};
+                                            {ok, get_context(Username)};
                                         error ->
                                             {error, bad_password}
                                     end
@@ -349,29 +374,29 @@ add_user(Username, Options) ->
 
 add_grant(all, Bucket, Grants) ->
     %% all is always valid
-    Meta = get_meta(),
     case validate_permissions(Grants) of
         ok ->
-            put_meta(stash(epoch, {epoch, os:timestamp()},
-                           add_grant_int([all], Bucket, Grants, Meta)));
+            add_grant_int([all], Bucket, Grants);
         Error ->
             Error
     end;
-add_grant([H|_T]=UserList, Bucket, Grants) when is_list(H) ->
+add_grant([H|_T]=UserList, Bucket, Grants) when is_binary(H) ->
     %% list of lists, weeeee
     %% validate the users...
-    Meta = get_meta(),
-    Users = lookup(users, Meta, []),
-    Valid = lists:foldl(fun(User, ok) ->
-                    case lists:keymember(User, 1, Users) of
-                        true ->
-                            ok;
-                        false ->
-                            {error, {unknown_user, User}}
-                    end;
-                (_User, Acc) ->
-                    Acc
-            end, ok, UserList),
+    
+    UnknownUsers = riak_core_metadata:fold(fun({Username, _}, Acc) ->
+                                                   io:format("~p~n",
+                                                              [Username]),
+                                                   Acc -- [Username]
+                                           end, UserList, {<<"security">>,
+                                           <<"roles">>}),
+    Valid = case UnknownUsers of
+                [] ->
+                    ok;
+                _ ->
+                    {error, {unknown_users, UnknownUsers}}
+            end,
+
     Valid2 = case Valid of
         ok ->
             validate_permissions(Grants);
@@ -381,9 +406,7 @@ add_grant([H|_T]=UserList, Bucket, Grants) when is_list(H) ->
     case Valid2 of
         ok ->
             %% add a source for each user
-            put_meta(stash(epoch, {epoch, os:timestamp()},
-                           add_grant_int(UserList, Bucket, Grants, Meta))),
-            ok;
+            add_grant_int(UserList, Bucket, Grants);
         Error ->
             Error
     end;
@@ -391,19 +414,21 @@ add_grant(User, Bucket, Grants) ->
     %% single user
     add_grant([User], Bucket, Grants).
 
-add_grant_int([], _, _, Meta) ->
-    Meta;
-add_grant_int([User|Users], Bucket, Permissions, Meta) ->
-    Grants = lookup(grants, Meta, []),
-    UserGrants = lookup(User, Grants, []),
-    BucketPermissions = lookup(Bucket, UserGrants, []),
+add_grant_int([], _, _) ->
+    ok;
+add_grant_int([User|Users], Bucket, Permissions) ->
+    BucketPermissions = case riak_core_metadata:get({<<"security">>, <<"grants">>},
+                                               {User, Bucket}) of
+                            undefined ->
+                                [];
+                            Perms ->
+                                Perms
+                        end,
     NewPerms = lists:umerge(lists:sort(BucketPermissions),
                             lists:sort(Permissions)),
-    NewMeta = stash(grants, {grants, stash(User, {User, stash(Bucket, {Bucket,
-                                                                      NewPerms},
-                                                             UserGrants)},
-                                           Grants)}, Meta),
-    add_grant_int(Users, Bucket, Permissions, NewMeta).
+    riak_core_metadata:put({<<"security">>, <<"grants">>}, {User, Bucket},
+                           NewPerms),
+    add_grant_int(Users, Bucket, Permissions).
 
 add_revoke(all, Bucket, Revokes) ->
     %% all is always valid
@@ -551,15 +576,36 @@ rm_source_int([User|Users], CIDR, Meta) ->
                                                        Sources)}, Meta),
     rm_source_int(Users, CIDR, NewMeta).
 
-
-%% XXX this is a stub for now, should tie in JoeD's stuff for validation
 validate_options(Options) ->
     %% Check if password is an option
     case lookup("password", Options) of
         undefined ->
-            {ok, Options};
+            validate_role_option(Options);
         Pass ->
-            validate_password_option(Pass, Options)
+            case validate_password_option(Pass, Options) of
+                {ok, NewOptions} ->
+                    validate_role_option(NewOptions);
+                Error ->
+                    Error
+            end
+    end.
+
+validate_role_option(Options) ->
+    case lookup("roles", Options) of
+        undefined ->
+            {ok, stash("roles", {"roles", []}, Options)};
+        RoleStr ->
+            Roles= [list_to_binary(R) || R <-
+                                         string:tokens(RoleStr, ",")],
+            InvalidRoles = [R || R <- Roles, not
+                                 is_valid_role(R)],
+            case InvalidRoles of
+                [] ->
+                    {ok, stash("roles", {"roles", Roles},
+                               Options)};
+                _ ->
+                    {error, {invalid_roles, InvalidRoles}}
+            end
     end.
 
 %% Handle 'password' option if given
@@ -603,4 +649,12 @@ validate_permissions([Perm|T], Known) ->
             end;
         _ ->
             {error, {unknown_permission, Perm}}
+    end.
+
+is_valid_role(Role) ->
+    case riak_core_metadata:get({<<"security">>, <<"roles">>}, Role) of
+        undefined ->
+            false;
+        _ ->
+            true
     end.

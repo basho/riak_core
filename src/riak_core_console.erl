@@ -24,7 +24,7 @@
          stage_force_replace/1, print_staged/1, commit_staged/1,
          clear_staged/1, transfer_limit/1, pending_claim_percentage/2,
          transfers/1, add_user/1, add_source/1, grant/1, revoke/1,
-         print_users/1, print_sources/1]).
+         print_users/1, print_user/1, print_sources/1]).
 
 %% @doc Return for a given ring and node, percentage currently owned and
 %% anticipated after the transitions have been completed.
@@ -823,7 +823,13 @@ check_limit(Str) ->
     end.
 
 add_user([Username|Options]) ->
-    riak_core_security:add_user(list_to_binary(Username), parse_options(Options)).
+    case riak_core_security:add_user(list_to_binary(Username),
+                                     parse_options(Options)) of
+        ok -> ok;
+        Error ->
+            io:format("~p~n", [Error]),
+            Error
+    end.
 
 add_source([Users, CIDR, Source | Options]) ->
     Unames = case string:tokens(Users, ",") of
@@ -842,12 +848,18 @@ add_source([Users, CIDR, Source | Options]) ->
             Error
     end.
 
-grant([Grants, "ON", Bucket, "TO", Users]) ->
+grant([Grants, "ON", Type, Bucket, "TO", Users]) ->
+    grant([Grants, "ON", {list_to_binary(Type), list_to_binary(Bucket)}, "TO",
+           Users]);
+grant([Grants, "ON", Bucket, "TO", Users]) when is_list(Bucket) ->
+    grant([Grants, "ON", list_to_binary(Bucket), "TO", Users]);
+grant([Grants, "ON", Bucket, "TO", Users]) when is_tuple(Bucket);
+                                                is_binary(Bucket) ->
     Unames = case string:tokens(Users, ",") of
         ["all"] ->
             all;
         Other ->
-            Other
+            [list_to_binary(O) || O <- Other]
     end,
     Permissions = case string:tokens(Grants, ",") of
         ["all"] ->
@@ -855,7 +867,12 @@ grant([Grants, "ON", Bucket, "TO", Users]) ->
         Other2 ->
             Other2
     end,
-    riak_core_security:add_grant(Unames, Bucket, Permissions);
+    case riak_core_security:add_grant(Unames, Bucket, Permissions) of
+        ok -> ok;
+        Error ->
+            io:format("~p~n", [Error]),
+            Error
+    end;
 grant(_) ->
     io:format("Usage: grant <permissions> ON <bucket> TO <users>"),
     error.
@@ -881,6 +898,9 @@ revoke(_) ->
 
 print_users([]) ->
     riak_core_security:print_users().
+
+print_user([User]) ->
+    riak_core_security:print_user(list_to_binary(User)).
 
 print_sources([]) ->
     riak_core_security:print_sources().
