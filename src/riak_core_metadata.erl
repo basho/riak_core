@@ -22,6 +22,7 @@
 -export([get/2,
          get/3,
          fold/3,
+         fold/4,
          iterator/1,
          iterator/2,
          itr_next/1,
@@ -47,6 +48,7 @@
 -type it_opt_resolver()     :: {resolver, metadata_resolver() | lww}.
 -type it_opt()              :: it_opt_resolver().
 -type it_opts()             :: [it_opt()].
+-type fold_opts()           :: it_opts().
 -opaque iterator()          :: {riak_core_metadata_manager:metadata_iterator(), it_opts()}.
 
 %% Put Option Types
@@ -83,11 +85,21 @@ get({Prefix, SubPrefix}=FullPrefix, Key, Opts)
         Existing -> maybe_resolve(PKey, Existing, ResolveMethod)
     end.
 
-%% @spec Fold over all keys and values stored under a given prefix/subprefix
--spec fold(fun(({metadata_key(), [metadata_value()]}) -> any()), any(), metadata_prefix()) ->
-                  any().
+%% @spec same as fold(Fun, Acc0, FullPrefix, []).
+-spec fold(fun(({metadata_key(), [metadata_value()] | metadata_value()}, any()) -> any()),
+           any(),
+           metadata_prefix()) -> any().
 fold(Fun, Acc0, FullPrefix) ->
-    It = iterator(FullPrefix),
+    fold(Fun, Acc0, FullPrefix, []).
+
+%% @spec Fold over all keys and values stored under a given prefix/subprefix. Available
+%% options are the same as those provided to iterator/2.
+-spec fold(fun(({metadata_key(), [metadata_value()] | metadata_value()}, any()) -> any()),
+           any(),
+           metadata_prefix(),
+           fold_opts()) -> any().
+fold(Fun, Acc0, FullPrefix, Opts) ->
+    It = iterator(FullPrefix, Opts),
     fold_it(Fun, Acc0, It).
 
 fold_it(Fun, Acc, It) ->
