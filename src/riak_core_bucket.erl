@@ -41,6 +41,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
+-define(METADATA_PREFIX, {core, buckets}).
+
 %% @doc Add a list of defaults to global list of defaults for new
 %%      buckets.  If any item is in Items is already set in the
 %%      current defaults list, the new setting is omitted, and the old
@@ -48,47 +50,52 @@
 %%      behavior, to allow settings from app.config to override any
 %%      hard-coded values.
 append_bucket_defaults(Items) when is_list(Items) ->
-    OldDefaults = app_helper:get_env(riak_core, default_bucket_props, []),
-    NewDefaults = merge_props(OldDefaults, Items),
-    FixedDefaults = case riak_core:bucket_fixups() of
-        [] -> NewDefaults;
-        Fixups ->
-            riak_core_ring_manager:run_fixups(Fixups, default, NewDefaults)
-    end,
-    application:set_env(riak_core, default_bucket_props, FixedDefaults),
-    %% do a noop transform on the ring, to make the fixups re-run
-    catch(riak_core_ring_manager:ring_trans(fun(Ring, _) ->
-                    {new_ring, Ring} end, undefined)).
-
+    riak_core_bucket_props:append_defaults(Items).
 
 %% @spec set_bucket(riak_object:bucket(), BucketProps::riak_core_bucketprops()) -> ok
 %% @doc Set the given BucketProps in Bucket.
+set_bucket({<<"default">>, Name}, BucketProps) ->
+    set_bucket(Name, BucketProps);
+set_bucket({Type, _Name}=Bucket, BucketProps0) ->
+    case riak_core_bucket_type:get(Type) of
+        undefined -> {error, no_type};
+        _ -> set_bucket(fun set_bucket_in_metadata/2, Bucket, BucketProps0)
+    end;
 set_bucket(Name, BucketProps0) ->
-    case validate_props(BucketProps0, riak_core:bucket_validators(), []) of
+    set_bucket(fun set_bucket_in_ring/2, Name, BucketProps0).
+
+set_bucket(StoreFun, Bucket, BucketProps0) ->
+    case riak_core_bucket_props:validate(BucketProps0) of
         {ok, BucketProps} ->
-            F = fun(Ring, _Args) ->
-                        OldBucket = get_bucket(Name),
-                        NewBucket = merge_props(BucketProps, OldBucket),
-                        {new_ring, riak_core_ring:update_meta({bucket,Name},
-                                                              NewBucket,
-                                                              Ring)}
-                end,
-            {ok, _NewRing} = riak_core_ring_manager:ring_trans(F, undefined),
-            ok;
+            OldBucket = get_bucket(Bucket),
+            NewBucket = merge_props(BucketProps, OldBucket),
+            StoreFun(Bucket, NewBucket);
         {error, Details} ->
-            lager:error("Bucket validation failed ~p~n", [Details]),
+            lager:error("Bucket properties validation failed ~p~n", [Details]),
             {error, Details}
     end.
+
+set_bucket_in_metadata(Bucket, BucketMeta) ->
+    riak_core_metadata:put(?METADATA_PREFIX, bucket_key(Bucket), BucketMeta).
+
+set_bucket_in_ring(Bucket, BucketMeta) ->
+    F = fun(Ring, _Args) ->
+                {new_ring, riak_core_ring:update_meta(bucket_key(Bucket),
+                                                      BucketMeta,
+                                                      Ring)}
+        end,
+    {ok, _NewRing} = riak_core_ring_manager:ring_trans(F, undefined),
+    ok.
+
 
 %% @spec merge_props(list(), list()) -> list()
 %% @doc Merge two sets of bucket props.  If duplicates exist, the
 %%      entries in Overriding are chosen before those in Other.
 merge_props(Overriding, Other) ->
-    lists:ukeymerge(1, lists:ukeysort(1, Overriding),
-                    lists:ukeysort(1, Other)).
+    riak_core_bucket_props:merge(Overriding, Other).
 
 %% @spec get_bucket(riak_object:bucket()) ->
-%%         {ok, BucketProps :: riak_core_bucketprops()}
+%%         {ok, BucketProps :: riak_core_bucketprops()} | {error,  no_type}
 %% @doc Return the complete current list of properties for Bucket.
 %% Properties include but are not limited to:
 %% <pre>
@@ -97,6 +104,16 @@ merge_props(Overriding, Other) ->
 %% linkfun: a function returning a m/r FunTerm for link extraction
 %% </pre>
 %%
+get_bucket({<<"default">>, Name}) ->
+    get_bucket(Name);
+get_bucket({Type, _Name}=Bucket) ->
+    TypeMeta = riak_core_bucket_type:get(Type),
+    BucketMeta = riak_core_metadata:get(?METADATA_PREFIX, bucket_key(Bucket),
+                                        [{resolver, fun riak_core_bucket_props:resolve/2}]),
+    case merge_type_props(TypeMeta, BucketMeta) of
+        {error, _}=Error -> Error;
+        Props -> [{name, Bucket} | Props]
+    end;
 get_bucket(Name) ->
     Meta = riak_core_ring_manager:get_bucket_meta(Name),
     get_bucket_props(Name, Meta).
@@ -104,34 +121,55 @@ get_bucket(Name) ->
 %% @spec get_bucket(Name, Ring::riak_core_ring:riak_core_ring()) ->
 %%          BucketProps :: riak_core_bucketprops()
 %% @private
+get_bucket({<<"default">>, Name}, Ring) ->
+    get_bucket(Name, Ring);
+get_bucket({_Type, _Name}=Bucket, _Ring) ->
+    %% non-default type buckets are not stored in the ring, so just ignore it
+    get_bucket(Bucket);
 get_bucket(Name, Ring) ->
-    Meta = riak_core_ring:get_meta({bucket, Name}, Ring),
+    Meta = riak_core_ring:get_meta(bucket_key(Name), Ring),
     get_bucket_props(Name, Meta).
 
-get_bucket_props(Name, Meta) ->
-    case Meta of
-        undefined ->
-            [{name, Name}
-             |app_helper:get_env(riak_core, default_bucket_props)];
-        {ok, Bucket} -> Bucket
-    end.
+get_bucket_props(Name, undefined) ->
+    [{name, Name} | riak_core_bucket_props:defaults()];
+get_bucket_props(_Name, {ok, Bucket}) ->
+    Bucket.
+
+merge_type_props(undefined, _) ->
+    {error, no_type};
+merge_type_props(TypeMeta, undefined) when is_list(TypeMeta) ->
+    TypeMeta;
+merge_type_props(TypeMeta, BucketMeta) when is_list(TypeMeta) andalso
+                                            is_list(BucketMeta) ->
+    merge_props(BucketMeta, TypeMeta).
 
 %% @spec reset_bucket(binary()) -> ok
-%% @doc Reset the bucket properties for Bucket to the default settings
+%% @doc Reset the bucket properties for Bucket to the settings
+%% inherited from its Bucket Type
+reset_bucket({<<"default">>, Name}) ->
+    reset_bucket(Name);
+reset_bucket({_Type, _Name}=Bucket) ->
+    riak_core_metadata:delete(?METADATA_PREFIX, bucket_key(Bucket));
 reset_bucket(Bucket) ->
     F = fun(Ring, _Args) ->
-                {new_ring, riak_core_ring:remove_meta({bucket, Bucket}, Ring)}
+                {new_ring, riak_core_ring:remove_meta(bucket_key(Bucket), Ring)}
         end,
     {ok, _NewRing} = riak_core_ring_manager:ring_trans(F, undefined),
     ok.
 
 %% @doc Get bucket properties `Props' for all the buckets in the given
-%%      `Ring'
+%%      `Ring' and stored in metadata
 -spec get_buckets(riak_core_ring:riak_core_ring()) ->
                          Props::list().
 get_buckets(Ring) ->
-    Names = riak_core_ring:get_buckets(Ring),
-    [get_bucket(Name, Ring) || Name <- Names].
+    RingNames = riak_core_ring:get_buckets(Ring),
+    RingBuckets = [get_bucket(Name, Ring) || Name <- RingNames],
+    MetadataBuckets = riak_core_metadata:fold(fun({_Key, Props}, Acc) ->
+                                                      [Props | Acc]
+                                              end,
+                                              [], ?METADATA_PREFIX,
+                                              [{resolver, fun riak_core_bucket_props:resolve/2}]),
+    RingBuckets ++ MetadataBuckets.
 
 %% @doc returns a proplist containing all buckets and their respective N values
 -spec bucket_nval_map(riak_core_ring:riak_core_ring()) -> [{binary(),integer()}].
@@ -142,27 +180,20 @@ bucket_nval_map(Ring) ->
 %% @doc returns the default n value for buckets that have not explicitly set the property
 -spec default_object_nval() -> integer().
 default_object_nval() ->
-    riak_core_bucket:n_val(riak_core_config:default_bucket_props()).
-
-%% @private
--spec validate_props(BucketProps::list({PropName::atom(), Value::any()}),
-                     Validators::list(module()),
-                     Errors::list({PropName::atom(), Error::atom()})) ->
-                            {ok, BucketProps::list({PropName::atom(), Value::any()})} |
-                            {error,  Errors::list({PropName::atom(), Error::atom()})}.
-validate_props(BucketProps, [], []) ->
-    {ok, BucketProps};
-validate_props(_, [], Errors) ->
-    {error, Errors};
-validate_props(BucketProps0, [{_App, Validator}|T], Errors0) ->
-    {BucketProps, Errors} = Validator:validate(BucketProps0),
-    validate_props(BucketProps, T, lists:flatten([Errors|Errors0])).
+    riak_core_bucket:n_val(riak_core_bucket_props:defaults()).
 
 name(BProps) ->
     proplists:get_value(name, BProps).
 
 n_val(BProps) ->
     proplists:get_value(n_val, BProps).
+
+bucket_key({<<"default">>, Name}) ->
+    bucket_key(Name);
+bucket_key({_Type, _Name}=Bucket) ->
+    Bucket;
+bucket_key(Name) ->
+    {bucket, Name}.
 
 %% ===================================================================
 %% EUnit tests

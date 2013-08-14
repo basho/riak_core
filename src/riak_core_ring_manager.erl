@@ -174,7 +174,15 @@ get_ring_id() ->
             {0,0}
     end.
 
-%% @doc Return metadata for the given bucket
+%% @doc Return metadata for the given bucket. If a bucket
+%% for the non-default type is provided {error, no_type}
+%% is returned when the type does not exist
+get_bucket_meta({<<"default">>, Name}) ->
+    get_bucket_meta(Name);
+get_bucket_meta({_Type, _Name}=Bucket) ->
+    %% reads from cluster metadata ets table
+    %% these aren't stored in ring manager ever
+    riak_core_bucket:get_bucket(Bucket);
 get_bucket_meta(Bucket) ->
     case ets:lookup(?ETS, {bucket, Bucket}) of
         [] ->

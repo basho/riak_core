@@ -20,6 +20,8 @@
              riak_core_apl,
              riak_core_app,
              riak_core_bucket,
+             riak_core_bucket_type,
+             riak_core_bucket_props,
              riak_core_cinfo_core,
              riak_core_claimant,
              riak_core_claim,
