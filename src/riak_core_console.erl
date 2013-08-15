@@ -877,12 +877,18 @@ grant(_) ->
     io:format("Usage: grant <permissions> ON <bucket> TO <users>"),
     error.
 
+revoke([Grants, "ON", Type, Bucket, "FROM", Users]) ->
+    revoke([Grants, "ON", {list_to_binary(Type), list_to_binary(Bucket)},
+            "FROM",
+           Users]);
+revoke([Grants, "ON", Bucket, "FROM", Users]) when is_list(Bucket) ->
+    revoke([Grants, "ON", list_to_binary(Bucket), "FROM", Users]);
 revoke([Grants, "ON", Bucket, "FROM", Users]) ->
     Unames = case string:tokens(Users, ",") of
         ["all"] ->
             all;
         Other ->
-            Other
+            [list_to_binary(O) || O <- Other]
     end,
     Permissions = case string:tokens(Grants, ",") of
         ["all"] ->

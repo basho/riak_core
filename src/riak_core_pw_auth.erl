@@ -30,12 +30,10 @@
 -define(AUTH_NAME, pbkdf2).
 
 %% @doc Hash a plaintext password, returning hashed password and algorithm details
-hash_password(EnteredPassword) ->
+hash_password(BinaryPass) when is_binary(BinaryPass) ->
     % TODO: Do something more with the salt?
     % Generate salt the simple way
     Salt = crypto:rand_bytes(?SALT_LENGTH),
-
-    BinaryPass = list_to_binary(EnteredPassword),
 
     % Hash the original password and store as hex
     {ok, HashedPass} = pbkdf2:pbkdf2(?HASH_FUNCTION, BinaryPass, Salt, ?HASH_ITERATIONS),
@@ -44,10 +42,7 @@ hash_password(EnteredPassword) ->
 
 
 %% @doc Check a plaintext password with a hashed password
-check_password(EnteredPassword, HashedPassword, HashFunction, Salt, HashIterations) ->
-
-    % Passwords are stored as binaries
-    BinaryPass = list_to_binary(EnteredPassword),
+check_password(BinaryPass, HashedPassword, HashFunction, Salt, HashIterations) when is_binary(BinaryPass) ->
 
     % Hash EnteredPassword to compare to HashedPassword
     {ok, HashedPass} = pbkdf2:pbkdf2(HashFunction, BinaryPass, Salt, HashIterations),

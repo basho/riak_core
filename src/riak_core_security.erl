@@ -100,7 +100,7 @@ prettyprint_users(Users0) ->
 
 match_source([], _User, _PeerIP) ->
     {error, no_matching_sources};
-match_source([{{UserName, {IP,Mask}}, Source, Options}|Tail], User, PeerIP) ->
+match_source([{UserName, {IP,Mask}, Source, Options}|Tail], User, PeerIP) ->
     case (UserName == all orelse
           UserName == User) andalso
         mask_address(IP, Mask) == mask_address(PeerIP, Mask) of
@@ -113,7 +113,7 @@ match_source([{{UserName, {IP,Mask}}, Source, Options}|Tail], User, PeerIP) ->
 sort_sources(Sources) ->
     %% sort sources first by userlist, so that 'all' matches come last
     %% and then by CIDR, so that most sprcific masks come first
-    Sources1 = lists:sort(fun({{UserA, _}, _, _}, {{UserB, _}, _, _}) ->
+    Sources1 = lists:sort(fun({UserA, _, _, _}, {UserB, _, _, _}) ->
                     case {UserA, UserB} of
                         {all, all} ->
                             true;
@@ -126,7 +126,7 @@ sort_sources(Sources) ->
                             true
                     end
             end, Sources),
-    lists:sort(fun({{_, {_, MaskA}}, _, _}, {{_, {_, MaskB}}, _, _}) ->
+    lists:sort(fun({_, {_, MaskA}, _, _}, {_, {_, MaskB}, _, _}) ->
                 MaskA > MaskB
         end, Sources1).
 
@@ -183,19 +183,57 @@ print_user(User) ->
             io:format("No such role ~p", [User]),
             {error, {unknown_role, User}};
         _U ->
-            _Ctx = get_context(User)
+            Grants = accumulate_grants(User),
+            table:print([{username, 20}, {type, 10}, {bucket, 10}, {grants, 20}],
+                        [begin
+                             case Bucket of
+                                 {T, B} ->
+                                     [Username, T, B, io_lib:format("~p",
+                                                                    [Permissions])];
+                                 T ->
+                                     [Username, T, "*", io_lib:format("~p",
+                                                                      [Permissions])]
+                             end
+                         end ||
+                         {{Username, Bucket}, Permissions} <- Grants]),
+            GroupedGrants = group_grants(Grants),
+            table:print([{type, 30}, {bucket, 10}, {grants, 20}],
+                        [begin
+                             case Bucket of
+                                 {T, B} ->
+                                     [T, B, io_lib:format("~p",
+                                                          [Permissions])];
+                                 T ->
+                                     [T, "*", io_lib:format("~p",
+                                                          [Permissions])]
+                             end
+                         end ||
+                         {Bucket, Permissions} <- GroupedGrants]),
+            ok
     end.
+
+
+group_grants(Grants) ->
+    D = lists:foldl(fun({{_User, Bucket}, G}, Acc) ->
+                dict:append(Bucket, G, Acc)
+        end, dict:new(), Grants),
+    [{Bucket, lists:usort(flatten_once(P))} || {Bucket, P} <- dict:to_list(D)].
+
+flatten_once(List) ->
+    lists:foldl(fun(A, Acc) ->
+                        A ++ Acc
+                end, [], List).
 
 %% Contexts are only valid until the GRANT epoch changes, and it will change
 %% whenever a GRANT or a REVOKE is performed. This is a little coarse grained
 %% right now, but it'll do for the moment.
 get_context(Username) when is_binary(Username) ->
-    Grants = accumulate_grants(Username),
-    {Username, Grants, [], now()}.
+    Grants = group_grants(accumulate_grants(Username)),
+    {Username, Grants, os:timestamp()}.
 
 accumulate_grants(Role) ->
     {Grants, _Seen} = accumulate_grants([Role], [], []),
-    Grants.
+    lists:flatten(Grants).
 
 accumulate_grants([], Seen, Acc) ->
     {Acc, Seen};
@@ -211,31 +249,20 @@ accumulate_grants([Role|Roles], Seen, Acc) ->
     accumulate_grants(Roles, NewSeen, [Grants|NewAcc]).
 
 check_permission(Permission, Bucket, Context) ->
-    Meta = get_meta(),
-    Epoch = lookup(epoch, Meta),
-    {Username, Grants, Revokes, CtxEpoch} = Context,
-    case Epoch == CtxEpoch of
+    %% TODO replace this with a cluster metadata hash check, or something
+    Epoch = os:timestamp(),
+    {Username, Grants, CtxEpoch} = Context,
+    case timer:now_diff(Epoch, CtxEpoch) < 1000 of
         false ->
             %% context has expired
             check_permission(Permission, Bucket, get_context(Username));
         true ->
-            %% TODO check context is still valid
             case match_grant(Bucket, Grants) of
-                {B, MatchG} ->
+                {_B, MatchG} ->
                     case MatchG /= undefined andalso
                         (lists:member(Permission, MatchG) orelse MatchG == 'all') of
                         true ->
-                            %% ok, permission is present, check for revokes
-                            MatchR = lookup(B, Revokes, undefined),
-                            case MatchR /= undefined andalso
-                                (lists:member(Permission, MatchR) orelse MatchR == 'all') of
-                                true ->
-                                    %% oh snap, it was revoked
-                                    {false, Context};
-                                false ->
-                                    %% not revoked, yay
-                                    {true, Context}
-                            end;
+                            {true, Context};
                         false ->
                             %% no applicable grant
                             {false, Context}
@@ -246,46 +273,30 @@ check_permission(Permission, Bucket, Context) ->
             end
     end.
 
-get_username({Username, _Grants, _Revokes, _Expiry}) ->
+get_username({Username, _Grants, _Expiry}) ->
     Username.
 
 match_grant(Bucket, Grants) ->
     %% find the first grant that matches the bucket name
-    lists:foldl(fun({B, P}, undefined) ->
-                case lists:last(B) == $* of
-                    true ->
-                        L = length(B) - 1,
-                        case string:substr(Bucket, 1, L) ==
-                             string:substr(B, 1, L) of
-                            true ->
-                                {B, P};
-                            false ->
-                                undefined
-                        end;
-                    false ->
-                        case Bucket == B of
-                            true ->
-                                {B, P};
-                            false ->
-                                undefined
-                        end
-                end;
-            (_, Acc) ->
-                Acc
-        end, undefined, lists:sort(fun({A, _}, {B, _}) ->
+    lists:foldl(fun({B, P}, undefined) when Bucket == B ->
+                        {B, P};
+                   (_, Acc) ->
+                        Acc
+                end, undefined, lists:sort(fun({A, _}, {B, _}) ->
                     %% sort by descending bucket length, so more specific
                     %% matches come first
                     length(A) > length(B)
             end, Grants)).
 
 authenticate(Username, Password, ConnInfo) ->
-    Meta = get_meta(),
-    Users = lookup(users, Meta, []),
-    case lookup(Username, Users) of
+    case riak_core_metadata:get({<<"security">>, <<"roles">>}, Username) of
         undefined ->
             {error, unknown_user};
         UserData ->
-            Sources = sort_sources(lookup(sources, Meta, [])),
+            Sources0 = riak_core_metadata:fold(fun({{Un, CIDR}, [{Source, Options}]}, Acc) ->
+                                                      [{Un, CIDR, Source, Options}|Acc]
+                                              end, [], {<<"security">>, <<"sources">>}),
+            Sources = sort_sources(Sources0),
             case match_source(Sources, Username,
                               proplists:get_value(ip, ConnInfo)) of
                 {ok, Source, SourceOptions} ->
@@ -324,7 +335,7 @@ authenticate(Username, Password, ConnInfo) ->
                                 CN ->
                                     %% TODO postgres support a map from
                                     %% common-name to username, should we?
-                                    case CN == Username of
+                                    case list_to_binary(CN) == Username of
                                         true ->
                                             {ok, get_context(Username)};
                                         false ->
@@ -432,12 +443,10 @@ add_grant_int([User|Users], Bucket, Permissions) ->
 
 add_revoke(all, Bucket, Revokes) ->
     %% all is always valid
-    Meta = get_meta(),
     case validate_permissions(Revokes) of
         ok ->
-            case add_revoke_int([all], Bucket, revokes, Meta) of
-                {ok, NewMeta} ->
-                    put_meta(stash(epoch, {epoch, os:timestamp()}, NewMeta)),
+            case add_revoke_int([all], Bucket, revokes) of
+                ok ->
                     ok;
                 Error2 ->
                     Error2
@@ -445,21 +454,21 @@ add_revoke(all, Bucket, Revokes) ->
         Error ->
             Error
     end;
-add_revoke([H|_T]=UserList, Bucket, Revokes) when is_list(H) ->
+add_revoke([H|_T]=UserList, Bucket, Revokes) when is_binary(H) ->
     %% list of lists, weeeee
     %% validate the users...
-    Meta = get_meta(),
-    Users = lookup(users, Meta, []),
-    Valid = lists:foldl(fun(User, ok) ->
-                    case lists:keymember(User, 1, Users) of
-                        true ->
-                            ok;
-                        false ->
-                            {error, {unknown_user, User}}
-                    end;
-                (_User, Acc) ->
-                    Acc
-            end, ok, UserList),
+    UnknownUsers = riak_core_metadata:fold(fun({Username, _}, Acc) ->
+                                                   io:format("~p~n",
+                                                              [Username]),
+                                                   Acc -- [Username]
+                                           end, UserList, {<<"security">>,
+                                           <<"roles">>}),
+    Valid = case UnknownUsers of
+                [] ->
+                    ok;
+                _ ->
+                    {error, {unknown_users, UnknownUsers}}
+            end,
     Valid2 = case Valid of
         ok ->
             validate_permissions(Revokes);
@@ -469,9 +478,8 @@ add_revoke([H|_T]=UserList, Bucket, Revokes) when is_list(H) ->
     case Valid2 of
         ok ->
             %% add a source for each user
-            case add_revoke_int(UserList, Bucket, Revokes, Meta) of
-                {ok, NewMeta} ->
-                    put_meta(stash(epoch, {epoch, os:timestamp()}, NewMeta)),
+            case add_revoke_int(UserList, Bucket, Revokes) of
+                ok ->
                     ok;
                 Error2 ->
                     Error2
@@ -483,34 +491,25 @@ add_revoke(User, Bucket, Revokes) ->
     %% single user
     add_revoke([User], Bucket, Revokes).
 
-add_revoke_int([], _, _, Meta) ->
-    {ok, Meta};
-add_revoke_int([User|Users], Bucket, Permissions, Meta) ->
-    Revokes = lookup(revokes, Meta, []),
-    UserRevokes = lookup(User, Revokes, []),
-    Grants = lookup(grants, Meta, []),
-    UserGrants = lookup(User, Grants, []),
+add_revoke_int([], _, _) ->
+    ok;
+add_revoke_int([User|Users], Bucket, Permissions) ->
+    UserGrants = riak_core_metadata:get({<<"security">>, <<"grants">>}, {User,
+                                                                         Bucket}),
 
     %% check if there is currently a GRANT we can revoke
-    case lookup(Bucket, UserGrants) of
+    case UserGrants of
         undefined ->
             %% can't REVOKE what wasn't GRANTED
-            add_revoke_int(Users, Bucket, Permissions, Meta);
+            add_revoke_int(Users, Bucket, Permissions);
         GrantedPermissions ->
-            ToRevoke = [X || X <- Permissions, Y <- GrantedPermissions, X == Y],
-            RevokedPermissions = lookup(Bucket, UserRevokes, []),
-            NewRevokes = lists:umerge(lists:sort(ToRevoke),
-                                      lists:sort(RevokedPermissions)),
+            NewPerms = [X || X <- GrantedPermissions, not lists:member(X,
+                                                                       Permissions)],
 
-            %% Now, in an ideal world, we'd try to do a strongly-consistent
-            %% write to simply update the GRANT list, andf if that failed,
-            %% we'd write to the REVOKE list. For testing purposes, we'll just
-            %% write a REVOKE for now.
-            NewMeta = stash(revokes, {revokes, stash(User, {User, stash(Bucket, {Bucket,
-                                                                                 NewRevokes},
-                                                                        UserRevokes)},
-                                                     Revokes)}, Meta),
-            add_revoke_int(Users, Bucket, Permissions, NewMeta)
+            riak_core_metadata:put({<<"security">>, <<"grants">>}, {User,
+                                                                  Bucket},
+                                   NewPerms),
+            add_revoke_int(Users, Bucket, Permissions)
     end.
 
 add_source(all, CIDR, Source, Options) ->
@@ -610,7 +609,7 @@ validate_role_option(Options) ->
 
 %% Handle 'password' option if given
 validate_password_option(Pass, Options) ->
-    case riak_core_pw_auth:hash_password(Pass) of
+    case riak_core_pw_auth:hash_password(list_to_binary(Pass)) of
         {ok, HashedPass, AuthName, HashFunction, Salt, Iterations} ->
             %% Add to options, replacing plaintext password
             NewOptions = stash("password", {"password",
