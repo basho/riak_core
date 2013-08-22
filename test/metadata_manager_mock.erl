@@ -133,15 +133,18 @@ handle_call({graft, {Key, Time}}, _From, State) ->
   case lists:keyfind(Key, 1, State#state.dict) of
     {Key, VSet} ->
       case {equal(Time, VSet), less(dvvset:new(Time, dummy), VSet)} of
-        {true, _} ->
-          event_logger:event({graft, node_name(), Key, VSet}),
-          {reply, {ok, VSet}, State};
-        {false, true} ->
-          event_logger:event({graft, node_name(), Key, Time, stale}),
-          {reply, stale, State};
+        %% {true, _} ->
+        %%   event_logger:event({graft, node_name(), Key, VSet}),
+        %%   {reply, {ok, VSet}, State};
+        %% {false, true} ->
+        %%   event_logger:event({graft, node_name(), Key, Time, stale}),
+        %%   {reply, stale, State};
         {false, false} ->
           event_logger:event({graft, node_name(), Key, bad_graft, Time, VSet}),
-          {reply, stale, State}
+          {reply, stale, State};
+        _ ->
+          event_logger:event({graft, node_name(), Key, VSet}),
+          {reply, {ok, VSet}, State}
       end;
     false ->
       event_logger:event({graft, node_name(), Key, bad_graft, Time}),
