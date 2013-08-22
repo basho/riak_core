@@ -25,33 +25,51 @@ key() -> elements([k1, k2, k3, k4, k5]).
 val() -> elements([v1, v2, v3, v4, v5]).
 msg() -> {key(), val()}.
 
+gen_peers(Node, Nodes) ->
+  case length(Nodes) of
+    1 -> {[], []};
+    2 -> {Nodes -- [Node], []};
+    N ->
+      Width = 2, % if N < 5 -> 1; true -> 2 end,
+      Tree  = riak_core_util:build_tree(Width, Nodes, [cycles]),
+      Eager = orddict:fetch(Node, Tree),
+      Lazy  = [elements(Nodes -- [Node | Eager]) || N > 3],
+      {Eager, Lazy}
+  end.
+
 %% -- Commands ---------------------------------------------------------------
 
 %% -- init --
 init_pre(S) -> S#state.nodes == [].
 
 init_args(_S) ->
-  [?LET(N, choose(1, length(node_list())), shrink_list(lists:sublist(node_list(), N)))].
+  [?LET(Nodes, ?LET(N, choose(2, length(node_list())),
+                    shrink_list(lists:sublist(node_list(), N))),
+        [ {Node, gen_peers(Node, Nodes)} || Node <- Nodes ])
+  ].
 
-init(Names) ->
-  Nodes = [ mk_node(N) || N <- Names ],
-  [ rpc:call(mk_node(Name), ?MODULE, start_server, [Name, Nodes]) || Name <- Names ],
-  %% log_tree(Names),
+init(Tree) ->
+  Names = [ Name || {Name, _} <- Tree ],
+  [ rpc:call(mk_node(Name), ?MODULE, start_server, [Name, Eager, Lazy, Names])
+    || {Name, {Eager, Lazy}} <- Tree ],
   ok.
 
-start_server(_Name, Nodes) ->
-  %% TODO: deterministic lazy_peers!
-  {Eager, Lazy} = riak_core_broadcast:init_peers(Nodes),
-  {ok, Pid} = riak_core_broadcast:start_link(Nodes, Eager, Lazy),
-  unlink(Pid),
-  (catch metadata_manager_mock:stop()),
-  timer:sleep(1),
-  {ok, Mgr} = metadata_manager_mock:start_link(),
-  unlink(Mgr),
-  ok.
+start_server(_Name, Eager, Lazy, Names) ->
+  try
+    N = fun(Xs) -> lists:map(fun mk_node/1, Xs) end,
+    {ok, Pid} = riak_core_broadcast:start_link(N(Names), N(Eager), N(Lazy)),
+    unlink(Pid),
+    (catch metadata_manager_mock:stop()),
+    timer:sleep(1),
+    {ok, Mgr} = metadata_manager_mock:start_link(),
+    unlink(Mgr),
+    ok
+  catch _:Err ->
+    io:format("OOPS\n~p\n~p\n", [Err, erlang:get_stacktrace()])
+  end.
 
 init_next(S, _, [Names]) ->
-  S#state{ nodes  = Names }.
+  S#state{ nodes  = [ Name || {Name, _} <- Names ] }.
 
 %% -- broadcast --
 broadcast_pre(S) -> S#state.nodes /= [].
@@ -78,7 +96,7 @@ weight(_, init)      -> 1.
 
 prop_test() ->
   ?SETUP(fun() -> setup(), fun() -> ok end end,
-  ?FORALL(Cmds, commands(?MODULE),
+  ?FORALL(Cmds, ?SIZED(N, resize(N div 2, commands(?MODULE))),
   ?LET(Shrinking, parameter(shrinking, false),
   ?ALWAYS(if Shrinking -> 5; true -> 1 end,
   begin
@@ -86,7 +104,7 @@ prop_test() ->
     event_logger:reset(),
     HSR={_H, S, _Res} = run_commands(?MODULE, Cmds),
     %% timer:sleep(200),
-    {Trace, Ok} = event_logger:get_events(100, 3000),
+    {Trace, Ok} = event_logger:get_events(100, 10000),
     event_logger:event(reset),
     {messages, Mailbox} = process_info(global:whereis_name(event_logger), messages),
     timer:sleep(10),
@@ -97,6 +115,7 @@ prop_test() ->
               || Node <- S#state.nodes ],
     timer:sleep(10),
     MoreTrace = event_logger:get_events(),
+    ?IMPLIES(length(MoreTrace) == 2,
     aggregate([ element(1, E) || {_, E} <- Trace, is_tuple(E) ],
     ?WHENFAIL(io:format("~p\n", [Trace]),
     ?WHENFAIL(io:format("Views =\n  ~p\n", [Views]),
@@ -106,9 +125,26 @@ prop_test() ->
       [ {consistent, prop_consistent(Views)}
       , {valid_views, [] == [ bad || {_, View} <- Views, not is_list(View) ]}
       , {termination, equals(Ok, ok)}
-      , {extra_trace, equals(length(MoreTrace), 2)}
-      ]))))))
+      %% , {tree, prop_tree(Tree)}
+      %% , {extra_trace, equals(length(MoreTrace), 2)}
+      ])))))))
   end)))).
+
+prop_tree(Tree) ->
+  Nodes = [ Node || {Node, _} <- Tree ],
+  conjunction(
+    [ {Node, equals(Nodes -- reachable(Node, Tree), [])}
+      || Node <- Nodes ]).
+
+reachable(Node, Tree) -> reachable([Node], Node, Tree, []).
+reachable([], _Root, _Tree, Acc) -> lists:sort(Acc);
+reachable([Node|Nodes], Root, Tree, Acc) ->
+  case lists:member(Node, Acc) of
+    true -> reachable(Nodes, Root, Tree, Acc);
+    false -> 
+      {_, Neighbours, _} = lists:keyfind(Root, 1, proplists:get_value(Node, Tree)),
+      reachable(Nodes ++ Neighbours, Root, Tree, [Node|Acc])
+  end.
 
 prop_consistent([]) -> true;
 prop_consistent(Views) ->
