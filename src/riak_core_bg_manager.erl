@@ -22,7 +22,12 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0,
+-export([
+         %% Universal
+         start_link/0,
+         enable/0,
+         disable/0,
+         %% Locks
          get_lock/1,
          get_lock/2,
          get_lock/3,
@@ -31,15 +36,34 @@
          lock_types/0,
          all_locks/0,
          query_locks/1,
-         enable/0,
-         enable/1,
-         disable/0,
-         disable/1,
-         disable/2,
+         enable_locks/0,
+         enable_locks/1,
+         disable_locks/0,
+         disable_locks/1,
+         disable_locks/2,
          concurrency_limit/1,
          set_concurrency_limit/2,
          set_concurrency_limit/3,
-         concurrency_limit_reached/1]).
+         concurrency_limit_reached/1,
+         %% Tokens, all proxied to riak_core_token_manager
+         set_token_rate/2,
+         token_rate/1,
+         enable_tokens/0,
+         enable_tokens/1,
+         disable_tokens/0,
+         disable_tokens/1,
+         get_token/1,
+         get_token/2,
+         get_token/3,
+         get_token_sync/1,
+         get_token_sync/2,
+         get_token_sync/3,
+         token_types/0,
+         tokens_given/0,
+         tokens_given/1,
+         tokens_waiting/0,
+         tokens_waiting/1
+        ]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -53,6 +77,7 @@
                     enabled           :: boolean()}).
 
 -define(SERVER, ?MODULE).
+-define(TOKEN_MODULE, riak_core_token_manager).
 -define(DEFAULT_CONCURRENCY, 0). %% DO NOT CHANGE. DEFAULT SET TO 0 TO ENFORCE "REGISTRATION"
 -define(limit(X), (X)#lock_info.concurrency_limit).
 -define(enabled(X), (X)#lock_info.enabled).
@@ -67,7 +92,107 @@
 %% @doc Starts the server
 -spec start_link() -> {ok, pid()} | ignore | {error, term}.
 start_link() ->
+    gen_server:start_link({local, ?TOKEN_MODULE}, ?TOKEN_MODULE, [], []),
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+
+%% @doc Enable handing out of all background locks and tokens
+-spec enable() -> ok.
+enable() ->
+    enable_tokens(),
+    enable_locks().
+
+%% @doc Disable handing out of all background locks and tokens
+-spec disable() -> ok.
+disable() ->
+    disable_tokens(),
+    disable_locks().
+
+%%% Token API proxies to the token manager
+
+%% @doc Set the refill rate of tokens.
+-spec set_token_rate(any(), riak_core_token_manager:rate()) -> riak_core_token_manager:rate().
+set_token_rate(Type, {Period, Count, StartFull}) ->
+    riak_core_token_manager:set_token_rate(Type, {Period, Count}, StartFull).
+
+-spec token_rate(any()) -> riak_core_token_manager:rate().
+token_rate(Type) ->
+    riak_core_token_manager:token_rate(Type).
+
+%% @doc Asynchronously get a token of kind Type. returns "max_tokens" if empty
+-spec get_token(any()) -> ok | max_tokens.
+get_token(Type) ->
+    get_token(Type, self()).
+
+%% @doc Asynchronously get a token of kind Type.
+%%      Associate token with provided pid or metadata. If metadata
+%%      is provided the lock is associated with the calling process.
+%%      Returns "max_tokens" if empty.
+-spec get_token(any(), pid() | [{atom(), any()}]) -> ok | max_tokens.
+get_token(Type, Pid) when is_pid(Pid) ->
+    get_token(Type, Pid, []);
+get_token(Type, Meta) ->
+    get_token(Type, self(), Meta).
+
+-spec get_token(any(), pid(), [{atom(), any()}]) -> ok | max_concurrency.
+get_token(Type, Pid, Meta) ->
+    riak_core_token_manager:get_token_async(Type, Pid, Meta).
+
+%% @doc Synchronously get a token of type Type. returns "max_tokens" if empty
+-spec get_token_sync(any()) -> ok | max_tokens.
+get_token_sync(Type) ->
+    get_token_sync(Type, self()).
+
+%% @doc Synchronously get a token of kind Type.
+%%      Associate token with provided pid or metadata. If metadata
+%%      is provided the lock is associated with the calling process.
+%%      Returns "max_tokens" if empty.
+-spec get_token_sync(any(), pid() | [{atom(), any()}]) -> ok | max_tokens.
+get_token_sync(Type, Pid) when is_pid(Pid) ->
+    get_token_sync(Type, Pid, []);
+get_token_sync(Type, Meta) ->
+    get_token(Type, self(), Meta).
+
+-spec get_token_sync(any(), pid(), [{atom(), any()}]) -> ok | max_concurrency.
+get_token_sync(Type, Pid, Meta) ->
+    riak_core_token_manager:get_token_sync(Type, Pid, Meta).
+
+token_types() ->
+    riak_core_token_manager:token_types().
+
+tokens_given() ->
+    riak_core_token_manager:tokens_given().
+
+tokens_given(Type) ->
+    riak_core_token_manager:tokens_given(Type).
+
+tokens_waiting() ->
+    riak_core_token_manager:tokens_waiting().
+
+tokens_waiting(Type) ->
+    riak_core_token_manager:tokens_waiting(Type).
+
+%% @doc Enable handing out of any tokens
+-spec enable_tokens() -> ok.
+enable_tokens() ->
+    riak_core_token_manager:enable().
+
+%% @doc Disable handing out of any tokens
+-spec disable_tokens() -> ok.
+disable_tokens() ->
+    riak_core_token_manager:disable().
+
+%% @doc Enable handing out of tokens of the given type.
+-spec enable_tokens(any()) -> ok.
+enable_tokens(Type) ->
+    riak_core_token_manager:enable(Type).
+
+
+%% @doc same as `disable(Type, false)'
+-spec disable_tokens(any()) -> ok.
+disable_tokens(Type) ->
+    riak_core_token_manager:enable(Type).
+
+%%% Locks
 
 %% @doc Acquire a concurrency lock of the given type, if available,
 %%      and associate the lock with the calling process.
@@ -124,30 +249,29 @@ query_locks(Query) ->
     gen_server:call(?MODULE, {query_locks, Query}, infinity).
 
 %% @doc Enable handing out of any locks
--spec enable() -> ok.
-enable() ->
+-spec enable_locks() -> ok.
+enable_locks() ->
     gen_server:cast(?MODULE, enable).
 
 %% @doc Disable handing out of any locks
--spec disable() -> ok.
-disable() ->
+-spec disable_locks() -> ok.
+disable_locks() ->
     gen_server:cast(?MODULE, disable).
 
 %% @doc Enable handing out of locks of the given type.
--spec enable(any()) -> ok.
-enable(Type) ->
+-spec enable_locks(any()) -> ok.
+enable_locks(Type) ->
     gen_server:cast(?MODULE, {enable, Type}).
 
-
-%% @doc same as `disable(Type, false)'
--spec disable(any()) -> ok.
-disable(Type) ->
-    disable(Type, false).
+%% @doc same as `disable_locks(Type, false)'
+-spec disable_locks(any()) -> ok.
+disable_locks(Type) ->
+    disable_locks(Type, false).
 
 %% @doc Disable handing out of locks of the given type. If `Kill' is `true' any processes
 %%      holding locks for the given type will be killed with reaseon `max_concurrency'
--spec disable(any(), boolean()) -> ok.
-disable(Type, Kill) ->
+-spec disable_locks(any(), boolean()) -> ok.
+disable_locks(Type, Kill) ->
     gen_server:cast(?MODULE, {disable, Type, Kill}).
 
 %% @doc Get the current maximum concurrency for the given lock type.
