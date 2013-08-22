@@ -32,8 +32,7 @@
 
 %% Debug API
 -export([debug_get_peers/2,
-         debug_get_tree/2,
-         init_peers/1]).
+         debug_get_tree/2]).
 
 
 %% gen_server callbacks
