@@ -30,7 +30,7 @@ gen_peers(Node, Nodes) ->
     1 -> {[], []};
     2 -> {Nodes -- [Node], []};
     N ->
-      Width = 2, % if N < 5 -> 1; true -> 2 end,
+      Width = if N < 5 -> 1; true -> 2 end,
       Tree  = riak_core_util:build_tree(Width, Nodes, [cycles]),
       Eager = orddict:fetch(Node, Tree),
       Lazy  = [elements(Nodes -- [Node | Eager]) || N > 3],
@@ -42,16 +42,20 @@ gen_peers(Node, Nodes) ->
 %% -- init --
 init_pre(S) -> S#state.nodes == [].
 
-init_args(_S) ->
-  [?LET(Nodes, ?LET(N, choose(2, length(node_list())),
-                    shrink_list(lists:sublist(node_list(), N))),
-        [ {Node, gen_peers(Node, Nodes)} || Node <- Nodes ])
-  ].
+init_pre(_S, [Nodes, _]) -> length(Nodes) > 2.
 
-init(Tree) ->
+init_args(_S) ->
+  ?LET(Nodes, ?LET(N, choose(3, length(node_list())),
+                    shrink_list(lists:sublist(node_list(), N))),
+  [ [ {Node, gen_peers(Node, Nodes)} || Node <- Nodes ]
+  , drop_strategy(Nodes)
+  ]).
+
+init(Tree, DropStrat) ->
   Names = [ Name || {Name, _} <- Tree ],
   [ rpc:call(mk_node(Name), ?MODULE, start_server, [Name, Eager, Lazy, Names])
     || {Name, {Eager, Lazy}} <- Tree ],
+  proxy_server:setup(DropStrat),
   ok.
 
 start_server(_Name, Eager, Lazy, Names) ->
@@ -68,7 +72,7 @@ start_server(_Name, Eager, Lazy, Names) ->
     io:format("OOPS\n~p\n~p\n", [Err, erlang:get_stacktrace()])
   end.
 
-init_next(S, _, [Names]) ->
+init_next(S, _, [Names, _]) ->
   S#state{ nodes  = [ Name || {Name, _} <- Names ] }.
 
 %% -- broadcast --
@@ -154,6 +158,7 @@ prop_consistent(Views) ->
 setup() ->
   %% error_logger:tty(false),
   error_logger:tty(true),
+  (catch proxy_server:start_link()),
   try event_logger:get_events() catch _:_ -> event_logger:start_link() end,
   start_nodes(),
   [ rpc:call(mk_node(Node), application, set_env,
