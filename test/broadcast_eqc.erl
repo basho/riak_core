@@ -33,9 +33,85 @@ gen_peers(Node, Nodes) ->
       Width = if N < 5 -> 1; true -> 2 end,
       Tree  = riak_core_util:build_tree(Width, Nodes, [cycles]),
       Eager = orddict:fetch(Node, Tree),
-      Lazy  = [elements(Nodes -- [Node | Eager]) || N > 3],
+      %% Lazy  = [elements(Nodes -- [Node | Eager])],
+      Xs = Nodes, %  -- (Eager -- [Node]),
+      {_, [_,X|_]} = lists:splitwith(fun(X) -> X /= Node end, Xs ++ Xs),
+      Lazy = [X],
       {Eager, Lazy}
   end.
+
+drop_strategy(Nodes) when length(Nodes) < 2 -> [];
+drop_strategy(Nodes) ->
+  ?LET(Strat, list({{elements(Nodes), elements(Nodes)}, ?LET(Xs, list(nat()), mk_drop_list(keep, drop, Xs))}),
+    [ E || E={_, Xs} <- Strat, [] /= Xs ]).
+  % [].
+
+mk_drop_list(_, _, [])     -> [];
+mk_drop_list(keep, _, [_]) -> [];
+mk_drop_list(A, B, [N|Ns]) ->
+  [{A, N} || N > 0] ++ mk_drop_list(B, A, Ns).
+
+%% -- Metadata manager abstraction -------------------------------------------
+
+-define(MOCK_MANAGER, true).
+
+-ifdef(MOCK_MANAGER).
+
+-define(MANAGER, metadata_manager_mock).
+
+start_manager(_Node) ->
+  (catch ?MANAGER:stop()),
+  timer:sleep(1),
+  {ok, Mgr} = ?MANAGER:start_link(),
+  unlink(Mgr).
+
+mk_key(Key) -> Key.
+
+put_arguments(_Name, Key, Val) ->
+  [Key, Val].
+
+broadcast_obj(Key, Val) -> {Key, Val}.
+
+get_view(Node) ->
+  rpc:call(mk_node(Node), ?MANAGER, stop, []).
+
+-else.
+
+-define(MANAGER, riak_core_metadata_manager).
+-define(PREFIX, {x, x}).
+
+-include("../include/riak_core_metadata.hrl").
+
+start_manager(Node) ->
+  Dir = atom_to_list(Node),
+  os:cmd("mkdir " ++ Dir),
+  os:cmd("rm " ++ Dir ++ "/*"),
+  (catch exit(whereis(?MANAGER), kill)),
+  timer:sleep(1),
+  {ok, Mgr} = ?MANAGER:start_link([{data_dir, Dir}, {node_name, Node}]),
+  unlink(Mgr).
+
+mk_key(Key) -> {?PREFIX, Key}.  %% TODO: prefix
+
+put_arguments(_Name, Key, Val) ->
+  [Key, undefined, Val].  %% TODO: context
+
+broadcast_obj(Key, Val) ->
+  #metadata_broadcast{ pkey = Key, obj = Val }.
+
+get_view(Node) ->
+  rpc:call(mk_node(Node), ?MODULE, get_view, []).
+
+get_view() ->
+  It = ?MANAGER:iterator(?PREFIX, '_'),
+  iterate(It, []).
+
+iterate(It, Acc) ->
+  case ?MANAGER:iterator_done(It) of
+    true  -> lists:reverse(Acc);
+    false -> iterate(?MANAGER:iterate(It), [?MANAGER:iterator_value(It)|Acc])
+  end.
+-endif.
 
 %% -- Commands ---------------------------------------------------------------
 
@@ -58,15 +134,12 @@ init(Tree, DropStrat) ->
   proxy_server:setup(DropStrat),
   ok.
 
-start_server(_Name, Eager, Lazy, Names) ->
+start_server(Node, Eager, Lazy, Names) ->
   try
     N = fun(Xs) -> lists:map(fun mk_node/1, Xs) end,
     {ok, Pid} = riak_core_broadcast:start_link(N(Names), N(Eager), N(Lazy)),
     unlink(Pid),
-    (catch metadata_manager_mock:stop()),
-    timer:sleep(1),
-    {ok, Mgr} = metadata_manager_mock:start_link(),
-    unlink(Mgr),
+    start_manager(Node),
     ok
   catch _:Err ->
     io:format("OOPS\n~p\n~p\n", [Err, erlang:get_stacktrace()])
@@ -81,10 +154,11 @@ broadcast_pre(S, [Node, _Msg]) -> lists:member(Node, S#state.nodes).
 
 broadcast_args(S) -> [elements(S#state.nodes), msg()].
 
-broadcast(Node, Msg={Key, Val}) ->
-  %% event_logger:event({broadcast, Node, Msg}),
-  rpc:call(mk_node(Node), metadata_manager_mock, put, [Key, Val]),
-  rpc:call(mk_node(Node), riak_core_broadcast, broadcast, [Msg, metadata_manager_mock]).
+broadcast(Node, {Key0, Val0}) ->
+  Key = mk_key(Key0),
+  event_logger:event({put, Node, Key0, Val0}),
+  Val = rpc:call(mk_node(Node), ?MANAGER, put, put_arguments(Node, Key, Val0)),
+  rpc:call(mk_node(Node), riak_core_broadcast, broadcast, [broadcast_obj(Key, Val), ?MANAGER]).
     %% Parameterize on manager
 
 %% -- sleep --
@@ -108,20 +182,19 @@ prop_test() ->
     event_logger:reset(),
     HSR={_H, S, _Res} = run_commands(?MODULE, Cmds),
     %% timer:sleep(200),
-    {Trace, Ok} = event_logger:get_events(100, 10000),
+    {Trace, Ok} = event_logger:get_events(300, 10000),
     event_logger:event(reset),
     {messages, Mailbox} = process_info(global:whereis_name(event_logger), messages),
     timer:sleep(10),
     Tree = get_tree(S#state.nodes),
     stop_servers(S),
     timer:sleep(5),
-    Views = [ {Node, rpc:call(mk_node(Node), metadata_manager_mock, stop, [])}
-              || Node <- S#state.nodes ],
+    Views = [ {Node, get_view(Node)} || Node <- S#state.nodes ],
     timer:sleep(10),
     MoreTrace = event_logger:get_events(),
     ?IMPLIES(length(MoreTrace) == 2,
     aggregate([ element(1, E) || {_, E} <- Trace, is_tuple(E) ],
-    ?WHENFAIL(io:format("~p\n", [Trace]),
+    ?WHENFAIL(io:format("~p\n(length: ~p)\n", [Trace, length(Trace)]),
     ?WHENFAIL(io:format("Views =\n  ~p\n", [Views]),
     ?WHENFAIL(io:format("MoreTrace =\n  ~p\nTree =\n  ~p\nMailbox =\n  ~p\n", [MoreTrace, Tree, Mailbox]),
     pretty_commands(?MODULE, Cmds, HSR,
@@ -129,7 +202,7 @@ prop_test() ->
       [ {consistent, prop_consistent(Views)}
       , {valid_views, [] == [ bad || {_, View} <- Views, not is_list(View) ]}
       , {termination, equals(Ok, ok)}
-      %% , {tree, prop_tree(Tree)}
+      , {lazy_sets, prop_tree(Tree)}
       %% , {extra_trace, equals(length(MoreTrace), 2)}
       ])))))))
   end)))).
@@ -146,7 +219,7 @@ reachable([Node|Nodes], Root, Tree, Acc) ->
   case lists:member(Node, Acc) of
     true -> reachable(Nodes, Root, Tree, Acc);
     false -> 
-      {_, Neighbours, _} = lists:keyfind(Root, 1, proplists:get_value(Node, Tree)),
+      {_, _, Neighbours} = lists:keyfind(Root, 1, proplists:get_value(Node, Tree)),
       reachable(Nodes ++ Neighbours, Root, Tree, [Node|Acc])
   end.
 
