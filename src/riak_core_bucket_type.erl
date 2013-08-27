@@ -19,9 +19,11 @@
 %% -------------------------------------------------------------------
 -module(riak_core_bucket_type).
 
--export([create/2,
+-export([defaults/0,
+         create/2,
          update/2,
          get/1,
+         reset/1,
          iterator/0,
          itr_next/1,
          itr_done/1,
@@ -32,6 +34,16 @@
 
 -define(KEY_PREFIX, {core, bucket_types}).
 -define(DEFAULT_TYPE, <<"default">>).
+
+%% @doc The hardcoded defaults for all bucket types.
+-spec defaults() -> bucket_type_props().
+defaults() ->
+      [{n_val,3},
+       {allow_mult,false},
+       {last_write_wins,false},
+       {precommit, []},
+       {postcommit, []},
+       {chash_keyfun, {riak_core_util, chash_std_keyfun}}].
 
 %% @doc Create a new bucket type. Properties provided will be merged with default
 %% bucket properties set in config. "Creation" as implemented is subject to concurrent
@@ -54,7 +66,7 @@ update(?DEFAULT_TYPE, _Props) ->
 update(BucketType, Props0) when is_binary(BucketType)->
     case riak_core_bucket_props:validate(Props0) of
         {ok, Props} ->
-            OldProps = get(BucketType, riak_core_bucket_props:defaults()),
+            OldProps = get(BucketType, defaults()),
             NewProps = riak_core_bucket_props:merge(Props, OldProps),
             %% TODO: but what if DNE? not much "update" guarantee
             riak_core_metadata:put(?KEY_PREFIX, BucketType, NewProps);
@@ -73,6 +85,16 @@ get(BucketType, Default) ->
     riak_core_metadata:get(?KEY_PREFIX,
                            BucketType,
                            [{default, Default}, {resolver, fun riak_core_bucket_props:resolve/2}]).
+
+
+reset(BucketType) ->
+    case ?MODULE:get(BucketType) of
+        undefined ->
+            {error, no_type};
+        _ ->
+            riak_core_metadata:put(?KEY_PREFIX, BucketType, defaults()),
+            ok
+    end.
 
 %% @doc Return an iterator that can be used to walk iterate through all existing bucket types
 -spec iterator() -> riak_core_metadata:iterator().
