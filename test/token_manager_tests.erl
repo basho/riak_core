@@ -143,7 +143,7 @@ token_mgr_test_() ->
                           ?assertEqual([], ?TOK_MGR:tokens_given())
                   end},
                 
-                { "synchronous gets and history test",
+                { "synchronous gets and ps/history",
                   fun() ->
                           Tokens = expected_token_types(),
                           %% clear history and let 1 sample be taken with empty stats
@@ -156,7 +156,17 @@ token_mgr_test_() ->
                           timer:sleep(1000),
                           %% Sample3: max given for each token, plus 2 blocked
                           E3 = [max_out_plus(Token, self(), 2) || Token <- Tokens],
-                          timer:sleep(1000),
+
+                          %% let all spawned procs run
+                          timer:sleep(100),
+
+                          PS = ?TOK_MGR:ps(),
+                          Given = ?TOK_MGR:tokens_given(),
+                          Blocked = ?TOK_MGR:tokens_blocked(),
+                          ?assertNot(PS == []),
+                          ?assertEqual(PS, Given++Blocked),
+
+                          timer:sleep(1000-100),
                           %% verify history
                           %% TODO: refills is hard to calculate and needs a better solution
                           ?assertEqual([E1,E2,E3], ?TOK_MGR:head()),
@@ -175,12 +185,23 @@ token_mgr_test_() ->
                           ?assertEqual([E1,E2,E3], ?TOK_MGR:head(all,0)),
                           ?assertEqual([E1,E2,E3], ?TOK_MGR:head(all,-1)),
                           ?assertEqual([E3], ?TOK_MGR:tail(all,0)),
-                          ?assertEqual([E3], ?TOK_MGR:tail(all,-1))
+                          ?assertEqual([E3], ?TOK_MGR:tail(all,-1)),
+
+                          %% calling head on a specific token yields a list of lists,
+                          %% but each "of lists" has only one thing in it.
+                          [check_head_token(Token, [E1,E2,E3]) || Token <- Tokens]
 
                   end}
 
               ] end}
     }.
+
+check_head_token(Token, StatsList) ->
+    F1 = fun(Stats) -> filter_stat(Token, Stats) end,
+    ?assertEqual(?TOK_MGR:head(Token), lists:map(F1, StatsList)).
+
+filter_stat(Token, Stats) ->
+    lists:filter(fun({T,_Stat}) -> Token==T end, Stats).
 
 spawn_sync_request(Token, Pid, Meta) ->
     spawn(fun() -> ok = ?TOK_MGR:get_token_sync(Token, Pid, Meta) end).
