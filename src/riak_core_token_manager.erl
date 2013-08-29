@@ -16,6 +16,8 @@
 %% specific language governing permissions and limitations
 %% under the License.
 %%
+%% ./rebar skip_deps=true eunit suite=token_manager
+%%
 %% -------------------------------------------------------------------
 -module(riak_core_token_manager).
 
@@ -383,13 +385,13 @@ do_hist(End, TokenType, Offset, Count, #state{history=HistQueue}) ->
                     StatsDictList = queue:to_list(Hist),
                     [orddict:to_list(Stat) || Stat <- StatsDictList];
                 _T  ->
-                    [{TokenType, stat_window(TokenType, StatsDict)} || StatsDict <- queue:to_list(Hist)]
+                    [[{TokenType, stat_window(TokenType, StatsDict)}] || StatsDict <- queue:to_list(Hist)]
             end
     end.
 
 segment_queue(First, Last, Queue) ->
     QLen = queue:len(Queue),
-    ?debugFmt("First: ~p, Last: ~p, QLen: ~p", [First, Last, QLen]),
+%%    ?debugFmt("First: ~p, Last: ~p, QLen: ~p", [First, Last, QLen]),
     case QLen >= Last andalso QLen > 0 of
         true ->
             %% trim off extra tail, then trim head
