@@ -53,6 +53,7 @@
          format_ip_and_port/2,
          peername/2,
          sockname/2,
+         make_fold_req/1,
          make_fold_req/2,
          make_fold_req/4
         ]).
@@ -536,16 +537,23 @@ sockname(Socket, Transport) ->
             lists:flatten(io_lib:format("error:~p", [Reason]))
     end.
 
+make_fold_req(#riak_core_fold_req_v1{foldfun=FoldFun, acc0=Acc0}) ->
+    make_fold_req(FoldFun, Acc0).
+
 make_fold_req(FoldFun, Acc0) ->
     make_fold_req(FoldFun, Acc0, false, []).
 
 make_fold_req(FoldFun, Acc0, Forwardable, Opts)
   when is_function(FoldFun, 3)
-       andalso (Forwardable == true orelse Forwardable == true)
+       andalso (Forwardable == true orelse Forwardable == false)
        andalso is_list(Opts) ->
-    %% TODO: Capability negotiation goes here, to figure out which version #
-    %% of the riak_core_fold_req_v* record to use.
-    ?FOLD_REQ{foldfun=FoldFun, acc0=Acc0, forwardable=Forwardable, opts=Opts}.
+    case riak_core_capability:get({riak_core, fold_req_version}, v1) of
+        v2 ->
+            ?FOLD_REQ{foldfun=FoldFun, acc0=Acc0,
+                      forwardable=Forwardable, opts=Opts};
+        v1 ->
+            #riak_core_fold_req_v1{foldfun=FoldFun, acc0=Acc0}
+    end.
 
 %% ===================================================================
 %% EUnit tests
