@@ -65,6 +65,8 @@
          tokens_waiting/1
         ]).
 
+-include("riak_core_token_manager.hrl").
+
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
@@ -110,11 +112,11 @@ disable() ->
 %%% Token API proxies to the token manager
 
 %% @doc Set the refill rate of tokens.
--spec set_token_rate(any(), riak_core_token_manager:rate()) -> riak_core_token_manager:rate().
-set_token_rate(Type, {Period, Count, StartFull}) ->
-    riak_core_token_manager:set_token_rate(Type, {Period, Count}, StartFull).
+-spec set_token_rate(any(), riak_core_token_manager:tm_rate()) -> riak_core_token_manager:tm_rate().
+set_token_rate(Type, {Period, Count}) ->
+    riak_core_token_manager:set_token_rate(Type, {Period, Count}).
 
--spec token_rate(any()) -> riak_core_token_manager:rate().
+-spec token_rate(any()) -> riak_core_token_manager:tm_rate().
 token_rate(Type) ->
     riak_core_token_manager:token_rate(Type).
 
