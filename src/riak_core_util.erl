@@ -52,7 +52,8 @@
          is_arch/1,
          format_ip_and_port/2,
          peername/2,
-         sockname/2
+         sockname/2,
+         md5/1
         ]).
 
 -ifdef(TEST).
@@ -179,9 +180,15 @@ integer_to_list(I0, Base, R0) ->
 -ifndef(old_hash).
 sha(Bin) ->
     crypto:hash(sha, Bin).
+
+md5(Bin) ->
+    crypto:hash(md5, Bin).
 -else.
 sha(Bin) ->
     crypto:sha(Bin).
+
+md5(Bin) ->
+    crypto:md5(Bin).
 -endif.
 
 %% @spec unique_id_62() -> string()
