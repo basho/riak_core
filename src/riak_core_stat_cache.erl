@@ -272,7 +272,7 @@ cache_test_() ->
     {setup,
      fun() ->
              folsom:start(),
-             [meck:new(Mock, [passthrough]) || Mock <- ?MOCKS],
+             [meck:new(Mock, [non_strict, passthrough]) || Mock <- ?MOCKS],
              riak_core_stat_cache:start_link()
      end,
      fun(_) ->
