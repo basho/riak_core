@@ -10,7 +10,10 @@
 
 token_mgr_test_() ->
     {timeout, 60000,  %% Seconds to finish all of the tests
-     {setup, fun() -> ?TOK_MGR:start_link(1) end, %% setup with history window to 1 seconds
+     {setup, fun() ->
+                     riak_core_table_manager:start_link([{?TM_ETS_TABLE, [private, set]}]),
+                     ?TOK_MGR:start_link(1) %% setup with history window to 1 seconds
+             end, 
       fun(_) -> ok end,                           %% cleanup
       fun(_) ->
               [ %% Tests

@@ -66,7 +66,7 @@
 
 -define(SERVER, ?MODULE).
 
--record(state, {info    :: orddict:orddict(),    %% tm_token() -> token_info()
+-record(state, {table_id:: ets:tid(),           %% TableID of ?TM_ETS_TABLE
                 blocked :: orddict:orddict(),    %% tm_token() -> queue of token_entry()
                 given   :: orddict:orddict(),    %% tm_token() -> [token_entry()]
                 enabled :: boolean(),            %% Global enable/disable switch
@@ -227,7 +227,9 @@ start_link(Interval) ->
                              ignore |
                              {stop, term()}.
 init([Interval]) ->
-    State = #state{info=orddict:new(),
+    %% claiming the table will result in a handle_info('ETS-TRANSFER', ...) message.
+    ok = riak_core_table_manager:claim_table(?TM_ETS_TABLE),
+    State = #state{table_id=undefined, %% resolved in the ETS-TRANSFER handler
                    given=orddict:new(),
                    blocked=orddict:new(),
                    window=orddict:new(),
@@ -313,6 +315,10 @@ handle_info({refill_tokens, Type}, State) ->
     State2 = do_refill_tokens(Type, State),
     schedule_refill_tokens(Type, State2),
     {noreply, State2};
+%% Handle transfer of ETS table from table manager
+handle_info({'ETS-TRANSFER', TableId, Pid, _Data}, State) ->
+    io:format("table_mgr (~p) -> token_mgr (~p) receiving ownership of TableId: ~p~n", [Pid, self(), TableId]),
+    {noreply, State#state{table_id=TableId}};
 handle_info({'DOWN', Ref, _, _, _}, State) ->
     lager:info("Linked process died with ref ~p: ", [Ref]),
     {noreply, State};
@@ -348,8 +354,10 @@ stat_window(TokenType, Window) ->
         {ok, StatHist} -> StatHist
     end.
 
-do_token_types(#state{info=Tokens}) ->
-    orddict:fetch_keys(Tokens).
+%% return list of registered TokenType(s)
+do_token_types(#state{table_id=TableId}) ->
+    %% match against info objects in table and return just the TokenType
+    [TokenType || {{info, TokenType},_} <- ets:match_object(TableId, {{info, '_'},'_'})].
 
 do_set_token_rate(TokenType, Rate, State) ->
     OldRate = ?rate(token_info(TokenType, State)),
@@ -559,10 +567,14 @@ do_refill_tokens(Type, State=#state{given=Given}) ->
     NewGiven = orddict:erase(Type, Given),
     maybe_unblock_blocked(Type, State2#state{given=NewGiven}).
 
-token_info(TokenType, #state{info=Info}) ->
-    case orddict:find(TokenType, Info) of
-        error -> ?DEFAULT_TOKEN_INFO;
-        {ok, TokenInfo} -> TokenInfo
+token_info(TokenType, #state{table_id=TableId}) ->
+    Key = {info,TokenType},
+    case ets:lookup(TableId, Key) of
+        [] -> ?DEFAULT_TOKEN_INFO;
+        [{_Key,TokenInfo}] -> TokenInfo;
+        [First | _Rest] ->
+            lager:error("Unexpected multiple instances of key ~p in table", [{info, TokenType}]),
+            First %% try to keep going
     end.
 
 update_token_queue(TokenType, TokenQueue, State=#state{blocked=Orddict1}) ->
@@ -593,9 +605,14 @@ update_token_rate(TokenType, Rate, State) ->
                      ?DEFAULT_TOKEN_INFO#token_info{rate=Rate},
                      State).
 
-update_token_info(TokenType, Fun, Default, State=#state{info=Info}) ->
-    NewInfo = orddict:update(TokenType, Fun, Default, Info),
-    State#state{info=NewInfo}.
+update_token_info(TokenType, Fun, Default, State=#state{table_id=TableId}) ->
+    Key = {info, TokenType},
+    NewInfo = case ets:lookup(TableId, Key) of
+                  [] -> Default;
+                  [{_Key,TokenInfo}] -> Fun(TokenInfo)
+              end,
+    ets:insert(TableId, {Key, NewInfo}),
+    State.
 
 tokens_given(Type, #state{given=AllGiven}) ->
     case orddict:find(Type, AllGiven) of

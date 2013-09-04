@@ -49,3 +49,5 @@
 -define(DEFAULT_TM_SAMPLE_WINDOW, 60).    %% in seconds
 -define(DEFAULT_TM_OUTPUT_SAMPLES, 20).   %% default number of sample windows displayed
 -define(DEFAULT_TM_KEPT_SAMPLES, 10000).  %% number of history samples to keep
+-define(TM_ETS_TABLE, token_mgr_table).   %% name of private token manager ETS table
+-define(TM_ETS_OPTS, [private, set]).     %% creation time properties of token manager ETS table

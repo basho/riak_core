@@ -88,7 +88,8 @@
              supervisor_pre_r14b04,
              vclock,
              riak_core_bg_manager,
-             riak_core_token_manager
+             riak_core_token_manager,
+             riak_core_table_manager
             ]},
   {registered, []},
   {included_applications, [folsom]},
