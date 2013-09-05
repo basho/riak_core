@@ -29,10 +29,13 @@
          iterator/0,
          iterator/1,
          iterator/2,
+         remote_iterator/1,
+         remote_iterator/2,
          iterate/1,
          iterator_prefix/1,
          iterator_value/1,
          iterator_done/1,
+         iterator_close/1,
          put/3]).
 
 %% riak_core_broadcast_handler callbacks
@@ -62,19 +65,30 @@
 
           %% an ets table holding references to per
           %% full-prefix ets tables
-          ets_tabs   :: ets:tab()
+          ets_tabs   :: ets:tab(),
+
+          %% an ets table to hold iterators opened
+          %% by other nodes
+          iterators  :: ets:tab()
          }).
 
 -record(metadata_iterator, {
           prefix :: metadata_prefix(),
           match  :: term(),
           pos    :: term(),
-          obj    :: {metadata_key(), metadata_object()},
+          obj    :: {metadata_key(), metadata_object()} | undefined,
           done   :: boolean(),
           tab    :: ets:tab()
          }).
 
+-record(remote_iterator, {
+          node   :: node(),
+          ref    :: reference(),
+          prefix :: atom() | binary()
+         }).
+
 -opaque metadata_iterator() :: #metadata_iterator{}.
+-type remote_iterator()     :: #remote_iterator{}. 
 
 -type mm_path_opt()     :: {data_dir, file:name_all()}.
 -type mm_nodename_opt() :: {nodename, term()}.
@@ -135,27 +149,66 @@ iterator({Prefix, SubPrefix}=FullPrefix, KeyMatch)
        (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
     gen_server:call(?SERVER, {iterator, FullPrefix, KeyMatch}, infinity).
 
+%% @doc Create an iterator on `Node'. This allows for remote iteration by having
+%% the metadata manager keep track of the actual iterator (since ets continuations cannot
+%% cross node boundaries). The iterator created iterates all full-prefixes. Once created
+%% the rest of the iterator API may be used as usual.
+-spec remote_iterator(node()) -> remote_iterator().
+remote_iterator(Node) ->
+    remote_iterator(Node, undefined).
+
+%% @doc Create an iterator on `Node'. This allows for remote iteration
+%% by having the metadata manager keep track of the actual iterator
+%% (since ets continuations cannot cross node boundaries). When
+%% `Perfix' is not a full prefix, the iterator created iterates all
+%% sub-prefixes under `Prefix'. Otherse, the iterator iterates all keys
+%% under a prefix. Once created the rest of the iterator API may be used as usual.
+-spec remote_iterator(node(), metadata_prefix() | binary() | atom()) -> remote_iterator().
+remote_iterator(Node, Prefix) when is_atom(Prefix) or is_binary(Prefix) ->
+    Ref = gen_server:call({?SERVER, Node}, {remote_iterator, undefined, Prefix}),
+    #remote_iterator{ref=Ref,prefix=Prefix,node=Node};
+remote_iterator(Node, FullPrefix) when is_tuple(FullPrefix) ->
+    Ref = gen_server:call({?SERVER, Node}, {remote_iterator, FullPrefix, undefined}),
+    #remote_iterator{ref=Ref,prefix=FullPrefix,node=Node}.
 
 %% @doc advance the iterator by one key, full-prefix or sub-prefix
--spec iterate(metadata_iterator()) -> metadata_iterator().
+-spec iterate(metadata_iterator() | remote_iterator()) -> metadata_iterator() | remote_iterator().
+iterate(It=#remote_iterator{ref=Ref,node=Node}) ->
+    gen_server:call({?SERVER, Node}, {iterate, Ref}),
+    It;
 iterate(Iterator) ->
     gen_server:call(?SERVER, {iterate, Iterator}, infinity).
 
 %% @doc return the full-prefix or prefix being iterated by this iterator. If the iterator is a
 %% full-prefix iterator undefined is returned.
--spec iterator_prefix(metadata_iterator()) -> metadata_prefix() | undefined | binary() | atom().
+-spec iterator_prefix(metadata_iterator() | remote_iterator()) ->
+                             metadata_prefix() | undefined | binary() | atom().
+iterator_prefix(#remote_iterator{prefix=Prefix}) -> Prefix;
 iterator_prefix(#metadata_iterator{prefix=undefined,match=undefined}) -> undefined;
 iterator_prefix(#metadata_iterator{prefix=undefined,match=Prefix}) -> Prefix;
 iterator_prefix(#metadata_iterator{prefix=Prefix}) -> Prefix.
 
 %% @doc return the key and object or the prefix pointed to by the iterator
--spec iterator_value(metadata_iterator()) -> {metadata_key(), metadata_object()} | metadata_prefix().
+-spec iterator_value(metadata_iterator() | remote_iterator()) ->
+                            {metadata_key(), metadata_object()} |
+                            metadata_prefix() | binary() | atom().
+iterator_value(#remote_iterator{ref=Ref,node=Node}) ->
+    gen_server:call({?SERVER, Node}, {iterator_value, Ref});
 iterator_value(#metadata_iterator{prefix=undefined,match=undefined,pos=Pos}) -> Pos;
 iterator_value(#metadata_iterator{obj=Obj}) -> Obj.
 
 %% @doc returns true if there are no more keys or prefixes to iterate over
--spec iterator_done(metadata_iterator()) -> boolean().
+-spec iterator_done(metadata_iterator() | remote_iterator()) -> boolean().
+iterator_done(#remote_iterator{ref=Ref,node=Node}) ->
+    gen_server:call({?SERVER, Node}, {iterator_done, Ref});
 iterator_done(#metadata_iterator{done=Done}) -> Done.
+
+%% @doc closes the iterator. This function only needs to be called on remote iterators.
+%% on local iterators it is a no-op.
+-spec iterator_close(metadata_iterator() | remote_iterator()) -> ok.
+iterator_close(#remote_iterator{ref=Ref,node=Node}) ->
+    gen_server:call({?SERVER, Node}, {iterator_close, Ref});
+iterator_close(#metadata_iterator{}) -> ok.
 
 %% @doc Sets the value of a prefixed key. The most recently read context (see get/1)
 %% should be passed as the second argument to prevent unneccessary siblings.
@@ -243,7 +296,8 @@ init([Opts]) ->
             Nodename = proplists:get_value(nodename, Opts, node()),
             State = #state{serverid=Nodename,
                            data_root=DataRoot,
-                           ets_tabs=new_ets_tab()},
+                           ets_tabs=new_ets_tab(),
+                           iterators=new_ets_tab()},
             init_manifest(State),
             %% TODO: should do this out-of-band from startup so we don't block
             init_from_files(State),
@@ -270,9 +324,27 @@ handle_call({get, PKey}, _From, State) ->
 handle_call({iterator, FullPrefix, KeyMatch}, _From, State) ->
     Iterator = iterator(FullPrefix, KeyMatch, State),
     {reply, Iterator, State};
+handle_call({remote_iterator, FullPrefix, KeyMatch}, _From, State) ->
+    Iterator = new_remote_iterator(FullPrefix, KeyMatch, State),
+    {reply, Iterator, State};
 handle_call({iterate, Iterator}, _From, State) ->
-    Next = next_iterator(Iterator),
+    Next = next_iterator(Iterator, State),
     {reply, Next, State};
+handle_call({iterator_value, RemoteRef}, _From, State) ->
+    Res = case ets:lookup(State#state.iterators, RemoteRef) of
+              [] -> undefined;
+              [{RemoteRef, It}] -> iterator_value(It)
+          end,
+    {reply, Res, State};
+handle_call({iterator_done, RemoteRef}, _From, State) ->
+    Res = case ets:lookup(State#state.iterators, RemoteRef) of
+              [] -> true;
+              [{RemoteRef, It}] -> iterator_done(It)
+          end,
+    {reply, Res, State};
+handle_call({iterator_close, RemoteRef}, _From, State) ->
+    close_remote_iterator(RemoteRef, State),
+    {reply, ok, State};
 handle_call({is_stale, PKey, Context}, _From, State) ->
     Existing = read(PKey, State),
     IsStale = riak_core_metadata_object:is_stale(Context, Existing),
@@ -300,7 +372,6 @@ terminate(_Reason, _State) ->
     close_manifest(),
     ok.
 
-
 %% @private
 -spec code_change(term() | {down, term()}, #state{}, term()) -> {ok, #state{}}.
 code_change(_OldVsn, State, _Extra) ->
@@ -309,6 +380,16 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+new_remote_iterator(FullPrefix, KeyMatch, State=#state{iterators=Iterators}) ->
+    Ref = make_ref(),
+    Iterator = iterator(FullPrefix, KeyMatch, State),
+    ets:insert(Iterators, [{Ref, Iterator}]),
+    Ref.
+
+close_remote_iterator(Ref, #state{iterators=Iterators}) ->
+    ets:delete(Iterators, Ref).
+
 iterator(undefined, KeyMatch, #state{ets_tabs=Tab}) ->
     new_iterator(undefined, KeyMatch, Tab);
 iterator(FullPrefix, KeyMatch, State) ->
@@ -317,15 +398,22 @@ iterator(FullPrefix, KeyMatch, State) ->
         Tab -> new_iterator(FullPrefix, KeyMatch, Tab)
     end.
 
-next_iterator(It=#metadata_iterator{done=true}) ->
+next_iterator(Ref, State=#state{iterators=Iterators}) when is_reference(Ref) ->
+    case ets:lookup(Iterators, Ref) of
+        [] -> ok;
+        [{Ref, It}] ->
+            Next = next_iterator(It, State),
+            ets:insert(Iterators, [{Ref, Next}])            
+    end,
+    Ref;
+next_iterator(It=#metadata_iterator{done=true}, #state{}) ->
     It;
-next_iterator(It=#metadata_iterator{prefix=undefined,match=undefined,tab=Tab,pos=Pos}) ->
+next_iterator(It=#metadata_iterator{prefix=undefined,match=undefined,tab=Tab,pos=Pos}, #state{}) ->
     next_iterator(It, ets:next(Tab, Pos));
-next_iterator(It=#metadata_iterator{prefix=undefined,pos=Pos}) ->
+next_iterator(It=#metadata_iterator{prefix=undefined,pos=Pos}, #state{}) ->
     next_iterator(It, ets:select(Pos));
-next_iterator(It=#metadata_iterator{pos=Pos}) ->
-    next_iterator(It, ets:match_object(Pos)).
-
+next_iterator(It=#metadata_iterator{pos=Pos}, #state{}) ->
+    next_iterator(It, ets:match_object(Pos));
 next_iterator(It, '$end_of_table') ->
     It#metadata_iterator{done=true,
                          pos=undefined,
