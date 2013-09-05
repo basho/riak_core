@@ -67,7 +67,7 @@ set_bucket(Name, BucketProps0) ->
     case validate_props(BucketProps0, riak_core:bucket_validators(), []) of
         {ok, BucketProps} ->
             F = fun(Ring, _Args) ->
-                        OldBucket = get_bucket(Name),
+                        OldBucket = get_bucket(Name, Ring),
                         NewBucket = merge_props(BucketProps, OldBucket),
                         {new_ring, riak_core_ring:update_meta({bucket,Name},
                                                               NewBucket,
