@@ -404,12 +404,14 @@ read_merge_write(PKey, Obj, State) ->
             {true, NewState}
     end.
 
-store({FullPrefix, Key}, Metadata, State) ->
+store({FullPrefix, Key}=PKey, Metadata, State) ->
     maybe_init_ets(FullPrefix, State),
     maybe_init_dets(FullPrefix, State),
 
     Objs = [{Key, Metadata}],
+    Hash = riak_core_metadata_object:hash(Metadata),
     ets:insert(ets_tab(FullPrefix, State), Objs),
+    riak_core_metadata_hashtree:insert(PKey, Hash),
     ok = dets_insert(dets_tabname(FullPrefix), Objs),
     {Metadata, State}.
 
