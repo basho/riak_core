@@ -23,7 +23,7 @@
 
 %% API
 -export([start_link/0,
-         start_link/3,
+         start_link/4,
          broadcast/2,
          ring_update/1,
          broadcast_members/0,
@@ -80,8 +80,9 @@
           %% destination
           outstanding   :: [{nodename(), outstanding()}],
 
-          %% Set of modules that handle messages that have been broadcast
-          handling_mods :: ordset:ordset(module()),
+          %% Set of registered modules that may handle messages that
+          %% have been broadcast
+          mods :: [module()],
 
           %% Set of all known members. Used to determine
           %% which members have joined and left during a membership update
@@ -105,7 +106,8 @@ start_link() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Members = all_broadcast_members(Ring),
     {InitEagers, InitLazys} = init_peers(Members),
-    Res = start_link(Members, InitEagers, InitLazys),
+    Mods = app_helper:get_env(riak_core, broadcast_mods, [riak_core_metadata_manager]),
+    Res = start_link(Members, InitEagers, InitLazys, Mods),
     riak_core_ring_events:add_sup_callback(fun ?MODULE:ring_update/1),
     Res.
 
@@ -115,13 +117,17 @@ start_link() ->
 %% `InitLazys' is a list of random peers not in `InitEagers' that will be used
 %% as the initial lazy peer shared by all trees for this node. If the number
 %% of nodes in the cluster is less than 3, `InitLazys' should be an empty list.
-%% `InitEagers' and `InitLazys' must also be subsets of `InitMembers'.
+%% `InitEagers' and `InitLazys' must also be subsets of `InitMembers'. `Mods' is
+%% a list of modules that may be handlers for broadcasted messages. All modules in
+%% `Mods' should implement the `riak_core_broadcast_handler' behaviour.
 %%
 %% NOTE: When starting the server using start_link/2 no automatic membership update from
 %% ring_events is registered. Use start_link/0.
--spec start_link([nodename()], [nodename()], [nodename()]) -> {ok, pid()} | ignore | {error, term}.
-start_link(InitMembers, InitEagers, InitLazys) ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [InitMembers, InitEagers, InitLazys], []).
+-spec start_link([nodename()], [nodename()], [nodename()], [module()]) ->
+                        {ok, pid()} | ignore | {error, term}.
+start_link(InitMembers, InitEagers, InitLazys, Mods) ->
+    gen_server:start_link({local, ?SERVER}, ?MODULE,
+                          [InitMembers, InitEagers, InitLazys, Mods], []).
 
 %% @doc Broadcasts a message originating from this node. The message will be delivered to
 %% each node at least once. The `Mod' passed is responsible for handling the message on remote
@@ -195,11 +201,12 @@ debug_get_tree(Root, Nodes) ->
                                   {ok, #state{}, non_neg_integer() | infinity} |
                                   ignore |
                                   {stop, term()}.
-init([AllMembers, InitEagers, InitLazys]) ->
+init([AllMembers, InitEagers, InitLazys, Mods]) ->
     schedule_lazy_tick(),
+    schedule_exchange_tick(),
     State1 =  #state{
        outstanding   = orddict:new(),
-       handling_mods = ordsets:new()
+       mods = lists:usort(Mods)
      },
     State2 = reset_peers(AllMembers, InitEagers, InitLazys, State1),
     {ok, State2}.
@@ -259,7 +266,11 @@ handle_cast({neighbors_down, Removed}, State) ->
 handle_info(lazy_tick, State) ->
     schedule_lazy_tick(),
     send_lazy(State),
-    {noreply, State}.
+    {noreply, State};
+handle_info(exchange_tick, State) ->
+    schedule_exchange_tick(),
+    State1 = maybe_exchange(State),
+    {noreply, State1}.
 
 %% @private
 -spec terminate(term(), #state{}) -> term().
@@ -353,6 +364,44 @@ send_lazy(Peer, Messages) ->
 send_lazy(MessageId, Mod, Round, Root, Peer) ->
     send({i_have, MessageId, Mod, Round, Root, node()}, Peer).
 
+maybe_exchange(State) ->
+    Root = random_root(State),
+    Peer = random_peer(Root, State),
+    maybe_exchange(Peer, State).
+
+maybe_exchange(undefined, State) ->
+    State;
+maybe_exchange(Peer, State=#state{mods=[Mod | Mods]}) ->
+    Mod:exchange(Peer),
+    State#state{mods=Mods ++ [Mod]}.
+
+%% picks random root uniformly
+random_root(#state{all_members=Members}) ->
+    random_other_node(Members).
+
+%% picks random peer favoring peers not in eager or lazy set and ensuring
+%% peer is not this node
+random_peer(Root, State=#state{all_members=All}) ->
+    Eagers = all_eager_peers(Root, State),
+    Lazys  = all_lazy_peers(Root, State),
+    Union  = ordsets:union([Eagers, Lazys]),
+    Other  = ordsets:del_element(node(), ordsets:subtract(All, Union)),
+    case ordsets:size(Other) of
+        0 ->
+            random_other_node(ordsets:del_element(node(), All));
+        _ ->
+            random_other_node(Other)
+    end.
+
+%% picks random node from ordset
+random_other_node(OrdSet) ->
+    Size = ordsets:size(OrdSet),
+    case Size of
+        0 -> undefined;
+        _ ->
+            lists:nth(random:uniform(Size),
+                     ordsets:to_list(OrdSet))
+    end.
 
 ack_outstanding(MessageId, Mod, Round, Root, From, State=#state{outstanding=All}) ->
     Existing = existing_outstanding(From, All),
@@ -432,8 +481,14 @@ send(Msg, P) ->
     gen_server:cast({?SERVER, P}, Msg).
 
 schedule_lazy_tick() ->
-    TickMs = app_helper:get_env(riak_core, broadcast_lazy_timer, 1000),
-    erlang:send_after(TickMs, ?MODULE, lazy_tick).
+    schedule_tick(lazy_tick, broadcast_lazy_timer, 1000).
+
+schedule_exchange_tick() ->
+    schedule_tick(exchange_tick, broadcast_exchange_timer, 10000).
+
+schedule_tick(Message, Timer, Default) ->
+    TickMs = app_helper:get_env(riak_core, Timer, Default),
+    erlang:send_after(TickMs, ?MODULE, Message).
 
 reset_peers(AllMembers, EagerPeers, LazyPeers, State) ->
     State#state{
