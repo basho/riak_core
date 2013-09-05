@@ -12,14 +12,20 @@ token_mgr_test_() ->
     {timeout, 60000,  %% Seconds to finish all of the tests
      {setup, fun() ->
                      riak_core_table_manager:start_link([{?TM_ETS_TABLE, ?TM_ETS_OPTS}]),
-                     ?TOK_MGR:start_link(1) %% setup with history window to 1 seconds
+                     start_token_mgr()
              end, 
       fun(_) -> ok end,                           %% cleanup
       fun(_) ->
               [ %% Tests
-                { "set/get token rates",
+                { "set/get token rates + verify rates",
                   fun() ->
                           setup_token_rates(),
+                          verify_token_rates()
+                  end},
+
+                { "crash token manager + verify rates persist",
+                  fun() ->
+                          crash_and_restart_token_manager(),
                           verify_token_rates()
                   end},
 
@@ -268,5 +274,19 @@ verify_token_rates() ->
     Rate = ?TOK_MGR:token_rate(bogusToken),
     DefaultRate = {0,0},
     ?assertEqual(DefaultRate, Rate).
+
+%% start a stand-alone server, not linked, so that when we crash it, it
+%% doesn't take down our test too.
+start_token_mgr() ->
+    %% setup with history window to 1 seconds
+    ?TOK_MGR:start(1).
+
+crash_and_restart_token_manager() ->
+    Pid = erlang:whereis(?TOK_MGR),
+    ?assertNot(Pid == undefined),
+    erlang:exit(Pid, kill),
+    timer:sleep(100),
+    start_token_mgr(),
+    timer:sleep(100).
 
 -endif.

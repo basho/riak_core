@@ -51,6 +51,9 @@
          tokens_blocked/1
         ]).
 
+%% testing
+-export([start/1]).
+
 %% reporting
 -export([clear_history/0,
          head/0,
@@ -231,6 +234,10 @@ start_link() ->
 start_link(Interval) ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [Interval], []).
 
+%% Test entry point to start stand-alone server
+start(Interval) ->
+    gen_server:start({local, ?SERVER}, ?MODULE, [Interval], []).
+
 %%%% Gen Server %%%%%%%
 
 %% @private
@@ -328,8 +335,10 @@ handle_info({refill_tokens, Type}, State) ->
     {noreply, State2};
 %% Handle transfer of ETS table from table manager
 handle_info({'ETS-TRANSFER', TableId, Pid, _Data}, State) ->
-    io:format("table_mgr (~p) -> token_mgr (~p) receiving ownership of TableId: ~p~n", [Pid, self(), TableId]),
-    {noreply, State#state{table_id=TableId}};
+    lager:debug("table_mgr (~p) -> token_mgr (~p) receiving ownership of TableId: ~p", [Pid, self(), TableId]),
+    State2 = State#state{table_id=TableId},
+    reschedule_token_refills(State2),
+    {noreply, State2};
 handle_info({'DOWN', Ref, _, _, _}, State) ->
     lager:info("Linked process died with ref ~p: ", [Ref]),
     {noreply, State};
@@ -528,6 +537,13 @@ maybe_unblock_blocked(Type, State) ->
     Queue = token_queue(Type, State),
     give_available_tokens(Type, PosNumAvailable, Queue, State).
 
+%% Get existing token type info from ETS table and schedule all for refill.
+%% This is needed because we just reloaded our saved persisent state data
+%% after a crash.
+reschedule_token_refills(State) ->
+    Types = do_token_types(State),
+    [schedule_refill_tokens(Type, State) || Type <- Types].
+    
 %% Schedule a timer event to refill tokens of given type
 schedule_refill_tokens(Type, State) ->
     {Period, _Count} = ?rate(token_info(Type, State)),
