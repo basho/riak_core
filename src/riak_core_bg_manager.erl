@@ -71,8 +71,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--record(state, {held    :: ordict:orddict(),
-                info    :: orddict:orddict(),
+-record(state, {table_id:: ets:tid(),            %% TableID of ?LM_ETS_TABLE
+                held    :: ordict:orddict(),
                 enabled :: boolean()}).
 
 -record(lock_info, {concurrency_limit :: non_neg_integer(),
@@ -84,6 +84,8 @@
 -define(limit(X), (X)#lock_info.concurrency_limit).
 -define(enabled(X), (X)#lock_info.enabled).
 -define(DEFAULT_LOCK_INFO, #lock_info{enabled=true, concurrency_limit=?DEFAULT_CONCURRENCY}).
+-define(LM_ETS_TABLE, lock_mgr_table).   %% name of private lock manager ETS table
+-define(LM_ETS_OPTS, [private, bag]).    %% creation time properties of lock manager ETS table
 
 -type concurrency_limit() :: non_neg_integer() | infinity.
 
@@ -312,7 +314,7 @@ concurrency_limit_reached(Type) ->
                   ignore |
                   {stop, term()}.
 init([]) ->
-    {ok, #state{info=orddict:new(),
+    {ok, #state{
                 held=orddict:new(),
                 enabled=true}}.
 
@@ -338,8 +340,9 @@ handle_call({lock_limit_reached, LockType}, _From, State) ->
     HeldCount = held_count(LockType, State),
     Limit = ?limit(lock_info(LockType, State)),
     {reply, HeldCount >= Limit, State};
-handle_call(lock_types, _From, State=#state{info=Info}) ->
-    Types = [{Type, ?enabled(LI), ?limit(LI)} || {Type, LI} <- orddict:to_list(Info)],
+handle_call(lock_types, _From, State=#state{table_id=TableId}) ->
+    Infos = [{Type,Info} || {{info, Type},Info} <- ets:match_object(TableId, {{info, '_'},'_'})],
+    Types = [{Type, ?enabled(LI), ?limit(LI)} || {Type, LI} <- Infos],
     {reply, Types, State};
 handle_call({query_locks, Query}, _From, State) ->
     Results = query_locks(Query, State),
@@ -378,6 +381,11 @@ handle_cast(disable, State) ->
 -spec handle_info(term(), #state{}) -> {noreply, #state{}} |
                                        {noreply, #state{}, non_neg_integer()} |
                                        {stop, term(), #state{}}.
+%% Handle transfer of ETS table from table manager
+handle_info({'ETS-TRANSFER', TableId, Pid, _Data}, State) ->
+    lager:debug("table_mgr (~p) -> bg_mgr (~p) receiving ownership of TableId: ~p", [Pid, self(), TableId]),
+    State2 = State#state{table_id=TableId},
+    {noreply, State2};
 handle_info({'DOWN', Ref, _, _, _}, State) ->
     State2 = release_lock(Ref, State),
     {noreply, State2};
@@ -498,13 +506,21 @@ update_concurrency_limit(LockType, Limit, State) ->
                      ?DEFAULT_LOCK_INFO#lock_info{concurrency_limit=Limit},
                      State).
 
-update_lock_info(LockType, Fun, Default, State=#state{info=Info}) ->
-    NewInfo = orddict:update(LockType, Fun, Default, Info),
-    State#state{info=NewInfo}.
+update_lock_info(LockType, Fun, Default, State=#state{table_id=TableId}) ->
+    Key = {info, LockType},
+    NewInfo = case ets:lookup(TableId, Key) of
+                  [] -> Default;
+                  [{_Key,LockInfo}] -> Fun(LockInfo)
+              end,
+    ets:insert(TableId, {Key, NewInfo}),
+    State.
 
-
-lock_info(LockType, #state{info=Info}) ->
-    case orddict:find(LockType, Info) of
-        error -> ?DEFAULT_LOCK_INFO;
-        {ok, LockInfo} -> LockInfo
+lock_info(LockType, #state{table_id=TableId}) ->
+    Key = {info,LockType},
+    case ets:lookup(TableId, Key) of
+        [] -> ?DEFAULT_LOCK_INFO;
+        [{_Key,LockInfo}] -> LockInfo;
+        [First | _Rest] ->
+            lager:error("Unexpected multiple instances of key ~p in table", [{info, LockType}]),
+            First %% try to keep going
     end.
