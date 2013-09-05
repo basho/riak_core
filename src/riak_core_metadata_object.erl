@@ -24,6 +24,7 @@
          value_count/1,
          context/1,
          empty_context/0,
+         hash/1,
          modify/4,
          reconcile/2,
          resolve/2,
@@ -57,6 +58,11 @@ context({metadata, Object}) ->
 %% @doc returns the representation for an empty context (opaque causal history)
 -spec empty_context() -> metadata_context().
 empty_context() -> [].
+
+%% @doc returns a hash representing the metadata objects contents
+-spec hash(metadata_object()) -> binary().
+hash({metadata, Object}) ->
+    term_to_binary(erlang:phash2(term_to_binary(Object))).
 
 %% @doc modifies a potentially existing object, setting its value and updating
 %% the causual history. If a function is provided as the third argument
