@@ -76,6 +76,7 @@
 -define(DEFAULT_OWNERSHIP_TRIGGER, 8).
 -define(ETS, ets_vnode_mgr).
 -define(DEFAULT_VNODE_ROLLING_START, 16).
+-define(LONG_TIMEOUT, 120*1000).
 
 %% ===================================================================
 %% Public API
@@ -88,7 +89,7 @@ stop() ->
     gen_server:cast(?MODULE, stop).
 
 all_vnodes_status() ->
-    gen_server:call(?MODULE, all_vnodes_status).
+    gen_server:call(?MODULE, all_vnodes_status, infinity).
 
 %% @doc Repair the given `ModPartition' pair for `Service' using the
 %%      given `FilterModFun' to filter keys.
@@ -102,21 +103,21 @@ repair(Service, {_Module, Partition}=ModPartition, FilterModFun) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Owner = riak_core_ring:index_owner(Ring, Partition),
     Msg = {repair, Service, ModPartition, FilterModFun},
-    gen_server:call({?MODULE, Owner}, Msg).
+    gen_server:call({?MODULE, Owner}, Msg, ?LONG_TIMEOUT).
 
 %% @doc Get the status of the repair process for a given `ModPartition'.
 -spec repair_status(mod_partition()) -> in_progress | not_found.
 repair_status({_Module, Partition}=ModPartition) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Owner = riak_core_ring:index_owner(Ring, Partition),
-    gen_server:call({?MODULE, Owner}, {repair_status, ModPartition}).
+    gen_server:call({?MODULE, Owner}, {repair_status, ModPartition}, ?LONG_TIMEOUT).
 
 %% TODO: make cast with retry on handoff sender side and handshake?
 %%
 %% TODO: second arg has specific form but maybe make proplist?
 -spec xfer_complete(node(), tuple()) -> ok.
 xfer_complete(Origin, Xfer) ->
-    gen_server:call({?MODULE, Origin}, {xfer_complete, Xfer}).
+    gen_server:call({?MODULE, Origin}, {xfer_complete, Xfer}, ?LONG_TIMEOUT).
 
 kill_repairs(Reason) ->
     gen_server:cast(?MODULE, {kill_repairs, Reason}).
@@ -155,7 +156,7 @@ all_vnodes() ->
     case get_all_vnodes() of
         [] ->
             %% ETS error could produce empty list, call manager to be sure.
-            gen_server:call(?MODULE, all_vnodes);
+            gen_server:call(?MODULE, all_vnodes, infinity);
         Result ->
             Result
     end.
@@ -164,7 +165,7 @@ all_vnodes(Mod) ->
     case get_all_vnodes(Mod) of
         [] ->
             %% ETS error could produce empty list, call manager to be sure.
-            gen_server:call(?MODULE, {all_vnodes, Mod});
+            gen_server:call(?MODULE, {all_vnodes, Mod}, infinity);
         Result ->
             Result
     end.

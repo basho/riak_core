@@ -65,7 +65,7 @@ register_app(App, {M, F, A}) ->
     register_app(App, {M, F, A}, RefreshRate).
 
 register_app(App, {M, F, A}, RefreshRateSecs) ->
-    gen_server:call(?SERVER, {register, App, {{M, F, A}, ?REFRSH_MILLIS(RefreshRateSecs)}}).
+    gen_server:call(?SERVER, {register, App, {{M, F, A}, ?REFRSH_MILLIS(RefreshRateSecs)}}, infinity).
 
 get_stats(App) ->
     gen_server:call(?SERVER, {get_stats, App}, infinity).
@@ -74,7 +74,7 @@ clear_cache(App) ->
     gen_server:call(?SERVER, {clear, App}, infinity).
 
 stop() ->
-    gen_server:cast(?SERVER, stop).
+    gen_server:cast(?SERVER, stop, infinity).
 
 %%% gen server
 
