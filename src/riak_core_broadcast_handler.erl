@@ -34,3 +34,6 @@
 %% has already been sent with information that subsumes the message associated with the given
 %% message id. In this case, `stale' is returned.
 -callback graft(any()) -> stale | {ok, any()} | {error, any()}.
+
+%% @doc trigger an exchange between the local handler and the handler on `Peer'.
+-callback exchange(node()) -> ok.

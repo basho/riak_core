@@ -44,7 +44,8 @@
 -export([broadcast_data/1,
          merge/2,
          is_stale/1,
-         graft/1]).
+         graft/1,
+         exchange/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -293,6 +294,13 @@ graft(Context, Obj) ->
         true ->
             {ok, Obj}
     end.
+
+%% @doc Trigger an exchange
+-spec exchange(node()) -> ok.
+exchange(Peer) ->
+    Timeout = app_helper:get_env(riak_core, metadata_exchange_timeout, 60000),
+    riak_core_metadata_exchange_fsm:start_link(Peer, Timeout),
+    ok.
 
 %%%===================================================================
 %%% gen_server callbacks
