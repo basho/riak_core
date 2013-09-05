@@ -26,6 +26,7 @@
 -export([start_link/0,
          start_link/1,
          get/1,
+         get/2,
          iterator/0,
          iterator/1,
          iterator/2,
@@ -36,7 +37,8 @@
          iterator_value/1,
          iterator_done/1,
          iterator_close/1,
-         put/3]).
+         put/3,
+         merge/3]).
 
 %% riak_core_broadcast_handler callbacks
 -export([broadcast_data/1,
@@ -123,6 +125,14 @@ start_link(Opts) ->
 get({{Prefix, SubPrefix}, _Key}=PKey) when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
                                            (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
     gen_server:call(?SERVER, {get, PKey}, infinity).
+
+%% @doc Same as get/1 but reads the value from `Node'
+-spec get(node(), metadata_pkey()) -> metadata_object() | undefined.
+get(Node, {{Prefix, SubPrefix}, _Key}=PKey)
+  when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
+       (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
+    gen_server:call({?SERVER, Node}, {get, PKey}).
+
 
 %% @doc Returns a full-prefix iterator: an iterator for all full-prefixes that have keys stored under them
 -spec iterator() -> metadata_iterator().
@@ -222,6 +232,11 @@ put({{Prefix, SubPrefix}, _Key}=PKey, Context, ValueOrFun)
   when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
        (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
     gen_server:call(?SERVER, {put, PKey, Context, ValueOrFun}, infinity).
+
+%% @doc same as merge/2 but merges the object on `Node'
+-spec merge(node(), {metadata_pkey(), metadata_context()}, metadata_object()) -> boolean().
+merge(Node, {PKey, _Context}, Obj) ->
+    gen_server:call({?SERVER, Node}, {merge, PKey, Obj}).
 
 %%%===================================================================
 %%% riak_core_broadcast_handler callbacks
