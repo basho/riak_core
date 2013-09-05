@@ -26,6 +26,8 @@
 -export([start_link/0,
          start_link/1,
          get/1,
+         iterator/0,
+         iterator/1,
          iterator/2,
          iterate/1,
          iterator_prefix/1,
@@ -108,6 +110,16 @@ get({{Prefix, SubPrefix}, _Key}=PKey) when (is_binary(Prefix) orelse is_atom(Pre
                                            (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
     gen_server:call(?SERVER, {get, PKey}, infinity).
 
+%% @doc Returns a full-prefix iterator: an iterator for all full-prefixes that have keys stored under them
+-spec iterator() -> metadata_iterator().
+iterator() ->
+    gen_server:call(?SERVER, {iterator, undefined, undefined}).
+
+%% @doc Returns a sub-prefix iterator for a given prefix.
+-spec iterator(binary() | atom()) -> metadata_iterator().
+iterator(Prefix) when is_binary(Prefix) or is_atom(Prefix) ->
+    gen_server:call(?SERVER, {iterator, undefined, Prefix}).
+
 %% @doc Return an iterator for keys stored under a prefix. If KeyMatch is undefined then
 %% all keys will may be visted by the iterator. Otherwise only keys matching KeyMatch will be
 %% visited.
@@ -124,20 +136,24 @@ iterator({Prefix, SubPrefix}=FullPrefix, KeyMatch)
     gen_server:call(?SERVER, {iterator, FullPrefix, KeyMatch}, infinity).
 
 
-%% @doc advance the iterator by one key
+%% @doc advance the iterator by one key, full-prefix or sub-prefix
 -spec iterate(metadata_iterator()) -> metadata_iterator().
 iterate(Iterator) ->
     gen_server:call(?SERVER, {iterate, Iterator}, infinity).
 
-%% @doc return the full prefix being iterated by this iterator
--spec iterator_prefix(metadata_iterator()) -> metadata_prefix().
+%% @doc return the full-prefix or prefix being iterated by this iterator. If the iterator is a
+%% full-prefix iterator undefined is returned.
+-spec iterator_prefix(metadata_iterator()) -> metadata_prefix() | undefined | binary() | atom().
+iterator_prefix(#metadata_iterator{prefix=undefined,match=undefined}) -> undefined;
+iterator_prefix(#metadata_iterator{prefix=undefined,match=Prefix}) -> Prefix;
 iterator_prefix(#metadata_iterator{prefix=Prefix}) -> Prefix.
 
-%% @doc return the key and object pointed to by the iterator
--spec iterator_value(metadata_iterator()) -> {metadata_key(), metadata_object()}.
+%% @doc return the key and object or the prefix pointed to by the iterator
+-spec iterator_value(metadata_iterator()) -> {metadata_key(), metadata_object()} | metadata_prefix().
+iterator_value(#metadata_iterator{prefix=undefined,match=undefined,pos=Pos}) -> Pos;
 iterator_value(#metadata_iterator{obj=Obj}) -> Obj.
 
-%% @doc returns true if there are no more keys to iterate over
+%% @doc returns true if there are no more keys or prefixes to iterate over
 -spec iterator_done(metadata_iterator()) -> boolean().
 iterator_done(#metadata_iterator{done=Done}) -> Done.
 
@@ -293,6 +309,8 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+iterator(undefined, KeyMatch, #state{ets_tabs=Tab}) ->
+    new_iterator(undefined, KeyMatch, Tab);
 iterator(FullPrefix, KeyMatch, State) ->
     case ets_tab(FullPrefix, State) of
         undefined -> empty_iterator(FullPrefix, KeyMatch, undefined);
@@ -301,6 +319,10 @@ iterator(FullPrefix, KeyMatch, State) ->
 
 next_iterator(It=#metadata_iterator{done=true}) ->
     It;
+next_iterator(It=#metadata_iterator{prefix=undefined,match=undefined,tab=Tab,pos=Pos}) ->
+    next_iterator(It, ets:next(Tab, Pos));
+next_iterator(It=#metadata_iterator{prefix=undefined,pos=Pos}) ->
+    next_iterator(It, ets:select(Pos));
 next_iterator(It=#metadata_iterator{pos=Pos}) ->
     next_iterator(It, ets:match_object(Pos)).
 
@@ -308,6 +330,8 @@ next_iterator(It, '$end_of_table') ->
     It#metadata_iterator{done=true,
                          pos=undefined,
                          obj=undefined};
+next_iterator(It=#metadata_iterator{prefix=undefined,match=undefined},Next) ->
+    It#metadata_iterator{pos=Next};
 next_iterator(It, {[Next], Cont}) ->
     It#metadata_iterator{pos=Cont,
                          obj=Next}.
@@ -322,21 +346,44 @@ empty_iterator(FullPrefix, KeyMatch, Tab) ->
                 tab=Tab
                }.
 
+new_iterator(undefined, undefined, Tab) ->
+    new_iterator(undefined, undefined, Tab, ets:first(Tab));
+new_iterator(undefined, Prefix, Tab) ->
+    new_iterator(undefined, Prefix, Tab,
+                 ets:select(Tab, [{{{Prefix,'$1'},'_'},[],['$1']}], 1));
 new_iterator(FullPrefix, KeyMatch, Tab) ->
     ObjectMatch = iterator_match(KeyMatch),
     new_iterator(FullPrefix, KeyMatch, Tab, ets:match_object(Tab, ObjectMatch, 1)).
 
 new_iterator(FullPrefix, KeyMatch, Tab, '$end_of_table') ->
     empty_iterator(FullPrefix, KeyMatch, Tab);
+new_iterator(undefined, undefined, Tab, First) ->
+    #metadata_iterator{
+       prefix=undefined,
+       match=undefined,
+       pos=First,
+       obj=undefined,
+       done=false,
+       tab=Tab
+      };
+new_iterator(undefined, Prefix, Tab, {[First], Cont}) ->
+    #metadata_iterator{
+       prefix=undefined,
+       match=Prefix,
+       pos=Cont,
+       obj=First,
+       done=false,
+       tab=Tab
+      };
 new_iterator(FullPrefix, KeyMatch, Tab, {[First], Cont}) ->
     #metadata_iterator{
-              prefix=FullPrefix,
-              match=KeyMatch,
-              pos=Cont,
-              obj=First,
-              done=false,
-              tab=Tab
-             }.
+       prefix=FullPrefix,
+       match=KeyMatch,
+       pos=Cont,
+       obj=First,
+       done=false,
+       tab=Tab
+      }.
 
 iterator_match(undefined) ->
     '_';
