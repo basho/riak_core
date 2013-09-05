@@ -26,8 +26,15 @@
          start_link/1,
          insert/2,
          insert/3,
-         prefix_hash/1]).
-
+         prefix_hash/1,
+         get_bucket/4,
+         key_hashes/3,
+         lock/0,
+         lock/1,
+         lock/2,
+         update/0,
+         update/1,
+         compare/3]).
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
@@ -46,7 +53,7 @@
 
           %% a monitor reference for a process that currently holds a
           %% lock on the tree. undefined otherwise
-          lock  :: reference() | undefined
+          lock  :: {internal | external, reference()} | undefined
          }).
 
 %%%===================================================================
@@ -70,7 +77,6 @@ start_link(DataRoot) ->
 insert(PKey, Hash) ->
     insert(PKey, Hash, false).
 
-
 %% @doc TODO
 -spec insert(metadata_pkey(), binary(), boolean()) -> ok.
 insert(PKey, Hash, IfMissing) ->
@@ -80,6 +86,47 @@ insert(PKey, Hash, IfMissing) ->
 -spec prefix_hash(metadata_prefix() | binary() | atom()) -> undefined | binary().
 prefix_hash(Prefix) ->
     gen_server:call(?SERVER, {prefix_hash, Prefix}).
+
+%% @doc TODO
+-spec get_bucket(node(), hashtree_tree:tree_node(),
+                 non_neg_integer(), non_neg_integer()) -> ordict:ordict().
+get_bucket(Node, Prefixes, Level, Bucket) ->
+    gen_server:call({?SERVER, Node}, {get_bucket, Prefixes, Level, Bucket}).
+
+%% @doc TODO
+-spec key_hashes(node(), hashtree_tree:tree_node(), non_neg_integer()) -> orddict:orddict().
+key_hashes(Node, Prefixes, Segment) ->
+    gen_server:call({?SERVER, Node}, {key_hashes, Prefixes, Segment}).
+
+%% @doc TODO
+-spec lock() -> ok | not_built | locked.
+lock() ->
+    lock(node()).
+
+%% @doc TODO
+-spec lock(node()) -> ok | not_built | locked.
+lock(Node) ->
+    lock(Node, self()).
+
+%% @doc TODO
+-spec lock(node(), pid()) -> ok | not_built | locked.
+lock(Node, Pid) ->
+    gen_server:call({?SERVER, Node}, {lock, Pid}).
+
+%% @doc TODO
+-spec update() -> ok | not_locked | not_built | ongoing_update.
+update() ->
+    update(node()).
+
+%% @doc TODO
+-spec update(node()) -> ok | not_locked | not_built | ongoing_update.
+update(Node) ->
+    gen_server:call({?SERVER, Node}, update).
+
+%% @doc TODO
+-spec compare(hashtree_tree:remote_fun(), hashtree_tree:handler_fun(X), X) -> X.
+compare(RemoteFun, HandlerFun, HandlerAcc) ->
+    gen_server:call(?SERVER, {compare, RemoteFun, HandlerFun, HandlerAcc}).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -95,6 +142,21 @@ init([DataRoot]) ->
     State1 = build_async(State),
     {ok, State1}.
 
+handle_call({compare, RemoteFun, HandlerFun, HandlerAcc}, From, State) ->
+    maybe_compare_async(From, RemoteFun, HandlerFun, HandlerAcc, State),
+    {noreply, State};
+handle_call(update, From, State) ->
+    State1 = maybe_external_update(From, State),
+    {noreply, State1};
+handle_call({lock, Pid}, _From, State) ->
+    {Reply, State1} = maybe_external_lock(Pid, State),
+    {reply, Reply, State1};
+handle_call({get_bucket, Prefixes, Level, Bucket}, _From, State) ->
+    Res = hashtree_tree:get_bucket(Prefixes, Level, Bucket, State#state.tree),
+    {reply, Res, State};
+handle_call({key_hashes, Prefixes, Segment}, _From, State) ->
+    [{_, Res}] = hashtree_tree:key_hashes(Prefixes, Segment, State#state.tree),
+    {reply, Res, State};
 handle_call({prefix_hash, Prefix}, _From, State=#state{tree=Tree}) ->
     PrefixList = prefix_to_prefix_list(Prefix),
     PrefixHash = hashtree_tree:prefix_hash(PrefixList, Tree),
@@ -113,7 +175,7 @@ handle_info({'EXIT', BuiltPid, normal}, State=#state{built=BuiltPid}) ->
 handle_info({'EXIT', BuiltPid, _}, State=#state{built=BuiltPid}) ->
     State1 = build_error(State),
     {noreply, State1};
-handle_info({'DOWN', LockRef, process, _Pid, _Reason}, State=#state{lock=LockRef}) ->
+handle_info({'DOWN', LockRef, process, _Pid, _Reason}, State=#state{lock={_, LockRef}}) ->
     State1 = release_lock(State),
     {noreply, State1};
 handle_info(tick, State) ->
@@ -134,19 +196,58 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 
 %% @private
+maybe_compare_async(From, RemoteFun, HandlerFun, HandlerAcc,
+                    State=#state{built=true,lock={external,_}}) ->
+    compare_async(From, RemoteFun, HandlerFun, HandlerAcc, State);
+maybe_compare_async(From, _, _, HandlerAcc, _State) ->
+    gen_server:reply(From, HandlerAcc).
+
+%% @private
+compare_async(From, RemoteFun, HandlerFun, HandlerAcc, #state{tree=Tree}) ->
+    spawn_link(fun() ->
+                       Res = hashtree_tree:compare(Tree, RemoteFun,
+                                                   HandlerFun, HandlerAcc),
+                       gen_server:reply(From, Res)
+               end).
+
+%% @private
+maybe_external_update(From, State=#state{built=true,lock=undefined}) ->
+    gen_server:reply(From, not_locked),
+    State;
+maybe_external_update(From, State=#state{built=true,lock={internal,_}}) ->
+    gen_server:reply(From, ongoing_update),
+    State;
+maybe_external_update(From, State=#state{built=true,lock={external,_}}) ->
+    update_async(From, false, State);
+maybe_external_update(From, State) ->
+    gen_server:reply(From, not_built),
+    State.
+
+%% @private
 maybe_update_async(State=#state{built=true,lock=undefined}) ->
     update_async(State);
 maybe_update_async(State) ->
     State.
 
 %% @private
-update_async(State=#state{tree=Tree}) ->
+update_async(State) ->
+    update_async(undefined, true, State).
+
+%% @private
+update_async(From, Lock, State=#state{tree=Tree}) ->
     {Snap, Tree2} = hashtree_tree:update_snapshot(Tree),
     Pid = spawn(fun() ->
-                        hashtree_tree:update_perform(Snap)
+                        hashtree_tree:update_perform(Snap),
+                        case From of
+                            undefined -> ok;
+                            _ -> gen_server:reply(From, ok)
+                        end
                 end),
-    LockRef = monitor(process, Pid),
-    State#state{tree=Tree2,lock=LockRef}.
+    State1 = case Lock of
+                 true -> lock(Pid, internal, State);
+                 false -> State
+             end,
+    State1#state{tree=Tree2}.
 
 %% @private
 maybe_build_async(State=#state{built=false}) ->
@@ -195,6 +296,19 @@ build_done(State) ->
 %% @private
 build_error(State) ->
     State#state{built=false}.
+
+%% @private
+maybe_external_lock(Pid, State=#state{lock=undefined,built=true}) ->
+    {ok, lock(Pid, external, State)};
+maybe_external_lock(_Pid, State=#state{built=true}) ->
+    {locked, State};
+maybe_external_lock(_Pid, State) ->
+    {not_built, State}.
+
+%% @private
+lock(Pid, Type, State) ->
+    LockRef = monitor(process, Pid),
+    State#state{lock={Type, LockRef}}.
 
 %% @private
 release_lock(State) ->
