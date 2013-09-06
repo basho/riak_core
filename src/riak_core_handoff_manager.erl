@@ -72,6 +72,7 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 init([]) ->
+    riak_core_bg_manager:set_concurrency_limit(handoff, ?HANDOFF_CONCURRENCY),
     {ok, #state{excl=sets:new(), handoffs=[]}}.
 
 -spec add_outbound(ho_type(),atom(),integer(),term(),pid(),[{atom(),term()}]) ->
@@ -128,10 +129,11 @@ status_update(ModSrcTgt, Stats) ->
     gen_server:cast(?MODULE, {status_update, ModSrcTgt, Stats}).
 
 set_concurrency(Limit) ->
-    gen_server:call(?MODULE,{set_concurrency,Limit}, infinity).
+    riak_core_bg_manager:set_concurrency_limit(handoff, Limit, true),
+    ok.
 
 get_concurrency() ->
-    gen_server:call(?MODULE, get_concurrency, infinity).
+    riak_core_bg_manager:concurrency_limit(handoff).
 
 %% @doc Kill the transfer of `ModSrcTarget' with `Reason'.
 -spec kill_xfer(node(), tuple(), any()) -> ok.
@@ -201,27 +203,7 @@ handle_call({xfer_status, Xfer}, _From, State=#state{handoffs=HS}) ->
 
 handle_call({status, Filter}, _From, State=#state{handoffs=HS}) ->
     Status = lists:filter(filter(Filter), [build_status(HO) || HO <- HS]),
-    {reply, Status, State};
-
-handle_call({set_concurrency,Limit},_From,State=#state{handoffs=HS}) ->
-    application:set_env(riak_core,handoff_concurrency,Limit),
-    case Limit < erlang:length(HS) of
-        true ->
-            %% Note: we don't update the state with the handoffs that we're
-            %% keeping because we'll still get the 'DOWN' messages with
-            %% a reason of 'max_concurrency' and we want to be able to do
-            %% something with that if necessary.
-            {_Keep,Discard}=lists:split(Limit,HS),
-            [erlang:exit(Pid,max_concurrency) ||
-                #handoff_status{transport_pid=Pid} <- Discard],
-            {reply, ok, State};
-        false ->
-            {reply, ok, State}
-    end;
-
-handle_call(get_concurrency, _From, State) ->
-    Concurrency = get_concurrency_limit(),
-    {reply, Concurrency, State}.
+    {reply, Status, State}.
 
 handle_cast({del_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
     Excl2 = sets:del_element({Mod, Idx}, Excl),
@@ -440,16 +422,8 @@ record_seen_index(Ring, Shrinking, NValMap, DefaultN, Mod, Src, Key, Seen) ->
         FutureIndex -> ordsets:add_element(FutureIndex, Seen)
     end.
 
-get_concurrency_limit () ->
-    app_helper:get_env(riak_core,handoff_concurrency,?HANDOFF_CONCURRENCY).
-
-%% true if handoff_concurrency (inbound + outbound) hasn't yet been reached
 handoff_concurrency_limit_reached () ->
-    Receivers=supervisor:count_children(riak_core_handoff_receiver_sup),
-    Senders=supervisor:count_children(riak_core_handoff_sender_sup),
-    ActiveReceivers=proplists:get_value(active,Receivers),
-    ActiveSenders=proplists:get_value(active,Senders),
-    get_concurrency_limit() =< (ActiveReceivers + ActiveSenders).
+    riak_core_bg_manager:concurrency_limit_reached(handoff).
 
 send_handoff(HOType, ModSrcTarget, Node, Pid, HS,Opts) ->
     send_handoff(HOType, ModSrcTarget, Node, Pid, HS, {none, none}, none, Opts).
@@ -544,11 +518,9 @@ send_handoff(HOType, {Mod, Src, Target}, Node, Vnode, HS, {Filter, FilterModFun}
 
 %% spawn a receiver process
 receive_handoff (SSLOpts) ->
-    case handoff_concurrency_limit_reached() of
-        true ->
-            {error, max_concurrency};
-        false ->
-            {ok,Pid}=riak_core_handoff_receiver_sup:start_receiver(SSLOpts),
+    case riak_core_handoff_receiver_sup:start_receiver(SSLOpts) of
+        {error, max_concurrency} -> {error, max_concurrency};
+        {ok, Pid} ->
             PidM = monitor(process, Pid),
 
             %% successfully started up a new receiver

@@ -90,6 +90,17 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
     SrcNode = node(),
     SrcPartition = get_src_partition(Opts),
     TargetPartition = get_target_partition(Opts),
+    LockMeta = [{direction, outbound},
+                {handoff_type, Type},
+                {target_node, TargetNode},
+                {source_node, SrcNode},
+                {target_partition, TargetPartition},
+                {source_partition, SrcPartition}],
+    case riak_core_bg_manager:get_lock(handoff, LockMeta) of
+        max_concurrency -> exit(max_concurrency);
+        ok -> ok
+    end,
+
      try
          Filter = get_filter(Opts),
          [_Name,Host] = string:tokens(atom_to_list(TargetNode), "@"),

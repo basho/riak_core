@@ -2,7 +2,7 @@
 %%
 %% riak_core: Core Riak Application
 %%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -24,6 +24,9 @@
 
 -behaviour(supervisor).
 
+-include("riak_core_bg_manager.hrl").
+-include("riak_core_token_manager.hrl").
+
 %% API
 -export([start_link/0, stop_webs/0, restart_webs/0]).
 
@@ -31,8 +34,17 @@
 -export([init/1]).
 
 %% Helper macro for declaring children of supervisor
--define(CHILD(I, Type, Timeout), {I, {I, start_link, []}, permanent, Timeout, Type, [I]}).
--define(CHILD(I, Type), ?CHILD(I, Type, 5000)).
+-define(DEFAULT_TIMEOUT, 5000).
+-define(CHILD(I, Type, Timeout, Args), {I, {I, start_link, Args}, permanent, Timeout, Type, [I]}).
+-define(CHILD(I, Type, Timeout), ?CHILD(I, Type, Timeout, [])).
+-define(CHILD(I, Type), ?CHILD(I, Type, ?DEFAULT_TIMEOUT)).
+
+%% ETS tables to be created and maintained by riak_core_table_manager, which is not linked
+%% to any processes except this supervisor. Please keep it that way so tables don't get lost
+%% when their user processes crash. Implement ETS-TRANSFER handler for user processes.
+-define(TBL_MGR_ARGS, [{?TM_ETS_TABLE, ?TM_ETS_OPTS},
+                       {?LM_ETS_TABLE, ?LM_ETS_OPTS}
+                      ]).
 
 %% ===================================================================
 %% API functions
@@ -56,6 +68,8 @@ restart_webs() ->
 init([]) ->
     Children = lists:flatten(
                  [?CHILD(riak_core_sysmon_minder, worker),
+                  ?CHILD(riak_core_table_manager, worker, ?DEFAULT_TIMEOUT, [?TBL_MGR_ARGS]),
+                  ?CHILD(riak_core_bg_manager_sup, supervisor),
                   ?CHILD(riak_core_vnode_sup, supervisor, 305000),
                   ?CHILD(riak_core_eventhandler_sup, supervisor),
                   ?CHILD(riak_core_ring_events, worker),

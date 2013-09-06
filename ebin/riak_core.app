@@ -86,7 +86,11 @@
              riak_core_tcp_mon,
              riak_core_ssl_util,
              supervisor_pre_r14b04,
-             vclock
+             vclock,
+             riak_core_bg_manager,
+             riak_core_token_manager,
+             riak_core_table_manager,
+             riak_core_bg_manager_sup
             ]},
   {registered, []},
   {included_applications, [folsom]},
