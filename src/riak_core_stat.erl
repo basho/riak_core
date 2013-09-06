@@ -46,27 +46,13 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 register_stats() ->
-    register_stats(?APP, stats()).
+    [(catch exometer_entry:delete([?APP,Name])) || {Name,_} <- stats()],
+    [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()],
+    riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
 
-%% @spec register_stats(App, Stats) -> ok
-%% @doc (Re-)Register a list of metrics for App.
-register_stats(App, Stats) ->
-    P = prefix(),
-    lists:foreach(fun(Stat) ->
-			  register_stat_(P, App, Stat)
-		  end, Stats).
-
-register_stat_(P, App, Stat) ->
-    {Name, Type, Opts} = case Stat of
-			     {N, T}     -> {N, T, []};
-			     {N, T, Os} -> {N, T, Os}
-			 end,
-    exometer:re_register(stat_name(P,App,Name), Type, Opts).
-
-stat_name(P, App, N) when is_atom(N) ->
-    [P, App, N];
-stat_name(P, App, N) when is_list(N) ->
-    [P, App | N].
+    %% [(catch folsom_metrics:delete_metric({?APP, Name})) || {Name, _Type} <- stats()],
+    %% [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()],
+    %% riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
 
 %% @spec get_stats() -> proplist()
 %% @doc Get the current aggregation of stats.
@@ -120,7 +106,6 @@ update_value(converge_timer_end) -> timer_begin;
 update_value(rebalance_timer_end) -> timer_begin;
 update_value(_) -> 1.
 
-
 %% private
 stats() ->
     [{ignored_gossip_total, counter},
@@ -130,8 +115,12 @@ stats() ->
      {handoff_timeouts, counter},
      {dropped_vnode_requests_total, counter},
      {converge_delay, duration},
-     {rebalance_delay, duration}
-    ].
+     {rebalance_delay, duration}].
+
+register_stat(Name, Type) when is_tuple(Name) ->
+    exometer_entry:new(tuple_to_list(Name), Type);
+register_stat(Name, Type) when is_list(Name) ->
+    exometer_entry:new(Name, Type).
 
 gossip_stats() ->
     lists:flatten([backwards_compat(Stat, Type, riak_core_stat_q:calc_stat({{?APP, Stat}, Type})) ||
