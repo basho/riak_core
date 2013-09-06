@@ -15,7 +15,8 @@
                   crypto,
                   riak_sysmon,
                   webmachine,
-                  os_mon
+                  os_mon,
+                  exometer
                  ]},
   {mod, { riak_core_app, []}},
   {env, [
