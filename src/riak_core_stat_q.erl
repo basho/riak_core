@@ -52,8 +52,12 @@
 -spec get_stats(path()) -> stats().
 get_stats(Path) ->
     %% get all the stats that are at Path
-    calculate_stats(exometer:select(
-                        [{ {Path ++ '_','_',enabled}, [], ['$_'] }])).
+    NamesNTypes = names_and_types(Path),
+    calculate_stats(NamesNTypes).
+
+%% @doc queries folsom's metrics table for stats that match our path
+names_and_types(Path) ->
+    exometer_entry:find_entries(Path).
 
 calculate_stats(NamesAndTypes) ->
     [{Name, get_stat(Name)} || {Name, _, _} <- NamesAndTypes].
@@ -70,12 +74,12 @@ get_stat(Stat) ->
 %% broken it stays that way. Should we delete
 %% stats that are broken?
 calc_stat({Name, _Type}) when is_tuple(Name) ->
-    stat_return(exometer:get_value(tuple_to_list(Name)));
+    stat_return(exometer_entry:get_value(tuple_to_list(Name)));
 calc_stat({[_|_] = Name, _Type}) ->
-    stat_return(exometer:get_value(Name)).
+    stat_return(exometer_entry:get_value(Name)).
 
 stat_return({error,not_found}) -> unavailable;
-stat_return({ok, Value}) -> Value.
+stat_return(Value) -> Value.
 
 log_error(StatName, ErrClass, ErrReason) ->
     lager:warning("Failed to calculate stat ~p with ~p:~p", [StatName, ErrClass, ErrReason]).
