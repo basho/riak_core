@@ -241,12 +241,16 @@ start(Interval) ->
 %%%% Gen Server %%%%%%%
 
 %% @private
-%% @doc Initializes the server with a history window interval in seconds
--spec init([tm_period()]) -> {ok, #state{}} |
+%% @doc Initializes the server with a history window interval in seconds,
+%%      defaults to 1 minute if empty list supplied.
+-spec init([tm_period()] | []) -> {ok, #state{}} |
                              {ok, #state{}, non_neg_integer() | infinity} |
                              ignore |
                              {stop, term()}.
+init([]) ->
+    init([?DEFAULT_TM_SAMPLE_WINDOW]);
 init([Interval]) ->
+    lager:debug("Token Manager starting up."),
     %% claiming the table will result in a handle_info('ETS-TRANSFER', ...) message.
     ok = riak_core_table_manager:claim_table(?TM_ETS_TABLE),
     State = #state{table_id=undefined, %% resolved in the ETS-TRANSFER handler
@@ -340,7 +344,7 @@ handle_info({'ETS-TRANSFER', TableId, Pid, _Data}, State) ->
     reschedule_token_refills(State2),
     {noreply, State2};
 handle_info({'DOWN', Ref, _, _, _}, State) ->
-    lager:info("Linked process died with ref ~p: ", [Ref]),
+    lager:debug("Linked process died with ref ~p: ", [Ref]),
     {noreply, State};
 handle_info(Info, State) ->
     lager:warning("Unhandled info: ~p", [Info]),

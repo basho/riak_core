@@ -89,7 +89,8 @@
              vclock,
              riak_core_bg_manager,
              riak_core_token_manager,
-             riak_core_table_manager
+             riak_core_table_manager,
+             riak_core_bg_manager_sup
             ]},
   {registered, []},
   {included_applications, [folsom]},

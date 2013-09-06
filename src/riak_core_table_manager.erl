@@ -85,6 +85,7 @@ claim_table(TableName) ->
 %% Table specs are provided by the process that creates this table manager,
 %% presumably a supervisor such as riak_core_sup.
 init([TableSpecs]) ->
+    lager:debug("Table Manager starting up with tables: ~p", [TableSpecs]),
     Tables = lists:foldl(fun(Spec, TT) -> create_table(Spec, TT) end, [], TableSpecs),
     {ok, #state{tables=Tables}}.
 

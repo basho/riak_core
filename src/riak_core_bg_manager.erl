@@ -28,6 +28,7 @@
          enable/0,
          disable/0,
          %% Locks
+         %% TODO: refactor the lock implementation to another module ala tokens
          get_lock/1,
          get_lock/2,
          get_lock/3,
@@ -72,14 +73,12 @@
          terminate/2, code_change/3]).
 
 -record(state, {table_id:: ets:tid(),            %% TableID of ?LM_ETS_TABLE
-                held    :: ordict:orddict(),
                 enabled :: boolean()}).
 
 -record(lock_info, {concurrency_limit :: non_neg_integer(),
                     enabled           :: boolean()}).
 
 -define(SERVER, ?MODULE).
--define(TOKEN_MODULE, riak_core_token_manager).
 -define(DEFAULT_CONCURRENCY, 0). %% DO NOT CHANGE. DEFAULT SET TO 0 TO ENFORCE "REGISTRATION"
 -define(limit(X), (X)#lock_info.concurrency_limit).
 -define(enabled(X), (X)#lock_info.enabled).
@@ -96,7 +95,6 @@
 %% @doc Starts the server
 -spec start_link() -> {ok, pid()} | ignore | {error, term}.
 start_link() ->
-    gen_server:start_link({local, ?TOKEN_MODULE}, ?TOKEN_MODULE, [], []),
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 %% @doc Enable handing out of all background locks and tokens
@@ -314,8 +312,10 @@ concurrency_limit_reached(Type) ->
                   ignore |
                   {stop, term()}.
 init([]) ->
-    {ok, #state{
-                held=orddict:new(),
+    lager:debug("Background Manager starting up."),
+    %% claiming the table will result in a handle_info('ETS-TRANSFER', ...) message.
+    ok = riak_core_table_manager:claim_table(?LM_ETS_TABLE),
+    {ok, #state{table_id=undefined,
                 enabled=true}}.
 
 %% @private
@@ -332,9 +332,8 @@ handle_call({get_lock, LockType, Pid, Info}, _From, State) ->
     {reply, Reply, State2};
 handle_call({lock_count, LockType}, _From, State) ->
     {reply, held_count(LockType, State), State};
-handle_call(lock_count, _From, State=#state{held=Locks}) ->
-    Count = orddict:fold(fun(_, Held, Total) -> Total + length(Held) end,
-                         0, Locks),
+handle_call(lock_count, _From, State) ->
+    Count = length(held_locks(State)),
     {reply, Count, State};
 handle_call({lock_limit_reached, LockType}, _From, State) ->
     HeldCount = held_count(LockType, State),
@@ -411,7 +410,8 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-query_locks(FullQuery, State=#state{held=Locks}) ->
+query_locks(FullQuery, State) ->
+    Locks = held_locks(State),
     Base = case proplists:get_value(type, FullQuery) of
                undefined -> Locks;
                LockType -> orddict:from_list([{LockType, held_locks(LockType, State)}])
@@ -451,19 +451,22 @@ try_lock(LockType, Pid, Info, State=#state{enabled=GlobalEnabled}) ->
 
 try_lock(false, _LockType, _Pid, _Info, State) ->
     {max_concurrency, State};
-try_lock(true, LockType, Pid, Info, State=#state{held=Locks}) ->
+try_lock(true, LockType, Pid, Info, State) ->
     Ref = monitor(process, Pid),
-    NewLocks = orddict:append(LockType, {Pid, Ref, Info}, Locks),
-    {ok, State#state{held=NewLocks}}.
+    State2 = add_lock(LockType, {Pid, Ref, Info}, State),
+    {ok, State2}.
 
-release_lock(Ref, State=#state{held=Locks}) ->
-    %% TODO: this makes me (jordan) :(
-    Released = orddict:map(fun(Type, Held) -> release_lock(Ref, Type, Held) end,
-                           Locks),
-    State#state{held=Released}.
+add_lock(LockType, Lock, State=#state{table_id=TableId}) ->
+    Key = {held, LockType},
+    ets:insert(TableId, {Key, Lock}),
+    State.
 
-release_lock(Ref, _LockType, Held) ->
-    lists:keydelete(Ref, 2, Held).
+release_lock(Ref, State=#state{table_id=TableId}) ->
+    %% There should only be one instance of the object, but we'll zap all that match.
+    Pattern = {{held, '_'}, {'_', Ref, '_'}},
+    Matches = [Lock || {{held, _Type},Lock} <- ets:match_object(TableId, Pattern)],
+    [ets:delete_object(TableId, Obj) || Obj <- Matches],
+    State.
 
 maybe_honor_limit(true, LockType, Limit, State) ->
     Held = held_locks(LockType, State),
@@ -482,11 +485,11 @@ maybe_honor_limit(false, _LockType, _Limit, _State) ->
 held_count(LockType, State) ->
     length(held_locks(LockType, State)).
 
-held_locks(LockType, #state{held=Locks}) ->
-    case orddict:find(LockType, Locks) of
-        error -> [];
-        {ok, Held} -> Held
-    end.
+held_locks(#state{table_id=TableId}) ->
+    [Lock || {{held, _Type},Lock} <- ets:match_object(TableId, {{held, '_'},'_'})].
+
+held_locks(LockType, #state{table_id=TableId}) ->
+    [Lock || {{held, _Type},Lock} <- ets:match_object(TableId, {{held, LockType},'_'})].
 
 enable_lock(LockType, State) ->
     update_lock_enabled(LockType, true, State).
