@@ -22,7 +22,13 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0,
+-export([
+         %% Universal
+         start_link/0,
+         enable/0,
+         disable/0,
+         %% Locks
+         %% TODO: refactor the lock implementation to another module ala tokens
          get_lock/1,
          get_lock/2,
          get_lock/3,
@@ -31,22 +37,42 @@
          lock_types/0,
          all_locks/0,
          query_locks/1,
-         enable/0,
-         enable/1,
-         disable/0,
-         disable/1,
-         disable/2,
+         enable_locks/0,
+         enable_locks/1,
+         disable_locks/0,
+         disable_locks/1,
+         disable_locks/2,
          concurrency_limit/1,
          set_concurrency_limit/2,
          set_concurrency_limit/3,
-         concurrency_limit_reached/1]).
+         concurrency_limit_reached/1,
+         %% Tokens, all proxied to riak_core_token_manager
+         set_token_rate/2,
+         token_rate/1,
+         enable_tokens/0,
+         enable_tokens/1,
+         disable_tokens/0,
+         disable_tokens/1,
+         get_token/1,
+         get_token/2,
+         get_token/3,
+         get_token_sync/1,
+         get_token_sync/2,
+         get_token_sync/3,
+         token_types/0,
+         tokens_given/0,
+         tokens_given/1,
+         tokens_waiting/0,
+         tokens_waiting/1
+        ]).
+
+-include("riak_core_token_manager.hrl").
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--record(state, {held    :: ordict:orddict(),
-                info    :: orddict:orddict(),
+-record(state, {table_id:: ets:tid(),            %% TableID of ?LM_ETS_TABLE
                 enabled :: boolean()}).
 
 -record(lock_info, {concurrency_limit :: non_neg_integer(),
@@ -57,6 +83,8 @@
 -define(limit(X), (X)#lock_info.concurrency_limit).
 -define(enabled(X), (X)#lock_info.enabled).
 -define(DEFAULT_LOCK_INFO, #lock_info{enabled=true, concurrency_limit=?DEFAULT_CONCURRENCY}).
+-define(LM_ETS_TABLE, lock_mgr_table).   %% name of private lock manager ETS table
+-define(LM_ETS_OPTS, [private, bag]).    %% creation time properties of lock manager ETS table
 
 -type concurrency_limit() :: non_neg_integer() | infinity.
 
@@ -68,6 +96,105 @@
 -spec start_link() -> {ok, pid()} | ignore | {error, term}.
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+
+%% @doc Enable handing out of all background locks and tokens
+-spec enable() -> ok.
+enable() ->
+    enable_tokens(),
+    enable_locks().
+
+%% @doc Disable handing out of all background locks and tokens
+-spec disable() -> ok.
+disable() ->
+    disable_tokens(),
+    disable_locks().
+
+%%% Token API proxies to the token manager
+
+%% @doc Set the refill rate of tokens.
+-spec set_token_rate(any(), riak_core_token_manager:tm_rate()) -> riak_core_token_manager:tm_rate().
+set_token_rate(Type, {Period, Count}) ->
+    riak_core_token_manager:set_token_rate(Type, {Period, Count}).
+
+-spec token_rate(any()) -> riak_core_token_manager:tm_rate().
+token_rate(Type) ->
+    riak_core_token_manager:token_rate(Type).
+
+%% @doc Asynchronously get a token of kind Type. returns "max_tokens" if empty
+-spec get_token(any()) -> ok | max_tokens.
+get_token(Type) ->
+    get_token(Type, self()).
+
+%% @doc Asynchronously get a token of kind Type.
+%%      Associate token with provided pid or metadata. If metadata
+%%      is provided the lock is associated with the calling process.
+%%      Returns "max_tokens" if empty.
+-spec get_token(any(), pid() | [{atom(), any()}]) -> ok | max_tokens.
+get_token(Type, Pid) when is_pid(Pid) ->
+    get_token(Type, Pid, []);
+get_token(Type, Meta) ->
+    get_token(Type, self(), Meta).
+
+-spec get_token(any(), pid(), [{atom(), any()}]) -> ok | max_concurrency.
+get_token(Type, Pid, Meta) ->
+    riak_core_token_manager:get_token_async(Type, Pid, Meta).
+
+%% @doc Synchronously get a token of type Type. returns "max_tokens" if empty
+-spec get_token_sync(any()) -> ok | max_tokens.
+get_token_sync(Type) ->
+    get_token_sync(Type, self()).
+
+%% @doc Synchronously get a token of kind Type.
+%%      Associate token with provided pid or metadata. If metadata
+%%      is provided the lock is associated with the calling process.
+%%      Returns "max_tokens" if empty.
+-spec get_token_sync(any(), pid() | [{atom(), any()}]) -> ok | max_tokens.
+get_token_sync(Type, Pid) when is_pid(Pid) ->
+    get_token_sync(Type, Pid, []);
+get_token_sync(Type, Meta) ->
+    get_token(Type, self(), Meta).
+
+-spec get_token_sync(any(), pid(), [{atom(), any()}]) -> ok | max_concurrency.
+get_token_sync(Type, Pid, Meta) ->
+    riak_core_token_manager:get_token_sync(Type, Pid, Meta).
+
+token_types() ->
+    riak_core_token_manager:token_types().
+
+tokens_given() ->
+    riak_core_token_manager:tokens_given().
+
+tokens_given(Type) ->
+    riak_core_token_manager:tokens_given(Type).
+
+tokens_waiting() ->
+    riak_core_token_manager:tokens_waiting().
+
+tokens_waiting(Type) ->
+    riak_core_token_manager:tokens_waiting(Type).
+
+%% @doc Enable handing out of any tokens
+-spec enable_tokens() -> ok.
+enable_tokens() ->
+    riak_core_token_manager:enable().
+
+%% @doc Disable handing out of any tokens
+-spec disable_tokens() -> ok.
+disable_tokens() ->
+    riak_core_token_manager:disable().
+
+%% @doc Enable handing out of tokens of the given type.
+-spec enable_tokens(any()) -> ok.
+enable_tokens(Type) ->
+    riak_core_token_manager:enable(Type).
+
+
+%% @doc same as `disable(Type, false)'
+-spec disable_tokens(any()) -> ok.
+disable_tokens(Type) ->
+    riak_core_token_manager:enable(Type).
+
+%%% Locks
 
 %% @doc Acquire a concurrency lock of the given type, if available,
 %%      and associate the lock with the calling process.
@@ -124,30 +251,29 @@ query_locks(Query) ->
     gen_server:call(?MODULE, {query_locks, Query}, infinity).
 
 %% @doc Enable handing out of any locks
--spec enable() -> ok.
-enable() ->
+-spec enable_locks() -> ok.
+enable_locks() ->
     gen_server:cast(?MODULE, enable).
 
 %% @doc Disable handing out of any locks
--spec disable() -> ok.
-disable() ->
+-spec disable_locks() -> ok.
+disable_locks() ->
     gen_server:cast(?MODULE, disable).
 
 %% @doc Enable handing out of locks of the given type.
--spec enable(any()) -> ok.
-enable(Type) ->
+-spec enable_locks(any()) -> ok.
+enable_locks(Type) ->
     gen_server:cast(?MODULE, {enable, Type}).
 
-
-%% @doc same as `disable(Type, false)'
--spec disable(any()) -> ok.
-disable(Type) ->
-    disable(Type, false).
+%% @doc same as `disable_locks(Type, false)'
+-spec disable_locks(any()) -> ok.
+disable_locks(Type) ->
+    disable_locks(Type, false).
 
 %% @doc Disable handing out of locks of the given type. If `Kill' is `true' any processes
 %%      holding locks for the given type will be killed with reaseon `max_concurrency'
--spec disable(any(), boolean()) -> ok.
-disable(Type, Kill) ->
+-spec disable_locks(any(), boolean()) -> ok.
+disable_locks(Type, Kill) ->
     gen_server:cast(?MODULE, {disable, Type, Kill}).
 
 %% @doc Get the current maximum concurrency for the given lock type.
@@ -186,8 +312,10 @@ concurrency_limit_reached(Type) ->
                   ignore |
                   {stop, term()}.
 init([]) ->
-    {ok, #state{info=orddict:new(),
-                held=orddict:new(),
+    lager:debug("Background Manager starting up."),
+    %% claiming the table will result in a handle_info('ETS-TRANSFER', ...) message.
+    ok = riak_core_table_manager:claim_table(?LM_ETS_TABLE),
+    {ok, #state{table_id=undefined,
                 enabled=true}}.
 
 %% @private
@@ -204,16 +332,16 @@ handle_call({get_lock, LockType, Pid, Info}, _From, State) ->
     {reply, Reply, State2};
 handle_call({lock_count, LockType}, _From, State) ->
     {reply, held_count(LockType, State), State};
-handle_call(lock_count, _From, State=#state{held=Locks}) ->
-    Count = orddict:fold(fun(_, Held, Total) -> Total + length(Held) end,
-                         0, Locks),
+handle_call(lock_count, _From, State) ->
+    Count = length(held_locks(State)),
     {reply, Count, State};
 handle_call({lock_limit_reached, LockType}, _From, State) ->
     HeldCount = held_count(LockType, State),
     Limit = ?limit(lock_info(LockType, State)),
     {reply, HeldCount >= Limit, State};
-handle_call(lock_types, _From, State=#state{info=Info}) ->
-    Types = [{Type, ?enabled(LI), ?limit(LI)} || {Type, LI} <- orddict:to_list(Info)],
+handle_call(lock_types, _From, State=#state{table_id=TableId}) ->
+    Infos = [{Type,Info} || {{info, Type},Info} <- ets:match_object(TableId, {{info, '_'},'_'})],
+    Types = [{Type, ?enabled(LI), ?limit(LI)} || {Type, LI} <- Infos],
     {reply, Types, State};
 handle_call({query_locks, Query}, _From, State) ->
     Results = query_locks(Query, State),
@@ -252,6 +380,11 @@ handle_cast(disable, State) ->
 -spec handle_info(term(), #state{}) -> {noreply, #state{}} |
                                        {noreply, #state{}, non_neg_integer()} |
                                        {stop, term(), #state{}}.
+%% Handle transfer of ETS table from table manager
+handle_info({'ETS-TRANSFER', TableId, Pid, _Data}, State) ->
+    lager:debug("table_mgr (~p) -> bg_mgr (~p) receiving ownership of TableId: ~p", [Pid, self(), TableId]),
+    State2 = State#state{table_id=TableId},
+    {noreply, State2};
 handle_info({'DOWN', Ref, _, _, _}, State) ->
     State2 = release_lock(Ref, State),
     {noreply, State2};
@@ -277,7 +410,8 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-query_locks(FullQuery, State=#state{held=Locks}) ->
+query_locks(FullQuery, State) ->
+    Locks = held_locks(State),
     Base = case proplists:get_value(type, FullQuery) of
                undefined -> Locks;
                LockType -> orddict:from_list([{LockType, held_locks(LockType, State)}])
@@ -317,19 +451,22 @@ try_lock(LockType, Pid, Info, State=#state{enabled=GlobalEnabled}) ->
 
 try_lock(false, _LockType, _Pid, _Info, State) ->
     {max_concurrency, State};
-try_lock(true, LockType, Pid, Info, State=#state{held=Locks}) ->
+try_lock(true, LockType, Pid, Info, State) ->
     Ref = monitor(process, Pid),
-    NewLocks = orddict:append(LockType, {Pid, Ref, Info}, Locks),
-    {ok, State#state{held=NewLocks}}.
+    State2 = add_lock(LockType, {Pid, Ref, Info}, State),
+    {ok, State2}.
 
-release_lock(Ref, State=#state{held=Locks}) ->
-    %% TODO: this makes me (jordan) :(
-    Released = orddict:map(fun(Type, Held) -> release_lock(Ref, Type, Held) end,
-                           Locks),
-    State#state{held=Released}.
+add_lock(LockType, Lock, State=#state{table_id=TableId}) ->
+    Key = {held, LockType},
+    ets:insert(TableId, {Key, Lock}),
+    State.
 
-release_lock(Ref, _LockType, Held) ->
-    lists:keydelete(Ref, 2, Held).
+release_lock(Ref, State=#state{table_id=TableId}) ->
+    %% There should only be one instance of the object, but we'll zap all that match.
+    Pattern = {{held, '_'}, {'_', Ref, '_'}},
+    Matches = [Lock || {{held, _Type},Lock} <- ets:match_object(TableId, Pattern)],
+    [ets:delete_object(TableId, Obj) || Obj <- Matches],
+    State.
 
 maybe_honor_limit(true, LockType, Limit, State) ->
     Held = held_locks(LockType, State),
@@ -348,11 +485,11 @@ maybe_honor_limit(false, _LockType, _Limit, _State) ->
 held_count(LockType, State) ->
     length(held_locks(LockType, State)).
 
-held_locks(LockType, #state{held=Locks}) ->
-    case orddict:find(LockType, Locks) of
-        error -> [];
-        {ok, Held} -> Held
-    end.
+held_locks(#state{table_id=TableId}) ->
+    [Lock || {{held, _Type},Lock} <- ets:match_object(TableId, {{held, '_'},'_'})].
+
+held_locks(LockType, #state{table_id=TableId}) ->
+    [Lock || {{held, _Type},Lock} <- ets:match_object(TableId, {{held, LockType},'_'})].
 
 enable_lock(LockType, State) ->
     update_lock_enabled(LockType, true, State).
@@ -372,13 +509,21 @@ update_concurrency_limit(LockType, Limit, State) ->
                      ?DEFAULT_LOCK_INFO#lock_info{concurrency_limit=Limit},
                      State).
 
-update_lock_info(LockType, Fun, Default, State=#state{info=Info}) ->
-    NewInfo = orddict:update(LockType, Fun, Default, Info),
-    State#state{info=NewInfo}.
+update_lock_info(LockType, Fun, Default, State=#state{table_id=TableId}) ->
+    Key = {info, LockType},
+    NewInfo = case ets:lookup(TableId, Key) of
+                  [] -> Default;
+                  [{_Key,LockInfo}] -> Fun(LockInfo)
+              end,
+    ets:insert(TableId, {Key, NewInfo}),
+    State.
 
-
-lock_info(LockType, #state{info=Info}) ->
-    case orddict:find(LockType, Info) of
-        error -> ?DEFAULT_LOCK_INFO;
-        {ok, LockInfo} -> LockInfo
+lock_info(LockType, #state{table_id=TableId}) ->
+    Key = {info,LockType},
+    case ets:lookup(TableId, Key) of
+        [] -> ?DEFAULT_LOCK_INFO;
+        [{_Key,LockInfo}] -> LockInfo;
+        [First | _Rest] ->
+            lager:error("Unexpected multiple instances of key ~p in table", [{info, LockType}]),
+            First %% try to keep going
     end.

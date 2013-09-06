@@ -179,7 +179,7 @@ vnodeq_stats() ->
 vnodeq_len(Pid) ->
     try
         element(2, erlang:process_info(Pid, message_queue_len))
-    catch _ ->
+    catch _:_ ->
             0
     end.
 

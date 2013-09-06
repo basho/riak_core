@@ -3,7 +3,7 @@
 {application, riak_core,
 [
   {description, "Riak Core"},
-  {vsn, "1.4.0"},
+  {vsn, "1.4.1"},
   {modules, [
              app_helper,
              bloom,
@@ -87,7 +87,10 @@
              riak_core_ssl_util,
              supervisor_pre_r14b04,
              vclock,
-             riak_core_bg_manager
+             riak_core_bg_manager,
+             riak_core_token_manager,
+             riak_core_table_manager,
+             riak_core_bg_manager_sup
             ]},
   {registered, []},
   {included_applications, [folsom]},
