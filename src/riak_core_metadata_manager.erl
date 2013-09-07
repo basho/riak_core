@@ -106,7 +106,7 @@ start_link(Opts) ->
 -spec get(metadata_pkey()) -> metadata_object() | undefined.
 get({{Prefix, SubPrefix}, _Key}=PKey) when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
                                            (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
-    gen_server:call(?SERVER, {get, PKey}).
+    gen_server:call(?SERVER, {get, PKey}, infinity).
 
 %% @doc Return an iterator for keys stored under a prefix. If KeyMatch is undefined then
 %% all keys will may be visted by the iterator. Otherwise only keys matching KeyMatch will be
@@ -121,13 +121,13 @@ get({{Prefix, SubPrefix}, _Key}=PKey) when (is_binary(Prefix) orelse is_atom(Pre
 iterator({Prefix, SubPrefix}=FullPrefix, KeyMatch)
   when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
        (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
-    gen_server:call(?SERVER, {iterator, FullPrefix, KeyMatch}).
+    gen_server:call(?SERVER, {iterator, FullPrefix, KeyMatch}, infinity).
 
 
 %% @doc advance the iterator by one key
 -spec iterate(metadata_iterator()) -> metadata_iterator().
 iterate(Iterator) ->
-    gen_server:call(?SERVER, {iterate, Iterator}).
+    gen_server:call(?SERVER, {iterate, Iterator}, infinity).
 
 %% @doc return the full prefix being iterated by this iterator
 -spec iterator_prefix(metadata_iterator()) -> metadata_prefix().
@@ -152,7 +152,7 @@ put(PKey, undefined, ValueOrFun) ->
 put({{Prefix, SubPrefix}, _Key}=PKey, Context, ValueOrFun)
   when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
        (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
-    gen_server:call(?SERVER, {put, PKey, Context, ValueOrFun}).
+    gen_server:call(?SERVER, {put, PKey, Context, ValueOrFun}, infinity).
 
 %%%===================================================================
 %%% riak_core_broadcast_handler callbacks
@@ -172,13 +172,13 @@ broadcast_data(#metadata_broadcast{pkey=Key, obj=Obj}) ->
 %% the remote copy is merged (possibly generating siblings) and `true' is returned.
 -spec merge({metadata_pkey(), metadata_context()}, metadata_object()) -> boolean().
 merge({PKey, _Context}, Obj) ->
-    gen_server:call(?SERVER, {merge, PKey, Obj}).
+    gen_server:call(?SERVER, {merge, PKey, Obj}, infinity).
 
 %% @doc Returns false if the update (or a causally newer update) has already been
 %% received (stored locally).
 -spec is_stale({metadata_pkey(), metadata_context()}) -> boolean().
 is_stale({PKey, Context}) ->
-    gen_server:call(?SERVER, {is_stale, PKey, Context}).
+    gen_server:call(?SERVER, {is_stale, PKey, Context}, infinity).
 
 %% @doc returns the object associated with the given key and context (message id) if
 %% the currently stored version has an equal context. otherwise stale is returned.
