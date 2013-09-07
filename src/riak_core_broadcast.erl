@@ -26,10 +26,12 @@
          start_link/3,
          broadcast/2,
          ring_update/1,
-         broadcast_members/0]).
+         broadcast_members/0,
+         broadcast_members/1]).
 
 %% Debug API
 -export([debug_get_peers/2,
+         debug_get_peers/3,
          debug_get_tree/2]).
 
 
@@ -138,20 +140,36 @@ ring_update(Ring) ->
     gen_server:cast(?SERVER, {ring_update, Ring}).
 
 %% @doc Returns the broadcast servers view of full cluster membership.
+%% Wait indefinitely for a response is returned from the process
 -spec broadcast_members() -> ordset:ordset(nodename()).
 broadcast_members() ->
-    gen_server:call(?SERVER, broadcast_members).
+    broadcast_members(infinity).
+
+%% @doc Returns the broadcast servers view of full cluster membership.
+%% Waits `Timeout' ms for a response from the server
+-spec broadcast_members(infinity | pos_integer()) -> ordset:ordset(nodename()).
+broadcast_members(Timeout) ->
+    gen_server:call(?SERVER, broadcast_members, Timeout).
 
 %%%===================================================================
 %%% Debug API
 %%%===================================================================
 
-%% @doc return the peers for `Node' for the tree rooted at `Root'
+%% @doc return the peers for `Node' for the tree rooted at `Root'. 
+%% Wait indefinitely for a response is returned from the process
 -spec debug_get_peers(node(), node()) -> {ordset:ordset(node()), ordset:ordset(node())}.
 debug_get_peers(Node, Root) ->
-    gen_server:call({?SERVER, Node}, {get_peers, Root}).
+    debug_get_peers(Node, Root, infinity).
+
+%% @doc return the peers for `Node' for the tree rooted at `Root'. 
+%% Waits `Timeout' ms for a response from the server
+-spec debug_get_peers(node(), node(), infinity | pos_integer()) ->
+                             {ordset:ordset(node()), ordset:ordset(node())}.
+debug_get_peers(Node, Root, Timeout) ->
+    gen_server:call({?SERVER, Node}, {get_peers, Root}, Timeout).
 
 %% @doc return peers for all `Nodes' for tree rooted at `Root'
+%% Wait indefinitely for a response is returned from the process
 -spec debug_get_tree(node(), [node()]) ->
                             [{node(), {ordset:ordset(node()), ordset:ordset(node())}}].
 debug_get_tree(Root, Nodes) ->
