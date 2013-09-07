@@ -33,4 +33,4 @@
 %% @doc return the message associated with the given message id. In some cases a message
 %% has already been sent with information that subsumes the message associated with the given
 %% message id. In this case, `stale' is returned.
--callback graft(any()) -> stale | {ok, any()}.
+-callback graft(any()) -> stale | {ok, any()} | {error, any()}.
