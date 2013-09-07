@@ -26,9 +26,7 @@
          start_link/3,
          broadcast/2,
          ring_update/1,
-         broadcast_members/0,
-         set_peers/3,
-         neighbors_down/1]).
+         broadcast_members/0]).
 
 %% Debug API
 -export([debug_get_peers/2,
@@ -137,34 +135,12 @@ broadcast(Broadcast, Mod) ->
 %% @doc Notifies broadcast server of membership update given a new ring
 -spec ring_update(riak_core_ring:riak_core_ring()) -> ok.
 ring_update(Ring) ->
-    CurrentMembers = ordsets:from_list(all_broadcast_members(Ring)),
-    BroadcastMembers = ?MODULE:broadcast_members(),
-    New = ordsets:subtract(CurrentMembers, BroadcastMembers),
-    Removed = ordsets:subtract(BroadcastMembers, CurrentMembers),
-    case ordsets:size(New) > 0 of
-        false -> ok;
-        true ->
-            {EagerPeers, LazyPeers} = init_peers(CurrentMembers),
-            ?MODULE:set_peers(CurrentMembers, EagerPeers, LazyPeers)
-    end,
-    ?MODULE:neighbors_down(Removed).
+    gen_server:cast(?SERVER, {ring_update, Ring}).
 
 %% @doc Returns the broadcast servers view of full cluster membership.
 -spec broadcast_members() -> ordset:ordset(nodename()).
 broadcast_members() ->
     gen_server:call(?SERVER, broadcast_members).
-
-%% @doc Sets the broadcast server's peers for all trees (effectively resetting the
-%% sender based trees). `AllMembers' must be a superset of both `EagerPeers' and
-%% `LazyPeers' which, in addition, must be disjoint
--spec set_peers([nodename()], [nodename()], [nodename()]) -> ok.
-set_peers(AllMembers, EagerPeers, LazyPeers) ->
-    gen_server:cast(?SERVER, {set_peers, AllMembers, EagerPeers, LazyPeers}).
-
-%% @doc Notifies the broadcast server that some nodes have left the cluster
--spec neighbors_down([nodename()]) -> ok.
-neighbors_down(Nodes) ->
-    gen_server:cast(?SERVER, {neighbors_down, Nodes}).
 
 %%%===================================================================
 %%% Debug API
@@ -245,12 +221,18 @@ handle_cast({graft, MessageId, Mod, Round, Root, From}, State) ->
     Result = Mod:graft(MessageId),
     State1 = handle_graft(Result, MessageId, Mod, Round, Root, From, State),
     {noreply, State1};
-handle_cast({set_peers, AllMembers, EagerPeers, LazyPeers}, State) ->
-    State1 = reset_peers(AllMembers, EagerPeers, LazyPeers, State),
-    {noreply, State1};
-handle_cast({neighbors_down, Removed}, State) ->
-    State1 = neighbors_down(ordsets:from_list(Removed), State),
-    {noreply, State1}.
+handle_cast({ring_update, Ring}, State=#state{all_members=BroadcastMembers}) ->
+    CurrentMembers = ordsets:from_list(all_broadcast_members(Ring)),
+    New = ordsets:subtract(CurrentMembers, BroadcastMembers),
+    Removed = ordsets:subtract(BroadcastMembers, CurrentMembers),
+    State1 = case ordsets:size(New) > 0 of
+                 false -> State;                      
+                 true ->
+                     {EagerPeers, LazyPeers} = init_peers(CurrentMembers),
+                     reset_peers(CurrentMembers, EagerPeers, LazyPeers, State)
+             end,
+    State2 = neighbors_down(Removed, State1),
+    {noreply, State2}.
 
 %% @private
 -spec handle_info(term(), #state{}) -> {noreply, #state{}} |
@@ -445,7 +427,7 @@ reset_peers(AllMembers, EagerPeers, LazyPeers, State) ->
      }.
 
 all_broadcast_members(Ring) ->
-    riak_core_ring:members(Ring, [joining, valid, leaving, exiting, down]).
+    riak_core_ring:all_members(Ring).
 
 init_peers(Members) ->
     case length(Members) of
