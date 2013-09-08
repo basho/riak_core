@@ -50,10 +50,6 @@ register_stats() ->
     [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()],
     riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
 
-    %% [(catch folsom_metrics:delete_metric({?APP, Name})) || {Name, _Type} <- stats()],
-    %% [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()],
-    %% riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
-
 %% @spec get_stats() -> proplist()
 %% @doc Get the current aggregation of stats.
 get_stats() ->

@@ -1,7 +1,7 @@
 %% -------------------------------------------------------------------
 %%
 %% Riak Core Connection Manager Statistics
-%%    collect, aggregate, and provide stats for connections made by 
+%%    collect, aggregate, and provide stats for connections made by
 %%    the connection manager
 %%
 %% Copyright (c) 2013 Basho Technologies, Inc.  All Rights Reserved.
@@ -120,12 +120,12 @@ format_stat({{?APP, StatName, ProtocolId},[{count,N},{one,_W}]}) when is_atom(Pr
     {atom_to_list(ProtocolId)  ++ "_" ++ atom_to_list(StatName), N};
 format_stat({{?APP, StatName, Addr, ProtocolId, total},N}) when is_atom(ProtocolId) ->
     {string_of_ipaddr(Addr)
-     ++ "_" ++ atom_to_list(ProtocolId) 
+     ++ "_" ++ atom_to_list(ProtocolId)
      ++ "_" ++ atom_to_list(StatName)
      ++ "_total", N};
 format_stat({{?APP, StatName, Addr, ProtocolId},[{count,N},{one,_W}]}) when is_atom(ProtocolId) ->
     {string_of_ipaddr(Addr)
-     ++ "_" ++ atom_to_list(ProtocolId) 
+     ++ "_" ++ atom_to_list(ProtocolId)
      ++ "_" ++ atom_to_list(StatName), N};
 format_stat({riak_conn_mgr_stats_stat_ts, S}) ->
     UnivTime = riak_core_format:epoch_to_datetime(S),
@@ -178,7 +178,7 @@ get_stats_by_protocol(ProtocolId) ->
     AllStats = get_stats(),
     Stats = lists:filter(fun(S) -> predicate_by_protocol(S,ProtocolId) end, AllStats),
     stats_as_atoms([format_stat(Stat) || Stat <- Stats]).
-    
+
 predicate_by_protocol({{_App, conn_error, _StatName, _Addr, MatchId},_Value}, MatchId) ->
     true;
 predicate_by_protocol({{_App, conn_error, _StatName, _Addr, MatchId, total},_Value}, MatchId) ->

@@ -114,6 +114,12 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 
+stat_name(Name) when is_tuple(Name) ->
+    tuple_to_list(Name);
+stat_name(Name) when is_list(Name) ->
+    Name.
+
+
 -spec register_mod(atom(), registered_app(), orddict:orddict()) -> orddict:orddict().
 register_mod(App, {Mod, _, _} = MFA, Apps0) ->
     P = riak_core_stat:prefix(),
