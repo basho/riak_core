@@ -46,10 +46,6 @@ register_stats() ->
     [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()],
     riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
 
-    %% [(catch folsom_metrics:delete_metric({?APP, Name})) || {Name, _Type} <- stats()],
-    %% [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()],
-    %% riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
-
 %% @spec get_stats() -> proplist()
 %% @doc Get the current aggregation of stats.
 get_stats() ->
@@ -100,35 +96,6 @@ update_value(converge_timer_end) -> timer_begin;
 update_value(rebalance_timer_end) -> timer_begin;
 update_value(_) -> 1.
 
-%% @spec update(term()) -> ok
-%% @doc Update the given stat.
-%% update1(rejected_handoffs) ->
-%%     folsom_metrics:notify_existing_metric({?APP, rejected_handoffs}, {inc, 1}, counter);
-
-%% update1(handoff_timeouts) ->
-%%     folsom_metrics:notify_existing_metric({?APP, handoff_timeouts}, {inc, 1}, counter);
-
-%% update1(ignored_gossip) ->
-%%     folsom_metrics:notify_existing_metric({?APP, ignored_gossip_total}, {inc, 1}, counter);
-
-%% update1(gossip_received) ->
-%%     folsom_metrics:notify_existing_metric({?APP, gossip_received}, 1, spiral);
-
-%% update1(rings_reconciled) ->
-%%     folsom_metrics:notify_existing_metric({?APP, rings_reconciled}, 1, spiral);
-
-%% update1(dropped_vnode_requests) ->
-%%     folsom_metrics:notify_existing_metric({?APP, dropped_vnode_requests_total}, {inc, 1}, counter);
-
-%% update1(converge_timer_begin) ->
-%%     folsom_metrics:notify_existing_metric({?APP, converge_delay}, timer_start, duration);
-%% update1(converge_timer_end) ->
-%%     folsom_metrics:notify_existing_metric({?APP, converge_delay}, timer_end, duration);
-
-%% update1(rebalance_timer_begin) ->
-%%     folsom_metrics:notify_existing_metric({?APP, rebalance_delay}, timer_start, duration);
-%% update1(rebalance_timer_end) ->
-%%     folsom_metrics:notify_existing_metric({?APP, rebalance_delay}, timer_end, duration).
 
 %% private
 stats() ->
@@ -145,13 +112,6 @@ register_stat(Name, Type) when is_tuple(Name) ->
     exometer_entry:new(tuple_to_list(Name), Type);
 register_stat(Name, Type) when is_list(Name) ->
     exometer_entry:new(Name, Type).
-
-%% register_stat(Name, counter) ->
-%%     folsom_metrics:new_counter(Name);
-%% register_stat(Name, spiral) ->
-%%     folsom_metrics:new_spiral(Name);
-%% register_stat(Name, duration) ->
-%%     folsom_metrics:new_duration(Name).
 
 gossip_stats() ->
     lists:flatten([backwards_compat(Stat, Type, riak_core_stat_q:calc_stat({{?APP, Stat}, Type})) ||

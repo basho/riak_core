@@ -48,8 +48,7 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 register_stats() ->
-    [(catch folsom_metrics:delete_metric(Stat)) || Stat <- folsom_metrics:get_metrics(),
-                                                   is_tuple(Stat), element(1, Stat) == ?APP],
+    [(catch exometer_entry:delete(Stat)) || {Stat,_} <- exometer_entry:find_entries([?APP])],
     [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()],
     riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
 
@@ -255,30 +254,44 @@ do_update(Stat, IPAddr, Protocol) ->
 
 %% dynamically update (and create if needed) a stat
 create_or_update(Name, UpdateVal, Type) ->
-    case (catch folsom_metrics:notify_existing_metric(Name, UpdateVal, Type)) of
+    Val = case UpdateVal of
+	      {inc,V} -> V;
+	      {dec,V} -> -V;
+	      Other   -> Other
+	  end,
+    create_or_update_(stat_name(Name), Val, Type).
+
+create_or_update_(Name, Val, Type) ->
+    case (catch exometer_entry:update(Name, Val)) of
         ok ->
             ok;
         {'EXIT', _} ->
             register_stat(Name, Type),
-            create_or_update(Name, UpdateVal, Type)
+            create_or_update_(Name, Val, Type)
     end.
 
+stat_name(Name) when is_tuple(Name) ->
+    tuple_to_list(Name);
+stat_name(Name) when is_list(Name) ->
+    Name.
+
+
 register_stat(Name, spiral) ->
-    folsom_metrics:new_spiral(Name);
+    exometer_entry:new(Name, spiral);
 register_stat(Name, counter) ->
-    folsom_metrics:new_counter(Name).
+    exometer_entry:new(Name, counter).
 
 %% @spec produce_stats() -> proplist()
 %% @doc Produce a proplist-formatted view of the current aggregation
 %%      of stats.
 produce_stats() ->
-    Stats = [Stat || Stat <- folsom_metrics:get_metrics(), is_tuple(Stat), element(1, Stat) == ?APP],
+    Stats = [Stat || {Stat,_} <- exometer_entry:find_entries([?APP])],
     lists:flatten([{Stat, get_stat(Stat)} || Stat <- Stats]).
 
 %% Get the value of the named stats metric
 %% NOTE: won't work for Histograms
 get_stat(Name) ->
-    folsom_metrics:get_metric_value(Name).
+    exometer_entry:get_value(Name).
 
 %% Return list of static stat names and types to register
 stats() -> []. %% no static stats to register
