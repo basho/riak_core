@@ -55,7 +55,7 @@ get_stats(Path) ->
     NamesNTypes = names_and_types(Path),
     calculate_stats(NamesNTypes).
 
-%% @doc queries folsom's metrics table for stats that match our path
+%% @doc queries metrics table for stats that match our path
 names_and_types(Path) ->
     exometer_entry:find_entries(Path).
 
