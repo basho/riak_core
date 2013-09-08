@@ -57,10 +57,8 @@ get_stats(Path) ->
     NamesNTypes = names_and_types(Path),
     calculate_stats(NamesNTypes).
 
-%% @doc queries folsom's metrics table for stats that match our path
+%% @doc queries metrics table for stats that match our path
 names_and_types(Path) ->
-    %% Guards = guards_from_path(Path),
-    %% ets:select(folsom, [{{'$1','$2'}, Guards,['$_']}]).
     exometer_entry:find_entries(Path).
 
 %% guards_from_path(Path) ->
@@ -91,11 +89,7 @@ get_stat(Stat) ->
     Pid = riak_core_stat_calc_sup:calc_proc(Stat),
     riak_core_stat_calc_proc:value(Pid).
 
-throw_folsom_error({error, _, _} = Err) ->
-    throw(Err);
-throw_folsom_error(Other) -> Other.
-
-%% Encapsulate getting a stat value from folsom.
+%% Encapsulate getting a stat value from exometer.
 %%
 %% If for any reason we can't get a stats value
 %% return 'unavailable'.
@@ -113,7 +107,7 @@ stat_return(Value) -> Value.
 log_error(StatName, ErrClass, ErrReason) ->
     lager:warning("Failed to calculate stat ~p with ~p:~p", [StatName, ErrClass, ErrReason]).
 
-%% some crazy people put funs in folsom gauges
+%% some crazy people put funs in gauges (exometer has a 'function' metric)
 %% so that they can have a consistent interface
 %% to access stats from disperate sources
 calc_gauge({function, Mod, Fun}) ->

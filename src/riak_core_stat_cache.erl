@@ -209,11 +209,17 @@ make_freshness_stat(App, TS) ->
 make_freshness_stat_name(App) ->
     list_to_atom(atom_to_list(App) ++ "_stat_ts").
 
+stat_name(Name) when is_tuple(Name) ->
+    tuple_to_list(Name);
+stat_name(Name) when is_list(Name) ->
+    Name.
+
+
 -spec register_mod(atom(), registered_app(), orddict:orddict()) -> orddict:orddict().
 register_mod(App, AppRegistration, Apps0) ->
     {{Mod, _, _}=MFA, RefreshRateMillis} = AppRegistration,
-    ok = folsom_metrics:new_histogram({?MODULE, Mod}),
-    ok = folsom_metrics:new_meter({?MODULE, App}),
+    exometer:new([?MODULE, Mod], histogram),
+    exometer:new([?MODULE, App], meter),
     Apps = orddict:store(App, AppRegistration, Apps0),
     schedule_get_stats(RefreshRateMillis, App, MFA),
     Apps.
@@ -248,10 +254,14 @@ maybe_get_stats(App, From, Active, MFA) ->
 
 do_get_stats(App, {M, F, A}) ->
     spawn_link(fun() ->
-                       Stats = folsom_metrics:histogram_timed_update({?MODULE, M}, M, F, A),
-                       ok = folsom_metrics:notify_existing_metric({?MODULE, App}, 1, meter),
-                       gen_server:cast(?MODULE, {stats, App, Stats, folsom_utils:now_epoch()})
-               end).
+                       Stats = histogram_timed_update({?MODULE, M}, M, F, A),
+		       exometer:update([?MODULE, App], 1),
+                       gen_server:cast(?MODULE, {stats, App, Stats, folsom_utils:now_epoch()}) end).
+
+histogram_timed_update(Name, M, F, A) ->
+    {Time, Value} = timer:tc(M, F, A),
+    exometer:update(stat_name(Name), Time),
+    Value.
 
 awaiting_for_pid(Pid, Active) ->
     case  [{App, Awaiting} || {App, {Proc, Awaiting}} <- orddict:to_list(Active),
