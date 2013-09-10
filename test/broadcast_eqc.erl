@@ -11,6 +11,7 @@
 -include_lib("eqc/include/eqc_temporal.hrl").
 
 -record(state, {nodes = []}).
+-record(node, {name, context}).
 
 -define(LAZY_TIMER, 20).
 
@@ -44,7 +45,7 @@ drop_strategy(Nodes) when length(Nodes) < 2 -> [];
 drop_strategy(Nodes) ->
   ?LET(Strat, list({{elements(Nodes), elements(Nodes)}, ?LET(Xs, list(nat()), mk_drop_list(keep, drop, Xs))}),
     [ E || E={_, Xs} <- Strat, [] /= Xs ]).
-  % [].
+  %% [].
 
 mk_drop_list(_, _, [])     -> [];
 mk_drop_list(keep, _, [_]) -> [];
@@ -67,7 +68,7 @@ start_manager(_Node) ->
 
 mk_key(Key) -> Key.
 
-put_arguments(_Name, Key, Val) ->
+put_arguments(_Name, Key, _Context, Val) ->
   [Key, Val].
 
 broadcast_obj(Key, Val) -> {Key, Val}.
@@ -93,8 +94,8 @@ start_manager(Node) ->
 
 mk_key(Key) -> {?PREFIX, Key}.  %% TODO: prefix
 
-put_arguments(_Name, Key, Val) ->
-  [Key, undefined, Val].  %% TODO: context
+put_arguments(_Name, Key, Context, Val) ->
+  [Key, Context, Val].
 
 broadcast_obj(Key, Val) ->
   #metadata_broadcast{ pkey = Key, obj = Val }.
@@ -146,20 +147,27 @@ start_server(Node, Eager, Lazy, Names) ->
   end.
 
 init_next(S, _, [Names, _]) ->
-  S#state{ nodes  = [ Name || {Name, _} <- Names ] }.
+  S#state{ nodes  = [ #node{ name = Name } || {Name, _} <- Names ] }.
 
 %% -- broadcast --
 broadcast_pre(S) -> S#state.nodes /= [].
-broadcast_pre(S, [Node, _Msg]) -> lists:member(Node, S#state.nodes).
+broadcast_pre(S, [Node, _, _, _]) -> lists:keymember(Node, #node.name, S#state.nodes).
 
-broadcast_args(S) -> [elements(S#state.nodes), msg()].
+broadcast_args(S) ->
+  ?LET({{Key, Val}, #node{name = Name, context = Context}},
+       {msg(), elements(S#state.nodes)},
+    [Name, Key, Val, Context]).
 
-broadcast(Node, {Key0, Val0}) ->
+broadcast(Node, Key0, Val0, Context) ->
   Key = mk_key(Key0),
-  event_logger:event({put, Node, Key0, Val0}),
-  Val = rpc:call(mk_node(Node), ?MANAGER, put, put_arguments(Node, Key, Val0)),
+  event_logger:event({put, Node, Key0, Val0, Context}),
+  Val = rpc:call(mk_node(Node), ?MANAGER, put, put_arguments(Node, Key, Context, Val0)),
   rpc:call(mk_node(Node), riak_core_broadcast, broadcast, [broadcast_obj(Key, Val), ?MANAGER]).
     %% Parameterize on manager
+
+broadcast_next(S, Context, [Node, _Key, _Val, _Context]) ->
+  S#state{ nodes = lists:keystore(Node, #node.name, S#state.nodes,
+                                  #node{ name = Node, context = Context }) }.
 
 %% -- sleep --
 sleep_pre(S) -> S#state.nodes /= [].
@@ -176,7 +184,7 @@ prop_test() ->
   ?SETUP(fun() -> setup(), fun() -> ok end end,
   ?FORALL(Cmds, ?SIZED(N, resize(N div 2, commands(?MODULE))),
   ?LET(Shrinking, parameter(shrinking, false),
-  ?ALWAYS(if Shrinking -> 5; true -> 1 end,
+  ?ALWAYS(if Shrinking -> 1; true -> 1 end,
   begin
     timer:sleep(2),
     event_logger:reset(),
@@ -186,10 +194,10 @@ prop_test() ->
     event_logger:event(reset),
     {messages, Mailbox} = process_info(global:whereis_name(event_logger), messages),
     timer:sleep(10),
-    Tree = get_tree(S#state.nodes),
-    stop_servers(S),
+    Tree = (catch get_tree(S#state.nodes)),
+    stop_servers(),
     timer:sleep(5),
-    Views = [ {Node, get_view(Node)} || Node <- S#state.nodes ],
+    Views = [ {Node, get_view(Node)} || #node{name = Node} <- S#state.nodes ],
     timer:sleep(10),
     MoreTrace = event_logger:get_events(),
     ?IMPLIES(length(MoreTrace) == 2,
@@ -202,7 +210,7 @@ prop_test() ->
       [ {consistent, prop_consistent(Views)}
       , {valid_views, [] == [ bad || {_, View} <- Views, not is_list(View) ]}
       , {termination, equals(Ok, ok)}
-      , {lazy_sets, prop_tree(Tree)}
+      %% , {lazy_sets, prop_tree(Tree)}
       %% , {extra_trace, equals(length(MoreTrace), 2)}
       ])))))))
   end)))).
@@ -232,11 +240,14 @@ setup() ->
   %% error_logger:tty(false),
   error_logger:tty(true),
   (catch proxy_server:start_link()),
-  try event_logger:get_events() catch _:_ -> event_logger:start_link() end,
+  try event_logger:get_events() catch _:_ -> event_logger:start() end,
   start_nodes(),
   [ rpc:call(mk_node(Node), application, set_env,
       [riak_core, broadcast_lazy_timer, ?LAZY_TIMER])
     || Node <- node_list() ].
+
+where_is_event_logger() ->
+  io:format("event_logger: ~p\n", [global:whereis_name(event_logger)]).
 
 %% -- Helpers ----------------------------------------------------------------
 
@@ -264,16 +275,15 @@ start_node(Node) ->
       rpc:call(mk_node(Node), user_default, l, []);
     false ->
       {ok, _} = slave:start(host(), Node),
-      rpc:call(mk_node(Node), ?MODULE, register_root, [node()]),
-      ok
+      rpc:call(mk_node(Node), global, sync, [])
   end.
 
 kill(Name) ->
   catch exit(whereis(Name), kill).
 
-stop_servers(S) ->
+stop_servers() ->
   [ rpc:call(mk_node(P), ?MODULE, kill, [riak_core_broadcast])
-    || P <- S#state.nodes ].
+    || P <- node_list() ].
 
 proplists_modify(Key, List, Fun) ->
   Val = proplists:get_value(Key, List),
@@ -283,8 +293,8 @@ get_tree(Nodes) ->
   [ {A, [ begin
             {Eager, Lazy} = riak_core_broadcast:debug_get_peers(mk_node(A), mk_node(B)),
             {B, lists:map(fun node_name/1, Eager), lists:map(fun node_name/1, Lazy)}
-          end || B <- Nodes ]}
-    || A <- Nodes ].
+          end || #node{name = B} <- Nodes ]}
+    || #node{name = A} <- Nodes ].
 
 %% prop_send_after() ->
 %%   ?FORALL(N, choose(10, 40),

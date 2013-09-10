@@ -9,7 +9,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0]).
+-export([start_link/0, start/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -26,8 +26,18 @@
 %% Function: start_link() -> {ok,Pid} | ignore | {error,Error}
 %% Description: Starts the server
 %%--------------------------------------------------------------------
-start_link() ->
-  gen_server:start_link({global, ?SERVER}, ?MODULE, [], []).
+start_link() -> do_start(start_link).
+start()      -> do_start(start).
+
+do_start(Start) ->
+  Ref = make_ref(),
+  Res = gen_server:Start({global, ?SERVER}, ?MODULE, [self(), Ref], []),
+  receive
+    {started, Ref} -> Res
+  after 1000 ->
+    {error, timeout}
+  end.
+  
 
 event(E) ->
   gen_server:call({global, ?SERVER}, {event, E}).
@@ -71,8 +81,9 @@ reset() ->
 %%                         {stop, Reason}
 %% Description: Initiates the server
 %%--------------------------------------------------------------------
-init([]) ->
+init([Parent, Ref]) ->
   %% schedule_tick(),
+  Parent ! {started, Ref},
   {ok, #state{}}.
 
 %%--------------------------------------------------------------------
@@ -182,7 +193,7 @@ mk_trace(#state{ events = Es }) -> mk_trace([{timestamp(), end_of_trace}|Es]);
 mk_trace([]) -> [];
 mk_trace(Es) ->
   Es1=[{T0,_}|_] = lists:reverse(Es),
-  lists:sort([ {T - T0 + 1, E} || {T, E} <- Es1 ]).
+  lists:sort([ {T - T0 + 1, simple_names(E)} || {T, E} <- Es1 ]).
 
 timestamp() -> from_now(os:timestamp()).
 
@@ -203,4 +214,15 @@ print_mailbox(S) ->
 
 schedule_tick() ->
   erlang:send_after(5, self(), tick).
+
+simple_names(Node) when is_atom(Node) ->
+  case string:tokens(atom_to_list(Node),"@") of
+    [Name, _Host] -> list_to_atom(Name);
+    _             -> Node
+  end;
+simple_names([H|T]) ->
+  [simple_names(H)|simple_names(T)];
+simple_names(T) when is_tuple(T) ->
+  list_to_tuple(simple_names(tuple_to_list(T)));
+simple_names(X) -> X.
 
