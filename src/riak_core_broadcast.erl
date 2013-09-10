@@ -425,7 +425,7 @@ all_peers(Root, Sets, Default) ->
         {ok, Peers} -> Peers
     end.
 
--ifdef(TEST).
+-ifdef(EQC_TEST).
 send(Msg, Peers) when is_list(Peers) ->
     [send(Msg, P) || P <- Peers];
 send(Msg, P) ->

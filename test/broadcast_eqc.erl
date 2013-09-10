@@ -1,6 +1,26 @@
 %%% File        : broadcast_eqc.erl
 %%% Author      : Ulf Norell
-%%% Description : 
+%%% Description : Tests for the broadcast protocol in riak_core_broadcast.erl.
+%%%
+%%%   To test dropping messages, compile riak_core_broadcast.erl with ?EQC_TEST
+%%%   defined.
+%%%
+%%%   The tests can be run against the real metadata manager or a simplified
+%%%   version of it. Uncomment/comment the definition of ?MOCK_MANAGER below to
+%%%   choose which version to run.
+%%%
+%%%   Dropping messages causes the tests to fail. It's quite easy to get into a
+%%%   situation when the lazy sets are not complete, in which case dropping an
+%%%   eager message will cause it to be lost.
+%%%
+%%%   With no dropped messages the tests should pass provided graft does not
+%%%   return stale when it shouldn't. The mock metadata manager satisfies this,
+%%%   but not riak_core_metadata_manager.
+%%%
+%%%   In general testing is quite slow and shrinking is difficult. The reasons
+%%%   for this are that we're running lots of nodes on a single machine and we
+%%%   have no control over scheduling. This would be a good candidate for
+%%%   PULSE, but unfortunately PULSE doesn't support multiple nodes yet.
 %%% Created     : 20 Aug 2013 by Ulf Norell
 -module(broadcast_eqc).
 
@@ -12,6 +32,9 @@
 
 -record(state, {nodes = []}).
 -record(node, {name, context}).
+
+%% Comment this line to use the real riak_core_metadata_manager.
+-define(MOCK_MANAGER, true).
 
 -define(LAZY_TIMER, 20).
 
@@ -34,10 +57,10 @@ gen_peers(Node, Nodes) ->
       Width = if N < 5 -> 1; true -> 2 end,
       Tree  = riak_core_util:build_tree(Width, Nodes, [cycles]),
       Eager = orddict:fetch(Node, Tree),
-      %% Lazy  = [elements(Nodes -- [Node | Eager])],
-      Xs = Nodes, %  -- (Eager -- [Node]),
-      {_, [_,X|_]} = lists:splitwith(fun(X) -> X /= Node end, Xs ++ Xs),
-      Lazy = [X],
+      Lazy  = [elements(Nodes -- [Node | Eager])],
+      %% Xs = Nodes, %  -- (Eager -- [Node]),
+      %% {_, [_,X|_]} = lists:splitwith(fun(X) -> X /= Node end, Xs ++ Xs),
+      %% Lazy = [X],
       {Eager, Lazy}
   end.
 
@@ -53,8 +76,6 @@ mk_drop_list(A, B, [N|Ns]) ->
   [{A, N} || N > 0] ++ mk_drop_list(B, A, Ns).
 
 %% -- Metadata manager abstraction -------------------------------------------
-
--define(MOCK_MANAGER, true).
 
 -ifdef(MOCK_MANAGER).
 
@@ -295,19 +316,4 @@ get_tree(Nodes) ->
             {B, lists:map(fun node_name/1, Eager), lists:map(fun node_name/1, Lazy)}
           end || #node{name = B} <- Nodes ]}
     || #node{name = A} <- Nodes ].
-
-%% prop_send_after() ->
-%%   ?FORALL(N, choose(10, 40),
-%%   begin
-%%     T0 = timestamp(),
-%%     erlang:send_after(N, self(), done),
-%%     T1 = receive done -> timestamp() end,
-%%     ?WHENFAIL(io:format("T0 = ~p\nT1 = ~p\nD  = ~p\n", [T0, T1, T1 - T0]),
-%%     abs(T1 - T0 - N) < 4)
-%%   end).
-
-%% timestamp() -> from_now(os:timestamp()).
-
-%% from_now({A, B, C}) ->
-%%   (C + 1000000 * (B + 1000000 * A)) div 1000.
 
