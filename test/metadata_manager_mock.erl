@@ -88,12 +88,12 @@ handle_call({put, Key, Val}, _From, State) ->
       VSet    = dvvset:update(dvvset:new(State#state.time, Val), node_name()),
       NewDict = [{Key, VSet} | State#state.dict],
       event_logger:event({put, node_name(), Key, VSet, new}),
-      {reply, new, State#state{ dict = NewDict, time = dvvset:join(VSet) }};
+      {reply, VSet, State#state{ dict = NewDict, time = dvvset:join(VSet) }};
     {Key, VSet} ->
       VSet1   = dvvset:update(dvvset:new(State#state.time, Val), VSet, node_name()),
       NewDict = lists:keystore(Key, 1, State#state.dict, {Key, VSet1}),
       event_logger:event({put, node_name(), Key, Val, update, VSet1}),
-      {reply, update, State#state{ dict = NewDict, time = dvvset:join(VSet1) }}
+      {reply, VSet1, State#state{ dict = NewDict, time = dvvset:join(VSet1) }}
   end;
 handle_call({merge, {Key, _Time}, New}, _From, State) ->
   case lists:keyfind(Key, 1, State#state.dict) of
@@ -133,12 +133,6 @@ handle_call({graft, {Key, Time}}, _From, State) ->
   case lists:keyfind(Key, 1, State#state.dict) of
     {Key, VSet} ->
       case {equal(Time, VSet), less(dvvset:new(Time, dummy), VSet)} of
-        %% {true, _} ->
-        %%   event_logger:event({graft, node_name(), Key, VSet}),
-        %%   {reply, {ok, VSet}, State};
-        %% {false, true} ->
-        %%   event_logger:event({graft, node_name(), Key, Time, stale}),
-        %%   {reply, stale, State};
         {false, false} ->
           event_logger:event({graft, node_name(), Key, bad_graft, Time, VSet}),
           {reply, stale, State};
