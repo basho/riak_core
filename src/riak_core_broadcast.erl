@@ -425,11 +425,19 @@ all_peers(Root, Sets, Default) ->
         {ok, Peers} -> Peers
     end.
 
+-ifdef(TEST).
+send(Msg, Peers) when is_list(Peers) ->
+    [send(Msg, P) || P <- Peers];
+send(Msg, P) ->
+    %% TODO: add debug logging
+    gen_server:cast({global, proxy_server}, {node(), ?SERVER, P, Msg}).
+-else.
 send(Msg, Peers) when is_list(Peers) ->
     [send(Msg, P) || P <- Peers];
 send(Msg, P) ->
     %% TODO: add debug logging
     gen_server:cast({?SERVER, P}, Msg).
+-endif.
 
 schedule_lazy_tick() ->
     TickMs = app_helper:get_env(riak_core, broadcast_lazy_timer, 1000),
