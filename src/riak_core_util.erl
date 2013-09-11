@@ -53,6 +53,7 @@
          format_ip_and_port/2,
          peername/2,
          sockname/2,
+         generate_socket_tag/3,
          sha/1,
          md5/1,
          make_fold_req/1,
@@ -545,6 +546,16 @@ sockname(Socket, Transport) ->
             %% just return a string so JSON doesn't blow up
             lists:flatten(io_lib:format("error:~p", [Reason]))
     end.
+
+%% @doc Generate a unique ID for a socket to log stats against
+generate_socket_tag(Prefix, Transport, Socket) ->
+    {ok, {{O1, O2, O3, O4}, PeerPort}} = Transport:peername(Socket),
+    {ok, {_Address, Portnum}} = Transport:sockname(Socket),
+    lists:flatten(io_lib:format("~s_~p -> ~p.~p.~p.~p:~p",[
+                Prefix,
+                Portnum,
+                O1, O2, O3, O4,
+                PeerPort])).
 
 %% @doc Convert a #riak_core_fold_req_v? record to the cluster's maximum
 %%      supported record version.

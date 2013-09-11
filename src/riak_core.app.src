@@ -12,6 +12,7 @@
                   stdlib,
                   lager,
                   sasl,
+                  ranch,
                   crypto,
                   riak_sysmon,
                   webmachine,
