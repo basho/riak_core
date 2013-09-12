@@ -53,7 +53,7 @@
          format_ip_and_port/2,
          peername/2,
          sockname/2,
-         md5/1
+         md5/1,
          make_fold_req/2,
          make_fold_req/4
         ]).
