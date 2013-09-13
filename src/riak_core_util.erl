@@ -548,7 +548,7 @@ make_fold_req(FoldFun, Acc0) ->
 
 make_fold_req(FoldFun, Acc0, Forwardable, Opts)
   when is_function(FoldFun, 3)
-       andalso (Forwardable == true orelse Forwardable == true)
+       andalso (Forwardable == true orelse Forwardable == false)
        andalso is_list(Opts) ->
     %% TODO: Capability negotiation goes here, to figure out which version #
     %% of the riak_core_fold_req_v* record to use.
