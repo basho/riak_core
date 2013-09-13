@@ -84,6 +84,9 @@ start(_StartType, _StartArgs) ->
             riak_core_capability:register({riak_core, resizable_ring},
                                           [true, false],
                                           false),
+            riak_core_capability:register({riak_core, fold_req_version},
+                                          [v2, v1],
+                                          v1),
 
             {ok, Pid};
         {error, Reason} ->
