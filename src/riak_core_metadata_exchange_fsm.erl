@@ -110,8 +110,9 @@ prepare(start, State) ->
         _Error ->
             {stop, normal, State}
     end;
-prepare(timeout, State) ->
+prepare(timeout, State=#state{peer=Peer}) ->
     %% getting remote lock timed out
+    lager:info("metadata exchange with ~p timed out aquiring locks", [Peer]),
     {stop, normal, State};
 prepare({remote_lock, ok}, State) ->
     %% getting remote lock succeeded
@@ -124,7 +125,8 @@ update(start, State) ->
     update_request(node()),
     update_request(State#state.peer),
     {next_state, update, State, State#state.timeout};
-update(timeout, State) ->
+update(timeout, State=#state{peer=Peer}) ->
+    lager:info("metadata exchange with ~p timed out updating trees", [Peer]),
     {stop, normal, State};
 update(tree_updated, State) ->
     Built = State#state.built + 1,
@@ -147,8 +149,13 @@ exchange(timeout, State=#state{peer=Peer}) ->
                          repair(Peer, Diff),
                          track_repair(Diff, Acc)
                  end,
-    _Res = riak_core_metadata_hashtree:compare(RemoteFun, HandlerFun,
+    Res = riak_core_metadata_hashtree:compare(RemoteFun, HandlerFun,
                                               #exchange{local=0,remote=0,keys=0}),
+    #exchange{local=LocalPrefixes,
+              remote=RemotePrefixes,
+              keys=Keys} = Res,
+    lager:info("completed metadata exchange with ~p. repaired ~p missing local prefixes, "
+               "~p missing remote prefixes, and ~p keys", [Peer, LocalPrefixes, RemotePrefixes, Keys]),
     {stop, normal, State}.
 
 prepare(_Event, _From, State) ->
