@@ -231,7 +231,7 @@ repair_keys(Peer, PrefixList, {_Type, KeyBin}) ->
     LocalObj = riak_core_metadata_manager:get(PKey),
     RemoteObj = riak_core_metadata_manager:get(Peer, PKey),
     merge(undefined, PKey, RemoteObj),
-    merge(undefined, PKey, LocalObj),
+    merge(Peer, PKey, LocalObj),
     ok.
 
 %% @private

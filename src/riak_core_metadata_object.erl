@@ -92,6 +92,8 @@ modify({metadata, Existing}, Context, Value, ServerId) ->
 %% element of the two-tuple
 -spec reconcile(metadata_object(), metadata_object() | undefined) ->
                        false | {true, metadata_object()}.
+reconcile(undefined, _LocalObj) ->
+    false;
 reconcile(RemoteObj, undefined) ->
     {true, RemoteObj};
 reconcile({metadata, RemoteObj}, {metadata, LocalObj}) ->
