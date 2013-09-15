@@ -270,7 +270,8 @@ build() ->
 %% @private
 build(PrefixIt) ->
     case riak_core_metadata_manager:iterator_done(PrefixIt) of
-        true -> ok;
+        true ->
+            riak_core_metadata_manager:iterator_close(PrefixIt);
         false ->
             Prefix = riak_core_metadata_manager:iterator_value(PrefixIt),
             ObjIt = riak_core_metadata_manager:iterator(Prefix, undefined),
@@ -281,6 +282,7 @@ build(PrefixIt) ->
 build(PrefixIt, ObjIt) ->
     case riak_core_metadata_manager:iterator_done(ObjIt) of
         true ->
+            riak_core_metadata_manager:iterator_close(ObjIt),
             build(riak_core_metadata_manager:iterate(PrefixIt));
         false ->
             FullPrefix = riak_core_metadata_manager:iterator_prefix(ObjIt),

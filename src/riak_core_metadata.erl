@@ -26,6 +26,7 @@
          iterator/1,
          iterator/2,
          itr_next/1,
+         itr_close/1,
          itr_done/1,
          itr_key_values/1,
          itr_key/1,
@@ -156,6 +157,11 @@ iterator({Prefix, SubPrefix}=FullPrefix, Opts)
 itr_next({It, Opts}) ->
     It1 = riak_core_metadata_manager:iterate(It),
     {It1, Opts}.
+
+%% @doc Closes the iterator
+-spec itr_close(iterator()) -> ok.
+itr_close({It, _Ots}) ->
+    riak_core_metadata_manager:iterator_close(It).
 
 %% @doc Returns true if there is nothing more to iterate over
 -spec itr_done(iterator()) -> boolean().
