@@ -41,7 +41,7 @@
 
 -include("riak_core_metadata.hrl").
 
--define(SERVER, ?MODULE). 
+-define(SERVER, ?MODULE).
 
 -record(state, {
           %% the tree managed by this process
@@ -64,7 +64,7 @@
 -spec start_link() -> {ok, pid()} | ignore | {error, term()}.
 start_link() ->
     PRoot = app_helper:get_env(riak_core, platform_data_dir),
-    DataRoot = filename:join(PRoot, "cluster_meta/trees"),    
+    DataRoot = filename:join(PRoot, "cluster_meta/trees"),
     start_link(DataRoot).
 
 %% @doc TODO
@@ -163,7 +163,7 @@ handle_call({prefix_hash, Prefix}, _From, State=#state{tree=Tree}) ->
     {reply, PrefixHash, State};
 handle_call({insert, PKey, Hash, IfMissing}, _From, State=#state{tree=Tree}) ->
     {Prefixes, Key} = prepare_pkey(PKey),
-    Tree1 = hashtree_tree:insert(Prefixes, Key, Hash, [{if_missing, IfMissing}], Tree),    
+    Tree1 = hashtree_tree:insert(Prefixes, Key, Hash, [{if_missing, IfMissing}], Tree),
     {reply, ok, State#state{tree=Tree1}}.
 
 handle_cast(_Msg, State) ->
@@ -323,11 +323,10 @@ prefix_to_prefix_list({Prefix, SubPrefix}) ->
     [Prefix,SubPrefix].
 
 %% @private
-prepare_pkey({FulLPrefix, Key}) ->
-    {prefix_to_prefix_list(FulLPrefix), term_to_binary(Key)}.
+prepare_pkey({FullPrefix, Key}) ->
+    {prefix_to_prefix_list(FullPrefix), term_to_binary(Key)}.
 
 %% @private
 schedule_tick() ->
     TickMs = app_helper:get_env(riak_core, metadata_hashtree_timer, 10000),
     erlang:send_after(TickMs, ?MODULE, tick).
-

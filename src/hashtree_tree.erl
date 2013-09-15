@@ -46,15 +46,15 @@
 
           %% number of levels in the tree excluding leaves (height - 1)
           num_levels :: non_neg_integer(),
-          
-          %% ets table that holds hashtree nodes in the tree          
+
+          %% ets table that holds hashtree nodes in the tree
           nodes      :: ets:tab(),
 
           %% ets table that holds snapshot nodes
           snapshot   :: ets:tab(),
 
           %% set of dirty leaves
-          dirty      :: gb_set()          
+          dirty      :: gb_set()
          }).
 
 -define(ROOT, '$ht_root').
@@ -96,7 +96,7 @@ new(TreeId, Opts) ->
                           dirty = gb_sets:new()},
     get_node(?ROOT, Tree),
     Tree.
-    
+
 
 %% @doc TODO
 -spec destroy(tree()) -> ok.
@@ -107,7 +107,7 @@ destroy(Tree) ->
               end, undefined, Tree#hashtree_tree.nodes),
     catch ets:delete(Tree#hashtree_tree.nodes),
     ok.
-    
+
 
 %% @doc an alias for insert(Prefixes, Key, Hash, [], Tree)
 -spec insert(prefixes(), binary(), binary(), tree()) -> tree() | {error, term()}.
@@ -144,7 +144,7 @@ update_snapshot(Tree=#hashtree_tree{dirty=Dirty,nodes=Nodes}) ->
     UpdatedTree = Tree#hashtree_tree{dirty=gb_sets:new()},
     SnapTree = UpdatedTree#hashtree_tree{snapshot=Snapshot},
     {SnapTree, UpdatedTree}.
-            
+
 
 %% @doc TODO
 -spec update_perform(tree()) -> ok.
@@ -164,7 +164,7 @@ update_perform(Tree=#hashtree_tree{snapshot=Snapshot}) ->
 -spec local_compare(tree(), tree()) -> [diff()].
 local_compare(T1, T2) ->
     RemoteFun = fun(Prefixes, {get_bucket, {Level, Bucket}}) ->
-                        hashtree_tree:get_bucket(Prefixes, Level, Bucket, T2);                            
+                        hashtree_tree:get_bucket(Prefixes, Level, Bucket, T2);
                    (Prefixes, {key_hashes, Segment}) ->
                         [{_, Hashes}] = hashtree_tree:key_hashes(Prefixes, Segment, T2),
                         Hashes
@@ -174,9 +174,9 @@ local_compare(T1, T2) ->
 
 %% @doc TODO
 -spec compare(tree(), remote_fun(), handler_fun(X), X) -> X.
-compare(LocalTree, RemoteFun, HandlerFun, HandlerAcc) ->    
+compare(LocalTree, RemoteFun, HandlerFun, HandlerAcc) ->
     compare(?ROOT, 1, LocalTree, RemoteFun, HandlerFun, HandlerAcc).
-                     
+
 %% @doc TODO
 -spec top_hash(tree()) -> undefined | binary().
 top_hash(Tree) ->
@@ -239,7 +239,7 @@ update_dirty_parents(DirtyParents, Tree) ->
                                   NextDirty = update_dirty(DirtyParent, DirtySnap, DirtyAcc, Tree),
                                   set_node(DirtyParent, DirtyNode2, Tree),
                                   NextDirty
-                          end, gb_sets:new(), DirtyParents),                
+                          end, gb_sets:new(), DirtyParents),
             update_dirty_parents(NextDirty, Tree)
     end.
 
@@ -299,7 +299,7 @@ compare(NodeName, Level, LocalTree, RemoteFun, HandlerFun, HandlerAcc) ->
 missing_prefix(NodeKey, Type, HandlerFun, HandlerAcc) ->
     HandlerFun({missing_prefix, Type, node_name_to_prefixes(from_parent_key(NodeKey))},
                HandlerAcc).
-%% @private                     
+%% @private
 extract_compare_acc([], HandlerAcc) ->
     HandlerAcc;
 extract_compare_acc([{acc, Acc}], _HandlerAcc) ->
@@ -320,7 +320,7 @@ get_node(_NodeName, Node, _Tree) ->
 lookup_node(NodeName, Tree=#hashtree_tree{nodes=Nodes}) ->
     NodeKey = node_key(NodeName, Tree),
     case ets:lookup(Nodes, NodeKey) of
-        [] -> undefined;             
+        [] -> undefined;
         [{NodeKey, Node}] -> Node
     end.
 
@@ -440,4 +440,3 @@ data_root(Opts) ->
             filename:join(Base, riak_core_util:integer_to_list(P, 16));
         Root -> Root
     end.
-    

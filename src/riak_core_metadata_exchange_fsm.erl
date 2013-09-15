@@ -188,7 +188,7 @@ repair_sub_prefixes(Type, Peer, Prefix, It) ->
         false ->
             SubPrefix = riak_core_metadata_manager:iterator_value(It),
             FullPrefix = {Prefix, SubPrefix},
-            
+
             ItType = repair_iterator_type(Type),
             ObjIt = repair_iterator(ItType, Peer, FullPrefix),
             repair_full_prefix(Type, Peer, FullPrefix, ObjIt),
@@ -215,7 +215,7 @@ repair_other(local, _Peer, PKey, Obj) ->
 repair_other(remote, Peer, PKey, Obj) ->
     %% remote missing data, merge local data into remote node
     merge(Peer, PKey, Obj).
-    
+
 %% @private
 repair_keys(Peer, PrefixList, {_Type, KeyBin}) ->
     Key = binary_to_term(KeyBin),
@@ -278,7 +278,7 @@ update_request(Node) ->
              end).
 
 %% @private
-%% "borrowed" from riak_kv_exchange_fsm    
+%% "borrowed" from riak_kv_exchange_fsm
 as_event(F) ->
     Self = self(),
     spawn_link(fun() ->
@@ -286,4 +286,3 @@ as_event(F) ->
                        gen_fsm:send_event(Self, Result)
                end),
     ok.
-    

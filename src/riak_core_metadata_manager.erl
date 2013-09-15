@@ -91,7 +91,7 @@
          }).
 
 -opaque metadata_iterator() :: #metadata_iterator{}.
--type remote_iterator()     :: #remote_iterator{}. 
+-type remote_iterator()     :: #remote_iterator{}.
 
 -type mm_path_opt()     :: {data_dir, file:name_all()}.
 -type mm_nodename_opt() :: {nodename, term()}.
@@ -432,7 +432,7 @@ next_iterator(Ref, State=#state{iterators=Iterators}) when is_reference(Ref) ->
         [] -> ok;
         [{Ref, It}] ->
             Next = next_iterator(It, State),
-            ets:insert(Iterators, [{Ref, Next}])            
+            ets:insert(Iterators, [{Ref, Next}])
     end,
     Ref;
 next_iterator(It=#metadata_iterator{done=true}, #state{}) ->

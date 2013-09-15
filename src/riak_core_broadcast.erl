@@ -164,13 +164,13 @@ broadcast_members(Timeout) ->
 %%% Debug API
 %%%===================================================================
 
-%% @doc return the peers for `Node' for the tree rooted at `Root'. 
+%% @doc return the peers for `Node' for the tree rooted at `Root'.
 %% Wait indefinitely for a response is returned from the process
 -spec debug_get_peers(node(), node()) -> {ordset:ordset(node()), ordset:ordset(node())}.
 debug_get_peers(Node, Root) ->
     debug_get_peers(Node, Root, infinity).
 
-%% @doc return the peers for `Node' for the tree rooted at `Root'. 
+%% @doc return the peers for `Node' for the tree rooted at `Root'.
 %% Waits `Timeout' ms for a response from the server
 -spec debug_get_peers(node(), node(), infinity | pos_integer()) ->
                              {ordset:ordset(node()), ordset:ordset(node())}.
@@ -255,7 +255,7 @@ handle_cast({ring_update, Ring}, State=#state{all_members=BroadcastMembers}) ->
     New = ordsets:subtract(CurrentMembers, BroadcastMembers),
     Removed = ordsets:subtract(BroadcastMembers, CurrentMembers),
     State1 = case ordsets:size(New) > 0 of
-                 false -> State;                      
+                 false -> State;
                  true ->
                      {EagerPeers, LazyPeers} = init_peers(CurrentMembers),
                      reset_peers(CurrentMembers, EagerPeers, LazyPeers, State)
