@@ -175,6 +175,8 @@ handle_info({'EXIT', BuiltPid, normal}, State=#state{built=BuiltPid}) ->
 handle_info({'EXIT', BuiltPid, _}, State=#state{built=BuiltPid}) ->
     State1 = build_error(State),
     {noreply, State1};
+handle_info({'EXIT', _, normal}, State) -> %% compare process
+    {noreply, State};
 handle_info({'DOWN', LockRef, process, _Pid, _Reason}, State=#state{lock={_, LockRef}}) ->
     State1 = release_lock(State),
     {noreply, State1};

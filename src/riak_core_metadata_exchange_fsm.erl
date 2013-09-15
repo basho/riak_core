@@ -22,7 +22,7 @@
 -behaviour(gen_fsm).
 
 %% API
--export([start_link/2]).
+-export([start/2]).
 
 %% gen_fsm callbacks
 -export([init/1, handle_event/3, handle_sync_event/4,
@@ -69,9 +69,9 @@
 %% @doc Start an exchange of Cluster Metadata hashtrees between this node
 %% and `Peer'. `Timeout' is the number of milliseconds the process will wait
 %% to aqcuire the remote lock or to upate both trees.
--spec start_link(node(), pos_integer()) -> {ok, pid()} | ignore | {error, term()}.
-start_link(Peer, Timeout) ->
-    gen_fsm:start_link({local, ?SERVER}, ?MODULE, [Peer, Timeout], []).
+-spec start(node(), pos_integer()) -> {ok, pid()} | ignore | {error, term()}.
+start(Peer, Timeout) ->
+    gen_fsm:start(?MODULE, [Peer, Timeout], []).
 
 %%%===================================================================
 %%% gen_fsm callbacks

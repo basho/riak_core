@@ -82,7 +82,10 @@
 
           %% Set of registered modules that may handle messages that
           %% have been broadcast
-          mods :: [module()],
+          mods          :: [module()],
+
+          %% List of outstanding exchanges
+          exchanges     :: [{module(), node(), reference(), pid()}],
 
           %% Set of all known members. Used to determine
           %% which members have joined and left during a membership update
@@ -199,9 +202,10 @@ init([AllMembers, InitEagers, InitLazys, Mods]) ->
     schedule_lazy_tick(),
     schedule_exchange_tick(),
     State1 =  #state{
-       outstanding   = orddict:new(),
-       mods = lists:usort(Mods)
-     },
+                 outstanding   = orddict:new(),
+                 mods = lists:usort(Mods),
+                 exchanges=[]
+                },
     State2 = reset_peers(AllMembers, InitEagers, InitLazys, State1),
     {ok, State2}.
 
@@ -270,7 +274,10 @@ handle_info(lazy_tick, State) ->
 handle_info(exchange_tick, State) ->
     schedule_exchange_tick(),
     State1 = maybe_exchange(State),
-    {noreply, State1}.
+    {noreply, State1};
+handle_info({'DOWN', Ref, process, _Pid, _Reason}, State=#state{exchanges=Exchanges}) ->
+    Exchanges1 = lists:keydelete(Ref, 3, Exchanges),
+    {noreply, State#state{exchanges=Exchanges1}}.
 
 %% @private
 -spec terminate(term(), #state{}) -> term().
@@ -371,9 +378,27 @@ maybe_exchange(State) ->
 
 maybe_exchange(undefined, State) ->
     State;
-maybe_exchange(Peer, State=#state{mods=[Mod | Mods]}) ->
-    Mod:exchange(Peer),
-    State#state{mods=Mods ++ [Mod]}.
+maybe_exchange(Peer, State=#state{mods=[Mod | _],exchanges=Exchanges}) ->
+    %% limit the number of exchanges this node can start concurrently.
+    %% the exchange must (currently?) implement any "inbound" concurrency limits
+    ExchangeLimit = app_helper:get_env(riak_core, broadcast_start_exchange_limit, 1),
+    BelowLimit = not (length(Exchanges) >= ExchangeLimit),
+    FreeMod = lists:keyfind(Mod, 1, Exchanges) =:= false,
+    case BelowLimit and FreeMod of
+        true -> exchange(Peer, State);
+        false -> State
+    end.
+
+exchange(Peer, State=#state{mods=[Mod | Mods],exchanges=Exchanges}) ->
+    State1 = case Mod:exchange(Peer) of
+                 {ok, Pid} ->
+                     lager:info("started ~p exchange with ~p (~p)", [Mod, Peer, Pid]),
+                     Ref = monitor(process, Pid),
+                     State#state{exchanges=[{Mod, Peer, Ref, Pid} | Exchanges]};
+                 {error, _Reason} ->
+                     State
+             end,
+    State1#state{mods=Mods ++ [Mod]}.
 
 %% picks random root uniformly
 random_root(#state{all_members=Members}) ->
