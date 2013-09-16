@@ -60,70 +60,102 @@
 %%% API
 %%%===================================================================
 
-%% @doc TODO
+%% @doc Starts the process using {@link start_link/1}, passing in the
+%% directory where other cluster metadata is stored in `platform_data_dir'
+%% as the data root.
 -spec start_link() -> {ok, pid()} | ignore | {error, term()}.
 start_link() ->
     PRoot = app_helper:get_env(riak_core, platform_data_dir),
     DataRoot = filename:join(PRoot, "cluster_meta/trees"),
     start_link(DataRoot).
 
-%% @doc TODO
+%% @doc Starts a registered process that manages a {@link
+%% hashtree_tree} for Cluster Metadata. Data for the tree is stored,
+%% for the lifetime of the process (assuming it shutdowns gracefully),
+%% in the directory `DataRoot'.
 -spec start_link(file:filename()) -> {ok, pid()} | ignore | {error, term()}.
 start_link(DataRoot) ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [DataRoot], []).
 
-%% @doc TODO
+%% @doc Same as insert(PKey, Hash, false).
 -spec insert(metadata_pkey(), binary()) -> ok.
 insert(PKey, Hash) ->
     insert(PKey, Hash, false).
 
-%% @doc TODO
+%% @doc Insert a hash for a full-prefix and key into the tree
+%% managed by the process. If `IfMissing' is `true' the hash is only
+%% inserted into the tree if the key is not already present.
 -spec insert(metadata_pkey(), binary(), boolean()) -> ok.
 insert(PKey, Hash, IfMissing) ->
     gen_server:call(?SERVER, {insert, PKey, Hash, IfMissing}).
 
-%% @doc TODO
+%% @doc Return the hash for the given prefix or full-prefix
 -spec prefix_hash(metadata_prefix() | binary() | atom()) -> undefined | binary().
 prefix_hash(Prefix) ->
     gen_server:call(?SERVER, {prefix_hash, Prefix}).
 
-%% @doc TODO
+%% @doc Return the bucket for a node in the tree managed by this
+%% process running on `Node'.
 -spec get_bucket(node(), hashtree_tree:tree_node(),
                  non_neg_integer(), non_neg_integer()) -> ordict:ordict().
 get_bucket(Node, Prefixes, Level, Bucket) ->
     gen_server:call({?SERVER, Node}, {get_bucket, Prefixes, Level, Bucket}).
 
-%% @doc TODO
+%% @doc Return the key hashes for a node in the tree managed by this
+%% process running on `Node'.
 -spec key_hashes(node(), hashtree_tree:tree_node(), non_neg_integer()) -> orddict:orddict().
 key_hashes(Node, Prefixes, Segment) ->
     gen_server:call({?SERVER, Node}, {key_hashes, Prefixes, Segment}).
 
-%% @doc TODO
+%% @doc Locks the tree on this node for updating on behalf of the
+%% calling process. {@see lock/2}
 -spec lock() -> ok | not_built | locked.
 lock() ->
     lock(node()).
 
-%% @doc TODO
+%% @doc Locks the tree on `Node' for updating on behalf of the calling
+%% process. {@see lock/2}.
 -spec lock(node()) -> ok | not_built | locked.
 lock(Node) ->
     lock(Node, self()).
 
-%% @doc TODO
+%% @doc Lock the tree for updating. This function must be called
+%% before updating the tree with {@link update/0} or {@link
+%% update/1}. If the tree is not built or already locked then the call
+%% will fail and the appropriate atom is returned. Otherwise,
+%% aqcuiring the lock succeeds and `ok' is returned.
 -spec lock(node(), pid()) -> ok | not_built | locked.
 lock(Node, Pid) ->
     gen_server:call({?SERVER, Node}, {lock, Pid}).
 
-%% @doc TODO
+%% @doc Updates the tree on this node. {@see update/1}.
 -spec update() -> ok | not_locked | not_built | ongoing_update.
 update() ->
     update(node()).
 
-%% @doc TODO
+%% @doc Updates the tree on `Node'. The tree must be locked using one
+%% of the lock functions. If the tree is not locked or built the
+%% update will not be started and the appropriate atom is
+%% returned. Although this function should not be called without a
+%% lock, if it is and the tree is being updated by the background tick
+%% then `ongoing_update' is returned. If the tree is built and a lock
+%% has been acquired then the update is started and `ok' is
+%% returned. The update is performed asynchronously and does not block
+%% the process that manages the tree (e.g. future inserts).
 -spec update(node()) -> ok | not_locked | not_built | ongoing_update.
 update(Node) ->
     gen_server:call({?SERVER, Node}, update).
 
-%% @doc TODO
+%% @doc Compare the local tree managed by this process with the remote
+%% tree also managed by a metadata hashtree process. `RemoteFun' is
+%% used to access the buckets and segments of nodes in the remote tree
+%% and should usually call {@link get_bucket/4} and {@link
+%% key_hashes/3}. `HandlerFun' is used to process the differences
+%% found between the two trees. `HandlerAcc' is passed to the first
+%% invocation of `HandlerFun'. Subsequent calls are passed the return
+%% value from the previous call.  This function returns the return
+%% value from the last call to `HandlerFun'. {@see hashtree_tree} for
+%% more details on `RemoteFun', `HandlerFun' and `HandlerAcc'.
 -spec compare(hashtree_tree:remote_fun(), hashtree_tree:handler_fun(X), X) -> X.
 compare(RemoteFun, HandlerFun, HandlerAcc) ->
     gen_server:call(?SERVER, {compare, RemoteFun, HandlerFun, HandlerAcc}).

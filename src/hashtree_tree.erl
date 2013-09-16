@@ -18,7 +18,89 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc TODO
+%% @doc This module implements a specialized hash tree that is used
+%% primarily by cluster metadata's anti-entropy exchanges and by
+%% metadata clients for determining when groups of metadata keys have
+%% changed locally. The tree can be used, generally, for determining
+%% the differences in groups of keys, or to find missing groups, between
+%% two stores.
+%%
+%% Each node of the tree is itself a hash tree, specifically a {@link
+%% hashtree}.  The tree has a fixed height but each node has a
+%% variable amount of children. The height of the tree directly
+%% corresponds to the number of prefixes supported by the tree. A list
+%% of prefixes, or a "prefix list", represent a group of keys. Each
+%% unique prefix list is a node in the tree. The leaves store hashes
+%% for the individual keys in the segments of the node's {@link
+%% hashtree}. The buckets of the leaves' hashtree provide an efficient
+%% way of determining when keys in the segments differ between two
+%% trees.  The tails of the prefix list are used to roll up groups
+%% into parent groups. For example, the prefixes `[a, b]', `[a, c]',
+%% `[d, e]' will be rolled up into parent groups `a', containing `c'
+%% and `b', and `d', containing only 'e'. The parent group's node has
+%% children corresponding to each child group. The top-hashes of the
+%% child nodes are stored in the parent nodes' segments. The parent
+%% nodes' buckets are used as an efficient method for determining when
+%% child groups differ between two trees. The root node corresponds to
+%% the empty list and it acts like any other node, storing hashes for
+%% the first level of child groups. The top hash of the root node is
+%% the top hash of the tree.
+%%
+%% The tree in the example above might store something like:
+%%
+%% node    parent   top-hash  segments
+%% ---------------------------------------------------
+%% root     none       1      [{a, 2}, {d, 3}]
+%% [a]      root       2      [{b, 4}, {c, 5}]
+%% [d]      root       3      [{e, 6}]
+%% [a,b]    [a]        4      [{k1, 0}, {k2, 6}, ...]
+%% [a,c]    [a]        5      [{k1, 1}, {k2, 4}, ...]
+%% [d,e]    [d]        6      [{k1, 2}, {k2, 3}, ...]
+%%
+%%
+%% When a key is inserted into the tree it is inserted into the leaf
+%% corresponding to the given prefix list. The leaf and its parents
+%% are not updated at this time. Instead the leaf is added to a dirty
+%% set. The nodes are later updated in bulk.
+%%
+%% Updating the hashtree is a two step process. First, a snapshot of
+%% the tree must be obtained. This prevents new writes from affecting
+%% the update. Snapshotting the tree will snapshot each dirty
+%% leaf. Since writes to nodes other than leaves only occur during
+%% updates no snapshot is taken for them. Second, the tree is updated
+%% using the snapshot. The update is performed by updating the {@link
+%% hashtree} nodes at each level starting with the leaves. The top
+%% hash of each node in a level is inserted into its parent node after
+%% being updated. The list of dirty parents is then updated, moving up
+%% the tree. Once the root is reached and has been updated the process
+%% is complete. This process is designed to minimize the traversal of
+%% the tree and ensure that each node is only updated once.
+%%
+%% The typical use for updating a tree is to compare it with another
+%% recently updated tree. Comparison is done with the ``compare/4''
+%% function.  Compare provides a sort of fold over the differences of
+%% the tree allowing for callers to determine what to do with those
+%% differences. In addition, the caller can accumulate a value, such
+%% as the difference list or stats about differencces.
+%%
+%% The tree implemented in this module assumes that it will be managed
+%% by a single process and that all calls will be made to it synchronously, with
+%% a couple exceptions:
+%%
+%% 1. Updating a tree with a snapshot can be done in another process. The snapshot
+%% must be taken by the owning process, synchronously.
+%% 2. Comparing two trees may be done by a seperate process. Compares should should use
+%% a snapshot and only be performed after an update.
+%%
+%% The nodes in this tree are backend by LevelDB, however, this is
+%% most likely temporary and Cluster Metadata's use of the tree is
+%% ephemeral. Trees are only meant to live for the lifetime of a
+%% running node and are rebuilt on start.  To ensure the tree is fresh
+%% each time, when nodes are created the backing LevelDB store is
+%% opened, closed, and then re-opened to ensure any lingering files
+%% are removed.  Additionally, the nodes themselves (references to
+%% {@link hashtree}, are stored in {@link ets}.
+
 
 -module(hashtree_tree).
 
@@ -38,7 +120,9 @@
 -export_type([tree/0, tree_node/0, handler_fun/1, remote_fun/0]).
 
 -record(hashtree_tree, {
-          %% the identifier for this tree. TODO more description
+          %% the identifier for this tree. used as part of the ids
+          %% passed to hashtree.erl and in keys used to store nodes in
+          %% the tree's ets tables.
           id         :: term(),
 
           %% directory where nodes are stored on disk
@@ -78,7 +162,13 @@
 %%% API
 %%%===================================================================
 
-%% @doc TODO
+%% @doc Creates a new hashtree.
+%%
+%% Takes the following options:
+%%   * num_levels - the height of the tree excluding leaves. corresponds to the
+%%                  length of the prefix list passed to {@link insert/5}.
+%%   * data_dir   - the directory where the LevelDB instances for the nodes will
+%%                  be stored.
 -type new_opt_num_levels() :: {num_levels, non_neg_integer()}.
 -type new_opt_data_dir()   :: {data_dir, file:name_all()}.
 -type new_opt()            :: new_opt_num_levels() | new_opt_data_dir().
@@ -97,8 +187,8 @@ new(TreeId, Opts) ->
     get_node(?ROOT, Tree),
     Tree.
 
-
-%% @doc TODO
+%% @doc Destroys the tree cleaning up any used resources.
+%% This deletes the LevelDB files for the nodes.
 -spec destroy(tree()) -> ok.
 destroy(Tree) ->
     ets:foldl(fun({_, Node}, _) ->
@@ -108,13 +198,24 @@ destroy(Tree) ->
     catch ets:delete(Tree#hashtree_tree.nodes),
     ok.
 
-
 %% @doc an alias for insert(Prefixes, Key, Hash, [], Tree)
 -spec insert(prefixes(), binary(), binary(), tree()) -> tree() | {error, term()}.
 insert(Prefixes, Key, Hash, Tree) ->
     insert(Prefixes, Key, Hash, [], Tree).
 
-%% @doc TODO
+%% @doc Insert a hash into the tree. The length of `Prefixes' must
+%% correspond to the height of the tree -- the value used for
+%% `num_levels' when creating the tree. The hash is inserted into
+%% a leaf of the tree and that leaf is marked as dirty. The tree is not
+%% updated at this time. Future operations on the tree should used the
+%% tree returend by this fucntion.
+%%
+%% Insert takes the following options:
+%%   * if_missing - if `true' then the hash is only inserted into the tree
+%%                  if the key is not already present. This is useful for
+%%                  ensuring writes concurrent with building the tree
+%%                  take precedence over older values. `false' is the default
+%%                  value.
 -type insert_opt_if_missing() :: {if_missing, boolean()}.
 -type insert_opt()            :: insert_opt_if_missing().
 -type insert_opts()           :: [insert_opt()].
@@ -128,7 +229,10 @@ insert(Prefixes, Key, Hash, Opts, Tree) ->
             {error, bad_prefixes}
     end.
 
-%% @doc TODO
+%% @doc Snapshot the tree for updating. This function returns a
+%% two-tuple where both elements are trees.  The first element is the
+%% snapshot tree to be passed to {@link update_perform/1}. The second
+%% is the tree that should be used to perform operations on the tree.
 -spec update_snapshot(tree()) -> {tree(), tree()}.
 update_snapshot(Tree=#hashtree_tree{dirty=Dirty,nodes=Nodes}) ->
     FoldRes = gb_sets:fold(fun(DirtyName, Acc) ->
@@ -146,11 +250,11 @@ update_snapshot(Tree=#hashtree_tree{dirty=Dirty,nodes=Nodes}) ->
     {SnapTree, UpdatedTree}.
 
 
-%% @doc TODO
+%% @doc Update the tree with a snapshot obtained by {@link
+%% update_snapshot/1}. This function may be called by a process other
+%% than the one managing the tree.
 -spec update_perform(tree()) -> ok.
 update_perform(Tree=#hashtree_tree{snapshot=Snapshot}) ->
-    %% 2. look at original update node function from recovery
-    %% 3. generic fold over ets (acc gb_set) and gb_set (acc gb_set)
     DirtyParents = ets:foldl(fun(DirtyKey, DirtyParents) ->
                                      update_dirty_leaves(DirtyKey, DirtyParents, Tree)
                              end,
@@ -159,8 +263,8 @@ update_perform(Tree=#hashtree_tree{snapshot=Snapshot}) ->
     catch ets:delete(Snapshot),
     ok.
 
-%% @doc TODO
-%% TODO: spec
+%% @doc Compare two local trees. This function is primarily for
+%% local debugging and testing.
 -spec local_compare(tree(), tree()) -> [diff()].
 local_compare(T1, T2) ->
     RemoteFun = fun(Prefixes, {get_bucket, {Level, Bucket}}) ->
@@ -172,17 +276,31 @@ local_compare(T1, T2) ->
     HandlerFun = fun(Diff, Acc) -> Acc ++ [Diff] end,
     compare(T1, RemoteFun, HandlerFun, []).
 
-%% @doc TODO
+%% @doc Compare a local and remote tree.  `RemoteFun' is used to
+%% access the buckets and segments of nodes in the remote
+%% tree. `HandlerFun' will be called for each difference found in the
+%% tree. A difference is either a missing local or remote prefix, or a
+%% list of key differences, which themselves signify different or
+%% missing keys. `HandlerAcc' is passed to the first call of
+%% `HandlerFun' and each subsequent call is passed the value returned
+%% by the previous call. The return value of this function is the
+%% return value from the last call to `HandlerFun'.
 -spec compare(tree(), remote_fun(), handler_fun(X), X) -> X.
 compare(LocalTree, RemoteFun, HandlerFun, HandlerAcc) ->
     compare(?ROOT, 1, LocalTree, RemoteFun, HandlerFun, HandlerAcc).
 
-%% @doc TODO
+%% @doc Returns the top-hash of the tree. This is the top-hash of the
+%% root node.
 -spec top_hash(tree()) -> undefined | binary().
 top_hash(Tree) ->
     prefix_hash([], Tree).
 
-%% @doc TODO
+%% @doc Returns the top-hash of the node corresponding to the given
+%% prefix list. The length of the prefix list can be less than or
+%% equal to the height of the tree. If the tree has not been updated
+%% or if the prefix list is not found or invalid, then `undefined' is
+%% returned.  Otherwise the hash value from the most recent update is
+%% returned.
 -spec prefix_hash(prefixes(), tree()) -> undefined | binary().
 prefix_hash(Prefixes, Tree) ->
     NodeName = prefixes_to_node_name(Prefixes),
@@ -191,7 +309,9 @@ prefix_hash(Prefixes, Tree) ->
         Node -> extract_top_hash(hashtree:top_hash(Node))
     end.
 
-%% @doc TODO
+%% @doc Returns the {@link hashtree} buckets for a given node in the
+%% tree. This is used primarily for accessing buckets of a remote tree
+%% during compare.
 -spec get_bucket(tree_node(), integer(), integer(), tree()) -> orddict:orddict().
 get_bucket(Prefixes, Level, Bucket, Tree) ->
     case lookup_node(prefixes_to_node_name(Prefixes), Tree) of
@@ -199,7 +319,9 @@ get_bucket(Prefixes, Level, Bucket, Tree) ->
         Node -> hashtree:get_bucket(Level, Bucket, Node)
     end.
 
-%% @doc TODO
+%% @doc Returns the {@link hashtree} segment hashes for a given node
+%% in the tree.  This is used primarily for accessing key hashes of a
+%% remote tree during compare.
 -spec key_hashes(tree_node(), integer(), tree()) -> [{integer(), orddict:orddict()}].
 key_hashes(Prefixes, Segment, Tree) ->
     case lookup_node(prefixes_to_node_name(Prefixes), Tree) of
