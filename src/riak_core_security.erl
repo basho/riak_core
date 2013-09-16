@@ -200,6 +200,9 @@ print_user(User) ->
             table:print([{type, 30}, {bucket, 10}, {grants, 20}],
                         [begin
                              case Bucket of
+                                 any ->
+                                     ["*", "*", io_lib:format("~p",
+                                                              [Permissions])];
                                  {T, B} ->
                                      [T, B, io_lib:format("~p",
                                                           [Permissions])];
@@ -248,45 +251,81 @@ accumulate_grants([Role|Roles], Seen, Acc) ->
                                      [{match, {Role, '_'}}]),
     accumulate_grants(Roles, NewSeen, [Grants|NewAcc]).
 
-check_permission(Permission, Bucket, Context) ->
+check_permission({Permission}, Context0) ->
+    Context = maybe_refresh_context(Context0),
+    {Username, Grants, _CtxEpoch} = Context,
+    %% The user needs to have this permission applied *globally*
+    %% This is for things like mapreduce with undetermined inputs or
+    %% permissions that don't tie to a particular bucket, like 'ping' and
+    %% 'stats'.
+    MatchG = match_grant(any, Grants),
+    case MatchG /= undefined andalso
+         (lists:member(Permission, MatchG) orelse MatchG == 'all') of
+        true ->
+            {true, Context};
+        false ->
+            %% no applicable grant
+            {false, io_lib:format("Permission denied: User '~s' does not have"
+                                  "'~s' on ANY", [Username,
+                                                 Permission]), Context}
+    end;
+check_permission({Permission, Bucket}, Context0) ->
+    Context = maybe_refresh_context(Context0),
+    {Username, Grants, _CtxEpoch} = Context,
+    MatchG = match_grant(Bucket, Grants),
+    case MatchG /= undefined andalso
+         (lists:member(Permission, MatchG) orelse MatchG == 'all') of
+        true ->
+            {true, Context};
+        false ->
+            %% no applicable grant
+            {false, io_lib:format("Permission denied: User '~s' does not have"
+                                  "'~s' on ~p", [Username,
+                                                 Permission,
+                                                 Bucket]), Context}
+    end.
+
+check_permissions(Permission, Ctx) when is_tuple(Permission) ->
+    %% single permission
+    check_permission(Permission, Ctx);
+check_permissions([], Ctx) ->
+    {true, Ctx};
+check_permissions([Permission|Rest], Ctx) ->
+    case check_permission(Permission, Ctx) of
+        {true, NewCtx} ->
+            check_permissions(Rest, NewCtx);
+        Other ->
+            %% return non-standard result
+            Other
+    end.
+
+maybe_refresh_context(Context) ->
     %% TODO replace this with a cluster metadata hash check, or something
     Epoch = os:timestamp(),
-    {Username, Grants, CtxEpoch} = Context,
+    {Username, _Grants, CtxEpoch} = Context,
     case timer:now_diff(Epoch, CtxEpoch) < 1000 of
         false ->
             %% context has expired
-            check_permission(Permission, Bucket, get_context(Username));
-        true ->
-            case match_grant(Bucket, Grants) of
-                {_B, MatchG} ->
-                    case MatchG /= undefined andalso
-                        (lists:member(Permission, MatchG) orelse MatchG == 'all') of
-                        true ->
-                            {true, Context};
-                        false ->
-                            %% no applicable grant
-                            {false, Context}
-                    end;
-                undefined ->
-                    %% no grants for this user at all
-                    {false, Context}
-            end
+            get_context(Username);
+        _ ->
+            Context
     end.
 
 get_username({Username, _Grants, _Expiry}) ->
     Username.
 
 match_grant(Bucket, Grants) ->
-    %% find the first grant that matches the bucket name
-    lists:foldl(fun({B, P}, undefined) when Bucket == B ->
-                        {B, P};
+    AnyGrants = proplists:get_value(any, Grants, []),
+    %% find the first grant that matches the bucket name and then merge in the
+    %% 'any' grants, if any
+    lists:umerge(lists:sort(lists:foldl(fun({B, P}, Acc) when Bucket == B ->
+                        P ++ Acc;
+                   ({B, P}, Acc) when element(1, Bucket) == B ->
+                        %% wildcard match against bucket type
+                        P ++ Acc;
                    (_, Acc) ->
                         Acc
-                end, undefined, lists:sort(fun({A, _}, {B, _}) ->
-                    %% sort by descending bucket length, so more specific
-                    %% matches come first
-                    length(A) > length(B)
-            end, Grants)).
+                end, [], Grants)), lists:sort(AnyGrants)).
 
 authenticate(Username, Password, ConnInfo) ->
     case riak_core_metadata:get({<<"security">>, <<"roles">>}, Username) of
@@ -505,6 +544,9 @@ add_revoke_int([User|Users], Bucket, Permissions) ->
         GrantedPermissions ->
             NewPerms = [X || X <- GrantedPermissions, not lists:member(X,
                                                                        Permissions)],
+
+            %% TODO - do deletes here, once cluster metadata supports it for
+            %% real, if NeePerms == []
 
             riak_core_metadata:put({<<"security">>, <<"grants">>}, {User,
                                                                   Bucket},

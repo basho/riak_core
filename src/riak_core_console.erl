@@ -848,13 +848,31 @@ add_source([Users, CIDR, Source | Options]) ->
             Error
     end.
 
+grant([Grants, "ON", "ANY", "TO", Users]) ->
+    Unames = case string:tokens(Users, ",") of
+        ["all"] ->
+            all;
+        Other ->
+            [list_to_binary(O) || O <- Other]
+    end,
+    Permissions = case string:tokens(Grants, ",") of
+        ["all"] ->
+            all;
+        Other2 ->
+            Other2
+    end,
+    case riak_core_security:add_grant(Unames, any, Permissions) of
+        ok -> ok;
+        Error ->
+            io:format("~p~n", [Error]),
+            Error
+    end;
 grant([Grants, "ON", Type, Bucket, "TO", Users]) ->
     grant([Grants, "ON", {list_to_binary(Type), list_to_binary(Bucket)}, "TO",
            Users]);
-grant([Grants, "ON", Bucket, "TO", Users]) when is_list(Bucket) ->
-    grant([Grants, "ON", list_to_binary(Bucket), "TO", Users]);
-grant([Grants, "ON", Bucket, "TO", Users]) when is_tuple(Bucket);
-                                                is_binary(Bucket) ->
+grant([Grants, "ON", Type, "TO", Users]) when is_list(Type) ->
+    grant([Grants, "ON", list_to_binary(Type), "TO", Users]);
+grant([Grants, "ON", Bucket, "TO", Users]) ->
     Unames = case string:tokens(Users, ",") of
         ["all"] ->
             all;
@@ -874,15 +892,29 @@ grant([Grants, "ON", Bucket, "TO", Users]) when is_tuple(Bucket);
             Error
     end;
 grant(_) ->
-    io:format("Usage: grant <permissions> ON <bucket> TO <users>"),
+    io:format("Usage: grant <permissions> ON (<type> [bucket]|ANY) TO <users>"),
     error.
 
+revoke([Grants, "ON", "ANY", "FROM", Users]) ->
+    Unames = case string:tokens(Users, ",") of
+        ["all"] ->
+            all;
+        Other ->
+            [list_to_binary(O) || O <- Other]
+    end,
+    Permissions = case string:tokens(Grants, ",") of
+        ["all"] ->
+            all;
+        Other2 ->
+            Other2
+    end,
+    riak_core_security:add_revoke(Unames, any, Permissions);
 revoke([Grants, "ON", Type, Bucket, "FROM", Users]) ->
     revoke([Grants, "ON", {list_to_binary(Type), list_to_binary(Bucket)},
             "FROM",
            Users]);
-revoke([Grants, "ON", Bucket, "FROM", Users]) when is_list(Bucket) ->
-    revoke([Grants, "ON", list_to_binary(Bucket), "FROM", Users]);
+revoke([Grants, "ON", Type, "FROM", Users]) when is_list(Type) ->
+    revoke([Grants, "ON", list_to_binary(Type), "FROM", Users]);
 revoke([Grants, "ON", Bucket, "FROM", Users]) ->
     Unames = case string:tokens(Users, ",") of
         ["all"] ->
@@ -898,7 +930,7 @@ revoke([Grants, "ON", Bucket, "FROM", Users]) ->
     end,
     riak_core_security:add_revoke(Unames, Bucket, Permissions);
 revoke(_) ->
-    io:format("Usage: revoke <permissions> ON <bucket> FROM <users>"),
+    io:format("Usage: revoke <permissions> ON <type> [bucket] FROM <users>"),
     error.
 
 
