@@ -34,3 +34,10 @@
 %% has already been sent with information that subsumes the message associated with the given
 %% message id. In this case, `stale' is returned.
 -callback graft(any()) -> stale | {ok, any()} | {error, any()}.
+
+%% @doc trigger an exchange between the local handler and the handler on the given node.
+%% How the exchange is performed is not defined but it should be performed as a background
+%% process and ensure that it delivers any messages missing on either the local or remote node.
+%% The exchange does not need to account for messages in-flight when it is started or broadcast
+%% during its operation. These can be taken care of in future exchanges.
+-callback exchange(node()) -> {ok, pid()} | {error, term()}.

@@ -24,6 +24,7 @@
          value_count/1,
          context/1,
          empty_context/0,
+         hash/1,
          modify/4,
          reconcile/2,
          resolve/2,
@@ -58,6 +59,11 @@ context({metadata, Object}) ->
 -spec empty_context() -> metadata_context().
 empty_context() -> [].
 
+%% @doc returns a hash representing the metadata objects contents
+-spec hash(metadata_object()) -> binary().
+hash({metadata, Object}) ->
+    term_to_binary(erlang:phash2(term_to_binary(Object))).
+
 %% @doc modifies a potentially existing object, setting its value and updating
 %% the causual history. If a function is provided as the third argument
 %% then this function also is used for conflict resolution. The difference
@@ -86,6 +92,8 @@ modify({metadata, Existing}, Context, Value, ServerId) ->
 %% element of the two-tuple
 -spec reconcile(metadata_object(), metadata_object() | undefined) ->
                        false | {true, metadata_object()}.
+reconcile(undefined, _LocalObj) ->
+    false;
 reconcile(RemoteObj, undefined) ->
     {true, RemoteObj};
 reconcile({metadata, RemoteObj}, {metadata, LocalObj}) ->
