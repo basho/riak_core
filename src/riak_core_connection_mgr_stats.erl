@@ -48,7 +48,8 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 register_stats() ->
-    [(catch exometer_entry:delete(Stat)) || {Stat,_} <- exometer_entry:find_entries([?APP])],
+    [(catch exometer_entry:delete(Stat))
+     || {Stat,_,_} <- exometer_entry:find_entries([?APP])],
     [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()],
     riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
 
@@ -285,7 +286,7 @@ register_stat(Name, counter) ->
 %% @doc Produce a proplist-formatted view of the current aggregation
 %%      of stats.
 produce_stats() ->
-    Stats = [Stat || {Stat,_} <- exometer_entry:find_entries([?APP])],
+    Stats = [Stat || {Stat,_,_} <- exometer_entry:find_entries([?APP])],
     lists:flatten([{Stat, get_stat(Stat)} || Stat <- Stats]).
 
 %% Get the value of the named stats metric
