@@ -54,35 +54,10 @@
 -spec get_stats(path()) -> stats().
 get_stats(Path) ->
     %% get all the stats that are at Path
-    NamesNTypes = names_and_types(Path),
-    calculate_stats(NamesNTypes).
-
-%% @doc queries metrics table for stats that match our path
-names_and_types(Path) ->
-    exometer_entry:find_entries(Path).
-
-%% guards_from_path(Path) ->
-%%     SizeGuard = size_guard(length(Path)),
-%%     %% Going to reverse it is why this way around
-%%     Guards = [SizeGuard, {is_tuple, '$1'}],
-%%     add_guards(Path, Guards, 1).
-
-%% add_guards([], Guards, _Cnt) ->
-%%     lists:reverse(Guards);
-%% add_guards(['_'|Path], Guards, Cnt) ->
-%%     add_guards(Path, Guards, Cnt+1);
-%% add_guards([Elem|Path], Guards, Cnt) ->
-%%    add_guards(Path, [guard(Elem, Cnt) | Guards], Cnt+1).
-
-%% guard(Elem, Cnt) when Cnt > 0 ->
-%%     {'==', {element, Cnt, '$1'}, Elem}.
-
-%% -spec size_guard(pos_integer()) -> tuple().
-%% size_guard(N) ->
-%%     {'>=', {size, '$1'}, N}.
+    calculate_stats(exometer_entry:find_entries(Path)).
 
 calculate_stats(NamesAndTypes) ->
-    [{Name, get_stat({Name, Type})} || {Name, {metric, _, Type, _}} <- NamesAndTypes].
+    [{Name, get_stat({Name, Type})} || {Name, Type, _} <- NamesAndTypes].
 
 %% Create/lookup a cache/calculation process
 get_stat(Stat) ->
@@ -102,7 +77,7 @@ calc_stat({[_|_] = Name, _Type}) ->
     stat_return(exometer_entry:get_value(Name)).
 
 stat_return({error,not_found}) -> unavailable;
-stat_return(Value) -> Value.
+stat_return({ok, Value}) -> Value.
 
 log_error(StatName, ErrClass, ErrReason) ->
     lager:warning("Failed to calculate stat ~p with ~p:~p", [StatName, ErrClass, ErrReason]).
