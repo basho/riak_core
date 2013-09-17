@@ -292,7 +292,12 @@ produce_stats() ->
 %% Get the value of the named stats metric
 %% NOTE: won't work for Histograms
 get_stat(Name) ->
-    exometer_entry:get_value(Name).
+    case exometer_entry:get_value(Name) of
+	{ok, Value} ->
+	    Value;
+	{error, _} ->
+	    unavailable
+    end.
 
 %% Return list of static stat names and types to register
 stats() -> []. %% no static stats to register
