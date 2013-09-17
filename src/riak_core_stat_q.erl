@@ -52,15 +52,10 @@
 -spec get_stats(path()) -> stats().
 get_stats(Path) ->
     %% get all the stats that are at Path
-    NamesNTypes = names_and_types(Path),
-    calculate_stats(NamesNTypes).
-
-%% @doc queries metrics table for stats that match our path
-names_and_types(Path) ->
-    exometer_entry:find_entries(Path).
+    calculate_stats(exometer:find_entries(Path)).
 
 calculate_stats(NamesAndTypes) ->
-    [{Name, get_stat(Name)} || {Name, _, _} <- NamesAndTypes].
+    [{Name, get_stat({Name, Type})} || {Name, Type, _} <- NamesAndTypes].
 
 %% Create/lookup a cache/calculation process
 get_stat(Stat) ->
@@ -79,7 +74,7 @@ calc_stat({[_|_] = Name, _Type}) ->
     stat_return(exometer_entry:get_value(Name)).
 
 stat_return({error,not_found}) -> unavailable;
-stat_return(Value) -> Value.
+stat_return({ok, Value}) -> Value.
 
 log_error(StatName, ErrClass, ErrReason) ->
     lager:warning("Failed to calculate stat ~p with ~p:~p", [StatName, ErrClass, ErrReason]).
