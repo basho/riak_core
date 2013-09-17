@@ -182,7 +182,9 @@ update_ring(Ring) ->
             add_supported_to_ring(node(), Supported, Ring)
     end.
 
-%% @doc Make a capbility from
+%% @doc
+%% Make a capbility from a capability atom, a list of supported modes,
+%% the default mode, and a mapping from a legacy var to it's capabilities.
 -spec make_capability(capability(), [mode()], mode(), term())
                      -> {capability(), #capability{}}.
 make_capability(Capability, Supported, Default, Legacy) ->
@@ -402,6 +404,7 @@ add_supported_to_ring(Node, Supported, Ring) ->
             {true, Ring2}
     end.
 
+%% @doc
 %% Given my node's capabilities, my node's registered default modes, the
 %% list of application env overrides, and the current view of all node's
 %% supported capabilities, determine the most preferred mode for each capability
