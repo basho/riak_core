@@ -25,7 +25,7 @@
 %% API
 -export([authenticate/3, add_user/2, add_source/4, add_grant/3,
          add_revoke/3, check_permission/2, check_permissions/2,
-         get_username/1]).
+         get_username/1, is_enabled/0]).
 %% TODO add rm_source, API to deactivate/remove users
 
 -record(context,
@@ -364,6 +364,10 @@ add_source([H|_T]=UserList, CIDR, Source, Options) when is_binary(H) ->
 add_source(User, CIDR, Source, Options) ->
     %% single user
     add_source([User], CIDR, Source, Options).
+
+is_enabled() ->
+    %% TODO this should be some kind of capability or cluster-wide config
+    app_helper:get_env(riak_core, security, false).
 
 
 %% ============
