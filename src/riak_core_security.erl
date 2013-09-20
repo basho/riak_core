@@ -19,77 +19,19 @@
 %% -------------------------------------------------------------------
 -module(riak_core_security).
 
-%% TODO
--compile(export_all).
+%% printing functions
+-export([print_users/0, print_sources/0, print_user/1]).
 
-initial_config() ->
-    %[{users, [{"andrew", [{password, "foo"}]}]},
-    [{users, []},
-     {sources, []},
-     {grants, []},
-     {revokes, []},
-     {epoch, os:timestamp()}
-    ].
+%% API
+-export([authenticate/3, add_user/2, add_source/4, add_grant/3,
+         add_revoke/3, check_permission/2, check_permissions/2,
+         get_username/1]).
+%% TODO add rm_source, API to deactivate/remove users
 
-get_meta() ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    case riak_core_ring:get_meta(?MODULE, Ring) of
-        undefined ->
-            initial_config();
-        {ok, Meta} ->
-            Meta
-    end.
-
-put_meta(Meta) ->
-    riak_core_ring_manager:ring_trans(fun(Ring, M) ->
-                {new_ring, riak_core_ring:update_meta(?MODULE, M, Ring)}
-        end, Meta).
-
-%% lookup a key in a list of key/value tuples. Like proplists:get_value but
-%% faster.
-lookup(Key, List, Default) ->
-    case lists:keyfind(Key, 1, List) of
-        false ->
-            Default;
-        {Key, Value} ->
-            Value
-    end.
-
-lookup(Key, List) ->
-    lookup(Key, List, undefined).
-
-stash(Key, Value, List) ->
-    lists:keystore(Key, 1, List, Value).
-
-%% @doc Get the subnet mask as an integer, stolen from an old post on
-%%      erlang-questions.
-mask_address(Addr={_, _, _, _}, Maskbits) ->
-    B = list_to_binary(tuple_to_list(Addr)),
-    <<Subnet:Maskbits, _Host/bitstring>> = B,
-    Subnet;
-mask_address({A, B, C, D, E, F, G, H}, Maskbits) ->
-    <<Subnet:Maskbits, _Host/bitstring>> = <<A:16, B:16, C:16, D:16, E:16,
-                                             F:16, G:16, H:16>>,
-    Subnet.
-
-%% @doc returns the real bottom of a netmask. Eg if 192.168.1.1/16 is
-%% provided, return 192.168.0.0/16
-anchor_mask(Addr={_, _, _, _}, Maskbits) ->
-    M = mask_address(Addr, Maskbits),
-    Rem = 32 - Maskbits,
-    <<A:8, B:8, C:8, D:8>> = <<M:Maskbits, 0:Rem>>,
-    {{A, B, C, D}, Maskbits};
-anchor_mask(Addr={_, _, _, _, _, _, _, _}, Maskbits) ->
-    M = mask_address(Addr, Maskbits),
-    Rem = 128 - Maskbits,
-    <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>> = <<M:Maskbits, 0:Rem>>,
-    {{A, B, C, D, E, F, G, H}, Maskbits}.
-
-anchor_mask({Addr, Mask}) ->
-    anchor_mask(Addr, Mask).
-
-prettyprint_cidr({Addr, Mask}) ->
-    io_lib:format("~s/~B", [inet_parse:ntoa(Addr), Mask]).
+-record(context,
+        {username,
+         grants,
+         epoch}).
 
 prettyprint_users([all]) ->
     "all";
@@ -97,63 +39,6 @@ prettyprint_users(Users0) ->
     %% my kingdom for an iolist join...
     Users = [binary_to_list(U) || U <- Users0],
     string:join(Users, ", ").
-
-match_source([], _User, _PeerIP) ->
-    {error, no_matching_sources};
-match_source([{UserName, {IP,Mask}, Source, Options}|Tail], User, PeerIP) ->
-    case (UserName == all orelse
-          UserName == User) andalso
-        mask_address(IP, Mask) == mask_address(PeerIP, Mask) of
-        true ->
-            {ok, Source, Options};
-        false ->
-            match_source(Tail, User, PeerIP)
-    end.
-
-sort_sources(Sources) ->
-    %% sort sources first by userlist, so that 'all' matches come last
-    %% and then by CIDR, so that most sprcific masks come first
-    Sources1 = lists:sort(fun({UserA, _, _, _}, {UserB, _, _, _}) ->
-                    case {UserA, UserB} of
-                        {all, all} ->
-                            true;
-                        {all, _} ->
-                            %% anything is greater than 'all'
-                            true;
-                        {_, all} ->
-                            false;
-                        {_, _} ->
-                            true
-                    end
-            end, Sources),
-    lists:sort(fun({_, {_, MaskA}, _, _}, {_, {_, MaskB}, _, _}) ->
-                MaskA > MaskB
-        end, Sources1).
-
-%% group users sharing the same CIDR/Source/Options
-group_sources(Sources) ->
-    D = lists:foldl(fun({User, CIDR, Source, Options}, Acc) ->
-                dict:append({CIDR, Source, Options}, User, Acc)
-        end, dict:new(), Sources),
-    R1 = [{Users, CIDR, Source, Options} || {{CIDR, Source, Options}, Users} <-
-                                       dict:to_list(D)],
-    %% sort the result by the same criteria that sort_sources uses
-    R2 = lists:sort(fun({UserA, _, _, _}, {UserB, _, _, _}) ->
-                    case {UserA, UserB} of
-                        {[all], [all]} ->
-                            true;
-                        {[all], _} ->
-                            %% anything is greater than 'all'
-                            true;
-                        {_, [all]} ->
-                            false;
-                        {_, _} ->
-                            true
-                    end
-            end, R1),
-    lists:sort(fun({_, {_, MaskA}, _, _}, {_, {_, MaskB}, _, _}) ->
-                MaskA > MaskB
-        end, R2).
 
 print_sources() ->
     Sources = riak_core_metadata:fold(fun({{Username, CIDR}, [{Source, Options}]}, Acc) ->
@@ -215,50 +100,13 @@ print_user(User) ->
             ok
     end.
 
-
-group_grants(Grants) ->
-    D = lists:foldl(fun({{_User, Bucket}, G}, Acc) ->
-                dict:append(Bucket, G, Acc)
-        end, dict:new(), Grants),
-    [{Bucket, lists:usort(flatten_once(P))} || {Bucket, P} <- dict:to_list(D)].
-
-flatten_once(List) ->
-    lists:foldl(fun(A, Acc) ->
-                        A ++ Acc
-                end, [], List).
-
-%% Contexts are only valid until the GRANT epoch changes, and it will change
-%% whenever a GRANT or a REVOKE is performed. This is a little coarse grained
-%% right now, but it'll do for the moment.
-get_context(Username) when is_binary(Username) ->
-    Grants = group_grants(accumulate_grants(Username)),
-    {Username, Grants, os:timestamp()}.
-
-accumulate_grants(Role) ->
-    {Grants, _Seen} = accumulate_grants([Role], [], []),
-    lists:flatten(Grants).
-
-accumulate_grants([], Seen, Acc) ->
-    {Acc, Seen};
-accumulate_grants([Role|Roles], Seen, Acc) ->
-    Options = riak_core_metadata:get({<<"security">>, <<"roles">>}, Role),
-    NestedRoles = [R || R <- lookup("roles", Options), not lists:member(R, Seen)],
-    {NewAcc, NewSeen} = accumulate_grants(NestedRoles, [Role|Seen], Acc),
-
-    Grants = riak_core_metadata:fold(fun({{R, Bucket}, [Permissions]}, A) ->
-                                             [{{R, Bucket}, Permissions}|A]
-                                     end, [], {<<"security">>, <<"grants">>},
-                                     [{match, {Role, '_'}}]),
-    accumulate_grants(Roles, NewSeen, [Grants|NewAcc]).
-
 check_permission({Permission}, Context0) ->
     Context = maybe_refresh_context(Context0),
-    {Username, Grants, _CtxEpoch} = Context,
     %% The user needs to have this permission applied *globally*
     %% This is for things like mapreduce with undetermined inputs or
     %% permissions that don't tie to a particular bucket, like 'ping' and
     %% 'stats'.
-    MatchG = match_grant(any, Grants),
+    MatchG = match_grant(any, Context#context.grants),
     case MatchG /= undefined andalso
          (lists:member(Permission, MatchG) orelse MatchG == 'all') of
         true ->
@@ -266,13 +114,12 @@ check_permission({Permission}, Context0) ->
         false ->
             %% no applicable grant
             {false, io_lib:format("Permission denied: User '~s' does not have"
-                                  "'~s' on ANY", [Username,
+                                  "'~s' on ANY", [Context#context.username,
                                                  Permission]), Context}
     end;
 check_permission({Permission, Bucket}, Context0) ->
     Context = maybe_refresh_context(Context0),
-    {Username, Grants, _CtxEpoch} = Context,
-    MatchG = match_grant(Bucket, Grants),
+    MatchG = match_grant(Bucket, Context#context.grants),
     case MatchG /= undefined andalso
          (lists:member(Permission, MatchG) orelse MatchG == 'all') of
         true ->
@@ -280,7 +127,7 @@ check_permission({Permission, Bucket}, Context0) ->
         false ->
             %% no applicable grant
             {false, io_lib:format("Permission denied: User '~s' does not have"
-                                  "'~s' on ~p", [Username,
+                                  "'~s' on ~p", [Context#context.username,
                                                  Permission,
                                                  Bucket]), Context}
     end.
@@ -299,33 +146,8 @@ check_permissions([Permission|Rest], Ctx) ->
             Other
     end.
 
-maybe_refresh_context(Context) ->
-    %% TODO replace this with a cluster metadata hash check, or something
-    Epoch = os:timestamp(),
-    {Username, _Grants, CtxEpoch} = Context,
-    case timer:now_diff(Epoch, CtxEpoch) < 1000 of
-        false ->
-            %% context has expired
-            get_context(Username);
-        _ ->
-            Context
-    end.
-
-get_username({Username, _Grants, _Expiry}) ->
+get_username(#context{username=Username}) ->
     Username.
-
-match_grant(Bucket, Grants) ->
-    AnyGrants = proplists:get_value(any, Grants, []),
-    %% find the first grant that matches the bucket name and then merge in the
-    %% 'any' grants, if any
-    lists:umerge(lists:sort(lists:foldl(fun({B, P}, Acc) when Bucket == B ->
-                        P ++ Acc;
-                   ({B, P}, Acc) when element(1, Bucket) == B ->
-                        %% wildcard match against bucket type
-                        P ++ Acc;
-                   (_, Acc) ->
-                        Acc
-                end, [], Grants)), lists:sort(AnyGrants)).
 
 authenticate(Username, Password, ConnInfo) ->
     case riak_core_metadata:get({<<"security">>, <<"roles">>}, Username) of
@@ -435,8 +257,6 @@ add_grant([H|_T]=UserList, Bucket, Grants) when is_binary(H) ->
     %% validate the users...
     
     UnknownUsers = riak_core_metadata:fold(fun({Username, _}, Acc) ->
-                                                   io:format("~p~n",
-                                                              [Username]),
                                                    Acc -- [Username]
                                            end, UserList, {<<"security">>,
                                            <<"roles">>}),
@@ -464,21 +284,6 @@ add_grant(User, Bucket, Grants) ->
     %% single user
     add_grant([User], Bucket, Grants).
 
-add_grant_int([], _, _) ->
-    ok;
-add_grant_int([User|Users], Bucket, Permissions) ->
-    BucketPermissions = case riak_core_metadata:get({<<"security">>, <<"grants">>},
-                                               {User, Bucket}) of
-                            undefined ->
-                                [];
-                            Perms ->
-                                Perms
-                        end,
-    NewPerms = lists:umerge(lists:sort(BucketPermissions),
-                            lists:sort(Permissions)),
-    riak_core_metadata:put({<<"security">>, <<"grants">>}, {User, Bucket},
-                           NewPerms),
-    add_grant_int(Users, Bucket, Permissions).
 
 add_revoke(all, Bucket, Revokes) ->
     %% all is always valid
@@ -497,8 +302,6 @@ add_revoke([H|_T]=UserList, Bucket, Revokes) when is_binary(H) ->
     %% list of lists, weeeee
     %% validate the users...
     UnknownUsers = riak_core_metadata:fold(fun({Username, _}, Acc) ->
-                                                   io:format("~p~n",
-                                                              [Username]),
                                                    Acc -- [Username]
                                            end, UserList, {<<"security">>,
                                            <<"roles">>}),
@@ -530,6 +333,43 @@ add_revoke(User, Bucket, Revokes) ->
     %% single user
     add_revoke([User], Bucket, Revokes).
 
+
+add_source(all, CIDR, Source, Options) ->
+    %% all is always valid
+    add_source_int([all], anchor_mask(CIDR), Source, Options),
+    ok;
+add_source([H|_T]=UserList, CIDR, Source, Options) when is_binary(H) ->
+    %% list of lists, weeeee
+    %% validate the users...
+    UnknownUsers = riak_core_metadata:fold(fun({Username, _}, Acc) ->
+                                                   Acc -- [Username]
+                                           end, UserList, {<<"security">>,
+                                           <<"roles">>}),
+    Valid = case UnknownUsers of
+                [] ->
+                    ok;
+                _ ->
+                    {error, {unknown_users, UnknownUsers}}
+            end,
+
+    case Valid of
+        ok ->
+            %% add a source for each user
+            add_source_int(UserList, anchor_mask(CIDR), Source,
+                                    Options),
+            ok;
+        Error ->
+            Error
+    end;
+add_source(User, CIDR, Source, Options) ->
+    %% single user
+    add_source([User], CIDR, Source, Options).
+
+
+%% ============
+%% INTERNAL
+%% ============
+
 add_revoke_int([], _, _) ->
     ok;
 add_revoke_int([User|Users], Bucket, Permissions) ->
@@ -554,42 +394,6 @@ add_revoke_int([User|Users], Bucket, Permissions) ->
             add_revoke_int(Users, Bucket, Permissions)
     end.
 
-add_source(all, CIDR, Source, Options) ->
-    %% all is always valid
-    add_source_int([all], anchor_mask(CIDR), Source, Options),
-    ok;
-add_source([H|_T]=UserList, CIDR, Source, Options) when is_binary(H) ->
-    %% list of lists, weeeee
-    %% validate the users...
-    io:format("Unames ~p~n", [UserList]),
-    UnknownUsers = riak_core_metadata:fold(fun({Username, _}, Acc) ->
-                                                   io:format("user ~p~n",
-                                                             [Username]),
-                                                   io:format("acc ~p~n",
-                                                             [Acc]),
-                                                   Acc -- [Username]
-                                           end, UserList, {<<"security">>,
-                                           <<"roles">>}),
-    Valid = case UnknownUsers of
-                [] ->
-                    ok;
-                _ ->
-                    {error, {unknown_users, UnknownUsers}}
-            end,
-
-    case Valid of
-        ok ->
-            %% add a source for each user
-            add_source_int(UserList, anchor_mask(CIDR), Source,
-                                    Options),
-            ok;
-        Error ->
-            Error
-    end;
-add_source(User, CIDR, Source, Options) ->
-    %% single user
-    add_source([User], CIDR, Source, Options).
-
 add_source_int([], _, _, _) ->
     ok;
 add_source_int([User|Users], CIDR, Source, Options) ->
@@ -597,25 +401,119 @@ add_source_int([User|Users], CIDR, Source, Options) ->
                            {Source, Options}),
     add_source_int(Users, CIDR, Source, Options).
 
-rm_source(all, CIDR) ->
-    Meta = get_meta(),
-    put_meta(rm_source_int(all, anchor_mask(CIDR), Meta)),
+add_grant_int([], _, _) ->
     ok;
-rm_source([H|_]=UserList, CIDR) when is_list(H) ->
-    Meta = get_meta(),
-    put_meta(rm_source_int(UserList, anchor_mask(CIDR), Meta)),
-    ok;
-rm_source(User, CIDR) ->
-    %% single user
-    rm_source([User], CIDR).
+add_grant_int([User|Users], Bucket, Permissions) ->
+    BucketPermissions = case riak_core_metadata:get({<<"security">>, <<"grants">>},
+                                               {User, Bucket}) of
+                            undefined ->
+                                [];
+                            Perms ->
+                                Perms
+                        end,
+    NewPerms = lists:umerge(lists:sort(BucketPermissions),
+                            lists:sort(Permissions)),
+    riak_core_metadata:put({<<"security">>, <<"grants">>}, {User, Bucket},
+                           NewPerms),
+    add_grant_int(Users, Bucket, Permissions).
 
-rm_source_int([], _, Meta) ->
-    Meta;
-rm_source_int([User|Users], CIDR, Meta) ->
-    Sources = lookup(sources, Meta, []),
-    NewMeta = stash(sources, {sources, lists:keydelete({User, CIDR}, 1,
-                                                       Sources)}, Meta),
-    rm_source_int(Users, CIDR, NewMeta).
+match_grant(Bucket, Grants) ->
+    AnyGrants = proplists:get_value(any, Grants, []),
+    %% find the first grant that matches the bucket name and then merge in the
+    %% 'any' grants, if any
+    lists:umerge(lists:sort(lists:foldl(fun({B, P}, Acc) when Bucket == B ->
+                        P ++ Acc;
+                   ({B, P}, Acc) when element(1, Bucket) == B ->
+                        %% wildcard match against bucket type
+                        P ++ Acc;
+                   (_, Acc) ->
+                        Acc
+                end, [], Grants)), lists:sort(AnyGrants)).
+
+maybe_refresh_context(Context) ->
+    %% TODO replace this with a cluster metadata hash check, or something
+    Epoch = os:timestamp(),
+    case timer:now_diff(Epoch, Context#context.epoch) < 1000 of
+        false ->
+            %% context has expired
+            get_context(Context#context.username);
+        _ ->
+            Context
+    end.
+
+
+
+%% Contexts are only valid until the GRANT epoch changes, and it will change
+%% whenever a GRANT or a REVOKE is performed. This is a little coarse grained
+%% right now, but it'll do for the moment.
+get_context(Username) when is_binary(Username) ->
+    Grants = group_grants(accumulate_grants(Username)),
+    #context{username=Username, grants=Grants, epoch=os:timestamp()}.
+
+accumulate_grants(Role) ->
+    {Grants, _Seen} = accumulate_grants([Role], [], []),
+    lists:flatten(Grants).
+
+accumulate_grants([], Seen, Acc) ->
+    {Acc, Seen};
+accumulate_grants([Role|Roles], Seen, Acc) ->
+    Options = riak_core_metadata:get({<<"security">>, <<"roles">>}, Role),
+    NestedRoles = [R || R <- lookup("roles", Options), not lists:member(R, Seen)],
+    {NewAcc, NewSeen} = accumulate_grants(NestedRoles, [Role|Seen], Acc),
+
+    Grants = riak_core_metadata:fold(fun({{R, Bucket}, [Permissions]}, A) ->
+                                             [{{R, Bucket}, Permissions}|A]
+                                     end, [], {<<"security">>, <<"grants">>},
+                                     [{match, {Role, '_'}}]),
+    accumulate_grants(Roles, NewSeen, [Grants|NewAcc]).
+
+%% lookup a key in a list of key/value tuples. Like proplists:get_value but
+%% faster.
+lookup(Key, List, Default) ->
+    case lists:keyfind(Key, 1, List) of
+        false ->
+            Default;
+        {Key, Value} ->
+            Value
+    end.
+
+lookup(Key, List) ->
+    lookup(Key, List, undefined).
+
+stash(Key, Value, List) ->
+    lists:keystore(Key, 1, List, Value).
+
+%% @doc Get the subnet mask as an integer, stolen from an old post on
+%%      erlang-questions.
+mask_address(Addr={_, _, _, _}, Maskbits) ->
+    B = list_to_binary(tuple_to_list(Addr)),
+    <<Subnet:Maskbits, _Host/bitstring>> = B,
+    Subnet;
+mask_address({A, B, C, D, E, F, G, H}, Maskbits) ->
+    <<Subnet:Maskbits, _Host/bitstring>> = <<A:16, B:16, C:16, D:16, E:16,
+                                             F:16, G:16, H:16>>,
+    Subnet.
+
+%% @doc returns the real bottom of a netmask. Eg if 192.168.1.1/16 is
+%% provided, return 192.168.0.0/16
+anchor_mask(Addr={_, _, _, _}, Maskbits) ->
+    M = mask_address(Addr, Maskbits),
+    Rem = 32 - Maskbits,
+    <<A:8, B:8, C:8, D:8>> = <<M:Maskbits, 0:Rem>>,
+    {{A, B, C, D}, Maskbits};
+anchor_mask(Addr={_, _, _, _, _, _, _, _}, Maskbits) ->
+    M = mask_address(Addr, Maskbits),
+    Rem = 128 - Maskbits,
+    <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>> = <<M:Maskbits, 0:Rem>>,
+    {{A, B, C, D, E, F, G, H}, Maskbits}.
+
+anchor_mask({Addr, Mask}) ->
+    anchor_mask(Addr, Mask).
+
+prettyprint_cidr({Addr, Mask}) ->
+    io_lib:format("~s/~B", [inet_parse:ntoa(Addr), Mask]).
+
+
 
 validate_options(Options) ->
     %% Check if password is an option
@@ -699,3 +597,73 @@ is_valid_role(Role) ->
         _ ->
             true
     end.
+
+match_source([], _User, _PeerIP) ->
+    {error, no_matching_sources};
+match_source([{UserName, {IP,Mask}, Source, Options}|Tail], User, PeerIP) ->
+    case (UserName == all orelse
+          UserName == User) andalso
+        mask_address(IP, Mask) == mask_address(PeerIP, Mask) of
+        true ->
+            {ok, Source, Options};
+        false ->
+            match_source(Tail, User, PeerIP)
+    end.
+
+sort_sources(Sources) ->
+    %% sort sources first by userlist, so that 'all' matches come last
+    %% and then by CIDR, so that most sprcific masks come first
+    Sources1 = lists:sort(fun({UserA, _, _, _}, {UserB, _, _, _}) ->
+                    case {UserA, UserB} of
+                        {all, all} ->
+                            true;
+                        {all, _} ->
+                            %% anything is greater than 'all'
+                            true;
+                        {_, all} ->
+                            false;
+                        {_, _} ->
+                            true
+                    end
+            end, Sources),
+    lists:sort(fun({_, {_, MaskA}, _, _}, {_, {_, MaskB}, _, _}) ->
+                MaskA > MaskB
+        end, Sources1).
+
+%% group users sharing the same CIDR/Source/Options
+group_sources(Sources) ->
+    D = lists:foldl(fun({User, CIDR, Source, Options}, Acc) ->
+                dict:append({CIDR, Source, Options}, User, Acc)
+        end, dict:new(), Sources),
+    R1 = [{Users, CIDR, Source, Options} || {{CIDR, Source, Options}, Users} <-
+                                       dict:to_list(D)],
+    %% sort the result by the same criteria that sort_sources uses
+    R2 = lists:sort(fun({UserA, _, _, _}, {UserB, _, _, _}) ->
+                    case {UserA, UserB} of
+                        {[all], [all]} ->
+                            true;
+                        {[all], _} ->
+                            %% anything is greater than 'all'
+                            true;
+                        {_, [all]} ->
+                            false;
+                        {_, _} ->
+                            true
+                    end
+            end, R1),
+    lists:sort(fun({_, {_, MaskA}, _, _}, {_, {_, MaskB}, _, _}) ->
+                MaskA > MaskB
+        end, R2).
+
+group_grants(Grants) ->
+    D = lists:foldl(fun({{_User, Bucket}, G}, Acc) ->
+                dict:append(Bucket, G, Acc)
+        end, dict:new(), Grants),
+    [{Bucket, lists:usort(flatten_once(P))} || {Bucket, P} <- dict:to_list(D)].
+
+flatten_once(List) ->
+    lists:foldl(fun(A, Acc) ->
+                        A ++ Acc
+                end, [], List).
+
+
