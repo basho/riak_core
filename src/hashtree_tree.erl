@@ -153,7 +153,7 @@
                                                    remote_missing |
                                                    different, binary()}]}.
 -type diff()           :: prefix_diff() | key_diffs().
--opaque handler_fun(X) :: fun((diff(), X) -> X).
+-type handler_fun(X)   :: fun((diff(), X) -> X).
 -opaque remote_fun()   :: fun((prefixes(),
                                {get_bucket, {integer(), integer()}} |
                                {key_hashses, integer()}) -> orddict:orddict()).
