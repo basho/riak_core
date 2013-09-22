@@ -207,7 +207,7 @@ handle_info({'EXIT', BuiltPid, normal}, State=#state{built=BuiltPid}) ->
 handle_info({'EXIT', BuiltPid, _}, State=#state{built=BuiltPid}) ->
     State1 = build_error(State),
     {noreply, State1};
-handle_info({'EXIT', _, normal}, State) -> %% compare process
+handle_info({'EXIT', _, normal}, State) -> %% compare or update process
     {noreply, State};
 handle_info({'DOWN', LockRef, process, _Pid, _Reason}, State=#state{lock={_, LockRef}}) ->
     State1 = release_lock(State),
@@ -269,14 +269,14 @@ update_async(State) ->
 
 %% @private
 update_async(From, Lock, State=#state{tree=Tree}) ->
-    {Snap, Tree2} = hashtree_tree:update_snapshot(Tree),
-    Pid = spawn(fun() ->
-                        hashtree_tree:update_perform(Snap),
-                        case From of
-                            undefined -> ok;
-                            _ -> gen_server:reply(From, ok)
-                        end
-                end),
+    Tree2 = hashtree_tree:update_snapshot(Tree),
+    Pid = spawn_link(fun() ->
+                             hashtree_tree:update_perform(Tree2),
+                             case From of
+                                 undefined -> ok;
+                                 _ -> gen_server:reply(From, ok)
+                             end
+                     end),
     State1 = case Lock of
                  true -> lock(Pid, internal, State);
                  false -> State
