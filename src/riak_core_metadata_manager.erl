@@ -427,23 +427,30 @@ close_remote_iterator(Ref, State=#state{iterators=Iterators}) ->
     ets:delete(Iterators, Ref).
 
 open_iterator(undefined, KeyMatch) ->
+    %% full or sub-prefix iterator
     new_iterator(undefined, KeyMatch, ?ETS);
 open_iterator(FullPrefix, KeyMatch) ->
+    %% key/value iterator
     case ets_tab(FullPrefix) of
         undefined -> empty_iterator(FullPrefix, KeyMatch, undefined);
         Tab -> new_iterator(FullPrefix, KeyMatch, Tab)
     end.
 
 next_iterator(It=#metadata_iterator{done=true}) ->
+    %% general catch-all for all iterators
     It;
 next_iterator(It=#metadata_iterator{prefix=undefined,match=undefined,tab=Tab,pos=Pos}) ->
+    %% full-prefix iterator
     next_iterator(It, ets:next(Tab, Pos));
 next_iterator(It=#metadata_iterator{prefix=undefined,pos=Pos}) ->
+    %% sub-prefix iterator
     next_iterator(It, ets:select(Pos));
 next_iterator(It=#metadata_iterator{pos=Pos}) ->
+    %% key/value iterator
     next_iterator(It, ets:match_object(Pos)).
 
 next_iterator(Ref, #state{iterators=Iterators}) when is_reference(Ref) ->
+    %% remote iterator
     case ets:lookup(Iterators, Ref) of
         [] -> ok;
         [{Ref, It}] ->
@@ -452,15 +459,19 @@ next_iterator(Ref, #state{iterators=Iterators}) when is_reference(Ref) ->
     end,
     Ref;
 next_iterator(It, '$end_of_table') ->
+    %% general catch-all for all iterators
     It#metadata_iterator{done=true,
                          pos=undefined,
                          obj=undefined};
 next_iterator(It=#metadata_iterator{prefix=undefined,match=undefined},Next) ->
+    %% full-prefix iterator
     It#metadata_iterator{pos=Next};
 next_iterator(It, {[Next], Cont}) ->
+    %% sub-prefix or key/value iterator
     It#metadata_iterator{pos=Cont,
                          obj=Next}.
 
+%% universal empty iterator
 empty_iterator(FullPrefix, KeyMatch, Tab) ->
     #metadata_iterator{
                 prefix=FullPrefix,
@@ -472,18 +483,23 @@ empty_iterator(FullPrefix, KeyMatch, Tab) ->
                }.
 
 new_iterator(undefined, undefined, Tab) ->
+    %% full-prefix iterator
     ets:safe_fixtable(Tab, true),
     new_iterator(undefined, undefined, Tab, ets:first(Tab));
 new_iterator(undefined, Prefix, Tab) ->
+    %% sub-prefix iterator
     new_iterator(undefined, Prefix, Tab,
                  ets:select(Tab, [{{{Prefix,'$1'},'_'},[],['$1']}], 1));
 new_iterator(FullPrefix, KeyMatch, Tab) ->
+    %% key/value iterator
     ObjectMatch = iterator_match(KeyMatch),
     new_iterator(FullPrefix, KeyMatch, Tab, ets:match_object(Tab, ObjectMatch, 1)).
 
 new_iterator(FullPrefix, KeyMatch, Tab, '$end_of_table') ->
+    %% catch-all for empty iterator of all types
     empty_iterator(FullPrefix, KeyMatch, Tab);
 new_iterator(undefined, undefined, Tab, First) ->
+    %% full-prefix iterator
     #metadata_iterator{
        prefix=undefined,
        match=undefined,
@@ -493,6 +509,7 @@ new_iterator(undefined, undefined, Tab, First) ->
        tab=Tab
       };
 new_iterator(undefined, Prefix, Tab, {[First], Cont}) ->
+    %% sub-prefix iterator
     #metadata_iterator{
        prefix=undefined,
        match=Prefix,
@@ -502,6 +519,7 @@ new_iterator(undefined, Prefix, Tab, {[First], Cont}) ->
        tab=Tab
       };
 new_iterator(FullPrefix, KeyMatch, Tab, {[First], Cont}) ->
+    %% key/value iterator
     #metadata_iterator{
        prefix=FullPrefix,
        match=KeyMatch,
