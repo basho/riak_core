@@ -112,7 +112,7 @@ prepare(start, State) ->
     end;
 prepare(timeout, State=#state{peer=Peer}) ->
     %% getting remote lock timed out
-    lager:info("metadata exchange with ~p timed out aquiring locks", [Peer]),
+    lager:error("metadata exchange with ~p timed out aquiring locks", [Peer]),
     {stop, normal, State};
 prepare({remote_lock, ok}, State) ->
     %% getting remote lock succeeded
@@ -126,7 +126,7 @@ update(start, State) ->
     update_request(State#state.peer),
     {next_state, update, State, State#state.timeout};
 update(timeout, State=#state{peer=Peer}) ->
-    lager:info("metadata exchange with ~p timed out updating trees", [Peer]),
+    lager:error("metadata exchange with ~p timed out updating trees", [Peer]),
     {stop, normal, State};
 update(tree_updated, State) ->
     Built = State#state.built + 1,
@@ -154,8 +154,14 @@ exchange(timeout, State=#state{peer=Peer}) ->
     #exchange{local=LocalPrefixes,
               remote=RemotePrefixes,
               keys=Keys} = Res,
-    lager:info("completed metadata exchange with ~p. repaired ~p missing local prefixes, "
-               "~p missing remote prefixes, and ~p keys", [Peer, LocalPrefixes, RemotePrefixes, Keys]),
+    Total = LocalPrefixes + RemotePrefixes + Keys,
+    case Total > 0 of
+        true ->
+            lager:info("completed metadata exchange with ~p. repaired ~p missing local prefixes, "
+                       "~p missing remote prefixes, and ~p keys", [Peer, LocalPrefixes, RemotePrefixes, Keys]);
+        false ->
+            lager:debug("completed metadata exchange with ~p. nothing repaired", [Peer])
+    end,
     {stop, normal, State}.
 
 prepare(_Event, _From, State) ->

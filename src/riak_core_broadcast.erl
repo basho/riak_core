@@ -392,7 +392,7 @@ maybe_exchange(Peer, State=#state{mods=[Mod | _],exchanges=Exchanges}) ->
 exchange(Peer, State=#state{mods=[Mod | Mods],exchanges=Exchanges}) ->
     State1 = case Mod:exchange(Peer) of
                  {ok, Pid} ->
-                     lager:info("started ~p exchange with ~p (~p)", [Mod, Peer, Pid]),
+                     lager:debug("started ~p exchange with ~p (~p)", [Mod, Peer, Pid]),
                      Ref = monitor(process, Pid),
                      State#state{exchanges=[{Mod, Peer, Ref, Pid} | Exchanges]};
                  {error, _Reason} ->
