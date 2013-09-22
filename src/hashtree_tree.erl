@@ -229,12 +229,12 @@ insert(Prefixes, Key, Hash, Opts, Tree) ->
             {error, bad_prefixes}
     end.
 
-%% @doc Snapshot the tree for updating. This function returns a
-%% two-tuple where both elements are trees.  The first element is the
-%% snapshot tree to be passed to {@link update_perform/1}. The second
-%% is the tree that should be used to perform operations on the tree.
--spec update_snapshot(tree()) -> {tree(), tree()}.
-update_snapshot(Tree=#hashtree_tree{dirty=Dirty,nodes=Nodes}) ->
+%% @doc Snapshot the tree for updating. The return tree should be
+%% updated using {@link update_perform/1} and to perform future operations
+%% on the tree
+-spec update_snapshot(tree()) -> tree().
+update_snapshot(Tree=#hashtree_tree{dirty=Dirty,nodes=Nodes,snapshot=Snapshot0}) ->
+    catch ets:delete(Snapshot0),
     FoldRes = gb_sets:fold(fun(DirtyName, Acc) ->
                                    DirtyKey = node_key(DirtyName, Tree),
                                    DirtyNode = lookup_node(DirtyName, Tree),
@@ -245,9 +245,7 @@ update_snapshot(Tree=#hashtree_tree{dirty=Dirty,nodes=Nodes}) ->
     Snapshot = ets:new(undefined, []),
     ets:insert(Snapshot, Snaps),
     ets:insert(Nodes, NewNodes),
-    UpdatedTree = Tree#hashtree_tree{dirty=gb_sets:new()},
-    SnapTree = UpdatedTree#hashtree_tree{snapshot=Snapshot},
-    {SnapTree, UpdatedTree}.
+    Tree#hashtree_tree{dirty=gb_sets:new(),snapshot=Snapshot}.
 
 
 %% @doc Update the tree with a snapshot obtained by {@link
