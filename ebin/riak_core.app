@@ -90,9 +90,13 @@
              supervisor_pre_r14b04,
              vclock,
              dvvset,
+             hashtree,
+             hashtree_tree,
              riak_core_metadata,
              riak_core_metadata_object,
              riak_core_metadata_manager,
+             riak_core_metadata_hashtree,
+             riak_core_metadata_exchange_fsm,
              riak_core_broadcast,
              riak_core_broadcast_handler
             ]},

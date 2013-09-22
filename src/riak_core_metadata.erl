@@ -26,12 +26,14 @@
          iterator/1,
          iterator/2,
          itr_next/1,
+         itr_close/1,
          itr_done/1,
          itr_key_values/1,
          itr_key/1,
          itr_values/1,
          itr_value/1,
          itr_default/1,
+         prefix_hash/1,
          put/3,
          put/4,
          delete/2,
@@ -156,6 +158,11 @@ itr_next({It, Opts}) ->
     It1 = riak_core_metadata_manager:iterate(It),
     {It1, Opts}.
 
+%% @doc Closes the iterator
+-spec itr_close(iterator()) -> ok.
+itr_close({It, _Ots}) ->
+    riak_core_metadata_manager:iterator_close(It).
+
 %% @doc Returns true if there is nothing more to iterate over
 -spec itr_done(iterator()) -> boolean().
 itr_done({It, _Opts}) ->
@@ -247,6 +254,15 @@ itr_default({_, Opts}=It) ->
             Fun(itr_key(It));
         Val -> Val
     end.
+
+%% @doc Return the local hash associated with a full-prefix or prefix. The hash value is
+%% updated periodically and does not always reflect the most recent value. This function
+%% can be used to determine when keys stored under a full-prefix or prefix have changed.
+%% If the tree has not yet been updated or there are no keys stored the given
+%% (full-)prefix. `undefined' is returned.
+-spec prefix_hash(metadata_prefix() | binary() | atom()) -> binary() | undefined.
+prefix_hash(Prefix) when is_tuple(Prefix) or is_atom(Prefix) or is_binary(Prefix) ->
+    riak_core_metadata_hashtree:prefix_hash(Prefix).
 
 %% @doc same as put(FullPrefix, Key, Value, [])
 -spec put(metadata_prefix(), metadata_key(), metadata_value() | metadata_modifier()) -> ok.
