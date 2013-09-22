@@ -253,7 +253,9 @@ close_iterator(Itr) ->
             ok
     end.
 
--spec destroy(hashtree()) -> hashtree().
+-spec destroy(string() | hashtree()) -> ok | hashtree().
+destroy(Path) when is_list(Path) ->
+    ok = eleveldb:destroy(Path, []);
 destroy(State) ->
     %% Assumption: close was already called on all hashtrees that
     %%             use this LevelDB instance,

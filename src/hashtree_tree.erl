@@ -453,14 +453,11 @@ create_node(NodeName, Tree) ->
     NumSegs = node_num_segs(NodeName),
     Width = node_width(NodeName),
     Opts = [{segment_path, NodePath}, {segments, NumSegs}, {width, Width}],
-    Node = clean_node(NodeId, Opts),
-    set_node(NodeName, Node, Tree).
 
-%% @private
-clean_node(NodeId, Opts) ->
-    FakeNode = hashtree:new(NodeId, Opts),
-    destroy_node(FakeNode),
-    hashtree:new(NodeId, Opts).
+    %% remove any existing node data in case of crash
+    ok = hashtree:destroy(NodePath),
+    Node = hashtree:new(NodeId, Opts),
+    set_node(NodeName, Node, Tree).
 
 %% @private
 set_node(NodeName, Node, Tree) when is_list(NodeName) orelse NodeName =:= ?ROOT ->
@@ -468,11 +465,6 @@ set_node(NodeName, Node, Tree) when is_list(NodeName) orelse NodeName =:= ?ROOT 
 set_node(NodeKey, Node, #hashtree_tree{nodes=Nodes}) when is_tuple(NodeKey) ->
     ets:insert(Nodes, [{NodeKey, Node}]),
     Node.
-
-%% @private
-destroy_node(Node) ->
-    Node1 = hashtree:close(Node),
-    hashtree:destroy(Node1).
 
 %% @private
 parent_node(?ROOT, _Tree) ->
