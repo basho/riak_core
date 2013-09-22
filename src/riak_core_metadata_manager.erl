@@ -129,7 +129,7 @@ get({{Prefix, SubPrefix}, _Key}=PKey) when (is_binary(Prefix) orelse is_atom(Pre
 get(Node, {{Prefix, SubPrefix}, _Key}=PKey)
   when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
        (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
-    gen_server:call({?SERVER, Node}, {get, PKey}).
+    gen_server:call({?SERVER, Node}, {get, PKey}, infinity).
 
 
 %% @doc Returns a full-prefix iterator: an iterator for all full-prefixes that have keys stored under them
@@ -179,16 +179,16 @@ remote_iterator(Node) ->
 %% When done with the iterator, iterator_close/1 must be called
 -spec remote_iterator(node(), metadata_prefix() | binary() | atom()) -> remote_iterator().
 remote_iterator(Node, Prefix) when is_atom(Prefix) or is_binary(Prefix) ->
-    Ref = gen_server:call({?SERVER, Node}, {remote_iterator, self(), undefined, Prefix}),
+    Ref = gen_server:call({?SERVER, Node}, {remote_iterator, self(), undefined, Prefix}, infinity),
     #remote_iterator{ref=Ref,prefix=Prefix,node=Node};
 remote_iterator(Node, FullPrefix) when is_tuple(FullPrefix) ->
-    Ref = gen_server:call({?SERVER, Node}, {remote_iterator, self(), FullPrefix, undefined}),
+    Ref = gen_server:call({?SERVER, Node}, {remote_iterator, self(), FullPrefix, undefined}, infinity),
     #remote_iterator{ref=Ref,prefix=FullPrefix,node=Node}.
 
 %% @doc advance the iterator by one key, full-prefix or sub-prefix
 -spec iterate(metadata_iterator() | remote_iterator()) -> metadata_iterator() | remote_iterator().
 iterate(It=#remote_iterator{ref=Ref,node=Node}) ->
-    gen_server:call({?SERVER, Node}, {iterate, Ref}),
+    gen_server:call({?SERVER, Node}, {iterate, Ref}, infinity),
     It;
 iterate(Iterator) ->
     next_iterator(Iterator).
@@ -207,20 +207,20 @@ iterator_prefix(#metadata_iterator{prefix=Prefix}) -> Prefix.
                             {metadata_key(), metadata_object()} |
                             metadata_prefix() | binary() | atom().
 iterator_value(#remote_iterator{ref=Ref,node=Node}) ->
-    gen_server:call({?SERVER, Node}, {iterator_value, Ref});
+    gen_server:call({?SERVER, Node}, {iterator_value, Ref}, infinity);
 iterator_value(#metadata_iterator{prefix=undefined,match=undefined,pos=Pos}) -> Pos;
 iterator_value(#metadata_iterator{obj=Obj}) -> Obj.
 
 %% @doc returns true if there are no more keys or prefixes to iterate over
 -spec iterator_done(metadata_iterator() | remote_iterator()) -> boolean().
 iterator_done(#remote_iterator{ref=Ref,node=Node}) ->
-    gen_server:call({?SERVER, Node}, {iterator_done, Ref});
+    gen_server:call({?SERVER, Node}, {iterator_done, Ref}, infinity);
 iterator_done(#metadata_iterator{done=Done}) -> Done.
 
 %% @doc Closes the iterator. This function must be called on all open iterators
 -spec iterator_close(metadata_iterator() | remote_iterator()) -> ok.
 iterator_close(#remote_iterator{ref=Ref,node=Node}) ->
-    gen_server:call({?SERVER, Node}, {iterator_close, Ref});
+    gen_server:call({?SERVER, Node}, {iterator_close, Ref}, infinity);
 iterator_close(#metadata_iterator{prefix=undefined,match=undefined,tab=Tab}) ->
     ets:safe_fixtable(Tab, false),
     ok;
@@ -242,7 +242,7 @@ put({{Prefix, SubPrefix}, _Key}=PKey, Context, ValueOrFun)
 %% @doc same as merge/2 but merges the object on `Node'
 -spec merge(node(), {metadata_pkey(), metadata_context()}, metadata_object()) -> boolean().
 merge(Node, {PKey, _Context}, Obj) ->
-    gen_server:call({?SERVER, Node}, {merge, PKey, Obj}).
+    gen_server:call({?SERVER, Node}, {merge, PKey, Obj}, infinity).
 
 %%%===================================================================
 %%% riak_core_broadcast_handler callbacks

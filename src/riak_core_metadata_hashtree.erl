@@ -87,25 +87,25 @@ insert(PKey, Hash) ->
 %% inserted into the tree if the key is not already present.
 -spec insert(metadata_pkey(), binary(), boolean()) -> ok.
 insert(PKey, Hash, IfMissing) ->
-    gen_server:call(?SERVER, {insert, PKey, Hash, IfMissing}).
+    gen_server:call(?SERVER, {insert, PKey, Hash, IfMissing}, infinity).
 
 %% @doc Return the hash for the given prefix or full-prefix
 -spec prefix_hash(metadata_prefix() | binary() | atom()) -> undefined | binary().
 prefix_hash(Prefix) ->
-    gen_server:call(?SERVER, {prefix_hash, Prefix}).
+    gen_server:call(?SERVER, {prefix_hash, Prefix}, infinity).
 
 %% @doc Return the bucket for a node in the tree managed by this
 %% process running on `Node'.
 -spec get_bucket(node(), hashtree_tree:tree_node(),
                  non_neg_integer(), non_neg_integer()) -> ordict:ordict().
 get_bucket(Node, Prefixes, Level, Bucket) ->
-    gen_server:call({?SERVER, Node}, {get_bucket, Prefixes, Level, Bucket}).
+    gen_server:call({?SERVER, Node}, {get_bucket, Prefixes, Level, Bucket}, infinity).
 
 %% @doc Return the key hashes for a node in the tree managed by this
 %% process running on `Node'.
 -spec key_hashes(node(), hashtree_tree:tree_node(), non_neg_integer()) -> orddict:orddict().
 key_hashes(Node, Prefixes, Segment) ->
-    gen_server:call({?SERVER, Node}, {key_hashes, Prefixes, Segment}).
+    gen_server:call({?SERVER, Node}, {key_hashes, Prefixes, Segment}, infinity).
 
 %% @doc Locks the tree on this node for updating on behalf of the
 %% calling process. {@see lock/2}
@@ -126,7 +126,7 @@ lock(Node) ->
 %% aqcuiring the lock succeeds and `ok' is returned.
 -spec lock(node(), pid()) -> ok | not_built | locked.
 lock(Node, Pid) ->
-    gen_server:call({?SERVER, Node}, {lock, Pid}).
+    gen_server:call({?SERVER, Node}, {lock, Pid}, infinity).
 
 %% @doc Updates the tree on this node. {@see update/1}.
 -spec update() -> ok | not_locked | not_built | ongoing_update.
@@ -144,7 +144,7 @@ update() ->
 %% the process that manages the tree (e.g. future inserts).
 -spec update(node()) -> ok | not_locked | not_built | ongoing_update.
 update(Node) ->
-    gen_server:call({?SERVER, Node}, update).
+    gen_server:call({?SERVER, Node}, update, infinity).
 
 %% @doc Compare the local tree managed by this process with the remote
 %% tree also managed by a metadata hashtree process. `RemoteFun' is
@@ -158,7 +158,7 @@ update(Node) ->
 %% more details on `RemoteFun', `HandlerFun' and `HandlerAcc'.
 -spec compare(hashtree_tree:remote_fun(), hashtree_tree:handler_fun(X), X) -> X.
 compare(RemoteFun, HandlerFun, HandlerAcc) ->
-    gen_server:call(?SERVER, {compare, RemoteFun, HandlerFun, HandlerAcc}).
+    gen_server:call(?SERVER, {compare, RemoteFun, HandlerFun, HandlerAcc}, infinity).
 
 %%%===================================================================
 %%% gen_server callbacks
