@@ -8,10 +8,12 @@
 -define(QC_OUT(P),
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 
+-define(POWERS, [8, 16, 32, 64, 128, 256, 512, 1024]).
+
 -include_lib("eunit/include/eunit.hrl").
 
 hashtree_test_() ->
-    {timeout, 30,
+    {timeout, 60,
         fun() ->
                 ?assert(eqc:quickcheck(?QC_OUT(eqc:testing_time(29,
                             hashtree_eqc:prop_correct()))))
@@ -29,14 +31,6 @@ hashtree_test_() ->
         width,
         mem_levels
     }).
-
-
-initial_state() ->
-    #state{
-        only1 = [],
-        only2 = [],
-        both = []
-    }.
 
 integer_to_binary(Int) ->
     list_to_binary(integer_to_list(Int)).
@@ -68,17 +62,6 @@ command(S) ->
                 S#state.tree1 /= undefined, S#state.tree2 /= undefined] ++
         []
     ).
-
-make_treevars() ->
-    Powers = [8, 16, 32, 64, 128, 256, 512, 1024],
-    Segments=oneof(Powers),
-    Width=oneof(Powers),
-    %NumLevels = erlang:trunc(math:log(Segments) / math:log(Width)) + 1,
-    %MemLevels = random:uniform(NumLevels+1)-1,
-    %MemLevels = oneof(lists:seq(0, NumLevels),
-    MemLevels=4,
-    {{call, erlang, '*', [Segments, Segments]}, Width, MemLevels}.
-    %{1024*1024, 1024, 4}.
 
 start_1(S) ->
     hashtree:new({0,0}, [{segments, S#state.segments}, {width,
@@ -181,20 +164,19 @@ next_state(S,R,{call, _, reconcile, [_]}) ->
 
 
 prop_correct() ->
-    ?FORALL({Segments, Width, MemLevels}, make_treevars(),
-    ?FORALL(Cmds,commands(?MODULE, #state{segments=Segments, width=Width,
-                mem_levels=MemLevels}),
+    ?FORALL({Segments, Width, MemLevels}, {oneof(?POWERS), oneof(?POWERS), 4},
+    ?FORALL(Cmds,commands(?MODULE, #state{segments=Segments*Segments, width=Width,
+                mem_levels=MemLevels, only1=[], only2=[], both=[]}),
         ?TRAPEXIT(
-            aggregate(command_names(Cmds), 
+            aggregate(command_names(Cmds),
                 begin
-                        {H,S,Res} = run_commands(?MODULE,Cmds),
-                        ?WHENFAIL(
-                            begin
-                                    io:format("History: ~p\nState: ~p\nRes: ~p\n~p\n",
-                                        [H,S,Res, zip(tl(Cmds), [Y || {_, Y} <- H])]),
-                                    catch hashtree:destroy(hashtree:close(S#state.tree1)),
-                                    catch hashtree:destroy(hashtree:close(S#state.tree2))
-                            end,
+                    {_H,S,Res} = HSR = run_commands(?MODULE,Cmds),
+                    pretty_commands(?MODULE, Cmds, HSR,
+                                    ?WHENFAIL(
+                                       begin
+                                           catch hashtree:destroy(hashtree:close(S#state.tree1)),
+                                           catch hashtree:destroy(hashtree:close(S#state.tree2))
+                                       end,
                             begin
                                     ?assertEqual(ok, Res),
                                     Unique1 = S#state.only1 -- S#state.only2,
@@ -230,7 +212,7 @@ prop_correct() ->
                                             true
                                     end
                             end
-                                )
+                                ))
                         end)))).
 
 -endif.
