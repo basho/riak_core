@@ -47,9 +47,9 @@
           %% the tree managed by this process
           tree  :: hashtree_tree:tree(),
 
-          %% whether or not the tree has been built or a pid if the
-          %% tree is being built
-          built :: boolean() | pid(),
+          %% whether or not the tree has been built or a monitor ref
+          %% if the tree is being built
+          built :: boolean() | reference(),
 
           %% a monitor reference for a process that currently holds a
           %% lock on the tree. undefined otherwise
@@ -165,7 +165,6 @@ compare(RemoteFun, HandlerFun, HandlerAcc) ->
 %%%===================================================================
 
 init([DataRoot]) ->
-    process_flag(trap_exit, true),
     schedule_tick(),
     Tree = hashtree_tree:new(cluster_meta, [{data_dir, DataRoot}, {num_levels, 2}]),
     State = #state{tree=Tree,
@@ -201,14 +200,13 @@ handle_call({insert, PKey, Hash, IfMissing}, _From, State=#state{tree=Tree}) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-handle_info({'EXIT', BuiltPid, normal}, State=#state{built=BuiltPid}) ->
+handle_info({'DOWN', BuildRef, process, _Pid, normal}, State=#state{built=BuildRef}) ->
     State1 = build_done(State),
     {noreply, State1};
-handle_info({'EXIT', BuiltPid, _}, State=#state{built=BuiltPid}) ->
+handle_info({'DOWN', BuildRef, process, _Pid, Reason}, State=#state{built=BuildRef}) ->
+    lager:error("building tree failed: ~p", [Reason]),
     State1 = build_error(State),
     {noreply, State1};
-handle_info({'EXIT', _, normal}, State) -> %% compare or update process
-    {noreply, State};
 handle_info({'DOWN', LockRef, process, _Pid, _Reason}, State=#state{lock={_, LockRef}}) ->
     State1 = release_lock(State),
     {noreply, State1};
@@ -291,8 +289,8 @@ maybe_build_async(State) ->
 
 %% @private
 build_async(State) ->
-    Pid = spawn_link(fun build/0),
-    State#state{built=Pid}.
+    {_Pid, Ref} = spawn_monitor(fun build/0),
+    State#state{built=Ref}.
 
 %% @private
 build() ->
