@@ -13,7 +13,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 hashtree_test_() ->
-    {timeout, 30,
+    {timeout, 60,
         fun() ->
                 ?assert(eqc:quickcheck(?QC_OUT(eqc:testing_time(29,
                             hashtree_eqc:prop_correct()))))
