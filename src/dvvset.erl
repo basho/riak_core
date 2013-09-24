@@ -82,7 +82,7 @@
 
 %% @doc Constructs a new clock set without causal history,
 %% and receives a list of values that gos to the anonymous list.
--spec new([value()]) -> clock().
+-spec new(value() | [value()]) -> clock().
 new(Vs) when is_list(Vs) -> {[], Vs};
 new(V) -> {[], [V]}.
 
@@ -90,7 +90,7 @@ new(V) -> {[], [V]}.
 %% of the given version vector / vector clock,
 %% and receives a list of values that gos to the anonymous list.
 %% The version vector SHOULD BE a direct result of join/1.
--spec new(vector(), [value()]) -> clock().
+-spec new(vector(), value() | [value()]) -> clock().
 new(VV, Vs) when is_list(Vs) ->
     VVS = lists:sort(VV), % defense against non-order preserving serialization
     {[{I, N, []} || {I, N} <- VVS], Vs};
@@ -176,7 +176,7 @@ update({Cc,[V]}, Cr, I) ->
     {event(C, I, V), Vs}.
 
 %% Private function
--spec event(vector(), id(), value()) -> vector().
+-spec event(entries(), id(), value()) -> entries().
 event([], I, V) -> [{I, 1, [V]}];
 event([{I, N, L} | T], I, V) -> [{I, N+1, [V | L]} | T];
 event([{I1, _, _} | _]=C, I, V) when I1 > I -> [{I, 1, [V]} | C];

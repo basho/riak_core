@@ -57,7 +57,7 @@
 -type it_opt()              :: it_opt_resolver() | it_opt_default() | it_opt_keymatch().
 -type it_opts()             :: [it_opt()].
 -type fold_opts()           :: it_opts().
--opaque iterator()          :: {riak_core_metadata_manager:metadata_iterator(), it_opts()}.
+-type iterator()            :: {riak_core_metadata_manager:metadata_iterator(), it_opts()}.
 
 %% Put Option Types
 -type put_opts()            :: [].
@@ -181,11 +181,10 @@ itr_done({It, _Opts}) ->
 %% NOTE: if resolution may be performed this function must be called at most once
 %% before calling itr_next/1 on the iterator (at which point the function can be called
 %% once more).
--spec itr_key_values(riak_core_metadata_manager:iterator()) ->
-                            {metadata_key(),
-                             [metadata_value() | metadata_tombstone()] |
-                             metadata_value() |
-                             metadata_tombstone()}.
+-spec itr_key_values(iterator()) -> {metadata_key(),
+                                     [metadata_value() | metadata_tombstone()] |
+                                     metadata_value() |
+                                     metadata_tombstone()}.
 itr_key_values({It, Opts}) ->
     Default = itr_default({It, Opts}),
     {Key, Obj} = riak_core_metadata_manager:iterator_value(It),

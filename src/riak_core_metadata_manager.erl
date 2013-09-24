@@ -84,7 +84,7 @@
 -record(remote_iterator, {
           node   :: node(),
           ref    :: reference(),
-          prefix :: atom() | binary()
+          prefix :: metadata_prefix() | atom() | binary()
          }).
 
 -opaque metadata_iterator() :: #metadata_iterator{}.
@@ -177,12 +177,12 @@ remote_iterator(Node) ->
 %% sub-prefixes under `Prefix'. Otherse, the iterator iterates all keys
 %% under a prefix. Once created the rest of the iterator API may be used as usual.
 %% When done with the iterator, iterator_close/1 must be called
--spec remote_iterator(node(), metadata_prefix() | binary() | atom()) -> remote_iterator().
+-spec remote_iterator(node(), metadata_prefix() | binary() | atom() | undefined) -> remote_iterator().
 remote_iterator(Node, Prefix) when is_atom(Prefix) or is_binary(Prefix) ->
-    Ref = gen_server:call({?SERVER, Node}, {remote_iterator, self(), undefined, Prefix}, infinity),
+    Ref = gen_server:call({?SERVER, Node}, {open_remote_iterator, self(), undefined, Prefix}, infinity),
     #remote_iterator{ref=Ref,prefix=Prefix,node=Node};
 remote_iterator(Node, FullPrefix) when is_tuple(FullPrefix) ->
-    Ref = gen_server:call({?SERVER, Node}, {remote_iterator, self(), FullPrefix, undefined}, infinity),
+    Ref = gen_server:call({?SERVER, Node}, {open_remote_iterator, self(), FullPrefix, undefined}, infinity),
     #remote_iterator{ref=Ref,prefix=FullPrefix,node=Node}.
 
 %% @doc advance the iterator by one key, full-prefix or sub-prefix
@@ -260,7 +260,7 @@ broadcast_data(#metadata_broadcast{pkey=Key, obj=Obj}) ->
 %% for the key contained in the message id. If the remote copy is causally older than
 %% the current data stored then `false' is returned and no updates are merged. Otherwise,
 %% the remote copy is merged (possibly generating siblings) and `true' is returned.
--spec merge({metadata_pkey(), metadata_context()}, metadata_object()) -> boolean().
+-spec merge({metadata_pkey(), metadata_context()}, undefined | metadata_object()) -> boolean().
 merge({PKey, _Context}, Obj) ->
     gen_server:call(?SERVER, {merge, PKey, Obj}, infinity).
 
@@ -355,7 +355,7 @@ handle_call({merge, PKey, Obj}, _From, State) ->
 handle_call({get, PKey}, _From, State) ->
     Result = read(PKey),
     {reply, Result, State};
-handle_call({remote_iterator, Pid, FullPrefix, KeyMatch}, _From, State) ->
+handle_call({open_remote_iterator, Pid, FullPrefix, KeyMatch}, _From, State) ->
     Iterator = new_remote_iterator(Pid, FullPrefix, KeyMatch, State),
     {reply, Iterator, State};
 handle_call({iterate, RemoteRef}, _From, State) ->
