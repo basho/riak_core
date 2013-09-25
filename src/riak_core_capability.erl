@@ -83,6 +83,9 @@
          all/0,
          update_ring/1]).
 
+-export([make_capability/4,
+         preferred_modes/4]).
+
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
@@ -178,6 +181,14 @@ update_ring(Ring) ->
         _ ->
             add_supported_to_ring(node(), Supported, Ring)
     end.
+
+%% @doc
+%% Make a capbility from a capability atom, a list of supported modes,
+%% the default mode, and a mapping from a legacy var to it's capabilities.
+-spec make_capability(capability(), [mode()], mode(), term())
+                     -> {capability(), #capability{}}.
+make_capability(Capability, Supported, Default, Legacy) ->
+    {Capability, capability_info(Supported, Default, Legacy)}.
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -393,6 +404,24 @@ add_supported_to_ring(Node, Supported, Ring) ->
             {true, Ring2}
     end.
 
+%% @doc
+%% Given my node's capabilities, my node's registered default modes, the
+%% list of application env overrides, and the current view of all node's
+%% supported capabilities, determine the most preferred mode for each capability
+%% that is supported by all nodes.
+-spec preferred_modes([{capability(), [mode()]}],
+                      [{node(), [{capability(), [mode()]}]}],
+                      registered(),
+                      [{capability(), [mode()]}])
+                     -> [{capability(), mode()}].
+preferred_modes(MyCaps, Capabilities, Registered, Override) ->
+    N1 = reformat_capabilities(Registered, Capabilities),
+    N2 = intersect_capabilities(N1),
+    N3 = order_by_preference(MyCaps, N2),
+    N4 = override_capabilities(N3, Override),
+    N5 = [{Cap, hd(Common)} || {Cap, Common} <- N4],
+    N5.
+
 %% Given the current view of each node's supported capabilities, determine
 %% the most preferred mode for each capability that is supported by all nodes
 %% in the cluster.
@@ -402,12 +431,8 @@ negotiate_capabilities(Node, Override, State=#state{registered=Registered,
         error ->
             State;
         {ok, MyCaps} ->
-            N1 = reformat_capabilities(Registered, Capabilities),
-            N2 = intersect_capabilities(N1),
-            N3 = order_by_preference(MyCaps, N2),
-            N4 = override_capabilities(N3, Override),
-            N5 = [{Cap, hd(Common)} || {Cap, Common} <- N4],
-            State#state{negotiated=N5}
+            N = preferred_modes(MyCaps, Capabilities, Registered, Override),
+            State#state{negotiated=N}
     end.
 
 renegotiate_capabilities(State=#state{supported=[]}) ->
