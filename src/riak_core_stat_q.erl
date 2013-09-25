@@ -54,7 +54,8 @@
 -spec get_stats(path()) -> stats().
 get_stats(Path) ->
     %% get all the stats that are at Path
-    calculate_stats(exometer_entry:find_entries(Path)).
+    calculate_stats(exometer_entry:select(
+                        [{ {Path ++ '_','_',enabled}, [], ['$_'] }])).
 
 calculate_stats(NamesAndTypes) ->
     [{Name, get_stat({Name, Type})} || {Name, Type, _} <- NamesAndTypes].
