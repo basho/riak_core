@@ -25,6 +25,7 @@
          clear_staged/1, transfer_limit/1, pending_claim_percentage/2,
          transfers/1, add_user/1, add_source/1, grant/1, revoke/1,
          print_users/1, print_user/1, print_sources/1]).
+-export([extra_text/1]).                        % For extra info strings
 
 %% @doc Return for a given ring and node, percentage currently owned and
 %% anticipated after the transitions have been completed.
@@ -185,9 +186,11 @@ unreachable_status(Down) ->
     io:format("WARNING: The cluster state will not converge until all nodes~n"
               "are up. Once the above nodes come back online, convergence~n"
               "will continue. If the outages are long-term or permanent, you~n"
-              "can either mark the nodes as down (riak-admin down NODE) or~n"
-              "forcibly remove the nodes from the cluster (riak-admin~n"
-              "force-remove NODE) to allow the remaining nodes to settle.~n"),
+              "can either mark the nodes as down ~sor~n"
+              "forcibly remove the nodes from the cluster~n"
+              "~sto allow the remaining nodes to settle.~n",
+              [extra_text_cb(unreachable_status1),
+               extra_text_cb(unreachable_status2)]),
     ok.
 
 %% Provide a list of nodes with pending partition transfers (i.e. any secondary vnodes)
@@ -589,13 +592,14 @@ clear_staged([]) ->
     end.
 
 is_claimant_error(Node, Action) ->
-    io:format("Failed: ~p is the claimant (see: riak-admin ring_status).~n",
-              [Node]),
+    io:format("Failed: ~p is the claimant~s.~n",
+              [Node, extra_text_cb(is_claimant_error1)]),
     io:format(
       "The claimant is the node responsible for initiating cluster changes,~n"
-      "and cannot forcefully ~s itself. You can use 'riak-admin down' to~n"
-      "mark the node as offline, which will trigger a new claimant to take~n"
-      "over.  However, this will clear any staged changes.~n", [Action]).
+      "and cannot forcefully ~s itself. You can mark the node down~n"
+      "~sto mark the node as offline, which will trigger a new claimant to take~n"
+      "over.  Doing so, however, this will clear any staged changes.~n",
+      [Action, extra_text_cb(is_claimant_error2)]).
 
 print_staged([]) ->
     case riak_core_claimant:plan() of
@@ -604,12 +608,11 @@ print_staged([]) ->
                       "support plan/commit.~n");
         {error, ring_not_ready} ->
             io:format("Cannot plan until cluster state has converged.~n"
-                      "Check 'Ring Ready' in 'riak-admin ring_status'~n");
+                      "~s", [extra_text_cb(print_staged1)]);
         {error, invalid_resize_claim} ->
             io:format("Unable to claim some partitions in resized ring.~n"
-                      "Check that there are no pending changes in 'riak-admin ring-status'~n"
-                      "If there are, try again once they are completed~n"
-                      "Otherwise try again shortly.~n");
+                      "~s",
+                      [extra_text_cb(print_staged2)]);
         {ok, Changes, NextRings} ->
             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
             %% The last next ring is always the final ring after all changes,
@@ -719,7 +722,7 @@ output(Ring, NextRing) ->
         {_, []} ->
             ok;
         {true, _} ->
-            io:format("Ring is resizing. see riak-admin ring-status for transfer details.~n");
+            io:format("Ring is resizing.~s", [extra_text_cb(output1)]);
         _ ->
             io:format("Transfers resulting from cluster changes: ~p~n",
                       [length(Next)]),
@@ -745,14 +748,14 @@ commit_staged([]) ->
             io:format("The cluster is running in legacy mode and does not "
                       "support plan/commit.~n");
         {error, nothing_planned} ->
-            io:format("You must verify the plan with "
-                      "'riak-admin cluster plan' before committing~n");
+            io:format("You must verify the plan.~s",
+                      [extra_text_cb(commit_staged1)]);
         {error, ring_not_ready} ->
-            io:format("Cannot commit until cluster state has converged.~n"
-                      "Check 'Ring Ready' in 'riak-admin ring_status'~n");
+            io:format("Cannot commit until cluster state has converged.~n~s",
+                      [extra_text_cb(commit_staged2)]);
         {error, plan_changed} ->
-            io:format("The plan has changed. Verify with "
-                      "'riak-admin cluster plan' before committing~n");
+            io:format("The plan has changed.~s",
+                      [extra_text_cb(commit_staged3)]);
         _ ->
             io:format("Unable to commit cluster changes. Plan "
                       "may have changed, please verify the~n"
@@ -773,9 +776,7 @@ transfer_limit([]) ->
                           io:format("(offline)    ~p~n", [Node])
                   end, Down),
     io:format("~79..-s~n", [""]),
-    io:format("Note: You can change transfer limits with "
-              "'riak-admin transfer_limit <limit>'~n"
-              "      and 'riak-admin transfer_limit <node> <limit>'~n"),
+    io:format("~s", [extra_text_cb(transfer_limit1)]),
     ok;
 transfer_limit([LimitStr]) ->
     {Valid, Limit} = check_limit(LimitStr),
@@ -956,3 +957,57 @@ parse_cidr(CIDR) ->
     [IP, Mask] = string:tokens(CIDR, "/"),
     {ok, Addr} = inet_parse:address(IP),
     {Addr, list_to_integer(Mask)}.
+
+%% For riak_core users outside of Basho's Riak KV application: If you
+%% define an OTP environment variable ExtraKey (see below) for the
+%% riak_core application, for example my_module, then any extra/custom
+%% text formatting text can be returned by calling the callback
+%% function my_module:extra_text/1 ... stolen (poorly) from GNU
+%% gettext.
+
+extra_text_cb(Label) ->
+    case app_helper:get_env(riak_kv) of
+        [] ->
+            ExtraKey = riak_core_console_extra_text_module,
+            case app_helper:get_env(riak_core, ExtraKey) of
+                undefined ->
+                    "";
+                Mod ->
+                    try
+                        Mod:extra_text(Label)
+                    catch _:_ ->
+                            ""
+                    end
+            end;
+        [_|_] ->
+            ?MODULE:extra_text(Label)
+    end.
+
+extra_text(unreachable_status1) ->
+    "(Using 'riak-admin down NODE') ";
+extra_text(unreachable_status2) ->
+    "(Using 'riak-admin force-remove NODE') ";
+extra_text(is_claimant_error1) ->
+    " (see: 'riak-admin ring_status')";
+extra_text(is_claimant_error2) ->
+    "(for example, 'riak-admin down')\n";
+extra_text(print_staged1) ->
+    "Check 'Ring Ready' in 'riak-admin ring_status'\n";
+extra_text(print_staged2) ->
+    "Check that there are no pending changes in 'riak-admin ring-status'\n"
+    "If there are, try again once they are completed.\n"
+    "Otherwise try again shortly.\n";
+extra_text(output1) ->
+    "  See 'riak-admin ring-status' for transfer details.\n";
+extra_text(commit_staged1) ->
+    "Run 'riak-admin cluster plan' before committing.\n";
+extra_text(commit_staged2) ->
+    "Check 'Ring Ready' in 'riak-admin ring_status'\n";
+extra_text(commit_staged3) ->
+    "  Verify with 'riak-admin cluster plan' before committing\n";
+extra_text(transfer_limit1) ->
+    "Note: You can change transfer limits with "
+    "'riak-admin transfer_limit <limit>'\n"
+    "and 'riak-admin transfer_limit <node> <limit>'\n";
+extra_text(_) ->
+    "".
