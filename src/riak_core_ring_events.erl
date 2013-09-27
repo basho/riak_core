@@ -34,7 +34,8 @@
          ring_update/1,
          force_update/0,
          ring_sync_update/1,
-         force_sync_update/0]).
+         force_sync_update/0,
+         get_pid/0]).
 
 %% gen_event callbacks
 -export([init/1, handle_event/2, handle_call/2,
@@ -80,6 +81,9 @@ force_sync_update() ->
 
 ring_sync_update(Ring) ->
     gen_event:sync_notify(?MODULE, {ring_update, Ring}).
+
+get_pid() ->
+    whereis(?MODULE).
 
 %% ===================================================================
 %% gen_event callbacks
