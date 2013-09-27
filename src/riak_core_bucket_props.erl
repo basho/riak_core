@@ -20,7 +20,7 @@
 -module(riak_core_bucket_props).
 
 -export([merge/2,
-         validate/1,
+         validate/4,
          resolve/2,
          defaults/0,
          append_defaults/1]).
@@ -35,18 +35,21 @@ merge(Overriding, Other) ->
                     lists:ukeysort(1, Other)).
 
 
--spec validate([{atom(), any()}]) -> {ok, [{atom(), any()}]} |
-                                     {error, [{atom(), atom()}]}.
-validate(BucketProps) ->
-    validate(BucketProps, riak_core:bucket_validators(), []).
+-spec validate(create | update,
+               {riak_core_bucket_type:bucket_type(), undefined | binary()} | binary(),
+               undefined | [{atom(), any()}],
+               [{atom(), any()}]) -> {ok, [{atom(), any()}]} | {error, [{atom(), atom()}]}.
+validate(CreateOrUpdate, Bucket, ExistingProps, BucketProps) ->
+    validate(CreateOrUpdate, Bucket, ExistingProps, BucketProps, riak_core:bucket_validators(), []).
 
-validate(BucketProps, [], []) ->
-    {ok, BucketProps};
-validate(_, [], Errors) ->
-    {error, Errors};
-validate(BucketProps0, [{_App, Validator}|T], Errors0) ->
-    {BucketProps, Errors} = Validator:validate(BucketProps0),
-    validate(BucketProps, T, lists:flatten([Errors|Errors0])).
+validate(_CreateOrUpdate, _Bucket, _ExistingProps, Props, [], ErrorLists) ->
+    case lists:flatten(ErrorLists) of
+        [] -> {ok, Props};
+        Errors -> {error, Errors}
+    end;
+validate(CreateOrUpdate, Bucket, ExistingProps, BucketProps0, [{_App, Validator}|T], Errors0) ->
+    {BucketProps, Errors} = Validator:validate(CreateOrUpdate, Bucket, ExistingProps, BucketProps0),
+    validate(CreateOrUpdate, Bucket, ExistingProps, BucketProps, T, [Errors|Errors0]).
 
 
 -spec defaults() -> [{atom(), any()}].
