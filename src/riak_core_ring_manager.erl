@@ -623,13 +623,13 @@ prune_write_ring(Ring, State) ->
     State2 = set_ring(Ring, State),
     State2.
 
+test_dummy_func(_Arg) ->
+    ok.
+
 %% ===================================================================
 %% Unit tests
 %% ===================================================================
 -ifdef(TEST).
-
-test_dummy_func(_Arg) ->
-    ok.
 
 back_test() ->
     X = [1,2,3],
