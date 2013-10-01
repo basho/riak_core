@@ -97,6 +97,7 @@
     }).
 
 -export([setup_ets/1, cleanup_ets/1, set_ring_global/1]). %% For EUnit testing
+-export([test_dummy_func/1]).
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -626,6 +627,9 @@ prune_write_ring(Ring, State) ->
 %% Unit tests
 %% ===================================================================
 -ifdef(TEST).
+
+test_dummy_func(_Arg) ->
+    ok.
 
 back_test() ->
     X = [1,2,3],

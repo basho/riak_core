@@ -377,9 +377,9 @@ watch_for_ring_events() ->
     Fn = fun(R) ->
                  gen_server:cast(Self, {ring_update, R})
          end,
-    riak_core_ring_events:add_sup_callback(Fn),
+    HandlerName = riak_core_ring_events:add_sup_callback(Fn),
     case riak_core_ring_events:get_pid() of
-        P when P == RingEventsPid ->
+        P when is_pid(P), P == RingEventsPid ->
             RingEventsPid;
         _ ->
             receive
@@ -388,6 +388,7 @@ watch_for_ring_events() ->
             after 100 ->
                     ok
             end,
+            riak_core_ring_events:delete_handler(HandlerName, race_cond_retry),
             watch_for_ring_events()
     end.
 

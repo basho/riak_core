@@ -31,6 +31,7 @@
          add_callback/1,
          add_sup_callback/1,
          add_guarded_callback/1,
+         delete_handler/2,
          ring_update/1,
          force_update/0,
          ring_sync_update/1,
@@ -42,6 +43,10 @@
          handle_info/2, terminate/2, code_change/3]).
 
 -record(state, { callback }).
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
 
 %% ===================================================================
 %% API functions
@@ -60,13 +65,22 @@ add_guarded_handler(Handler, Args) ->
     riak_core:add_guarded_event_handler(?MODULE, Handler, Args).
 
 add_callback(Fn) when is_function(Fn) ->
-    gen_event:add_handler(?MODULE, {?MODULE, make_ref()}, [Fn]).
+    HandlerName = {?MODULE, make_ref()},
+    gen_event:add_handler(?MODULE, HandlerName, [Fn]),
+    HandlerName.
 
 add_sup_callback(Fn) when is_function(Fn) ->
-    gen_event:add_sup_handler(?MODULE, {?MODULE, make_ref()}, [Fn]).
+    HandlerName = {?MODULE, make_ref()},
+    gen_event:add_sup_handler(?MODULE, HandlerName, [Fn]),
+    HandlerName.
 
 add_guarded_callback(Fn) when is_function(Fn) ->
-    riak_core:add_guarded_event_handler(?MODULE, {?MODULE, make_ref()}, [Fn]).
+    HandlerName = {?MODULE, make_ref()},
+    riak_core:add_guarded_event_handler(?MODULE, HandlerName, [Fn]),
+    HandlerName.
+
+delete_handler(HandlerName, ReasonArgs) ->
+    gen_event:delete_handler(?MODULE, HandlerName, ReasonArgs).
 
 force_update() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -110,3 +124,39 @@ terminate(_Reason, _State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
+-ifdef(TEST).
+
+delete_handler_test_() ->
+    RingMgr = riak_core_ring_manager,
+    {setup,
+     fun() ->
+             meck:new(RingMgr, [passthrough]),
+             meck:expect(RingMgr, get_my_ring,
+                         fun() -> {ok, fake_ring_here} end),
+             ?MODULE:start_link()
+     end,
+     fun(_) ->
+             meck:unload(RingMgr)
+     end,
+     [
+      fun () ->
+              Name = ?MODULE:add_sup_callback(
+                       fun(Arg) -> RingMgr:test_dummy_func(Arg) end),
+
+              BogusRing = bogus_ring_stand_in,
+              ?MODULE:ring_update(BogusRing),
+              ok = ?MODULE:delete_handler(Name, unused),
+              {error, _} = ?MODULE:delete_handler(Name, unused),
+
+              %% test_dummy_func is called twice: once by add_sup_callback()
+              %% and once by ring_update().
+              [
+               {_, {RingMgr, get_my_ring, _}, _},
+               {_, {RingMgr, test_dummy_func, _}, _},
+               {_, {RingMgr, test_dummy_func, [BogusRing]}, _}
+              ] = meck:history(RingMgr),
+              ok
+      end
+     ]}.
+
+-endif. % TEST
