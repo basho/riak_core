@@ -245,7 +245,7 @@ repair_keys(Peer, PrefixList, {_Type, KeyBin}) ->
 merge(undefined, PKey, RemoteObj) ->
     riak_core_metadata_manager:merge({PKey, undefined}, RemoteObj);
 merge(Peer, PKey, LocalObj) ->
-    riak_core_metadata_manager:merge(Peer, {PKey, undefiend}, LocalObj).
+    riak_core_metadata_manager:merge(Peer, {PKey, undefined}, LocalObj).
 
 
 %% @privarte
