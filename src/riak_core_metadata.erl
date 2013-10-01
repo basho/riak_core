@@ -181,7 +181,7 @@ itr_done({It, _Opts}) ->
 %% NOTE: if resolution may be performed this function must be called at most once
 %% before calling itr_next/1 on the iterator (at which point the function can be called
 %% once more).
--spec itr_key_values(riak_core_metadata_manager:iterator()) ->
+-spec itr_key_values(iterator()) ->
                             {metadata_key(),
                              [metadata_value() | metadata_tombstone()] |
                              metadata_value() |

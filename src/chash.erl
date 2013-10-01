@@ -50,7 +50,7 @@
          successors/3,
          update/3]).
 
--export_type([chash/0]).
+-export_type([chash/0, index/0]).
     
 -define(RINGTOP, trunc(math:pow(2,160)-1)).  % SHA-1 space
 
