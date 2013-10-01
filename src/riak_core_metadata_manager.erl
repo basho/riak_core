@@ -240,7 +240,7 @@ put({{Prefix, SubPrefix}, _Key}=PKey, Context, ValueOrFun)
     gen_server:call(?SERVER, {put, PKey, Context, ValueOrFun}, infinity).
 
 %% @doc same as merge/2 but merges the object on `Node'
--spec merge(node(), {metadata_pkey(), metadata_context()}, metadata_object()) -> boolean().
+-spec merge(node(), {metadata_pkey(), undefined | metadata_context()}, metadata_object()) -> boolean().
 merge(Node, {PKey, _Context}, Obj) ->
     gen_server:call({?SERVER, Node}, {merge, PKey, Obj}, infinity).
 
@@ -260,7 +260,7 @@ broadcast_data(#metadata_broadcast{pkey=Key, obj=Obj}) ->
 %% for the key contained in the message id. If the remote copy is causally older than
 %% the current data stored then `false' is returned and no updates are merged. Otherwise,
 %% the remote copy is merged (possibly generating siblings) and `true' is returned.
--spec merge({metadata_pkey(), metadata_context()}, undefined | metadata_object()) -> boolean().
+-spec merge({metadata_pkey(), undefined | metadata_context()}, undefined | metadata_object()) -> boolean().
 merge({PKey, _Context}, Obj) ->
     gen_server:call(?SERVER, {merge, PKey, Obj}, infinity).
 
