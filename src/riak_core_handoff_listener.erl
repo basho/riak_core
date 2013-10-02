@@ -41,7 +41,7 @@ start_link() ->
     gen_nb_server:start_link(?MODULE, IpAddr, PortNum, [IpAddr, PortNum, SslOpts]).
 
 get_handoff_ip() ->
-    riak_core_gen_server:call(?MODULE, handoff_ip, infinity).
+    gen_server:call(?MODULE, handoff_ip, infinity).
 
 init([IpAddr, PortNum, SslOpts]) ->
     register(?MODULE, self()),

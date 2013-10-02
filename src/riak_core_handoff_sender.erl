@@ -401,10 +401,10 @@ get_handoff_ip(Node) when is_atom(Node) ->
     end.
 
 get_handoff_port(Node) when is_atom(Node) ->
-    case catch(riak_core_gen_server:call({riak_core_handoff_listener, Node}, handoff_port, infinity)) of
+    case catch(gen_server:call({riak_core_handoff_listener, Node}, handoff_port, infinity)) of
         {'EXIT', _}  ->
             %% Check old location from previous release
-            riak_core_gen_server:call({riak_kv_handoff_listener, Node}, handoff_port, infinity);
+            gen_server:call({riak_kv_handoff_listener, Node}, handoff_port, infinity);
         Other -> Other
     end.
 
