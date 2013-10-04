@@ -372,7 +372,9 @@ update_avsn(State) ->
     State#state { avsn = State#state.avsn + 1 }.
 
 watch_for_ring_events() ->
-    RingEventsPid = riak_core_ring_events:get_pid(),
+    %% Polling isn't (and cannot be) perfect, good enough 99% of the time
+    %% Our supervisor takes care of the last 1%.
+    RingEventsPid = poll_for_riak_core_ring_events_pid(10),
     Self = self(),
     Fn = fun(R) ->
                  gen_server:cast(Self, {ring_update, R})
@@ -390,6 +392,17 @@ watch_for_ring_events() ->
             end,
             riak_core_ring_events:delete_handler(HandlerName, race_cond_retry),
             watch_for_ring_events()
+    end.
+
+poll_for_riak_core_ring_events_pid(0) ->
+    undefined;
+poll_for_riak_core_ring_events_pid(N) ->
+    case riak_core_ring_events:get_pid() of
+        Pid when is_pid(Pid) ->
+            Pid;
+        _ ->
+            timer:sleep(100),
+            poll_for_riak_core_ring_events_pid(N-1)
     end.
 
 delete_service_mref(Id) ->
