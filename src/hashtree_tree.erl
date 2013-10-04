@@ -237,9 +237,9 @@ update_snapshot(Tree=#hashtree_tree{dirty=Dirty,nodes=Nodes,snapshot=Snapshot0})
     catch ets:delete(Snapshot0),
     FoldRes = gb_sets:fold(fun(DirtyName, Acc) ->
                                    DirtyKey = node_key(DirtyName, Tree),
-                                   DirtyNode = lookup_node(DirtyName, Tree),
-                                   {SnapNode, NewNode} = hashtree:update_snapshot(DirtyNode),
-                                   [{{DirtyKey, SnapNode}, {DirtyKey, NewNode}} | Acc]
+                                   Node = lookup_node(DirtyName, Tree),
+                                   {DirtyNode, NewNode} = hashtree:update_snapshot(Node),
+                                   [{{DirtyKey, DirtyNode}, {DirtyKey, NewNode}} | Acc]
                            end, [], Dirty),
     {Snaps, NewNodes} = lists:unzip(FoldRes),
     Snapshot = ets:new(undefined, []),
@@ -253,8 +253,8 @@ update_snapshot(Tree=#hashtree_tree{dirty=Dirty,nodes=Nodes,snapshot=Snapshot0})
 %% than the one managing the tree.
 -spec update_perform(tree()) -> ok.
 update_perform(Tree=#hashtree_tree{snapshot=Snapshot}) ->
-    DirtyParents = ets:foldl(fun(DirtyKey, DirtyParents) ->
-                                     update_dirty_leaves(DirtyKey, DirtyParents, Tree)
+    DirtyParents = ets:foldl(fun(DirtyLeaf, DirtyParentsAcc) ->
+                                     update_dirty_leaves(DirtyLeaf, DirtyParentsAcc, Tree)
                              end,
                              gb_sets:new(), Snapshot),
     update_dirty_parents(DirtyParents, Tree),

@@ -27,7 +27,10 @@
          broadcast/2,
          ring_update/1,
          broadcast_members/0,
-         broadcast_members/1]).
+         broadcast_members/1,
+         exchanges/0,
+         exchanges/1,
+         cancel_exchanges/1]).
 
 %% Debug API
 -export([debug_get_peers/2,
@@ -45,6 +48,8 @@
 -type message_id()      :: any().
 -type message_round()   :: non_neg_integer().
 -type outstanding()     :: {message_id(), module(), message_round(), nodename()}.
+-type exchange()        :: {module(), node(), reference(), pid()}.
+-type exchanges()       :: [exchange()].
 
 -record(state, {
           %% Initially trees rooted at each node are the same.
@@ -85,7 +90,7 @@
           mods          :: [module()],
 
           %% List of outstanding exchanges
-          exchanges     :: [{module(), node(), reference(), pid()}],
+          exchanges     :: exchanges(),
 
           %% Set of all known members. Used to determine
           %% which members have joined and left during a membership update
@@ -160,6 +165,25 @@ broadcast_members() ->
 broadcast_members(Timeout) ->
     gen_server:call(?SERVER, broadcast_members, Timeout).
 
+%% @doc return a list of exchanges, started by broadcast on thisnode, that are running
+-spec exchanges() -> exchanges().
+exchanges() ->
+    exchanges(node()).
+
+%% @doc returns a list of exchanges, started by broadcast on `Node', that are running
+-spec exchanges(node()) -> exchanges().
+exchanges(Node) ->
+    gen_server:call({?SERVER, Node}, exchanges, infinity).
+
+%% @doc cancel exchanges started by this node.
+-spec cancel_exchanges(all              |
+                       {peer, node()}   |
+                       {mod, module()}  |
+                       reference()      |
+                       pid()) -> exchanges().
+cancel_exchanges(WhichExchanges) ->
+    gen_server:call(?SERVER, {cancel_exchanges, WhichExchanges}, infinity).
+
 %%%===================================================================
 %%% Debug API
 %%%===================================================================
@@ -222,7 +246,12 @@ handle_call({get_peers, Root}, _From, State) ->
     LazyPeers = all_peers(Root, State#state.lazy_sets, State#state.common_lazys),
     {reply, {EagerPeers, LazyPeers}, State};
 handle_call(broadcast_members, _From, State=#state{all_members=AllMembers}) ->
-    {reply, AllMembers, State}.
+    {reply, AllMembers, State};
+handle_call(exchanges, _From, State=#state{exchanges=Exchanges}) ->
+    {reply, Exchanges, State};
+handle_call({cancel_exchanges, WhichExchanges}, _From, State) ->
+    Cancelled = cancel_exchanges(WhichExchanges, State#state.exchanges),
+    {reply, Cancelled, State}.
 
 %% @private
 -spec handle_cast(term(), #state{}) -> {noreply, #state{}} |
@@ -399,6 +428,43 @@ exchange(Peer, State=#state{mods=[Mod | Mods],exchanges=Exchanges}) ->
                      State
              end,
     State1#state{mods=Mods ++ [Mod]}.
+
+cancel_exchanges(all, Exchanges) ->
+    kill_exchanges(Exchanges);
+cancel_exchanges(WhichProc, Exchanges) when is_reference(WhichProc) orelse
+                                            is_pid(WhichProc) ->
+    KeyPos = case is_reference(WhichProc) of
+              true -> 3;
+              false -> 4
+          end,
+    case lists:keyfind(WhichProc, KeyPos, Exchanges) of
+        false -> [];
+        Exchange ->
+            kill_exchange(Exchange),
+            [Exchange]
+    end;
+cancel_exchanges(Which, Exchanges) ->
+    Filter = exchange_filter(Which),
+    ToCancel = [Ex || Ex <- Exchanges, Filter(Ex)],
+    kill_exchanges(ToCancel).
+
+kill_exchanges(Exchanges) ->
+    [kill_exchange(Exchange) || Exchange <- Exchanges],
+    Exchanges.
+
+kill_exchange({_, _, _, ExchangePid}) ->
+    exit(ExchangePid, cancel_exchange).
+
+
+exchange_filter({peer, Peer}) ->
+    fun({_, ExchangePeer, _, _}) ->
+            Peer =:= ExchangePeer
+    end;
+exchange_filter({mod, Mod}) ->
+    fun({ExchangeMod, _, _, _}) ->
+            Mod =:= ExchangeMod
+    end.
+
 
 %% picks random root uniformly
 random_root(#state{all_members=Members}) ->
