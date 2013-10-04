@@ -542,35 +542,31 @@ sockname(Socket, Transport) ->
 %%      supported record version.
 
 make_fold_req(#riak_core_fold_req_v1{foldfun=FoldFun, acc0=Acc0}) ->
-    make_fold_req2(FoldFun, Acc0, false, []);
+    make_fold_req(FoldFun, Acc0, false, []);
 make_fold_req(?FOLD_REQ{foldfun=FoldFun, acc0=Acc0,
                        forwardable=Forwardable, opts=Opts}) ->
-    make_fold_req2(FoldFun, Acc0, Forwardable, Opts).
+    make_fold_req(FoldFun, Acc0, Forwardable, Opts).
 
 make_fold_req(FoldFun, Acc0) ->
-    make_fold_req2(FoldFun, Acc0, false, []).
+    make_fold_req(FoldFun, Acc0, false, []).
 
 make_fold_req(FoldFun, Acc0, Forwardable, Opts) ->
-    make_fold_req2(FoldFun, Acc0, Forwardable, Opts).
+    make_fold_reqv(riak_core_capability:get({riak_core, fold_req_version}, v1),
+                   FoldFun, Acc0, Forwardable, Opts).
 
-%% @doc Force a #riak_core_fold_req_v? record to the cluster's maximum
-%%      supported record version.
+%% @doc Force a #riak_core_fold_req_v? record to the latest version,
+%%      regardless of cluster support
 
 make_newest_fold_req(#riak_core_fold_req_v1{foldfun=FoldFun, acc0=Acc0}) ->
-    make_fold_req3(v2, FoldFun, Acc0, false, []);
+    make_fold_reqv(v2, FoldFun, Acc0, false, []);
 make_newest_fold_req(?FOLD_REQ{} = F) ->
     F.
 
 %% @private
-make_fold_req2(FoldFun, Acc0, Forwardable, Opts) ->
-    make_fold_req3(riak_core_capability:get({riak_core, fold_req_version}, v1),
-                   FoldFun, Acc0, Forwardable, Opts).
-
-%% @private
-make_fold_req3(v1, FoldFun, Acc0, _Forwardable, _Opts)
+make_fold_reqv(v1, FoldFun, Acc0, _Forwardable, _Opts)
   when is_function(FoldFun, 3) ->
     #riak_core_fold_req_v1{foldfun=FoldFun, acc0=Acc0};
-make_fold_req3(v2, FoldFun, Acc0, Forwardable, Opts)
+make_fold_reqv(v2, FoldFun, Acc0, Forwardable, Opts)
   when is_function(FoldFun, 3)
        andalso (Forwardable == true orelse Forwardable == false)
        andalso is_list(Opts) ->
