@@ -74,7 +74,7 @@ clear_cache(App) ->
     gen_server:call(?SERVER, {clear, App}, infinity).
 
 stop() ->
-    gen_server:cast(?SERVER, stop, infinity).
+    gen_server:cast(?SERVER, stop).
 
 %%% gen server
 
