@@ -32,6 +32,8 @@
              riak_core_console,
              riak_core_coverage_fsm,
              riak_core_coverage_plan,
+             riak_core_dist_mon,
+             riak_core_dist_mon_sup,
              riak_core_dtrace,
              riak_core_eventhandler_guard,
              riak_core_eventhandler_sup,
@@ -146,6 +148,10 @@
 
          %% Handoff IP/port
          {handoff_port, 8099},
-         {handoff_ip, "0.0.0.0"}
+         {handoff_ip, "0.0.0.0"},
+         
+         %% Disterl buffer sizes
+         {dist_send_buf_size, 393216},
+         {dist_recv_buf_size, 786432}
         ]}
  ]}.

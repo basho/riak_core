@@ -29,7 +29,7 @@
 
 -export([start_link/0, start_link/1, monitor/3, status/0, status/1, format/0, format/2]).
 -export([default_status_funs/0, raw/2, diff/2, rate/2, kbps/2,
-         socket_status/1, format_socket_stats/2 ]).
+         socket_status/1, format_socket_stats/2]).
 
 %% gen_server callbacks
 -behavior(gen_server).
