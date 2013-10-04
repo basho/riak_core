@@ -17,22 +17,96 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
+
+%% @doc Bucket Types allow groups of buckets to share configuration
+%% details.  Each bucket belongs to a type and inherits its
+%% properties. Buckets can override the properties they inherit using
+%% {@link riak_core_bucket}.  The "Default Bucket Type" always
+%% exists. The Default Type's properties come from the riak_core
+%% `default_bucket_props' application config, so the Default Type and
+%% its buckets continue to act as they had prior to the existence of
+%% Bucket Types.
+%%
+%% Unlike Buckets, Bucket Types must be explicitly created. In
+%% addition, types support setting some properties only on creation
+%% (via {@link riak_core_bucket_props:validate/4}). Since, types are
+%% stored using {@link riak_core_metadata}, in order to provide safe
+%% creation semantics the following invariant must be satisfied: all
+%% nodes in the cluster either see no type or a single version of the
+%% type for the lifetime of the cluster (nodes need not see the single
+%% version at the same time). As part of ensuring this invariant, creation
+%% is a two-step process:
+%%
+%%   1. The type is created and is inactive. To the node an inactive type
+%%      does not exist
+%%   2. When the creation has propogated to all nodes, the type may be activated.
+%%      As the activation propogates, nodes will be able to use the type
+%%
+%% The first step is performed using {@see create/2}. The second by
+%% {@see activate/1}.  After the type has been activated, some
+%% properties may be updated using {@see update/2}. All operations are
+%% serialized through {@link riak_core_claimant} except reading bucket
+%% type properties with {@get/1}.
+%%
+%% Bucket types can be in one of four states. The
+%% state of a type can be queried using {@see status/1}.
+%%
+%%   1. undefined - the type has not been created
+%%   2. created - the type has been created but has not propogated to all nodes
+%%   3. ready - the type has been created and has propogated to all nodes but
+%%              has not been activated
+%%   4. active - the Bucket Type has been activated, but the activation may
+%%               not have propogated to all nodes yet
+%%
+%% In order for the invariant to hold, additional restrictions are
+%% placed on the operations, generally and based on the state of the
+%% Bucket Type. These restrictions are in-place to ensure safety
+%% during cases where membership changes or node failures change the
+%% {@link riak_core_claimant} to a new node -- ensuring concurrent
+%% updates do not break the invariant.
+%%
+%%   * calling {@see create/1} multiple times before a Bucket Type
+%%     is active is allowed. The newer creation will supersede any
+%%     previous ones. In addition, the type will be "claimed" by the
+%%     {@link riak_core_claimant} node writing the property. Future
+%%     calls to {@see create/1} must be serialized through the same
+%%     claimant node or the call will not succeed. In the case where
+%%     the claimed type fails to propogate to a new claimant during a
+%%     a failure the potential concurrent update is resolved with
+%%     last-write-wins. Since nodes can not use inactive types, this is
+%%     safe.
+%%   * A type may only be activated if it is in the `ready' state. This means
+%%     all nodes must be reachable from the claimant
+%%   * {@see create/1} will fail if the type is active. Activation concurrent
+%%     with creation is not possible due to the previous restriction
+%%   * {@see update/1} will fail unless the type is updated. {@see update/1} does
+%%     not allow modifications to properties for which the invariant must hold
+%%     (NOTE: this is up to the implementor of the riak_core bucket_validator).
+%%
+%% There is one known case where this invariant does not hold:
+%%    * in the case where a singleton cluster activates a type before being joined
+%%      to a cluster that has activated the same type. This is a case poorly handled
+%%      by most riak_core applications and is considered acceptable (so dont do it!).
 -module(riak_core_bucket_type).
 
 -export([defaults/0,
          create/2,
+         status/1,
+         activate/1,
          update/2,
          get/1,
          reset/1,
          iterator/0,
          itr_next/1,
          itr_done/1,
-         itr_value/1]).
+         itr_value/1,
+         itr_close/1]).
+
+-export_type([bucket_type/0]).
 
 -type bucket_type()       :: binary().
 -type bucket_type_props() :: [{term(), term()}].
 
--define(KEY_PREFIX, {core, bucket_types}).
 -define(DEFAULT_TYPE, <<"default">>).
 
 %% @doc The hardcoded defaults for all bucket types.
@@ -45,63 +119,59 @@ defaults() ->
        {postcommit, []},
        {chash_keyfun, {riak_core_util, chash_std_keyfun}}].
 
-%% @doc Create a new bucket type. Properties provided will be merged with default
-%% bucket properties set in config. "Creation" as implemented is subject to concurrent
-%% write issues, so for now this is more of a semantic name. This will be addressed
-%% when proper support is added to cluster metadata
+%% @doc Create the type. The type is not activated (available to nodes) at this time. This
+%% function may be called arbitratily many times if the claimant does not change between
+%% calls and the type is not active. An error will also be returned if the properties
+%% are not valid. Properties not provided will be taken from those returned by
+%% {@see defaults/0}.
 -spec create(bucket_type(), bucket_type_props()) -> ok | {error, term()}.
 create(?DEFAULT_TYPE, _Props) ->
-    {error, already_exists};
+    {error, default_type};
 create(BucketType, Props) when is_binary(BucketType) ->
-    %% TODO: this doesn't actually give us much guaruntees
-    case ?MODULE:get(BucketType) of
-        undefined -> update(BucketType, Props);
-        _ -> {error, already_exists}
-    end.
+    riak_core_claimant:create_bucket_type(BucketType,
+                                          riak_core_bucket_props:merge(Props, defaults())).
 
-%% @doc Update an existing bucket type. See comments in create/1 for caveats.
+%% @doc Returns the state the type is in.
+-spec status(bucket_type()) -> undefined | created | ready | active.
+status(?DEFAULT_TYPE) ->
+    active;
+status(BucketType) when is_binary(BucketType) ->
+    riak_core_claimant:bucket_type_status(BucketType).
+
+%% @doc Activate the type. This will succeed only if the type is in the `ready' state. Otherwise,
+%% an error is returned.
+-spec activate(bucket_type()) -> ok | {error, undefined | not_ready}.
+activate(?DEFAULT_TYPE) ->
+    ok;
+activate(BucketType) when is_binary(BucketType) ->
+    riak_core_claimant:activate_bucket_type(BucketType).
+
+%% @doc Update an existing bucket type. Updates may only be performed
+%% on active types. Properties not provided will keep their existing
+%% values.
 -spec update(bucket_type(), bucket_type_props()) -> ok | {error, term()}.
 update(?DEFAULT_TYPE, _Props) ->
     {error, no_default_update}; %% default props are in the app.config
-update(BucketType, Props0) when is_binary(BucketType)->
-    case riak_core_bucket_props:validate(Props0) of
-        {ok, Props} ->
-            OldProps = get(BucketType, defaults()),
-            NewProps = riak_core_bucket_props:merge(Props, OldProps),
-            %% TODO: but what if DNE? not much "update" guarantee
-            riak_core_metadata:put(?KEY_PREFIX, BucketType, NewProps);
-        {error, Details} ->
-            lager:error("Bucket Type properties validation failed ~p~n", [Details]),
-            {error, Details}
-    end.
+update(BucketType, Props) when is_binary(BucketType)->
+    riak_core_claimant:update_bucket_type(BucketType, Props).
 
-%% @doc Return the properties associated with the given bucket type
+%% @doc Return the properties associated with the given bucket type.
 -spec get(bucket_type()) -> undefined | bucket_type_props().
 get(BucketType) when is_binary(BucketType) ->
-    get(BucketType, undefined).
+    riak_core_claimant:get_bucket_type(BucketType, undefined).
 
-%% @private
-get(BucketType, Default) ->
-    riak_core_metadata:get(?KEY_PREFIX,
-                           BucketType,
-                           [{default, Default}, {resolver, fun riak_core_bucket_props:resolve/2}]).
-
-
+%% @doc Reset the properties of the bucket. This only affects properties that
+%% can be set using {@see update/2} and can only be performed on an active
+%% type.
+-spec reset(bucket_type()) -> ok | {error, term()}.
 reset(BucketType) ->
-    case ?MODULE:get(BucketType) of
-        undefined ->
-            {error, no_type};
-        _ ->
-            riak_core_metadata:put(?KEY_PREFIX, BucketType, defaults()),
-            ok
-    end.
+    update(BucketType, defaults()).
 
-%% @doc Return an iterator that can be used to walk iterate through all existing bucket types
+%% @doc Return an iterator that can be used to walk through all existing bucket types
+%% and their properties
 -spec iterator() -> riak_core_metadata:iterator().
 iterator() ->
-    %% we don't allow deletion (yet) so we should never need the default but we provide one anyway
-    riak_core_metadata:iterator(?KEY_PREFIX, [{default, undefined},
-                                              {resolver, fun riak_core_bucket_props:resolve/2}]).
+    riak_core_claimant:bucket_type_iterator().
 
 %% @doc Advance the iterator to the next bucket type. itr_done/1 should always be called
 %% before this function
@@ -122,3 +192,8 @@ itr_done(It) ->
 itr_value(It) ->
     {BucketType, Props} = riak_core_metadata:itr_key_values(It),
     {BucketType, Props}.
+
+
+-spec itr_close(riak_core_metadata:iterator()) -> ok.
+itr_close(It) ->
+    riak_core_metadata:itr_close(It).

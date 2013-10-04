@@ -20,7 +20,7 @@
 -module(riak_core_bucket_props).
 
 -export([merge/2,
-         validate/1,
+         validate/4,
          resolve/2,
          defaults/0,
          append_defaults/1]).
@@ -35,18 +35,21 @@ merge(Overriding, Other) ->
                     lists:ukeysort(1, Other)).
 
 
--spec validate([{atom(), any()}]) -> {ok, [{atom(), any()}]} |
-                                     {error, [{atom(), atom()}]}.
-validate(BucketProps) ->
-    validate(BucketProps, riak_core:bucket_validators(), []).
+-spec validate(create | update,
+               {riak_core_bucket_type:bucket_type(), undefined | binary()} | binary(),
+               undefined | [{atom(), any()}],
+               [{atom(), any()}]) -> {ok, [{atom(), any()}]} | {error, [{atom(), atom()}]}.
+validate(CreateOrUpdate, Bucket, ExistingProps, BucketProps) ->
+    validate(CreateOrUpdate, Bucket, ExistingProps, BucketProps, riak_core:bucket_validators(), []).
 
-validate(BucketProps, [], []) ->
-    {ok, BucketProps};
-validate(_, [], Errors) ->
-    {error, Errors};
-validate(BucketProps0, [{_App, Validator}|T], Errors0) ->
-    {BucketProps, Errors} = Validator:validate(BucketProps0),
-    validate(BucketProps, T, lists:flatten([Errors|Errors0])).
+validate(_CreateOrUpdate, _Bucket, _ExistingProps, Props, [], ErrorLists) ->
+    case lists:flatten(ErrorLists) of
+        [] -> {ok, Props};
+        Errors -> {error, Errors}
+    end;
+validate(CreateOrUpdate, Bucket, ExistingProps, BucketProps0, [{_App, Validator}|T], Errors0) ->
+    {BucketProps, Errors} = Validator:validate(CreateOrUpdate, Bucket, ExistingProps, BucketProps0),
+    validate(CreateOrUpdate, Bucket, ExistingProps, BucketProps, T, [Errors|Errors0]).
 
 
 -spec defaults() -> [{atom(), any()}].
@@ -87,73 +90,40 @@ resolve({allow_mult, Mult1}, {allow_mult, Mult2}) ->
 resolve({basic_quorum, Basic1}, {basic_quorum, Basic2}) ->
     Basic1 andalso Basic2;
 resolve({big_vclock, Big1}, {big_vclock, Big2}) ->
-    case Big1 > Big2 of
-        true -> Big1;
-        false -> Big2
-    end;
+    max(Big1, Big2);
 resolve({chash_keyfun, KeyFun1}, {chash_keyfun, _KeyFun2}) ->
     KeyFun1; %% arbitrary choice
 resolve({dw, DW1}, {dw, DW2}) ->
     %% 'quorum' wins over set numbers
-    case DW1 > DW2 of
-        true -> DW1;
-        false -> DW2
-    end;
+    max(DW1, DW2);
 resolve({last_write_wins, LWW1}, {last_write_wins, LWW2}) ->
     LWW1 andalso LWW2;
 resolve({linkfun, LinkFun1}, {linkfun, _LinkFun2}) ->
     LinkFun1; %% arbitrary choice
 resolve({n_val, N1}, {n_val, N2}) ->
-    case N1 > N2 of
-        true -> N1;
-        false -> N2
-    end;
+    max(N1, N2);
 resolve({notfound_ok, NF1}, {notfound_ok, NF2}) ->
     NF1 orelse NF2;
 resolve({old_vclock, Old1}, {old_vclock, Old2}) ->
-    case Old1 > Old2 of
-        true -> Old1;
-        false -> Old2
-    end;
+    max(Old1, Old2);
 resolve({postcommit, PC1}, {postcommit, PC2}) ->
     resolve_hooks(PC1, PC2);
 resolve({pr, PR1}, {pr, PR2}) ->
-    case PR1 > PR2 of
-        true -> PR1;
-        false -> PR2
-    end;
+    max(PR1, PR2);
 resolve({precommit, PC1}, {precommit, PC2}) ->
     resolve_hooks(PC1, PC2);
 resolve({pw, PW1}, {pw, PW2}) ->
-    case PW1 > PW2 of
-        true -> PW1;
-        false -> PW2
-    end;
+    max(PW1, PW2);
 resolve({r, R1}, {r, R2}) ->
-    case R1 > R2 of
-        true -> R1;
-        false -> R2
-    end;
+    max(R1, R2);
 resolve({rw, RW1}, {rw, RW2}) ->
-    case RW1 > RW2 of
-        true -> RW1;
-        false -> RW2
-    end;
+    max(RW1, RW2);
 resolve({small_vclock, Small1}, {small_vclock, Small2}) ->
-    case Small1 > Small2 of
-        true -> Small1;
-        false -> Small2
-    end;
+    max(Small1, Small2);
 resolve({w, W1}, {w, W2}) ->
-    case W1 > W2 of
-        true -> W1;
-        false -> W2
-    end;
+    max(W1, W2);
 resolve({young_vclock, Young1}, {young_vclock, Young2}) ->
-    case Young1 > Young2 of
-        true -> Young1;
-        false -> Young2
-    end;
+    max(Young1, Young2);
 resolve({_, V1}, {_, _V2}) ->
     V1.
 
