@@ -52,8 +52,10 @@
 append_bucket_defaults(Items) when is_list(Items) ->
     riak_core_bucket_props:append_defaults(Items).
 
-%% @spec set_bucket(riak_object:bucket(), BucketProps::riak_core_bucketprops()) -> ok
-%% @doc Set the given BucketProps in Bucket.
+%% @doc Set the given BucketProps in Bucket or {BucketType, Bucket}. If BucketType does not
+%% exist, or is not active, {error, no_type} is returned.
+-spec set_bucket(binary() | {riak_core_bucket_type:bucket_type(), binary()}, [{atom(), any()}]) ->
+                        ok | {error, no_type}.
 set_bucket({<<"default">>, Name}, BucketProps) ->
     set_bucket(Name, BucketProps);
 set_bucket({Type, _Name}=Bucket, BucketProps0) ->
@@ -65,9 +67,9 @@ set_bucket(Name, BucketProps0) ->
     set_bucket(fun set_bucket_in_ring/2, Name, BucketProps0).
 
 set_bucket(StoreFun, Bucket, BucketProps0) ->
-    case riak_core_bucket_props:validate(BucketProps0) of
+    OldBucket = get_bucket(Bucket),
+    case riak_core_bucket_props:validate(update, Bucket, OldBucket, BucketProps0) of
         {ok, BucketProps} ->
-            OldBucket = get_bucket(Bucket),
             NewBucket = merge_props(BucketProps, OldBucket),
             StoreFun(Bucket, NewBucket);
         {error, Details} ->

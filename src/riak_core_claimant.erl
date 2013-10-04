@@ -32,7 +32,14 @@
          plan/0,
          commit/0,
          clear/0,
-         ring_changed/2]).
+         ring_changed/2,
+         create_bucket_type/2,
+         update_bucket_type/2,
+         bucket_type_status/1,
+         activate_bucket_type/1,
+         get_bucket_type/2,
+         get_bucket_type/3,
+         bucket_type_iterator/0]).
 -export([reassign_indices/1]). % helpers for claim sim
 
 %% gen_server callbacks
@@ -68,6 +75,7 @@
 -define(ROUT(S,A),ok).
 %%-define(ROUT(S,A),?debugFmt(S,A)).
 %%-define(ROUT(S,A),io:format(S,A)).
+-define(BUCKET_TYPE_PREFIX, {core, bucket_types}).
 
 %%%===================================================================
 %%% API
@@ -155,6 +163,59 @@ clear() ->
 ring_changed(Node, Ring) ->
     internal_ring_changed(Node, Ring).
 
+%% @doc {@see riak_core_bucket_type:create/2}
+-spec create_bucket_type(riak_core_bucket_type:bucket_type(), [{atom(), any()}]) ->
+                                ok | {error, term()}.
+create_bucket_type(BucketType, Props) ->
+    gen_server:call(claimant(), {create_bucket_type, BucketType, Props}, infinity).
+
+%% @doc {@see riak_core_bucket_type:status/1}
+-spec bucket_type_status(riak_core_bucket_type:bucket_type()) ->
+                                undefined | created | ready | active.
+bucket_type_status(BucketType) ->
+    gen_server:call(claimant(), {bucket_type_status, BucketType}, infinity).
+
+%% @doc {@see riak_core_bucket_type:activate/1}
+-spec activate_bucket_type(riak_core_bucket_type:bucket_type()) ->
+                                  ok | {error, undefined | not_ready}.
+activate_bucket_type(BucketType) ->
+    gen_server:call(claimant(), {activate_bucket_type, BucketType}, infinity).
+
+%% @doc Lookup the properties for `BucketType'. If there are no properties or
+%% the type is inactive, the given `Default' value is returned.
+-spec get_bucket_type(riak_core_bucket_type:bucket_type(), X) -> [{atom(), any()}] | X.
+get_bucket_type(BucketType, Default) ->
+    get_bucket_type(BucketType, Default, true).
+
+%% @doc Lookup the properties for `BucketType'. If there are no properties or
+%% the type is inactive and `RequireActive' is `true', the given `Default' value is
+%% returned.
+-spec get_bucket_type(riak_core_bucket_type:bucket_type(), X, boolean()) ->
+                             [{atom(), any()}] | X.
+get_bucket_type(BucketType, Default, RequireActive) ->
+    %% we resolve w/ last-write-wins because conflicts only occur
+    %% during creation when the claimant is changed and create on a
+    %% new claimant happens before the original propogates. In this
+    %% case we want the newest create. Updates can also result in
+    %% conflicts so we choose the most recent as well.
+    case riak_core_metadata:get(?BUCKET_TYPE_PREFIX, BucketType,
+                                [{default, Default}]) of
+        Default -> Default;
+        Props -> maybe_filter_inactive_type(RequireActive, Default, Props)
+    end.
+
+%% @doc {@see riak_core_bucket_type:update/2}
+-spec update_bucket_type(riak_core_bucket_type:bucket_type(), [{atom(), any()}]) ->
+                                ok | {error, term()}.
+update_bucket_type(BucketType, Props) ->
+    gen_server:call(claimant(), {update_bucket_type, BucketType, Props}).
+
+%% @doc {@see riak_core_bucket_type:iterator/0}
+-spec bucket_type_iterator() -> riak_core_metadata:iterator().
+bucket_type_iterator() ->
+    riak_core_metadata:iterator(?BUCKET_TYPE_PREFIX, [{default, undefined},
+                                              {resolver, fun riak_core_bucket_props:resolve/2}]).
+
 %%%===================================================================
 %%% Claim sim helpers until refactor
 %%%===================================================================
@@ -172,6 +233,14 @@ stage(Node, Action) ->
 claimant() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     {?MODULE, riak_core_ring:claimant(Ring)}.
+
+maybe_filter_inactive_type(false, _Default, Props) ->
+    Props;
+maybe_filter_inactive_type(true, Default, Props) ->
+    case type_active(Props) of
+        true -> Props;
+        false -> Default
+    end.
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -204,6 +273,40 @@ handle_call(plan, _From, State) ->
 handle_call(commit, _From, State) ->
     {Reply, State2} = commit_staged(State),
     {reply, Reply, State2};
+
+handle_call({create_bucket_type, BucketType, Props0}, _From, State) ->
+    Existing = get_bucket_type(BucketType, undefined, false),
+    case can_create_type(BucketType, Existing, Props0) of
+        {ok, Props} ->
+            InactiveProps = lists:keystore(active, 1, Props, {active, false}),
+            ClaimedProps = lists:keystore(claimant, 1, InactiveProps, {claimant, node()}),
+            riak_core_metadata:put(?BUCKET_TYPE_PREFIX, BucketType, ClaimedProps),
+            {reply, ok, State};
+        Error ->
+            {reply, Error, State}
+    end;
+
+handle_call({update_bucket_type, BucketType, Props0}, _From, State) ->
+    Existing = get_bucket_type(BucketType, [], false),
+    case can_update_type(BucketType, Existing, Props0) of
+        {ok, Props} ->
+            MergedProps = riak_core_bucket_props:merge(Props, Existing),
+            riak_core_metadata:put(?BUCKET_TYPE_PREFIX, BucketType, MergedProps),
+            {reply, ok, State};
+        Error ->
+            {reply, Error, State}
+    end;
+
+handle_call({bucket_type_status, BucketType}, _From, State) ->
+    Existing = get_bucket_type(BucketType, undefined, false),
+    Reply = get_type_status(BucketType, Existing),
+    {reply, Reply, State};
+
+handle_call({activate_bucket_type, BucketType}, _From, State) ->
+    Existing = get_bucket_type(BucketType, undefined, false),
+    Status = get_type_status(BucketType, Existing),
+    Reply = maybe_activate_type(BucketType, Status, Existing),
+    {reply, Reply, State};
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -555,6 +658,78 @@ maybe_force_ring_update(Ring) ->
         _ ->
             ok
     end.
+
+%% @private
+can_create_type(BucketType, undefined, Props) ->
+    riak_core_bucket_props:validate(create, {BucketType, undefined}, undefined, Props);
+can_create_type(BucketType, Existing, Props) ->
+    Active = type_active(Existing),
+    Claimed = node() =:= type_claimant(Existing),
+    case {Active, Claimed} of
+        %% if type is not active and this claimant has claimed it
+        %% then we can re-create the type.
+        {false, true} -> riak_core_bucket_props:validate(create, {BucketType, undefined},
+                                                         Existing, Props);
+        {true, _} -> {error, already_active};
+        {_, false} -> {error, not_claimed}
+    end.
+
+%% @private
+can_update_type(_BucketType, undefined, _Props) ->
+    {error, undefined};
+can_update_type(BucketType, Existing, Props) ->
+    case type_active(Existing) of
+        true -> riak_core_bucket_props:validate(update, {BucketType, undefined},
+                                                Existing, Props);
+        false -> {error, not_active}
+    end.
+
+%% @private
+get_type_status(_BucketType, undefined) ->
+    undefined;
+get_type_status(BucketType, Props) ->
+    case type_active(Props) of
+        true -> active;
+        false -> get_remote_type_status(BucketType, Props)
+    end.
+
+%% @private
+get_remote_type_status(BucketType, Props) ->
+    {ok, R} = riak_core_ring_manager:get_my_ring(),
+    Members = riak_core_ring:all_members(R),
+    {AllProps, BadNodes} = rpc:multicall(lists:delete(node(), Members),
+                                         riak_core_metadata,
+                                         get, [?BUCKET_TYPE_PREFIX, BucketType, [{default, []}]]),
+    SortedProps = lists:ukeysort(1, Props),
+    DiffProps = [P || P <- AllProps, lists:ukeysort(1, P) =/= SortedProps],
+    case {DiffProps, BadNodes} of
+        {[], []} -> ready;
+        %% unreachable nodes may or may not have correct value, so we assume they dont
+        {_, _} -> created
+    end.
+
+%% @private
+maybe_activate_type(_BucketType, undefined, _Props) ->
+    {error, undefined};
+maybe_activate_type(_BucketType, created, _Props) ->
+    {error, not_ready};
+maybe_activate_type(_BucketType, active, _Props) ->
+    ok;
+maybe_activate_type(BucketType, ready, Props) ->
+    ActiveProps = lists:keystore(active, 1, Props, {active, true}),
+    riak_core_metadata:put(?BUCKET_TYPE_PREFIX, BucketType, ActiveProps).
+
+%% @private
+type_active(Props) ->
+    {active, true} =:= lists:keyfind(active, 1, Props).
+
+%% @private
+type_claimant(Props) ->
+    case lists:keyfind(claimant, 1, Props) of
+        {claimant, Claimant} -> Claimant;
+        false -> undefined
+    end.
+
 
 %% =========================================================================
 %% Claimant rebalance/reassign logic
