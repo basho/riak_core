@@ -157,8 +157,8 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 safe_peername(Skt, Mod) ->
     case Mod:peername(Skt) of
-        {ok, Info} ->
-            Info;
+        {ok, {Host, Port}} ->
+            {inet_parse:ntoa(Host), Port};
         _ ->
             {unknown, unknown}                  % Real info is {Addr, Port}
     end.
