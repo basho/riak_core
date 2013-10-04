@@ -98,7 +98,10 @@
              riak_core_metadata_hashtree,
              riak_core_metadata_exchange_fsm,
              riak_core_broadcast,
-             riak_core_broadcast_handler
+             riak_core_broadcast_handler,
+             riak_core_bg_manager,
+             riak_core_table_manager,
+             riak_core_bg_manager_sup
             ]},
   {registered, []},
   {included_applications, [folsom]},
