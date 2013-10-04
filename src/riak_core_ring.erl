@@ -128,6 +128,7 @@
          set_resized_ring/2,
          future_index/3,
          future_index/4,
+         future_index/5,
          is_future_index/4,
          future_owner/2,
          future_num_partitions/1,
@@ -548,9 +549,12 @@ future_index(CHashKey, OrigIdx, State) ->
                    undefined | integer(),
                    chstate()) -> integer() | undefined.
 future_index(CHashKey, OrigIdx, NValCheck, State) ->
-    <<CHashInt:160/integer>> = CHashKey,
     OrigCount = num_partitions(State),
     NextCount = future_num_partitions(State),
+    future_index(CHashKey, OrigIdx, NValCheck, OrigCount, NextCount).
+
+future_index(CHashKey, OrigIdx, NValCheck, OrigCount, NextCount) ->
+    <<CHashInt:160/integer>> = CHashKey,
     OrigInc = chash:ring_increment(OrigCount),
     NextInc = chash:ring_increment(NextCount),
 
