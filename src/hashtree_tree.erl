@@ -390,7 +390,7 @@ compare(NodeName, Level, LocalTree, RemoteFun, HandlerFun, HandlerAcc)
                                       extract_compare_acc(CompareAcc, HandlerAcc)),
                      [{acc, Res}]
              end,
-    CompareRes = hashtree:compare(LocalNode, RemoteNode, AccFun),
+    CompareRes = hashtree:compare(LocalNode, RemoteNode, AccFun, []),
     extract_compare_acc(CompareRes, HandlerAcc);
 compare(NodeName, Level, LocalTree, RemoteFun, HandlerFun, HandlerAcc) ->
     Prefixes = node_name_to_prefixes(NodeName),
@@ -411,7 +411,7 @@ compare(NodeName, Level, LocalTree, RemoteFun, HandlerFun, HandlerAcc) ->
                                        extract_compare_acc(CompareAcc, HandlerAcc), Diffs),
                      [{acc, Res}]
              end,
-    CompareRes = hashtree:compare(LocalNode, RemoteNode, AccFun),
+    CompareRes = hashtree:compare(LocalNode, RemoteNode, AccFun, []),
     extract_compare_acc(CompareRes, HandlerAcc).
 
 
