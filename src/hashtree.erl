@@ -90,14 +90,14 @@
 %% to LevelDB using a single batch write. Writes are flushed whenever the
 %% buffer becomes full, as well as before updating the hashtree.
 %%
-%% Tree exchange is provided by the ``compare/2'' and ``compare/3'' functions.
-%% The behavior of these functions is determined through a provided function
+%% Tree exchange is provided by the ``compare/4'' function.
+%% The behavior of this function is determined through a provided function
 %% that implements logic to get buckets and segments for a given remote tree,
 %% as well as a callback invoked as key differences are determined. This
 %% generic interface allows for tree exchange to be implemented in a variety
 %% of ways, including directly against to local hash tree instances, over
 %% distributed Erlang, or over a custom protocol over a TCP socket. See
-%% ``local_compare/2'' and ``do_remote/1'' for examples.
+%% ``local_compare/2'' and ``do_remote/1'' for examples (-ifdef(TEST) only).
 
 -module(hashtree).
 
@@ -114,9 +114,7 @@
          destroy/1,
          read_meta/2,
          write_meta/3,
-         local_compare/2,
-         compare/2,
-         compare/3,
+         compare/4,
          top_hash/1,
          get_bucket/3,
          key_hashes/2,
@@ -125,6 +123,8 @@
          width/1,
          mem_levels/1]).
 
+-ifdef(TEST).
+-export([local_compare/2]).
 -export([run_local/0,
          run_local/1,
          run_concurrent_build/0,
@@ -133,6 +133,7 @@
          run_multiple/2,
          run_remote/0,
          run_remote/1]).
+-endif. % TEST
 
 -ifdef(EQC).
 -export([prop_correct/0]).
@@ -158,8 +159,8 @@
 
 -type keydiff() :: {missing | remote_missing | different, binary()}.
 
--type remote_fun() :: fun((get_bucket | key_hashes,
-                           {integer(), integer()}) -> any()).
+-type remote_fun() :: fun((get_bucket | key_hashes | init | final,
+                           {integer(), integer()} | integer() | term()) -> any()).
 
 -type acc_fun(Acc) :: fun(([keydiff()], Acc) -> Acc).
 
@@ -385,25 +386,8 @@ rehash_perform(State) ->
 top_hash(State) ->
     get_bucket(1, 0, State).
 
--spec local_compare(hashtree(), hashtree()) -> [keydiff()].
-local_compare(T1, T2) ->
-    Remote = fun(get_bucket, {L, B}) ->
-                     get_bucket(L, B, T2);
-                (key_hashes, Segment) ->
-                     [{_, KeyHashes2}] = key_hashes(T2, Segment),
-                     KeyHashes2
-             end,
-    compare(T1, Remote).
-
--spec compare(hashtree(), remote_fun()) -> [keydiff()].
-compare(Tree, Remote) ->
-    compare(Tree, Remote, fun(Keys, KeyAcc) ->
-                                  Keys ++ KeyAcc
-                          end).
-
--spec compare(hashtree(), remote_fun(), acc_fun(X)) -> X.
-compare(Tree, Remote, AccFun) ->
-    compare(1, 0, Tree, Remote, AccFun, []).
+compare(Tree, Remote, AccFun, Acc) ->
+    compare(1, 0, Tree, Remote, AccFun, Acc).
 
 -spec levels(hashtree()) -> pos_integer().
 levels(#state{levels=L}) ->
@@ -898,6 +882,8 @@ expand(V, N, Acc) ->
 %%% Experiments
 %%%===================================================================
 
+-ifdef(TEST).
+
 run_local() ->
     run_local(10000).
 run_local(N) ->
@@ -1051,7 +1037,25 @@ peval(L) ->
 %%% EUnit
 %%%===================================================================
 
--ifdef(TEST).
+-spec local_compare(hashtree(), hashtree()) -> [keydiff()].
+local_compare(T1, T2) ->
+    Remote = fun(get_bucket, {L, B}) ->
+                     get_bucket(L, B, T2);
+                (key_hashes, Segment) ->
+                     [{_, KeyHashes2}] = key_hashes(T2, Segment),
+                     KeyHashes2
+             end,
+    compare(T1, Remote).
+
+-spec compare(hashtree(), remote_fun()) -> [keydiff()].
+compare(Tree, Remote) ->
+    compare(Tree, Remote, fun(Keys, KeyAcc) ->
+                                  Keys ++ KeyAcc
+                          end).
+
+-spec compare(hashtree(), remote_fun(), acc_fun(X)) -> X.
+compare(Tree, Remote, AccFun) ->
+    compare(Tree, Remote, AccFun, []).
 
 %% Verify that `update_tree/1' generates a snapshot of the underlying
 %% LevelDB store that is used by `compare', therefore isolating the
