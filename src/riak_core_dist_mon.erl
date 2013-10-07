@@ -35,10 +35,10 @@
          }).
 
 %% provided for testing convenience and debugging.
-set_dist_buf_sizes(SendSz, RecvSz) 
-  when (is_integer(SendSz) andalso SendSz > 0) andalso
-       (is_integer(RecvSz) andalso RecvSz > 0) ->
-    gen_server:call(?MODULE, {set_dist_buf_sizes, SendSz, RecvSz}).
+set_dist_buf_sizes(SndBuf, RecBuf) 
+  when (is_integer(SndBuf) andalso SndBuf > 0) andalso
+       (is_integer(RecBuf) andalso RecBuf > 0) ->
+    gen_server:call(?MODULE, {set_dist_buf_sizes, SndBuf, RecBuf}).
 
 
 start_link() ->
@@ -48,22 +48,22 @@ init(_) ->
     %% register for monitor events so we can adjust buffers on 
     %% new connections when they're started.
     ok = net_kernel:monitor_nodes(true, [{node_type, visible}, nodedown_reason]),
-    {SendBufSz, RecBufSz} = get_riak_env_vars(),
+    {SndBuf, RecBuf} = get_riak_env_vars(),
     DistCtrl = erlang:system_info(dist_ctrl),
     %% make sure that buffers are correct on existing connections.
-    [set_port_buffers(Port, SendBufSz, RecBufSz)
+    [set_port_buffers(Port, SndBuf, RecBuf)
      || {_Node, Port} <- DistCtrl],
-    {ok, #state{sndbuf=SendBufSz, recbuf=RecBufSz}}.
+    {ok, #state{sndbuf=SndBuf, recbuf=RecBuf}}.
 
 get_riak_env_vars() ->
-    {ok, SndBufSz} = application:get_env(riak_core, dist_send_buf_size),
-    {ok, RecBufSz} = application:get_env(riak_core, dist_recv_buf_size),
-    {SndBufSz, RecBufSz}.
+    {ok, SndBuf} = application:get_env(riak_core, dist_send_buf_size),
+    {ok, RecBuf} = application:get_env(riak_core, dist_recv_buf_size),
+    {SndBuf, RecBuf}.
 
-handle_call({set_dist_buf_sizes, SendSz, RecvSz}, _From, State) ->
-    [set_port_buffers(Port, SendSz, RecvSz)
+handle_call({set_dist_buf_sizes, SndBuf, RecBuf}, _From, State) ->
+    [set_port_buffers(Port, SndBuf, RecBuf)
      || {_Node, Port} <- erlang:system_info(dist_ctrl)],
-    {reply, ok, State#state{sndbuf=SendSz, recbuf=RecvSz}};
+    {reply, ok, State#state{sndbuf=SndBuf, recbuf=RecBuf}};
 handle_call(Msg, _From, State) ->
     lager:warning("unknown call message received: ~p", [Msg]),
     {noreply, State}.
@@ -73,15 +73,15 @@ handle_cast(Msg, State) ->
     {noreply, State}.
 
 
-handle_info({nodeup, Node, _InfoList}, #state{sndbuf=SendBufSz,
-                                              recbuf=RecBufSz} = State) ->
+handle_info({nodeup, Node, _InfoList}, #state{sndbuf=SndBuf,
+                                              recbuf=RecBuf} = State) ->
     DistCtrl = erlang:system_info(dist_ctrl),
     case proplists:get_value(Node, DistCtrl) of
         undefined ->
             lager:error("Could not get dist for ~p\n~p\n", [Node, DistCtrl]),
             {noreply, State};
         Port ->
-            set_port_buffers(Port, SendBufSz, RecBufSz),
+            set_port_buffers(Port, SndBuf, RecBuf),
             {noreply, State}
     end;
 handle_info({nodedown, _Node, _InfoList}, State) ->
@@ -99,6 +99,6 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% private 
 
-set_port_buffers(Port, SendBufSz, RecBufSz) ->
-    inet:setopts(Port, [{sndbuf, SendBufSz},
-                        {recbuf, RecBufSz}]).
+set_port_buffers(Port, SndBuf, RecBuf) ->
+    inet:setopts(Port, [{sndbuf, SndBuf},
+                        {recbuf, RecBuf}]).
