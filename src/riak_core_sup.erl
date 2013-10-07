@@ -50,7 +50,7 @@ init([]) ->
                  [?CHILD(riak_core_sysmon_minder, worker),
                   ?CHILD(riak_core_vnode_sup, supervisor, 305000),
                   ?CHILD(riak_core_eventhandler_sup, supervisor),
-                  ?CHILD(riak_core_dist_mon_sup, supervisor),
+                  ?CHILD(riak_core_dist_mon, worker),
                   ?CHILD(riak_core_handoff_sup, supervisor),
                   ?CHILD(riak_core_ring_events, worker),
                   ?CHILD(riak_core_ring_manager, worker),
