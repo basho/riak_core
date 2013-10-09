@@ -1,8 +1,8 @@
 .eunit/*
 deps/*
 priv/*
+ebin/*
 *.o
-*.beam
 include/*_pb.hrl
 *~
 doc/*
