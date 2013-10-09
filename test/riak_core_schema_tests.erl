@@ -3,7 +3,10 @@
 -include_lib("eunit/include/eunit.hrl").
 -compile(export_all).
 
+%% basic schema test will check to make sure that all defaults from the schema
+%% make it into the generated app.config
 basic_schema_test() ->
+    %% The defaults are defined in ../priv/riak_core.schema. it is the file under test. 
     Config = cuttlefish_unit:generate_templated_config("../priv/riak_core.schema", [], context()),
 
     cuttlefish_unit:assert_config(Config, "riak_core.ring_creation_size", 64),
@@ -18,6 +21,8 @@ basic_schema_test() ->
     ok.
 
 override_schema_test() ->
+    %% Conf represents the riak.conf file that would be read in by cuttlefish.
+    %% this proplists is what would be output by the conf_parse module
     Conf = [
         {["ring_size"], 8},
         {["ring", "state_dir"], "/absolute/ring"},
@@ -56,6 +61,10 @@ override_schema_test() ->
     cuttlefish_unit:assert_config(Config, "riak_core.handoff_ssl_options.keyfile", "/tmp/erlkey/pem"),
     ok.
 
+%% this context() represents the substitution variables that rebar will use during the build process.
+%% riak_core's schema file is written with some {{mustache_vars}} for substitution during packaging
+%% cuttlefish doesn't have a great time parsing those, so we perform the substitutions first, because
+%% that's how it would work in real life.
 context() ->
     [
         {handoff_port, "8099"},
