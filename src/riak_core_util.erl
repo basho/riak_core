@@ -58,7 +58,9 @@
          make_fold_req/1,
          make_fold_req/2,
          make_fold_req/4,
-         make_newest_fold_req/1
+         make_newest_fold_req/1,
+         start_set_net_ticktime_daemon/2,
+         stop_set_net_ticktime_daemon/1
         ]).
 
 -include("riak_core_vnode.hrl").
@@ -580,6 +582,100 @@ make_fold_reqv(v2, FoldFun, Acc0, Forwardable, Opts)
        andalso is_list(Opts) ->
     ?FOLD_REQ{foldfun=FoldFun, acc0=Acc0,
               forwardable=Forwardable, opts=Opts}.
+
+-define(REGNAME, net_kernel_net_ticktime_change_daemon).
+
+start_set_net_ticktime_daemon(Node, Time) ->
+    EbinDir = filename:dirname(code:which(?MODULE)),
+    try
+        Dirs = rpc:call(Node, code, get_path, []),
+        case lists:member(EbinDir, Dirs) of
+            false ->
+                lager:info("start_set_net_ticktime_daemon: adding to code path "
+                           "for node ~p\n", [Node]),
+                rpc:call(Node, code, add_pathz, [EbinDir]);
+            true ->
+                ok
+        end
+    catch _:_ ->
+            %% Network problems or timeouts here, spawn will fail, no
+            %% worries, we'll try again soon.
+            ok
+    end,
+    spawn(Node, fun() ->
+                        try
+                            register(?REGNAME, self()),
+                            %% If we get here, we are the one daemon process
+                            lager:info("start_set_net_ticktime_daemon: started "
+                                       "changing net_ticktime on ~p to ~p\n",
+                                 [Node, Time]),
+                            random:seed(os:timestamp()),
+                            set_net_ticktime_daemon_loop(Time, 1)
+                        catch _:_ ->
+                                ok
+                        end
+                end).
+
+stop_set_net_ticktime_daemon(Node) ->
+    try
+        case rpc:call(Node, erlang, whereis, [?REGNAME]) of
+            Pid when is_pid(Pid) ->
+                io:format("Stopping tick daemon ~p on ~p\n", [Pid, Node]),
+                exit(Pid, stop_now),
+                ok;
+            undefined ->
+                io:format("Stopping tick daemon on ~p but not running\n", [Node]),
+                ok
+        end
+    catch _:_ ->
+            %% Network problems or timeouts, we don't try too hard
+            error
+    end.
+
+async_start_set_net_ticktime_daemons(Time, Nodes) ->
+    Pids = [spawn(fun() ->
+                          start_set_net_ticktime_daemon(Node, Time)
+                  end) || Node <- Nodes],
+    spawn(fun() ->
+                  %% If a daemon cannot finish in 5 seconds, no worries.
+                  %% We want to avoid leaving lots of pids around due to
+                  %% network/net_kernel instability.
+                  timer:sleep(5000),
+                  [exit(Pid, kill) || Pid <- Pids]
+          end).
+
+set_net_ticktime_daemon_loop(Time, Count) ->
+    case set_net_ticktime(Time) of
+        unchanged ->
+            lager:info("start_set_net_ticktime_daemon: finished "
+                       "changing net_ticktime on ~p to ~p\n", [node(), Time]),
+            exit(normal);
+        _ ->
+            timer:sleep(random:uniform(1*1000)),
+            %% Here is an uncommon use the erlang:nodes/1 BIF.
+            %% Hidden nodes (e.g. administrative escripts) may have
+            %% connected to us.  Force them to change their tick time,
+            %% in case they're using something different.  And pick up
+            %% any regular nodes that have connected since we started.
+            if Count rem 5 == 0 ->
+                    async_start_set_net_ticktime_daemons(
+                      Time, da_nodes(nodes(connected)));
+               true ->
+                    ok
+            end,
+            set_net_ticktime_daemon_loop(Time, Count + 1)
+    end.
+
+da_nodes(Nodes) ->
+    lists:sort([node()|Nodes]).                 % Always include myself
+
+set_net_ticktime(Time) ->
+    case net_kernel:set_net_ticktime(Time) of
+        {Status, _} ->
+            Status;
+        A when is_atom(A) ->
+            A
+    end.
 
 %% ===================================================================
 %% EUnit tests
