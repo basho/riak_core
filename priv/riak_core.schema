@@ -1,0 +1,101 @@
+%% example of super basic mapping
+%% @doc Default ring creation size.  Make sure it is a power of 2,
+%% e.g. 16, 32, 64, 128, 256, 512 etc
+{mapping, "ring_size", "riak_core.ring_creation_size", [
+  {datatype, integer},
+  {default, 64},
+  {validators, ["ring_size"]},
+  {commented, 64}
+]}.
+
+%% ring_size validator
+{validator, "ring_size", "not a power of 2 greater than 1",
+ fun(Size) -> 
+  Size > 1 andalso (Size band (Size-1) =:= 0)
+ end}.
+
+%% @doc Default location of ringstate
+{mapping, "ring.state_dir", "riak_core.ring_state_dir", [
+  {default, "{{ring_state_dir}}"}
+]}.
+
+%% @doc Default cert location for https can be overridden
+%% with the ssl config variable, for example:
+{mapping, "ssl.certfile", "riak_core.ssl.certfile", [
+  {commented, "{{platform_etc_dir}}/cert.pem"}
+]}.
+
+%% @doc Default key location for https can be overridden
+%% with the ssl config variable, for example:
+{mapping, "ssl.keyfile", "riak_core.ssl.keyfile", [
+  {commented, "{{platform_etc_dir}}/key.pem"}
+]}.
+
+%% @doc Default signing authority location for https can be overridden
+%% with the ssl config variable, for example:
+{mapping, "ssl.cacertfile", "riak_core.ssl.cacertfile", [
+  {commented, "{{platform_etc_dir}}/cacertfile.pem"}
+]}.
+
+%% @doc handoff.port is the TCP port that Riak uses for
+%% intra-cluster data handoff.
+{mapping, "handoff.port", "riak_core.handoff_port", [
+  {default, {{handoff_port}} },
+  {datatype, integer}
+]}.
+
+%% @doc To encrypt riak_core intra-cluster data handoff traffic,
+%% uncomment the following line and edit its path to an
+%% appropriate certfile and keyfile.  (This example uses a
+%% single file with both items concatenated together.)
+{mapping, "handoff.ssl.certfile", "riak_core.handoff_ssl_options.certfile", [
+  {commented, "/tmp/erlserver.pem"}
+]}.
+
+%% @doc if you need a seperate keyfile for handoff
+{mapping, "handoff.ssl.keyfile", "riak_core.handoff_ssl_options.keyfile", []}.
+
+%% @doc DTrace support
+%% Do not enable 'dtrace' unless your Erlang/OTP
+%% runtime is compiled to support DTrace.  DTrace is
+%% available in R15B01 (supported by the Erlang/OTP
+%% official source package) and in R14B04 via a custom
+%% source repository & branch.
+{mapping, "dtrace", "riak_core.dtrace_support", [
+  {default, off},
+  {datatype, {enum, [on, off]}}
+]}.
+
+%% consistent on/off (in lieu of enabled/disabled, true/false)
+{ translation,
+  "riak_core.dtrace_support",
+  fun(Conf) ->
+    Setting = cuttlefish_util:conf_get_value("dtrace", Conf), 
+    case Setting of
+      on -> true;
+      off -> false;
+      _Default -> false
+    end
+  end
+}.
+
+%% Platform-specific installation paths (substituted by rebar)
+{mapping, "platform_bin_dir", "riak_core.platform_bin_dir", [
+  {default, "{{platform_bin_dir}}"}
+]}.
+
+{mapping, "platform_data_dir", "riak_core.platform_data_dir", [
+  {default, "{{platform_data_dir}}"}
+]}.
+
+{mapping, "platform_etc_dir", "riak_core.platform_etc_dir", [
+  {default, "{{platform_etc_dir}}"}
+]}.
+
+{mapping, "platform_lib_dir", "riak_core.platform_lib_dir", [
+  {default, "{{platform_lib_dir}}"}
+]}.
+
+{mapping, "platform_log_dir", "riak_core.platform_log_dir", [
+  {default, "{{platform_log_dir}}"}
+]}.
