@@ -34,6 +34,8 @@
 -define(CHILD(I, Type, Timeout), {I, {I, start_link, []}, permanent, Timeout, Type, [I]}).
 -define(CHILD(I, Type), ?CHILD(I, Type, 5000)).
 
+-define (IF (Bool, A, B), if Bool -> A; true -> B end).
+
 %% ===================================================================
 %% API functions
 %% ===================================================================
@@ -46,11 +48,14 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
+    DistMonEnabled = app_helper:get_env(riak_core, disable_dist_mon,
+                                        false) == false,
     Children = lists:flatten(
                  [?CHILD(riak_core_sysmon_minder, worker),
                   ?CHILD(riak_core_vnode_sup, supervisor, 305000),
                   ?CHILD(riak_core_eventhandler_sup, supervisor),
-                  ?CHILD(riak_core_dist_mon, worker),
+                  ?IF(DistMonEnabled, 
+                      ?CHILD(riak_core_dist_mon, worker), []),
                   ?CHILD(riak_core_handoff_sup, supervisor),
                   ?CHILD(riak_core_ring_events, worker),
                   ?CHILD(riak_core_ring_manager, worker),
