@@ -511,12 +511,12 @@ connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
             lager:debug("Trying connection to: ~p at ~p", [ProtocolId, string_of_ipport(Addr)]),
             ?TRACE(?debugMsg("Attempting riak_core_connection:sync_connect/2")),
             case riak_core_connection:sync_connect(Addr, Protocol) of
-                ok ->
-                    ok;
                 {error, Reason} ->
                     %% notify connection manager this EP failed and try next one
                     gen_server:cast(?SERVER, {endpoint_failed, Addr, Reason, ProtocolId}),
-                    connection_helper(Ref, Protocol, Strategy, Addrs)
+                    connection_helper(Ref, Protocol, Strategy, Addrs);
+                Result ->
+                    Result
             end;
         _ ->
             %% connection request has been cancelled
