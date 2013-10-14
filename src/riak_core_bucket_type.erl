@@ -126,7 +126,7 @@ defaults() ->
      {basic_quorum, false},
      {notfound_ok, true},
      {n_val,3},
-     {allow_mult,false},
+     {allow_mult, true},
      {last_write_wins,false},
      {precommit, []},
      {postcommit, []},
