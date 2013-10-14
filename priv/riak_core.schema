@@ -4,11 +4,13 @@
 %% http://docs.basho.com/riak/latest/dev/advanced/cap-controls/
 {mapping, "buckets.default.n_val", "riak_core.default_bucket_props.n_val", [
   {datatype, integer},
-  {default, 3}
+  {default, 3},
+  {level, advanced}
 ]}.
 
 {mapping, "buckets.default.pr", "riak_core.default_bucket_props.pr", [
-  {default, "0"}
+  {default, "0"},
+  {level, advanced}
 ]}.
 
 %% Cut and paste translation screams to be rewritten as a datatype, but that's a 
@@ -31,7 +33,8 @@
 }.
 
 {mapping, "buckets.default.r", "riak_core.default_bucket_props.r", [
-  {default, "quorum"}
+  {default, "quorum"},
+  {level, advanced}
 ]}.
 {translation, 
   "riak_core.default_bucket_props.r",
@@ -51,7 +54,8 @@
 }.
 
 {mapping, "buckets.default.w", "riak_core.default_bucket_props.w", [
-  {default, "quorum"}
+  {default, "quorum"},
+  {level, advanced}
 ]}.
 {translation, 
   "riak_core.default_bucket_props.w",
@@ -71,7 +75,8 @@
 }.
 
 {mapping, "buckets.default.pw", "riak_core.default_bucket_props.pw", [
-  {default, "0"}
+  {default, "0"},
+  {level, advanced}
 ]}.
 {translation, 
   "riak_core.default_bucket_props.pw",
@@ -91,7 +96,8 @@
 }.
 
 {mapping, "buckets.default.dw", "riak_core.default_bucket_props.dw", [
-  {default, "quorum"}
+  {default, "quorum"},
+  {level, advanced}
 ]}.
 {translation, 
   "riak_core.default_bucket_props.dw",
@@ -111,7 +117,8 @@
 }.
 
 {mapping, "buckets.default.rw", "riak_core.default_bucket_props.rw", [
-  {default, "quorum"}
+  {default, "quorum"},
+  {level, advanced}
 ]}.
 {translation, 
   "riak_core.default_bucket_props.rw",
@@ -137,7 +144,8 @@
 %% Note: See Vector Clocks for a discussion of sibling resolution.
 {mapping, "buckets.default.siblings", "riak_core.default_bucket_props.allow_mult", [
   {datatype, {enum, [on, off]}},
-  {default, on}
+  {default, on},
+  {level, advanced}
 ]}.
 
 {translation, 
@@ -153,7 +161,8 @@
 
 {mapping, "buckets.default.last_write_wins", "riak_core.default_bucket_props.last_write_wins", [
   {datatype, {enum, [true, false]}},
-  {default, false}
+  {default, false},
+  {level, advanced}
 ]}.
 
 %{mapping, "buckets.default.precommit", "riak_core.default_bucket_props.precommit", []},
