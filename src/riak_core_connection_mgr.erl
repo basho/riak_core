@@ -504,7 +504,7 @@ connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
     %% delay by the backoff_delay for this endpoint.
     {ok, BackoffDelay} = gen_server:call(?SERVER, {get_endpoint_backoff, Addr}, infinity),
     lager:debug("Holding off ~p seconds before trying ~p at ~p",
-               [(BackoffDelay/1000), ProtocolId, string_of_ipport(Addr)]),
+               [(BackoffDelay div 1000), ProtocolId, string_of_ipport(Addr)]),
     timer:sleep(BackoffDelay),
     case gen_server:call(?SERVER, {should_try_endpoint, Ref, Addr}, infinity) of
         true ->
@@ -553,7 +553,7 @@ fail_endpoint(Addr, Reason, ProtocolId, State) ->
                         nb_failures = EP#ep.nb_failures + 1,
                         backoff_delay = increase_backoff(Backoff),
                         last_fail_time = os:timestamp(),
-                        next_try_secs = Backoff/1000,
+                        next_try_secs = Backoff div 1000,
                         is_black_listed = true}
           end,
     update_endpoint(Addr, Fun, State).
