@@ -112,12 +112,25 @@
 %% @doc The hardcoded defaults for all bucket types.
 -spec defaults() -> bucket_type_props().
 defaults() ->
-      [{n_val,3},
-       {allow_mult,false},
-       {last_write_wins,false},
-       {precommit, []},
-       {postcommit, []},
-       {chash_keyfun, {riak_core_util, chash_std_keyfun}}].
+    [{linkfun, {modfun, riak_kv_wm_link_walker, mapreduce_linkfun}},
+     {old_vclock, 86400},
+     {young_vclock, 20},
+     {big_vclock, 50},
+     {small_vclock, 50},
+     {pr, 0},
+     {r, quorum},
+     {w, quorum},
+     {pw, 0},
+     {dw, quorum},
+     {rw, quorum},
+     {basic_quorum, false},
+     {notfound_ok, true},
+     {n_val,3},
+     {allow_mult,false},
+     {last_write_wins,false},
+     {precommit, []},
+     {postcommit, []},
+     {chash_keyfun, {riak_core_util, chash_std_keyfun}}].
 
 %% @doc Create the type. The type is not activated (available to nodes) at this time. This
 %% function may be called arbitratily many times if the claimant does not change between
