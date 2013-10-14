@@ -137,7 +137,7 @@
 %% Note: See Vector Clocks for a discussion of sibling resolution.
 {mapping, "buckets.default.siblings", "riak_core.default_bucket_props.allow_mult", [
   {datatype, {enum, [on, off]}},
-  {default, off}
+  {default, on}
 ]}.
 
 {translation, 
@@ -147,7 +147,7 @@
     case Setting of
       on -> true;
       off -> false;
-      _Default -> false
+      _Default -> true
     end  
  end}.
 

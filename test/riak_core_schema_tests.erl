@@ -16,7 +16,7 @@ basic_schema_test() ->
     cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.pw", 0),
     cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.dw", quorum),
     cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.rw", quorum),
-    cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.allow_mult", false),
+    cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.allow_mult", true),
     cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.last_write_wins", false),
 
 
@@ -37,7 +37,7 @@ default_bucket_properties_test() ->
         {["buckets", "default", "rw"], "all"},
         {["buckets", "default", "w"], "1"},
         {["buckets", "default", "r"], "3"},
-        {["buckets", "default", "siblings"], on},
+        {["buckets", "default", "siblings"], off},
         {["buckets", "default", "last_write_wins"], true}
     ],
 
@@ -48,7 +48,7 @@ default_bucket_properties_test() ->
     cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.rw", all),
     cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.w", 1),
     cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.r", 3),
-    cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.allow_mult", true),
+    cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.allow_mult", false),
     cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.last_write_wins", true),
     ok.
 
