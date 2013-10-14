@@ -161,26 +161,6 @@
 %{mapping, "buckets.default.chash_keyfun", "riak_core.default_bucket_props.chash_keyfun", {riak_core_util, chash_std_keyfun}},
 %{mapping, "buckets.default.linkfun", "riak_core.default_bucket_props.linkfun", {modfun, riak_kv_wm_link_walker, mapreduce_linkfun}}
 
-%% Slightly more complex mapping with translation layer
-%% @doc enable active anti-entropy subsystem
-{mapping, "anti_entropy", "riak_kv.anti_entropy", [
-  {datatype, {enum, [on, off, debug]}},
-  {default, on}
-]}.
-
-{ translation,
-  "riak_kv.anti_entropy",
-  fun(Conf) ->
-    Setting = cuttlefish_util:conf_get_value("anti_entropy", Conf), 
-    case Setting of
-      on -> {on, []};
-      debug -> {on, [debug]};
-      off -> {off, []};
-      _Default -> {on, []}
-    end
-  end
-}.
-
 %% example of super basic mapping
 %% @doc Default ring creation size.  Make sure it is a power of 2,
 %% e.g. 16, 32, 64, 128, 256, 512 etc
