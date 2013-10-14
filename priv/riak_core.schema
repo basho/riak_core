@@ -1,3 +1,186 @@
+%% Default Bucket Properties
+
+%% @doc the number of replicas stored. Note: See CAP Controls for further discussion.
+%% http://docs.basho.com/riak/latest/dev/advanced/cap-controls/
+{mapping, "buckets.default.n_val", "riak_core.default_bucket_props.n_val", [
+  {datatype, integer},
+  {default, 3}
+]}.
+
+{mapping, "buckets.default.pr", "riak_core.default_bucket_props.pr", [
+  {default, "0"}
+]}.
+
+%% Cut and paste translation screams to be rewritten as a datatype, but that's a 
+%% "nice to have"
+{translation, 
+  "riak_core.default_bucket_props.pr",
+  fun(Conf) ->
+    Setting = cuttlefish_util:conf_get_value("buckets.default.pr", Conf),
+    case Setting of
+      "quorum" -> quorum;
+      "all" -> all;
+      X ->
+        try list_to_integer(Setting) of
+          Int -> Int
+        catch 
+          E:R -> error
+        end
+    end
+  end
+}.
+
+{mapping, "buckets.default.r", "riak_core.default_bucket_props.r", [
+  {default, "quorum"}
+]}.
+{translation, 
+  "riak_core.default_bucket_props.r",
+  fun(Conf) ->
+    Setting = cuttlefish_util:conf_get_value("buckets.default.r", Conf),
+    case Setting of
+      "quorum" -> quorum;
+      "all" -> all;
+      X ->
+        try list_to_integer(Setting) of
+          Int -> Int
+        catch 
+          E:R -> error
+        end
+    end
+  end
+}.
+
+{mapping, "buckets.default.w", "riak_core.default_bucket_props.w", [
+  {default, "quorum"}
+]}.
+{translation, 
+  "riak_core.default_bucket_props.w",
+  fun(Conf) ->
+    Setting = cuttlefish_util:conf_get_value("buckets.default.w", Conf),
+    case Setting of
+      "quorum" -> quorum;
+      "all" -> all;
+      X ->
+        try list_to_integer(Setting) of
+          Int -> Int
+        catch 
+          E:R -> error
+        end
+    end
+  end
+}.
+
+{mapping, "buckets.default.pw", "riak_core.default_bucket_props.pw", [
+  {default, "0"}
+]}.
+{translation, 
+  "riak_core.default_bucket_props.pw",
+  fun(Conf) ->
+    Setting = cuttlefish_util:conf_get_value("buckets.default.pw", Conf),
+    case Setting of
+      "quorum" -> quorum;
+      "all" -> all;
+      X ->
+        try list_to_integer(Setting) of
+          Int -> Int
+        catch 
+          E:R -> error
+        end
+    end
+  end
+}.
+
+{mapping, "buckets.default.dw", "riak_core.default_bucket_props.dw", [
+  {default, "quorum"}
+]}.
+{translation, 
+  "riak_core.default_bucket_props.dw",
+  fun(Conf) ->
+    Setting = cuttlefish_util:conf_get_value("buckets.default.dw", Conf),
+    case Setting of
+      "quorum" -> quorum;
+      "all" -> all;
+      X ->
+        try list_to_integer(Setting) of
+          Int -> Int
+        catch 
+          E:R -> error
+        end
+    end
+  end
+}.
+
+{mapping, "buckets.default.rw", "riak_core.default_bucket_props.rw", [
+  {default, "quorum"}
+]}.
+{translation, 
+  "riak_core.default_bucket_props.rw",
+  fun(Conf) ->
+    Setting = cuttlefish_util:conf_get_value("buckets.default.rw", Conf),
+    case Setting of
+      "quorum" -> quorum;
+      "all" -> all;
+      X ->
+        try list_to_integer(Setting) of
+          Int -> Int
+        catch 
+          E:R -> error
+        end
+    end
+  end
+}.
+
+%% {mapping, "buckets.default.basic_quorum", "riak_core.default_bucket_props.basic_quorum", false},
+%% {mapping, "buckets.default.notfound_ok", "riak_core.default_bucket_props.notfound_ok", true}
+
+%% @doc whether or not siblings are allowed.
+%% Note: See Vector Clocks for a discussion of sibling resolution.
+{mapping, "buckets.default.siblings", "riak_core.default_bucket_props.allow_mult", [
+  {datatype, {enum, [on, off]}},
+  {default, off}
+]}.
+
+{translation, 
+ "riak_core.default_bucket_props.allow_mult", 
+ fun(Conf) -> 
+  Setting = cuttlefish_util:conf_get_value("buckets.default.siblings", Conf),
+    case Setting of
+      on -> true;
+      off -> false;
+      _Default -> false
+    end  
+ end}.
+
+{mapping, "buckets.default.last_write_wins", "riak_core.default_bucket_props.last_write_wins", [
+  {datatype, {enum, [true, false]}},
+  {default, false}
+]}.
+
+%{mapping, "buckets.default.precommit", "riak_core.default_bucket_props.precommit", []},
+%{mapping, "buckets.default.postcommit", "riak_core.default_bucket_props.postcommit", []},
+%{mapping, "buckets.default.chash_keyfun", "riak_core.default_bucket_props.chash_keyfun", {riak_core_util, chash_std_keyfun}},
+%{mapping, "buckets.default.linkfun", "riak_core.default_bucket_props.linkfun", {modfun, riak_kv_wm_link_walker, mapreduce_linkfun}}
+
+%% Slightly more complex mapping with translation layer
+%% @doc enable active anti-entropy subsystem
+{mapping, "anti_entropy", "riak_kv.anti_entropy", [
+  {datatype, {enum, [on, off, debug]}},
+  {default, on}
+]}.
+
+{ translation,
+  "riak_kv.anti_entropy",
+  fun(Conf) ->
+    Setting = cuttlefish_util:conf_get_value("anti_entropy", Conf), 
+    case Setting of
+      on -> {on, []};
+      debug -> {on, [debug]};
+      off -> {off, []};
+      _Default -> {on, []}
+    end
+  end
+}.
+
 %% example of super basic mapping
 %% @doc Default ring creation size.  Make sure it is a power of 2,
 %% e.g. 16, 32, 64, 128, 256, 512 etc

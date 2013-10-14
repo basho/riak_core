@@ -9,15 +9,47 @@ basic_schema_test() ->
     %% The defaults are defined in ../priv/riak_core.schema. it is the file under test. 
     Config = cuttlefish_unit:generate_templated_config("../priv/riak_core.schema", [], context()),
 
+    cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.n_val", 3),
+    cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.pr", 0),
+    cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.r", quorum),
+    cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.w", quorum),
+    cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.pw", 0),
+    cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.dw", quorum),
+    cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.rw", quorum),
+    cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.allow_mult", false),
+    cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.last_write_wins", false),
+
+
     cuttlefish_unit:assert_config(Config, "riak_core.ring_creation_size", 64),
     cuttlefish_unit:assert_config(Config, "riak_core.ring_state_dir", "./ring"),
     cuttlefish_unit:assert_config(Config, "riak_core.handoff_port", 8099 ),
-    cuttlefish_unit:assert_config(Config,"riak_core.dtrace_support", false),
+    cuttlefish_unit:assert_config(Config, "riak_core.dtrace_support", false),
     cuttlefish_unit:assert_config(Config, "riak_core.platform_bin_dir",  "./bin"),
     cuttlefish_unit:assert_config(Config, "riak_core.platform_data_dir", "./data"),
     cuttlefish_unit:assert_config(Config, "riak_core.platform_etc_dir",  "./etc"),
     cuttlefish_unit:assert_config(Config, "riak_core.platform_lib_dir",  "./lib"),
     cuttlefish_unit:assert_config(Config, "riak_core.platform_log_dir",  "./log"),
+    ok.
+
+default_bucket_properties_test() ->
+    Conf = [
+        {["buckets", "default", "pr"], "quorum"},
+        {["buckets", "default", "rw"], "all"},
+        {["buckets", "default", "w"], "1"},
+        {["buckets", "default", "r"], "3"},
+        {["buckets", "default", "siblings"], on},
+        {["buckets", "default", "last_write_wins"], true}
+    ],
+
+    Config = cuttlefish_unit:generate_templated_config(
+        "../priv/riak_core.schema", Conf, context()),
+
+    cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.pr", quorum),
+    cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.rw", all),
+    cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.w", 1),
+    cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.r", 3),
+    cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.allow_mult", true),
+    cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.last_write_wins", true),
     ok.
 
 override_schema_test() ->
