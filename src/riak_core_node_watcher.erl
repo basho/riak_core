@@ -44,8 +44,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--record(state, { ring_events_pid :: pid(),
-                 status = up,
+-record(state, { status = up,
                  services = [],
                  health_checks = [],
                  healths_enabled = true,
@@ -173,7 +172,7 @@ init([]) ->
     %% Setup callback notification for ring changes; note that we use the
     %% supervised variation so that the callback gets removed if this process
     %% exits
-    RingEventsPid = watch_for_ring_events(),
+    watch_for_ring_events(),
 
     %% Watch for node up/down events
     net_kernel:monitor_nodes(true),
@@ -181,7 +180,7 @@ init([]) ->
     %% Setup ETS table to track node status
     ets:new(?MODULE, [protected, {read_concurrency, true}, named_table]),
 
-    {ok, schedule_broadcast(#state{ring_events_pid=RingEventsPid})}.
+    {ok, schedule_broadcast(#state{})}.
 
 handle_call({set_bcast_mod, Module, Fn}, _From, State) ->
     %% Call available for swapping out how broadcasts are generated
@@ -331,10 +330,6 @@ handle_info({'DOWN', Mref, _, _Pid, _Info}, State) ->
             {noreply, update_avsn(S3)}
     end;
 
-handle_info({'EXIT', Pid, _Cause}, #state{ring_events_pid=RingEventsPid}=State)
-  when Pid == RingEventsPid ->
-    RingEventsPid2 = watch_for_ring_events(),
-    {noreply, State#state{ring_events_pid=RingEventsPid2}};
 handle_info({'EXIT', Pid, _Cause} = Msg, State) ->
     Service = erlang:erase(Pid),
     State2 = handle_check_msg(Msg, Service, State),
@@ -346,8 +341,8 @@ handle_info({check_health, Id}, State) ->
 
 handle_info({gen_event_EXIT, _, _}, State) ->
     %% Ring event handler has been removed for some reason; re-register
-    RingEventsPid = watch_for_ring_events(),
-    {noreply, update_avsn(State#state{ring_events_pid=RingEventsPid})};
+    watch_for_ring_events(),
+    {noreply, update_avsn(State)};
 
 handle_info(broadcast, State) ->
     S2 = broadcast(State#state.peers, State),
@@ -372,38 +367,11 @@ update_avsn(State) ->
     State#state { avsn = State#state.avsn + 1 }.
 
 watch_for_ring_events() ->
-    %% Polling isn't (and cannot be) perfect, good enough 99% of the time
-    %% Our supervisor takes care of the last 1%.
-    RingEventsPid = poll_for_riak_core_ring_events_pid(10),
     Self = self(),
     Fn = fun(R) ->
                  gen_server:cast(Self, {ring_update, R})
          end,
-    HandlerName = riak_core_ring_events:add_sup_callback(Fn),
-    case riak_core_ring_events:get_pid() of
-        P when is_pid(P), P == RingEventsPid ->
-            RingEventsPid;
-        _ ->
-            receive
-                {gen_event_EXIT, _, _} ->
-                    ok
-            after 100 ->
-                    ok
-            end,
-            riak_core_ring_events:delete_handler(HandlerName, race_cond_retry),
-            watch_for_ring_events()
-    end.
-
-poll_for_riak_core_ring_events_pid(0) ->
-    undefined;
-poll_for_riak_core_ring_events_pid(N) ->
-    case riak_core_ring_events:get_pid() of
-        Pid when is_pid(Pid) ->
-            Pid;
-        _ ->
-            timer:sleep(100),
-            poll_for_riak_core_ring_events_pid(N-1)
-    end.
+    riak_core_ring_events:add_sup_callback(Fn).
 
 delete_service_mref(Id) ->
     %% Cleanup the monitor if one exists
