@@ -3,7 +3,7 @@
 {application, riak_core,
 [
   {description, "Riak Core"},
-  {vsn, "1.4.2"},
+  {vsn, git},
   {modules, []},
   {registered, []},
   {included_applications, [folsom]},
