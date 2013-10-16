@@ -25,7 +25,7 @@
 -behaviour(supervisor).
 
 %% API
--export([start_link/0]).
+-export([start_link/0, start_late_worker/0]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -41,6 +41,12 @@
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
+late_worker_childspec() ->
+    ?CHILD(riak_core_node_watcher, worker).
+
+start_late_worker() ->
+    supervisor:start_child(?MODULE, late_worker_childspec()).
+
 %% ===================================================================
 %% Supervisor callbacks
 %% ===================================================================
@@ -48,8 +54,7 @@ start_link() ->
 init([]) ->
     Children = lists:flatten(
                  [
-                  ?CHILD(riak_core_ring_events, worker),
-                  ?CHILD(riak_core_node_watcher, worker)
+                  ?CHILD(riak_core_ring_events, worker)
                  ]),
 
     {ok, {{one_for_all, 9999, 10}, Children}}.
