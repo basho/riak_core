@@ -25,7 +25,8 @@
 -behaviour(riak_core_gen_server).
 -export([start_link/0,                          % Don't use SSL
          start_link/1,                          % SSL options list, empty=no SSL
-         set_socket/2]).
+         set_socket/2,
+         supports_batching/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
@@ -49,6 +50,9 @@ start_link(SslOpts) ->
 
 set_socket(Pid, Socket) ->
     riak_core_gen_server:call(Pid, {set_socket, Socket}).
+
+supports_batching() ->
+    true.
 
 init([SslOpts]) ->
     {ok, #state{ssl_opts = SslOpts,
