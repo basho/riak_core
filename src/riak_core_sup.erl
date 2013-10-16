@@ -57,6 +57,12 @@ init([]) ->
                   ?CHILD(riak_core_broadcast, worker),
                   ?CHILD(riak_core_vnode_proxy_sup, supervisor),
                   ?CHILD(riak_core_node_watcher_events, worker),
+                  %% riak_core_node_watcher is no longer started here.  It is
+                  %% now a *dynamic* child of the riak_core_ring_events_sup
+                  %% and started by riak_core_vnode_manager:init/1.  If it is
+                  %% started by riak_core_ring_events_sup during its startup,
+                  %% it is too early, and Riak rings never settle after a ring
+                  %% change.
                   ?CHILD(riak_core_vnode_manager, worker),
                   ?CHILD(riak_core_capability, worker),
                   ?CHILD(riak_core_handoff_sup, supervisor),

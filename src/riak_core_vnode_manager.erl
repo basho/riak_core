@@ -206,8 +206,9 @@ get_all_vnodes(Mod) ->
 
 %% @private
 init(_State) ->
-    {ok, _Pid} = riak_core_ring_events_sup:start_late_worker(),
-    error_logger:warning_msg("YO started late worker ~p\n", [_Pid]),
+    %% See riak_core_sup:init/1 for why this call is here.
+    {ok, _Pid} = riak_core_ring_events_sup:start_riak_core_node_watcher(),
+
     {ok, Ring, CHBin} = riak_core_ring_manager:get_raw_ring_chashbin(),
     Mods = [Mod || {_, Mod} <- riak_core:vnode_modules()],
     State = #state{forwarding=dict:new(), handoff=dict:new(),
