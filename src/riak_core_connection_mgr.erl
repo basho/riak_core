@@ -49,7 +49,8 @@
 -define(SERVER, riak_core_connection_manager).
 -define(MAX_LISTENERS, 100).
 
--type(counter() :: non_neg_integer()).
+-type counter() :: non_neg_integer().
+-type target()  :: {atom(), term()}.
 
 %% Connection manager strategy (per Jon M.)
 %% when a connection request comes in,
@@ -187,18 +188,18 @@ apply_locator(Name, Strategy) ->
 %% Supervision must be done by the calling process if desired. No supervision
 %% is done here.
 %%
--spec connect(Target :: string(), ClientSpec :: clientspec(), Strategy :: client_scheduler_strategy()) -> {'ok', reference()}.
+-spec connect(Target :: target(), ClientSpec :: clientspec(), Strategy :: client_scheduler_strategy()) -> {'ok', reference()}.
 connect(Target, ClientSpec, Strategy) ->
     gen_server:call(?SERVER, {connect, Target, ClientSpec, Strategy}, infinity).
 
 %% @doc same as connect(Target, ClientSpec, default).
 %% @see connect/3
--spec connect(Target :: string(), ClientSpec :: clientspec()) -> {'ok', reference()}.
+-spec connect(Target :: target(), ClientSpec :: clientspec()) -> {'ok', reference()}.
 connect(Target, ClientSpec) ->
     gen_server:call(?SERVER, {connect, Target, ClientSpec, default}, infinity).
 
 %% @doc Disconnect from the remote side.
--spec disconnect(Target :: string()) -> 'ok'.
+-spec disconnect(Target :: target()) -> 'ok'.
 disconnect(Target) ->
     gen_server:cast(?SERVER, {disconnect, Target}).
 

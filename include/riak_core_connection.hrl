@@ -87,7 +87,7 @@
 %%                the number of accepted connections to max_nb_cons().
 %% custom := service must provide a strategy to the cluster manager for choosing nodes
 %%           UNSUPPORTED so far. Should we use a behaviour for the service module?
--type(max_nb_cons() :: non_neg_integer()).
+-type(max_nb_cons() :: non_neg_integer() | undefined).
 -type(client_scheduler_strategy() :: default | askme).
 -type(service_scheduler_strategy() :: {round_robin, max_nb_cons()} | custom).
 
