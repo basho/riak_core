@@ -56,6 +56,8 @@
           total_objects        :: non_neg_integer(),
           total_bytes          :: non_neg_integer(),
 
+          use_batching         :: boolean(),
+
           item_queue           :: [binary()],
           item_queue_length    :: non_neg_integer(),
           item_queue_byte_size :: non_neg_integer(),
@@ -141,6 +143,8 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
              {error, closed} -> exit({shutdown, max_concurrency})
          end,
 
+         RemoteSupportsBatching = remote_supports_batching(TargetNode),
+
          lager:info("Starting ~p transfer of ~p from ~p ~p to ~p ~p",
                     [Type, Module, SrcNode, SrcPartition,
                      TargetNode, TargetPartition]),
@@ -153,8 +157,7 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
          UnsentFun = get_notsent_fun(Opts),
 
          Req = ?FOLD_REQ{foldfun=fun visit_item/3,
-                         acc0=#ho_acc{
-                                      ack=0,
+                         acc0=#ho_acc{ack=0,
                                       error=ok,
                                       filter=Filter,
                                       module=Module,
@@ -166,7 +169,9 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
 
                                       total_bytes=0,
                                       total_objects=0,
-
+                                      
+                                      use_batching=RemoteSupportsBatching,
+                                 
                                       item_queue=[],
                                       item_queue_length=0,
                                       item_queue_byte_size=0,
@@ -175,8 +180,7 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
 
                                       type=Type,
                                       notsent_acc=UnsentAcc0,
-                                      notsent_fun=UnsentFun
-                                     }
+                                      notsent_fun=UnsentFun}
                         },                             
 
          %% IFF the vnode is using an async worker to perform the fold
@@ -303,17 +307,15 @@ visit_item(K, V, Acc = #ho_acc{ack = _AccSyncThreshold, acksync_threshold = _Acc
             Acc#ho_acc{ack=0, error={error, Reason}, stats=Stats3}
     end;
 visit_item(K, V, Acc) ->
-    #ho_acc{
-            filter=Filter,
+    #ho_acc{filter=Filter,
             module=Module,
             total_objects=TotalObjects,
+            use_batching=UseBatching,
             item_queue=ItemQueue,
             item_queue_length=ItemQueueLength,
             item_queue_byte_size=ItemQueueByteSize,
             notsent_fun=NotSentFun,
-            notsent_acc=NotSentAcc
-           } = Acc,
-
+            notsent_acc=NotSentAcc} = Acc,
     case Filter(K) of
         true ->
             case Module:encode_handoff_item(K, V) of
@@ -324,22 +326,51 @@ visit_item(K, V, Acc) ->
                     Acc;
                 BinObj ->
 
-                    ItemQueue2 = [BinObj | ItemQueue],
-                    ItemQueueLength2 = ItemQueueLength + 1,
-                    ItemQueueByteSize2 = ItemQueueByteSize + byte_size(BinObj),
-                    
-                    Acc2 = Acc#ho_acc{item_queue_length=ItemQueueLength2,
-                                      item_queue_byte_size=ItemQueueByteSize2},
-                    
-            %% Unit size is bytes:
-                    HandoffBatchThreshold = app_helper:get_env(riak_core, handoff_batch_threshold, 1024*1024),
+                    case UseBatching of
+                        true ->
+                            ItemQueue2 = [BinObj | ItemQueue],
+                            ItemQueueLength2 = ItemQueueLength + 1,
+                            ItemQueueByteSize2 = ItemQueueByteSize + byte_size(BinObj),
+                            
+                            Acc2 = Acc#ho_acc{item_queue_length=ItemQueueLength2,
+                                              item_queue_byte_size=ItemQueueByteSize2},
+                            
+                            %% Unit size is bytes:
+                            HandoffBatchThreshold = app_helper:get_env(riak_core, 
+                                                                       handoff_batch_threshold, 
+                                                                       1024*1024),
 
-                    case ItemQueueByteSize2 =< HandoffBatchThreshold of
-                        true  -> Acc2#ho_acc{item_queue=ItemQueue2};
-                        false -> send_objects(ItemQueue2, Acc2)
+                            case ItemQueueByteSize2 =< HandoffBatchThreshold of
+                                true  -> Acc2#ho_acc{item_queue=ItemQueue2};
+                                false -> send_objects(ItemQueue2, Acc2)
+                            end;
+                        _ ->
+                            #ho_acc{ack=Ack,
+                                    socket=Sock,
+                                    src_target={SrcPartition, TargetPartition},
+                                    stats=Stats,
+                                    tcp_mod=TcpMod,
+                                    total_objects=TotalObjects,
+                                    total_bytes=TotalBytes} = Acc,
+                            M = <<?PT_MSG_OBJ:8,BinObj/binary>>,
+                            NumBytes = byte_size(M),
+                            
+                            Stats2 = incr_bytes(incr_objs(Stats), NumBytes),
+                            Stats3 = maybe_send_status({Module, SrcPartition, 
+                                                        TargetPartition}, Stats2),
+                            
+                            case TcpMod:send(Sock, M) of
+                                ok ->
+                                    Acc#ho_acc{ack=Ack+1, 
+                                               error=ok, 
+                                               stats=Stats3, 
+                                               total_bytes=TotalBytes+NumBytes,
+                                               total_objects=TotalObjects+1};
+                                {error, Reason} ->
+                                    Acc#ho_acc{error={error, Reason}, stats=Stats3}
+                            end
                     end
             end;
-
         false ->
             NewNotSentAcc = handle_not_sent_item(NotSentFun, NotSentAcc, K),
             Acc#ho_acc{error=ok,
@@ -466,6 +497,9 @@ is_elapsed(TS) ->
 incr_bytes(Stats=#ho_stats{bytes=Bytes}, NumBytes) ->
     Stats#ho_stats{bytes=Bytes + NumBytes}.
 
+incr_objs(Stats) ->
+    incr_objs(Stats, 1).
+
 %% @private
 %%
 %% @doc Increment `Stats' object count by NObjs:
@@ -515,3 +549,23 @@ get_filter(Opts) ->
         none -> fun(_) -> true end;
         Filter -> Filter
     end.
+
+%% @private 
+%%
+%% @doc check if the handoff reciever will accept batching messages
+%%      otherwise fall back to the slower, object-at-a-time path
+
+remote_supports_batching(Node) ->
+
+    case catch rpc:call(Node, riak_core_handoff_receiver, 
+                  supports_batching, []) of
+        true ->
+            lager:debug("remote node supports batching, enabling"),
+            true;
+        _ ->
+            %% whatever the problem here, just revert to the old behavior
+            %% which shouldn't matter too much for any single handoff
+            lager:debug("remote node doesn't support batching"),
+            false
+    end.
+    
