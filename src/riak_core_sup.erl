@@ -46,10 +46,13 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
+    DistMonEnabled = app_helper:get_env(riak_core, enable_dist_mon,
+                                        true),
     Children = lists:flatten(
                  [?CHILD(riak_core_sysmon_minder, worker),
                   ?CHILD(riak_core_vnode_sup, supervisor, 305000),
                   ?CHILD(riak_core_eventhandler_sup, supervisor),
+                  [?CHILD(riak_core_dist_mon, worker) || DistMonEnabled],
                   ?CHILD(riak_core_handoff_sup, supervisor),
                   ?CHILD(riak_core_ring_events, worker),
                   ?CHILD(riak_core_ring_manager, worker),
