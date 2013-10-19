@@ -30,7 +30,8 @@
          validate_ssl_config/1,
          upgrade_client_to_ssl/2,
          upgrade_server_to_ssl/2,
-         get_common_name/1
+         get_common_name/1,
+         load_certs/1
         ]).
 
 -ifdef(TEST).
@@ -129,13 +130,19 @@ upgrade_server_to_ssl(Socket, App) ->
 
 load_certs(undefined) ->
     undefined;
-load_certs(CertDir) ->
-    case file:list_dir(CertDir) of
-        {ok, Certs} ->
-            load_certs(lists:map(fun(Cert) -> filename:join(CertDir, Cert)
-                    end, Certs), []);
-        {error, _} ->
-            undefined
+load_certs(CertDirOrFile) ->
+    case filelib:is_regular(CertDirOrFile) of
+        true ->
+            load_cert(CertDirOrFile);
+        _ ->
+            case file:list_dir(CertDirOrFile) of
+                {ok, Certs} ->
+                    load_certs(lists:map(fun(Cert) ->
+                                                 filename:join(CertDirOrFile, Cert)
+                                         end, Certs), []);
+                {error, _} ->
+                    undefined
+            end
     end.
 
 load_certs([], Acc) ->
