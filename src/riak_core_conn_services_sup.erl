@@ -1,8 +1,8 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_core: Core Riak Application
+%% riak_core_conn_services_sup: supervise connection mananger services
 %%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -20,11 +20,13 @@
 %%
 %% -------------------------------------------------------------------
 
--module(riak_core_sup).
+%% @doc Supervise connection manager services
 
--behaviour(supervisor).
+-module(riak_core_conn_services_sup).
+
 
 %% API
+
 -export([start_link/0]).
 
 %% Supervisor callbacks
@@ -45,29 +47,13 @@ start_link() ->
 %% Supervisor callbacks
 %% ===================================================================
 
+%% @private
 init([]) ->
-    DistMonEnabled = app_helper:get_env(riak_core, enable_dist_mon,
-                                        true),
     Children = lists:flatten(
-                 [?CHILD(riak_core_sysmon_minder, worker),
-                  ?CHILD(riak_core_vnode_sup, supervisor, 305000),
-                  ?CHILD(riak_core_eventhandler_sup, supervisor),
-                  [?CHILD(riak_core_dist_mon, worker) || DistMonEnabled],
-                  ?CHILD(riak_core_handoff_sup, supervisor),
-                  ?CHILD(riak_core_ring_events, worker),
-                  ?CHILD(riak_core_ring_manager, worker),
-                  ?CHILD(riak_core_metadata_manager, worker),
-                  ?CHILD(riak_core_metadata_hashtree, worker),
-                  ?CHILD(riak_core_broadcast, worker),
-                  ?CHILD(riak_core_vnode_proxy_sup, supervisor),
-                  ?CHILD(riak_core_node_watcher_events, worker),
-                  ?CHILD(riak_core_node_watcher, worker),
-                  ?CHILD(riak_core_vnode_manager, worker),
-                  ?CHILD(riak_core_capability, worker),
-                  ?CHILD(riak_core_gossip, worker),
-                  ?CHILD(riak_core_claimant, worker),
-                  ?CHILD(riak_core_stat_sup, supervisor),
-                  ?CHILD(riak_core_conn_services_sup, supervisor)
+                 [
+                  ?CHILD(riak_core_service_mgr, worker),
+                  ?CHILD(riak_core_connection_mgr, worker),
+                  ?CHILD(riak_core_tcp_mon, worker)
                  ]),
 
     {ok, {{one_for_one, 10, 10}, Children}}.
