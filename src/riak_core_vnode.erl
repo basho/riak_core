@@ -205,7 +205,8 @@ do_init(State = #state{index=Index, mod=Mod, forward=Forward}) ->
             State2 = State#state{modstate=ModState, inactivity_timeout=Timeout2,
                                  pool_pid=PoolPid, pool_config=PoolConfig},
             lager:debug("vnode :: ~p/~p :: ~p~n", [Mod, Index, Forward]),
-            {ok, State2}
+            State3 = mod_set_forwarding(Forward, State2),
+            {ok, State3}
     end.
 
 wait_for_init(Vnode) ->
@@ -588,9 +589,10 @@ finish_handoff(SeenIdxs, State=#state{mod=Mod,
         resize ->
             CurrentForwarding = resize_forwarding(State),
             NewForwarding = [Target | CurrentForwarding],
-            continue(State#state{handoff_target=none,
-                                 handoff_type=undefined,
-                                 forward=NewForwarding});
+            State2 = mod_set_forwarding(NewForwarding, State),
+            continue(State2#state{handoff_target=none,
+                                  handoff_type=undefined,
+                                  forward=NewForwarding});
         Res when Res == forward; Res == shutdown ->
             {_, HN} = Target,
             %% Have to issue the delete now.  Once unregistered the
@@ -604,10 +606,11 @@ finish_handoff(SeenIdxs, State=#state{mod=Mod,
             riak_core_vnode_manager:unregister_vnode(Idx, Mod),
             lager:debug("vnode hn/fwd :: ~p/~p :: ~p -> ~p~n",
                         [State#state.mod, State#state.index, State#state.forward, HN]),
-            continue(State#state{modstate={deleted,NewModState}, % like to fail if used
-                                 handoff_target=none,
-                                 handoff_type=undefined,
-                                 forward=HN})
+            State2 = mod_set_forwarding(HN, State),
+            continue(State2#state{modstate={deleted,NewModState}, % like to fail if used
+                                  handoff_target=none,
+                                  handoff_type=undefined,
+                                  forward=HN})
     end.
 
 maybe_shutdown_pool(#state{pool_pid=Pool}) ->
@@ -653,7 +656,8 @@ handle_event({set_forwarding, undefined}, _StateName,
 handle_event({set_forwarding, ForwardTo}, _StateName, State) ->
     lager:debug("vnode fwd :: ~p/~p :: ~p -> ~p~n",
                 [State#state.mod, State#state.index, State#state.forward, ForwardTo]),
-    continue(State#state{forward=ForwardTo});
+    State2 = mod_set_forwarding(ForwardTo, State),
+    continue(State2#state{forward=ForwardTo});
 handle_event(finish_handoff, _StateName,
              State=#state{modstate={deleted, _ModState}}) ->
     stop_manager_event_timer(State),
@@ -900,11 +904,13 @@ start_handoff(HOType, TargetIdx, TargetNode,
                                        handoff_type=HOType,
                                        handoff_target={TargetIdx, TargetNode}});
         {false, Size, NewModState} ->
-            NewState = start_outbound(HOType, TargetIdx, TargetNode, [{size, Size}], State),
-            continue(NewState#state{modstate=NewModState});
+            State2 = State#state{modstate=NewModState},
+            NewState = start_outbound(HOType, TargetIdx, TargetNode, [{size, Size}], State2),
+            continue(NewState);
         {false, NewModState} ->
-            NewState = start_outbound(HOType, TargetIdx, TargetNode, [], State),
-            continue(NewState#state{modstate=NewModState})
+            State2 = State#state{modstate=NewModState},
+            NewState = start_outbound(HOType, TargetIdx, TargetNode, [], State2),
+            continue(NewState)
     end.
 
 
@@ -915,7 +921,8 @@ start_outbound(HOType, TargetIdx, TargetNode, Opts, State=#state{index=Idx,mod=M
                         handoff_type=HOType,
                         handoff_target={TargetIdx, TargetNode}};
         {error,_Reason} ->
-            State
+            {ok, NewModState} = Mod:handoff_cancelled(State#state.modstate),
+            State#state{modstate=NewModState}
     end.
 
 %% @doc Send a reply to a vnode request.  If
@@ -971,6 +978,15 @@ stop_manager_event_timer(#state{manager_event_timer=undefined}) ->
     ok;
 stop_manager_event_timer(#state{manager_event_timer=T}) ->
     gen_fsm:cancel_timer(T).
+
+mod_set_forwarding(Forward, State=#state{mod=Mod, modstate=ModState}) ->
+    case lists:member({set_vnode_forwarding, 2}, Mod:module_info(exports)) of
+        true ->
+            NewModState = Mod:set_vnode_forwarding(Forward, ModState),
+            State#state{modstate=NewModState};
+        false ->
+            State
+    end.
 
 %% ===================================================================
 %% Test API
