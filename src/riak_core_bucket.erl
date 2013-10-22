@@ -33,6 +33,7 @@
          get_buckets/1,
          bucket_nval_map/1,
          default_object_nval/0,
+         all_n/1,
          merge_props/2,
          name/1,
          n_val/1]).
@@ -143,6 +144,14 @@ bucket_nval_map(Ring) ->
 -spec default_object_nval() -> integer().
 default_object_nval() ->
     riak_core_bucket:n_val(riak_core_config:default_bucket_props()).
+
+all_n(Ring) ->
+    BucketNs = bucket_nval_map(Ring),
+    DefaultN = default_object_nval(),
+    AllN = lists:foldl(fun({_, N}, Acc) ->
+                               ordsets:add_element(N, Acc)
+                       end, [DefaultN], BucketNs),
+    AllN.
 
 %% @private
 -spec validate_props(BucketProps::list({PropName::atom(), Value::any()}),

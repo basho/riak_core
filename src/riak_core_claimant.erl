@@ -51,6 +51,7 @@
 -type ring_transition() :: {riak_core_ring(), riak_core_ring()}.
 
 -record(state, {
+          last_ring_id,
           %% The set of staged cluster changes
           changes :: [{node(), action()}],
 
@@ -522,13 +523,20 @@ schedule_tick() ->
                               10000),
     erlang:send_after(Tick, ?MODULE, tick).
 
-tick(State) ->
-    maybe_force_ring_update(),
-    schedule_tick(),
-    State.
+tick(State=#state{last_ring_id=LastID}) ->
+    case riak_core_ring_manager:get_ring_id() of
+        LastID ->
+            schedule_tick(),
+            State;
+        RingID ->
+            {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
+            maybe_bootstrap_root_ensemble(Ring),
+            maybe_force_ring_update(Ring),
+            schedule_tick(),
+            State#state{last_ring_id=RingID}
+    end.
 
-maybe_force_ring_update() ->
-    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
+maybe_force_ring_update(Ring) ->
     IsClaimant = (riak_core_ring:claimant(Ring) == node()),
     IsReady = riak_core_ring:ring_ready(Ring),
     %% Do not force if we have any joining nodes unless any of them are
@@ -537,12 +545,12 @@ maybe_force_ring_update() ->
                  andalso (auto_joining_nodes(Ring) == [])),
     case IsClaimant and IsReady and (not JoinBlock) of
         true ->
-            maybe_force_ring_update(Ring);
+            do_maybe_force_ring_update(Ring);
         false ->
             ok
     end.
 
-maybe_force_ring_update(Ring) ->
+do_maybe_force_ring_update(Ring) ->
     case compute_next_ring([], erlang:now(), Ring) of
         {ok, NextRing} ->
             case same_plan(Ring, NextRing) of
@@ -553,6 +561,46 @@ maybe_force_ring_update(Ring) ->
                     ok
             end;
         _ ->
+            ok
+    end.
+
+maybe_bootstrap_root_ensemble(Ring) ->
+    IsClaimant = (riak_core_ring:claimant(Ring) == node()),
+    IsReady = riak_core_ring:ring_ready(Ring),
+    case IsClaimant and IsReady of
+        true ->
+            bootstrap_root_ensemble(Ring);
+        false ->
+            ok
+    end.
+
+bootstrap_root_ensemble(Ring) ->
+    %% TODO: Need to make bootstrapping safe even if claimant dies/has state deleted
+    bootstrap_members(Ring),
+    ok.
+
+bootstrap_members(Ring) ->
+    Name = riak_core_ring:cluster_name(Ring),
+    Members = riak_core_ring:all_members(Ring),
+    RootMembers = riak_ensemble_manager:get_members(root),
+    Known = riak_ensemble_manager:rget(members, []),
+    Need = Members -- Known,
+    [riak_ensemble_manager:join(node(), Member) || Member <- Need],
+
+    RootNodes = [Node || {_, Node} <- RootMembers],
+    RootAdd = Members -- RootNodes,
+    RootDel = RootNodes -- Members,
+    Changes =
+        [{add, {Name, Node}} || Node <- RootAdd] ++
+        [{del, {Name, Node}} || Node <- RootDel],
+    case Changes of
+        [] ->
+            ok;
+        _ ->
+            RootLeader = riak_ensemble_manager:rleader_pid(),
+            spawn(fun() ->
+                          riak_ensemble_peer:update_members(RootLeader, Changes, 10000)
+                  end),
             ok
     end.
 
