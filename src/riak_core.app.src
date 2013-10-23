@@ -6,7 +6,7 @@
   {vsn, git},
   {modules, []},
   {registered, []},
-  {included_applications, [folsom]},
+  {included_applications, [folsom, riak_ensemble]},
   {applications, [
                   kernel,
                   stdlib,
@@ -17,7 +17,7 @@
                   webmachine,
                   os_mon
                  ]},
-  {mod, { riak_core_app, []}},
+  {mod, {riak_core_app, []}},
   {env, [
          %% Cluster name
          {cluster_name, "default"},

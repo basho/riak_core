@@ -26,6 +26,7 @@
 -export([active_owners/1, active_owners/2,
          get_apl/3, get_apl/4, get_apl_ann/3, get_apl_ann/4,
          get_primary_apl/3, get_primary_apl/4,
+         get_primary_apl_chbin/4,
          first_up/2, offline_owners/1, offline_owners/2
         ]).
 

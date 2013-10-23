@@ -48,6 +48,12 @@ start_link() ->
 init([]) ->
     DistMonEnabled = app_helper:get_env(riak_core, enable_dist_mon,
                                         true),
+    {ok, Root} = application:get_env(riak_core, platform_data_dir),
+
+    EnsembleSup = {riak_ensemble_sup,
+                   {riak_ensemble_sup, start_link, [Root]},
+                   permanent, 30000, supervisor, [riak_ensemble_sup]},
+
     Children = lists:flatten(
                  [?CHILD(riak_core_sysmon_minder, worker),
                   ?CHILD(riak_core_vnode_sup, supervisor, 305000),
@@ -66,7 +72,8 @@ init([]) ->
                   ?CHILD(riak_core_capability, worker),
                   ?CHILD(riak_core_gossip, worker),
                   ?CHILD(riak_core_claimant, worker),
-                  ?CHILD(riak_core_stat_sup, supervisor)
+                  ?CHILD(riak_core_stat_sup, supervisor),
+                  EnsembleSup
                  ]),
 
     {ok, {{one_for_one, 10, 10}, Children}}.
