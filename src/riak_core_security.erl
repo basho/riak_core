@@ -33,12 +33,12 @@
          grants,
          epoch}).
 
-prettyprint_users([all]) ->
+prettyprint_users([all], _) ->
     "all";
-prettyprint_users(Users0) ->
+prettyprint_users(Users0, Width) ->
     %% my kingdom for an iolist join...
     Users = [binary_to_list(U) || U <- Users0],
-    string:join(Users, ", ").
+    prettyprint_permissions(Users, Width).
 
 print_sources() ->
     Sources = riak_core_metadata:fold(fun({{Username, CIDR}, [{Source, Options}]}, Acc) ->
@@ -49,8 +49,8 @@ print_sources() ->
 
 print_sources(Sources) ->
     GS = group_sources(Sources),
-    table:print([{users, 20}, {cidr, 10}, {source, 10}, {options, 10}],
-                [[prettyprint_users(Users), prettyprint_cidr(CIDR),
+    riak_core_console_table:print([{users, 20}, {cidr, 10}, {source, 10}, {options, 10}],
+                [[prettyprint_users(Users, 20), prettyprint_cidr(CIDR),
                   atom_to_list(Source), io_lib:format("~p", [Options])] ||
             {Users, CIDR, Source, Options} <- GS]).
 
@@ -58,9 +58,27 @@ print_users() ->
     Users = riak_core_metadata:fold(fun({Username, Options}, Acc) ->
                                     [{Username, Options}|Acc]
                             end, [], {<<"security">>, <<"roles">>}),
-    table:print([{username, 20}, {options, 10}],
-                [[Username, io_lib:format("~p", [Options])] ||
-            {Username, Options} <- Users]).
+    riak_core_console_table:print([{username, 20}, {roles, 20}, {password, 40}, {options, 30}],
+                [begin
+                     Roles = case proplists:get_value("roles", Options) of
+                                 undefined ->
+                                     "";
+                                 List ->
+                                     prettyprint_permissions(List, 20)
+                             end,
+                     Password = case proplists:get_value("password", Options) of
+                                    undefined ->
+                                        "";
+                                    Pw ->
+                                        proplists:get_value(hash_pass, Pw)
+                                end,
+                     OtherOptions = lists:keydelete("password", 1,
+                                                    lists:keydelete("roles", 1,
+                                                                    Options)),
+                     [Username, Roles, Password,
+                      lists:flatten(io_lib:format("~p", [OtherOptions]))]
+                 end ||
+            {Username, [Options]} <- Users]).
 
 print_user(User) ->
     case riak_core_metadata:get({<<"security">>, <<"roles">>}, User) of
@@ -69,36 +87,56 @@ print_user(User) ->
             {error, {unknown_role, User}};
         _U ->
             Grants = accumulate_grants(User),
-            table:print([{username, 20}, {type, 10}, {bucket, 10}, {grants, 20}],
-                        [begin
-                             case Bucket of
-                                 {T, B} ->
-                                     [Username, T, B, io_lib:format("~p",
-                                                                    [Permissions])];
-                                 T ->
-                                     [Username, T, "*", io_lib:format("~p",
-                                                                      [Permissions])]
-                             end
-                         end ||
-                         {{Username, Bucket}, Permissions} <- Grants]),
-            GroupedGrants = group_grants(Grants),
-            table:print([{type, 30}, {bucket, 10}, {grants, 20}],
+            io:format("~nInherited permissions~n~n"),
+            riak_core_console_table:print([{role, 20}, {type, 10}, {bucket, 10}, {grants, 40}],
                         [begin
                              case Bucket of
                                  any ->
-                                     ["*", "*", io_lib:format("~p",
-                                                              [Permissions])];
+                                     [Username, "*", "*",
+                                      prettyprint_permissions(Permissions, 40)];
                                  {T, B} ->
-                                     [T, B, io_lib:format("~p",
-                                                          [Permissions])];
+                                     [Username, T, B,
+                                      prettyprint_permissions(Permissions, 40)];
                                  T ->
-                                     [T, "*", io_lib:format("~p",
-                                                          [Permissions])]
+                                     [Username, T, "*",
+                                      prettyprint_permissions(Permissions, 40)]
+                             end
+                         end ||
+                         {{Username, Bucket}, Permissions} <- Grants, Username /= User]),
+            GroupedGrants = group_grants(Grants),
+            io:format("~nApplied permissions~n~n"),
+            riak_core_console_table:print([{type, 10}, {bucket, 10}, {grants, 40}],
+                        [begin
+                             case Bucket of
+                                 any ->
+                                     ["*", "*",
+                                      prettyprint_permissions(Permissions, 40)];
+                                 {T, B} ->
+                                     [T, B,
+                                      prettyprint_permissions(Permissions, 40)];
+                                 T ->
+                                     [T, "*",
+                                      prettyprint_permissions(Permissions, 40)]
                              end
                          end ||
                          {Bucket, Permissions} <- GroupedGrants]),
             ok
     end.
+
+prettyprint_permissions(Permissions, Width) ->
+    prettyprint_permissions(lists:sort(Permissions), Width, []).
+
+prettyprint_permissions([], _Width, Acc) ->
+    string:join([string:join(Line, ", ") || Line <- lists:reverse(Acc)], ",\n");
+prettyprint_permissions([Permission|Rest], Width, [H|T] =Acc) ->
+    case length(Permission) + lists:flatlength(H) + 2 + (2 * length(H)) > Width of
+        true ->
+            prettyprint_permissions(Rest, Width, [[Permission] | Acc]);
+        false ->
+            prettyprint_permissions(Rest, Width, [[Permission|H]|T])
+    end;
+prettyprint_permissions([Permission|Rest], Width, Acc) ->
+    prettyprint_permissions(Rest, Width, [[Permission] | Acc]).
 
 check_permission({Permission}, Context0) ->
     Context = maybe_refresh_context(Context0),
