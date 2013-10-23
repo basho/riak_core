@@ -91,7 +91,9 @@ start(_StartType, _StartArgs) ->
             riak_core_capability:register({riak_core, fold_req_version},
                                           [v2, v1],
                                           v1),
-
+            riak_core_capability:register({riak_core, security},
+                                          [true, false],
+                                          false),
             {ok, Pid};
         {error, Reason} ->
             {error, Reason}
