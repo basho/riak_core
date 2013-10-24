@@ -739,9 +739,10 @@ type_claimant(Props) ->
     end.
 
 maybe_bootstrap_root_ensemble(Ring) ->
+    IsEnabled = (whereis(riak_ensemble_sup) =/= undefined),
     IsClaimant = (riak_core_ring:claimant(Ring) == node()),
     IsReady = riak_core_ring:ring_ready(Ring),
-    case IsClaimant and IsReady of
+    case IsEnabled and IsClaimant and IsReady of
         true ->
             bootstrap_root_ensemble(Ring);
         false ->

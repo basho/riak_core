@@ -26,6 +26,7 @@
 
 %% API
 -export([start_link/0]).
+-export([ensembles_enabled/0]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -73,7 +74,12 @@ init([]) ->
                   ?CHILD(riak_core_gossip, worker),
                   ?CHILD(riak_core_claimant, worker),
                   ?CHILD(riak_core_stat_sup, supervisor),
-                  EnsembleSup
+                  [EnsembleSup || ensembles_enabled()]
                  ]),
 
     {ok, {{one_for_one, 10, 10}, Children}}.
+
+ensembles_enabled() ->
+    Exists = (code:which(riak_ensemble_sup) =/= non_existing),
+    Enabled = app_helper:get_env(riak_core, enable_consensus, false),
+    Exists and Enabled.
