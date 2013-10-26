@@ -271,3 +271,12 @@
 {mapping, "platform_log_dir", "riak_core.platform_log_dir", [
   {default, "{{platform_log_dir}}"}
 ]}.
+
+%% @doc Enable consensus subsystem (tech preview feature)
+%% Set to true to enable the consensus subsystem used for strongly
+%% consistent Riak operations.
+{mapping, "enable_consensus", "riak_core.enable_consensus", [
+  {datatype, {enum, [true, false]}},
+  {default, false},
+  {commented, true}
+]}.
