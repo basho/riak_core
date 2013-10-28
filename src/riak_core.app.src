@@ -6,7 +6,7 @@
   {vsn, git},
   {modules, []},
   {registered, []},
-  {included_applications, [folsom]},
+  {included_applications, [folsom, riak_ensemble]},
   {applications, [
                   kernel,
                   stdlib,
@@ -18,7 +18,7 @@
                   os_mon,
                   exometer
                  ]},
-  {mod, { riak_core_app, []}},
+  {mod, {riak_core_app, []}},
   {env, [
          %% Cluster name
          {cluster_name, "default"},
@@ -52,6 +52,15 @@
 
          %% Handoff IP/port
          {handoff_port, 8099},
-         {handoff_ip, "0.0.0.0"}
+         {handoff_ip, "0.0.0.0"},
+         
+         %% Disterl buffer sizes in bytes.
+         %% These sizes (3*128*1024 & 6*128*1024) were
+         %% derived from a limited amount of testing in a 
+         %% 10GE environment, and may need tuning for your 
+         %% network and workload. In particular they're likely
+         %% too small to be optimal for larger object sizes.
+         {dist_send_buf_size, 393216},
+         {dist_recv_buf_size, 786432}
         ]}
  ]}.

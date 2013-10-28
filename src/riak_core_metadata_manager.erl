@@ -122,10 +122,12 @@ start_link(Opts) ->
 -spec get(metadata_pkey()) -> metadata_object() | undefined.
 get({{Prefix, SubPrefix}, _Key}=PKey) when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
                                            (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
-    gen_server:call(?SERVER, {get, PKey}, infinity).
+    read(PKey).
 
 %% @doc Same as get/1 but reads the value from `Node'
 -spec get(node(), metadata_pkey()) -> metadata_object() | undefined.
+get(Node, PKey) when node() =:= Node ->
+    ?MODULE:get(PKey);
 get(Node, {{Prefix, SubPrefix}, _Key}=PKey)
   when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
        (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
