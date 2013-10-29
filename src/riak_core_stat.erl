@@ -127,7 +127,7 @@ backwards_compat(rings_reconciled, spiral, Stats) ->
 backwards_compat(gossip_received, spiral, Stats) ->
     {gossip_received, safe_trunc(proplists:get_value(one, Stats, unavailable))};
 backwards_compat(Name, counter, Stats) ->
-    {Name, Stats};
+    {Name, proplists:get_value(value, Stats)};
 backwards_compat(Name, duration, Stats) ->
     [{join(Name, min), safe_trunc(proplists:get_value(min, Stats, unavailable))},
      {join(Name, max), safe_trunc(proplists:get_value(max, Stats, unavailable))},
