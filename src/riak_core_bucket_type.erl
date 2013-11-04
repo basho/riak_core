@@ -89,6 +89,8 @@
 %%      by most riak_core applications and is considered acceptable (so dont do it!).
 -module(riak_core_bucket_type).
 
+-include("riak_core_bucket_type.hrl").
+
 -export([defaults/0,
          create/2,
          status/1,
@@ -103,11 +105,9 @@
          itr_close/1]).
 
 -export_type([bucket_type/0]).
-
 -type bucket_type()       :: binary().
 -type bucket_type_props() :: [{term(), term()}].
 
--define(DEFAULT_TYPE, <<"default">>).
 
 %% @doc The hardcoded defaults for all bucket types.
 -spec defaults() -> bucket_type_props().
