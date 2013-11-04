@@ -21,6 +21,8 @@
 -module(riak_core_claimant).
 -behaviour(gen_server).
 
+-include_lib("riak_core_metadata.hrl").
+
 %% API
 -export([start_link/0]).
 -export([leave_member/1,
@@ -76,7 +78,6 @@
 -define(ROUT(S,A),ok).
 %%-define(ROUT(S,A),?debugFmt(S,A)).
 %%-define(ROUT(S,A),io:format(S,A)).
--define(BUCKET_TYPE_PREFIX, {core, bucket_types}).
 
 %%%===================================================================
 %%% API
