@@ -15,3 +15,4 @@
           obj   :: metadata_object()
          }).
 -type metadata_broadcast()  ::  #metadata_broadcast{}.
+-define(BUCKET_TYPE_PREFIX, {core, bucket_types}).
