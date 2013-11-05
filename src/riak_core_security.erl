@@ -86,13 +86,14 @@ print_users() ->
     Users = riak_core_metadata:fold(fun({Username, Options}, Acc) ->
                                     [{Username, Options}|Acc]
                             end, [], {<<"security">>, <<"roles">>}),
-    riak_core_console_table:print([{username, 20}, {roles, 20}, {password, 40}, {options, 30}],
+    riak_core_console_table:print([{username, 10}, {roles, 15}, {password, 40}, {options, 30}],
                 [begin
                      Roles = case proplists:get_value("roles", Options) of
                                  undefined ->
                                      "";
                                  List ->
-                                     prettyprint_permissions(List, 20)
+                                     prettyprint_permissions([binary_to_list(R)
+                                                              || R <- List], 20)
                              end,
                      Password = case proplists:get_value("password", Options) of
                                     undefined ->
