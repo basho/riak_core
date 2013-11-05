@@ -22,6 +22,7 @@
 
 -module(riak_core_service_mgr_tests).
 -author("Chris Tilt").
+-define(NODEBUG, true).
 -include_lib("eunit/include/eunit.hrl").
 
 %%-define(TRACE(Stmt),Stmt).
@@ -46,6 +47,7 @@
                       {active, false}]).
 
 service_test_() ->
+    error_logger:tty(false),
     {timeout, 60000, {setup, fun() ->
         riak_core_ring_events:start_link(),
         riak_core_ring_manager:start_link(test),
