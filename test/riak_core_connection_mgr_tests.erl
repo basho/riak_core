@@ -22,6 +22,8 @@
 
 -module(riak_core_connection_mgr_tests).
 -author("Chris Tilt").
+-define(NODEBUG, true).
+
 -include_lib("eunit/include/eunit.hrl").
 
 -define(TRACE(Stmt),Stmt).
@@ -76,6 +78,7 @@ register_empty_locator() ->
     ok = riak_core_connection_mgr:register_locator(?REMOTE_LOCATOR_TYPE, Locator).
 
 connections_test_() ->
+    error_logger:tty(false),
     {timeout, 6000, {setup, fun() ->
         ok = application:start(ranch),
         riak_core_ring_events:start_link(),

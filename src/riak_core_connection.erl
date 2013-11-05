@@ -25,6 +25,7 @@
 -include("riak_core_connection.hrl").
 
 -ifdef(TEST).
+-define(NODEBUG, true).
 -include_lib("eunit/include/eunit.hrl").
 -define(TRACE(Stmt),Stmt).
 -else.

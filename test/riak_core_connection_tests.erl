@@ -23,6 +23,8 @@
 
 -module(riak_core_connection_tests).
 -author("Chris Tilt").
+-define(NODEBUG, true).
+
 -include_lib("eunit/include/eunit.hrl").
 
 -export([test1service/5, connected/6, connect_failed/3]).
@@ -70,6 +72,7 @@ connect_failed({Proto,_Vers}, {error, Reason}, Args) ->
     ?assert(Proto == test1protoFailed).
 
 conection_test_() ->
+    error_logger:tty(false),
     {timeout, 60000, {setup, fun() ->
         riak_core_ring_events:start_link(),
         riak_core_ring_manager:start_link(test),
@@ -106,6 +109,7 @@ conection_test_() ->
         end},
 
         {"protocol match", fun() ->
+            error_logger:tty(false),
             ExpectedRevs = [{1,0}, {1,1}],
             ServiceProto = {test1proto, [{2,1}, {1,0}]},
             ServiceSpec = {ServiceProto, {?TCP_OPTIONS, ?MODULE, test1service, ExpectedRevs}},
