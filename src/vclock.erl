@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_core: Core Riak Application
+%% Riak_Core: Core Riak Application
 %%
 %% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
 %%
@@ -34,6 +34,7 @@
 -export([fresh/0,descends/2,merge/1,get_counter/2,get_timestamp/2,
 	increment/2,increment/3,all_nodes/1,equal/2,prune/3,timestamp/0]).
 -export([fresh/2]).
+-export([fresh/3]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -58,6 +59,11 @@ fresh() ->
 -spec fresh(vclock_node(), counter()) -> vclock().
 fresh(Node, Count) ->
     [{Node, {Count, timestamp()}}].
+
+-spec fresh(vclock_node(), counter(), timestamp()) ->
+                   vclock().
+fresh(Node, Count, Ts) ->
+    [{Node, {Count, Ts}}].
 
 % @doc Return true if Va is a direct descendant of Vb, else false -- remember, a vclock is its own descendant!
 -spec descends(Va :: vclock()|[], Vb :: vclock()|[]) -> boolean().
