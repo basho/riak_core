@@ -31,7 +31,7 @@
 
 -module(vclock).
 
--export([fresh/0,descends/2,merge/1,get_counter/2,get_timestamp/2,
+-export([fresh/0,descends/2,merge/1,get_counter/2,get_timestamp/2, get_entry/2,
 	increment/2,increment/3,all_nodes/1,equal/2,prune/3,timestamp/0]).
 -export([fresh/2]).
 -export([fresh/3]).
@@ -121,6 +121,13 @@ get_timestamp(Node, VClock) ->
     case lists:keyfind(Node, 1, VClock) of
 	{_, {_Ctr, TS}} -> TS;
 	false           -> undefined
+    end.
+
+get_entry(Node, VClock) ->
+    case lists:keyfind(Node, 1, VClock) of
+        false ->
+            undefined;
+        Entry -> Entry
     end.
 
 % @doc Increment VClock at Node.
