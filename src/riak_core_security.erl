@@ -23,7 +23,8 @@
 -export([print_users/0, print_sources/0, print_user/1]).
 
 %% API
--export([authenticate/3, add_user/2, alter_user/2, add_source/4, del_source/2,
+-export([authenticate/3, add_user/2, alter_user/2, del_user/1,
+         add_source/4, del_source/2,
          add_grant/3, add_revoke/3, check_permission/2, check_permissions/2,
          get_username/1, is_enabled/0,
          get_ciphers/0, set_ciphers/1, print_ciphers/0]).
@@ -86,7 +87,9 @@ print_sources(Sources) ->
             {Users, CIDR, Source, Options} <- GS]).
 
 print_users() ->
-    Users = riak_core_metadata:fold(fun({Username, Options}, Acc) ->
+    Users = riak_core_metadata:fold(fun({_Username, [?TOMBSTONE]}, Acc) ->
+                                            Acc;
+                                        ({Username, Options}, Acc) ->
                                     [{Username, Options}|Acc]
                             end, [], {<<"security">>, <<"roles">>}),
     riak_core_console_table:print([{username, 10}, {roles, 15}, {password, 40}, {options, 30}],
@@ -96,7 +99,8 @@ print_users() ->
                                      "";
                                  List ->
                                      prettyprint_permissions([binary_to_list(R)
-                                                              || R <- List], 20)
+                                                              || R <- List,
+                                                                 user_exists(R)], 20)
                              end,
                      Password = case proplists:get_value("password", Options) of
                                     undefined ->
@@ -331,6 +335,19 @@ alter_user(Username, Options) ->
                 Error ->
                     Error
             end
+    end.
+
+del_user(Username) ->
+    User = riak_core_metadata:get({<<"security">>, <<"roles">>}, Username),
+    case User of
+        undefined ->
+            {error, {unknown_user, Username}};
+        _UserData ->
+            riak_core_metadata:delete({<<"security">>, <<"roles">>},
+                                   Username),
+            %% TODO any grants or any references in other user's 'roles'
+            %% option should also be cleaned up
+            ok
     end.
 
 add_grant(all, Bucket, Grants) ->
@@ -603,7 +620,10 @@ accumulate_grants([], Seen, Acc) ->
     {Acc, Seen};
 accumulate_grants([Role|Roles], Seen, Acc) ->
     Options = riak_core_metadata:get({<<"security">>, <<"roles">>}, Role),
-    NestedRoles = [R || R <- lookup("roles", Options), not lists:member(R, Seen)],
+    NestedRoles = [R || R <- lookup("roles", Options),
+                        not lists:member(R,Seen),
+                        user_exists(R)],
+    io:format("Nested roles ~p~n", [NestedRoles]),
     {NewAcc, NewSeen} = accumulate_grants(NestedRoles, [Role|Seen], Acc),
 
     Grants = riak_core_metadata:fold(fun({{_R, _Bucket}, [?TOMBSTONE]}, A) ->
@@ -813,4 +833,10 @@ flatten_once(List) ->
                         A ++ Acc
                 end, [], List).
 
-
+user_exists(Username) ->
+    User = riak_core_metadata:get({<<"security">>, <<"roles">>}, Username),
+    case User of
+        undefined ->
+            false;
+        _ -> true
+    end.
