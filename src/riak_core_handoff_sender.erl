@@ -316,21 +316,28 @@ visit_item(K, V, Acc) ->
 
     case Filter(K) of
         true ->
-            BinObj = Module:encode_handoff_item(K, V),
+            case Module:encode_handoff_item(K, V) of
+                corrupted ->
+                    {Bucket, Key} = K,
+                    lager:warning("Unreadable object ~p/~p discarded",
+                                  [Bucket, Key]),
+                    Acc;
+                BinObj ->
 
-            ItemQueue2 = [BinObj | ItemQueue],
-            ItemQueueLength2 = ItemQueueLength + 1,
-            ItemQueueByteSize2 = ItemQueueByteSize + byte_size(BinObj),
-
-            Acc2 = Acc#ho_acc{item_queue_length=ItemQueueLength2,
-                              item_queue_byte_size=ItemQueueByteSize2},
-
+                    ItemQueue2 = [BinObj | ItemQueue],
+                    ItemQueueLength2 = ItemQueueLength + 1,
+                    ItemQueueByteSize2 = ItemQueueByteSize + byte_size(BinObj),
+                    
+                    Acc2 = Acc#ho_acc{item_queue_length=ItemQueueLength2,
+                                      item_queue_byte_size=ItemQueueByteSize2},
+                    
             %% Unit size is bytes:
-            HandoffBatchThreshold = app_helper:get_env(riak_core, handoff_batch_threshold, 1024*1024),
+                    HandoffBatchThreshold = app_helper:get_env(riak_core, handoff_batch_threshold, 1024*1024),
 
-            case ItemQueueByteSize2 =< HandoffBatchThreshold of
-                true  -> Acc2#ho_acc{item_queue=ItemQueue2};
-                false -> send_objects(ItemQueue2, Acc2)
+                    case ItemQueueByteSize2 =< HandoffBatchThreshold of
+                        true  -> Acc2#ho_acc{item_queue=ItemQueue2};
+                        false -> send_objects(ItemQueue2, Acc2)
+                    end
             end;
 
         false ->
