@@ -345,8 +345,42 @@ del_user(Username) ->
         _UserData ->
             riak_core_metadata:delete({<<"security">>, <<"roles">>},
                                    Username),
-            %% TODO any grants or any references in other user's 'roles'
-            %% option should also be cleaned up
+            %% delete any associated grants, so if a user with the same name
+            %% is added again, they don't pick up these grants
+            riak_core_metadata:fold(fun({Key, _Value}, Acc) ->
+                                            %% apparently destructive
+                                            %% iteration is allowed
+                                            riak_core_metadata:delete({<<"security">>,
+                                                                       <<"grants">>},
+                                                                       Key),
+                                            Acc
+                                    end, undefined,
+                                    {<<"security">> ,<<"grants">>},
+                                    [{match, {Username, '_'}}]),
+            %% delete the user out of any other user's 'roles' option
+            %% this is kind of a pain, as we have to iterate ALL roles
+            riak_core_metadata:fold(fun({_, [?TOMBSTONE]}, Acc) ->
+                                            Acc;
+                                        ({Uname, [Options]}, Acc) ->
+                                            case proplists:get_value("roles", Options) of
+                                                undefined ->
+                                                    Acc;
+                                                Roles ->
+                                                    case lists:member(Username,
+                                                                      Roles) of
+                                                        true ->
+                                                            NewRoles = lists:keystore("roles", 1, Options, {"roles", Roles -- [Username]}),
+                                                            riak_core_metadata:put({<<"security">>,
+                                                                                    <<"roles">>},
+                                                                                   Uname,
+                                                                                   NewRoles),
+                                                            Acc;
+                                                        false ->
+                                                            Acc
+                                                    end
+                                            end
+                                    end, undefined,
+                                    {<<"security">>,<<"roles">>}),
             ok
     end.
 
