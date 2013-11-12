@@ -445,16 +445,27 @@ lookup_node(NodeName, Tree=#hashtree_tree{nodes=Nodes}) ->
     end.
 
 %% @private
-create_node(NodeName, Tree) ->
-    NodeId = node_id(NodeName, Tree),
-    NodePath = node_path(NodeId, Tree),
-    NumSegs = node_num_segs(NodeName),
-    Width = node_width(NodeName),
+create_node(?ROOT, Tree) ->
+    NodeId = node_id(?ROOT, Tree),
+    NodePath = node_path(Tree),
+    NumSegs = node_num_segs(?ROOT),
+    Width = node_width(?ROOT),
     Opts = [{segment_path, NodePath}, {segments, NumSegs}, {width, Width}],
-
-    %% remove any existing node data in case of crash
+    %% destroy any data that previously existed because its lingering from
+    %% a tree that was not properly destroyed
     ok = hashtree:destroy(NodePath),
     Node = hashtree:new(NodeId, Opts),
+    set_node(?ROOT, Node, Tree);
+create_node([], Tree) ->
+    create_node(?ROOT, Tree);
+create_node(NodeName, Tree) ->
+    NodeId = node_id(NodeName, Tree),
+    RootNode = get_node(?ROOT, Tree),
+    NumSegs = node_num_segs(NodeName),
+    Width = node_width(NodeName),
+    Opts = [{segments, NumSegs}, {width, Width}],
+    %% share segment store accross all nodes
+    Node = hashtree:new(NodeId, RootNode, Opts),
     set_node(NodeName, Node, Tree).
 
 %% @private
@@ -494,9 +505,8 @@ node_num_segs(NodeName) ->
     end.
 
 %% @private
-node_path({_, <<NodeInt:176/integer>>}, #hashtree_tree{data_root=DataRoot}) ->
-    NodeMD5 = riak_core_util:integer_to_list(NodeInt, 16),
-    filename:join(DataRoot, NodeMD5).
+node_path(#hashtree_tree{data_root=DataRoot}) ->
+    DataRoot.
 
 %% @private
 node_key(NodeName, #hashtree_tree{id=TreeId}) ->

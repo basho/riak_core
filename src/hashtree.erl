@@ -103,6 +103,7 @@
 
 -export([new/0,
          new/2,
+         new/3,
          insert/3,
          insert/4,
          delete/2,
