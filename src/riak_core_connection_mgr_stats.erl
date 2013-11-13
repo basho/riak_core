@@ -48,8 +48,8 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 register_stats() ->
-    [(catch exometer_entry:delete(Stat))
-     || {Stat,_,_} <- exometer_entry:find_entries([?APP])],
+    [(catch exometer:delete(Stat))
+     || {Stat,_,_} <- exometer:find_entries([?APP])],
     [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()],
     riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
 
@@ -60,7 +60,7 @@ register_stats() ->
 %% produce_stats() function.
 get_stats() ->
     case riak_core_stat_cache:get_stats(?APP) of
-        {ok, Stats, _TS} ->
+        {ok, Stats} ->
             Stats;
         Error -> Error
     end.
@@ -263,7 +263,7 @@ create_or_update(Name, UpdateVal, Type) ->
     create_or_update_(stat_name(Name), Val, Type).
 
 create_or_update_(Name, Val, Type) ->
-    case (catch exometer_entry:update(Name, Val)) of
+    case (catch exometer:update(Name, Val)) of
         ok ->
             ok;
         {'EXIT', _} ->
@@ -278,21 +278,21 @@ stat_name(Name) when is_list(Name) ->
 
 
 register_stat(Name, spiral) ->
-    exometer_entry:new(Name, spiral);
+    exometer:new(Name, spiral);
 register_stat(Name, counter) ->
-    exometer_entry:new(Name, counter).
+    exometer:new(Name, counter).
 
 %% @spec produce_stats() -> proplist()
 %% @doc Produce a proplist-formatted view of the current aggregation
 %%      of stats.
 produce_stats() ->
-    Stats = [Stat || {Stat,_,_} <- exometer_entry:find_entries([?APP])],
+    Stats = [Stat || {Stat,_,_} <- exometer:find_entries([?APP])],
     lists:flatten([{Stat, get_stat(Stat)} || Stat <- Stats]).
 
 %% Get the value of the named stats metric
 %% NOTE: won't work for Histograms
 get_stat(Name) ->
-    case exometer_entry:get_value(Name) of
+    case exometer:get_value(Name) of
 	{ok, Value} ->
 	    Value;
 	{error, _} ->

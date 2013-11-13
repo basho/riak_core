@@ -23,12 +23,16 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, get_stats/0, update/1,
-         register_stats/0, produce_stats/0]).
+-export([start_link/0, get_stats/0, get_stats/1, update/1,
+         register_stats/0, produce_stats/0,
+	 register_stats/2,
+	 prefix/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
+
+-compile({parse_transform, riak_core_stat_xform}).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -42,18 +46,37 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 register_stats() ->
-    [(catch exometer_entry:delete([?APP,Name])) || {Name,_} <- stats()],
-    [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()],
-    riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
+    register_stats(?APP, stats()).
+
+%% @spec register_stats(App, Stats) -> ok
+%% @doc (Re-)Register a list of metrics for App.
+register_stats(App, Stats) ->
+    P = prefix(),
+    lists:foreach(fun(Stat) ->
+			  register_stat_(P, App, Stat)
+		  end, Stats).
+
+register_stat_(P, App, Stat) ->
+    {Name, Type, Opts} = case Stat of
+			     {N, T}     -> {N, T, []};
+			     {N, T, Os} -> {N, T, Os}
+			 end,
+    exometer:re_register(stat_name(P,App,Name), Type, Opts).
+
+stat_name(P, App, N) when is_atom(N) ->
+    [P, App, N];
+stat_name(P, App, N) when is_list(N) ->
+    [P, App | N].
+
 
 %% @spec get_stats() -> proplist()
 %% @doc Get the current aggregation of stats.
 get_stats() ->
-    case riak_core_stat_cache:get_stats(?APP) of
-        {ok, Stats, _TS} ->
-            Stats;
-        Error -> Error
-    end.
+    get_stats(?APP).
+
+get_stats(App) ->
+    P = prefix(),
+    exometer:get_values([P, App]).
 
 update(Arg) ->
     gen_server:cast(?SERVER, {update, Arg}).
@@ -65,6 +88,9 @@ produce_stats() ->
     lists:append([gossip_stats(),
                   vnodeq_stats()]).
 
+prefix() ->
+    app_helper:get_env(riak_core, stat_prefix, riak).
+
 %% gen_server
 
 init([]) ->
@@ -75,7 +101,7 @@ handle_call(_Req, _From, State) ->
     {reply, ok, State}.
 
 handle_cast({update, Arg}, State) ->
-    exometer_entry:update([?APP, Arg], update_value(Arg)),
+    exometer:update([?APP, Arg], update_value(Arg)),
     %% update1(Arg),
     {noreply, State};
 handle_cast(_Req, State) ->
@@ -106,12 +132,8 @@ stats() ->
      {handoff_timeouts, counter},
      {dropped_vnode_requests_total, counter},
      {converge_delay, duration},
-     {rebalance_delay, duration}].
-
-register_stat(Name, Type) when is_tuple(Name) ->
-    exometer_entry:new(tuple_to_list(Name), Type);
-register_stat(Name, Type) when is_list(Name) ->
-    exometer_entry:new(Name, Type).
+     {rebalance_delay, duration}
+    ].
 
 gossip_stats() ->
     lists:flatten([backwards_compat(Stat, Type, riak_core_stat_q:calc_stat({{?APP, Stat}, Type})) ||
