@@ -23,9 +23,7 @@
 %%      A `Path' is a list of atoms | binaries. The module creates a set
 %%      of `ets:select/1' guards, one for each element in `Path'
 %%      For each stat that has a key that matches `Path' we calculate the
-%%      current value and return it. This module makes use of
-%%     `riak_core_stat_calc_proc'
-%%      to cache and limit stat calculations.
+%%      current value and return it.
 
 -module(riak_core_stat_q).
 
@@ -37,7 +35,7 @@
 -type path() :: [] | [atom()|binary()].
 -type stats() :: [stat()].
 -type stat() :: {stat_name(), stat_value()}.
--type stat_name() :: tuple().
+-type stat_name() :: list().
 -type stat_value() :: integer() | [tuple()].
 
 %% @doc To allow for namespacing, and adding richer dimensions, stats
@@ -54,16 +52,15 @@
 -spec get_stats(path()) -> stats().
 get_stats(Path) ->
     %% get all the stats that are at Path
-    calculate_stats(exometer_entry:select(
+    calculate_stats(exometer:select(
                         [{ {Path ++ '_','_',enabled}, [], ['$_'] }])).
 
 calculate_stats(NamesAndTypes) ->
-    [{Name, get_stat({Name, Type})} || {Name, Type, _} <- NamesAndTypes].
+    [{Name, get_stat(Name)} || {Name, _, _} <- NamesAndTypes].
 
 %% Create/lookup a cache/calculation process
 get_stat(Stat) ->
-    Pid = riak_core_stat_calc_sup:calc_proc(Stat),
-    riak_core_stat_calc_proc:value(Pid).
+    exometer:get_value(Stat).
 
 %% Encapsulate getting a stat value from exometer.
 %%
@@ -73,9 +70,9 @@ get_stat(Stat) ->
 %% broken it stays that way. Should we delete
 %% stats that are broken?
 calc_stat({Name, _Type}) when is_tuple(Name) ->
-    stat_return(exometer_entry:get_value(tuple_to_list(Name)));
+    stat_return(exometer:get_value(tuple_to_list(Name)));
 calc_stat({[_|_] = Name, _Type}) ->
-    stat_return(exometer_entry:get_value(Name)).
+    stat_return(exometer:get_value(Name)).
 
 stat_return({error,not_found}) -> unavailable;
 stat_return({ok, Value}) -> Value.
