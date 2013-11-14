@@ -572,7 +572,8 @@ handle_cast(clear_history, State) ->
 handle_info({'ETS-TRANSFER', TableId, Pid, _Data}, State) ->
     lager:debug("table_mgr (~p) -> bg_mgr (~p) receiving ownership of TableId: ~p", [Pid, self(), TableId]),
     State2 = State#state{table_id=TableId},
-    reschedule_token_refills(State2),
+    State3 = validate_holds(State2),
+    reschedule_token_refills(State3),
     {noreply, State2};
 handle_info({'DOWN', Ref, _, _, _}, State) ->
     State2 = release_resource(Ref, State),
@@ -610,6 +611,23 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+%% @private
+%% @doc We must have just gotten the table data back after a crash/restart.
+%%      Walk through the given resources and release any holds by dead processes.
+validate_holds(State=#state{table_id=TableId}) ->
+    [validate_hold(Obj, TableId) || Obj <- ets:match_object(TableId, {{given, '_'},'_'})],
+    State.
+
+%% @private
+%% @doc If the given entry has no alive process associated with it,
+%%      remove the hold from the ETS table.
+validate_hold({_Key,Entry}=Obj, TableId) ->
+    %% If the process is not alive, release the lock
+    case is_process_alive(?e_pid(Entry)) of
+        false ->
+            ets:delete_object(TableId, Obj)
+    end.
 
 %% @private
 %% @doc Wrap a call, to a function with args, with a try/catch that handles
@@ -699,12 +717,12 @@ limit(#resource_info{type=lock, limit=Limit}) -> Limit;
 limit(#resource_info{type=token, limit={_Period,MaxCount}}) -> MaxCount.
 
 %% @private
-%% @doc Release the resource associated with the given resource. This is mostly
+%% @doc Release the resource associated with the given reference. This is mostly
 %%      meaningful for locks.
 release_resource(Ref, State=#state{table_id=TableId}) ->
     %% There should only be one instance of the object, but we'll zap all that match.
-    Entries = all_given_entries(State),
-    Matches = [Entry || {{given, _Resource},Entry} <- Entries, ?e_ref(Entry) == Ref],
+    Given = [Obj || Obj <- ets:match_object(TableId, {{given, '_'},'_'})],
+    Matches = [Obj || {_Key,Entry}=Obj <- Given, ?e_ref(Entry) == Ref],
     [ets:delete_object(TableId, Obj) || Obj <- Matches],
     State.
 
@@ -796,7 +814,6 @@ give_available_resources(Resource, NumAvailable, Queue, State) ->
 %% to callers on the blocked list. They need a reply because they
 %% made a gen_server:call() that we have not replied to yet.
 maybe_unblock_blocked(Resource, State) ->
-%%    ?debugFmt("Maybe unblock ~p~n", [Resource]),
     Entries = resources_given(Resource, State),
     Info = resource_info(Resource, State),
     MaxCount = limit(Info),
@@ -857,8 +874,10 @@ update_stat_window(TokenType, Fun, Default, State=#state{window=Window}) ->
     State#state{window=NewWindow}.
 
 resources_given(Resource, #state{table_id=TableId}) ->
-    Key = {given, Resource},
-    [Given || {_K,Given} <- ets:lookup(TableId, Key)].
+    [Entry || {{given,_R},Entry} <- ets:match_object(TableId, {{given, Resource},'_'})].
+
+%%    Key = {given, Resource},
+%%    [Given || {_K,Given} <- ets:lookup(TableId, Key)].
 
 %% @private
 %% @doc Add a Resource Entry to the "given" table. Here, we really do want
@@ -877,7 +896,6 @@ remove_given_entries(Token, #state{table_id=TableId}) ->
 give_resource(Entry, State=#state{table_id=TableId}) ->
     Resource = ?e_resource(Entry),
     Type = ?e_type(Entry),
-%%    ?debugFmt("Giving ~p~n", [Resource]),
     add_given_entry(Resource, Entry#resource_entry{state=given}, TableId),
     %% update given stats
     increment_stat_given(Resource, Type, State).
@@ -893,7 +911,10 @@ give_resource(Resource, Type, Pid, Ref, Meta, State) ->
 try_get_resource(false, _Resource, _Type, _Pid, _Meta, State) ->
     {max_concurrency, State};
 try_get_resource(true, Resource, Type, Pid, Meta, State) ->
-    Ref = monitor(process, Pid),
+    Ref = case Type of
+              token -> undefined;
+              lock -> monitor(process, Pid)
+          end,
     {ok, give_resource(Resource, Type, Pid, Ref, Meta, State)}.
 
 %% @private
@@ -945,9 +966,11 @@ blocked_queue(Resource, #state{table_id=TableId}) ->
 %% @doc Put a resource request on the blocked queue. We'll reply later when resources
 %% of that type become available.
 enqueue_request(Resource, Type, Pid, Meta, From, Timeout, State) ->
-%%    ?debugFmt("queueing ~p~n", [Resource]),
     OldQueue = blocked_queue(Resource, State),
-    Ref = monitor(process, Pid),
+    Ref = case Type of
+              token -> undefined;
+              lock -> monitor(process, Pid)
+          end,
     NewQueue = queue:in(?RESOURCE_ENTRY(Resource, Type, Pid, Meta, From, Ref, blocked), OldQueue),
     schedule_timeout(Resource, From, Timeout),
     %% update blocked stats
@@ -993,7 +1016,6 @@ do_query(all, States, Types, State) ->
     E2 = case lists:member(blocked, States) of
              true ->
                  Queues = all_blocked_queues(State),
-%%                 ?debugFmt("All blocked queues: ~p~n", [Queues]),
                  E1 ++ lists:flatten(
                          [[Entry || Entry <- queue:to_list(Q),
                                     lists:member(?e_type(Entry), Types)] || Q <- Queues]);
@@ -1025,7 +1047,6 @@ do_query(Resource, States, Types, State) ->
 %%   Clear all tokens of this type from the given set,
 %%   Unblock blocked processes if possible.
 do_refill_tokens(Token, State) ->
-%%    ?debugFmt("Refilling ~p~n", [Token]),
     State2 = increment_stat_refills(Token, State),
     remove_given_entries(Token, State),
     maybe_unblock_blocked(Token, State2).
