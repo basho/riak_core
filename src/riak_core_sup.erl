@@ -73,7 +73,7 @@ init([]) ->
                   ?CHILD(riak_core_claimant, worker),
                   ?CHILD(riak_core_stat_sup, supervisor),
                   ?CHILD(riak_core_table_manager, worker, 5000, [?TBL_MGR_ARGS]),
-                  ?CHILD(riak_core_bg_manager_sup, supervisor)
+                  ?CHILD(riak_core_bg_manager, supervisor)
                  ]),
 
     {ok, {{one_for_one, 10, 10}, Children}}.
