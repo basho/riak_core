@@ -199,8 +199,9 @@ concurrency_limit_reached(Lock) ->
     gen_server:call(?MODULE, {lock_limit_reached, Lock}, infinity).
 
 %% @doc Acquire a concurrency lock of the given name, if available,
-%%      and associate the lock with the calling process.
--spec get_lock(bg_lock()) -> ok | max_concurrency.
+%%      and associate the lock with the calling process. Returns the
+%%      reference to the monitored process or max_concurrency.
+-spec get_lock(bg_lock()) -> {ok, reference()} | max_concurrency.
 get_lock(Lock) ->
     get_lock(Lock, self()).
 
@@ -208,7 +209,7 @@ get_lock(Lock) ->
 %%      lock with the provided pid or metadata. If metadata
 %%      is provided the lock is associated with the calling process
 %%      If no locks are available, max_concurrency is returned.
--spec get_lock(bg_lock(), pid() | [{atom(), any()}]) -> ok | max_concurrency.
+-spec get_lock(bg_lock(), pid() | [{atom(), any()}]) -> {ok, reference()} | max_concurrency.
 get_lock(Lock, Pid) when is_pid(Pid) ->
     get_lock(Lock, Pid, []);
 get_lock(Lock, Opts) when is_list(Opts)->
@@ -216,7 +217,7 @@ get_lock(Lock, Opts) when is_list(Opts)->
 
 %% @doc Acquire a concurrency lock, if available,  and associate
 %%      the lock with the provided pid and metadata.
--spec get_lock(bg_lock(), pid(), [{atom(), any()}]) -> ok | max_concurrency.
+-spec get_lock(bg_lock(), pid(), [{atom(), any()}]) -> {ok, reference()} | max_concurrency.
 get_lock(Lock, Pid, Meta) ->
     gen_server:call(?MODULE, {get_lock, Lock, Pid, Meta}, infinity).
 
@@ -225,13 +226,13 @@ get_lock(Lock, Pid, Meta) ->
 %%      If metadata is provided, the lock is associated with the calling process.
 %%      If the lock is not given before Timeout milliseconds, the call will
 %%      return with 'timeout'.
--spec get_lock_blocking(bg_lock(), pid() | [{atom(), any()}], timeout()) -> ok | timeout | unregistered.
+-spec get_lock_blocking(bg_lock(), pid() | [{atom(), any()}], timeout()) -> {ok, reference()} | timeout | unregistered.
 get_lock_blocking(Lock, Pid, Timeout) when is_pid(Pid) ->
     get_lock_blocking(Lock, Pid, [], Timeout);
 get_lock_blocking(Lock, Meta, Timeout) ->
     get_lock_blocking(Lock, self(), Meta, Timeout).
 
--spec get_lock_blocking(bg_lock(), timeout()) -> ok | unregistered.
+-spec get_lock_blocking(bg_lock(), timeout()) -> {ok, reference()} | unregistered.
 get_lock_blocking(Lock, Timeout) ->
     get_lock_blocking(Lock, self(), Timeout).
 
@@ -911,11 +912,13 @@ give_resource(Resource, Type, Pid, Ref, Meta, State) ->
 try_get_resource(false, _Resource, _Type, _Pid, _Meta, State) ->
     {max_concurrency, State};
 try_get_resource(true, Resource, Type, Pid, Meta, State) ->
-    Ref = case Type of
-              token -> undefined;
-              lock -> monitor(process, Pid)
-          end,
-    {ok, give_resource(Resource, Type, Pid, Ref, Meta, State)}.
+    case Type of
+        token ->
+            {ok, give_resource(Resource, Type, Pid, undefined, Meta, State)};
+        lock ->
+            Ref = monitor(process, Pid),
+            {{ok,Ref}, give_resource(Resource, Type, Pid, Ref, Meta, State)}
+    end.
 
 %% @private
 %% @doc reply now if resource is available. Returns max_concurrency

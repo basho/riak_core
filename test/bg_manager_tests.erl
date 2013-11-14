@@ -66,8 +66,8 @@ bg_mgr_test_() ->
                           ?BG_MGR:disable(),
                           ?assertEqual(max_concurrency, ?BG_MGR:get_lock(a)),
                           ?BG_MGR:enable(),
-                          ?assertEqual(ok, ?BG_MGR:get_lock(a)),
-                          ?assertEqual(ok, ?BG_MGR:get_lock(a, self()))
+                          {ok, _Ref1} = ?BG_MGR:get_lock(a),
+                          {ok, _Ref2} = ?BG_MGR:get_lock(a, self())
                   end},
 
                 { "locks_held multiple times for same resource ",
@@ -97,12 +97,12 @@ bg_mgr_test_() ->
                           ?assertEqual(1, ?BG_MGR:set_concurrency_limit(b, 2)),
                           ?BG_MGR:disable(a),
                           %% make sure b is still enabled
-                          ?assertEqual(ok, ?BG_MGR:get_lock(b, self(), [meta_b])),
+                          {ok,_Ref1} = ?BG_MGR:get_lock(b, self(), [meta_b]),
                           %% a should be disabled now
                           ?assertEqual(max_concurrency, ?BG_MGR:get_lock(a, self(), [meta_a])),
                           ?BG_MGR:enable(a),
                           %% a should be re-enabled now
-                          ?assertEqual(ok, ?BG_MGR:get_lock(a, self(), [meta_a]))
+                          {ok,_Ref2} = ?BG_MGR:get_lock(a, self(), [meta_a])
                   end},
 
                 { "locks held",
