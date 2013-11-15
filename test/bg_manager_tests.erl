@@ -270,7 +270,21 @@ bg_mgr_test_() ->
                           %% but each "of lists" has only one thing in it.
                           [check_head_token(Token, [E1,E2,E3]) || Token <- Tokens]
 
-                  end}
+                  end},
+
+                {"lock/token separation",
+                 fun() ->
+                         %% Trying to set the rate on a token of the wrong type looks
+                         %% like an unregistered token. Same for locks.
+                         ?assertEqual({unregistered, lock_a}, riak_core_bg_manager:get_lock(lock_a)),
+                         ?assertEqual(0, riak_core_bg_manager:set_concurrency_limit(lock_a, 2)),
+                         ?assertEqual(0, riak_core_bg_manager:set_token_rate(lock_a, {1, 5})),
+
+                         ?assertEqual(0, riak_core_bg_manager:set_token_rate(token_a, {1,5})),
+                         ?assertEqual(0, riak_core_bg_manager:set_concurrency_limit(token_a, 1))
+
+                 end}
+
 
               ] end}
     }.

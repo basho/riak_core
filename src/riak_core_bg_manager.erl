@@ -665,6 +665,7 @@ do_disable_lock(Lock, Kill, State) ->
 do_set_token_rate(Token, Rate, State) ->
     try
         Info = resource_info(Token, State),
+        enforce_type_or_throw(Token, token, Info),
         OldRate = limit(Info),
         State2 = update_limit(Token, Rate, Info, State),
         schedule_refill_tokens(Token, State2),
@@ -687,9 +688,16 @@ do_resource_limit(Resource, State) ->
     Rate = ?resource_limit(Info),
     {reply, Rate, State}.
 
+enforce_type_or_throw(Resource, Type, Info) ->
+    case ?resource_type(Info) of
+        Type -> ok;
+        _Other -> throw({unregistered, Resource})
+    end.
+
 do_set_concurrency_limit(Lock, Limit, Kill, State) ->
     try
         Info = resource_info(Lock, State),
+        enforce_type_or_throw(Lock, lock, Info),
         OldLimit = limit(Info),
         State2 = update_limit(Lock, Limit, ?DEFAULT_LOCK_INFO, State),
         maybe_honor_limit(Kill, Lock, Limit, State2),
@@ -707,6 +715,7 @@ do_resource_info(Lock, State) ->
 %% @doc Throws unregistered for unknown Lock
 do_lock_limit_reached(Lock, State) ->
     Info = resource_info(Lock, State),
+    enforce_type_or_throw(Lock, lock, Info),
     HeldCount = held_count(Lock, State),
     Limit = limit(Info),
     {reply, HeldCount >= Limit, State}.
