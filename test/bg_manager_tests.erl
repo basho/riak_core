@@ -275,13 +275,21 @@ bg_mgr_test_() ->
                 {"lock/token separation",
                  fun() ->
                          %% Trying to set the rate on a token of the wrong type looks
-                         %% like an unregistered token. Same for locks.
+                         %% like an unregistered token.
+                         ?assertEqual({unregistered, token_a}, riak_core_bg_manager:get_token(token_a)),
+                         ?assertEqual(0, riak_core_bg_manager:set_token_rate(token_a, {1,5})),
+                         ?assertEqual(0, riak_core_bg_manager:set_concurrency_limit(token_a, 1)),
+
+                         %% Same for locks.
                          ?assertEqual({unregistered, lock_a}, riak_core_bg_manager:get_lock(lock_a)),
                          ?assertEqual(0, riak_core_bg_manager:set_concurrency_limit(lock_a, 2)),
                          ?assertEqual(0, riak_core_bg_manager:set_token_rate(lock_a, {1, 5})),
 
-                         ?assertEqual(0, riak_core_bg_manager:set_token_rate(token_a, {1,5})),
-                         ?assertEqual(0, riak_core_bg_manager:set_concurrency_limit(token_a, 1))
+                         %% Don't allow get_token(Lock)
+                         ?assertEqual({unregistered, lock_a}, riak_core_bg_manager:get_token(lock_a)),
+
+                         %% Don't allow get_lock(Token)
+                         ?assertEqual({unregistered, token_a}, riak_core_bg_manager:get_lock(token_a))
 
                  end}
 

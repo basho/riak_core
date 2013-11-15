@@ -937,6 +937,7 @@ do_get_resource(_Resource, _Type, _Pid, _Meta, State=#state{enabled=false}) ->
     {reply, max_concurrency, State};
 do_get_resource(Resource, Type, Pid, Meta, State) ->
     Info = resource_info(Resource, State),
+    enforce_type_or_throw(Resource, Type, Info),
     Enabled = ?resource_enabled(Info),
     Limit = limit(Info),
     Given  = length(resources_given(Resource, State)),
