@@ -276,16 +276,19 @@ forward_or_vnode_command(Sender, Request, State=#state{forward=Forward,
         false ->
             RequestHash = undefined
     end,
-    case {Forward, RequestHash} of
+    Forwardable = is_request_forwardable(Request),
+    case {Forwardable, Forward, RequestHash} of
+        %% Not a forwardable command, handle request locally
+        {false, _, _} -> vnode_command(Sender, Request, State);
         %% typical vnode operation, no forwarding set, handle request locally
-        {undefined, _} -> vnode_command(Sender, Request, State);
+        {_, undefined, _} -> vnode_command(Sender, Request, State);
         %% implicit forwarding after ownership_transfer/hinted_handoff
-        {F, _} when not is_list(F) ->
+        {_, F, _} when not is_list(F) ->
             vnode_forward(implicit, {Index, Forward}, Sender, Request, State);
         %% during resize we can't forward a request w/o request hash, always handle locally
-        {_, undefined} -> vnode_command(Sender, Request, State);
+        {_, _, undefined} -> vnode_command(Sender, Request, State);
         %% possible forwarding during ring resizing
-        {_, _} ->
+        {_, _, _} ->
             {ok, R} = riak_core_ring_manager:get_my_ring(),
             FutureIndex = riak_core_ring:future_index(RequestHash, Index, R),
             vnode_resize_command(Sender, Request, FutureIndex, State)
@@ -972,26 +975,36 @@ stop_manager_event_timer(#state{manager_event_timer=undefined}) ->
 stop_manager_event_timer(#state{manager_event_timer=T}) ->
     gen_fsm:cancel_timer(T).
 
+is_request_forwardable(#riak_core_fold_req_v2{forwardable=false}) ->
+    false;
+is_request_forwardable(_) ->
+    %% Assume that all other vnode ops are forwardable.
+    %%
+    %% WARNING: The coding style used in this function means that special
+    %%          care must be taken when adding #riak_core_fold_req_v3 and
+    %%          v4 and v27 as well as any other vnode request type.
+    true.
+
 %% ===================================================================
 %% Test API
 %% ===================================================================
 
 -ifdef(TEST).
 
-%% @doc Start the garbage collection server
+%% Start the garbage collection server
 test_link(Mod, Index) ->
     gen_fsm:start_link(?MODULE, [Mod, Index, 0, node()], []).
 
-%% @doc Get the current state of the fsm for testing inspection
+%% Get the current state of the fsm for testing inspection
 -spec current_state(pid()) -> {atom(), #state{}} | {error, term()}.
 current_state(Pid) ->
     gen_fsm:sync_send_all_state_event(Pid, current_state).
 
 pool_death_test() ->
-    meck:new(test_vnode),
+    meck:new(test_vnode, [non_strict, no_link]),
     meck:expect(test_vnode, init, fun(_) -> {ok, [], [{pool, test_pool_mod, 1, []}]} end),
     meck:expect(test_vnode, terminate, fun(_, _) -> normal end),
-    meck:new(test_pool_mod),
+    meck:new(test_pool_mod, [non_strict, no_link]),
     meck:expect(test_pool_mod, init_worker, fun(_, _, _) -> {ok, []} end),
 
     {ok, Pid} = ?MODULE:test_link(test_vnode, 0),

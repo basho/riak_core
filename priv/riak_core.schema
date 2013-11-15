@@ -1,0 +1,273 @@
+%% Default Bucket Properties
+
+%% @doc the number of replicas stored. Note: See CAP Controls for further discussion.
+%% http://docs.basho.com/riak/latest/dev/advanced/cap-controls/
+{mapping, "buckets.default.n_val", "riak_core.default_bucket_props.n_val", [
+  {datatype, integer},
+  {default, 3},
+  {level, advanced}
+]}.
+
+{mapping, "buckets.default.pr", "riak_core.default_bucket_props.pr", [
+  {default, "0"},
+  {level, advanced}
+]}.
+
+%% Cut and paste translation screams to be rewritten as a datatype, but that's a 
+%% "nice to have"
+{translation, 
+  "riak_core.default_bucket_props.pr",
+  fun(Conf) ->
+    Setting = cuttlefish_util:conf_get_value("buckets.default.pr", Conf),
+    case Setting of
+      "quorum" -> quorum;
+      "all" -> all;
+      X ->
+        try list_to_integer(Setting) of
+          Int -> Int
+        catch 
+          E:R -> error
+        end
+    end
+  end
+}.
+
+{mapping, "buckets.default.r", "riak_core.default_bucket_props.r", [
+  {default, "quorum"},
+  {level, advanced}
+]}.
+{translation, 
+  "riak_core.default_bucket_props.r",
+  fun(Conf) ->
+    Setting = cuttlefish_util:conf_get_value("buckets.default.r", Conf),
+    case Setting of
+      "quorum" -> quorum;
+      "all" -> all;
+      X ->
+        try list_to_integer(Setting) of
+          Int -> Int
+        catch 
+          E:R -> error
+        end
+    end
+  end
+}.
+
+{mapping, "buckets.default.w", "riak_core.default_bucket_props.w", [
+  {default, "quorum"},
+  {level, advanced}
+]}.
+{translation, 
+  "riak_core.default_bucket_props.w",
+  fun(Conf) ->
+    Setting = cuttlefish_util:conf_get_value("buckets.default.w", Conf),
+    case Setting of
+      "quorum" -> quorum;
+      "all" -> all;
+      X ->
+        try list_to_integer(Setting) of
+          Int -> Int
+        catch 
+          E:R -> error
+        end
+    end
+  end
+}.
+
+{mapping, "buckets.default.pw", "riak_core.default_bucket_props.pw", [
+  {default, "0"},
+  {level, advanced}
+]}.
+{translation, 
+  "riak_core.default_bucket_props.pw",
+  fun(Conf) ->
+    Setting = cuttlefish_util:conf_get_value("buckets.default.pw", Conf),
+    case Setting of
+      "quorum" -> quorum;
+      "all" -> all;
+      X ->
+        try list_to_integer(Setting) of
+          Int -> Int
+        catch 
+          E:R -> error
+        end
+    end
+  end
+}.
+
+{mapping, "buckets.default.dw", "riak_core.default_bucket_props.dw", [
+  {default, "quorum"},
+  {level, advanced}
+]}.
+{translation, 
+  "riak_core.default_bucket_props.dw",
+  fun(Conf) ->
+    Setting = cuttlefish_util:conf_get_value("buckets.default.dw", Conf),
+    case Setting of
+      "quorum" -> quorum;
+      "all" -> all;
+      X ->
+        try list_to_integer(Setting) of
+          Int -> Int
+        catch 
+          E:R -> error
+        end
+    end
+  end
+}.
+
+{mapping, "buckets.default.rw", "riak_core.default_bucket_props.rw", [
+  {default, "quorum"},
+  {level, advanced}
+]}.
+{translation, 
+  "riak_core.default_bucket_props.rw",
+  fun(Conf) ->
+    Setting = cuttlefish_util:conf_get_value("buckets.default.rw", Conf),
+    case Setting of
+      "quorum" -> quorum;
+      "all" -> all;
+      X ->
+        try list_to_integer(Setting) of
+          Int -> Int
+        catch 
+          E:R -> error
+        end
+    end
+  end
+}.
+
+%% {mapping, "buckets.default.basic_quorum", "riak_core.default_bucket_props.basic_quorum", false},
+%% {mapping, "buckets.default.notfound_ok", "riak_core.default_bucket_props.notfound_ok", true}
+
+%% @doc whether or not siblings are allowed.
+%% Note: See Vector Clocks for a discussion of sibling resolution.
+{mapping, "buckets.default.siblings", "riak_core.default_bucket_props.allow_mult", [
+  {datatype, {enum, [on, off]}},
+  {default, on},
+  {level, advanced}
+]}.
+
+{translation, 
+ "riak_core.default_bucket_props.allow_mult", 
+ fun(Conf) -> 
+  Setting = cuttlefish_util:conf_get_value("buckets.default.siblings", Conf),
+    case Setting of
+      on -> true;
+      off -> false;
+      _Default -> true
+    end  
+ end}.
+
+{mapping, "buckets.default.last_write_wins", "riak_core.default_bucket_props.last_write_wins", [
+  {datatype, {enum, [true, false]}},
+  {default, false},
+  {level, advanced}
+]}.
+
+%{mapping, "buckets.default.precommit", "riak_core.default_bucket_props.precommit", []},
+%{mapping, "buckets.default.postcommit", "riak_core.default_bucket_props.postcommit", []},
+%{mapping, "buckets.default.chash_keyfun", "riak_core.default_bucket_props.chash_keyfun", {riak_core_util, chash_std_keyfun}},
+%{mapping, "buckets.default.linkfun", "riak_core.default_bucket_props.linkfun", {modfun, riak_kv_wm_link_walker, mapreduce_linkfun}}
+
+%% example of super basic mapping
+%% @doc Default ring creation size.  Make sure it is a power of 2,
+%% e.g. 16, 32, 64, 128, 256, 512 etc
+{mapping, "ring_size", "riak_core.ring_creation_size", [
+  {datatype, integer},
+  {default, 64},
+  {validators, ["ring_size"]},
+  {commented, 64}
+]}.
+
+%% ring_size validator
+{validator, "ring_size", "not a power of 2 greater than 1",
+ fun(Size) -> 
+  Size > 1 andalso (Size band (Size-1) =:= 0)
+ end}.
+
+%% @doc Default location of ringstate
+{mapping, "ring.state_dir", "riak_core.ring_state_dir", [
+  {default, "{{ring_state_dir}}"}
+]}.
+
+%% @doc Default cert location for https can be overridden
+%% with the ssl config variable, for example:
+{mapping, "ssl.certfile", "riak_core.ssl.certfile", [
+  {commented, "{{platform_etc_dir}}/cert.pem"}
+]}.
+
+%% @doc Default key location for https can be overridden
+%% with the ssl config variable, for example:
+{mapping, "ssl.keyfile", "riak_core.ssl.keyfile", [
+  {commented, "{{platform_etc_dir}}/key.pem"}
+]}.
+
+%% @doc Default signing authority location for https can be overridden
+%% with the ssl config variable, for example:
+{mapping, "ssl.cacertfile", "riak_core.ssl.cacertfile", [
+  {commented, "{{platform_etc_dir}}/cacertfile.pem"}
+]}.
+
+%% @doc handoff.port is the TCP port that Riak uses for
+%% intra-cluster data handoff.
+{mapping, "handoff.port", "riak_core.handoff_port", [
+  {default, {{handoff_port}} },
+  {datatype, integer}
+]}.
+
+%% @doc To encrypt riak_core intra-cluster data handoff traffic,
+%% uncomment the following line and edit its path to an
+%% appropriate certfile and keyfile.  (This example uses a
+%% single file with both items concatenated together.)
+{mapping, "handoff.ssl.certfile", "riak_core.handoff_ssl_options.certfile", [
+  {commented, "/tmp/erlserver.pem"}
+]}.
+
+%% @doc if you need a seperate keyfile for handoff
+{mapping, "handoff.ssl.keyfile", "riak_core.handoff_ssl_options.keyfile", []}.
+
+%% @doc DTrace support
+%% Do not enable 'dtrace' unless your Erlang/OTP
+%% runtime is compiled to support DTrace.  DTrace is
+%% available in R15B01 (supported by the Erlang/OTP
+%% official source package) and in R14B04 via a custom
+%% source repository & branch.
+{mapping, "dtrace", "riak_core.dtrace_support", [
+  {default, off},
+  {datatype, {enum, [on, off]}}
+]}.
+
+%% consistent on/off (in lieu of enabled/disabled, true/false)
+{ translation,
+  "riak_core.dtrace_support",
+  fun(Conf) ->
+    Setting = cuttlefish_util:conf_get_value("dtrace", Conf), 
+    case Setting of
+      on -> true;
+      off -> false;
+      _Default -> false
+    end
+  end
+}.
+
+%% Platform-specific installation paths (substituted by rebar)
+{mapping, "platform_bin_dir", "riak_core.platform_bin_dir", [
+  {default, "{{platform_bin_dir}}"}
+]}.
+
+{mapping, "platform_data_dir", "riak_core.platform_data_dir", [
+  {default, "{{platform_data_dir}}"}
+]}.
+
+{mapping, "platform_etc_dir", "riak_core.platform_etc_dir", [
+  {default, "{{platform_etc_dir}}"}
+]}.
+
+{mapping, "platform_lib_dir", "riak_core.platform_lib_dir", [
+  {default, "{{platform_lib_dir}}"}
+]}.
+
+{mapping, "platform_log_dir", "riak_core.platform_log_dir", [
+  {default, "{{platform_log_dir}}"}
+]}.

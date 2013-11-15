@@ -55,7 +55,7 @@ prop_main() ->
     riak_core_node_watcher_events:start_link(),
 
     %% meck used for health watch / threshold
-    meck:new(mod_health),
+    meck:new(mod_health, [non_strict, no_link]),
 
     ?FORALL(Cmds, commands(?MODULE),
             begin

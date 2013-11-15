@@ -152,7 +152,7 @@ pause() ->
 %% @doc Return paused state
 -spec is_paused() -> boolean().
 is_paused() ->
-    gen_server:call(?SERVER, is_paused).
+    gen_server:call(?SERVER, is_paused, infinity).
 
 %% @doc Reset all backoff delays to zero.
 -spec reset_backoff() -> 'ok'.
@@ -189,13 +189,13 @@ apply_locator(Name, Strategy) ->
 %%
 -spec connect(Target :: string(), ClientSpec :: clientspec(), Strategy :: client_scheduler_strategy()) -> {'ok', reference()}.
 connect(Target, ClientSpec, Strategy) ->
-    gen_server:call(?SERVER, {connect, Target, ClientSpec, Strategy}).
+    gen_server:call(?SERVER, {connect, Target, ClientSpec, Strategy}, infinity).
 
 %% @doc same as connect(Target, ClientSpec, default).
 %% @see connect/3
 -spec connect(Target :: string(), ClientSpec :: clientspec()) -> {'ok', reference()}.
 connect(Target, ClientSpec) ->
-    gen_server:call(?SERVER, {connect, Target, ClientSpec, default}).
+    gen_server:call(?SERVER, {connect, Target, ClientSpec, default}, infinity).
 
 %% @doc Disconnect from the remote side.
 -spec disconnect(Target :: string()) -> 'ok'.
@@ -205,7 +205,7 @@ disconnect(Target) ->
 %% doc Stop the server and sever all connections.
 -spec stop() -> 'ok'.
 stop() ->
-    gen_server:call(?SERVER, stop).
+    gen_server:call(?SERVER, stop, infinity).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -502,11 +502,11 @@ connection_helper(Ref, _Protocol, _Strategy, []) ->
 connection_helper(Ref, Protocol, Strategy, [Addr|Addrs]) ->
     {{ProtocolId, _Foo},_Bar} = Protocol,
     %% delay by the backoff_delay for this endpoint.
-    {ok, BackoffDelay} = gen_server:call(?SERVER, {get_endpoint_backoff, Addr}),
+    {ok, BackoffDelay} = gen_server:call(?SERVER, {get_endpoint_backoff, Addr}, infinity),
     lager:debug("Holding off ~p seconds before trying ~p at ~p",
                [(BackoffDelay/1000), ProtocolId, string_of_ipport(Addr)]),
     timer:sleep(BackoffDelay),
-    case gen_server:call(?SERVER, {should_try_endpoint, Ref, Addr}) of
+    case gen_server:call(?SERVER, {should_try_endpoint, Ref, Addr}, infinity) of
         true ->
             lager:debug("Trying connection to: ~p at ~p", [ProtocolId, string_of_ipport(Addr)]),
             ?TRACE(?debugMsg("Attempting riak_core_connection:sync_connect/2")),

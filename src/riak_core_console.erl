@@ -23,7 +23,8 @@
          stage_leave/1, stage_remove/1, stage_replace/1, stage_resize_ring/1,
          stage_force_replace/1, print_staged/1, commit_staged/1,
          clear_staged/1, transfer_limit/1, pending_claim_percentage/2,
-         transfers/1]).
+         transfers/1, add_user/1, add_source/1, grant/1, revoke/1,
+         print_users/1, print_user/1, print_sources/1]).
 
 %% @doc Return for a given ring and node, percentage currently owned and
 %% anticipated after the transitions have been completed.
@@ -820,3 +821,138 @@ check_limit(Str) ->
         _:_ ->
             {false, 0}
     end.
+
+add_user([Username|Options]) ->
+    case riak_core_security:add_user(list_to_binary(Username),
+                                     parse_options(Options)) of
+        ok -> ok;
+        Error ->
+            io:format("~p~n", [Error]),
+            Error
+    end.
+
+add_source([Users, CIDR, Source | Options]) ->
+    Unames = case string:tokens(Users, ",") of
+        ["all"] ->
+            all;
+        Other ->
+            [list_to_binary(O) || O <- Other]
+    end,
+    case riak_core_security:add_source(Unames, parse_cidr(CIDR),
+                                  list_to_atom(Source),
+                                  parse_options(Options)) of
+        ok ->
+            ok;
+        Error ->
+            io:format("~p~n", [Error]),
+            Error
+    end.
+
+grant([Grants, "ON", "ANY", "TO", Users]) ->
+    Unames = case string:tokens(Users, ",") of
+        ["all"] ->
+            all;
+        Other ->
+            [list_to_binary(O) || O <- Other]
+    end,
+    Permissions = case string:tokens(Grants, ",") of
+        ["all"] ->
+            all;
+        Other2 ->
+            Other2
+    end,
+    case riak_core_security:add_grant(Unames, any, Permissions) of
+        ok -> ok;
+        Error ->
+            io:format("~p~n", [Error]),
+            Error
+    end;
+grant([Grants, "ON", Type, Bucket, "TO", Users]) ->
+    grant([Grants, "ON", {list_to_binary(Type), list_to_binary(Bucket)}, "TO",
+           Users]);
+grant([Grants, "ON", Type, "TO", Users]) when is_list(Type) ->
+    grant([Grants, "ON", list_to_binary(Type), "TO", Users]);
+grant([Grants, "ON", Bucket, "TO", Users]) ->
+    Unames = case string:tokens(Users, ",") of
+        ["all"] ->
+            all;
+        Other ->
+            [list_to_binary(O) || O <- Other]
+    end,
+    Permissions = case string:tokens(Grants, ",") of
+        ["all"] ->
+            all;
+        Other2 ->
+            Other2
+    end,
+    case riak_core_security:add_grant(Unames, Bucket, Permissions) of
+        ok -> ok;
+        Error ->
+            io:format("~p~n", [Error]),
+            Error
+    end;
+grant(_) ->
+    io:format("Usage: grant <permissions> ON (<type> [bucket]|ANY) TO <users>"),
+    error.
+
+revoke([Grants, "ON", "ANY", "FROM", Users]) ->
+    Unames = case string:tokens(Users, ",") of
+        ["all"] ->
+            all;
+        Other ->
+            [list_to_binary(O) || O <- Other]
+    end,
+    Permissions = case string:tokens(Grants, ",") of
+        ["all"] ->
+            all;
+        Other2 ->
+            Other2
+    end,
+    riak_core_security:add_revoke(Unames, any, Permissions);
+revoke([Grants, "ON", Type, Bucket, "FROM", Users]) ->
+    revoke([Grants, "ON", {list_to_binary(Type), list_to_binary(Bucket)},
+            "FROM",
+           Users]);
+revoke([Grants, "ON", Type, "FROM", Users]) when is_list(Type) ->
+    revoke([Grants, "ON", list_to_binary(Type), "FROM", Users]);
+revoke([Grants, "ON", Bucket, "FROM", Users]) ->
+    Unames = case string:tokens(Users, ",") of
+        ["all"] ->
+            all;
+        Other ->
+            [list_to_binary(O) || O <- Other]
+    end,
+    Permissions = case string:tokens(Grants, ",") of
+        ["all"] ->
+            all;
+        Other2 ->
+            Other2
+    end,
+    riak_core_security:add_revoke(Unames, Bucket, Permissions);
+revoke(_) ->
+    io:format("Usage: revoke <permissions> ON <type> [bucket] FROM <users>"),
+    error.
+
+
+print_users([]) ->
+    riak_core_security:print_users().
+
+print_user([User]) ->
+    riak_core_security:print_user(list_to_binary(User)).
+
+print_sources([]) ->
+    riak_core_security:print_sources().
+
+parse_options(Options) ->
+    parse_options(Options, []).
+
+parse_options([], Acc) ->
+    Acc;
+parse_options([H|T], Acc) ->
+    [Key, Value] = string:tokens(H, "="),
+    parse_options(T, [{Key, Value}|Acc]).
+
+parse_cidr(CIDR) ->
+    [IP, Mask] = string:tokens(CIDR, "/"),
+    {ok, Addr} = inet_parse:address(IP),
+    {Addr, list_to_integer(Mask)}.

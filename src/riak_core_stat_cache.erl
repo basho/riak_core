@@ -65,7 +65,7 @@ register_app(App, {M, F, A}) ->
     register_app(App, {M, F, A}, RefreshRate).
 
 register_app(App, {M, F, A}, RefreshRateSecs) ->
-    gen_server:call(?SERVER, {register, App, {{M, F, A}, ?REFRSH_MILLIS(RefreshRateSecs)}}).
+    gen_server:call(?SERVER, {register, App, {{M, F, A}, ?REFRSH_MILLIS(RefreshRateSecs)}}, infinity).
 
 get_stats(App) ->
     gen_server:call(?SERVER, {get_stats, App}, infinity).
@@ -272,7 +272,7 @@ cache_test_() ->
     {setup,
      fun() ->
              folsom:start(),
-             [meck:new(Mock, [passthrough]) || Mock <- ?MOCKS],
+             [meck:new(Mock, [non_strict, passthrough]) || Mock <- ?MOCKS],
              riak_core_stat_cache:start_link()
      end,
      fun(_) ->

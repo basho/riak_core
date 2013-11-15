@@ -120,7 +120,7 @@ start_link(test) ->
 
 %% @spec get_my_ring() -> {ok, riak_core_ring:riak_core_ring()} | {error, Reason}
 get_my_ring() ->
-    Ring = case mochiglobal:get(?RING_KEY) of
+    Ring = case riak_core_mochiglobal:get(?RING_KEY) of
                ets ->
                    case ets:lookup(?ETS, ring) of
                        [{_, RingETS}] ->
@@ -174,7 +174,15 @@ get_ring_id() ->
             {0,0}
     end.
 
-%% @doc Return metadata for the given bucket
+%% @doc Return metadata for the given bucket. If a bucket
+%% for the non-default type is provided {error, no_type}
+%% is returned when the type does not exist
+get_bucket_meta({<<"default">>, Name}) ->
+    get_bucket_meta(Name);
+get_bucket_meta({_Type, _Name}=Bucket) ->
+    %% reads from cluster metadata ets table
+    %% these aren't stored in ring manager ever
+    riak_core_bucket:get_bucket(Bucket);
 get_bucket_meta(Bucket) ->
     case ets:lookup(?ETS, {bucket, Bucket}) of
         [] ->
@@ -521,13 +529,13 @@ cleanup_ets(test) ->
 reset_ring_id() ->
     %% Maintain ring id epoch using mochiglobal to ensure ring id remains
     %% monotonic even if the riak_core_ring_manager crashes and restarts
-    Epoch = case mochiglobal:get(riak_ring_id_epoch) of
+    Epoch = case riak_core_mochiglobal:get(riak_ring_id_epoch) of
                 undefined ->
                     0;
                 Value ->
                     Value
             end,
-    mochiglobal:put(riak_ring_id_epoch, Epoch + 1),
+    riak_core_mochiglobal:put(riak_ring_id_epoch, Epoch + 1),
     {Epoch + 1, 0}.
 
 %% Set the ring in mochiglobal/ETS.  Exported during unit testing
@@ -589,17 +597,17 @@ set_ring_global(Ring) ->
                {chashbin, CHBin} | BucketMeta2],
     ets:insert(?ETS, Actions),
     ets:match_delete(?ETS, {{bucket, '_'}, undefined}),
-    case mochiglobal:get(?RING_KEY) of
+    case riak_core_mochiglobal:get(?RING_KEY) of
         ets ->
             ok;
         _ ->
-            mochiglobal:put(?RING_KEY, ets)
+            riak_core_mochiglobal:put(?RING_KEY, ets)
     end,
     ok.
 
 promote_ring() ->
     {ok, Ring} = get_my_ring(),
-    mochiglobal:put(?RING_KEY, Ring).
+    riak_core_mochiglobal:put(?RING_KEY, Ring).
 
 %% Persist a new ring file, set the global value and notify any listeners
 prune_write_notify_ring(Ring, State) ->
@@ -644,7 +652,7 @@ set_ring_global_test() ->
     Ring = riak_core_ring:fresh(),
     set_ring_global(Ring),
     promote_ring(),
-    ?assert(riak_core_ring:nearly_equal(Ring, mochiglobal:get(?RING_KEY))),
+    ?assert(riak_core_ring:nearly_equal(Ring, riak_core_mochiglobal:get(?RING_KEY))),
     cleanup_ets(test).
 
 set_my_ring_test() ->

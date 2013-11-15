@@ -156,8 +156,10 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
          UnsentAcc0 = get_notsent_acc0(Opts),
          UnsentFun = get_notsent_fun(Opts),
 
-         Req = ?FOLD_REQ{foldfun=fun visit_item/3,
-                         acc0=#ho_acc{ack=0,
+         Req = riak_core_util:make_fold_req(
+                             fun visit_item/3,
+                             #ho_acc{
+                                      ack=0,
                                       error=ok,
                                       filter=Filter,
                                       module=Module,
@@ -180,8 +182,8 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
 
                                       type=Type,
                                       notsent_acc=UnsentAcc0,
-                                      notsent_fun=UnsentFun}
-                        },                             
+                                      notsent_fun=UnsentFun
+                                     }),
 
          %% IFF the vnode is using an async worker to perform the fold
          %% then sync_command will return error on vnode crash,

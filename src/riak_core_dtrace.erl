@@ -151,26 +151,26 @@ timeit0(ArgList) ->
     end.
 
 timeit_mg(ArgList) ->
-    case mochiglobal:get(?MAGIC) of
+    case riak_core_mochiglobal:get(?MAGIC) of
         undefined ->
             case application:get_env(riak_core, dtrace_support) of
                 {ok, true} ->
                     case string:to_float(erlang:system_info(version)) of
                         {5.8, _} ->
                             %% R14B04
-                            mochiglobal:put(?MAGIC, dtrace),
+                            riak_core_mochiglobal:put(?MAGIC, dtrace),
                             timeit_mg(ArgList);
                         {Num, _} when Num > 5.8 ->
                             %% R15B or higher, though dyntrace option
                             %% was first available in R15B01.
-                            mochiglobal:put(?MAGIC, dyntrace),
+                            riak_core_mochiglobal:put(?MAGIC, dyntrace),
                             timeit_mg(ArgList);
                         _ ->
-                            mochiglobal:put(?MAGIC, unsupported),
+                            riak_core_mochiglobal:put(?MAGIC, unsupported),
                             false
                     end;
                 _ ->
-                    mochiglobal:put(?MAGIC, unsupported),
+                    riak_core_mochiglobal:put(?MAGIC, unsupported),
                     false
             end;
         dyntrace ->
@@ -197,7 +197,7 @@ timeit_naive_test() ->
 -define(REPS, 225000).
 
 timeit_mochiglobal_test() ->
-    mochiglobal:delete(?MAGIC),
+    riak_core_mochiglobal:delete(?MAGIC),
     Reps = lists:seq(1, ?REPS),
     test_common("timeit_mochiglobal",
                 fun() ->
@@ -206,7 +206,7 @@ timeit_mochiglobal_test() ->
                         [unused, {timer:now_diff(os:timestamp(), Start), unused}]
                 end,
                 ?REPS),
-    mochiglobal:delete(?MAGIC).
+    riak_core_mochiglobal:delete(?MAGIC).
 
 timeit_best_off_test() ->
     timeit_best_common("timeit_best OFF (fastest)", false).

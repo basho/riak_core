@@ -131,11 +131,11 @@ unregister_service(ProtocolId) ->
 %% @doc True if the given protocal id is registered.
 -spec(is_registered(proto_id()) -> boolean()).
 is_registered(ProtocolId) ->
-    gen_server:call(?SERVER, {is_registered, service, ProtocolId}).
+    gen_server:call(?SERVER, {is_registered, service, ProtocolId}, infinity).
 
 %% @doc Register a callback function that will get called periodically or
 %% when the connection status of services changes. The function will
-%% receive a list of tuples: {<protocol-id>, <stats>} where stats
+%% receive a list of tuples: {&lt;protocol-id&gt;, &lt;stats&gt;} where stats
 %% holds the number of open connections that have been accepted  for that
 %% protocol type. This can be used to report load, in the form of
 %% connected-ness, for each protocol type, to remote clusters, e.g.,
@@ -148,12 +148,12 @@ register_stats_fun(Fun) ->
 %% @doc Number of open connections for each protocol id.
 -spec get_stats() -> [{proto_id(), non_neg_integer()}].
 get_stats() ->
-    gen_server:call(?SERVER, get_stats).
+    gen_server:call(?SERVER, get_stats, infinity).
 
 %% @doc Stop the ranch listener, and then exit the server normally.
 -spec stop() -> 'ok'.
 stop() ->
-    gen_server:call(?SERVER, stop).
+    gen_server:call(?SERVER, stop, infinity).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -293,7 +293,7 @@ dispatch_service(Listener, Socket, Transport, _Args) ->
                 {NewTransport, NewSocket} ->
                     %% get latest set of registered services from gen_server
                     %% and do negotiation
-                    Services = gen_server:call(?SERVER, get_services),
+                    Services = gen_server:call(?SERVER, get_services, infinity),
                     SubProtocols = [Protocol ||
                         {_Key,{Protocol,_Strategy}} <- Services],
                     lager:debug("started dispatch_service with protocols: ~p",
