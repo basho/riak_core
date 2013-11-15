@@ -555,6 +555,14 @@ wait_for_pid(Pid) ->
             {error, didnotexit}
     end.
 
+bg_manager_monitors() ->
+    bg_manager_monitors(whereis(riak_core_bg_manager)).
+
+bg_manager_monitors(undefined) ->
+    crashed;
+bg_manager_monitors(Pid) ->
+    process_info(Pid, monitors).
+
 prop_bgmgr() ->
     ?FORALL(Cmds, commands(?MODULE),
             aggregate(command_names(Cmds),
@@ -570,11 +578,12 @@ prop_bgmgr() ->
                              unlink(BgMgr),
                              {H, S, Res} = run_commands(?MODULE,Cmds),
                              Table = ets:tab2list(background_mgr_table),
+                             Monitors = bg_manager_monitors(),
                              RunnngPids = running_procs(S),
                              %% cleanup processes not killed during test
                              [stop_pid(Pid) || Pid <- RunnngPids],
-                             stop_pid(TableMgr),
-                             stop_pid(BgMgr),
+                             stop_pid(whereis(riak_core_table_manager)),
+                             stop_pid(whereis(riak_core_bg_manager)),
                              ?WHENFAIL(
                                 begin
                                     io:format("~n~nFinal State: ~n"),
@@ -589,7 +598,12 @@ prop_bgmgr() ->
                                     io:format("~n~nbackground_mgr_table: ~n"),
                                     io:format("---------------~n"),
                                     io:format("~p~n", [Table]),
+                                    io:format("---------------~n"),
+                                    io:format("~n~nbg_manager monitors: ~n"),
+                                    io:format("---------------~n"),
+                                    io:format("~p~n", [Monitors]),
                                     io:format("---------------~n")
+
                                 end,
                                 pretty_commands(?MODULE, Cmds, {H, S, Res},
                                                 Res == ok))
@@ -611,6 +625,7 @@ prop_bgmgr_parallel() ->
                              unlink(BgMgr),
                              {Seq, Par, Res} = run_parallel_commands(?MODULE,Cmds),
                              Table = ets:tab2list(background_mgr_table),
+                             Monitors = bg_manager_monitors(),
                              stop_pid(TableMgr),
                              stop_pid(BgMgr),
                              ?WHENFAIL(
@@ -618,6 +633,10 @@ prop_bgmgr_parallel() ->
                                     io:format("~n~nbackground_mgr_table: ~n"),
                                     io:format("---------------~n"),
                                     io:format("~p~n", [Table]),
+                                    io:format("---------------~n"),
+                                    io:format("~n~nbg_manager monitors: ~n"),
+                                    io:format("---------------~n"),
+                                    io:format("~p~n", [Monitors]),
                                     io:format("---------------~n")
                                 end,
                                 pretty_commands(?MODULE, Cmds, {Seq, Par, Res},
