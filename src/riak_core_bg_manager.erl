@@ -914,7 +914,8 @@ try_get_resource(false, _Resource, _Type, _Pid, _Meta, State) ->
 try_get_resource(true, Resource, Type, Pid, Meta, State) ->
     case Type of
         token ->
-            {ok, give_resource(Resource, Type, Pid, undefined, Meta, State)};
+            Ref = random_bogus_ref(),
+            {ok, give_resource(Resource, Type, Pid, Ref, Meta, State)};
         lock ->
             Ref = monitor(process, Pid),
             {{ok,Ref}, give_resource(Resource, Type, Pid, Ref, Meta, State)}
@@ -965,13 +966,16 @@ blocked_queue(Resource, #state{table_id=TableId}) ->
         [{Key,Queue} | _Rest] -> Queue
     end.
 
+random_bogus_ref() ->
+    random:uniform().
+
 %% @private
 %% @doc Put a resource request on the blocked queue. We'll reply later when resources
 %% of that type become available.
 enqueue_request(Resource, Type, Pid, Meta, From, Timeout, State) ->
     OldQueue = blocked_queue(Resource, State),
     Ref = case Type of
-              token -> undefined;
+              token -> random_bogus_ref();
               lock -> monitor(process, Pid)
           end,
     NewQueue = queue:in(?RESOURCE_ENTRY(Resource, Type, Pid, Meta, From, Ref, blocked), OldQueue),
