@@ -278,21 +278,22 @@ bg_mgr_test_() ->
                          %% like an unregistered token.
                          ?assertEqual({unregistered, token_a}, riak_core_bg_manager:get_token(token_a)),
                          ?assertEqual(0, riak_core_bg_manager:set_token_rate(token_a, {1,5})),
-                         ?assertEqual(0, riak_core_bg_manager:set_concurrency_limit(token_a, 1)),
+                         ?assertEqual({badtype, token_a},
+                                      riak_core_bg_manager:set_concurrency_limit(token_a, 42)),
 
                          %% Same for locks.
                          ?assertEqual({unregistered, lock_a}, riak_core_bg_manager:get_lock(lock_a)),
-                         ?assertEqual(0, riak_core_bg_manager:set_concurrency_limit(lock_a, 2)),
-                         ?assertEqual(0, riak_core_bg_manager:set_token_rate(lock_a, {1, 5})),
+                         ?assertEqual(0, riak_core_bg_manager:set_concurrency_limit(lock_a, 52)),
+                         ?assertEqual({badtype, lock_a},
+                                      riak_core_bg_manager:set_token_rate(lock_a, {1, 5})),
 
                          %% Don't allow get_token(Lock)
-                         ?assertEqual({unregistered, lock_a}, riak_core_bg_manager:get_token(lock_a)),
+                         ?assertEqual({badtype, lock_a}, riak_core_bg_manager:get_token(lock_a)),
 
                          %% Don't allow get_lock(Token)
-                         ?assertEqual({unregistered, token_a}, riak_core_bg_manager:get_lock(token_a))
+                         ?assertEqual({badtype, token_a}, riak_core_bg_manager:get_lock(token_a))
 
                  end}
-
 
               ] end}
     }.
@@ -379,10 +380,13 @@ start_bg_mgr() ->
     %% setup with history window to 1 seconds
     ?BG_MGR:start(1).
 
-crash_and_restart_token_manager() ->
+kill_bg_mgr() ->
     Pid = erlang:whereis(?BG_MGR),
     ?assertNot(Pid == undefined),
-    erlang:exit(Pid, kill),
+    erlang:exit(Pid, kill).
+
+crash_and_restart_token_manager() ->
+    kill_bg_mgr(),
     timer:sleep(100),
     start_bg_mgr(),
     timer:sleep(100).

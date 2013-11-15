@@ -626,6 +626,8 @@ validate_holds(State=#state{table_id=TableId}) ->
 validate_hold({_Key,Entry}=Obj, TableId) ->
     %% If the process is not alive, release the lock
     case is_process_alive(?e_pid(Entry)) of
+        true ->
+            ok;
         false ->
             ets:delete_object(TableId, Obj)
     end.
@@ -674,7 +676,9 @@ do_set_token_rate(Token, Rate, State) ->
         {reply, OldRate, State3}
     catch
         {unregistered, Token} ->
-            {reply, 0, update_limit(Token, Rate, ?DEFAULT_TOKEN_INFO, State)}
+            {reply, 0, update_limit(Token, Rate, ?DEFAULT_TOKEN_INFO, State)};
+        {badtype, _Token}=Error ->
+            {reply, Error, State}
     end.
 
 do_get_type_info(Type, State) ->
@@ -691,7 +695,7 @@ do_resource_limit(Resource, State) ->
 enforce_type_or_throw(Resource, Type, Info) ->
     case ?resource_type(Info) of
         Type -> ok;
-        _Other -> throw({unregistered, Resource})
+        _Other -> throw({badtype, Resource})
     end.
 
 do_set_concurrency_limit(Lock, Limit, Kill, State) ->
@@ -704,7 +708,9 @@ do_set_concurrency_limit(Lock, Limit, Kill, State) ->
         {reply, OldLimit, State2}
     catch
         {unregistered, Lock} ->
-            {reply, 0, update_limit(Lock, Limit, ?DEFAULT_LOCK_INFO, State)}
+            {reply, 0, update_limit(Lock, Limit, ?DEFAULT_LOCK_INFO, State)};
+        {badtype, _Lock}=Error ->
+            {reply, Error, State}
     end.
 
 %% @doc Throws unregistered for unknown Lock
