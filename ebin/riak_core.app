@@ -100,8 +100,7 @@
              riak_core_broadcast,
              riak_core_broadcast_handler,
              riak_core_bg_manager,
-             riak_core_table_manager,
-             riak_core_bg_manager_sup
+             riak_core_table_manager
             ]},
   {registered, []},
   {included_applications, [folsom]},
