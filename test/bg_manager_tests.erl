@@ -12,8 +12,8 @@
 bg_mgr_test_() ->
     {timeout, 60000,  %% Seconds to finish all of the tests
      {setup, fun() ->
-                     riak_core_table_manager:start_link([{?BG_ETS_TABLE, ?BG_ETS_OPTS}]),
-                     start_bg_mgr()
+                     start_table_mgr(),  %% unlinks from our test as well.
+                     start_bg_mgr()      %% uses non-linking start.
              end, 
       fun(_) -> ok end,                           %% cleanup
       fun(_) ->
@@ -293,7 +293,15 @@ bg_mgr_test_() ->
                          %% Don't allow get_lock(Token)
                          ?assertEqual({badtype, token_a}, riak_core_bg_manager:get_lock(token_a))
 
-                 end}
+                 end},
+
+                {"crash background manager + queries",
+                 fun() ->
+                         kill_bg_mgr(),
+                         timer:sleep(100),
+                         start_bg_mgr(),
+                         ?assertEqual({unregistered, lock_b}, ?BG_MGR:get_token(lock_b))
+                 end},
 
               ] end}
     }.
@@ -378,7 +386,8 @@ verify_token_rates() ->
 %% doesn't take down our test too.
 start_bg_mgr() ->
     %% setup with history window to 1 seconds
-    ?BG_MGR:start(1).
+    ?BG_MGR:start(1),
+    timer:sleep(100).
 
 kill_bg_mgr() ->
     Pid = erlang:whereis(?BG_MGR),
@@ -390,5 +399,15 @@ crash_and_restart_token_manager() ->
     timer:sleep(100),
     start_bg_mgr(),
     timer:sleep(100).
+
+start_table_mgr() ->
+    {ok,Pid} = riak_core_table_manager:start_link([{?BG_ETS_TABLE, ?BG_ETS_OPTS}]),
+    unlink(Pid),
+    timer:sleep(100).
+
+kill_table_mgr() ->
+    Pid = erlang:whereis(riak_core_table_manager),
+    ?assertNot(Pid == undefined),
+    erlang:exit(Pid, kill).
 
 -endif.
