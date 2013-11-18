@@ -14,7 +14,11 @@
                   sasl,
                   crypto,
                   riak_sysmon,
-                  os_mon
+                  os_mon,
+                  basho_stats,
+                  eleveldb,
+                  pbkdf2,
+                  poolboy
                  ]},
   {mod, {riak_core_app, []}},
   {env, [
