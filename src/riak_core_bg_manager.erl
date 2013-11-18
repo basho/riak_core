@@ -50,6 +50,7 @@
          enable/1,
          disable/0,
          disable/1,
+         disable/2,
          query_resource/3,
          all_resources/0,
          all_given/0,
@@ -142,10 +143,16 @@ disable() ->
 enable(Resource) ->
     gen_server:cast(?SERVER, {enable, Resource}).
 
-%% @doc Disble handing out resource of the given kind.
+%% @doc Disable handing out resource of the given kind.
 -spec disable(bg_resource()) -> ok | unregistered.
 disable(Resource) ->
     gen_server:cast(?SERVER, {disable, Resource}).
+
+%% @doc Disable handing out resource of the given kind. If kill == true,
+%%      processes that currently hold the given resource will be killed.
+-spec disable(bg_resource(), boolean()) -> ok | unregistered.
+disable(Resource, Kill) ->
+    gen_server:cast(?SERVER, {disable, Resource, Kill}).
 
 %% @doc Query the current set of registered resources by name, states, and types.
 %%      The special atom 'all' querys all resources. A list of states and a list
@@ -662,10 +669,10 @@ do_handle_call_exception(Function, Args, State) ->
             {reply, Error, State}
     end.
 
-%% xyzzy
-
 %% @doc Throws {unregistered, Resource} for unknown Lock.
 do_disable_lock(Lock, Kill, State) ->
+    Info = resource_info(Token, State),
+    enforce_type_or_throw(Lock, lock, Info),
     maybe_honor_limit(Kill, Lock, 0, State),
     do_enable_resource(Lock, false, State).
 
@@ -801,7 +808,8 @@ resource_info(Resource, #state{table_id=TableId}) ->
     Key = {info,Resource},
     case ets:lookup(TableId, Key) of
         [] -> throw({unregistered, Resource});
-        [{_Key,Info} | _Rest] -> Info
+        [{_Key,Info}] -> Info;
+        [{_Key,_Info} | _Rest] -> throw({too_many_info_objects, Resource})
     end.
 
 %% @doc Throws unregistered for unknown Resource
