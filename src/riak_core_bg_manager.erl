@@ -624,24 +624,19 @@ validate_holds(State=#state{table_id=TableId}) ->
 %% @doc If the given entry has no alive process associated with it,
 %%      remove the hold from the ETS table. If it is alive, then we need
 %%      to re-monitor it and update the table with the new ref.
-validate_hold({Key,Entry}=Obj, TableId) ->
+validate_hold({Key,Entry}=Obj, TableId) when ?e_type(Entry) == lock ->
     %% If the process is not alive, release the lock
-    Pid = ?e_pid(Entry),
-    case is_process_alive(Pid) of
+    case is_process_alive(?e_pid(Entry)) of
         true ->
-            case ?e_type(Entry) of
-                lock ->
-                    Ref = monitor(process, Pid),
-                    Entry2 = Entry#resource_entry{ref=Ref},
-                    {given,Resource} = Key,
-                    update_given_entry(Resource, Entry2, TableId);
-                token ->
-                    %% nothing to re-monitor
-                    ok
-            end;
+            Ref = monitor(process, ?e_pid(Entry)),
+            Entry2 = Entry#resource_entry{ref=Ref},
+            {given,Resource} = Key,
+            update_given_entry(Resource, Entry2, TableId);
         false ->
             ets:delete_object(TableId, Obj)
-    end.
+    end;
+validate_hold(_Obj, _TableId) -> %% tokens don't monitor processes
+    ok.
 
 %% @private
 %% @doc Wrap a call, to a function with args, with a try/catch that handles
