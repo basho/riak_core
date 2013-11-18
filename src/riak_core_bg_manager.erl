@@ -622,12 +622,23 @@ validate_holds(State=#state{table_id=TableId}) ->
 
 %% @private
 %% @doc If the given entry has no alive process associated with it,
-%%      remove the hold from the ETS table.
-validate_hold({_Key,Entry}=Obj, TableId) ->
+%%      remove the hold from the ETS table. If it is alive, then we need
+%%      to re-monitor it and update the table with the new ref.
+validate_hold({Key,Entry}=Obj, TableId) ->
     %% If the process is not alive, release the lock
-    case is_process_alive(?e_pid(Entry)) of
+    Pid = ?e_pid(Entry),
+    case is_process_alive(Pid) of
         true ->
-            ok;
+            case ?e_type(Entry) of
+                lock ->
+                    Ref = monitor(process, Pid),
+                    Entry2 = Entry#resource_entry{ref=Ref},
+                    {given,Resource} = Key,
+                    update_given_entry(Resource, Entry2, TableId);
+                token ->
+                    %% nothing to re-monitor
+                    ok
+            end;
         false ->
             ets:delete_object(TableId, Obj)
     end.
@@ -903,9 +914,15 @@ add_given_entry(Resource, Entry, TableId) ->
     Key = {given, Resource},
     ets:insert(TableId, {Key, Entry}).
 
-remove_given_entries(Token, #state{table_id=TableId}) ->
-    Key = {given, Token},
+remove_given_entries(Resource, #state{table_id=TableId}) ->
+    Key = {given, Resource},
     ets:delete(TableId, Key).
+
+update_given_entry(Resource, Entry, TableId) ->
+    Key = {given, Resource},
+    %% TODO: lock? maybe use ets:update_element() instead?
+    ets:delete(TableId, Key),
+    ets:insert(TableId, {Key, Entry}).
 
 %% @private
 %% @doc Add a resource queue entry to our given set.
