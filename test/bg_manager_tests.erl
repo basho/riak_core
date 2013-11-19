@@ -136,7 +136,7 @@ bg_mgr_test_() ->
                   fun() ->
                           ?assertNot([] == ?BG_MGR:tokens_given()),
                           %% let tokens refill and confirm available
-                          MaxPeriod = (max_token_period() * 1000) + 100,
+                          MaxPeriod = (max_token_period()) + 100,
                           timer:sleep(MaxPeriod),
                           ?assertEqual([], ?BG_MGR:tokens_given()),
 
@@ -185,7 +185,7 @@ bg_mgr_test_() ->
                                   ?assertEqual([make_live_stat(token1,token,Pid,Meta,blocked)], Blocked1)
                           end,
                           %% let tokens refill and confirm available and blocked is now given
-                          MaxPeriod = (max_token_period() * 1000) + 100,
+                          MaxPeriod = max_token_period() + 100,
                           receive
                               {unblocked,Pid} ->
                                   %% check that our token was given and the blocked queue is empty
@@ -215,7 +215,7 @@ bg_mgr_test_() ->
                 { "clear all tokens given and confirm none given",
                   fun() ->
                           %% wait a little longer than longest refill time.
-                          MaxPeriod = (max_token_period() * 1000) + 100,
+                          MaxPeriod = max_token_period() + 100,
                           timer:sleep(MaxPeriod),
                           %% confirm none given now
                           ?assertEqual([], ?BG_MGR:tokens_given())
@@ -295,12 +295,24 @@ bg_mgr_test_() ->
 
                  end},
 
-                {"crash background manager + queries",
+                {"failing crash/revive EQC test case",
+                 %% bg_manager_eqc:set_token_rate('B', 2) -> 0
+                 %% bg_manager_eqc:get_token('B') -> ok
+                 %% bg_manager_eqc:crash() -> ok
+                 %% bg_manager_eqc:revive() -> true
+                 %% bg_manager_eqc:get_token('B') -> ok
+                 %% bg_manager_eqc:get_token('B') -> ok
                  fun() ->
-                         kill_bg_mgr(),
-                         timer:sleep(100),
-                         start_bg_mgr(),
-                         ?assertEqual({unregistered, lock_b}, ?BG_MGR:get_token(lock_b))
+                         T = token_b,
+                         Max = 2,
+                         Period = 5000000,
+                         ?BG_MGR:set_token_rate(T, {Period, Max}),
+                         ?assertEqual(ok, ?BG_MGR:get_token(T)),
+                         ?assertEqual(1, length(?BG_MGR:tokens_given(T))),
+                         crash_and_restart_token_manager(),
+                         ?assertEqual(ok, ?BG_MGR:get_token(T)),
+                         ?assertEqual(2, length(?BG_MGR:tokens_given(T))),
+                         ?assertEqual(max_concurrency, ?BG_MGR:get_token(T))
                  end}
 
               ] end}
@@ -353,9 +365,9 @@ make_live_stat(Resource, Type, Pid, Meta, Status) ->
 
 -spec some_token_rates() -> [{bg_token(), {bg_period(), bg_count()}}].
 some_token_rates() ->
-    [ {token1, {1, 5}},
-      {token2, {1, 4}},
-      {{token3,stuff3}, {1, 3}}
+    [ {token1, {1*1000, 5}},
+      {token2, {1*1000, 4}},
+      {{token3,stuff3}, {1*1000, 3}}
     ].
 
 expected_token_names() ->

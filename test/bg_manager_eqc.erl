@@ -494,7 +494,7 @@ mk_token_rate(0) ->
     {0, 0};
 mk_token_rate(Count) ->
     %% 4294967295 is erlang:send_after max which is used for token refilling
-    {4294967295 div 1000, Count}.
+    {4294967295, Count}.
 
 running_procs(#state{procs=Procs}) ->
     [Pid || {Pid, running} <- Procs].

@@ -45,7 +45,7 @@
 -type bg_resource_type() :: lock | token.
 
 -type bg_meta()  :: {atom(), any()}.                %% meta data to associate with a lock/token
--type bg_period() :: pos_integer().                 %% token refill period in seconds
+-type bg_period() :: pos_integer().                 %% token refill period in milliseconds
 -type bg_count() :: pos_integer().                  %% token refill tokens to count at each refill period
 -type bg_rate() :: {bg_period(), bg_count()}.       %% token refill rate
 -type bg_concurrency_limit() :: non_neg_integer() | infinity.  %% max lock concurrency allowed

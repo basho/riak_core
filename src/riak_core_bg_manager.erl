@@ -303,18 +303,18 @@ token_rate(Token) ->
 %% @doc Get a token without blocking.
 %%      Associate token with provided pid or metadata. If metadata
 %%      is provided the lock is associated with the calling process.
-%%      Returns "max_tokens" if empty.
--spec get_token(bg_token(), pid() | [{atom(), any()}]) -> ok | max_tokens.
+%%      Returns "max_concurrency" if empty.
+-spec get_token(bg_token(), pid() | [{atom(), any()}]) -> ok | max_concurrency.
 get_token(Token, Pid) when is_pid(Pid) ->
     get_token(Token, Pid, []);
 get_token(Token, Meta) ->
     get_token(Token, self(), Meta).
 
--spec get_token(bg_token()) -> ok | max_tokens.
+-spec get_token(bg_token()) -> ok | max_concurrency.
 get_token(Token) ->
     get_token(Token, self()).
 
--spec get_token(bg_token(), pid(), [{atom(), any()}]) -> ok | max_tokens.
+-spec get_token(bg_token(), pid(), [{atom(), any()}]) -> ok | max_concurrency.
 get_token(Token, Pid, Meta) ->
     gen_server:call(?SERVER, {get_token, Token, Pid, Meta}, infinity).
 
@@ -878,7 +878,7 @@ reschedule_token_refills(State) ->
 %% Schedule a timer event to refill tokens of given type
 schedule_refill_tokens(Token, State) ->
     {Period, _Count} = ?resource_limit(resource_info(Token, State)),
-    erlang:send_after(Period*1000, self(), {refill_tokens, Token}).
+    erlang:send_after(Period, self(), {refill_tokens, Token}).
 
 %% Schedule a timer event to snapshot the current history
 schedule_sample_history(State=#state{window_interval=Interval}) ->
