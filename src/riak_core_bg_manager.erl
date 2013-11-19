@@ -671,7 +671,7 @@ do_handle_call_exception(Function, Args, State) ->
 
 %% @doc Throws {unregistered, Resource} for unknown Lock.
 do_disable_lock(Lock, Kill, State) ->
-    Info = resource_info(Token, State),
+    Info = resource_info(Lock, State),
     enforce_type_or_throw(Lock, lock, Info),
     maybe_honor_limit(Kill, Lock, 0, State),
     do_enable_resource(Lock, false, State).
@@ -679,9 +679,8 @@ do_disable_lock(Lock, Kill, State) ->
 %% @doc Throws unregistered for unknown Token
 do_set_token_rate(Token, Rate, State) ->
     try
-        Info = resource_info(Token, State),
+        Info = #resource_info{type=token, limit=OldRate} = resource_info(Token, State),
         enforce_type_or_throw(Token, token, Info),
-        OldRate = limit(Info),
         State2 = update_limit(Token, Rate, Info, State),
         schedule_refill_tokens(Token, State2),
         %% maybe reschedule blocked callers
@@ -689,7 +688,7 @@ do_set_token_rate(Token, Rate, State) ->
         {reply, OldRate, State3}
     catch
         {unregistered, Token} ->
-            {reply, 0, update_limit(Token, Rate, ?DEFAULT_TOKEN_INFO, State)};
+            {reply, {0, 0}, update_limit(Token, Rate, ?DEFAULT_TOKEN_INFO, State)};
         {badtype, _Token}=Error ->
             {reply, Error, State}
     end.

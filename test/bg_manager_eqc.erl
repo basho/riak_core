@@ -7,8 +7,8 @@
 
 -module(bg_manager_eqc).
 
--ifdef(TEST).
--ifdef(EQC).
+%%-ifdef(TEST).
+%% -ifdef(EQC).
 
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
@@ -286,9 +286,7 @@ set_token_rate(Type, Count) ->
 set_token_rate_post(S, [Type, _Count], Res) ->
     %% check returned value is equal to value we have in state prior to this call
     %% since returned value is promised to be previous one that was set
-%%    eq(Res, mk_token_rate(max_num_tokens(Type, 0, S))).
-    %% NOTE: workaround for bug, above fails so using this for now
-    eq(Res, max_num_tokens(Type, 0, S)).
+    eq(Res, mk_token_rate(max_num_tokens(Type, 0, S))).
 
 %% ------ Grouped operator: token_rate
 %% @doc token_rate_command
@@ -451,8 +449,8 @@ token_count() ->
 
 %% @doc weight/2 - Distribution of calls
 weight(_S, set_concurrency_limit) -> 3;
-weight(_S, concurrency_limit) -> 0;
-weight(_S, concurrency_limit_reached) -> 0;
+weight(_S, concurrency_limit) -> 3;
+weight(_S, concurrency_limit_reached) -> 3;
 weight(_S, start_process) -> 3;
 weight(#state{alive=true}, stop_process) -> 5;
 weight(#state{alive=false}, stop_process) -> 50;
@@ -492,6 +490,8 @@ is_alive(#state{alive=Alive}) ->
 
 mk_token_rate({unregistered, _}=Unreg) ->
     Unreg;
+mk_token_rate(0) ->
+    {0, 0};
 mk_token_rate(Count) ->
     %% 4294967295 is erlang:send_after max which is used for token refilling
     {4294967295 div 1000, Count}.
@@ -570,7 +570,7 @@ prop_bgmgr() ->
                          begin
                              stop_pid(whereis(riak_core_table_manager)),
                              stop_pid(whereis(riak_core_bg_manager)),
-                             {ok, TableMgr} = riak_core_table_manager:start_link([{background_mgr_table,
+                             {ok, _TableMgr} = riak_core_table_manager:start_link([{background_mgr_table,
                                                                                    [protected, bag, named_table]}]),
                              {ok, BgMgr} = riak_core_bg_manager:start_link(),
                              %% unlink bgmgr so we can crash it, unfortunately we won't surface non-intentional
@@ -643,5 +643,5 @@ prop_bgmgr_parallel() ->
                                                 Res == ok))
                          end))).
 
--endif.
--endif.
+%% -endif.
+%% -endif.
