@@ -679,7 +679,8 @@ do_disable_lock(Lock, Kill, State) ->
 %% @doc Throws unregistered for unknown Token
 do_set_token_rate(Token, Rate, State) ->
     try
-        Info = #resource_info{type=token, limit=OldRate} = resource_info(Token, State),
+        Info = resource_info(Token, State),
+        OldRate = Info#resource_info.limit,
         enforce_type_or_throw(Token, token, Info),
         State2 = update_limit(Token, Rate, Info, State),
         schedule_refill_tokens(Token, State2),
