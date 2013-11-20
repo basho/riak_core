@@ -491,7 +491,7 @@ is_alive(#state{alive=Alive}) ->
 mk_token_rate({unregistered, _}=Unreg) ->
     Unreg;
 mk_token_rate(0) ->
-    {0, 0};
+    {undefined, 0};
 mk_token_rate(Count) ->
     %% 4294967295 is erlang:send_after max which is used for token refilling
     {4294967295, Count}.
