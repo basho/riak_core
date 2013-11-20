@@ -253,11 +253,11 @@ handle_call({insert, Id, Key, Hash, Options}, _From, State) ->
     {reply, ok, State2};
 handle_call({insert_object, BKey, RObj}, _From, State) ->
     VNode = State#state.vnode,
-    IndexN = riak_core_util2:get_index_n(BKey),
+    IndexN = riak_core_util:get_index_n(BKey),
     State2 = do_insert(IndexN, term_to_binary(BKey), VNode:hash_object(BKey, RObj), [], State),
     {reply, ok, State2};
 handle_call({delete, BKey}, _From, State) ->
-    IndexN = riak_core_util2:get_index_n(BKey),
+    IndexN = riak_core_util:get_index_n(BKey),
     State2 = do_delete(IndexN, term_to_binary(BKey), State),
     {reply, ok, State2};
 
@@ -312,7 +312,7 @@ handle_cast(stop, State) ->
 
 handle_cast({insert_object, BKey, RObj}, State) ->
     VNode = State#state.vnode,
-    IndexN = riak_core_util2:get_index_n(BKey),
+    IndexN = riak_core_util:get_index_n(BKey),
     State2 = do_insert(IndexN, term_to_binary(BKey), VNode:hash_object(BKey, RObj), [], State),
     {noreply, State2};
 
@@ -405,7 +405,7 @@ load_built(#state{trees=Trees}) ->
 fold_keys(Partition, Tree, VNode) ->
     Req = riak_core_util:make_fold_req(
             fun(BKey={Bucket,Key}, RObj, _) ->
-                    IndexN = riak_core_util2:get_index_n({Bucket, Key}),
+                    IndexN = riak_core_util:get_index_n({Bucket, Key}),
                     insert(IndexN, term_to_binary(BKey), VNode:hash_object(BKey, RObj),
                            Tree, [if_missing]),
                     ok
@@ -540,7 +540,7 @@ do_delete(Id, Key, State=#state{trees=Trees}) ->
 
 -spec handle_unexpected_key(index_n(), binary(), state()) -> state().
 handle_unexpected_key(Id, Key, State=#state{index=Partition}) ->
-    RP = riak_core_util2:responsible_preflists(Partition),
+    RP = riak_core_util:responsible_preflists(Partition),
     case lists:member(Id, RP) of
         false ->
             %% The encountered object does not belong to any preflists thata
@@ -645,7 +645,7 @@ maybe_clear(State) ->
 clear_tree(State=#state{index=Index}) ->
     lager:debug("Clearing tree ~p", [State#state.index]),
     State2 = destroy_trees(State),
-    IndexNs = riak_core_util2:responsible_preflists(Index),
+    IndexNs = riak_core_util:responsible_preflists(Index),
     State3 = init_trees(IndexNs, State2#state{trees=orddict:new()}),
     State3#state{built=false}.
 
