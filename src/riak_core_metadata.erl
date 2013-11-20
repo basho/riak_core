@@ -23,6 +23,8 @@
          get/3,
          fold/3,
          fold/4,
+         to_list/1,
+         to_list/2,
          iterator/1,
          iterator/2,
          itr_next/1,
@@ -122,6 +124,24 @@ fold_it(Fun, Acc, It) ->
             Next = Fun(itr_key_values(It), Acc),
             fold_it(Fun, Next, itr_next(It))
     end.
+
+%% @doc same as to_list(FullPrefix, [])
+-spec to_list(metadata_prefix()) -> [{metadata_key(),
+                                      [metadata_value() | metadata_tombstone()] |
+                                      metadata_value() | metadata_tombstone()}].
+to_list(FullPrefix) ->
+    to_list(FullPrefix, []).
+
+
+%% @doc Return a list of all keys and values stored under a given prefix/subprefix. Available
+%% options are the same as those provided to iterator/2.
+-spec to_list(metadata_prefix(), fold_opts()) -> [{metadata_key(),
+                                                   [metadata_value() | metadata_tombstone()] |
+                                                   metadata_value() | metadata_tombstone()}].
+to_list(FullPrefix, Opts) ->
+    fold(fun({Key, ValOrVals}, Acc) ->
+                 [{Key, ValOrVals} | Acc]
+         end, [], FullPrefix, Opts).
 
 %% @doc same as iterator(FullPrefix, []).
 -spec iterator(metadata_prefix()) -> iterator().
