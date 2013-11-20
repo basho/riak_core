@@ -1,4 +1,93 @@
 %%-*- mode: erlang -*-
+
+%% @doc enable active anti-entropy subsystem
+{mapping, "anti_entropy", "riak_kv.anti_entropy", [
+  {datatype, {enum, [on, off, debug]}},
+  {default, on}
+]}.
+
+{ translation,
+  "riak_core.anti_entropy",
+  fun(Conf) ->
+    Setting = cuttlefish_util:conf_get_value("anti_entropy", Conf),
+    case Setting of
+      on -> {on, []};
+      debug -> {on, [debug]};
+      off -> {off, []};
+      _Default -> {on, []}
+    end
+  end
+}.
+
+%% @doc Restrict how fast AAE can build hash trees. Building the tree
+%% for a given partition requires a full scan over that partition's
+%% data. Once built, trees stay built until they are expired.
+%% Config is of the form:
+%%   {num-builds, per-timespan}
+%% Default is 1 build per hour.
+{mapping, "anti_entropy.build_limit.number", "riak_core.anti_entropy_build_limit", [
+  {default, 1},
+  {datatype, integer}
+]}.
+
+{mapping, "anti_entropy.build_limit.per_timespan", "riak_core.anti_entropy_build_limit", [
+  {default, "1h"},
+  {datatype, {duration, ms}}
+]}.
+
+{translation,
+ "riak_core.anti_entropy_build_limit",
+ fun(Conf) ->
+    {cuttlefish_util:conf_get_value("anti_entropy.build_limit.number", Conf),
+     cuttlefish_util:conf_get_value("anti_entropy.build_limit.per_timespan", Conf)}
+ end}.
+
+%% @doc Determine how often hash trees are expired after being built.
+%% Periodically expiring a hash tree ensures the on-disk hash tree
+%% data stays consistent with the actual k/v backend data. It also
+%% helps Riak identify silent disk failures and bit rot. However,
+%% expiration is not needed for normal AAE operation and should be
+%% infrequent for performance reasons. The time is specified in
+%% milliseconds. The default is 1 week.
+{mapping, "anti_entropy.expire", "riak_core.anti_entropy_expire", [
+  {default, "1w"},
+  {datatype, {duration, ms}}
+]}.
+
+%% @doc Limit how many AAE exchanges/builds can happen concurrently.
+{mapping, "anti_entropy.concurrency", "riak_core.anti_entropy_concurrency", [
+  {default, 2},
+  {datatype, integer}
+]}.
+
+%% @doc The tick determines how often the AAE manager looks for work
+%% to do (building/expiring trees, triggering exchanges, etc).
+%% The default is every 15 seconds. Lowering this value will
+%% speedup the rate that all replicas are synced across the cluster.
+%% Increasing the value is not recommended.
+{mapping, "anti_entropy.tick", "riak_core.anti_entropy_tick", [
+  {default, "15s"},
+  {datatype, {duration, ms}}
+]}.
+
+%% @doc The directory where AAE hash trees are stored.
+{mapping, "anti_entropy.data_dir", "riak_core.anti_entropy_data_dir", [
+  {default, "{{platform_data_dir}}/anti_entropy"}
+]}.
+
+%% @doc The LevelDB options used by AAE to generate the LevelDB-backed
+%% on-disk hashtrees.
+{mapping, "anti_entropy.write_buffer_size", "riak_core.anti_entropy_leveldb_opts.write_buffer_size", [
+  {default, "4MB"},
+  {datatype, bytesize}
+]}.
+
+{mapping, "anti_entropy.max_open_files", "riak_core.anti_entropy_leveldb_opts.max_open_files", [
+  {default, 20},
+  {datatype, integer}
+]}.
+
+
 %% Default Bucket Properties
 
 %% @doc The number of replicas stored. Note: See Replication
@@ -25,6 +114,156 @@
  "2048 and larger are supported, but considered advanced config",
  fun(Size) ->
   Size =< 1024
+
+{mapping, "buckets.default.pr", "riak_core.default_bucket_props.pr", [
+  {default, "0"},
+  {level, advanced}
+]}.
+
+%% Cut and paste translation screams to be rewritten as a datatype, but that's a
+%% "nice to have"
+{translation,
+  "riak_core.default_bucket_props.pr",
+  fun(Conf) ->
+    Setting = cuttlefish_util:conf_get_value("buckets.default.pr", Conf),
+    case Setting of
+      "quorum" -> quorum;
+      "all" -> all;
+      X ->
+        try list_to_integer(Setting) of
+          Int -> Int
+        catch
+          E:R -> error
+        end
+    end
+  end
+}.
+
+{mapping, "buckets.default.r", "riak_core.default_bucket_props.r", [
+  {default, "quorum"},
+  {level, advanced}
+]}.
+{translation,
+  "riak_core.default_bucket_props.r",
+  fun(Conf) ->
+    Setting = cuttlefish_util:conf_get_value("buckets.default.r", Conf),
+    case Setting of
+      "quorum" -> quorum;
+      "all" -> all;
+      X ->
+        try list_to_integer(Setting) of
+          Int -> Int
+        catch
+          E:R -> error
+        end
+    end
+  end
+}.
+
+{mapping, "buckets.default.w", "riak_core.default_bucket_props.w", [
+  {default, "quorum"},
+  {level, advanced}
+]}.
+{translation,
+  "riak_core.default_bucket_props.w",
+  fun(Conf) ->
+    Setting = cuttlefish_util:conf_get_value("buckets.default.w", Conf),
+    case Setting of
+      "quorum" -> quorum;
+      "all" -> all;
+      X ->
+        try list_to_integer(Setting) of
+          Int -> Int
+        catch
+          E:R -> error
+        end
+    end
+  end
+}.
+
+{mapping, "buckets.default.pw", "riak_core.default_bucket_props.pw", [
+  {default, "0"},
+  {level, advanced}
+]}.
+{translation,
+  "riak_core.default_bucket_props.pw",
+  fun(Conf) ->
+    Setting = cuttlefish_util:conf_get_value("buckets.default.pw", Conf),
+    case Setting of
+      "quorum" -> quorum;
+      "all" -> all;
+      X ->
+        try list_to_integer(Setting) of
+          Int -> Int
+        catch
+          E:R -> error
+        end
+    end
+  end
+}.
+
+{mapping, "buckets.default.dw", "riak_core.default_bucket_props.dw", [
+  {default, "quorum"},
+  {level, advanced}
+]}.
+{translation,
+  "riak_core.default_bucket_props.dw",
+  fun(Conf) ->
+    Setting = cuttlefish_util:conf_get_value("buckets.default.dw", Conf),
+    case Setting of
+      "quorum" -> quorum;
+      "all" -> all;
+      X ->
+        try list_to_integer(Setting) of
+          Int -> Int
+        catch
+          E:R -> error
+        end
+    end
+  end
+}.
+
+{mapping, "buckets.default.rw", "riak_core.default_bucket_props.rw", [
+  {default, "quorum"},
+  {level, advanced}
+]}.
+{translation,
+  "riak_core.default_bucket_props.rw",
+  fun(Conf) ->
+    Setting = cuttlefish_util:conf_get_value("buckets.default.rw", Conf),
+    case Setting of
+      "quorum" -> quorum;
+      "all" -> all;
+      X ->
+        try list_to_integer(Setting) of
+          Int -> Int
+        catch
+          E:R -> error
+        end
+    end
+  end
+}.
+
+%% {mapping, "buckets.default.basic_quorum", "riak_core.default_bucket_props.basic_quorum", false},
+%% {mapping, "buckets.default.notfound_ok", "riak_core.default_bucket_props.notfound_ok", true}
+
+%% @doc whether or not siblings are allowed.
+%% Note: See Vector Clocks for a discussion of sibling resolution.
+{mapping, "buckets.default.siblings", "riak_core.default_bucket_props.allow_mult", [
+  {datatype, {enum, [on, off]}},
+  {default, on},
+  {level, advanced}
+]}.
+
+{translation,
+ "riak_core.default_bucket_props.allow_mult",
+ fun(Conf) ->
+  Setting = cuttlefish_util:conf_get_value("buckets.default.siblings", Conf),
+    case Setting of
+      on -> true;
+      off -> false;
+      _Default -> true
+    end
  end}.
 
 {validator, "ring_size^2", "not a power of 2",
@@ -141,6 +380,19 @@
   {default, off},
   {datatype, flag}
 ]}.
+
+%% consistent on/off (in lieu of enabled/disabled, true/false)
+{ translation,
+  "riak_core.dtrace_support",
+  fun(Conf) ->
+    Setting = cuttlefish_util:conf_get_value("dtrace", Conf),
+    case Setting of
+      on -> true;
+      off -> false;
+      _Default -> false
+    end
+  end
+}.
 
 %% @doc Platform-specific installation paths (substituted by rebar)
 {mapping, "platform_bin_dir", "riak_core.platform_bin_dir", [
