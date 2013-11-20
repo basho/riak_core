@@ -96,7 +96,7 @@ get({Prefix, SubPrefix}=FullPrefix, Key, Opts)
             maybe_tombstone(maybe_resolve(PKey, Existing, ResolveMethod), Default)
     end.
 
-%% @spec same as fold(Fun, Acc0, FullPrefix, []).
+%% @doc same as fold(Fun, Acc0, FullPrefix, []).
 -spec fold(fun(({metadata_key(),
                  [metadata_value() | metadata_tombstone()] |
                  metadata_value() | metadata_tombstone()}, any()) -> any()),
@@ -105,7 +105,7 @@ get({Prefix, SubPrefix}=FullPrefix, Key, Opts)
 fold(Fun, Acc0, FullPrefix) ->
     fold(Fun, Acc0, FullPrefix, []).
 
-%% @spec Fold over all keys and values stored under a given prefix/subprefix. Available
+%% @doc Fold over all keys and values stored under a given prefix/subprefix. Available
 %% options are the same as those provided to iterator/2.
 -spec fold(fun(({metadata_key(),
                  [metadata_value() | metadata_tombstone()] |
@@ -119,7 +119,9 @@ fold(Fun, Acc0, FullPrefix, Opts) ->
 
 fold_it(Fun, Acc, It) ->
     case itr_done(It) of
-        true -> Acc;
+        true ->
+            ok = itr_close(It),
+            Acc;
         false ->
             Next = Fun(itr_key_values(It), Acc),
             fold_it(Fun, Next, itr_next(It))
