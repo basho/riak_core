@@ -58,7 +58,11 @@
          make_fold_req/1,
          make_fold_req/2,
          make_fold_req/4,
-         make_newest_fold_req/1
+         make_newest_fold_req/1,
+         responsible_preflists/1,
+         responsible_preflists/2,
+         get_index_n/1,
+         preflist_siblings/1
         ]).
 
 -include("riak_core_vnode.hrl").
@@ -67,6 +71,10 @@
 -include_lib("eunit/include/eunit.hrl").
 -export([counter_loop/1,incr_counter/1,decr_counter/1]).
 -endif.
+
+-type riak_core_ring() :: riak_core_ring:riak_core_ring().
+-type index() :: non_neg_integer().
+-type index_n() :: {index(), pos_integer()}.
 
 %% R14 Compatibility
 -compile({no_auto_import,[integer_to_list/2]}).
@@ -580,6 +588,87 @@ make_fold_reqv(v2, FoldFun, Acc0, Forwardable, Opts)
        andalso is_list(Opts) ->
     ?FOLD_REQ{foldfun=FoldFun, acc0=Acc0,
               forwardable=Forwardable, opts=Opts}.
+
+%% ===================================================================
+%% Preflist utility functions
+%% ===================================================================
+
+%% @doc Given a bucket/key, determine the associated preflist index_n.
+-spec get_index_n({binary(), binary()}) -> index_n().
+get_index_n({Bucket, Key}) ->
+    BucketProps = riak_core_bucket:get_bucket(Bucket),
+    N = proplists:get_value(n_val, BucketProps),
+    ChashKey = riak_core_util:chash_key({Bucket, Key}),
+    {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
+    Index = chashbin:responsible_index(ChashKey, CHBin),
+    {Index, N}.
+
+%% @doc Given an index, determine all sibling indices that participate in one
+%%      or more preflists with the specified index.
+-spec preflist_siblings(index()) -> [index()].
+preflist_siblings(Index) ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    preflist_siblings(Index, Ring).
+
+%% @doc See {@link preflist_siblings/1}.
+-spec preflist_siblings(index(), riak_core_ring()) -> [index()].
+preflist_siblings(Index, Ring) ->
+    MaxN = determine_max_n(Ring),
+    preflist_siblings(Index, MaxN, Ring).
+
+-spec preflist_siblings(index(), pos_integer(), riak_core_ring()) -> [index()].
+preflist_siblings(Index, N, Ring) ->
+    IndexBin = <<Index:160/integer>>,
+    PL = riak_core_ring:preflist(IndexBin, Ring),
+    Indices = [Idx || {Idx, _} <- PL],
+    RevIndices = lists:reverse(Indices),
+    {Succ, _} = lists:split(N-1, Indices),
+    {Pred, _} = lists:split(N-1, tl(RevIndices)),
+    lists:reverse(Pred) ++ Succ.
+
+-spec responsible_preflists(index()) -> [index_n()].
+responsible_preflists(Index) ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    responsible_preflists(Index, Ring).
+
+-spec responsible_preflists(index(), riak_core_ring()) -> [index_n()].
+responsible_preflists(Index, Ring) ->
+    AllN = determine_all_n(Ring),
+    responsible_preflists(Index, AllN, Ring).
+
+-spec responsible_preflists(index(), [pos_integer(),...], riak_core_ring())
+                           -> [index_n()].
+responsible_preflists(Index, AllN, Ring) ->
+    IndexBin = <<Index:160/integer>>,
+    PL = riak_core_ring:preflist(IndexBin, Ring),
+    Indices = [Idx || {Idx, _} <- PL],
+    RevIndices = lists:reverse(Indices),
+    lists:flatmap(fun(N) ->
+                          responsible_preflists_n(RevIndices, N)
+                  end, AllN).
+
+-spec responsible_preflists_n([index()], pos_integer()) -> [index_n()].
+responsible_preflists_n(RevIndices, N) ->
+    {Pred, _} = lists:split(N, RevIndices),
+    [{Idx, N} || Idx <- lists:reverse(Pred)].
+
+
+-spec determine_max_n(riak_core_ring()) -> pos_integer().
+determine_max_n(Ring) ->
+    lists:max(determine_all_n(Ring)).
+
+-spec determine_all_n(riak_core_ring()) -> [pos_integer(),...].
+determine_all_n(Ring) ->
+    Buckets = riak_core_ring:get_buckets(Ring),
+    BucketProps = [riak_core_bucket:get_bucket(Bucket, Ring) || Bucket <- Buckets],
+    Default = app_helper:get_env(riak_core, default_bucket_props),
+    DefaultN = proplists:get_value(n_val, Default),
+    AllN = lists:foldl(fun(Props, AllN) ->
+                               N = proplists:get_value(n_val, Props),
+                               ordsets:add_element(N, AllN)
+                       end, [DefaultN], BucketProps),
+    AllN.
+
 
 %% ===================================================================
 %% EUnit tests
