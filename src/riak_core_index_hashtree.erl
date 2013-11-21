@@ -422,12 +422,15 @@ fold_keys(Partition, Tree, VNode) ->
 %% tree. In other words, all hashtrees for a given index_hashtree are stored in
 %% the same on-disk store.
 -spec do_new_tree(index_n(), state()) -> state().
-do_new_tree(Id, State=#state{trees=Trees, path=Path}) ->
+do_new_tree(Id, State=#state{trees=Trees, path=Path, service=Service}) ->
     Index = State#state.index,
     IdBin = tree_id(Id),
     NewTree = case Trees of
                   [] ->
-                      hashtree:new({Index,IdBin}, [{segment_path, Path}]);
+                      hashtree:new(
+                        {Index,IdBin},
+                        [{segment_path,
+                          filename:join(Path, atom_to_list(Service))}]);
                   [{_,Other}|_] ->
                       hashtree:new({Index,IdBin}, Other)
               end,
