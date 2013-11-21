@@ -329,7 +329,7 @@ init([Opts]) ->
         undefined ->
             {stop, no_data_dir};
         DataRoot ->
-            ets:new(?ETS, [named_table]),
+            ets:new(?ETS, [named_table, {read_concurrency, true}, {write_concurrency, true}]),
             Nodename = proplists:get_value(nodename, Opts, node()),
             State = #state{serverid=Nodename,
                            data_root=DataRoot,
@@ -617,7 +617,7 @@ init_ets(FullPrefix) ->
     TabId.
 
 new_ets_tab() ->
-    ets:new(undefined, []).
+    ets:new(undefined, [{read_concurrency, true}, {write_concurrency, true}]).
 
 maybe_init_dets(FullPrefix, State) ->
     case dets:info(dets_tabname(FullPrefix)) of
