@@ -1,6 +1,17 @@
 # AAE
 
 
+## Quickstart:
+
+* Add the Entropy Manager to your apps supervisor tree.
+* Add the `riak_core_aae_vnode` behavior to the vnode in question.
+* Implement the functions required by the behavior.
+* Implement the callback matches detailed in the VNode section.
+* Makre sure that `init/1` creates a hashtree, see `maybe_create_hashtrees/2` as example how to do that.
+* Make all data changing calls in your VNode also call `update_hashtree/3` (or something similar) or `riak_core_index_hashtree:delete`.
+* Add the required config parameters.
+
+
 ## Entropy Manger (riak_core_entropy_manager)
 One is started per vnode service, as part of the of the main apps supervisor. It needs the service name and the vnode module passed as arguments.
 
@@ -30,9 +41,19 @@ The VNode will need to take care of creating the hash tree for it's partition an
 ## VNode (riak_core_aae_vnode)
 `riak_core_aae_vnode` implements a behavior for all the functions that need to be implemented for this.
 
-In addition to the functions described there the vnode needs to respond to the following calls to handle_info:
+In addition to the functions described there the vnode needs to respond to the following calls to handle_info and command:
 
 ```erlang
+% ...
+handle_command(?FOLD_REQ{foldfun=Fun, acc0=Acc0}, _Sender, State) ->
+    lager:debug("Fold on ~p", [State#state.partition]),
+    Acc = fifo_db:fold(State#state.db, <<"user">>,
+                       fun(K, V, O) ->
+                               Fun({<<"user">>, K}, V, O)
+                       end, Acc0),
+    {reply, Acc, State};
+
+% ...
 handle_info(retry_create_hashtree, State=#state{hashtrees=undefined}) ->
     State2 = maybe_create_hashtrees(State),
     case State2#state.hashtrees of
