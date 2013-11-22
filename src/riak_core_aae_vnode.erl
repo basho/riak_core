@@ -62,7 +62,7 @@ maybe_create_hashtrees(true, Service, Index, Last) ->
                     lager:debug("~p/~p: hashtree created: ~p.",
                                 [Service, Index, Trees]),
                     monitor(process, Trees),
-                    {ok, Trees};
+                    Trees;
                 Error ->
                     lager:info("~p/~p: unable to start index_hashtree: ~p",
                                [Service, Index, Error]),
