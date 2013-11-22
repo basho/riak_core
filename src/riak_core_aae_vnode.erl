@@ -2,6 +2,8 @@
 
 -export([behaviour_info/1]).
 
+-export([maybe_create_hashtrees/3,
+         update_hashtree/4]).
 
 -export([aae_repair/2,
          hash_object/2,
@@ -9,12 +11,15 @@
          hashtree_pid/1,
          master/0,
          rehash/3]).
+
 -xref_ignore([aae_repair/2,
               hash_object/2,
               request_hashtree_pid/1,
               hashtree_pid/1,
               master/0,
               rehash/3]).
+
+-define(DEFAULT_HASHTREE_TOKENS, 90).
 
 -type preflist() :: [{Index::integer(), Node :: term()}].
 
@@ -26,8 +31,83 @@ behaviour_info(callbacks) ->
      {hashtree_pid, 1},
      {master, 0},
      {rehash, 3}];
+
 behaviour_info(_Other) ->
     undefined.
+
+-spec maybe_create_hashtrees(atom(), integer(), pid()|undefined) ->
+                                    {ok, pid()} |
+                                    ignore |
+                                    retry.
+maybe_create_hashtrees(Service, Index, Last) ->
+    maybe_create_hashtrees(riak_core_entropy_manager:enabled(), Service, Index,
+                           Last).
+
+-spec maybe_create_hashtrees(boolean(), atom(), integer(), pid()|undefined) ->
+                                    pid()|undefined.
+maybe_create_hashtrees(false, _Service, _Index, Last) ->
+    lager:info("sniffle_dtrace: Hashtree not enabled."),
+    Last;
+
+maybe_create_hashtrees(true, Service, Index, Last) ->
+    %% Only maintain a hashtree if a primary vnode
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    lager:debug("~p/~p: creating hashtree.", [Service, Index]),
+    case riak_core_ring:vnode_type(Ring, Index) of
+        primary ->
+            RP = riak_core_util:responsible_preflists(Index),
+            case riak_core_index_hashtree:start(Service, Index, RP, self(),
+                                                ?MODULE) of
+                {ok, Trees} ->
+                    lager:debug("~p/~p: hashtree created: ~p.",
+                                [Service, Index, Trees]),
+                    monitor(process, Trees),
+                    {ok, Trees};
+                Error ->
+                    lager:info("~p/~p: unable to start index_hashtree: ~p",
+                               [Service, Index, Error]),
+                    erlang:send_after(1000, self(), retry_create_hashtree),
+                    Last
+            end;
+        _ ->
+            lager:debug("~p/~p: not primary", [Service, Index]),
+            Last
+    end.
+
+-spec update_hashtree(binary(), binary(), binary(), pid()) -> ok.
+update_hashtree(Bucket, Key, Val, Trees) ->
+    case get_hashtree_token() of
+        true ->
+            riak_core_index_hashtree:async_insert_object({Bucket, Key}, Val,
+                                                         Trees),
+            ok;
+        false ->
+            riak_core_index_hashtree:insert_object({Bucket, Key}, Val, Trees),
+            reset_hashtree_token(),
+            ok
+    end.
+
+-spec max_hashtree_tokens() -> pos_integer().
+max_hashtree_tokens() ->
+    app_helper:get_env(riak_core,
+                       anti_entropy_max_async,
+                       ?DEFAULT_HASHTREE_TOKENS).
+
+get_hashtree_token() ->
+    Tokens = get(hashtree_tokens),
+    case Tokens of
+        undefined ->
+            put(hashtree_tokens, max_hashtree_tokens() - 1),
+            true;
+        N when N > 0 ->
+            put(hashtree_tokens, Tokens - 1),
+            true;
+        _ ->
+            false
+    end.
+
+reset_hashtree_token() ->
+    put(hashtree_tokens, max_hashtree_tokens()).
 
 
 %% @doc aae_repair is called when the AAE system detectes a difference
