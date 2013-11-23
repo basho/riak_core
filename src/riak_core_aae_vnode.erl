@@ -23,6 +23,10 @@
 
 -type preflist() :: [{Index::integer(), Node :: term()}].
 
+%%%===================================================================
+%%% Behaviour callbacks
+%%%===================================================================
+
 -spec behaviour_info(atom()) -> 'undefined' | [{atom(), arity()}].
 behaviour_info(callbacks) ->
     [{aae_repair, 2},
@@ -35,10 +39,23 @@ behaviour_info(callbacks) ->
 behaviour_info(_Other) ->
     undefined.
 
+%%%===================================================================
+%%% Utility functions
+%%%===================================================================
+
+
+%% @doc This function is a working example of how to implement hashtree
+%% creatin for a VNode, using this is recommanded, it will need to be
+%% called during the init process.
+%% It also requires the calling vnode to implement a handle_info match on
+%% `retry_create_hashtree` which will need to either call this function
+%% again or do nothing if a valid hashtree already exists.
+%% In addtioj to that the calling VNode will be set up to monitor the
+%% created hashtree so it is adviced to listen for
+%% `{'DOWN', _, _, Pid, _}` where Pid is the pid of the created hashtree
+%% to recreate a new one if this should die.
 -spec maybe_create_hashtrees(atom(), integer(), pid()|undefined) ->
-                                    {ok, pid()} |
-                                    ignore |
-                                    retry.
+                                    pid()|undefined.
 maybe_create_hashtrees(Service, Index, Last) ->
     maybe_create_hashtrees(riak_core_entropy_manager:enabled(), Service, Index,
                            Last).
@@ -74,6 +91,10 @@ maybe_create_hashtrees(true, Service, Index, Last) ->
             Last
     end.
 
+%% @doc A Utility function that implements partially asyncronous updates
+%% To the hashtree. It will allow up to `riak_core.anti_entropy_max_async`
+%% asyncronous hashtree updates before requiering a syncronous update.
+%% `riak_core.anti_entropy_max_async` if not set defaults to 90.
 -spec update_hashtree(binary(), binary(), binary(), pid()) -> ok.
 update_hashtree(Bucket, Key, Val, Trees) ->
     case get_hashtree_token() of
@@ -86,6 +107,10 @@ update_hashtree(Bucket, Key, Val, Trees) ->
             reset_hashtree_token(),
             ok
     end.
+
+%%%===================================================================
+%%% Internal functions
+%%%===================================================================
 
 -spec max_hashtree_tokens() -> pos_integer().
 max_hashtree_tokens() ->
@@ -110,9 +135,13 @@ reset_hashtree_token() ->
     put(hashtree_tokens, max_hashtree_tokens()).
 
 
+%%%===================================================================
+%%% Placehodlers for callback functions (to give you a idea how they look)
+%%%===================================================================
+
 %% @doc aae_repair is called when the AAE system detectes a difference
 %% the simplest method to handle this is causing a read-repair if the
-%% system supports it. But the actuall implemetation is left to the
+%% system supports it. But the actual implemetation is left to the
 %% vnode to handle whatever is best.
 -spec aae_repair(Bucket::binary(), Key::binary()) -> term().
 aae_repair(_Bucket, _Key) ->
