@@ -37,7 +37,8 @@
          get_lock/3,
          requeue_poke/2,
          start_exchange_remote/4,
-         exchange_status/5]).
+         exchange_status/5,
+         supervisor_spec/2]).
 -export([all_pairwise_exchanges/2]).
 
 %% gen_server callbacks
@@ -64,9 +65,20 @@
 -type state() :: #state{}.
 
 -define(DEFAULT_CONCURRENCY, 2).
--define(DEFAULT_BUILD_LIMIT, {1, 36000}). %% Once per hour
-%%-define(DEFAULT_BUILD_LIMIT, {1, 3600000}). %% Once per hour
+-define(DEFAULT_BUILD_LIMIT, {1, 3600000}). %% Once per hour
 
+
+-spec supervisor_spec(Service::atom(), VNode::atom()) ->
+                             {atom(),
+                              {riak_core_entropy_manager, start_link,
+                               [atom()]},
+                              permanent, 30000, worker, [riak_core_entropy_manager]}.
+
+supervisor_spec(Service, VNode) ->
+    {gen_name(Service),
+     {riak_core_entropy_manager, start_link,
+      [Service, VNode]},
+     permanent, 30000, worker, [riak_core_entropy_manager]}.
 
 gen_name(Service) ->
     list_to_atom(atom_to_list(Service) ++ "_entropy_manager").

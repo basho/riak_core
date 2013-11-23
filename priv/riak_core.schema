@@ -1,7 +1,7 @@
 %%-*- mode: erlang -*-
 
 %% @doc enable active anti-entropy subsystem
-{mapping, "anti_entropy", "riak_kv.anti_entropy", [
+{mapping, "anti_entropy", "riak_core.anti_entropy", [
   {datatype, {enum, [on, off, debug]}},
   {default, on}
 ]}.
