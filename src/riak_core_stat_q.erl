@@ -51,9 +51,10 @@
 %% in `Path' as a wild card.
 -spec get_stats(path()) -> stats().
 get_stats(Path) ->
-    %% get all the stats that are at Path
-    calculate_stats(exometer:select(
-                        [{ {Path ++ '_','_',enabled}, [], ['$_'] }])).
+    exometer:get_values(Path).
+    %% %% get all the stats that are at Path
+    %% calculate_stats(exometer:select(
+    %%                     [{ {Path ++ '_','_',enabled}, [], ['$_'] }])).
 
 calculate_stats(NamesAndTypes) ->
     [{Name, get_stat(Name)} || {Name, _, _} <- NamesAndTypes].
