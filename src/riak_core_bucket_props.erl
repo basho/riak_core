@@ -40,7 +40,8 @@ merge(Overriding, Other) ->
                undefined | [{atom(), any()}],
                [{atom(), any()}]) -> {ok, [{atom(), any()}]} | {error, [{atom(), atom()}]}.
 validate(CreateOrUpdate, Bucket, ExistingProps, BucketProps) ->
-    validate(CreateOrUpdate, Bucket, ExistingProps, BucketProps, riak_core:bucket_validators(), []).
+    CoreErrors = validate_core_props(CreateOrUpdate, Bucket, ExistingProps, BucketProps),
+    validate(CreateOrUpdate, Bucket, ExistingProps, BucketProps, riak_core:bucket_validators(), CoreErrors).
 
 validate(_CreateOrUpdate, _Bucket, _ExistingProps, Props, [], ErrorLists) ->
     case lists:flatten(ErrorLists) of
@@ -51,6 +52,46 @@ validate(CreateOrUpdate, Bucket, ExistingProps, BucketProps0, [{_App, Validator}
     {BucketProps, Errors} = Validator:validate(CreateOrUpdate, Bucket, ExistingProps, BucketProps0),
     validate(CreateOrUpdate, Bucket, ExistingProps, BucketProps, T, [Errors|Errors0]).
 
+validate_core_props(CreateOrUpdate, Bucket, ExistingProps, BucketProps) ->
+    lists:foldl(fun(Prop, Errors) ->
+                        case validate_core_prop(CreateOrUpdate, Bucket, ExistingProps, Prop) of
+                            true ->  Errors;
+                            Error -> [Error | Errors]
+                        end
+                end, [], BucketProps).
+
+validate_core_prop(create, {_Bucket, undefined}, undefined, {claimant, Claimant}) when Claimant =:= node()->
+    %% claimant valid on first call to create if claimant is this node
+    true;
+validate_core_prop(create, {_Bucket, undefined}, undefined, {claimant, _BadClaimant}) ->
+    %% claimant not valid on first call to create if claimant is not this node
+    {claimant, "Invalid claimant"};
+validate_core_prop(create, {_Bucket, undefined}, Existing, {claimant, Claimant}) ->
+    %% subsequent creation calls cannot modify claimant and it should exist
+    case lists:keyfind(claimant, 1, Existing) of
+        false -> {claimant, "No claimant details found in existing properties"};
+        {claimant, Claimant} -> true;
+        {claimant, _Other} -> {claimant, "Cannot modify claimant property"}
+    end;
+validate_core_prop(update, {_Bucket, _BucketName}, _Existing, {claimant, _Claimant}) ->
+    %% cannot update claimant
+    {claimant, "Cannot update claimant property"};
+validate_core_prop(create, {_Bucket, undefined}, undefined, {active, false}) ->
+    %% first creation call that sets active to false is always valid
+    true;
+validate_core_prop(create, {_Bucket, undefined}, _Existing, {active, false}) ->
+    %% subsequent creation calls that leaves active false is valid
+    true;
+validate_core_prop(update, {_Bucket, _}, _Existing, {active, true}) ->
+    %% calls to update that do not modify active are valid
+    true;
+validate_core_prop(_, {_Bucket, _}, _Existing, {active, _}) ->
+    %% subsequent creation calls or update calls cannot modify active (it is modified directly
+    %% by riak_core_claimant)
+    {active, "Cannot modify active property"};
+validate_core_prop(_, _, _, _) ->
+    %% all other properties are valid from the perspective of riak_core
+    true.
 
 -spec defaults() -> [{atom(), any()}].
 defaults() ->
