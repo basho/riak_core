@@ -23,7 +23,7 @@
 %% @doc
 %% This module implements a gen_server process that manages a set of hashtrees
 %% (see {@link hashtree}) containing key/hash pairs for all data owned by a
-%% given partition. Each riak_kv vnode spawns its own index_hashtree. These
+%% given partition. Each riak_core vnode spawns its own index_hashtree. These
 %% hashtrees are used for active anti-entropy exchange between vnodes.
 
 -module(riak_core_index_hashtree).
@@ -136,7 +136,7 @@ delete(BKey, Tree) ->
 
 %% @doc Called by the entropy manager to finish the process used to acquire
 %%      remote vnode locks when starting an exchange. For more details,
-%%      see {@link riak_kv_entropy_manager:start_exchange_remote/3}
+%%      see {@link riak_core_entropy_manager:start_exchange_remote/3}
 -spec start_exchange_remote(pid(), term(), index_n(), pid()) -> ok.
 start_exchange_remote(FsmPid, From, IndexN, Tree) ->
     gen_server:cast(Tree, {start_exchange_remote, FsmPid, From, IndexN}).
@@ -193,7 +193,7 @@ get_lock(Tree, Type, Pid) ->
 
 %% @doc Poke the specified index_hashtree to ensure the tree is
 %%      built/rebuilt as needed. This is periodically called by the
-%%      {@link riak_kv_entropy_manager}.
+%%      {@link riak_core_entropy_manager}.
 -spec poke(pid()) -> ok.
 poke(Tree) ->
     gen_server:cast(Tree, poke).
@@ -217,7 +217,7 @@ init([Service, Index, IndexNs, VNPid, VNode]) ->
         undefined ->
             case riak_core_entropy_manager:enabled() of
                 true ->
-                    lager:warning("Neither riak_kv/anti_entropy_data_dir or "
+                    lager:warning("Neither riak_core/anti_entropy_data_dir or "
                                   "riak_core/platform_data_dir are defined. "
                                   "Disabling active anti-entropy."),
                     riak_core_entropy_manager:disable(Service);
@@ -368,7 +368,7 @@ determine_data_root() ->
             case application:get_env(riak_core, platform_data_dir) of
                 {ok, PlatformRoot} ->
                     Root = filename:join(PlatformRoot, "anti_entropy"),
-                    lager:warning("Config riak_kv/anti_entropy_data_dir is "
+                    lager:warning("Config riak_core/anti_entropy_data_dir is "
                                   "missing. Defaulting to: ~p", [Root]),
                     application:set_env(riak_core, anti_entropy_data_dir, Root),
                     Root;
