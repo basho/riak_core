@@ -45,13 +45,13 @@ behaviour_info(_Other) ->
 
 
 %% @doc This function is a working example of how to implement hashtree
-%% creatin for a VNode, using this is recommanded, it will need to be
+%% creation for a VNode, using this is recommended, it will need to be
 %% called during the init process.
 %% It also requires the calling vnode to implement a handle_info match on
 %% `retry_create_hashtree` which will need to either call this function
 %% again or do nothing if a valid hashtree already exists.
-%% In addtioj to that the calling VNode will be set up to monitor the
-%% created hashtree so it is adviced to listen for
+%% In addition to that the calling VNode will be set up to monitor the
+%% created hashtree so it should listen for
 %% `{'DOWN', _, _, Pid, _}` where Pid is the pid of the created hashtree
 %% to recreate a new one if this should die.
 -spec maybe_create_hashtrees(atom(), integer(), pid()|undefined) ->
@@ -148,9 +148,10 @@ aae_repair(_Bucket, _Key) ->
     ok.
 
 
-%% @doc hash_object is called to hash a object, how it does this is opaque
-%% to the aae system as long as it returns a binary and is deterministic in
-%% it's outcome.
+%% @doc hash_object is called by the AAE subsyste to hash a object when the
+%% tree first gets generated, a object needs to be hash or is inserted.
+%% To AAE system does not care for the details as long as it returns a binary
+%% and is deterministic in it's outcome. (see {@link riak_core_index_hashtree})
 -spec hash_object({Bucket::binary(), Key::binary()}, Obj::term()) -> binary().
 hash_object(_BKey, _Obj) ->
     <<>>.
@@ -159,6 +160,8 @@ hash_object(_BKey, _Obj) ->
 %% @doc This is a asyncronous command that needs to send a term in the form
 %% `{ok, Hashtree::pid()}` or `{error, wrong_node}` to the process it was called
 %% from.
+%% It is required by the {@link riak_core_entropy_manager} to determin what
+%% hashtree serves a partition on a given erlang node.
 -spec request_hashtree_pid(Partition::non_neg_integer()) -> ok.
 request_hashtree_pid(_Partition) ->
     ok.
@@ -172,6 +175,8 @@ hashtree_pid(_Partition) ->
 
 %% @doc Returns the vnode master for this vnode type, that is the same
 %% used when registering the vnode.
+%% This function is required by the {@link riak_core_index_hashtree} to
+%% send rehash requests to a vnode.
 
 -spec master() -> Master::atom().
 master() ->

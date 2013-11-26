@@ -17,7 +17,7 @@
 %% under the License.
 %%
 %% This is a direct copy of:
-%% https://github.com/basho/riak_kv/blob/develop/src/riak_kv_index_hashtree.erl
+%% https://github.com/basho/riak_kv/blob/develop/src/riak_kvgi_index_hashtree.erl
 %% -------------------------------------------------------------------
 
 %% @doc
