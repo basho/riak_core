@@ -7,17 +7,14 @@
 
 -export([aae_repair/2,
          hash_object/2,
-         request_hashtree_pid/1,
-         hashtree_pid/1,
          master/0,
-         rehash/3]).
+         request_hashtree_pid/2,
+         hashtree_pid/2,
+         rehash/4]).
 
 -xref_ignore([aae_repair/2,
               hash_object/2,
-              request_hashtree_pid/1,
-              hashtree_pid/1,
-              master/0,
-              rehash/3]).
+              master/0]).
 
 -define(DEFAULT_HASHTREE_TOKENS, 90).
 
@@ -38,6 +35,50 @@ behaviour_info(callbacks) ->
 
 behaviour_info(_Other) ->
     undefined.
+
+%%%===================================================================
+%%% AAE Calls
+%%%===================================================================
+
+%% @doc This is a asyncronous command that needs to send a term in the form
+%% `{ok, Hashtree::pid()}` or `{error, wrong_node}` to the process it was called
+%% from.
+%% It is required by the {@link riak_core_entropy_manager} to determin what
+%% hashtree serves a partition on a given erlang node.
+-spec request_hashtree_pid(_Master::atom(), Partition::non_neg_integer()) -> ok.
+request_hashtree_pid(Master, Partition) ->
+    ReqId = {hashtree_pid, Partition},
+    riak_core_vnode_master:command({Partition, node()},
+                                   {hashtree_pid, node()},
+                                   {raw, ReqId, self()},
+                                   Master).
+
+%% @doc Returns the hashtree for the partiion of this service/vnode combination.
+-spec hashtree_pid(_Master::atom(), Partition::non_neg_integer()) ->
+                          {error, wrong_node} |
+                          {ok, HashTree::pid()}.
+hashtree_pid(Master, Partition) ->
+    riak_core_vnode_master:sync_command({Partition, node()},
+                                        {hashtree_pid, node()},
+                                        Master,
+                                        infinity).
+
+
+%% Used by {@link riak_core_exchange_fsm} to force a vnode to update the hashtree
+%% for repaired keys. Typically, repairing keys will trigger read repair that
+%% will update the AAE hash in the write path. However, if the AAE tree is
+%% divergent from the KV data, it is possible that AAE will try to repair keys
+%% that do not have divergent KV replicas. In that case, read repair is never
+%% triggered. Always rehashing keys after any attempt at repair ensures that
+%% AAE does not try to repair the same non-divergent keys over and over.
+
+-spec rehash(_Master::atom(), _Preflist::preflist(),
+             _Bucket::binary(), _Key::binary()) -> ok.
+rehash(Master, Preflist, Bucket, Key) ->
+    riak_core_vnode_master:command(Preflist,
+                                   {rehash, {Bucket, Key}},
+                                   ignore,
+                                   Master).
 
 %%%===================================================================
 %%% Utility functions
@@ -134,7 +175,6 @@ get_hashtree_token() ->
 reset_hashtree_token() ->
     put(hashtree_tokens, max_hashtree_tokens()).
 
-
 %%%===================================================================
 %%% Placehodlers for callback functions (to give you a idea how they look)
 %%%===================================================================
@@ -156,23 +196,6 @@ aae_repair(_Bucket, _Key) ->
 hash_object(_BKey, _Obj) ->
     <<>>.
 
-
-%% @doc This is a asyncronous command that needs to send a term in the form
-%% `{ok, Hashtree::pid()}` or `{error, wrong_node}` to the process it was called
-%% from.
-%% It is required by the {@link riak_core_entropy_manager} to determin what
-%% hashtree serves a partition on a given erlang node.
--spec request_hashtree_pid(Partition::non_neg_integer()) -> ok.
-request_hashtree_pid(_Partition) ->
-    ok.
-
-%% @doc Returns the hashtree for the partiion of this service/vnode combination.
--spec hashtree_pid(Partition::non_neg_integer()) ->
-                          {error, wrong_node} |
-                          {ok, HashTree::pid()}.
-hashtree_pid(_Partition) ->
-    {error, wrong_node}.
-
 %% @doc Returns the vnode master for this vnode type, that is the same
 %% used when registering the vnode.
 %% This function is required by the {@link riak_core_index_hashtree} to
@@ -180,16 +203,4 @@ hashtree_pid(_Partition) ->
 
 -spec master() -> Master::atom().
 master() ->
-    ok.
-
-%% Used by {@link riak_core_exchange_fsm} to force a vnode to update the hashtree
-%% for repaired keys. Typically, repairing keys will trigger read repair that
-%% will update the AAE hash in the write path. However, if the AAE tree is
-%% divergent from the KV data, it is possible that AAE will try to repair keys
-%% that do not have divergent KV replicas. In that case, read repair is never
-%% triggered. Always rehashing keys after any attempt at repair ensures that
-%% AAE does not try to repair the same non-divergent keys over and over.
-
--spec rehash(_Preflist::preflist(), _Bucket::binary(), _Key::binary()) -> ok.
-rehash(_Preflist, _Bucket, _Key) ->
     ok.

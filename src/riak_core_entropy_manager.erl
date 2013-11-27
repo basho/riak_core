@@ -369,7 +369,8 @@ reload_hashtrees(Ring, State=#state{trees=Trees}) ->
     MissingIdx = [Idx || Idx <- Indices,
                          not dict:is_key(Idx, Existing)],
     VNode = State#state.vnode,
-    [VNode:request_hashtree_pid(Idx) || Idx <- MissingIdx],
+    Master = VNode:master(),
+    [riak_core_aae_vnode:request_hashtree_pid(Master, Idx) || Idx <- MissingIdx],
     State.
 
 add_hashtree_pid(Index, Pid, State) ->
@@ -591,7 +592,7 @@ start_exchange(LocalVN, RemoteVN, IndexN, Ring, State) ->
                     %% be running (eg. after a crash).  Send request to
                     %% the vnode to trigger on-demand start and requeue
                     %% exchange.
-                    VNode:request_hashtree_pid(LocalIdx),
+                    riak_core_aae_vnode:request_hashtree_pid(VNode:master(), LocalIdx),
                     State2 = requeue_exchange(LocalIdx, RemoteIdx, IndexN, State),
                     {not_built, State2};
                 {ok, Tree} ->
