@@ -132,8 +132,8 @@ handle_call({collect, Duration, Nodes}, _From, State) ->
                                  end,
                                  Pid
                          end, self()}),
-    dbg:p(all, call),
     [{ok, N} = dbg:n(N) || N <- Nodes],
+    dbg:p(all, [call]),
     dbg:tpl(?MODULE, trigger_sentinel, []),
     add_tracers(State#state.mfs),
     {reply, ok, State#state{trace=[], stop_tref = Tref, tracing = true}};
