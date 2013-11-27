@@ -5,16 +5,9 @@
 -export([maybe_create_hashtrees/3,
          update_hashtree/4]).
 
--export([aae_repair/2,
-         hash_object/2,
-         master/0,
-         request_hashtree_pid/2,
+-export([request_hashtree_pid/2,
          hashtree_pid/2,
          rehash/4]).
-
--xref_ignore([aae_repair/2,
-              hash_object/2,
-              master/0]).
 
 -define(DEFAULT_HASHTREE_TOKENS, 90).
 
