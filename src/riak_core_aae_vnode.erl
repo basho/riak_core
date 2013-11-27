@@ -180,24 +180,24 @@ reset_hashtree_token() ->
 %% the simplest method to handle this is causing a read-repair if the
 %% system supports it. But the actual implemetation is left to the
 %% vnode to handle whatever is best.
--spec aae_repair(Bucket::binary(), Key::binary()) -> term().
-aae_repair(_Bucket, _Key) ->
-    ok.
+%% -spec aae_repair(Bucket::binary(), Key::binary()) -> term().
+%%aae_repair(_Bucket, _Key) ->
+%%    aae_repair.
 
 
 %% @doc hash_object is called by the AAE subsyste to hash a object when the
 %% tree first gets generated, a object needs to be hash or is inserted.
 %% To AAE system does not care for the details as long as it returns a binary
 %% and is deterministic in it's outcome. (see {@link riak_core_index_hashtree})
--spec hash_object({Bucket::binary(), Key::binary()}, Obj::term()) -> binary().
-hash_object(_BKey, _Obj) ->
-    <<>>.
+%% -spec hash_object({Bucket::binary(), Key::binary()}, Obj::term()) -> binary().
+%% hash_object(_BKey, _Obj) ->
+%%    <<>>.
 
 %% @doc Returns the vnode master for this vnode type, that is the same
 %% used when registering the vnode.
 %% This function is required by the {@link riak_core_index_hashtree} to
 %% send rehash requests to a vnode.
 
--spec master() -> Master::atom().
-master() ->
-    ok.
+%% -spec master() -> Master::atom().
+%% master() ->
+%%    some_other_strange_atom_form_master.
