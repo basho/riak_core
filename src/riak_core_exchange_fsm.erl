@@ -286,7 +286,7 @@ read_repair_keydiff(VNode, LocalVN, RemoteVN, {Bucket, Key, _Reason}) ->
     %% lager:debug("Anti-entropy forced read repair: ~p/~p", [Bucket, Key]),
     VNode:aae_repair(Bucket, Key),
     %% Force vnodes to update AAE tree in case read repair wasn't triggered
-    VNode:rehash([LocalVN, RemoteVN], Bucket, Key),
+    riak_core_aae_vnode:rehash(VNode:master(), [LocalVN, RemoteVN], Bucket, Key),
     ok.
 
 %% @private
