@@ -28,10 +28,7 @@
 behaviour_info(callbacks) ->
     [{aae_repair, 2},
      {hash_object, 2},
-     {request_hashtree_pid, 1},
-     {hashtree_pid, 1},
-     {master, 0},
-     {rehash, 3}];
+     {master, 0}];
 
 behaviour_info(_Other) ->
     undefined.
