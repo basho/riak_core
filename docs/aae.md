@@ -11,7 +11,7 @@
 * Add the required config parameters.
 
 
-## Entropy Manger (riak_core_entropy_manager)
+## Entropy Manger (`riak_core_entropy_manager`)
 One is started per vnode service, as part of the of the main apps supervisor. It needs the service name and the vnode module passed as arguments.
 
 Here an example how to start it for the `snarl_user` service that is implemented in the `snarl_user_vnode`.
@@ -22,18 +22,18 @@ Here an example how to start it for the `snarl_user` service that is implemented
 
 The manager is responsible of coordinating the AAE tree build and exchange with other nodes.
 
-## Entropy Info (riak_core_entropy_info)
+## Entropy Info (`riak_core_entropy_info`)
 A helper module to get information about the entropy system, nothing needs touching here.
 
-## Exchange FSM (riak_core_exchange_fsm)
+## Exchange FSM (`riak_core_exchange_fsm`)
 FSM to do the actual work of exchange.
 
-## Index Hash Tree (riak_core_index_hashtree)
+## Index Hash Tree (`riak_core_index_hashtree`)
 One of those is started for each combination of service/partition, it handles the hash tree and takes care of keeping track of the changes.
 
 The VNode will need to take care of creating the hash tree for it's partition and also send updates on writes and deletes to keep the data in check. The hash tree will also fold over the entries for the first bootup.
 
-## VNode (riak_core_aae_vnode)
+## VNode (`riak_core_aae_vnode`)
 `riak_core_aae_vnode` implements a behavior for all the functions that need to be implemented for this.
 
 In addition to the functions described there the vnode needs to respond to the following calls to handle_info and command:
@@ -89,5 +89,12 @@ do_delete(Key, State) ->
     riak_core_index_hashtree:delete({<<"bucket">>, Key}, State#state.hashtrees),
     State#state{dict = Dict1}.
 
+```
 
+## Application (`*_app.erl`)
+
+A ets table has to be created for aae to work adding the following line to the `*_app.erl` file (or anywhere really):
+
+```erlang
+    riak_core_entropy_info:create_table()
 ```
