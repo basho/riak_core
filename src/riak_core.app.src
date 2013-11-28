@@ -15,7 +15,11 @@
                   crypto,
                   riak_sysmon,
                   os_mon,
-                  exometer
+                  exometer,
+                  basho_stats,
+                  eleveldb,
+                  pbkdf2,
+                  poolboy
                  ]},
   {mod, {riak_core_app, []}},
   {env, [

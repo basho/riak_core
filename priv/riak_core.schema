@@ -186,6 +186,13 @@
   Size > 1 andalso (Size band (Size-1) =:= 0)
  end}.
 
+%% @doc Number of VNodes allowed to do handoff concurrently.
+{mapping, "handoff_concurrency", "riak_core.handoff_concurrency", [
+  {datatype, integer},
+  {default, 2},
+  {commented, 2}
+]}.
+
 %% @doc Default location of ringstate
 {mapping, "ring.state_dir", "riak_core.ring_state_dir", [
   {default, "{{ring_state_dir}}"}
