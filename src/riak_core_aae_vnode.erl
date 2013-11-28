@@ -2,7 +2,7 @@
 
 -export([behaviour_info/1]).
 
--export([maybe_create_hashtrees/3,
+-export([maybe_create_hashtrees/4,
          update_hashtree/4]).
 
 -export([request_hashtree_pid/2,
@@ -85,19 +85,19 @@ rehash(Master, Preflist, Bucket, Key) ->
 %% created hashtree so it should listen for
 %% `{'DOWN', _, _, Pid, _}` where Pid is the pid of the created hashtree
 %% to recreate a new one if this should die.
--spec maybe_create_hashtrees(atom(), integer(), pid()|undefined) ->
+-spec maybe_create_hashtrees(atom(), integer(), atom(), pid()|undefined) ->
                                     pid()|undefined.
-maybe_create_hashtrees(Service, Index, Last) ->
+maybe_create_hashtrees(Service, Index, VNode,  Last) ->
     maybe_create_hashtrees(riak_core_entropy_manager:enabled(), Service, Index,
-                           Last).
+                           VNode, Last).
 
--spec maybe_create_hashtrees(boolean(), atom(), integer(), pid()|undefined) ->
+-spec maybe_create_hashtrees(boolean(), atom(), integer(), atom(), pid()|undefined) ->
                                     pid()|undefined.
-maybe_create_hashtrees(false, _Service, _Index, Last) ->
+maybe_create_hashtrees(false, _Service, _Index, _VNode, Last) ->
     lager:info("sniffle_dtrace: Hashtree not enabled."),
     Last;
 
-maybe_create_hashtrees(true, Service, Index, Last) ->
+maybe_create_hashtrees(true, Service, Index, VNode, Last) ->
     %% Only maintain a hashtree if a primary vnode
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     lager:debug("~p/~p: creating hashtree.", [Service, Index]),
@@ -105,7 +105,7 @@ maybe_create_hashtrees(true, Service, Index, Last) ->
         primary ->
             RP = riak_core_util:responsible_preflists(Index),
             case riak_core_index_hashtree:start(Service, Index, RP, self(),
-                                                ?MODULE) of
+                                                VNode) of
                 {ok, Trees} ->
                     lager:debug("~p/~p: hashtree created: ~p.",
                                 [Service, Index, Trees]),
