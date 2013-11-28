@@ -73,9 +73,9 @@ exchange_complete(Type, Index, RemoteIdx, IndexN, Repaired) ->
     update_index_info({Type, Index},
                       {exchange_complete, RemoteIdx, IndexN, Repaired}).
 
-%% @doc Called by {@link riak_kv_sup} to create public ETS table used for
+%% @doc Called by {@link <app>_sup} to create public ETS table used for
 %%      holding AAE information for reporting. Table will be owned by
-%%      the `riak_kv_sup' to ensure longevity.
+%%      the `<app>_sup' to ensure longevity.
 create_table() ->
     (ets:info(?ETS) /= undefined) orelse
         ets:new(?ETS, [named_table, public, set, {write_concurrency, true}]).

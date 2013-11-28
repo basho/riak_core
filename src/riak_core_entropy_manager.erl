@@ -122,14 +122,14 @@ start_exchange_remote(Service, _VNode={Index, Node}, IndexN, FsmPid) ->
                     {start_exchange_remote, FsmPid, Index, IndexN},
                     infinity).
 
-%% @doc Used by {@link riak_kv_index_hashtree} to requeue a poke on
+%% @doc Used by {@link riak_core_index_hashtree} to requeue a poke on
 %%      build failure.
 -spec requeue_poke(atom(), index()) -> ok.
 requeue_poke(Service, Index) ->
     Name = gen_name(Service),
     gen_server:cast(Name, {requeue_poke, Index}).
 
-%% @doc Used by {@link riak_kv_exchange_fsm} to inform the entropy
+%% @doc Used by {@link riak_core_exchange_fsm} to inform the entropy
 %%      manager about the status of an exchange (ie. completed without
 %%      issue, failed, etc)
 -spec exchange_status(atom(), vnode(), vnode(), index_n(), any()) -> ok.
