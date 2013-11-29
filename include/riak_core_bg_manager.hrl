@@ -47,8 +47,8 @@
 -type bg_meta()  :: {atom(), any()}.                %% meta data to associate with a lock/token
 -type bg_period() :: pos_integer().                 %% token refill period in milliseconds
 -type bg_count() :: pos_integer().                  %% token refill tokens to count at each refill period
--type bg_rate() :: {bg_period(), bg_count()}.       %% token refill rate
--type bg_concurrency_limit() :: non_neg_integer() | infinity.  %% max lock concurrency allowed
+-type bg_rate() :: undefined | {bg_period(), bg_count()}.       %% token refill rate
+-type bg_concurrency_limit() :: non_neg_integer() | infinity.   %% max lock concurrency allowed
 -type bg_state() :: given | blocked | failed.       %% state of an instance of a resource.
 
 %% Results of a "ps" of live given or blocked locks/tokens
@@ -66,14 +66,14 @@
 -record(bg_stat_hist,
         {
           type    :: undefined | bg_resource_type(),  %% undefined only on default
-          limit   :: bg_count(),  %% maximum available, defined by token rate during interval
-          refills :: bg_count(),  %% number of times a token was refilled during interval. 0 if lock
-          given   :: bg_count(),  %% number of times this resource was handed out within interval
-          blocked :: bg_count()   %% number of blocked processes waiting for a token
+          limit   :: non_neg_integer(),  %% maximum available, defined by token rate during interval
+          refills :: non_neg_integer(),  %% number of times a token was refilled during interval. 0 if lock
+          given   :: non_neg_integer(),  %% number of times this resource was handed out within interval
+          blocked :: non_neg_integer()   %% number of blocked processes waiting for a token
         }).
 -type bg_stat_hist() :: #bg_stat_hist{}.
 -define(BG_DEFAULT_STAT_HIST,
-        #bg_stat_hist{type=undefined, limit=0, refills=0, given=0, blocked=0}).
+        #bg_stat_hist{type=undefined, limit=undefined, refills=0, given=0, blocked=0}).
 
 -define(BG_DEFAULT_WINDOW_INTERVAL, 60).    %% in seconds
 -define(BG_DEFAULT_OUTPUT_SAMPLES, 20).     %% default number of sample windows displayed

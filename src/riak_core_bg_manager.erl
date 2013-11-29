@@ -233,7 +233,7 @@ get_lock(Lock, Pid, Meta) ->
 %%      If metadata is provided, the lock is associated with the calling process.
 %%      If the lock is not given before Timeout milliseconds, the call will
 %%      return with 'timeout'.
--spec get_lock_blocking(bg_lock(), pid() | [{atom(), any()}], timeout()) -> {ok, reference()} | timeout | unregistered.
+-spec get_lock_blocking(bg_lock(), pid() | [{atom(), any()}], timeout()) -> {ok, reference()} | unregistered | timeout.
 get_lock_blocking(Lock, Pid, Timeout) when is_pid(Pid) ->
     get_lock_blocking(Lock, Pid, [], Timeout);
 get_lock_blocking(Lock, Meta, Timeout) ->
@@ -243,7 +243,7 @@ get_lock_blocking(Lock, Meta, Timeout) ->
 get_lock_blocking(Lock, Timeout) ->
     get_lock_blocking(Lock, self(), Timeout).
 
--spec get_lock_blocking(bg_lock(), pid(), [{atom(), any()}], timeout()) -> ok | timeout.
+-spec get_lock_blocking(bg_lock(), pid(), [{atom(), any()}], timeout()) -> {ok, reference} | unregistered | timeout.
 get_lock_blocking(Lock, Pid, Meta, Timeout) ->
     gen_server:call(?SERVER, {get_lock_blocking, Lock, Pid, Meta, Timeout}, infinity).
 
@@ -292,6 +292,7 @@ locks_blocked(Lock) ->
 
 %% @doc Set the refill rate of tokens. Return previous value.
 -spec set_token_rate(bg_token(), bg_rate()) -> bg_rate().
+set_token_rate(_Token, undefined) -> undefined;
 set_token_rate(Token, Rate={_Period, _Count}) ->
     gen_server:call(?SERVER, {set_token_rate, Token, Rate}, infinity).
 
@@ -377,10 +378,10 @@ head() ->
 -spec head(bg_token()) -> [[bg_stat_hist()]].
 head(Token) ->
         head(Token, ?BG_DEFAULT_OUTPUT_SAMPLES).
--spec head(bg_token(), bg_count()) -> [[bg_stat_hist()]].
+-spec head(bg_token(), non_neg_integer()) -> [[bg_stat_hist()]].
 head(Token, NumSamples) ->
     head(Token, 0, NumSamples).
--spec head(bg_token(), bg_count(), bg_count()) -> [[bg_stat_hist()]].
+-spec head(bg_token(), non_neg_integer(), bg_count()) -> [[bg_stat_hist()]].
 head(Token, Offset, NumSamples) ->
     gen_server:call(?SERVER, {head, Token, Offset, NumSamples}, infinity).
 
@@ -427,7 +428,7 @@ ps(Arg) ->
 -define(resource_enabled(X), (X)#resource_info.enabled).
 
 -define(DEFAULT_CONCURRENCY, 0). %% DO NOT CHANGE. DEFAULT SET TO 0 TO ENFORCE "REGISTRATION"
--define(DEFAULT_RATE, {0,0}).
+-define(DEFAULT_RATE, undefined).%% DO NOT CHANGE. DEFAULT SET TO 0 TO ENFORCE "REGISTRATION"
 -define(DEFAULT_LOCK_INFO, #resource_info{type=lock, enabled=true, limit=?DEFAULT_CONCURRENCY}).
 -define(DEFAULT_TOKEN_INFO, #resource_info{type= token, enabled=true, limit=?DEFAULT_RATE}).
 
@@ -694,9 +695,9 @@ do_set_token_rate(Token, Rate, State) ->
     catch
         table_id_undefined ->
         %% This could go into a queue to be played when the transfer happens.
-            {reply, {undefined, 0}, State};
+            {reply, undefined, State};
         {unregistered, Token} ->
-            {reply, {undefined, 0}, update_limit(Token, Rate, ?DEFAULT_TOKEN_INFO, State)};
+            {reply, undefined, update_limit(Token, Rate, ?DEFAULT_TOKEN_INFO, State)};
         {badtype, _Token}=Error ->
             {reply, Error, State}
     end.
@@ -782,7 +783,7 @@ maybe_honor_limit(true, Lock, Limit, State) ->
         true ->
             {_Keep, Discards} = lists:split(Limit, Held),
             %% killing of processes will generate 'DOWN' messages and release the locks
-            [erlang:exit(Pid, max_concurrency) || Discard <- Discards, Pid = ?e_pid(Discard)],
+            [erlang:exit(?e_pid(Discard), max_concurrency) || Discard <- Discards],
             ok;
         false ->
             ok
@@ -901,11 +902,10 @@ reschedule_token_refills(State) ->
 schedule_refill_tokens(_Token, #state{table_id=undefined}) ->
     ok;
 schedule_refill_tokens(Token, State) ->
-    {Period, _Count} = ?resource_limit(resource_info(Token, State)),
-    case Period of
+    case ?resource_limit(resource_info(Token, State)) of
         undefined ->
             ok;
-        _P ->
+        {Period, _Count} ->
             erlang:send_after(Period, self(), {refill_tokens, Token})
     end.
 
@@ -966,7 +966,10 @@ give_resource(Resource, Type, Pid, Ref, Meta, State) ->
     Entry = ?RESOURCE_ENTRY(Resource, Type, Pid, Meta, From, Ref, given),
     give_resource(Entry, State).
 
-
+-spec try_get_resource(boolean(), bg_resource(), bg_resource_type(), pid(), [{atom(), any()}], #state{}) ->
+                              {max_concurrency, #state{}}
+                                  | {ok, #state{}}
+                                  | {{ok, reference()}, #state{}}.
 try_get_resource(false, _Resource, _Type, _Pid, _Meta, State) ->
     {max_concurrency, State};
 try_get_resource(true, Resource, Type, Pid, Meta, State) ->
@@ -982,6 +985,10 @@ try_get_resource(true, Resource, Type, Pid, Meta, State) ->
 %% @private
 %% @doc reply now if resource is available. Returns max_concurrency
 %%      if resource not available or globally or specifically disabled.
+-spec do_get_resource(bg_resource(), bg_resource_type(), pid(), [{atom(), any()}], #state{}) ->
+                             {reply, max_concurrency, #state{}}
+                                 | {reply, {ok, #state{}}}
+                                 | {reply, {{ok, reference()}, #state{}}}.
 do_get_resource(_Resource, _Type, _Pid, _Meta, State=#state{table_id=undefined}) ->
     %% Table transfer has not occurred yet. Reply "max_concurrency" so that callers
     %% will try back later, hopefully when we have our table back.
