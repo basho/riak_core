@@ -24,7 +24,8 @@
          stage_force_replace/1, print_staged/1, commit_staged/1,
          clear_staged/1, transfer_limit/1, pending_claim_percentage/2,
          transfers/1, add_user/1, add_source/1, grant/1, revoke/1,
-         print_users/1, print_user/1, print_sources/1]).
+         print_users/1, print_user/1, print_sources/1,
+	 stat_show/1, stat_enable/1, stat_disable/1]).
 
 %% @doc Return for a given ring and node, percentage currently owned and
 %% anticipated after the transitions have been completed.
@@ -956,3 +957,87 @@ parse_cidr(CIDR) ->
     [IP, Mask] = string:tokens(CIDR, "/"),
     {ok, Addr} = inet_parse:address(IP),
     {Addr, list_to_integer(Mask)}.
+
+
+stat_show(Arg) ->
+    io:fwrite("stats for ~p~n", [Patterns = lists:flatten([parse_stat_entry(S) || S <- Arg])]),
+    print_stats(exometer:select(Patterns)).
+
+print_stats(Entries) ->
+    [io:fwrite("~p: ~p~n", [E, get_value(E)]) || E <- Entries].
+
+get_value(E) ->
+    case exometer:get_value(E) of
+	{ok, V} -> V;
+	{error,_} -> unavailable
+    end.
+	     
+
+stat_enable(Arg) ->
+    io:fwrite("stat_enable ~p~n", [[parse_stat_entry(S) || S <- Arg]]).
+
+stat_disable(Arg) ->
+    io:fwrite("stat_disable ~p~n", [[parse_stat_entry(S) || S <- Arg]]).
+
+parse_stat_entry("[" ++ _ = Expr) ->
+    case erl_scan:string(ensure_trailing_dot(Expr)) of
+	{ok, Toks, _} ->
+	    case erl_parse:parse_exprs(Toks) of
+		{ok, [Abst]} ->
+		    partial_eval(Abst);
+		Error ->
+		    io:fwrite("(Parse error for ~p: ~p~n", [Expr, Error]),
+		    []
+	    end;
+	ScanErr ->
+	    io:fwrite("(Scan error for ~p: ~p~n", [Expr, ScanErr]),
+	    []
+    end;
+parse_stat_entry(Str) ->
+    Parts = re:split(Str, "\\.", [{return,list}]),
+    {{replace_parts(Parts),'_',enabled}, [], [{element,1,'$_'}]}.
+
+ensure_trailing_dot(Str) ->
+    case lists:reverse(Str) of
+	"." ++ _ ->
+	    Str;
+	_ ->
+	    Str ++ "."
+    end.
+
+partial_eval({cons,_,H,T}) ->
+    [partial_eval(H) | partial_eval(T)];
+%% partial_eval({nil,_}) ->
+%%     [];
+partial_eval({tuple,_,Elems}) ->
+    list_to_tuple([partial_eval(E) || E <- Elems]);
+%% partial_eval({T,_,X}) when T==atom; T==integer; T==float ->
+%%     X;
+partial_eval({op,_,'++',L1,L2}) ->
+    partial_eval(L1) ++ partial_eval(L2);
+partial_eval(X) ->
+    erl_parse:normalise(X).
+
+
+
+
+
+
+replace_parts([H|T]) ->
+    R = case H of
+	    "*" -> '_';
+	    [H|_] = Part when H >= $0, H =< $9 ->
+		try list_to_integer(Part)
+		catch
+		    error:_ -> list_to_atom(Part)
+		end;
+	    _ -> list_to_atom(H)
+	end,
+    case T of
+	["**"] -> [R] ++ '_';
+	_ -> [R|replace_parts(T)]
+    end;
+replace_parts([]) ->
+    [].
+
+	     
