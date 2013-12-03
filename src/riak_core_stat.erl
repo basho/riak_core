@@ -53,7 +53,7 @@ register_stats() ->
 %% @spec get_stats() -> proplist()
 %% @doc Get the current aggregation of stats.
 get_stats() ->
-    get_stats(?APP).
+    get_stats(?APP) ++ vnodeq_stats().
 
 get_stats(App) ->
     P = prefix(),
@@ -180,16 +180,14 @@ vnodeq_aggregate(Service, MQLs0) ->
                  1 ->
                      lists:nth(Len div 2 + 1, MQLs)
              end,
-    [{vnodeq_atom(Service, <<"s_running">>), Len},
-     {vnodeq_atom(Service, <<"q_min">>), lists:nth(1, MQLs)},
-     {vnodeq_atom(Service, <<"q_median">>), Median},
-     {vnodeq_atom(Service, <<"q_mean">>), Mean},
-     {vnodeq_atom(Service, <<"q_max">>), lists:nth(Len, MQLs)},
-     {vnodeq_atom(Service, <<"q_total">>), Total}].
+    P = prefix(),
+    [{[P, riak_core, vnodeq_atom(Service,<<"s_running">>)], [{value, Len}]},
+     {[P, riak_core, vnodeq_atom(Service,<<"q">>)],
+      [{min, lists:nth(1, MQLs)}, {median, Median}, {mean, Mean},
+       {q_max, lists:nth(Len, MQLs)}, {total, Total}]}].
 
 vnodeq_atom(Service, Desc) ->
     binary_to_atom(<<(atom_to_binary(Service, latin1))/binary, Desc/binary>>, latin1).
-
 
 -ifdef(TEST).
 
@@ -198,48 +196,38 @@ vnodeq_aggregate_empty_test() ->
     ?assertEqual([], vnodeq_aggregate(service_vnode, [])).
 
 vnodeq_aggregate_odd1_test() ->
-    ?assertEqual([{service_vnodes_running, 1},
-                  {service_vnodeq_min, 10},
-                  {service_vnodeq_median, 10},
-                  {service_vnodeq_mean, 10},
-                  {service_vnodeq_max, 10},
-                  {service_vnodeq_total, 10}],
+    P = prefix(),
+    ?assertEqual([{[P, riak_core, service_vnodes_running], 1},
+                  {[P, riak_core, service_vnodeq],
+		   [{min, 10}, {median, 10}, {mean, 10}, {max, 10}, {total, 10}]}],
                  vnodeq_aggregate(service_vnode, [10])).
 
 vnodeq_aggregate_odd3_test() ->
-    ?assertEqual([{service_vnodes_running, 3},
-                  {service_vnodeq_min, 1},
-                  {service_vnodeq_median, 2},
-                  {service_vnodeq_mean, 2},
-                  {service_vnodeq_max, 3},
-                  {service_vnodeq_total, 6}],
+    P = prefix(),
+    ?assertEqual([{[P, riak_core, service_vnodes_running], 3},
+                  {[P, riak_core, service_vnodeq],
+		   [{min, 1}, {median, 2}, {mean, 2}, {max, 3}, {total, 6}]}],
                  vnodeq_aggregate(service_vnode, [1, 2, 3])).
 
 vnodeq_aggregate_odd5_test() ->
-    ?assertEqual([{service_vnodes_running, 5},
-                  {service_vnodeq_min, 0},
-                  {service_vnodeq_median, 1},
-                  {service_vnodeq_mean, 2},
-                  {service_vnodeq_max, 5},
-                  {service_vnodeq_total, 10}],
+    P = prefix(),
+    ?assertEqual([{[P, riak_core, service_vnodes_running], 5},
+                  {[P, riak_core, service_vnodeq], 
+		   [{min, 0}, {median, 1}, {mean, 2}, {max, 5}, {total, 10}]}],
                  vnodeq_aggregate(service_vnode, [1, 0, 5, 0, 4])).
 
 vnodeq_aggregate_even2_test() ->
-    ?assertEqual([{service_vnodes_running, 2},
-                  {service_vnodeq_min, 10},
-                  {service_vnodeq_median, 15},
-                  {service_vnodeq_mean, 15},
-                  {service_vnodeq_max, 20},
-                  {service_vnodeq_total, 30}],
+    P = prefix(),
+    ?assertEqual([{[P, riak_core, service_vnodes_running], 2},
+                  {[P, riak_core, service_vnodeq],
+		   [{min, 10}, {median, 15}, {mean, 15}, {max, 20}, {total, 30}]}],
                  vnodeq_aggregate(service_vnode, [10, 20])).
 
 vnodeq_aggregate_even4_test() ->
-    ?assertEqual([{service_vnodes_running, 4},
-                  {service_vnodeq_min, 0},
-                  {service_vnodeq_median, 5},
-                  {service_vnodeq_mean, 7},
-                  {service_vnodeq_max, 20},
-                  {service_vnodeq_total, 30}],
+    P = prefix(),
+    ?assertEqual([{[P, riak_core, service_vnodes_running], 4},
+                  {[P, riak_core, service_vnodeq]
+		   [{min, 0}, {median, 5}, {mean, 7}, {max, 20}, {total, 30}]}],
                  vnodeq_aggregate(service_vnode, [0, 10, 0, 20])).
 
 -endif.
