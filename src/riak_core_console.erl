@@ -25,7 +25,7 @@
          clear_staged/1, transfer_limit/1, pending_claim_percentage/2,
          transfers/1, add_user/1, add_source/1, grant/1, revoke/1,
          print_users/1, print_user/1, print_sources/1,
-	 stat_show/1, stat_enable/1, stat_disable/1]).
+	 stat_show/1, stat_showall/1, stat_info/1, stat_enable/1, stat_disable/1]).
 
 %% @doc Return for a given ring and node, percentage currently owned and
 %% anticipated after the transitions have been completed.
@@ -960,26 +960,80 @@ parse_cidr(CIDR) ->
 
 
 stat_show(Arg) ->
-    io:fwrite("stats for ~p~n", [Patterns = lists:flatten([parse_stat_entry(S) || S <- Arg])]),
-    print_stats(exometer:select(Patterns)).
+    print_stats(find_entries(Arg)).
+
+stat_showall(Arg) ->
+    print_stats(find_entries(Arg, '_')).
+
+find_entries(Arg) ->
+    find_entries(Arg, enabled).
+
+find_entries(Arg, Status) ->
+    Patterns = lists:flatten([parse_stat_entry(S, Status) || S <- Arg]),
+    exometer:select(Patterns).
 
 print_stats(Entries) ->
-    [io:fwrite("~p: ~p~n", [E, get_value(E)]) || E <- Entries].
+    io:fwrite(
+      [io_lib:fwrite("~p: ~p~n", [E, get_value(E, Status)]) || {E, _T, Status} <- Entries]).
 
-get_value(E) ->
+get_value(_, disabled) ->
+    disabled;
+get_value(E, _Status) ->
     case exometer:get_value(E) of
 	{ok, V} -> V;
 	{error,_} -> unavailable
     end.
-	     
 
 stat_enable(Arg) ->
-    io:fwrite("stat_enable ~p~n", [[parse_stat_entry(S) || S <- Arg]]).
+    [io:fwrite("~p: ~p~n", [N, change_status(N, enabled)])
+     || {N, _, _} <- find_entries(Arg, disabled)].
 
 stat_disable(Arg) ->
-    io:fwrite("stat_disable ~p~n", [[parse_stat_entry(S) || S <- Arg]]).
+    [io:fwrite("~p: ~p~n", [N, change_status(N, disabled)])
+     || {N, _, _} <- find_entries(Arg, enabled)].
 
-parse_stat_entry("[" ++ _ = Expr) ->
+change_status(N, St) ->
+    case exometer:setopts(N, [{status, St}]) of
+	ok ->
+	    St;
+	Error ->
+	    Error
+    end.
+
+stat_info(Arg) ->
+    {Attrs, RestArg} = pick_info_attrs(split_arg(Arg)),
+    [print_info(E, Attrs) || E <- find_entries(RestArg, '_')].
+
+pick_info_attrs(Arg) ->
+    lists:foldr(
+      fun("-name"     , {As, Ps}) -> {[name     |As], Ps};
+	 ("-type"     , {As, Ps}) -> {[type     |As], Ps};
+	 ("-module"   , {As, Ps}) -> {[module   |As], Ps};
+	 ("-value"    , {As, Ps}) -> {[value    |As], Ps};
+	 ("-cache"    , {As, Ps}) -> {[cache    |As], Ps};
+	 ("-status"   , {As, Ps}) -> {[status   |As], Ps};
+	 ("-timestamp", {As, Ps}) -> {[timestamp|As], Ps};
+	 ("-options"  , {As, Ps}) -> {[options  |As], Ps};
+	 (P, {As, Ps}) -> {As, [P|Ps]}
+      end, {[], []}, Arg).
+
+print_info({N, _Type, _Status}, [A|Attrs]) ->
+    Hdr = lists:flatten(io_lib:fwrite("~p: ", [N])),
+    Pad = lists:duplicate(length(Hdr), $\s),
+    Info = exometer:info(N),
+    Body = [io_lib:fwrite("~w = ~p~n", [A, proplists:get_value(A, Info)])
+	    | lists:map(fun(Ax) ->
+				io_lib:fwrite(Pad ++ "~w = ~p~n",
+					      [Ax, proplists:get_value(Ax, Info)])
+			end, Attrs)],
+    io:fwrite([Hdr, Body]).
+
+split_arg([Str]) ->
+    Split = re:split(Str, "\\s", [{return,list}]),
+    io:fwrite("Split = ~p~n", [Split]),
+    Split.
+
+parse_stat_entry("[" ++ _ = Expr, _Status) ->
     case erl_scan:string(ensure_trailing_dot(Expr)) of
 	{ok, Toks, _} ->
 	    case erl_parse:parse_exprs(Toks) of
@@ -993,9 +1047,12 @@ parse_stat_entry("[" ++ _ = Expr) ->
 	    io:fwrite("(Scan error for ~p: ~p~n", [Expr, ScanErr]),
 	    []
     end;
-parse_stat_entry(Str) ->
+parse_stat_entry(Str, Status) when Status==enabled; Status==disabled; Status=='_' ->
     Parts = re:split(Str, "\\.", [{return,list}]),
-    {{replace_parts(Parts),'_',enabled}, [], [{element,1,'$_'}]}.
+    {{replace_parts(Parts),'_',Status}, [], ['$_']};
+parse_stat_entry(_, Status) ->
+    io:fwrite("(Illegal status: ~p~n", [Status]).
+
 
 ensure_trailing_dot(Str) ->
     case lists:reverse(Str) of
@@ -1018,18 +1075,20 @@ partial_eval({op,_,'++',L1,L2}) ->
 partial_eval(X) ->
     erl_parse:normalise(X).
 
-
-
-
-
-
 replace_parts([H|T]) ->
     R = case H of
 	    "*" -> '_';
-	    [H|_] = Part when H >= $0, H =< $9 ->
-		try list_to_integer(Part)
+	    "'" ++ _ ->
+		case erl_scan:string(H) of
+		    {ok, [{atom, _, A}], _} ->
+			A;
+		    Error ->
+			error(Error)
+		end;
+	    [C|_] when C >= $0, C =< $9 ->
+		try list_to_integer(H)
 		catch
-		    error:_ -> list_to_atom(Part)
+		    error:_ -> list_to_atom(H)
 		end;
 	    _ -> list_to_atom(H)
 	end,
@@ -1041,3 +1100,15 @@ replace_parts([]) ->
     [].
 
 	     
+
+
+
+
+
+
+
+
+
+
+
+
