@@ -26,9 +26,10 @@ initial_state() ->
 %% Command generator, S is the state
 command(#state{vclocks=Vs}) ->
     oneof([{call, ?MODULE, fresh, []}] ++
-          [{call, ?MODULE, timestamp, []}] ++ 
+          [{call, ?MODULE, timestamp, []}] ++
           [{call, ?MODULE, increment, [gen_actor_id(), elements(Vs)]} || length(Vs) > 0] ++
           [{call, ?MODULE, get_counter, [gen_actor_id(), elements(Vs)]} || length(Vs) > 0] ++
+          [{call, ?MODULE, get_timestamp, [gen_actor_id(), elements(Vs)]} || length(Vs) > 0] ++
           [{call, ?MODULE, merge, [list(elements(Vs))]} || length(Vs) > 0] ++
           [{call, ?MODULE, descends, [elements(Vs), elements(Vs)]} || length(Vs) > 0] ++
           [{call, ?MODULE, dominates, [elements(Vs), elements(Vs)]} || length(Vs) > 0]
@@ -36,6 +37,8 @@ command(#state{vclocks=Vs}) ->
 
 %% Next state transformation, S is the current state
 next_state(S,_V,{call,_,get_counter,[_, _]}) ->
+    S;
+next_state(S,_V,{call,_,get_timestamp,[_, _]}) ->
     S;
 next_state(S,_V,{call,_,descends,[_, _]}) ->
     S;
@@ -54,6 +57,8 @@ precondition(_S,{call,_,_,_}) ->
 %% OBS: S is the state before next_state(S,_,<command>)
 postcondition(_S, {call, _, get_counter, _}, {MRes, Res}) ->
     MRes == Res;
+postcondition(_S, {call, _, get_timestamp, _}, {MRes, Res}) ->
+    timestamp_values_equal(MRes, Res);
 postcondition(_S, {call, _, descends, _}, {MRes, Res}) ->
     MRes == Res;
 postcondition(_S, {call, _, dominates, _}, {MRes, Res}) ->
@@ -95,11 +100,12 @@ descends({AM, AV}, {BM, BV}) ->
      vclock:descends(AV, BV)}.
 
 get_counter(A, {M, V}) ->
-    {orddict:fetch(A, M), vclock:get_counter(A, V)}.
+    {model_counter(A, M), vclock:get_counter(A, V)}.
 
 increment(A, {M, V}) ->
     TS = timestamp(),
-    {orddict:update_counter(A, 1, M), vclock:increment(A, TS, V)}.
+    MCount = model_counter(A, M),
+    {lists:keyreplace(A, 1, M, {A, MCount + 1, TS}), vclock:increment(A, TS, V)}.
 
 merge(List) ->
     {Models, VClocks} = lists:unzip(List),
@@ -107,24 +113,50 @@ merge(List) ->
      vclock:merge(VClocks)}.
 
 model_merge(M,OM) ->
-    orddict:merge(fun(_K,A,B) -> erlang:max(A,B) end, M, OM).
+    [ if C1 > C2 -> {A, C1, T1};
+         C1 == C2 -> {A, C1, erlang:max(T1, T2)};
+         true -> {A, C2, T2}
+      end
+      || {{A, C1, T1}, {A, C2, T2}} <- lists:zip(M, OM) ].
 
 new_model() ->
-    orddict:from_list([{ID, 0} || ID <- ?ACTOR_IDS]).
+    [{ID, 0, 0} || ID <- ?ACTOR_IDS].
 
 model_compare(M, V) ->
     lists:all(fun(A) ->
-                      orddict:fetch(A,M) == vclock:get_counter(A,V)
+                      model_counter(A,M) == vclock:get_counter(A,V) andalso
+                          timestamps_equal(A, M, V)
               end,
               ?ACTOR_IDS).
 
 model_descends(AM, BM) ->
-   lists:all(fun({Actor, Count}) ->
-                     Count >= orddict:fetch(Actor, BM)
+   lists:all(fun({{Actor, Count1, _TS1}, {Actor, Count2, _TS2}}) ->
+                     Count1 >= Count2
              end,
-             AM).
+             lists:zip(AM, BM)).
+
+get_timestamp(A, {M, V}) ->
+    {model_timestamp(A,M), vclock:get_timestamp(A, V)}.
 
 timestamp() ->
     put(timestamp, get(timestamp) + 1).
+
+model_counter(A, M) ->
+    element(2, lists:keyfind(A, 1, M)).
+
+model_timestamp(A, M) ->
+    element(3, lists:keyfind(A, 1, M)).
+
+timestamps_equal(A, M, V) ->
+    VT = vclock:get_timestamp(A,V),
+    MT = model_timestamp(A,M),
+    timestamp_values_equal(MT, VT).
+
+timestamp_values_equal(0, undefined) ->
+    true;
+timestamp_values_equal(T, T) ->
+    true;
+timestamp_values_equal(_, _) ->
+    false.
 
 -endif.

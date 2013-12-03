@@ -85,7 +85,7 @@ descends(Va, Vb) ->
 
 -spec dominates(vclock(), vclock()) -> boolean().
 dominates(A, B) ->
-    (not equal(A, B)) andalso descends(A, B).
+    descends(A, B) andalso not equal(A, B).
 
 % @doc Combine all VClocks in the input list into their least possible
 %      common descendant.
