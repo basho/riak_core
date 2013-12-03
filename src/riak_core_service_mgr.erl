@@ -59,9 +59,12 @@
                 refs = []
                }).
 
--export([start_link/0, start_link/1,
+-export([start_link/0,
+         start_link/1,
          register_service/2,
          unregister_service/1,
+         sync_register_service/2,
+         sync_unregister_service/1,
          is_registered/1,
          register_stats_fun/1,
          get_stats/0,
@@ -111,15 +114,23 @@ start_link({IP,Port}) when is_integer(Port), Port >= 0 ->
             gen_server:start_link({local, ?SERVER}, ?MODULE, Args, Options)
     end.
 
-%% @doc Once a protocol specification is registered, it will be kept available
-%% by the Service Manager. Note that the callee is responsible for taking
-%% ownership of the socket via Transport:controlling_process(Socket, Pid).
-%% Only the strategy of `round_robin' is supported; it's arg is ignored.
+%% @doc Once a protocol specification is registered, it will be kept
+%% available by the Service Manager. Note that the callee is responsible
+%% for taking ownership of the socket via
+%% Transport:controlling_process(Socket, Pid).  Only the strategy of
+%% `round_robin' is supported; it's arg is ignored.
 -spec(register_service(hostspec(), service_scheduler_strategy()) -> ok).
 register_service(HostProtocol, Strategy) ->
     %% only one strategy is supported as yet
     {round_robin, _NB} = Strategy,
     gen_server:cast(?SERVER, {register_service, HostProtocol, Strategy}).
+
+%% @doc Blocking version of register_service.
+-spec sync_register_service(hostspec(), service_scheduler_strategy()) -> ok.
+sync_register_service(HostProtocol, Strategy) ->
+    %% only one strategy is supported as yet
+    {round_robin, _NB} = Strategy,
+    gen_server:call(?SERVER, {register_service, HostProtocol, Strategy}).
 
 %% @doc Unregister the given protocol-id. Existing connections for this
 %% protocol are not killed. New connections for this protocol will not be
@@ -127,6 +138,11 @@ register_service(HostProtocol, Strategy) ->
 -spec(unregister_service(proto_id()) -> ok).
 unregister_service(ProtocolId) ->
     gen_server:cast(?SERVER, {unregister_service, ProtocolId}).
+
+%% @doc Blocking version of unregister_service.
+-spec sync_unregister_service(proto_id()) -> ok.
+sync_unregister_service(ProtocolId) ->
+    gen_server:call(?SERVER, {unregister_service, ProtocolId}).
 
 %% @doc True if the given protocal id is registered.
 -spec(is_registered(proto_id()) -> boolean()).
@@ -179,17 +195,28 @@ handle_call(get_stats, _From, State) ->
     PStats = [{Protocol, Count} || {Protocol,{_Stats,Count}} <- Stats],
     {reply, PStats, State};
 
+handle_call({register_service, Protocol, Strategy},  _From, State) ->
+    NewDict = handle_register_service(Protocol,
+                                      Strategy,
+                                      State#state.services),
+    {reply, ok, State#state{services=NewDict}};
+
+handle_call({unregister_service, ProtocolId}, _From, State) ->
+    NewDict = handle_unregister_service(ProtocolId, State#state.services),
+    {reply, ok, State#state{services=NewDict}};
+
 handle_call(_Unhandled, _From, State) ->
     ?TRACE(?debugFmt("Unhandled gen_server call: ~p", [_Unhandled])),
     {reply, {error, unhandled}, State}.
 
 handle_cast({register_service, Protocol, Strategy}, State) ->
-    {{ProtocolId,_Revs},_Rest} = Protocol,
-    NewDict = orddict:store(ProtocolId, {Protocol, Strategy}, State#state.services),
+    NewDict = handle_register_service(Protocol,
+                                      Strategy,
+                                      State#state.services),
     {noreply, State#state{services=NewDict}};
- 
+
 handle_cast({unregister_service, ProtocolId}, State) ->
-    NewDict = orddict:erase(ProtocolId, State#state.services),
+    NewDict = handle_unregister_service(ProtocolId, State#state.services),
     {noreply, State#state{services=NewDict}};
 
 handle_cast({register_stats_fun, Fun}, State) ->
@@ -496,3 +523,12 @@ start_dispatcher({IP,Port}, MaxListeners, SubProtocols) ->
                                 ?MODULE, SubProtocols),
     lager:info("Service manager: listening on ~s:~p", [IP, Port]),
     {ok, Pid}.
+
+%% @doc Register a service, and store.
+handle_register_service(Protocol, Strategy, Services) ->
+    {{ProtocolId,_Revs},_Rest} = Protocol,
+    orddict:store(ProtocolId, {Protocol, Strategy}, Services).
+
+%% @doc Unregister service.
+handle_unregister_service(ProtocolId, Services) ->
+    orddict:erase(ProtocolId, Services).
