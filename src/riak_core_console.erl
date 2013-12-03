@@ -1214,9 +1214,7 @@ print_info({N, _Type, _Status}, [A|Attrs]) ->
     io:fwrite([Hdr, Body]).
 
 split_arg([Str]) ->
-    Split = re:split(Str, "\\s", [{return,list}]),
-    io:fwrite("Split = ~p~n", [Split]),
-    Split.
+    re:split(Str, "\\s", [{return,list}]).
 
 parse_stat_entry("[" ++ _ = Expr, _Status) ->
     case erl_scan:string(ensure_trailing_dot(Expr)) of
