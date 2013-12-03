@@ -26,6 +26,7 @@ initial_state() ->
 %% Command generator, S is the state
 command(#state{vclocks=Vs}) ->
     oneof([{call, ?MODULE, fresh, []}] ++
+          [{call, ?MODULE, timestamp, []}] ++ 
           [{call, ?MODULE, increment, [gen_actor_id(), elements(Vs)]} || length(Vs) > 0] ++
           [{call, ?MODULE, get_counter, [gen_actor_id(), elements(Vs)]} || length(Vs) > 0] ++
           [{call, ?MODULE, merge, [list(elements(Vs))]} || length(Vs) > 0] ++
@@ -39,6 +40,8 @@ next_state(S,_V,{call,_,get_counter,[_, _]}) ->
 next_state(S,_V,{call,_,descends,[_, _]}) ->
     S;
 next_state(S,_V,{call,_,dominates,[_, _]}) ->
+    S;
+next_state(S, _V, {call,_,timestamp,_}) ->
     S;
 next_state(#state{vclocks=Vs}=S,V,{call,_,_,_}) ->
     S#state{vclocks=Vs ++ [V]}.
@@ -69,10 +72,12 @@ postcondition(_S, _C, _Res) ->
 prop_vclock() ->
     ?FORALL(Cmds,commands(?MODULE),
             begin
+                put(timestamp, 1),
                 {H,S,Res} = run_commands(?MODULE,Cmds),
+                aggregate([ length(V) || {_,V} <- S#state.vclocks ],
                 aggregate(command_names(Cmds),
                           collect({num_vclocks_div_10, length(S#state.vclocks) div 10},
-                                  pretty_commands(?MODULE,Cmds, {H,S,Res}, Res == ok)))
+                                  pretty_commands(?MODULE,Cmds, {H,S,Res}, Res == ok))))
             end).
 
 gen_actor_id() ->
@@ -93,7 +98,8 @@ get_counter(A, {M, V}) ->
     {orddict:fetch(A, M), vclock:get_counter(A, V)}.
 
 increment(A, {M, V}) ->
-    {orddict:update_counter(A, 1, M), vclock:increment(A, V)}.
+    TS = timestamp(),
+    {orddict:update_counter(A, 1, M), vclock:increment(A, TS, V)}.
 
 merge(List) ->
     {Models, VClocks} = lists:unzip(List),
@@ -117,5 +123,8 @@ model_descends(AM, BM) ->
                      Count >= orddict:fetch(Actor, BM)
              end,
              AM).
+
+timestamp() ->
+    put(timestamp, get(timestamp) + 1).
 
 -endif.
