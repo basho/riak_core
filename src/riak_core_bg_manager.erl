@@ -806,11 +806,10 @@ update_resource_enabled(Resource, Value, Default, State) ->
                      State).
 
 update_limit(Resource, Limit, Default, State) ->
-    State2 = update_resource_info(Resource,
-                                  fun(Info) -> Info#resource_info{limit=Limit} end,
-                                  Default#resource_info{limit=Limit},
-                                  State),
-    increment_stat_limit(Resource, Limit, State2).
+    update_resource_info(Resource,
+                         fun(Info) -> Info#resource_info{limit=Limit} end,
+                         Default#resource_info{limit=Limit},
+                         State).
 
 update_resource_info(Resource, Fun, Default, State=#state{table_id=TableId}) ->
     Key = {info, Resource},
@@ -915,10 +914,20 @@ schedule_sample_history(State=#state{window_interval=Interval}) ->
     TRef = erlang:send_after(Interval, self(), sample_history),
     State#state{window_tref=TRef}.
 
-do_sample_history(State=#state{window=Window, history=Histories}) ->
+%% @doc Update the "limit" history stat for all registered resources into current window.
+update_stat_all_limits(State) ->
+    lists:foldl(fun({Resource, Info}, S) ->
+                        increment_stat_limit(Resource, ?resource_limit(Info), S)
+                end,
+                State,
+                all_resource_info(State)).
+
+do_sample_history(State) ->
+    %% Update window with current limits before copying it
+    State2 = update_stat_all_limits(State),
     %% Move the current window of measurements onto the history queues.
     %% Trim queue down to ?BG_DEFAULT_KEPT_SAMPLES if too big now.
-    Queue2 = queue:in(Window, Histories),
+    Queue2 = queue:in(State2#state.window, State2#state.history),
     Trimmed = case queue:len(Queue2) > ?BG_DEFAULT_KEPT_SAMPLES of
                   true ->
                       {_Discarded, Rest} = queue:out(Queue2),
@@ -927,7 +936,7 @@ do_sample_history(State=#state{window=Window, history=Histories}) ->
                       Queue2
               end,
     EmptyWindow = orddict:new(),
-    State#state{window=EmptyWindow, history=Trimmed}.
+    State2#state{window=EmptyWindow, history=Trimmed}.
 
 update_stat_window(Resource, Fun, Default, State=#state{window=Window}) ->
     NewWindow = orddict:update(Resource, Fun, Default, Window),
@@ -1061,6 +1070,9 @@ enqueue_request(Resource, Type, Pid, Meta, From, Timeout, State) ->
     %% Put new queue back in state
     update_blocked_queue(Resource, NewQueue, State2).
 
+all_resource_info(#state{table_id=TableId}) ->
+    [{Resource, Info} || {{info, Resource}, Info} <- ets:match_object(TableId, {{info, '_'},'_'})].
+
 all_registered_resources(Type, #state{table_id=TableId}) ->
     [Resource || {{info, Resource}, Info} <- ets:match_object(TableId, {{info, '_'},'_'}),
                  ?resource_type(Info) == Type].
@@ -1146,14 +1158,12 @@ default_given(Token, Type, State) ->
     ?BG_DEFAULT_STAT_HIST#bg_stat_hist{type=Type, given=1, limit=Limit}.
 
 increment_stat_limit(_Resource, undefined, State) ->
-%%    ?debugMsg("increment limit undefined"),
     State;
 increment_stat_limit(Resource, Limit, State) ->
     {Type, Count} = case Limit of
                         {_Period, C} -> {token, C};
                         N -> {lock, N}
                     end,
-%%    ?debugFmt("increment limit for ~p/~p to ~p~n", [Resource, Type, Limit]),
     update_stat_window(Resource,
                        fun(Stat) -> Stat#bg_stat_hist{limit=Count} end,
                        ?BG_DEFAULT_STAT_HIST#bg_stat_hist{type=Type, limit=Count},
@@ -1198,7 +1208,6 @@ do_hist(End, Resource, Offset, Count, #state{history=HistQueue}) ->
                        tail -> QLen - Offset + 1
                    end),
     Last = min(QLen, max(First + Count - 1, 1)),
-%%    ?debugFmt("do_hist(~p,~p,~p): queue = ~p~n", [Resource, First, Last, HistQueue]),
     H = case segment_queue(First, Last, HistQueue) of
             empty -> [];
             {ok, Hist } -> 

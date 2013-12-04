@@ -93,8 +93,7 @@ set_concurrency_limit(Type, Limit, false) ->
 
 %% @doc state transition for set_concurrency_limit command
 set_concurrency_limit_next(S=#state{limits=Limits}, _Value, [Type,Limit,_Kill]) ->
-    S2 = update_sample(Type, Limit, 0, 0, S),
-    S2#state{ limits = lists:keystore(Type, 1, Limits, {Type, Limit}) }.
+    S#state{ limits = lists:keystore(Type, 1, Limits, {Type, Limit}) }.
 
 %% @doc set_concurrency_limit_post - Postcondition for set_concurrency_limit
 set_concurrency_limit_post(S, [Type,_Limit,_Kill], Res) ->
@@ -501,9 +500,7 @@ head_next(S, _Value, _Args) ->
 
 %% @doc head command
 head(Resource, Offset, NumSamples) ->
-    _R = riak_core_bg_manager:head(Resource, Offset, NumSamples),
-%%    ?debugFmt("Head: ~p~n", [_R]),
-    _R.
+    riak_core_bg_manager:head(Resource, Offset, NumSamples).
 
 %% @doc ps postcondition
 head_post(#state{history=History}, [Resource, Offset, NumSamples], Result) ->
@@ -514,6 +511,36 @@ head_post(#state{history=History}, [Resource, Offset, NumSamples], Result) ->
           || Samples <- Keep, Samples =/= []],
     H3 = lists:filter(fun(S) -> S =/= [] end, H2),
     eq(length(Result), length(H3)).
+
+%% ------ Grouped operator: tail query
+%% @doc tail arguments generator
+tail_args(_S) ->
+    %% [Resource, Offset, NumSamples]
+    [oneof([all, lock_type(), token_type()]), 0, choose(0,5)].
+
+%% @doc ps precondition
+tail_pre(S) ->
+    is_alive(S).
+
+%% @doc ps next state function
+tail_next(S, _Value, _Args) ->
+    S.
+
+%% @doc tail command
+tail(Resource, Offset, NumSamples) ->
+    riak_core_bg_manager:tail(Resource, Offset, NumSamples).
+
+%% @doc ps postcondition
+tail_post(#state{history=History}, [Resource, Offset, NumSamples], Result) ->
+    HistLen = length(History),
+    Start = HistLen - Offset + 1,
+    Len = min(NumSamples, HistLen - Offset),
+    Keep = lists:sublist(History, Start, Len),
+    H2 = [lists:filter(fun({R,_L,_R,_G}) -> Resource == all orelse R == Resource end, Samples)
+          || Samples <- Keep, Samples =/= []],
+    H3 = lists:filter(fun(S) -> S =/= [] end, H2),
+    eq(length(Result), length(H3)).
+
 
 %% -- Generators
 lock_type() ->
@@ -543,8 +570,10 @@ weight(_S, set_token_rate) -> 3;
 weight(_S, token_rate) -> 0;
 weight(_S, get_token) -> 20;
 weight(_S, refill_tokens) -> 10;
+weight(_S, sample_history) -> 5;
 weight(_S, ps) -> 3;
 weight(_S, head) -> 3;
+weight(_S, tail) -> 3;
 weight(_S, crash) -> 3;
 weight(_S, revive) -> 1;
 weight(_S, _Cmd) -> 1.
@@ -582,11 +611,15 @@ clear_history(State) ->
     State#state{history=[], samples=[]}.
 
 %% @doc Snapshot current history samples and reset samples to empty
-do_sample_history(State=#state{history=History, samples=Samples}) ->
-%%    ?debugFmt("sample_history: samples = ~p~n", [Samples]),
-    NewHistory = lists:reverse([Samples | History]),
-%%    ?debugFmt("sample_history: samples = ~p history = ~p~n", [Samples,NewHistory]),
-    State#state{history=NewHistory, samples=[]}.
+do_sample_history(State=#state{limits=Limits, counts=Counts}) ->
+    %% First, grab updates for all resources
+    S2 = lists:foldl(fun({Resource, Limit}, S) ->
+                             update_sample(Resource, Limit, 0, 0, S)
+                     end,
+                     State,
+                     Limits++Counts),
+    NewHistory = lists:reverse([S2#state.samples | S2#state.history]),
+    S2#state{history=NewHistory, samples=[]}.
 
 %% @doc Update the current samples with supplied increments.
 %% Limit is overwritten unless undefined. It's not expected to change too often,
@@ -625,7 +658,6 @@ max_send_after() ->
 
 running_procs(#state{procs=Procs}) ->
     [Pid || {Pid, running} <- Procs].
-
 
 all_locks(#state{locks=Locks}) ->
     lists:flatten([ByType || {_Type, ByType} <- Locks]).
