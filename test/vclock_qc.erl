@@ -13,10 +13,18 @@
 
 -record(state, {vclocks = []}).
 
+-define(TEST_TIME, 20).
+
 eqc_test_() ->
     {timeout,
      60,
-     ?_assert(quickcheck(eqc:testing_time(20, more_commands(10,?QC_OUT(prop_vclock())))))}.
+     ?_assert(quickcheck(eqc:testing_time(?TEST_TIME, more_commands(10,?QC_OUT(prop_vclock())))))}.
+
+test() ->
+    quickcheck(eqc:testing_time(?TEST_TIME, more_commands(10, prop_vclock()))).
+
+test(Time) ->
+    quickcheck(eqc:testing_time(Time, more_commands(10, prop_vclock()))).
 
 
 %% Initialize the state
