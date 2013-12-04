@@ -75,7 +75,7 @@
 -define(BG_DEFAULT_STAT_HIST,
         #bg_stat_hist{type=undefined, limit=undefined, refills=0, given=0, blocked=0}).
 
--define(BG_DEFAULT_WINDOW_INTERVAL, 60).    %% in seconds
+-define(BG_DEFAULT_WINDOW_INTERVAL, 60*1000).    %% in milliseconds
 -define(BG_DEFAULT_OUTPUT_SAMPLES, 20).     %% default number of sample windows displayed
 -define(BG_DEFAULT_KEPT_SAMPLES, 10000).    %% number of history samples to keep
 -define(BG_ETS_TABLE, background_mgr_table).%% name of private lock/token manager ETS table

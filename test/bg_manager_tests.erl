@@ -261,10 +261,11 @@ bg_mgr_test_() ->
                           ?assertEqual([E2,E3], ?BG_MGR:tail(all,2,2)),  %% tail(offset,count)
                           ?assertEqual([E2], ?BG_MGR:tail(all,2,1)),
                           %% test range guards on head/tail
-                          ?assertEqual([E1,E2,E3], ?BG_MGR:head(all,0)),
-                          ?assertEqual([E1,E2,E3], ?BG_MGR:head(all,-1)),
-                          ?assertEqual([E3], ?BG_MGR:tail(all,0)),
-                          ?assertEqual([E3], ?BG_MGR:tail(all,-1)),
+                          %% num-samples of zero or less should be empty result
+                          ?assertEqual([], ?BG_MGR:head(all,0)),
+                          ?assertEqual([], ?BG_MGR:head(all,-1)),
+                          ?assertEqual([], ?BG_MGR:tail(all,0)),
+                          ?assertEqual([], ?BG_MGR:tail(all,-1)),
 
                           %% calling head on a specific token yields a list of lists,
                           %% but each "of lists" has only one thing in it.
@@ -398,7 +399,7 @@ verify_token_rates() ->
 %% doesn't take down our test too.
 start_bg_mgr() ->
     %% setup with history window to 1 seconds
-    ?BG_MGR:start(1),
+    ?BG_MGR:start(1*1000),
     timer:sleep(100).
 
 kill_bg_mgr() ->

@@ -12,6 +12,7 @@
 
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
+-include_lib("eunit/include/eunit.hrl").
 
 -compile(export_all).
 
@@ -31,8 +32,11 @@
           %% and their state
           locks  :: [{bg_eqc_type(), [{reference(), pid(), [], held | released}]}],
           %% number of tokens taken by type
-          tokens :: [{bg_eqc_type(), non_neg_integer()}]
-
+          tokens :: [{bg_eqc_type(), non_neg_integer()}],
+          %% current history samples accumulator: [{resource, limit, refills, given}]
+          samples :: [{bg_eqc_type(), non_neg_integer(), non_neg_integer(), non_neg_integer()}],
+          %% snapshot of samples on window interval
+          history :: [[{bg_eqc_type(), non_neg_integer(), non_neg_integer(), non_neg_integer()}]]
          }).
 
 run_eqc() ->
@@ -68,7 +72,9 @@ initial_state() ->
        limits = [],
        counts = [],
        locks  = [],
-       tokens = []
+       tokens = [],
+       samples = [],
+       history = []
       }.
 
 %% ------ Grouped operator: set_concurrency_limit
@@ -87,7 +93,8 @@ set_concurrency_limit(Type, Limit, false) ->
 
 %% @doc state transition for set_concurrency_limit command
 set_concurrency_limit_next(S=#state{limits=Limits}, _Value, [Type,Limit,_Kill]) ->
-    S#state{ limits = lists:keystore(Type, 1, Limits, {Type, Limit}) }.
+    S2 = update_sample(Type, Limit, 0, 0, S),
+    S2#state{ limits = lists:keystore(Type, 1, Limits, {Type, Limit}) }.
 
 %% @doc set_concurrency_limit_post - Postcondition for set_concurrency_limit
 set_concurrency_limit_post(S, [Type,_Limit,_Kill], Res) ->
@@ -152,7 +159,7 @@ get_lock_pre(S) ->
 get_lock_pre(S, [Type, _Pid, _Meta]) ->
     %% must call set_concurrency_limit at least once
     %% TODO: we can probably remove and test this restriction instead
-    is_integer(limit(Type, undefined, S)).
+    is_integer(limit(Type, unregistered, S)).
 
 get_lock(Type, Pid, Meta) ->
     case riak_core_bg_manager:get_lock(Type, Pid, Meta) of
@@ -272,8 +279,11 @@ set_token_rate_pre(S) ->
     is_alive(S).
 
 %% @doc set_token_rate state transition
+%% Note that set_token_rate takes a rate, which is {Period, Count},
+%% but this test generates it's own refill messages, so rate is not modeled.
 set_token_rate_next(S=#state{counts=Counts}, _Value, [Type, Count]) ->
-    S#state{ counts = lists:keystore(Type, 1, Counts, {Type, Count}) }.
+    S2 = update_sample(Type, Count, 0, 0, S),
+    S2#state{ counts = lists:keystore(Type, 1, Counts, {Type, Count}) }.
 
 %% @doc set_token_rate command
 set_token_rate(Type, Count) ->
@@ -286,7 +296,7 @@ set_token_rate(Type, Count) ->
 set_token_rate_post(S, [Type, _Count], Res) ->
     %% check returned value is equal to value we have in state prior to this call
     %% since returned value is promised to be previous one that was set
-    eq(Res, mk_token_rate(max_num_tokens(Type, 0, S))).
+    eq(Res, mk_token_rate(max_num_tokens(Type, undefined, S))).
 
 %% ------ Grouped operator: token_rate
 %% @doc token_rate_command
@@ -320,7 +330,7 @@ get_token_pre(S, [Type, _Pid]) ->
 get_token_pre(S, [Type]) ->
     %% must call set_token_rate at least once
     %% TODO: we can probably remove and test this restriction instead
-    is_integer(max_num_tokens(Type, undefined, S)) andalso is_alive(S).
+    is_integer(max_num_tokens(Type, unregistered, S)) andalso is_alive(S).
 
 %% @doc get_token state transition
 get_token_next(S, Value, [Type, _Pid]) ->
@@ -329,7 +339,7 @@ get_token_next(S, _Value, [Type]) ->
     CurCount = num_tokens(Type, S),
     %% NOTE: this assumes the precondition requires we call set_token_rate at least once
     %% in case we don't we treat the max as 0
-    Max = max_num_tokens(Type, 0, S),
+    Max = max_num_tokens(Type, unregistered, S),
     case CurCount < Max of
         true -> increment_token_count(Type, S);
         false -> S
@@ -348,7 +358,7 @@ get_token_post(S, [Type], max_concurrency) ->
     CurCount = num_tokens(Type, S),
     %% NOTE: this assumes the precondition requires we call set_token_rate at least once
     %% in case we don't we treat the max as 0
-    Max = max_num_tokens(Type, 0, S),
+    Max = max_num_tokens(Type, unregistered, S),
     case CurCount >= Max of
         true -> true;
         false ->
@@ -359,7 +369,7 @@ get_token_post(S, [Type], ok) ->
     CurCount = num_tokens(Type, S),
     %% NOTE: this assumes the precondition requires we call set_token_rate at least once
     %% in case we don't we treat the max as 0
-    Max = max_num_tokens(Type, 0, S),
+    Max = max_num_tokens(Type, unregistered, S),
     case CurCount < Max of
         true -> true;
         false ->
@@ -374,7 +384,7 @@ refill_tokens_args(_S) ->
 %% @doc refill_tokens precondition
 refill_tokens_pre(S, [Type]) ->
     %% only refill tokens if we have registered type (called set_token_rate at least once)
-    is_integer(max_num_tokens(Type, undefined, S)) andalso is_alive(S).
+    is_integer(max_num_tokens(Type, unregistered, S)) andalso is_alive(S).
 
 %% @doc refill_tokens state transition
 refill_tokens_next(S, _Value, [Type]) ->
@@ -385,6 +395,23 @@ refill_tokens(Type) ->
     %% TODO: find way to get rid of this timer sleep
     timer:sleep(100).
 
+%% ------ Grouped operator: sample_history
+%% @doc sample_history args generator
+sample_history_args(_S) ->
+    [].
+
+%% @doc sample_history precondition
+sample_history_pre(S, []) ->
+    is_alive(S).
+
+%% @doc sample_history next state function
+sample_history_next(S, _Value, []) ->
+    do_sample_history(S).
+
+%% @doc sample_history command
+sample_history() ->
+    riak_core_bg_manager ! sample_history,
+    timer:sleep(100).
 
 %% ------ Grouped operator: crash
 %% @doc crash args generator
@@ -421,18 +448,72 @@ revive_pre(#state{alive=Alive}) ->
 
 %% @doc revive_next - Next state function
 revive_next(S, _Value, _Args) ->
-    S#state{ alive = true }.
+    S2 = S#state{ alive = true },
+    clear_history(S2).
 
 %% @doc revive command
 revive() ->
-    {ok, BgMgr} = riak_core_bg_manager:start_link(),
-    unlink(BgMgr).
+    {ok, _BgMgr} = riak_core_bg_manager:start(window_interval()).
 
 %% @doc revive_post - Postcondition for revive
 revive_post(_S, _Args, _Res) ->
     %% TODO: what to validate here, if anything?
     true.
 
+%% ------ Grouped operator: ps query
+%% @doc ps arguments generator
+ps_args(_S) ->
+    [oneof([all, lock_type(), token_type()])].
+
+%% @doc ps precondition
+ps_pre(S) ->
+    is_alive(S).
+
+%% @doc ps next state function
+ps_next(S, _Value, _Args) ->
+    S.
+
+%% @doc ps command
+ps(Resource) ->
+    riak_core_bg_manager:ps(Resource).
+
+%% @doc ps postcondition
+ps_post(State, [Resource], Result) ->
+    %% only one of these will have non-zero result unless Resource = all
+    NumLocks = length(held_locks(Resource, State)),
+    NumTokens = num_tokens_taken(Resource, State),
+    %% TODO: could validate record entries in addition to correct counts
+    eq(length(Result), NumLocks+NumTokens).
+
+%% ------ Grouped operator: head query
+%% @doc head arguments generator
+head_args(_S) ->
+    %% [Resource, Offset, NumSamples]
+    [oneof([all, lock_type(), token_type()]), 0, choose(0,5)].
+
+%% @doc ps precondition
+head_pre(S) ->
+    is_alive(S).
+
+%% @doc ps next state function
+head_next(S, _Value, _Args) ->
+    S.
+
+%% @doc head command
+head(Resource, Offset, NumSamples) ->
+    _R = riak_core_bg_manager:head(Resource, Offset, NumSamples),
+%%    ?debugFmt("Head: ~p~n", [_R]),
+    _R.
+
+%% @doc ps postcondition
+head_post(#state{history=History}, [Resource, Offset, NumSamples], Result) ->
+    Start = Offset+1,
+    Len = min(NumSamples, length(History) - Offset),
+    Keep = lists:sublist(History, Start, Len),
+    H2 = [lists:filter(fun({R,_L,_R,_G}) -> Resource == all orelse R == Resource end, Samples)
+          || Samples <- Keep, Samples =/= []],
+    H3 = lists:filter(fun(S) -> S =/= [] end, H2),
+    eq(length(Result), length(H3)).
 
 %% -- Generators
 lock_type() ->
@@ -447,18 +528,23 @@ lock_limit() ->
 token_count() ->
     choose(0, 5).
 
+ps_() ->
+    choose(0, 10).
+
 %% @doc weight/2 - Distribution of calls
 weight(_S, set_concurrency_limit) -> 3;
 weight(_S, concurrency_limit) -> 3;
 weight(_S, concurrency_limit_reached) -> 3;
 weight(_S, start_process) -> 3;
-weight(#state{alive=true}, stop_process) -> 5;
-weight(#state{alive=false}, stop_process) -> 50;
+weight(#state{alive=true}, stop_process) -> 3;
+weight(#state{alive=false}, stop_process) -> 3;
 weight(_S, get_lock) -> 20;
 weight(_S, set_token_rate) -> 3;
 weight(_S, token_rate) -> 0;
 weight(_S, get_token) -> 20;
 weight(_S, refill_tokens) -> 10;
+weight(_S, ps) -> 3;
+weight(_S, head) -> 3;
 weight(_S, crash) -> 3;
 weight(_S, revive) -> 1;
 weight(_S, _Cmd) -> 1.
@@ -485,23 +571,67 @@ max_num_tokens(Type, Default, #state{counts=Counts}) ->
         {Type, Limit} -> Limit
     end.
 
+num_tokens_taken(all, #state{tokens=Tokens}) ->
+    lists:foldl(fun({_Resource, Count}, Sum) -> Count+Sum end, 0, Tokens);
+num_tokens_taken(Resource, #state{tokens=Tokens}) ->
+    lists:foldl(fun(Count, Sum) -> Count+Sum end,
+                0,
+                [Count || {R, Count} <- Tokens, R == Resource]).
+
+clear_history(State) ->
+    State#state{history=[], samples=[]}.
+
+%% @doc Snapshot current history samples and reset samples to empty
+do_sample_history(State=#state{history=History, samples=Samples}) ->
+%%    ?debugFmt("sample_history: samples = ~p~n", [Samples]),
+    NewHistory = lists:reverse([Samples | History]),
+%%    ?debugFmt("sample_history: samples = ~p history = ~p~n", [Samples,NewHistory]),
+    State#state{history=NewHistory, samples=[]}.
+
+%% @doc Update the current samples with supplied increments.
+%% Limit is overwritten unless undefined. It's not expected to change too often,
+%% hopefully less often than the sampling window (Niquist!).
+%% This should probably be called approximately every time the API is called.
+update_sample(Resource, Limit, Refill, Given, State=#state{samples=Samples}) ->
+    %% find sample counts for specified resource and increment per arguments.
+    {_R, Limit1, Refills1, Given1} = case lists:keyfind(Resource, 1, Samples) of
+                                      false -> {Resource, 0, 0, 0};
+                                      S -> S
+                                  end,
+    Sample = {Resource, defined_or_default(Limit, Limit1), Refill+Refills1,
+              Given+Given1},
+    Samples2 = lists:keystore(Resource, 1, Samples, Sample),
+    State#state{samples=Samples2}.
+
+defined_or_default(undefined, Default) -> Default;
+defined_or_default(Value, _Default) -> Value.
+
 is_alive(#state{alive=Alive}) ->
     Alive.
 
 mk_token_rate({unregistered, _}=Unreg) ->
     Unreg;
-mk_token_rate(0) ->
+mk_token_rate(undefined) ->
     undefined;
 mk_token_rate(Count) ->
-    %% 4294967295 is erlang:send_after max which is used for token refilling
-    {4294967295, Count}.
+    %% erlang:send_after max is used so that we can trigger token refilling from EQC test
+    {max_send_after(), Count}.
+
+window_interval() ->
+    max_send_after().
+
+max_send_after() ->
+    4294967295.
 
 running_procs(#state{procs=Procs}) ->
     [Pid || {Pid, running} <- Procs].
 
+
 all_locks(#state{locks=Locks}) ->
     lists:flatten([ByType || {_Type, ByType} <- Locks]).
 
+all_locks(all, State) ->
+    all_locks(State);
 all_locks(Type, #state{locks=Locks}) ->
     case lists:keyfind(Type, 1, Locks) of
         false -> [];
@@ -516,7 +646,8 @@ update_locks(Type, TypeLocks, State=#state{locks=Locks}) ->
 
 add_held_lock(Type, Ref, Pid, Meta, State) ->
     All = all_locks(Type, State),
-    update_locks(Type, [{Ref, Pid, Meta, held} | All], State).
+    S2 = update_sample(Type, undefined, 0, 1, State),
+    update_locks(Type, [{Ref, Pid, Meta, held} | All], S2).
 
 release_locks(Pid, State=#state{locks=Locks}) ->
     lists:foldl(fun({Type, ByType}, StateAcc) ->
@@ -532,11 +663,12 @@ mark_locks_released(Pid, Locks) ->
 
 increment_token_count(Type, State=#state{tokens=Tokens}) ->
     CurCount = num_tokens(Type, State),
-    State#state{ tokens = lists:keystore(Type, 1, Tokens, {Type, CurCount + 1}) }.
+    S2 = update_sample(Type, undefined, 0, 1, State),
+    S2#state{ tokens = lists:keystore(Type, 1, Tokens, {Type, CurCount + 1}) }.
 
 reset_token_count(Type, State=#state{tokens=Tokens}) ->
-    State#state{ tokens = lists:keystore(Type, 1, Tokens, {Type, 0}) }.
-
+    S2 = update_sample(Type, undefined, 1, 0, State),
+    S2#state{ tokens = lists:keystore(Type, 1, Tokens, {Type, 0}) }.
 
 stop_pid(Other) when not is_pid(Other) ->
     ok;
@@ -572,10 +704,7 @@ prop_bgmgr() ->
                              stop_pid(whereis(riak_core_bg_manager)),
                              {ok, _TableMgr} = riak_core_table_manager:start_link([{background_mgr_table,
                                                                                    [protected, bag, named_table]}]),
-                             {ok, BgMgr} = riak_core_bg_manager:start_link(),
-                             %% unlink bgmgr so we can crash it, unfortunately we won't surface non-intentional
-                             %% crashes as well :(
-                             unlink(BgMgr),
+                             {ok, _BgMgr} = riak_core_bg_manager:start(window_interval()),
                              {H, S, Res} = run_commands(?MODULE,Cmds),
                              Table = ets:tab2list(background_mgr_table),
                              Monitors = bg_manager_monitors(),
@@ -594,6 +723,8 @@ prop_bgmgr() ->
                                     io:format("locks = ~p~n", [S#state.locks]),
                                     io:format("counts = ~p~n", [S#state.counts]),
                                     io:format("tokens = ~p~n", [S#state.tokens]),
+                                    io:format("samples = ~p~n", [S#state.samples]),
+                                    io:format("history = ~p~n", [S#state.history]),
                                     io:format("---------------~n"),
                                     io:format("~n~nbackground_mgr_table: ~n"),
                                     io:format("---------------~n"),
@@ -619,10 +750,7 @@ prop_bgmgr_parallel() ->
                              stop_pid(whereis(riak_core_bg_manager)),
                              {ok, TableMgr} = riak_core_table_manager:start_link([{background_mgr_table,
                                                                                    [protected, bag, named_table]}]),
-                             {ok, BgMgr} = riak_core_bg_manager:start_link(),
-                             %% unlink bgmgr so we can crash it, unfortunately we won't surface non-intentional
-                             %% crashes as well :(
-                             unlink(BgMgr),
+                             {ok, BgMgr} = riak_core_bg_manager:start(window_interval()),
                              {Seq, Par, Res} = run_parallel_commands(?MODULE,Cmds),
                              Table = ets:tab2list(background_mgr_table),
                              Monitors = bg_manager_monitors(),

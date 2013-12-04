@@ -464,7 +464,7 @@ ps(Arg) ->
          %% stats
          window  :: orddict:orddict(),    %% bg_resource() -> bg_stat_hist()
          history :: queue(),              %% bg_resource() -> queue of bg_stat_hist()
-         window_interval :: bg_period(),  %% history window size in seconds
+         window_interval :: bg_period(),  %% history window size in milliseconds
          window_tref :: reference()       %% reference to history window sampler timer
         }).
 
@@ -806,10 +806,11 @@ update_resource_enabled(Resource, Value, Default, State) ->
                      State).
 
 update_limit(Resource, Limit, Default, State) ->
-    update_resource_info(Resource,
-                         fun(Info) -> Info#resource_info{limit=Limit} end,
-                         Default#resource_info{limit=Limit},
-                         State).
+    State2 = update_resource_info(Resource,
+                                  fun(Info) -> Info#resource_info{limit=Limit} end,
+                                  Default#resource_info{limit=Limit},
+                                  State),
+    increment_stat_limit(Resource, Limit, State2).
 
 update_resource_info(Resource, Fun, Default, State=#state{table_id=TableId}) ->
     Key = {info, Resource},
@@ -911,7 +912,7 @@ schedule_refill_tokens(Token, State) ->
 
 %% Schedule a timer event to snapshot the current history
 schedule_sample_history(State=#state{window_interval=Interval}) ->
-    TRef = erlang:send_after(Interval*1000, self(), sample_history),
+    TRef = erlang:send_after(Interval, self(), sample_history),
     State#state{window_tref=TRef}.
 
 do_sample_history(State=#state{window=Window, history=Histories}) ->
@@ -928,8 +929,8 @@ do_sample_history(State=#state{window=Window, history=Histories}) ->
     EmptyWindow = orddict:new(),
     State#state{window=EmptyWindow, history=Trimmed}.
 
-update_stat_window(TokenType, Fun, Default, State=#state{window=Window}) ->
-    NewWindow = orddict:update(TokenType, Fun, Default, Window),
+update_stat_window(Resource, Fun, Default, State=#state{window=Window}) ->
+    NewWindow = orddict:update(Resource, Fun, Default, Window),
     State#state{window=NewWindow}.
 
 resources_given(Resource, #state{table_id=TableId}) ->
@@ -1144,6 +1145,20 @@ default_given(Token, Type, State) ->
     Limit = limit(resource_info(Token, State)),
     ?BG_DEFAULT_STAT_HIST#bg_stat_hist{type=Type, given=1, limit=Limit}.
 
+increment_stat_limit(_Resource, undefined, State) ->
+%%    ?debugMsg("increment limit undefined"),
+    State;
+increment_stat_limit(Resource, Limit, State) ->
+    {Type, Count} = case Limit of
+                        {_Period, C} -> {token, C};
+                        N -> {lock, N}
+                    end,
+%%    ?debugFmt("increment limit for ~p/~p to ~p~n", [Resource, Type, Limit]),
+    update_stat_window(Resource,
+                       fun(Stat) -> Stat#bg_stat_hist{limit=Count} end,
+                       ?BG_DEFAULT_STAT_HIST#bg_stat_hist{type=Type, limit=Count},
+                       State).
+
 increment_stat_refills(Token, State) ->
     update_stat_window(Token,
                        fun(Stat) -> Stat#bg_stat_hist{refills=1+Stat#bg_stat_hist.refills} end,
@@ -1170,31 +1185,37 @@ do_clear_history(State=#state{window_tref=TRef}) ->
     schedule_sample_history(State2).
 
 %% Return stats history from head or tail of stats history queue
-do_hist(_End, _TokenType, _Offset, _Count, #state{table_id=undefined}) ->
+do_hist(_End, _Resource, _Offset, _Count, #state{table_id=undefined}) ->
     [];
-do_hist(End, TokenType, Offset, Count, State) when Offset =< 0 ->
-    do_hist(End, TokenType, 1, Count, State);
-do_hist(End, TokenType, Offset, Count, State) when Count =< 0 ->
-    do_hist(End, TokenType, Offset, ?BG_DEFAULT_OUTPUT_SAMPLES, State);
-do_hist(End, TokenType, Offset, Count, #state{history=HistQueue}) ->
+do_hist(End, Resource, Offset, Count, State) when Offset < 0 ->
+    do_hist(End, Resource, 0, Count, State);
+do_hist(_End, _Resource, _Offset, Count, _State) when Count =< 0 ->
+    [];
+do_hist(End, Resource, Offset, Count, #state{history=HistQueue}) ->
     QLen = queue:len(HistQueue),
     First = max(1, case End of
-                       head -> Offset;
+                       head -> min(Offset+1, QLen);
                        tail -> QLen - Offset + 1
                    end),
     Last = min(QLen, max(First + Count - 1, 1)),
-    case segment_queue(First, Last, HistQueue) of
-        empty -> [];
-        {ok, Hist } -> 
-            case TokenType of
-                all ->
-                    StatsDictList = queue:to_list(Hist),
-                    [orddict:to_list(Stat) || Stat <- StatsDictList];
-                _T  ->
-                    [[{TokenType, stat_window(TokenType, StatsDict)}] || StatsDict <- queue:to_list(Hist)]
-            end
-    end.
+%%    ?debugFmt("do_hist(~p,~p,~p): queue = ~p~n", [Resource, First, Last, HistQueue]),
+    H = case segment_queue(First, Last, HistQueue) of
+            empty -> [];
+            {ok, Hist } -> 
+                case Resource of
+                    all ->
+                        StatsDictList = queue:to_list(Hist),
+                        [orddict:to_list(Stat) || Stat <- StatsDictList];
+                    _T  ->
+                        [[{Resource, stat_window(Resource, StatsDict)}]
+                         || StatsDict <- queue:to_list(Hist), stat_window(Resource, StatsDict) =/= undefined]
+                end
+        end,
+    %% Remove empty windows
+    lists:filter(fun(S) -> S =/= [] end, H).
 
+segment_queue(First, Last, _Q) when Last < First ->
+    empty;
 segment_queue(First, Last, Queue) ->
     QLen = queue:len(Queue),
     case QLen >= Last andalso QLen > 0 of
@@ -1222,6 +1243,6 @@ segment_queue(First, Last, Queue) ->
 -spec stat_window(bg_resource(), orddict:orddict()) -> bg_stat_hist().
 stat_window(Resource, Window) ->
     case orddict:find(Resource, Window) of
-        error -> ?BG_DEFAULT_STAT_HIST;
+        error -> undefined;
         {ok, StatHist} -> StatHist
     end.
