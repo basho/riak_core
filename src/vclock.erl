@@ -38,6 +38,7 @@
          merge/1,
          get_counter/2,
          get_timestamp/2,
+         get_entry/2,
          increment/2,
          increment/3,
          all_nodes/1,
@@ -49,9 +50,11 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--export_type([vclock/0, timestamp/0, vclock_node/0]).
+-export_type([vclock/0, timestamp/0, vclock_node/0, dot/0]).
 
 -opaque vclock() :: [vc_entry()].
+-opaque dot() :: vc_entry().
+
 % The timestamp is present but not used, in case a client wishes to inspect it.
 -type vc_entry() :: {vclock_node(), {counter(), timestamp()}}.
 
@@ -129,6 +132,14 @@ get_timestamp(Node, VClock) ->
     case lists:keyfind(Node, 1, VClock) of
 	{_, {_Ctr, TS}} -> TS;
 	false           -> undefined
+    end.
+
+% @doc Get the {counter, timestamp} entry value in a VClock set from Node.
+-spec get_entry(Node :: vclock_node(), VClock :: vclock()) -> dot() | undefined.
+get_entry(Node, VClock) ->
+    case lists:keyfind(Node, 1, VClock) of
+	false -> undefined;
+        Entry -> Entry
     end.
 
 % @doc Increment VClock at Node.
