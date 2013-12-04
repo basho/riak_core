@@ -31,9 +31,19 @@
 
 -module(vclock).
 
--export([fresh/0,descends/2,merge/1,get_counter/2,get_timestamp/2,
-	increment/2,increment/3,all_nodes/1,equal/2,prune/3,timestamp/0]).
--export([fresh/2]).
+-export([fresh/0,
+         fresh/2,
+         descends/2,
+         dominates/2,
+         merge/1,
+         get_counter/2,
+         get_timestamp/2,
+         increment/2,
+         increment/3,
+         all_nodes/1,
+         equal/2,
+         prune/3,
+         timestamp/0]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -72,6 +82,10 @@ descends(Va, Vb) ->
         {_, {CtrA, _TSA}} ->
             (CtrA >= CtrB) andalso descends(Va,RestB)
         end.
+
+-spec dominates(vclock(), vclock()) -> boolean().
+dominates(A, B) ->
+    descends(A, B) andalso not equal(A, B).
 
 % @doc Combine all VClocks in the input list into their least possible
 %      common descendant.
