@@ -49,7 +49,7 @@ start_link() ->
 init([]) ->
     DistMonEnabled = app_helper:get_env(riak_core, enable_dist_mon,
                                         true),
-    {ok, Root} = application:get_env(riak_core, platform_data_dir),
+    Root = application:get_env(riak_core, platform_data_dir),
 
     EnsembleSup = {riak_ensemble_sup,
                    {riak_ensemble_sup, start_link, [Root]},
