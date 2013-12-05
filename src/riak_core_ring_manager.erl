@@ -466,7 +466,7 @@ code_change(_OldVsn, State, _Extra) ->
 ring_dir() ->
     case app_helper:get_env(riak_core, ring_state_dir) of
         undefined ->
-            app_helper:get_env(riak_core, platform_data_dir, "data");
+            filename:join(app_helper:get_env(riak_core, platform_data_dir, "data"), "ring");
         Dir ->
             Dir
     end.
