@@ -25,8 +25,36 @@
 %% API
 -export([authenticate/3, add_user/2, add_source/4, add_grant/3,
          add_revoke/3, check_permission/2, check_permissions/2,
-         get_username/1, is_enabled/0]).
+         get_username/1, is_enabled/0,
+         get_ciphers/0, set_ciphers/1, print_ciphers/0]).
 %% TODO add rm_source, API to deactivate/remove users
+
+
+-define(DEFAULT_CIPHER_LIST,
+"ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256"
+":ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384"
+":DHE-RSA-AES128-GCM-SHA256:DHE-DSS-AES128-GCM-SHA256"
+":DHE-DSS-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384"
+":ADH-AES256-GCM-SHA384:ADH-AES128-GCM-SHA256"
+":ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA256"
+":ECDHE-RSA-AES128-SHA:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384"
+":ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA:ECDHE-ECDSA-AES256-SHA"
+":DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-DSS-AES128-SHA256"
+":DHE-RSA-AES256-SHA256:DHE-DSS-AES256-SHA:DHE-RSA-AES256-SHA"
+":AES128-GCM-SHA256:AES256-GCM-SHA384:ECDHE-RSA-RC4-SHA:ECDHE-ECDSA-RC4-SHA"
+":SRP-DSS-AES-128-CBC-SHA:SRP-RSA-AES-128-CBC-SHA:DHE-DSS-AES128-SHA"
+":AECDH-AES128-SHA:SRP-AES-128-CBC-SHA:ADH-AES128-SHA256:ADH-AES128-SHA"
+":ECDH-RSA-AES128-GCM-SHA256:ECDH-ECDSA-AES128-GCM-SHA256"
+":ECDH-RSA-AES128-SHA256:ECDH-ECDSA-AES128-SHA256:ECDH-RSA-AES128-SHA"
+":ECDH-ECDSA-AES128-SHA:AES128-SHA256:AES128-SHA:SRP-DSS-AES-256-CBC-SHA"
+":SRP-RSA-AES-256-CBC-SHA:DHE-DSS-AES256-SHA256:AECDH-AES256-SHA"
+":SRP-AES-256-CBC-SHA:ADH-AES256-SHA256:ADH-AES256-SHA"
+":ECDH-RSA-AES256-GCM-SHA384:ECDH-ECDSA-AES256-GCM-SHA384"
+":ECDH-RSA-AES256-SHA384:ECDH-ECDSA-AES256-SHA384:ECDH-RSA-AES256-SHA"
+":ECDH-ECDSA-AES256-SHA:AES256-SHA256:AES256-SHA:RC4-SHA"
+":DHE-RSA-CAMELLIA256-SHA:DHE-DSS-CAMELLIA256-SHA:ADH-CAMELLIA256-SHA"
+":CAMELLIA256-SHA:DHE-RSA-CAMELLIA128-SHA:DHE-DSS-CAMELLIA128-SHA"
+":ADH-CAMELLIA128-SHA:CAMELLIA128-SHA").
 
 -record(context,
         {username,
@@ -407,6 +435,39 @@ is_enabled() ->
     %% TODO this should be some kind of capability or cluster-wide config
     app_helper:get_env(riak_core, security, false).
 
+get_ciphers() ->
+    case riak_core_metadata:get({<<"security">>, <<"config">>}, ciphers) of
+        undefined ->
+            ?DEFAULT_CIPHER_LIST;
+        Result ->
+            Result
+    end.
+
+print_ciphers() ->
+    Ciphers = get_ciphers(),
+    {Good, Bad} = riak_core_ssl_util:parse_ciphers(Ciphers),
+    io:format("Configured ciphers~n~n~s~n~n", [Ciphers]),
+    io:format("Valid ciphers(~b)~n~n~s~n~n",
+              [length(Good), riak_core_ssl_util:print_ciphers(Good)]),
+    case Bad of
+        [] ->
+            ok;
+        _ ->
+            io:format("Unknown/Unsupported ciphers(~b)~n~n~s~n~n",
+                      [length(Bad), string:join(Bad, ":")])
+    end.
+
+set_ciphers(CipherList) ->
+    case riak_core_ssl_util:parse_ciphers(CipherList) of
+        {[], _} ->
+            %% no valid ciphers
+            io:format("No known or supported ciphers in list."),
+            error;
+        _ ->
+            riak_core_metadata:put({<<"security">>, <<"config">>}, ciphers,
+                                   CipherList),
+            ok
+    end.
 
 %% ============
 %% INTERNAL

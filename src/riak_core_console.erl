@@ -24,7 +24,7 @@
          stage_force_replace/1, print_staged/1, commit_staged/1,
          clear_staged/1, transfer_limit/1, pending_claim_percentage/2,
          transfers/1, add_user/1, add_source/1, grant/1, revoke/1,
-         print_users/1, print_user/1, print_sources/1]).
+         print_users/1, print_user/1, print_sources/1, ciphers/1]).
 
 %% @doc Return for a given ring and node, percentage currently owned and
 %% anticipated after the transitions have been completed.
@@ -942,6 +942,18 @@ print_user([User]) ->
 
 print_sources([]) ->
     riak_core_security:print_sources().
+
+ciphers([]) ->
+    riak_core_security:print_ciphers();
+
+ciphers([CipherList]) ->
+    case riak_core_security:set_ciphers(CipherList) of
+        ok ->
+            riak_core_security:print_ciphers(),
+            ok;
+        error ->
+            error
+    end.
 
 parse_options(Options) ->
     parse_options(Options, []).
