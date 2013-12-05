@@ -224,7 +224,8 @@ force_update() ->
     ok.
 
 do_write_ringfile(Ring) ->
-    case app_helper:get_env(riak_core, platform_data_dir) of
+    case ring_dir() of
+        undefined ->
         "<nostore>" -> nop;
         Dir ->
             {{Year, Month, Day},{Hour, Minute, Second}} = calendar:universal_time(),
@@ -248,7 +249,7 @@ do_write_ringfile(Ring, FN) ->
 
 %% @spec find_latest_ringfile() -> string()
 find_latest_ringfile() ->
-    Dir = app_helper:get_env(riak_core, ring_state_dir),
+    Dir = ring_dir(),
     case file:list_dir(Dir) of
         {ok, Filenames} ->
             Cluster = app_helper:get_env(riak_core, cluster_name),
@@ -266,6 +267,14 @@ find_latest_ringfile() ->
             {error, Reason}
     end.
 
+ring_dir() ->
+    case app_helper:get_env(riak_core, ring_state_dir) of
+        Dir ->
+            Dir;
+        undefined ->
+            app_helper:get_env(riak_core, platform_data_dir, "data")
+    end.
+
 %% @spec read_ringfile(string()) -> riak_core_ring:riak_core_ring() | {error, any()}
 read_ringfile(RingFile) ->
     case file:read_file(RingFile) of
@@ -276,7 +285,7 @@ read_ringfile(RingFile) ->
 
 %% @spec prune_ringfiles() -> ok | {error, Reason}
 prune_ringfiles() ->
-    case app_helper:get_env(riak_core, ring_state_dir) of
+    case ring_dir() of
         "<nostore>" -> ok;
         Dir ->
             Cluster = app_helper:get_env(riak_core, cluster_name),
@@ -462,6 +471,14 @@ code_change(_OldVsn, State, _Extra) ->
 %% ===================================================================
 %% Internal functions
 %% ===================================================================
+
+ring_dir() ->
+    case app_helper:get_env(riak_core, ring_state_dir) of
+        Dir ->
+            Dir;
+        undefined ->
+            app_helper:get_env(riak_core, platform_data_dir, "data")
+    end.
 
 prune_list([X|Rest]) ->
     lists:usort(lists:append([[X],back(1,X,Rest),back(2,X,Rest),
