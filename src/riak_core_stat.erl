@@ -82,7 +82,8 @@ handle_call(_Req, _From, State) ->
     {reply, ok, State}.
 
 handle_cast({update, Arg}, State) ->
-    exometer:update([?APP, Arg], update_value(Arg)),
+    exometer:update([prefix(), ?APP, Arg], update_value(Arg)),
+    %% update1(Arg),
     {noreply, State};
 handle_cast(_Req, State) ->
     {noreply, State}.
@@ -212,7 +213,7 @@ vnodeq_aggregate_odd3_test() ->
 vnodeq_aggregate_odd5_test() ->
     P = prefix(),
     ?assertEqual([{[P, riak_core, service_vnodes_running], 5},
-                  {[P, riak_core, service_vnodeq], 
+                  {[P, riak_core, service_vnodeq],
 		   [{min, 0}, {median, 1}, {mean, 2}, {max, 5}, {total, 10}]}],
                  vnodeq_aggregate(service_vnode, [1, 0, 5, 0, 4])).
 
