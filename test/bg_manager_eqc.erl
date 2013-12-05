@@ -10,6 +10,7 @@
 %%-ifdef(TEST).
 %% -ifdef(EQC).
 
+-include("riak_core_bg_manager.hrl").
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -503,7 +504,8 @@ head(Resource, Offset, NumSamples) ->
     riak_core_bg_manager:head(Resource, Offset, NumSamples).
 
 %% @doc ps postcondition
-head_post(#state{history=History}, [Resource, Offset, NumSamples], Result) ->
+head_post(#state{history=RevHistory}, [Resource, Offset, NumSamples], Result) ->
+    History = lists:reverse(RevHistory),
     Start = Offset+1,
     Len = min(NumSamples, length(History) - Offset),
     Keep = lists:sublist(History, Start, Len),
@@ -531,7 +533,8 @@ tail(Resource, Offset, NumSamples) ->
     riak_core_bg_manager:tail(Resource, Offset, NumSamples).
 
 %% @doc ps postcondition
-tail_post(#state{history=History}, [Resource, Offset, NumSamples], Result) ->
+tail_post(#state{history=RevHistory}, [Resource, Offset, NumSamples], Result) ->
+    History = lists:reverse(RevHistory),
     HistLen = length(History),
     Start = HistLen - Offset + 1,
     Len = min(NumSamples, HistLen - Offset),
@@ -570,7 +573,7 @@ weight(_S, set_token_rate) -> 3;
 weight(_S, token_rate) -> 0;
 weight(_S, get_token) -> 20;
 weight(_S, refill_tokens) -> 10;
-weight(_S, sample_history) -> 5;
+weight(_S, sample_history) -> 10;
 weight(_S, ps) -> 3;
 weight(_S, head) -> 3;
 weight(_S, tail) -> 3;
@@ -618,7 +621,7 @@ do_sample_history(State=#state{limits=Limits, counts=Counts}) ->
                      end,
                      State,
                      Limits++Counts),
-    NewHistory = lists:reverse([S2#state.samples | S2#state.history]),
+    NewHistory = [S2#state.samples | S2#state.history],
     S2#state{history=NewHistory, samples=[]}.
 
 %% @doc Update the current samples with supplied increments.
@@ -734,11 +737,14 @@ prop_bgmgr() ->
                          begin
                              stop_pid(whereis(riak_core_table_manager)),
                              stop_pid(whereis(riak_core_bg_manager)),
-                             {ok, _TableMgr} = riak_core_table_manager:start_link([{background_mgr_table,
-                                                                                   [protected, bag, named_table]}]),
+                             {ok, _TableMgr} = riak_core_table_manager:start_link([{?BG_INFO_ETS_TABLE,
+                                                                                    [protected, set, named_table]},
+                                                                                   {?BG_ENTRY_ETS_TABLE,
+                                                                                    [protected, bag, named_table]}]),
                              {ok, _BgMgr} = riak_core_bg_manager:start(window_interval()),
                              {H, S, Res} = run_commands(?MODULE,Cmds),
-                             Table = ets:tab2list(background_mgr_table),
+                             InfoTable = ets:tab2list(?BG_INFO_ETS_TABLE),
+                             EntryTable = ets:tab2list(?BG_ENTRY_ETS_TABLE),
                              Monitors = bg_manager_monitors(),
                              RunnngPids = running_procs(S),
                              %% cleanup processes not killed during test
@@ -758,9 +764,11 @@ prop_bgmgr() ->
                                     io:format("samples = ~p~n", [S#state.samples]),
                                     io:format("history = ~p~n", [S#state.history]),
                                     io:format("---------------~n"),
-                                    io:format("~n~nbackground_mgr_table: ~n"),
+                                    io:format("~n~nbackground_mgr tables: ~n"),
                                     io:format("---------------~n"),
-                                    io:format("~p~n", [Table]),
+                                    io:format("~p~n", [InfoTable]),
+                                    io:format("---------------~n"),
+                                    io:format("~p~n", [EntryTable]),
                                     io:format("---------------~n"),
                                     io:format("~n~nbg_manager monitors: ~n"),
                                     io:format("---------------~n"),
@@ -780,19 +788,24 @@ prop_bgmgr_parallel() ->
                          begin
                              stop_pid(whereis(riak_core_table_manager)),
                              stop_pid(whereis(riak_core_bg_manager)),
-                             {ok, TableMgr} = riak_core_table_manager:start_link([{background_mgr_table,
-                                                                                   [protected, bag, named_table]}]),
+                             {ok, TableMgr} = riak_core_table_manager:start_link([{?BG_INFO_ETS_TABLE,
+                                                                                   ?BG_INFO_ETS_OPTS},
+                                                                                  {?BG_ENTRY_ETS_TABLE,
+                                                                                   ?BG_ENTRY_ETS_OPTS}]),
                              {ok, BgMgr} = riak_core_bg_manager:start(window_interval()),
                              {Seq, Par, Res} = run_parallel_commands(?MODULE,Cmds),
-                             Table = ets:tab2list(background_mgr_table),
+                             InfoTable = ets:tab2list(?BG_INFO_ETS_TABLE),
+                             EntryTable = ets:tab2list(?BG_ENTRY_ETS_TABLE),
                              Monitors = bg_manager_monitors(),
                              stop_pid(TableMgr),
                              stop_pid(BgMgr),
                              ?WHENFAIL(
                                 begin
-                                    io:format("~n~nbackground_mgr_table: ~n"),
+                                    io:format("~n~nbackground_mgr tables: ~n"),
                                     io:format("---------------~n"),
-                                    io:format("~p~n", [Table]),
+                                    io:format("~p~n", [InfoTable]),
+                                    io:format("---------------~n"),
+                                    io:format("~p~n", [EntryTable]),
                                     io:format("---------------~n"),
                                     io:format("~n~nbg_manager monitors: ~n"),
                                     io:format("---------------~n"),

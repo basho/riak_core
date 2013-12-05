@@ -78,7 +78,11 @@
 -define(BG_DEFAULT_WINDOW_INTERVAL, 60*1000).    %% in milliseconds
 -define(BG_DEFAULT_OUTPUT_SAMPLES, 20).     %% default number of sample windows displayed
 -define(BG_DEFAULT_KEPT_SAMPLES, 10000).    %% number of history samples to keep
--define(BG_ETS_TABLE, background_mgr_table).%% name of private lock/token manager ETS table
--define(BG_ETS_OPTS, [private, bag]).       %% creation time properties of token manager ETS table
+
+-define(BG_INFO_ETS_TABLE, background_mgr_info_table).  %% name of private lock/token manager info ETS table
+-define(BG_INFO_ETS_OPTS, [private, set]).              %% creation time properties of info ETS table
+
+-define(BG_ENTRY_ETS_TABLE, background_mgr_entry_table). %% name of private lock/token manager entry ETS table
+-define(BG_ENTRY_ETS_OPTS, [private, bag]).              %% creation time properties of entry ETS table
 
 

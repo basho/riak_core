@@ -17,17 +17,23 @@
 %% under the License.
 %%
 %% @doc
-%% We use an ETS table to store critical data. In the event this process crashes,
-%% the table will be given back to the table manager and we can reclaim it when
-%% we restart. Thus, token rates and states are maintained across restarts of the
+%% We use two ETS tables to store critical data. In the event this process crashes,
+%% the tables will be given back to the table manager and we can reclaim them when
+%% we restart. Thus, limits and states are maintained across restarts of the
 %% module, but not of the application. Since we are supervised by riak_core_sup,
 %% that's fine.
 %%
-%% The table must be a bag and is best if private. See ?BG_ETS_OPTS in MODULE.hrl.
+%% === Info Table ===
+%% The table must be a set and is best if private. See ?BG_INFO_ETS_OPTS in MODULE.hrl.
 %% Table Schema...
 %% KEY                     Data                      Notes
 %% ---                     ----                      -----
 %% {info, Resource}        #resource_info            One token object per key.
+%%
+%% === Entries Table ===
+%% The table must be a bag and is best if private. See ?BG_ENTRY_ETS_OPTS in MODULE.hrl.
+%% KEY                     Data                      Notes
+%% ---                     ----                      -----
 %% {given, Resource}       #resource_entry           Multiple objects per key.
 %% {blocked, Resource}  queue of #resource_entry(s)  One queue object per key.
 %%
@@ -113,6 +119,8 @@
          terminate/2, code_change/3]).
 
 -define(SERVER, ?MODULE).
+
+-define(NOT_TRANSFERED(S), S#state.info_table == undefined orelse S#state.entry_table == undefined).
 
 %%%===================================================================
 %%% API
@@ -458,7 +466,8 @@ ps(Arg) ->
 %%%
 
 -record(state,
-        {table_id:: ets:tid(),            %% TableID of ?BG_ETS_TABLE
+        {info_table:: ets:tid(),          %% TableID of ?BG_INFO_ETS_TABLE
+         entry_table:: ets:tid(),         %% TableID of ?BG_ENTRY_ETS_TABLE
          %% NOTE: None of the following data is persisted across process crashes.
          enabled :: boolean(),            %% Global enable/disable switch, true at startup
          %% stats
@@ -482,9 +491,12 @@ init([]) ->
     init([?BG_DEFAULT_WINDOW_INTERVAL]);
 init([Interval]) ->
     lager:debug("Background Manager starting up."),
-    %% claiming the table will result in a handle_info('ETS-TRANSFER', ...) message.
-    ok = riak_core_table_manager:claim_table(?BG_ETS_TABLE),
-    State = #state{table_id=undefined, %% resolved in the ETS-TRANSFER handler
+    %% Claiming a table will result in a handle_info('ETS-TRANSFER', ...) message.
+    %% We have two to claim...
+    ok = riak_core_table_manager:claim_table(?BG_INFO_ETS_TABLE),
+    ok = riak_core_table_manager:claim_table(?BG_ENTRY_ETS_TABLE),
+    State = #state{info_table=undefined, %% resolved in the ETS-TRANSFER handler
+                   entry_table=undefined, %% resolved in the ETS-TRANSFER handler
                    window=orddict:new(),
                    enabled=true,
                    window_interval=Interval,
@@ -578,12 +590,21 @@ handle_cast(clear_history, State) ->
                                        {noreply, #state{}, non_neg_integer()} |
                                        {stop, term(), #state{}}.
 %% Handle transfer of ETS table from table manager
-handle_info({'ETS-TRANSFER', TableId, Pid, _Data}, State) ->
+handle_info({'ETS-TRANSFER', TableId, Pid, TableName}, State) ->
     lager:debug("table_mgr (~p) -> bg_mgr (~p) receiving ownership of TableId: ~p", [Pid, self(), TableId]),
-    State2 = State#state{table_id=TableId},
-    State3 = validate_holds(State2),
-    reschedule_token_refills(State3),
-    {noreply, State2};
+    State2 = case TableName of
+                 ?BG_INFO_ETS_TABLE -> State#state{info_table=TableId};
+                 ?BG_ENTRY_ETS_TABLE -> State#state{entry_table=TableId}
+             end,
+    case {State2#state.info_table, State2#state.entry_table} of
+        {undefined, _E} -> {noreply, State2};
+        {_I, undefined} -> {noreply, State2};
+        {_I, _E} ->
+            %% Got both tables, we can proceed with reviving ourself
+            State3 = validate_holds(State2),
+            reschedule_token_refills(State3),
+            {noreply, State3}
+    end;
 handle_info({'DOWN', Ref, _, _, _}, State) ->
     State2 = release_resource(Ref, State),
     {noreply, State2};
@@ -625,7 +646,7 @@ code_change(_OldVsn, State, _Extra) ->
 %% @doc We must have just gotten the table data back after a crash/restart.
 %%      Walk through the given resources and release any holds by dead processes.
 %%      Assumes TableId is always valid (called only after transfer)
-validate_holds(State=#state{table_id=TableId}) ->
+validate_holds(State=#state{entry_table=TableId}) ->
     [validate_hold(Obj, TableId) || Obj <- ets:match_object(TableId, {{given, '_'},'_'})],
     State.
 
@@ -673,7 +694,7 @@ do_handle_call_exception(Function, Args, State) ->
     end.
 
 %% @doc Throws {unregistered, Resource} for unknown Lock.
-do_disable_lock(_Lock, _Kill, State=#state{table_id=undefined}) ->
+do_disable_lock(_Lock, _Kill, State) when ?NOT_TRANSFERED(State) ->
     {noreply, State};
 do_disable_lock(Lock, Kill, State) ->
     Info = resource_info(Lock, State),
@@ -702,7 +723,7 @@ do_set_token_rate(Token, Rate, State) ->
             {reply, Error, State}
     end.
 
-do_get_type_info(_Type, #state{table_id=undefined}) ->
+do_get_type_info(_Type, State) when ?NOT_TRANSFERED(State) ->
     %% Table not trasnferred yet.
     [];
 do_get_type_info(Type, State) ->
@@ -712,9 +733,9 @@ do_get_type_info(Type, State) ->
     {reply, Infos, State}.
 
 %% Returns empty if the ETS table has not been transferred to us yet.
-do_resource_limit(lock, _Resource, State=#state{table_id=undefined}) ->
+do_resource_limit(lock, _Resource, State) when ?NOT_TRANSFERED(State) ->
     {reply, 0, State};
-do_resource_limit(token, _Resource, State=#state{table_id=undefined}) ->
+do_resource_limit(token, _Resource, State) when ?NOT_TRANSFERED(State) ->
     {reply, {0,0}, State};
 do_resource_limit(_Type, Resource, State) ->
     Info = resource_info(Resource, State),
@@ -767,9 +788,9 @@ limit(#resource_info{type=token, limit={_Period,MaxCount}}) -> MaxCount.
 %% @private
 %% @doc Release the resource associated with the given reference. This is mostly
 %%      meaningful for locks.
-release_resource(_Ref, State=#state{table_id=undefined}) ->
+release_resource(_Ref, State) when ?NOT_TRANSFERED(State) ->
     State;
-release_resource(Ref, State=#state{table_id=TableId}) ->
+release_resource(Ref, State=#state{entry_table=TableId}) ->
     %% There should only be one instance of the object, but we'll zap all that match.
     Given = [Obj || Obj <- ets:match_object(TableId, {{given, '_'},'_'})],
     Matches = [Obj || {_Key,Entry}=Obj <- Given, ?e_ref(Entry) == Ref],
@@ -811,23 +832,19 @@ update_limit(Resource, Limit, Default, State) ->
                          Default#resource_info{limit=Limit},
                          State).
 
-update_resource_info(Resource, Fun, Default, State=#state{table_id=TableId}) ->
+update_resource_info(Resource, Fun, Default, State=#state{info_table=TableId}) ->
     Key = {info, Resource},
     NewInfo = case ets:lookup(TableId, Key) of
                   [] -> Default;
-                  [{_Key,Info} | _Rest] ->
-                      %% delete existing since we are using a bag, we don't
-                      %% want multiple per info values resource key.
-                      ets:delete(TableId, Key),
-                      Fun(Info)
+                  [{_Key,Info} | _Rest] -> Fun(Info)
               end,
     ets:insert(TableId, {Key, NewInfo}),
     State.
 
 %% @doc Throws unregistered for unknown Resource
-resource_info(_Resource, #state{table_id=undefined}) ->
+resource_info(_Resource, State) when ?NOT_TRANSFERED(State) ->
     throw(table_id_undefined);
-resource_info(Resource, #state{table_id=TableId}) ->
+resource_info(Resource, #state{info_table=TableId}) ->
     Key = {info,Resource},
     case ets:lookup(TableId, Key) of
         [] -> throw({unregistered, Resource});
@@ -899,7 +916,7 @@ reschedule_token_refills(State) ->
     [schedule_refill_tokens(Token, State) || Token <- Tokens].
  
 %% Schedule a timer event to refill tokens of given type
-schedule_refill_tokens(_Token, #state{table_id=undefined}) ->
+schedule_refill_tokens(_Token, State) when ?NOT_TRANSFERED(State) ->
     ok;
 schedule_refill_tokens(Token, State) ->
     case ?resource_limit(resource_info(Token, State)) of
@@ -942,7 +959,7 @@ update_stat_window(Resource, Fun, Default, State=#state{window=Window}) ->
     NewWindow = orddict:update(Resource, Fun, Default, Window),
     State#state{window=NewWindow}.
 
-resources_given(Resource, #state{table_id=TableId}) ->
+resources_given(Resource, #state{entry_table=TableId}) ->
     [Entry || {{given,_R},Entry} <- ets:match_object(TableId, {{given, Resource},'_'})].
 
 %%    Key = {given, Resource},
@@ -956,13 +973,13 @@ add_given_entry(Resource, Entry, TableId) ->
     Key = {given, Resource},
     ets:insert(TableId, {Key, Entry}).
 
-remove_given_entries(Resource, #state{table_id=TableId}) ->
+remove_given_entries(Resource, #state{entry_table=TableId}) ->
     Key = {given, Resource},
     ets:delete(TableId, Key).
 
 %% @private
 %% @doc Add a resource queue entry to our given set.
-give_resource(Entry, State=#state{table_id=TableId}) ->
+give_resource(Entry, State=#state{entry_table=TableId}) ->
     Resource = ?e_resource(Entry),
     Type = ?e_type(Entry),
     add_given_entry(Resource, Entry#resource_entry{state=given}, TableId),
@@ -999,7 +1016,7 @@ try_get_resource(true, Resource, Type, Pid, Meta, State) ->
                              {reply, max_concurrency, #state{}}
                                  | {reply, {ok, #state{}}}
                                  | {reply, {{ok, reference()}, #state{}}}.
-do_get_resource(_Resource, _Type, _Pid, _Meta, State=#state{table_id=undefined}) ->
+do_get_resource(_Resource, _Type, _Pid, _Meta, State) when ?NOT_TRANSFERED(State) ->
     %% Table transfer has not occurred yet. Reply "max_concurrency" so that callers
     %% will try back later, hopefully when we have our table back.
     {reply, max_concurrency, State};
@@ -1030,7 +1047,7 @@ do_get_resource_blocking(Resource, Type, Pid, Meta, From, Timeout, State) ->
 
 %% @private
 %% @doc Replace the current "blocked entries" queue for the specified Resource.
-update_blocked_queue(Resource, Queue, State=#state{table_id=TableId}) ->
+update_blocked_queue(Resource, Queue, State=#state{entry_table=TableId}) ->
     Key = {blocked, Resource},
     Object = {Key, Queue},
     %% replace existing queue. Must delete existing one since we're using a bag table
@@ -1040,7 +1057,7 @@ update_blocked_queue(Resource, Queue, State=#state{table_id=TableId}) ->
 
 %% @private
 %% @doc Return the queue of blocked resources named 'Resource'.
-blocked_queue(Resource, #state{table_id=TableId}) ->
+blocked_queue(Resource, #state{entry_table=TableId}) ->
     Key = {blocked, Resource},
     case ets:lookup(TableId, Key) of
         [] -> queue:new();
@@ -1070,18 +1087,18 @@ enqueue_request(Resource, Type, Pid, Meta, From, Timeout, State) ->
     %% Put new queue back in state
     update_blocked_queue(Resource, NewQueue, State2).
 
-all_resource_info(#state{table_id=TableId}) ->
+all_resource_info(#state{info_table=TableId}) ->
     [{Resource, Info} || {{info, Resource}, Info} <- ets:match_object(TableId, {{info, '_'},'_'})].
 
-all_registered_resources(Type, #state{table_id=TableId}) ->
+all_registered_resources(Type, #state{info_table=TableId}) ->
     [Resource || {{info, Resource}, Info} <- ets:match_object(TableId, {{info, '_'},'_'}),
                  ?resource_type(Info) == Type].
 
-all_given_entries(#state{table_id=TableId}) ->
+all_given_entries(#state{entry_table=TableId}) ->
     %% multiple entries per resource type, i.e. uses the "bag"
     [Entry || {{given, _Resource}, Entry} <- ets:match_object(TableId, {{given, '_'},'_'})].
 
-all_blocked_queues(#state{table_id=TableId}) ->
+all_blocked_queues(#state{entry_table=TableId}) ->
     %% there is just one queue per resource type. More like a "set". The queue is in the table!
     [Queue || {{blocked, _Resource}, Queue} <- ets:match_object(TableId, {{blocked, '_'},'_'})].
 
@@ -1099,7 +1116,7 @@ fmt_live_entries(Entries) ->
     [format_entry(Entry) || Entry <- Entries].
 
 %% States :: [given | blocked], Types :: [lock | token]
-do_query(_Resource, _States, _Types, #state{table_id=undefined}) ->
+do_query(_Resource, _States, _Types, State) when ?NOT_TRANSFERED(State) ->
     %% Table hasn't been transfered yet.
     [];
 do_query(all, States, Types, State) ->
@@ -1195,7 +1212,7 @@ do_clear_history(State=#state{window_tref=TRef}) ->
     schedule_sample_history(State2).
 
 %% Return stats history from head or tail of stats history queue
-do_hist(_End, _Resource, _Offset, _Count, #state{table_id=undefined}) ->
+do_hist(_End, _Resource, _Offset, _Count, State) when ?NOT_TRANSFERED(State) ->
     [];
 do_hist(End, Resource, Offset, Count, State) when Offset < 0 ->
     do_hist(End, Resource, 0, Count, State);

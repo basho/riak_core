@@ -40,7 +40,9 @@
 %% ETS tables to be created and maintained by riak_core_table_manager, which is not linked
 %% to any processes except this supervisor. Please keep it that way so tables don't get lost
 %% when their user processes crash. Implement ETS-TRANSFER handler for user processes.
--define(TBL_MGR_ARGS, [{?BG_ETS_TABLE, ?BG_ETS_OPTS}]).
+-define(TBL_MGR_ARGS, [{?BG_INFO_ETS_TABLE, ?BG_INFO_ETS_OPTS},
+                       {?BG_ENTRY_ETS_TABLE, ?BG_ENTRY_ETS_OPTS}
+                      ]).
 
 %% ===================================================================
 %% API functions

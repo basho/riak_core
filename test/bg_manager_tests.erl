@@ -159,7 +159,9 @@ crash_and_restart_token_manager() ->
     timer:sleep(100).
 
 start_table_mgr() ->
-    {ok,Pid} = riak_core_table_manager:start_link([{?BG_ETS_TABLE, ?BG_ETS_OPTS}]),
+    {ok,Pid} = riak_core_table_manager:start_link([{?BG_INFO_ETS_TABLE, ?BG_INFO_ETS_OPTS},
+                                                   {?BG_ENTRY_ETS_TABLE, ?BG_ENTRY_ETS_OPTS}
+                                                  ]),
     unlink(Pid),
     timer:sleep(100).
 

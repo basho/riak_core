@@ -108,7 +108,7 @@ handle_call({claim_table, TableName}, {Pid, _Tag}, State) ->
             {reply, {undefined_table, TableName}, State};
         TableId ->
             lager:debug("Giving away table ~p (~p) to ~p", [TableName, TableId, Pid]),
-            ets:give_away(TableId, Pid, undefined),
+            ets:give_away(TableId, Pid, TableName),
             Reply = ok,
             {reply, Reply, State}
     end;
