@@ -35,7 +35,6 @@
 %% KEY                     Data                      Notes
 %% ---                     ----                      -----
 %% {given, Resource}       #resource_entry           Multiple objects per key.
-%% {blocked, Resource}  queue of #resource_entry(s)  One queue object per key.
 %%
 %% -------------------------------------------------------------------
 -module(riak_core_bg_manager).
@@ -60,7 +59,6 @@
          query_resource/3,
          all_resources/0,
          all_given/0,
-         all_blocked/0,
          %% Locks
          concurrency_limit/1,
          set_concurrency_limit/2,
@@ -69,33 +67,23 @@
          get_lock/1,
          get_lock/2,
          get_lock/3,
-         get_lock_blocking/2,
-         get_lock_blocking/3,
-         get_lock_blocking/4,
          lock_info/0,
          lock_info/1,
          lock_count/1,
          all_locks/0,
          locks_held/0,
          locks_held/1, 
-         locks_blocked/0,
-         locks_blocked/1,
          %% Tokens
          set_token_rate/2,
          token_rate/1,
          get_token/1,
          get_token/2,
          get_token/3,
-         get_token_blocking/2,
-         get_token_blocking/3,
-         get_token_blocking/4,
          token_info/0,
          token_info/1,
          all_tokens/0,
          tokens_given/0,
          tokens_given/1,
-         tokens_blocked/0,
-         tokens_blocked/1,
          %% Testing
          start/1
         ]).
@@ -172,17 +160,12 @@ query_resource(Resource, States, Types) ->
 %% @doc Get a list of all resources of all types in all states
 -spec all_resources() -> [bg_stat_live()].
 all_resources() ->
-    query_resource(all, [given, blocked], [token, lock]).
+    query_resource(all, [given], [token, lock]).
 
 %% @doc Get a list of all resources of all kinds in the given state
 -spec all_given() -> [bg_stat_live()].
 all_given() ->
     query_resource(all, [given], [token, lock]).
-
-%% @doc Get a list of all resources of all kinds in the blocked state
--spec all_blocked() -> [bg_stat_live()].
-all_blocked() ->
-    query_resource(all, [blocked], [token, lock]).
 
 %%%%%%%%%%%
 %% Lock API
@@ -236,25 +219,6 @@ get_lock(Lock, Opts) when is_list(Opts)->
 get_lock(Lock, Pid, Meta) ->
     gen_server:call(?MODULE, {get_lock, Lock, Pid, Meta}, infinity).
 
-%% @doc Get a lock and block if those locks are currently at max_concurrency, until
-%%      a lock is released. Associate lock with provided pid or metadata.
-%%      If metadata is provided, the lock is associated with the calling process.
-%%      If the lock is not given before Timeout milliseconds, the call will
-%%      return with 'timeout'.
--spec get_lock_blocking(bg_lock(), pid() | [{atom(), any()}], timeout()) -> {ok, reference()} | unregistered | timeout.
-get_lock_blocking(Lock, Pid, Timeout) when is_pid(Pid) ->
-    get_lock_blocking(Lock, Pid, [], Timeout);
-get_lock_blocking(Lock, Meta, Timeout) ->
-    get_lock_blocking(Lock, self(), Meta, Timeout).
-
--spec get_lock_blocking(bg_lock(), timeout()) -> {ok, reference()} | unregistered.
-get_lock_blocking(Lock, Timeout) ->
-    get_lock_blocking(Lock, self(), Timeout).
-
--spec get_lock_blocking(bg_lock(), pid(), [{atom(), any()}], timeout()) -> {ok, reference} | unregistered | timeout.
-get_lock_blocking(Lock, Pid, Meta, Timeout) ->
-    gen_server:call(?SERVER, {get_lock_blocking, Lock, Pid, Meta, Timeout}, infinity).
-
 %% @doc Return the current concurrency count of the given lock type.
 -spec lock_count(bg_lock()) -> integer() | unregistered.
 lock_count(Lock) ->
@@ -271,10 +235,10 @@ lock_info() ->
 lock_info(Lock) ->
     gen_server:call(?MODULE, {lock_info, Lock}, infinity).
 
-%% @doc Returns all locks, held or blocked.
+%% @doc Returns all locks.
 -spec all_locks() -> [bg_stat_live()].
 all_locks() ->
-    query_resource(all, [given, blocked], [lock]).
+    query_resource(all, [given], [lock]).
 
 
 %% @doc Returns all currently held locks or those that match Lock
@@ -285,14 +249,6 @@ locks_held() ->
 -spec locks_held(bg_lock() | all) -> [bg_stat_live()].
 locks_held(Lock) ->
     query_resource(Lock, [given], [lock]).
-
-%% @doc Returns all currently blocked locks.
-locks_blocked() ->
-    locks_blocked(all).
-
--spec locks_blocked(bg_lock() | all) -> [bg_stat_live()].
-locks_blocked(Lock) ->
-    query_resource(Lock, [blocked], [token]).
 
 %%%%%%%%%%%%
 %% Token API
@@ -327,23 +283,6 @@ get_token(Token) ->
 get_token(Token, Pid, Meta) ->
     gen_server:call(?SERVER, {get_token, Token, Pid, Meta}, infinity).
 
-%% @doc Get a token and block if those tokens are currently empty, until the
-%%      tokens are refilled. Associate token with provided pid or metadata.
-%%      If metadata is provided, the token is associated with the calling process.
--spec get_token_blocking(bg_token(), pid() | [{atom(), any()}], timeout()) -> ok | timeout.
-get_token_blocking(Token, Pid, Timeout) when is_pid(Pid) ->
-    get_token_blocking(Token, Pid, [], Timeout);
-get_token_blocking(Token, Meta, Timeout) ->
-    get_token_blocking(Token, self(), Meta, Timeout).
-
--spec get_token_blocking(bg_token(), timeout()) -> ok.
-get_token_blocking(Token, Timeout) ->
-    get_token_blocking(Token, self(), Timeout).
-
--spec get_token_blocking(bg_token(), pid(), [{atom(), any()}], timeout()) -> ok | timeout.
-get_token_blocking(Token, Pid, Meta, Timeout) ->
-    gen_server:call(?SERVER, {get_token_blocking, Token, Pid, Meta, Timeout}, infinity).
-
 %% @doc Return list of token kinds and associated info. To be returned in this list
 %%      a token must have had its rate set.
 -spec token_info() -> [{bg_token(), boolean(), bg_rate()}].
@@ -357,7 +296,7 @@ token_info(Token) ->
 
 -spec all_tokens() -> [bg_stat_live()].
 all_tokens() ->
-    query_resource(all, [given, blocked], [token]).
+    query_resource(all, [given], [token]).
 
 %% @doc Get a list of token resources in the given state.
 tokens_given() ->
@@ -365,12 +304,6 @@ tokens_given() ->
 -spec tokens_given(bg_token() | all) -> [bg_stat_live()].
 tokens_given(Token) ->
     query_resource(Token, [given], [token]).
-
-%% @doc Get a list of token resources in the blocked state.
-tokens_blocked() ->
-    tokens_blocked(all).
-tokens_blocked(Token) ->
-    query_resource(Token, [blocked], [token]).
 
 %% Stats/Reporting
 
@@ -414,7 +347,7 @@ ps() ->
     ps(all).
 %% @doc List most recent requests/grants for named resource or one of
 %%      either 'token' or 'lock'. The later two options will list all
-%%      resources of that type in the given/locked or blocked state.
+%%      resources of that type in the given/locked.
 -spec ps(bg_resource() | token | lock) -> [bg_stat_live()].
 ps(Arg) ->
     gen_server:call(?SERVER, {ps, Arg}, infinity).
@@ -440,24 +373,22 @@ ps(Arg) ->
 -define(DEFAULT_LOCK_INFO, #resource_info{type=lock, enabled=true, limit=?DEFAULT_CONCURRENCY}).
 -define(DEFAULT_TOKEN_INFO, #resource_info{type= token, enabled=true, limit=?DEFAULT_RATE}).
 
-%% An instance of a resource entry in "given" or "blocked"
+%% An instance of a resource entry in "given"
 -record(resource_entry,
         {resource  :: bg_resource(),
          type      :: bg_resource_type(),
          pid       :: pid(),           %% owning process
          meta      :: bg_meta(),       %% associated metadata
-         from      :: {pid(), term()}, %% optional reply-to for blocked resources
          ref       :: reference(),     %% optional monitor reference to owning process
-         state     :: bg_state()        %% state of item on given or blocked queue
+         state     :: bg_state()       %% state of item on given
         }).
 
--define(RESOURCE_ENTRY(Resource, Type, Pid, Meta, From, Ref, State),
-        #resource_entry{resource=Resource, type=Type, pid=Pid, meta=Meta, from=From, ref=Ref, state=State}).
+-define(RESOURCE_ENTRY(Resource, Type, Pid, Meta, Ref, State),
+        #resource_entry{resource=Resource, type=Type, pid=Pid, meta=Meta, ref=Ref, state=State}).
 -define(e_resource(X), (X)#resource_entry.resource).
 -define(e_type(X), (X)#resource_entry.type).
 -define(e_pid(X), (X)#resource_entry.pid).
 -define(e_meta(X), (X)#resource_entry.meta).
--define(e_from(X), (X)#resource_entry.from).
 -define(e_ref(X), (X)#resource_entry.ref).
 -define(e_state(X), (X)#resource_entry.state).
 
@@ -519,9 +450,6 @@ handle_call({query_resource, Resource, States, Types}, _From, State) ->
     {reply, Result, State};
 handle_call({get_lock, Lock, Pid, Meta}, _From, State) ->
     do_handle_call_exception(fun do_get_resource/5, [Lock, lock, Pid, Meta, State], State);
-handle_call({get_lock_blocking, Lock, Pid, Meta, Timeout}, From, State) ->
-    do_handle_call_exception(fun do_get_resource_blocking/7,
-                             [Lock, lock, Pid, Meta, From, Timeout, State], State);
 handle_call({lock_count, Lock}, _From, State) ->
     {reply, held_count(Lock, State), State};
 handle_call({lock_limit_reached, Lock}, _From, State) ->
@@ -544,9 +472,6 @@ handle_call({set_token_rate, Token, Rate}, _From, State) ->
     do_handle_call_exception(fun do_set_token_rate/3, [Token, Rate, State], State);
 handle_call({get_token, Token, Pid, Meta}, _From, State) ->
     do_handle_call_exception(fun do_get_resource/5, [Token, token, Pid, Meta, State], State);
-handle_call({get_token_blocking, Token, Pid, Meta, Timeout}, From, State) ->
-    do_handle_call_exception(fun do_get_resource_blocking/7,
-                             [Token, token, Pid, Meta, From, Timeout, State], State);
 handle_call({head, Token, Offset, Count}, _From, State) ->
     Result = do_hist(head, Token, Offset, Count, State),
     {reply, Result, State};
@@ -554,13 +479,13 @@ handle_call({tail, Token, Offset, Count}, _From, State) ->
     Result = do_hist(tail, Token, Offset, Count, State),
     {reply, Result, State};
 handle_call({ps, lock}, _From, State) ->
-    Result = do_query(all, [given, blocked], [lock], State),
+    Result = do_query(all, [given], [lock], State),
     {reply, Result, State};
 handle_call({ps, token}, _From, State) ->
-    Result = do_query(all, [given, blocked], [token], State),
+    Result = do_query(all, [given], [token], State),
     {reply, Result, State};
 handle_call({ps, Resource}, _From, State) ->
-    Result = do_query(Resource, [given, blocked], [token, lock], State),
+    Result = do_query(Resource, [given], [token, lock], State),
     {reply, Result, State}.
 
 %% @private
@@ -612,9 +537,6 @@ handle_info(sample_history, State) ->
     State2 = schedule_sample_history(State),
     State3 = do_sample_history(State2),
     {noreply, State3};
-handle_info({blocked_timeout, Resource, From}, State) ->
-    %% reply timeout to waiting caller and clear blocked queue.
-    {noreply, do_reply_timeout(Resource, From, State)};
 handle_info({refill_tokens, Type}, State) ->
     State2 = do_refill_tokens(Type, State),
     schedule_refill_tokens(Type, State2),
@@ -710,9 +632,7 @@ do_set_token_rate(Token, Rate, State) ->
         enforce_type_or_throw(Token, token, Info),
         State2 = update_limit(Token, Rate, Info, State),
         schedule_refill_tokens(Token, State2),
-        %% maybe reschedule blocked callers
-        State3 = maybe_unblock_blocked(Token, State2),
-        {reply, OldRate, State3}
+        {reply, OldRate, State2}
     catch
         table_id_undefined ->
         %% This could go into a queue to be played when the transfer happens.
@@ -857,55 +777,6 @@ resource_info_tuple(Resource, State) ->
     Info = resource_info(Resource, State),
     {Resource, ?resource_type(Info), ?resource_enabled(Info), ?resource_limit(Info)}.
 
-
-%% Possibly send replies to processes blocked on resources named Resource.
-%% Returns new State.
-give_available_resources(Resource, 0, Queue, State) ->
-    %% no more available resources to give out
-    update_blocked_queue(Resource, Queue, State);
-give_available_resources(Resource, NumAvailable, Queue, State) ->
-    case queue:out(Queue) of
-        {empty, _Q} ->
-            %% no more blocked entries
-            update_blocked_queue(Resource, Queue, State);
-        {{value, Entry}, Queue2} ->
-            %% account for given resource
-            State2 = give_resource(Entry, State),
-            %% send reply to blocked caller, unblocking them.
-            gen_server:reply(?e_from(Entry), ok),
-            %% unblock next blocked in queue
-            give_available_resources(Resource, NumAvailable-1, Queue2,State2)
-    end.
-
-%% @private
-%% @doc
-%% For the given type, check the current given count and if less
-%% than the rate limit, give out as many tokens as are available
-%% to callers on the blocked list. They need a reply because they
-%% made a gen_server:call() that we have not replied to yet.
-maybe_unblock_blocked(Resource, State) ->
-    Entries = resources_given(Resource, State),
-    Info = resource_info(Resource, State),
-    MaxCount = limit(Info),
-    PosNumAvailable = erlang:max(MaxCount - length(Entries), 0),
-    Queue = blocked_queue(Resource, State),
-    give_available_resources(Resource, PosNumAvailable, Queue, State).
-
-schedule_timeout(Resource, From, Timeout) ->
-    erlang:send_after(Timeout, self(), {blocked_timeout, Resource, From}),
-    ok.
-
-%% @private
-%% @doc Send timeout reply to blocked caller, unblocking them.
-%% And remove the matching entry from the blocked queue. We can find the
-%% matching entry based on the 'From' since the caller can't block on more
-%% than one call at a time.
-do_reply_timeout(Resource, From, State) ->
-    gen_server:reply(From, timeout),
-    Queue = blocked_queue(Resource, State),
-    Queue2 = queue:filter(fun(Entry) -> ?e_from(Entry) /= From end, Queue),
-    update_blocked_queue(Resource, Queue2, State).
-
 %% @private
 %% @doc
 %% Get existing token type info from ETS table and schedule all for refill.
@@ -973,9 +844,10 @@ add_given_entry(Resource, Entry, TableId) ->
     Key = {given, Resource},
     ets:insert(TableId, {Key, Entry}).
 
-remove_given_entries(Resource, #state{entry_table=TableId}) ->
+remove_given_entries(Resource, State=#state{entry_table=TableId}) ->
     Key = {given, Resource},
-    ets:delete(TableId, Key).
+    ets:delete(TableId, Key),
+    State.
 
 %% @private
 %% @doc Add a resource queue entry to our given set.
@@ -989,8 +861,7 @@ give_resource(Entry, State=#state{entry_table=TableId}) ->
 %% @private
 %% @doc Add Resource to our given set.
 give_resource(Resource, Type, Pid, Ref, Meta, State) ->
-    From = undefined,
-    Entry = ?RESOURCE_ENTRY(Resource, Type, Pid, Meta, From, Ref, given),
+    Entry = ?RESOURCE_ENTRY(Resource, Type, Pid, Meta, Ref, given),
     give_resource(Entry, State).
 
 -spec try_get_resource(boolean(), bg_resource(), bg_resource_type(), pid(), [{atom(), any()}], #state{}) ->
@@ -1033,59 +904,11 @@ do_get_resource(Resource, Type, Pid, Meta, State) ->
     {reply, Result, State2}.
 
 %% @private
-%% @doc
-%% reply now if available or reply later if en-queued. Call returns even if we can't
-%% get the resource now, but 'noreply' indicates that calling process will block until
-%% we forward the reply later.
-do_get_resource_blocking(Resource, Type, Pid, Meta, From, Timeout, State) ->
-    case do_get_resource(Resource, Type, Pid, Meta, State) of
-        {reply, max_concurrency, _State2} ->
-            {noreply, enqueue_request(Resource, Type, Pid, Meta, From, Timeout, State)};
-        Reply ->
-            Reply
-    end.
-
-%% @private
-%% @doc Replace the current "blocked entries" queue for the specified Resource.
-update_blocked_queue(Resource, Queue, State=#state{entry_table=TableId}) ->
-    Key = {blocked, Resource},
-    Object = {Key, Queue},
-    %% replace existing queue. Must delete existing one since we're using a bag table
-    ets:delete(TableId, Key),
-    ets:insert(TableId, Object),
-    State.
-
-%% @private
-%% @doc Return the queue of blocked resources named 'Resource'.
-blocked_queue(Resource, #state{entry_table=TableId}) ->
-    Key = {blocked, Resource},
-    case ets:lookup(TableId, Key) of
-        [] -> queue:new();
-        [{Key,Queue} | _Rest] -> Queue
-    end.
-
-%% @private
 %% @doc This should create a unique reference every time it's called; and should
 %%      not repeat across process restarts since our ETS table lives across process
 %%      lifetimes. This is needed to create unique entries in the "given" table.
 random_bogus_ref() ->
     make_ref().
-
-%% @private
-%% @doc Put a resource request on the blocked queue. We'll reply later when resources
-%% of that type become available.
-enqueue_request(Resource, Type, Pid, Meta, From, Timeout, State) ->
-    OldQueue = blocked_queue(Resource, State),
-    Ref = case Type of
-              token -> random_bogus_ref();
-              lock -> monitor(process, Pid)
-          end,
-    NewQueue = queue:in(?RESOURCE_ENTRY(Resource, Type, Pid, Meta, From, Ref, blocked), OldQueue),
-    schedule_timeout(Resource, From, Timeout),
-    %% update blocked stats
-    State2 = increment_stat_blocked(Resource, State),
-    %% Put new queue back in state
-    update_blocked_queue(Resource, NewQueue, State2).
 
 all_resource_info(#state{info_table=TableId}) ->
     [{Resource, Info} || {{info, Resource}, Info} <- ets:match_object(TableId, {{info, '_'},'_'})].
@@ -1097,10 +920,6 @@ all_registered_resources(Type, #state{info_table=TableId}) ->
 all_given_entries(#state{entry_table=TableId}) ->
     %% multiple entries per resource type, i.e. uses the "bag"
     [Entry || {{given, _Resource}, Entry} <- ets:match_object(TableId, {{given, '_'},'_'})].
-
-all_blocked_queues(#state{entry_table=TableId}) ->
-    %% there is just one queue per resource type. More like a "set". The queue is in the table!
-    [Queue || {{blocked, _Resource}, Queue} <- ets:match_object(TableId, {{blocked, '_'},'_'})].
 
 format_entry(Entry) ->
     #bg_stat_live
@@ -1115,7 +934,7 @@ format_entry(Entry) ->
 fmt_live_entries(Entries) ->
     [format_entry(Entry) || Entry <- Entries].
 
-%% States :: [given | blocked], Types :: [lock | token]
+%% States :: [given], Types :: [lock | token]
 do_query(_Resource, _States, _Types, State) when ?NOT_TRANSFERED(State) ->
     %% Table hasn't been transfered yet.
     [];
@@ -1128,16 +947,7 @@ do_query(all, States, Types, State) ->
              false ->
                  []
          end,
-    E2 = case lists:member(blocked, States) of
-             true ->
-                 Queues = all_blocked_queues(State),
-                 E1 ++ lists:flatten(
-                         [[Entry || Entry <- queue:to_list(Q),
-                                    lists:member(?e_type(Entry), Types)] || Q <- Queues]);
-             false ->
-                 E1
-         end,
-    fmt_live_entries(E2);
+    fmt_live_entries(E1);
 do_query(Resource, States, Types, State) ->
     E1 = case lists:member(given, States) of
              true ->
@@ -1146,25 +956,15 @@ do_query(Resource, States, Types, State) ->
              false ->
                  []
          end,
-    E2 = case lists:member(blocked, States) of
-             true ->
-                 %% Oh Erlang, why is your scoping so messed up?
-                 Entries2 = queue:to_list(blocked_queue(Resource, State)),
-                 E1 ++ [Entry || Entry <- Entries2, lists:member(?e_type(Entry), Types)];
-             false ->
-                 E1
-         end,
-    fmt_live_entries(E2).
+    fmt_live_entries(E1).
 
 %% @private
 %% @doc Token refill timer event handler.
 %%   Capture stats of what was given in the previous period,
 %%   Clear all tokens of this type from the given set,
-%%   Unblock blocked processes if possible.
 do_refill_tokens(Token, State) ->
     State2 = increment_stat_refills(Token, State),
-    remove_given_entries(Token, State),
-    maybe_unblock_blocked(Token, State2).
+    remove_given_entries(Token, State2).
 
 default_refill(Token, State) ->
     Limit = limit(resource_info(Token, State)),
@@ -1196,13 +996,6 @@ increment_stat_given(Token, Type, State) ->
     update_stat_window(Token,
                        fun(Stat) -> Stat#bg_stat_hist{given=1+Stat#bg_stat_hist.given} end,
                        default_given(Token, Type, State),
-                       State).
-
-increment_stat_blocked(Token, State) ->
-    Limit = limit(resource_info(Token, State)),
-    update_stat_window(Token,
-                       fun(Stat) -> Stat#bg_stat_hist{blocked=1+Stat#bg_stat_hist.blocked} end,
-                       ?BG_DEFAULT_STAT_HIST#bg_stat_hist{blocked=1, limit=Limit},
                        State).
 
 %% erase saved history
