@@ -25,8 +25,7 @@
          %% Cluster name
          {cluster_name, "default"},
 
-         %% Default location of ringstate
-         {ring_state_dir, "data/ring"},
+         %% Default location for ring, cluster and other data files
          {platform_data_dir, "data"},
 
          %% Default ring creation size.  Make sure it is a power of 2,

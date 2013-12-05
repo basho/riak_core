@@ -224,14 +224,14 @@ force_update() ->
     ok.
 
 do_write_ringfile(Ring) ->
-    case app_helper:get_env(riak_core, ring_state_dir) of
+    case app_helper:get_env(riak_core, platform_data_dir) of
         "<nostore>" -> nop;
         Dir ->
             {{Year, Month, Day},{Hour, Minute, Second}} = calendar:universal_time(),
             TS = io_lib:format(".~B~2.10.0B~2.10.0B~2.10.0B~2.10.0B~2.10.0B",
                                [Year, Month, Day, Hour, Minute, Second]),
             Cluster = app_helper:get_env(riak_core, cluster_name),
-            FN = Dir ++ "/riak_core_ring." ++ Cluster ++ TS,
+            FN = Dir ++ "/ring/riak_core_ring." ++ Cluster ++ TS,
             do_write_ringfile(Ring, FN)
     end.
 
