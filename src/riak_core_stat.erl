@@ -105,7 +105,7 @@ handle_call(_Req, _From, State) ->
     {reply, ok, State}.
 
 handle_cast({update, Arg}, State) ->
-    exometer:update([?APP, Arg], update_value(Arg)),
+    exometer:update([prefix(), ?APP, Arg], update_value(Arg)),
     %% update1(Arg),
     {noreply, State};
 handle_cast(_Req, State) ->
