@@ -225,7 +225,6 @@ force_update() ->
 
 do_write_ringfile(Ring) ->
     case ring_dir() of
-        undefined ->
         "<nostore>" -> nop;
         Dir ->
             {{Year, Month, Day},{Hour, Minute, Second}} = calendar:universal_time(),
