@@ -266,14 +266,6 @@ find_latest_ringfile() ->
             {error, Reason}
     end.
 
-ring_dir() ->
-    case app_helper:get_env(riak_core, ring_state_dir) of
-        Dir ->
-            Dir;
-        undefined ->
-            app_helper:get_env(riak_core, platform_data_dir, "data")
-    end.
-
 %% @spec read_ringfile(string()) -> riak_core_ring:riak_core_ring() | {error, any()}
 read_ringfile(RingFile) ->
     case file:read_file(RingFile) of
@@ -473,10 +465,10 @@ code_change(_OldVsn, State, _Extra) ->
 
 ring_dir() ->
     case app_helper:get_env(riak_core, ring_state_dir) of
-        Dir ->
-            Dir;
         undefined ->
-            app_helper:get_env(riak_core, platform_data_dir, "data")
+            app_helper:get_env(riak_core, platform_data_dir, "data");
+        Dir ->
+            Dir
     end.
 
 prune_list([X|Rest]) ->
