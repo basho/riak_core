@@ -51,6 +51,7 @@
 -export([
          %% Universal
          start_link/0,
+         bypass/1,
          enable/0,
          enable/1,
          disable/0,
@@ -122,6 +123,12 @@ start_link() ->
 %% Test entry point to start stand-alone server
 start(Interval) ->
     gen_server:start({local, ?SERVER}, ?MODULE, [Interval], []).
+
+%% @doc Global kill switch - causes all locks/tokens to be given out freely without limits.
+%% Nothing will be tracked or recorded.
+-spec bypass(boolean()) -> ok.
+bypass(Switch) ->
+    gen_server:cast(?SERVER, {bypass, Switch}).
 
 %% @doc Enable handing out of all locks and tokens
 -spec enable() -> ok.
@@ -401,6 +408,7 @@ ps(Arg) ->
          entry_table:: ets:tid(),         %% TableID of ?BG_ENTRY_ETS_TABLE
          %% NOTE: None of the following data is persisted across process crashes.
          enabled :: boolean(),            %% Global enable/disable switch, true at startup
+         bypass :: boolean(),             %% Global kill switch. false at startup
          %% stats
          window  :: orddict:orddict(),    %% bg_resource() -> bg_stat_hist()
          history :: queue(),              %% bg_resource() -> queue of bg_stat_hist()
@@ -430,6 +438,7 @@ init([Interval]) ->
                    entry_table=undefined, %% resolved in the ETS-TRANSFER handler
                    window=orddict:new(),
                    enabled=true,
+                   bypass=false,
                    window_interval=Interval,
                    history=queue:new()},
     State2 = schedule_sample_history(State),
@@ -493,6 +502,12 @@ handle_call({ps, Resource}, _From, State) ->
 -spec handle_cast(term(), #state{}) -> {noreply, #state{}} |
                                        {noreply, #state{}, non_neg_integer()} |
                                        {stop, term(), #state{}}.
+handle_cast({bypass, false}, State) ->
+    {noreply, State#state{bypass=false}};
+handle_cast({bypass, true}, State) ->
+    {noreply, State#state{bypass=true}};
+handle_cast({bypass, _Other}, State) ->
+    {noreply, State};
 handle_cast({enable, Resource}, State) ->
     do_handle_cast_exception(fun do_enable_resource/3, [Resource, true, State], State);
 handle_cast({disable, Resource}, State) ->
@@ -887,6 +902,11 @@ try_get_resource(true, Resource, Type, Pid, Meta, State) ->
                              {reply, max_concurrency, #state{}}
                                  | {reply, {ok, #state{}}}
                                  | {reply, {{ok, reference()}, #state{}}}.
+%% @doc When the API is bypassed, we just give them out without record. This would
+%% only occur in a dire situation. We can't assume anything, including having a table.
+do_get_resource(_Resource, _Type, _Pid, _Meta, State=#state{bypass=true}) ->
+    Ref = random_bogus_ref(),
+    {reply, {ok, Ref}, State};
 do_get_resource(_Resource, _Type, _Pid, _Meta, State) when ?NOT_TRANSFERED(State) ->
     %% Table transfer has not occurred yet. Reply "max_concurrency" so that callers
     %% will try back later, hopefully when we have our table back.

@@ -71,6 +71,29 @@ bg_mgr_test_() ->
                          ?assertEqual(ok, ?BG_MGR:get_token(T)),
                          ?assertEqual(2, length(?BG_MGR:tokens_given(T))),
                          ?assertEqual(max_concurrency, ?BG_MGR:get_token(T))
+                 end},
+
+                {"bypass API",
+                 fun() ->
+                         %% bypass API
+                         riak_core_bg_manager:bypass(true),
+
+                         %% reduce token rate to zero and ensure we still get one
+                         riak_core_bg_manager:set_token_rate(token_a, {1,0}),
+                         {ok, _Ref} = riak_core_bg_manager:get_token(token_a),
+
+                         %% reduce lock limit to zero and ensure we still get one
+                         riak_core_bg_manager:set_concurrency_limit(lock_a, 0),
+                         {ok, _Ref1} = riak_core_bg_manager:get_lock(lock_a),
+
+                         %% even if globally disabled, we get a lock
+                         riak_core_bg_manager:disable(),
+                         {ok, _Ref2} = riak_core_bg_manager:get_lock(lock_a),
+
+                         %% turn it back on
+                         ?BG_MGR:bypass(false),
+                         ?BG_MGR:enable(),
+                         ?assertEqual(max_concurrency, ?BG_MGR:get_lock(lock_a))
                  end}
 
               ] end}
