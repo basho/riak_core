@@ -84,7 +84,8 @@ handle_call(value, From, State0=#state{active=Active0, awaiting=Awaiting0,
     Reply = case cache_get(TS, TTL) of
                 No when No == miss; No == stale ->
                     {Active, Awaiting} = maybe_get_stat(Stat, From, Active0, Awaiting0 ),
-                    {noreply, State0#state{active=Active, awaiting=Awaiting}, 1000};
+                    {noreply, State0#state{active=Active, awaiting=Awaiting}, 
+                     timer:seconds(10)};
                 hit ->
                     {reply, Value, State0}
             end,
