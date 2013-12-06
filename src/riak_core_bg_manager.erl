@@ -52,6 +52,9 @@
          %% Universal
          start_link/0,
          bypass/1,
+         bypassed/0,
+         enabled/0,
+         enabled/1,
          enable/0,
          enable/1,
          disable/0,
@@ -130,32 +133,46 @@ start(Interval) ->
 bypass(Switch) ->
     gen_server:cast(?SERVER, {bypass, Switch}).
 
+%% @doc Return bypass state as boolean.
+-spec bypassed() -> boolean().
+bypassed() ->
+    gen_server:call(?SERVER, bypassed).
+
 %% @doc Enable handing out of all locks and tokens
--spec enable() -> ok.
+-spec enable() -> ok | bypassed.
 enable() ->
-    gen_server:cast(?SERVER, enable).
+    gen_server:call(?SERVER, enable).
 
 %% @doc Disable handing out of all locks and tokens
--spec disable() -> ok.
+-spec disable() -> ok | bypassed.
 disable() ->
-    gen_server:cast(?SERVER, disable).
+    gen_server:call(?SERVER, disable).
+
+%% @doc Return global enabled status.
+-spec enabled() -> true | false | bypassed.
+enabled() ->
+    gen_server:call(?SERVER, enabled).
 
 %% @doc Enable handing out resources of the kind specified. If the resource
 %%      has not already been registered, this will have no effect.
--spec enable(bg_resource()) -> ok | unregistered.
+-spec enable(bg_resource()) -> ok | unregistered | bypassed.
 enable(Resource) ->
-    gen_server:cast(?SERVER, {enable, Resource}).
+    gen_server:call(?SERVER, {enable, Resource}).
 
 %% @doc Disable handing out resource of the given kind.
--spec disable(bg_resource()) -> ok | unregistered.
+-spec disable(bg_resource()) -> ok | unregistered | bypassed.
 disable(Resource) ->
-    gen_server:cast(?SERVER, {disable, Resource}).
+    gen_server:call(?SERVER, {disable, Resource}).
+
+-spec enabled(bg_resource()) -> true | false | bypassed.
+enabled(Resource) ->
+    gen_server:call(?SERVER, {enabled, Resource}).
 
 %% @doc Disable handing out resource of the given kind. If kill == true,
 %%      processes that currently hold the given resource will be killed.
--spec disable(bg_resource(), boolean()) -> ok | unregistered.
+-spec disable(bg_resource(), boolean()) -> ok | unregistered | bypassed.
 disable(Resource, Kill) ->
-    gen_server:cast(?SERVER, {disable, Resource, Kill}).
+    gen_server:call(?SERVER, {disable, Resource, Kill}).
 
 %% @doc Query the current set of registered resources by name, states, and types.
 %%      The special atom 'all' querys all resources. A list of states and a list
@@ -408,7 +425,7 @@ ps(Arg) ->
          entry_table:: ets:tid(),         %% TableID of ?BG_ENTRY_ETS_TABLE
          %% NOTE: None of the following data is persisted across process crashes.
          enabled :: boolean(),            %% Global enable/disable switch, true at startup
-         bypass :: boolean(),             %% Global kill switch. false at startup
+         bypassed:: boolean(),            %% Global kill switch. false at startup
          %% stats
          window  :: orddict:orddict(),    %% bg_resource() -> bg_stat_hist()
          history :: queue(),              %% bg_resource() -> queue of bg_stat_hist()
@@ -438,7 +455,7 @@ init([Interval]) ->
                    entry_table=undefined, %% resolved in the ETS-TRANSFER handler
                    window=orddict:new(),
                    enabled=true,
-                   bypass=false,
+                   bypassed=false,
                    window_interval=Interval,
                    history=queue:new()},
     State2 = schedule_sample_history(State),
@@ -454,6 +471,24 @@ init([Interval]) ->
                          {stop, term(), term(), #state{}} |
                          {stop, term(), #state{}}.
 
+handle_call(bypassed, _From, State=#state{bypassed=Bypassed}) ->
+    {reply, Bypassed, State};
+handle_call({enabled, Resource}, _From, State) ->
+    do_handle_call_exception(fun do_enabled/2, [Resource, State], State);
+handle_call({enable, Resource}, _From, State) ->
+    do_handle_call_exception(fun do_enable_resource/3, [Resource, true, State], State);
+handle_call({disable, Resource}, _From, State) ->
+    do_handle_call_exception(fun do_enable_resource/3, [Resource, false, State], State);
+handle_call({disable, Lock, Kill}, _From, State) ->
+    do_handle_call_exception(fun do_disable_lock/3, [Lock, Kill, State], State);
+handle_call(enabled, _From, State) ->
+    {reply, status_of(true, State), State};
+handle_call(enable, _From, State) ->
+    State2 = State#state{enabled=true},
+    {reply, status_of(true, State2), State2};
+handle_call(disable, _From, State) ->
+    State2 = State#state{enabled=false},
+    {reply, status_of(true, State2), State2};
 handle_call({query_resource, Resource, States, Types}, _From, State) ->
     Result = do_query(Resource, States, Types, State),
     {reply, Result, State};
@@ -503,23 +538,11 @@ handle_call({ps, Resource}, _From, State) ->
                                        {noreply, #state{}, non_neg_integer()} |
                                        {stop, term(), #state{}}.
 handle_cast({bypass, false}, State) ->
-    {noreply, State#state{bypass=false}};
+    {noreply, State#state{bypassed=false}};
 handle_cast({bypass, true}, State) ->
-    {noreply, State#state{bypass=true}};
+    {noreply, State#state{bypassed=true}};
 handle_cast({bypass, _Other}, State) ->
     {noreply, State};
-handle_cast({enable, Resource}, State) ->
-    do_handle_cast_exception(fun do_enable_resource/3, [Resource, true, State], State);
-handle_cast({disable, Resource}, State) ->
-    do_handle_cast_exception(fun do_enable_resource/3, [Resource, false, State], State);
-handle_cast({disable, Lock, Kill}, State) ->
-    do_handle_cast_exception(fun do_disable_lock/3, [Lock, Kill, State], State);
-handle_cast(enable, State) ->
-    State2 = State#state{enabled=true},
-    {noreply, State2};
-handle_cast(disable, State) ->
-    State2 = State#state{enabled=false},
-    {noreply, State2};
 handle_cast(clear_history, State) ->
     State2 = do_clear_history(State),
     {noreply, State2}.
@@ -579,6 +602,12 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
+%% @doc bypass > enable/disable
+status_of(_Enabled, #state{bypassed=true}) -> bypassed;
+status_of(true, #state{enabled=true}) -> enabled;
+status_of(false, #state{enabled=true}) -> disabled;
+status_of(_E,_S) -> disabled.
+
 %% @private
 %% @doc We must have just gotten the table data back after a crash/restart.
 %%      Walk through the given resources and release any holds by dead processes.
@@ -605,18 +634,6 @@ validate_hold({Key,Entry}=Obj, TableId) when ?e_type(Entry) == lock ->
     end;
 validate_hold(_Obj, _TableId) -> %% tokens don't monitor processes
     ok.
-
-%% @private
-%% @doc Wrap a call, to a function with args, with a try/catch that handles
-%%      thrown exceptions, namely '{unregistered, Resource}' and return the
-%%      proper error response for a gen server cast.
-do_handle_cast_exception(Function, Args, State) ->
-    try apply(Function, Args)
-    catch
-        Error ->
-            lager:error("Exception: ~p in function ~p", [Error, Function]),
-            {noreply, State}
-    end.
 
 %% @private
 %% @doc Wrap a call, to a function with args, with a try/catch that handles
@@ -750,10 +767,14 @@ maybe_honor_limit(false, _LockType, _Limit, _State) ->
 held_count(Resource, State) ->
     length(resources_given(Resource, State)).
 
+do_enabled(Resource, State) ->
+    Info = resource_info(Resource, State),
+    {reply, status_of(?resource_enabled(Info), State), State}.
+
 do_enable_resource(Resource, Enabled, State) ->
     Info = resource_info(Resource, State),
     State2 = update_resource_enabled(Resource, Enabled, Info, State),
-    {noreply, State2}.
+    {reply, status_of(Enabled, State2), State2}.
 
 update_resource_enabled(Resource, Value, Default, State) ->
     update_resource_info(Resource,
@@ -902,15 +923,14 @@ try_get_resource(true, Resource, Type, Pid, Meta, State) ->
                              {reply, max_concurrency, #state{}}
                                  | {reply, {ok, #state{}}}
                                  | {reply, {{ok, reference()}, #state{}}}.
-%% @doc When the API is bypassed, we just give them out without record. This would
-%% only occur in a dire situation. We can't assume anything, including having a table.
-do_get_resource(_Resource, _Type, _Pid, _Meta, State=#state{bypass=true}) ->
-    Ref = random_bogus_ref(),
-    {reply, {ok, Ref}, State};
 do_get_resource(_Resource, _Type, _Pid, _Meta, State) when ?NOT_TRANSFERED(State) ->
     %% Table transfer has not occurred yet. Reply "max_concurrency" so that callers
     %% will try back later, hopefully when we have our table back.
     {reply, max_concurrency, State};
+%% @doc When the API is bypassed, we ignore concurrency limits.
+do_get_resource(Resource, Type, Pid, Meta, State=#state{bypassed=true}) ->
+    {Result, State2} = try_get_resource(true, Resource, Type, Pid, Meta, State),
+    {reply, Result, State2};
 do_get_resource(_Resource, _Type, _Pid, _Meta, State=#state{enabled=false}) ->
     {reply, max_concurrency, State};
 do_get_resource(Resource, Type, Pid, Meta, State) ->

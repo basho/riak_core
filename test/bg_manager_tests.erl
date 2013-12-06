@@ -80,7 +80,7 @@ bg_mgr_test_() ->
 
                          %% reduce token rate to zero and ensure we still get one
                          riak_core_bg_manager:set_token_rate(token_a, {1,0}),
-                         {ok, _Ref} = riak_core_bg_manager:get_token(token_a),
+                         ok = riak_core_bg_manager:get_token(token_a),
 
                          %% reduce lock limit to zero and ensure we still get one
                          riak_core_bg_manager:set_concurrency_limit(lock_a, 0),
