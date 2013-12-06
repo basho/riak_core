@@ -29,6 +29,8 @@
 %% KEY                     Data                      Notes
 %% ---                     ----                      -----
 %% {info, Resource}        #resource_info            One token object per key.
+%% bypassed                boolean()
+%% enabled                 boolean()
 %%
 %% === Entries Table ===
 %% The table must be a bag and is best if private. See ?BG_ENTRY_ETS_OPTS in MODULE.hrl.
@@ -484,10 +486,10 @@ handle_call({disable, Lock, Kill}, _From, State) ->
 handle_call(enabled, _From, State) ->
     {reply, status_of(true, State), State};
 handle_call(enable, _From, State) ->
-    State2 = State#state{enabled=true},
+    State2 = update_enabled(true, State),
     {reply, status_of(true, State2), State2};
 handle_call(disable, _From, State) ->
-    State2 = State#state{enabled=false},
+    State2 = update_enabled(false, State),
     {reply, status_of(true, State2), State2};
 handle_call({query_resource, Resource, States, Types}, _From, State) ->
     Result = do_query(Resource, States, Types, State),
@@ -538,9 +540,9 @@ handle_call({ps, Resource}, _From, State) ->
                                        {noreply, #state{}, non_neg_integer()} |
                                        {stop, term(), #state{}}.
 handle_cast({bypass, false}, State) ->
-    {noreply, State#state{bypassed=false}};
+    {noreply, update_bypassed(false,State)};
 handle_cast({bypass, true}, State) ->
-    {noreply, State#state{bypassed=true}};
+    {noreply, update_bypassed(true,State)};
 handle_cast({bypass, _Other}, State) ->
     {noreply, State};
 handle_cast(clear_history, State) ->
@@ -565,8 +567,10 @@ handle_info({'ETS-TRANSFER', TableId, Pid, TableName}, State) ->
         {_I, _E} ->
             %% Got both tables, we can proceed with reviving ourself
             State3 = validate_holds(State2),
-            reschedule_token_refills(State3),
-            {noreply, State3}
+            State4 = restore_enabled(true, State3),
+            State5 = restore_bypassed(false, State4),
+            reschedule_token_refills(State5),
+            {noreply, State5}
     end;
 handle_info({'DOWN', Ref, _, _, _}, State) ->
     State2 = release_resource(Ref, State),
@@ -635,6 +639,38 @@ validate_hold({Key,Entry}=Obj, TableId) when ?e_type(Entry) == lock ->
 validate_hold(_Obj, _TableId) -> %% tokens don't monitor processes
     ok.
 
+%% @doc Update state with bypassed status and store to ETS
+update_bypassed(_Bypassed, State) when ?NOT_TRANSFERED(State) ->
+    State;
+update_bypassed(Bypassed, State=#state{info_table=TableId}) ->
+    ets:insert(TableId, {bypassed, Bypassed}),
+    State#state{bypassed=Bypassed}.
+
+%% @doc Update state with enabled status and store to ETS
+update_enabled(_Enabled, State) when ?NOT_TRANSFERED(State) ->
+    State;
+update_enabled(Enabled, State=#state{info_table=TableId}) ->
+    ets:insert(TableId, {enabled, Enabled}),
+    State#state{enabled=Enabled}.
+
+%% Assumes tables have been transfered.
+restore_boolean(Key, Default, #state{info_table=TableId}) ->
+    case ets:lookup(TableId, Key) of
+        [] ->
+            ets:insert(TableId, {Key, Default}),
+            Default;
+        [{_Key,Value} | _Rest] ->
+            Value
+    end.
+
+%% Assumes tables have been transfered.
+restore_bypassed(Default, State) ->
+    State#state{bypassed=restore_boolean(bypassed, Default, State)}.
+
+%% Assumes tables have been transfered.
+restore_enabled(Default, State) ->
+    State#state{enabled=restore_boolean(enabled, Default, State)}.
+    
 %% @private
 %% @doc Wrap a call, to a function with args, with a try/catch that handles
 %%      thrown exceptions, namely '{unregistered, Resource}' and return the

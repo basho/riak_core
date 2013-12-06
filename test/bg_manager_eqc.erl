@@ -23,6 +23,8 @@
 -record(state,{
           %% whether or not the bgmgr is running
           alive  :: boolean(),
+          %% whether or not the global bypass switch is engaged
+          bypassed :: boolean(),
           %% processes started by the test and the processes state
           procs  :: [{pid(), running | not_running}],
           %% concurrency limits for lock types
@@ -69,6 +71,7 @@ run_recheck() ->
 initial_state() ->
     #state{
        alive  = true,
+       bypassed = false,
        procs  = [],
        limits = [],
        counts = [],
@@ -181,6 +184,8 @@ get_lock_next(S, Res, [Type, Pid, Meta]) ->
     end.
 
 %% @doc Postcondition for get_lock
+get_lock_post(#state{bypassed=true}, [_Type, _Pid, _Meta], max_concurrency) ->
+    'max_concurrency returned when bypassed';
 get_lock_post(S, [Type, _Pid, _Meta], max_concurrency) ->
     %% Since S reflects the state before we check that it
     %% was already at the limit.
@@ -194,12 +199,12 @@ get_lock_post(S, [Type, _Pid, _Meta], max_concurrency) ->
             %% hack to get more informative post-cond failure (like eq)
             {ExistingCount, 'not >=', Limit}
     end;
-get_lock_post(S, [Type, _Pid, _Meta], _LockRef) ->
+get_lock_post(S=#state{bypassed=Bypassed}, [Type, _Pid, _Meta], _LockRef) ->
     %% Since S reflects the state before we check that it
     %% was not already at the limit.
     Limit = limit(Type, S),
     ExistingCount = length(held_locks(Type, S)),
-    case ExistingCount <  Limit of
+    case ExistingCount <  Limit orelse Bypassed of
         true -> true;
         false ->
             %% hack to get more informative post-cond failure (like eq)
@@ -335,12 +340,12 @@ get_token_pre(S, [Type]) ->
 %% @doc get_token state transition
 get_token_next(S, Value, [Type, _Pid]) ->
     get_token_next(S, Value, [Type]);
-get_token_next(S, _Value, [Type]) ->
+get_token_next(S=#state{bypassed=Bypassed}, _Value, [Type]) ->
     CurCount = num_tokens(Type, S),
     %% NOTE: this assumes the precondition requires we call set_token_rate at least once
     %% in case we don't we treat the max as 0
     Max = max_num_tokens(Type, unregistered, S),
-    case CurCount < Max of
+    case CurCount < Max orelse Bypassed of
         true -> increment_token_count(Type, S);
         false -> S
     end.
@@ -354,6 +359,8 @@ get_token(Type, Pid) ->
 %% @doc Postcondition for get_token
 get_token_post(S, [Type, _Pid], Res) ->
     get_token_post(S, [Type], Res);
+get_token_post(#state{bypassed=true}, [_Type], max_concurrency) ->
+    'max_concurrency returned while bypassed';
 get_token_post(S, [Type], max_concurrency) ->
     CurCount = num_tokens(Type, S),
     %% NOTE: this assumes the precondition requires we call set_token_rate at least once
@@ -365,12 +372,12 @@ get_token_post(S, [Type], max_concurrency) ->
             %% hack to get more info out of postcond failure
             {CurCount, 'not >=', Max}
     end;
-get_token_post(S, [Type], ok) ->
+get_token_post(S=#state{bypassed=Bypassed}, [Type], ok) ->
     CurCount = num_tokens(Type, S),
     %% NOTE: this assumes the precondition requires we call set_token_rate at least once
     %% in case we don't we treat the max as 0
     Max = max_num_tokens(Type, unregistered, S),
-    case CurCount < Max of
+    case CurCount < Max orelse Bypassed of
         true -> true;
         false ->
             {CurCount, 'not <', Max}
@@ -544,6 +551,28 @@ tail_post(#state{history=RevHistory}, [Resource, Offset, NumSamples], Result) ->
     H3 = lists:filter(fun(S) -> S =/= [] end, H2),
     eq(length(Result), length(H3)).
 
+%% ------ Grouped operator: bypass
+%% @doc bypass arguments generator
+bypass_args(_S) ->
+    [oneof([true, false])].
+
+%% @doc bypass precondition
+bypass_pre(S) ->
+    is_alive(S).
+
+%% @doc bypass next state function
+bypass_next(S, _Value, [Switch]) ->
+    S#state{bypassed=Switch}.
+
+%% @doc bypass command
+bypass(Switch) ->
+    Res = riak_core_bg_manager:bypass(Switch), %% expect 'ok'
+    Value = riak_core_bg_manager:bypassed(),  %% expect eq(Value, Switch)
+    {Res, Value}.
+
+%% @doc bypass postcondition
+bypass_post(_S, [Switch], Result) ->
+    eq(Result, {ok, Switch}).
 
 %% -- Generators
 lock_type() ->
@@ -756,6 +785,7 @@ prop_bgmgr() ->
                                     io:format("~n~nFinal State: ~n"),
                                     io:format("---------------~n"),
                                     io:format("alive = ~p~n", [S#state.alive]),
+                                    io:format("bypassed = ~p~n", [S#state.bypassed]),
                                     io:format("procs = ~p~n", [S#state.procs]),
                                     io:format("limits = ~p~n", [S#state.limits]),
                                     io:format("locks = ~p~n", [S#state.locks]),
