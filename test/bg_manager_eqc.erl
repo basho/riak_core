@@ -25,6 +25,8 @@
           alive  :: boolean(),
           %% whether or not the global bypass switch is engaged
           bypassed :: boolean(),
+          %% whether or not the global enable switch is engaged
+          enabled :: boolean(),
           %% processes started by the test and the processes state
           procs  :: [{pid(), running | not_running}],
           %% concurrency limits for lock types
@@ -72,6 +74,7 @@ initial_state() ->
     #state{
        alive  = true,
        bypassed = false,
+       enabled = true,
        procs  = [],
        limits = [],
        counts = [],
@@ -173,10 +176,10 @@ get_lock(Type, Pid, Meta) ->
 
 %% @doc State transition for get_lock command
 %% `Res' is either the lock reference or max_concurrency
-get_lock_next(S, Res, [Type, Pid, Meta]) ->
+get_lock_next(S=#state{enabled=Enabled, bypassed=Bypassed}, Res, [Type, Pid, Meta]) ->
     TypeLimit = limit(Type, S),
     Held = held_locks(Type, S),
-    case length(Held) < TypeLimit of
+    case (Enabled andalso length(Held) < TypeLimit) orelse Bypassed of
         %% got lock
         true -> add_held_lock(Type, Res, Pid, Meta, S);
         %% failed to get lock
@@ -184,27 +187,29 @@ get_lock_next(S, Res, [Type, Pid, Meta]) ->
     end.
 
 %% @doc Postcondition for get_lock
+%% We expect to get max_concurrency if globally disabled or we hit the limit.
+%% We expect to get ok if bypassed or under the limit.
 get_lock_post(#state{bypassed=true}, [_Type, _Pid, _Meta], max_concurrency) ->
     'max_concurrency returned when bypassed';
-get_lock_post(S, [Type, _Pid, _Meta], max_concurrency) ->
+get_lock_post(S=#state{enabled=Enabled}, [Type, _Pid, _Meta], max_concurrency) ->
     %% Since S reflects the state before we check that it
     %% was already at the limit.
     Limit = limit(Type, S),
     ExistingCount = length(held_locks(Type, S)),
     %% check >= because we may have lowered limit *without*
     %% forcing some processes to release their locks by killing them
-    case ExistingCount >= Limit of
+    case (not Enabled) orelse ExistingCount >= Limit of
         true -> true;
         false ->
             %% hack to get more informative post-cond failure (like eq)
             {ExistingCount, 'not >=', Limit}
     end;
-get_lock_post(S=#state{bypassed=Bypassed}, [Type, _Pid, _Meta], _LockRef) ->
+get_lock_post(S=#state{bypassed=Bypassed, enabled=Enabled}, [Type, _Pid, _Meta], _LockRef) ->
     %% Since S reflects the state before we check that it
     %% was not already at the limit.
     Limit = limit(Type, S),
     ExistingCount = length(held_locks(Type, S)),
-    case ExistingCount <  Limit orelse Bypassed of
+    case (Enabled andalso ExistingCount <  Limit) orelse Bypassed of
         true -> true;
         false ->
             %% hack to get more informative post-cond failure (like eq)
@@ -340,12 +345,12 @@ get_token_pre(S, [Type]) ->
 %% @doc get_token state transition
 get_token_next(S, Value, [Type, _Pid]) ->
     get_token_next(S, Value, [Type]);
-get_token_next(S=#state{bypassed=Bypassed}, _Value, [Type]) ->
+get_token_next(S=#state{bypassed=Bypassed, enabled=Enabled}, _Value, [Type]) ->
     CurCount = num_tokens(Type, S),
     %% NOTE: this assumes the precondition requires we call set_token_rate at least once
     %% in case we don't we treat the max as 0
     Max = max_num_tokens(Type, unregistered, S),
-    case CurCount < Max orelse Bypassed of
+    case (Enabled andalso CurCount < Max) orelse Bypassed of
         true -> increment_token_count(Type, S);
         false -> S
     end.
@@ -357,27 +362,29 @@ get_token(Type, Pid) ->
     riak_core_bg_manager:get_token(Type, Pid).
 
 %% @doc Postcondition for get_token
+%% We expect to get max_concurrency if globally disabled or we hit the limit.
+%% We expect to get ok if bypassed or under the limit.
 get_token_post(S, [Type, _Pid], Res) ->
     get_token_post(S, [Type], Res);
 get_token_post(#state{bypassed=true}, [_Type], max_concurrency) ->
     'max_concurrency returned while bypassed';
-get_token_post(S, [Type], max_concurrency) ->
+get_token_post(S=#state{enabled=Enabled}, [Type], max_concurrency) ->
     CurCount = num_tokens(Type, S),
     %% NOTE: this assumes the precondition requires we call set_token_rate at least once
     %% in case we don't we treat the max as 0
     Max = max_num_tokens(Type, unregistered, S),
-    case CurCount >= Max of
+    case (not Enabled) orelse CurCount >= Max of
         true -> true;
         false ->
             %% hack to get more info out of postcond failure
             {CurCount, 'not >=', Max}
     end;
-get_token_post(S=#state{bypassed=Bypassed}, [Type], ok) ->
+get_token_post(S=#state{bypassed=Bypassed, enabled=Enabled}, [Type], ok) ->
     CurCount = num_tokens(Type, S),
     %% NOTE: this assumes the precondition requires we call set_token_rate at least once
     %% in case we don't we treat the max as 0
     Max = max_num_tokens(Type, unregistered, S),
-    case CurCount < Max orelse Bypassed of
+    case (Enabled andalso CurCount < Max) orelse Bypassed of
         true -> true;
         false ->
             {CurCount, 'not <', Max}
@@ -573,6 +580,95 @@ bypass(Switch) ->
 %% @doc bypass postcondition
 bypass_post(_S, [Switch], Result) ->
     eq(Result, {ok, Switch}).
+
+%% ------ Grouped operator: bypassed
+%% @doc bypass arguments generator
+bypassed_args(_S) ->
+    [].
+
+%% @doc eanble precondition
+bypassed_pre(S) ->
+    is_alive(S).
+
+%% @doc bypassed next state function
+bypassed_next(S, _Value, []) ->
+    S.
+
+%% @doc bypassed command
+bypassed() ->
+    riak_core_bg_manager:bypassed().
+
+%% @doc bypassed postcondition
+bypassed_post(#state{bypassed=Bypassed}, _Value, Result) ->
+    eq(Result, Bypassed).
+
+%% ------ Grouped operator: enable
+%% @doc bypass arguments generator
+enable_args(_S) ->
+    [].
+
+%% @doc eanble precondition
+enable_pre(S) ->
+    is_alive(S).
+
+%% @doc enable next state function
+enable_next(S, _Value, []) ->
+    S#state{enabled=true}.
+
+%% @doc enable command
+enable() ->
+    riak_core_bg_manager:enable().
+
+%% @doc enable postcondition
+enable_post(S, _Value, Result) ->
+    eq(Result, status_of(true, S#state{enabled=true})).
+
+%% ------ Grouped operator: disable
+%% @doc bypass arguments generator
+disable_args(_S) ->
+    [].
+
+%% @doc eanble precondition
+disable_pre(S) ->
+    is_alive(S).
+
+%% @doc disable next state function
+disable_next(S, _Value, []) ->
+    S#state{enabled=false}.
+
+%% @doc disable command
+disable() ->
+    riak_core_bg_manager:disable().
+
+%% @doc disable postcondition
+disable_post(S, _Value, Result) ->
+    eq(Result, status_of(true, S#state{enabled=false})).
+
+%% ------ Grouped operator: enabled
+%% @doc bypass arguments generator
+enabled_args(_S) ->
+    [].
+
+%% @doc eanble precondition
+enabled_pre(S) ->
+    is_alive(S).
+
+%% @doc enabled next state function
+enabled_next(S, _Value, []) ->
+    S.
+
+%% @doc enabled command
+enabled() ->
+    riak_core_bg_manager:enabled().
+
+%% @doc enabled postcondition
+enabled_post(S, _Value, Result) ->
+    eq(Result, status_of(true, S)).
+
+%% @doc return status considering Resource status, enbaled, and bypassed
+status_of(_Enabled, #state{bypassed=true}) -> bypassed;
+status_of(true, #state{enabled=true}) -> enabled;
+status_of(_E,_S) -> disabled.
 
 %% -- Generators
 lock_type() ->
@@ -786,6 +882,7 @@ prop_bgmgr() ->
                                     io:format("---------------~n"),
                                     io:format("alive = ~p~n", [S#state.alive]),
                                     io:format("bypassed = ~p~n", [S#state.bypassed]),
+                                    io:format("enabled = ~p~n", [S#state.enabled]),
                                     io:format("procs = ~p~n", [S#state.procs]),
                                     io:format("limits = ~p~n", [S#state.limits]),
                                     io:format("locks = ~p~n", [S#state.locks]),

@@ -141,38 +141,38 @@ bypassed() ->
     gen_server:call(?SERVER, bypassed).
 
 %% @doc Enable handing out of all locks and tokens
--spec enable() -> ok | bypassed.
+-spec enable() -> enabled | bypassed.
 enable() ->
     gen_server:call(?SERVER, enable).
 
 %% @doc Disable handing out of all locks and tokens
--spec disable() -> ok | bypassed.
+-spec disable() -> disabled | bypassed.
 disable() ->
     gen_server:call(?SERVER, disable).
 
 %% @doc Return global enabled status.
--spec enabled() -> true | false | bypassed.
+-spec enabled() -> enabled | disabled | bypassed.
 enabled() ->
     gen_server:call(?SERVER, enabled).
 
 %% @doc Enable handing out resources of the kind specified. If the resource
 %%      has not already been registered, this will have no effect.
--spec enable(bg_resource()) -> ok | unregistered | bypassed.
+-spec enable(bg_resource()) -> enabled | unregistered | bypassed.
 enable(Resource) ->
     gen_server:call(?SERVER, {enable, Resource}).
 
 %% @doc Disable handing out resource of the given kind.
--spec disable(bg_resource()) -> ok | unregistered | bypassed.
+-spec disable(bg_resource()) -> disabled | unregistered | bypassed.
 disable(Resource) ->
     gen_server:call(?SERVER, {disable, Resource}).
 
--spec enabled(bg_resource()) -> true | false | bypassed.
+-spec enabled(bg_resource()) -> enabled | disabled | bypassed.
 enabled(Resource) ->
     gen_server:call(?SERVER, {enabled, Resource}).
 
 %% @doc Disable handing out resource of the given kind. If kill == true,
 %%      processes that currently hold the given resource will be killed.
--spec disable(bg_resource(), boolean()) -> ok | unregistered | bypassed.
+-spec disable(bg_resource(), boolean()) -> disabled | unregistered | bypassed.
 disable(Resource, Kill) ->
     gen_server:call(?SERVER, {disable, Resource, Kill}).
 
@@ -609,7 +609,6 @@ code_change(_OldVsn, State, _Extra) ->
 %% @doc bypass > enable/disable
 status_of(_Enabled, #state{bypassed=true}) -> bypassed;
 status_of(true, #state{enabled=true}) -> enabled;
-status_of(false, #state{enabled=true}) -> disabled;
 status_of(_E,_S) -> disabled.
 
 %% @private
