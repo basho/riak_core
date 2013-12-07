@@ -84,7 +84,8 @@ handle_call(value, From, State0=#state{active=Active0, awaiting=Awaiting0,
     Reply = case cache_get(TS, TTL) of
                 No when No == miss; No == stale ->
                     {Active, Awaiting} = maybe_get_stat(Stat, From, Active0, Awaiting0 ),
-                    {noreply, State0#state{active=Active, awaiting=Awaiting}};
+                    {noreply, State0#state{active=Active, awaiting=Awaiting}, 
+                     timer:seconds(10)};
                 hit ->
                     {reply, Value, State0}
             end,
@@ -104,6 +105,18 @@ handle_cast(_Msg, State) ->
 %% don't let a crashing stat calc crash the server
 handle_info({'EXIT', FromPid, Reason}, State=#state{active=FromPid, awaiting=Awaiting}) when Reason /= normal ->
     [gen_server:reply(From, {error, Reason}) || From <- Awaiting],
+    {noreply, State#state{active=undefined, awaiting=[]}};
+handle_info({'EXIT', _FromPid, Reason}, State=#state{active=undefined, 
+                                                    awaiting=[]}) 
+  when Reason /= normal ->
+    %% catch intentional kills due to timeout here.
+    {noreply, State};
+handle_info(timeout, State=#state{active=Pid, awaiting=Awaiting, value=Value}) ->
+    %% kill the pid, causing the above clause to be processed
+    lager:debug("killed delinquent stats process ~p", [Pid]),
+    exit(Pid, kill),
+    %% let the cache get staler
+    [gen_server:reply(From, Value) || From <- Awaiting],
     {noreply, State#state{active=undefined, awaiting=[]}};
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -140,6 +153,8 @@ do_calc_stat(Stat) ->
     spawn_link(
       fun() ->
               StatVal = riak_core_stat_q:calc_stat(Stat),
-              gen_server:cast(ServerPid, {value, StatVal, folsom_utils:now_epoch()}) end
+              gen_server:cast(ServerPid, {value, StatVal, 
+                                          folsom_utils:now_epoch()}) 
+      end
      ).
 
