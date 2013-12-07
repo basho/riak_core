@@ -29,6 +29,8 @@
           enabled :: boolean(),
           %% processes started by the test and the processes state
           procs  :: [{pid(), running | not_running}],
+          %% resources that are disabled are on the list
+          disabled :: [{bg_eqc_type()}],
           %% concurrency limits for lock types
           limits :: [{bg_eqc_type(), bg_eqc_limit()}],
           %% max counts per "period" for token types
@@ -75,6 +77,7 @@ initial_state() ->
        alive  = true,
        bypassed = false,
        enabled = true,
+       disabled = [],
        procs  = [],
        limits = [],
        counts = [],
@@ -179,7 +182,8 @@ get_lock(Type, Pid, Meta) ->
 get_lock_next(S=#state{enabled=Enabled, bypassed=Bypassed}, Res, [Type, Pid, Meta]) ->
     TypeLimit = limit(Type, S),
     Held = held_locks(Type, S),
-    case (Enabled andalso length(Held) < TypeLimit) orelse Bypassed of
+    ReallyEnabled = Enabled andalso resource_enabled(Type, S),
+    case (ReallyEnabled andalso length(Held) < TypeLimit) orelse Bypassed of
         %% got lock
         true -> add_held_lock(Type, Res, Pid, Meta, S);
         %% failed to get lock
@@ -198,7 +202,8 @@ get_lock_post(S=#state{enabled=Enabled}, [Type, _Pid, _Meta], max_concurrency) -
     ExistingCount = length(held_locks(Type, S)),
     %% check >= because we may have lowered limit *without*
     %% forcing some processes to release their locks by killing them
-    case (not Enabled) orelse ExistingCount >= Limit of
+    ReallyEnabled = Enabled andalso resource_enabled(Type, S),
+    case (not ReallyEnabled) orelse ExistingCount >= Limit of
         true -> true;
         false ->
             %% hack to get more informative post-cond failure (like eq)
@@ -209,7 +214,8 @@ get_lock_post(S=#state{bypassed=Bypassed, enabled=Enabled}, [Type, _Pid, _Meta],
     %% was not already at the limit.
     Limit = limit(Type, S),
     ExistingCount = length(held_locks(Type, S)),
-    case (Enabled andalso ExistingCount <  Limit) orelse Bypassed of
+    ReallyEnabled = Enabled andalso resource_enabled(Type, S),
+    case (ReallyEnabled andalso ExistingCount <  Limit) orelse Bypassed of
         true -> true;
         false ->
             %% hack to get more informative post-cond failure (like eq)
@@ -350,7 +356,8 @@ get_token_next(S=#state{bypassed=Bypassed, enabled=Enabled}, _Value, [Type]) ->
     %% NOTE: this assumes the precondition requires we call set_token_rate at least once
     %% in case we don't we treat the max as 0
     Max = max_num_tokens(Type, unregistered, S),
-    case (Enabled andalso CurCount < Max) orelse Bypassed of
+    ReallyEnabled = Enabled andalso resource_enabled(Type, S),
+    case (ReallyEnabled andalso CurCount < Max) orelse Bypassed of
         true -> increment_token_count(Type, S);
         false -> S
     end.
@@ -373,7 +380,8 @@ get_token_post(S=#state{enabled=Enabled}, [Type], max_concurrency) ->
     %% NOTE: this assumes the precondition requires we call set_token_rate at least once
     %% in case we don't we treat the max as 0
     Max = max_num_tokens(Type, unregistered, S),
-    case (not Enabled) orelse CurCount >= Max of
+    ReallyEnabled = Enabled andalso resource_enabled(Type, S),
+    case (not ReallyEnabled) orelse CurCount >= Max of
         true -> true;
         false ->
             %% hack to get more info out of postcond failure
@@ -384,7 +392,8 @@ get_token_post(S=#state{bypassed=Bypassed, enabled=Enabled}, [Type], ok) ->
     %% NOTE: this assumes the precondition requires we call set_token_rate at least once
     %% in case we don't we treat the max as 0
     Max = max_num_tokens(Type, unregistered, S),
-    case (Enabled andalso CurCount < Max) orelse Bypassed of
+    ReallyEnabled = Enabled andalso resource_enabled(Type, S),
+    case (ReallyEnabled andalso CurCount < Max) orelse Bypassed of
         true -> true;
         false ->
             {CurCount, 'not <', Max}
@@ -605,44 +614,79 @@ bypassed_post(#state{bypassed=Bypassed}, _Value, Result) ->
 %% ------ Grouped operator: enable
 %% @doc bypass arguments generator
 enable_args(_S) ->
-    [].
+    [oneof([[], token_type(), lock_type()])].
 
-%% @doc eanble precondition
+%% @doc enable precondition
+%% global enable
 enable_pre(S) ->
     is_alive(S).
 
+%% per resource enable
+enable_pre(S,[Type]) ->
+    is_integer(max_num_tokens(Type, unregistered, S)) andalso is_alive(S).
+
 %% @doc enable next state function
+%% global enable
 enable_next(S, _Value, []) ->
-    S#state{enabled=true}.
+    S#state{enabled=true};
+%% per resource enable
+enable_next(S, _Value, [Type]) ->
+    enable_resource(Type, S).
 
 %% @doc enable command
 enable() ->
     riak_core_bg_manager:enable().
 
+enable(Resource) ->
+    riak_core_bg_manager:enable(Resource).
+
 %% @doc enable postcondition
-enable_post(S, _Value, Result) ->
-    eq(Result, status_of(true, S#state{enabled=true})).
+%% global enable
+enable_post(S, [], Result) ->
+    eq(Result, status_of(true, S#state{enabled=true}));
+%% per resource enable
+enable_post(S, [_Resource], Result) ->
+    ResourceEnabled = true,
+    eq(Result, status_of(ResourceEnabled, S)).
 
 %% ------ Grouped operator: disable
 %% @doc bypass arguments generator
 disable_args(_S) ->
-    [].
+    [oneof([[], token_type(), lock_type()])].
 
 %% @doc eanble precondition
+%% global disable
 disable_pre(S) ->
     is_alive(S).
 
+%% per resource disable
+disable_pre(S,[Type]) ->
+    is_integer(max_num_tokens(Type, unregistered, S)) andalso is_alive(S).
+
 %% @doc disable next state function
+%% global disable
 disable_next(S, _Value, []) ->
-    S#state{enabled=false}.
+    S#state{enabled=false};
+%% per resource disable
+disable_next(S, _Value, [Type]) ->
+    disable_resource(Type, S).
 
 %% @doc disable command
 disable() ->
     riak_core_bg_manager:disable().
 
+disable(Resource) ->
+    riak_core_bg_manager:disable(Resource).
+
 %% @doc disable postcondition
-disable_post(S, _Value, Result) ->
-    eq(Result, status_of(true, S#state{enabled=false})).
+%% global
+disable_post(S, [], Result) ->
+    Ignored = true,
+    eq(Result, status_of(Ignored, S#state{enabled=false}));
+%% per resource
+disable_post(S, [_Resource], Result) ->
+    ResourceEnabled = false,
+    eq(Result, status_of(ResourceEnabled, S)).
 
 %% ------ Grouped operator: enabled
 %% @doc bypass arguments generator
@@ -664,6 +708,18 @@ enabled() ->
 %% @doc enabled postcondition
 enabled_post(S, _Value, Result) ->
     eq(Result, status_of(true, S)).
+
+%%------------ helpers -------------------------
+%% @doc resources are disabled iff they appear on the "disabled" list
+resource_enabled(Resource, #state{disabled=Disabled}) ->
+    not lists:member(Resource, Disabled).
+
+%% @doc enable the resource by removing from the "disabled" list
+enable_resource(Resource, State=#state{disabled=Disabled}) ->
+    State#state{disabled=lists:delete(Resource, Disabled)}.
+
+disable_resource(Resource, State=#state{disabled=Disabled}) ->
+    State#state{disabled=[Resource | lists:delete(Resource, Disabled)]}.
 
 %% @doc return status considering Resource status, enbaled, and bypassed
 status_of(_Enabled, #state{bypassed=true}) -> bypassed;
