@@ -231,7 +231,7 @@ do_write_ringfile(Ring) ->
             TS = io_lib:format(".~B~2.10.0B~2.10.0B~2.10.0B~2.10.0B~2.10.0B",
                                [Year, Month, Day, Hour, Minute, Second]),
             Cluster = app_helper:get_env(riak_core, cluster_name),
-            FN = Dir ++ "/ring/riak_core_ring." ++ Cluster ++ TS,
+            FN = Dir ++ "/riak_core_ring." ++ Cluster ++ TS,
             do_write_ringfile(Ring, FN)
     end.
 
