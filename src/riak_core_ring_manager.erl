@@ -464,13 +464,12 @@ code_change(_OldVsn, State, _Extra) ->
 %% ===================================================================
 
 ring_dir() ->
-    Dir = case app_helper:get_env(riak_core, ring_state_dir) of
+    case app_helper:get_env(riak_core, ring_state_dir) of
         undefined ->
-            app_helper:get_env(riak_core, platform_data_dir, "data");
+            filename:join(app_helper:get_env(riak_core, platform_data_dir, "data"), "ring");
         D ->
             D
-    end,
-    filename:join(Dir, "ring").
+    end.
 
 prune_list([X|Rest]) ->
     lists:usort(lists:append([[X],back(1,X,Rest),back(2,X,Rest),
