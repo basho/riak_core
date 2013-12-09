@@ -185,7 +185,7 @@ vnodeq_aggregate(Service, MQLs0) ->
     [{[P, riak_core, vnodeq_atom(Service,<<"s_running">>)], [{value, Len}]},
      {[P, riak_core, vnodeq_atom(Service,<<"q">>)],
       [{min, lists:nth(1, MQLs)}, {median, Median}, {mean, Mean},
-       {q_max, lists:nth(Len, MQLs)}, {total, Total}]}].
+       {max, lists:nth(Len, MQLs)}, {total, Total}]}].
 
 vnodeq_atom(Service, Desc) ->
     binary_to_atom(<<(atom_to_binary(Service, latin1))/binary, Desc/binary>>, latin1).
