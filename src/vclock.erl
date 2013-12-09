@@ -39,6 +39,7 @@
          get_counter/2,
          get_timestamp/2,
          get_entry/2,
+         valid_entry/1,
          increment/2,
          increment/3,
          all_nodes/1,
@@ -135,12 +136,19 @@ get_timestamp(Node, VClock) ->
     end.
 
 % @doc Get the {counter, timestamp} entry value in a VClock set from Node.
--spec get_entry(Node :: vclock_node(), VClock :: vclock()) -> dot() | undefined.
+-spec get_entry(Node :: vclock_node(), VClock :: vclock()) -> {ok, dot()} | undefined.
 get_entry(Node, VClock) ->
     case lists:keyfind(Node, 1, VClock) of
 	false -> undefined;
-        Entry -> Entry
+        Entry -> {ok, Entry}
     end.
+
+%% @doc is the given argument a valid dot, or entry?
+-spec valid_entry(dot()) -> boolean().
+valid_entry({_, {_, _}}) ->
+    true;
+valid_entry(_) ->
+    false.
 
 % @doc Increment VClock at Node.
 -spec increment(Node :: vclock_node(), VClock :: vclock()) -> vclock().
@@ -337,5 +345,24 @@ merge_same_id_test() ->
     VC2 = [{<<"1">>, {1, 3}},{<<"3">>,{1,5}}],
     ?assertEqual([{<<"1">>, {1, 3}},{<<"2">>,{1,4}},{<<"3">>,{1,5}}],
                  vclock:merge([VC1, VC2])).
+
+get_entry_test() ->
+    VC = vclock:fresh(),
+    VC1 = increment(c, increment(b, increment(a, VC))),
+    ?assertMatch({ok, {a, {1, _}}}, get_entry(a, VC1)),
+    ?assertMatch({ok, {b, {1, _}}}, get_entry(b, VC1)),
+    ?assertMatch({ok, {c, {1, _}}}, get_entry(c, VC1)),
+    ?assertEqual(undefined, get_entry(d, VC1)).
+
+valid_entry_test() ->
+    VC = vclock:fresh(),
+    VC1 = increment(c, increment(b, increment(a, VC))),
+    [begin
+         {ok, E} = get_entry(Actor, VC1),
+         ?assert(valid_entry(E))
+     end || Actor <- [a, b, c]],
+    ?assertNot(valid_entry(undefined)),
+    ?assertNot(valid_entry("huffle-puff")),
+    ?assertNot(valid_entry([])).
 
 -endif.
