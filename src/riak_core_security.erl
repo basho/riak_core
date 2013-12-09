@@ -111,7 +111,7 @@ print_users() ->
 print_user(User) ->
     case riak_core_metadata:get({<<"security">>, <<"roles">>}, User) of
         undefined ->
-            io:format("No such role ~p", [User]),
+            io:format("No such role ~p~n", [User]),
             {error, {unknown_role, User}};
         _U ->
             Grants = accumulate_grants(User),
@@ -461,7 +461,7 @@ set_ciphers(CipherList) ->
     case riak_core_ssl_util:parse_ciphers(CipherList) of
         {[], _} ->
             %% no valid ciphers
-            io:format("No known or supported ciphers in list."),
+            io:format("No known or supported ciphers in list.~n"),
             error;
         _ ->
             riak_core_metadata:put({<<"security">>, <<"config">>}, ciphers,
