@@ -79,7 +79,6 @@
              riak_core_vnode_worker_pool,
              riak_core_web,
              riak_core_wm_urlmap,
-             riak_core_connection,
              riak_core_tcp_mon,
              riak_core_ssl_util,
              supervisor_pre_r14b04,
