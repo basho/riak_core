@@ -1,3 +1,4 @@
+%%-*- mode: erlang -*-
 %% Default Bucket Properties
 
 %% @doc the number of replicas stored. Note: See CAP Controls for further discussion.
@@ -13,19 +14,19 @@
   {level, advanced}
 ]}.
 
-%% Cut and paste translation screams to be rewritten as a datatype, but that's a 
+%% Cut and paste translation screams to be rewritten as a datatype, but that's a
 %% "nice to have"
-{translation, 
+{translation,
   "riak_core.default_bucket_props.pr",
   fun(Conf) ->
-    Setting = cuttlefish_util:conf_get_value("buckets.default.pr", Conf),
+    Setting = cuttlefish:conf_get("buckets.default.pr", Conf),
     case Setting of
       "quorum" -> quorum;
       "all" -> all;
       X ->
         try list_to_integer(Setting) of
           Int -> Int
-        catch 
+        catch
           E:R -> error
         end
     end
@@ -36,17 +37,17 @@
   {default, "quorum"},
   {level, advanced}
 ]}.
-{translation, 
+{translation,
   "riak_core.default_bucket_props.r",
   fun(Conf) ->
-    Setting = cuttlefish_util:conf_get_value("buckets.default.r", Conf),
+    Setting = cuttlefish:conf_get("buckets.default.r", Conf),
     case Setting of
       "quorum" -> quorum;
       "all" -> all;
       X ->
         try list_to_integer(Setting) of
           Int -> Int
-        catch 
+        catch
           E:R -> error
         end
     end
@@ -57,17 +58,17 @@
   {default, "quorum"},
   {level, advanced}
 ]}.
-{translation, 
+{translation,
   "riak_core.default_bucket_props.w",
   fun(Conf) ->
-    Setting = cuttlefish_util:conf_get_value("buckets.default.w", Conf),
+    Setting = cuttlefish:conf_get("buckets.default.w", Conf),
     case Setting of
       "quorum" -> quorum;
       "all" -> all;
       X ->
         try list_to_integer(Setting) of
           Int -> Int
-        catch 
+        catch
           E:R -> error
         end
     end
@@ -78,17 +79,17 @@
   {default, "0"},
   {level, advanced}
 ]}.
-{translation, 
+{translation,
   "riak_core.default_bucket_props.pw",
   fun(Conf) ->
-    Setting = cuttlefish_util:conf_get_value("buckets.default.pw", Conf),
+    Setting = cuttlefish:conf_get("buckets.default.pw", Conf),
     case Setting of
       "quorum" -> quorum;
       "all" -> all;
       X ->
         try list_to_integer(Setting) of
           Int -> Int
-        catch 
+        catch
           E:R -> error
         end
     end
@@ -99,17 +100,17 @@
   {default, "quorum"},
   {level, advanced}
 ]}.
-{translation, 
+{translation,
   "riak_core.default_bucket_props.dw",
   fun(Conf) ->
-    Setting = cuttlefish_util:conf_get_value("buckets.default.dw", Conf),
+    Setting = cuttlefish:conf_get("buckets.default.dw", Conf),
     case Setting of
       "quorum" -> quorum;
       "all" -> all;
       X ->
         try list_to_integer(Setting) of
           Int -> Int
-        catch 
+        catch
           E:R -> error
         end
     end
@@ -120,17 +121,17 @@
   {default, "quorum"},
   {level, advanced}
 ]}.
-{translation, 
+{translation,
   "riak_core.default_bucket_props.rw",
   fun(Conf) ->
-    Setting = cuttlefish_util:conf_get_value("buckets.default.rw", Conf),
+    Setting = cuttlefish:conf_get("buckets.default.rw", Conf),
     case Setting of
       "quorum" -> quorum;
       "all" -> all;
       X ->
         try list_to_integer(Setting) of
           Int -> Int
-        catch 
+        catch
           E:R -> error
         end
     end
@@ -148,15 +149,15 @@
   {level, advanced}
 ]}.
 
-{translation, 
- "riak_core.default_bucket_props.allow_mult", 
- fun(Conf) -> 
-  Setting = cuttlefish_util:conf_get_value("buckets.default.siblings", Conf),
+{translation,
+ "riak_core.default_bucket_props.allow_mult",
+ fun(Conf) ->
+  Setting = cuttlefish:conf_get("buckets.default.siblings", Conf),
     case Setting of
       on -> true;
       off -> false;
       _Default -> true
-    end  
+    end
  end}.
 
 {mapping, "buckets.default.last_write_wins", "riak_core.default_bucket_props.last_write_wins", [
@@ -182,7 +183,7 @@
 
 %% ring_size validator
 {validator, "ring_size", "not a power of 2 greater than 1",
- fun(Size) -> 
+ fun(Size) ->
   Size > 1 andalso (Size band (Size-1) =:= 0)
  end}.
 
@@ -249,7 +250,7 @@
 { translation,
   "riak_core.dtrace_support",
   fun(Conf) ->
-    Setting = cuttlefish_util:conf_get_value("dtrace", Conf), 
+    Setting = cuttlefish:conf_get("dtrace", Conf),
     case Setting of
       on -> true;
       off -> false;
