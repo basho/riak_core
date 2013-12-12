@@ -198,12 +198,13 @@ all_given() ->
 %%%%%%%%%%%
 
 %% @doc Get the current maximum concurrency for the given lock type.
--spec concurrency_limit(bg_lock()) -> bg_concurrency_limit().
+%%      If the background manager is unavailable, undefined is returned.
+-spec concurrency_limit(bg_lock()) -> bg_concurrency_limit() | undefined.
 concurrency_limit(Lock) ->
     gen_server:call(?MODULE, {concurrency_limit, Lock}, infinity).
 
 %% @doc same as `set_concurrency_limit(Type, Limit, false)'
--spec set_concurrency_limit(bg_lock(), bg_concurrency_limit()) -> bg_concurrency_limit().
+-spec set_concurrency_limit(bg_lock(), bg_concurrency_limit()) -> bg_concurrency_limit() | undefined.
 set_concurrency_limit(Lock, Limit) ->
     set_concurrency_limit(Lock, Limit, false).
 
@@ -213,7 +214,7 @@ set_concurrency_limit(Lock, Limit) ->
 %%      then the extra locks are released by killing processes with reason `max_concurrency'.
 %%      If `false', then the processes holding the extra locks are aloud to do so until they
 %%      are released.
--spec set_concurrency_limit(bg_lock(), bg_concurrency_limit(), boolean()) -> bg_concurrency_limit().
+-spec set_concurrency_limit(bg_lock(), bg_concurrency_limit(), boolean()) -> bg_concurrency_limit() | undefined.
 set_concurrency_limit(Lock, Limit, Kill) ->
     gen_server:call(?MODULE, {set_concurrency_limit, Lock, Limit, Kill}, infinity).
 
@@ -287,7 +288,8 @@ set_token_rate(Token, Rate={_Period, _Count}) ->
     gen_server:call(?SERVER, {set_token_rate, Token, Rate}, infinity).
 
 %% @doc Get the current refill rate of named token.
--spec token_rate(bg_token()) -> bg_rate().
+%%      If the background manager is unavailable, undefined is returned.
+-spec token_rate(bg_token()) -> bg_rate() | undefined.
 token_rate(Token) ->
     gen_server:call(?SERVER, {token_rate, Token}, infinity).
 
@@ -720,10 +722,8 @@ do_get_type_info(Type, State) ->
     {reply, Infos, State}.
 
 %% Returns empty if the ETS table has not been transferred to us yet.
-do_resource_limit(lock, _Resource, State) when ?NOT_TRANSFERED(State) ->
-    {reply, 0, State};
-do_resource_limit(token, _Resource, State) when ?NOT_TRANSFERED(State) ->
-    {reply, {0,0}, State};
+do_resource_limit(_Type, _Resource, State) when ?NOT_TRANSFERED(State) ->
+    {reply, undefined, state};
 do_resource_limit(_Type, Resource, State) ->
     Info = resource_info(Resource, State),
     Rate = ?resource_limit(Info),
@@ -746,7 +746,7 @@ do_set_concurrency_limit(Lock, Limit, Kill, State) ->
     catch
         table_id_undefined ->
             %% This could go into a queue to be played when the transfer happens.
-            {reply, 0, State};
+            {reply, undefined, State};
         {unregistered, Lock} ->
             {reply, 0, update_limit(Lock, Limit, ?DEFAULT_LOCK_INFO, State)};
         {badtype, _Lock}=Error ->
@@ -818,6 +818,7 @@ update_resource_enabled(Resource, Value, Default, State) ->
                      State).
 
 update_limit(Resource, Limit, Default, State) ->
+    lager:info("Set concurrency ~p <- ~p", [Resource, Limit]),
     update_resource_info(Resource,
                          fun(Info) -> Info#resource_info{limit=Limit} end,
                          Default#resource_info{limit=Limit},
@@ -932,6 +933,7 @@ give_resource(Entry, State=#state{entry_table=TableId}) ->
 %% @private
 %% @doc Add Resource to our given set.
 give_resource(Resource, Type, Pid, Ref, Meta, State) ->
+    lager:info("Gave ~p/~p to ~p:~p", [Type, Resource, Pid, Meta]),
     Entry = ?RESOURCE_ENTRY(Resource, Type, Pid, Meta, Ref, given),
     give_resource(Entry, State).
 
@@ -939,7 +941,8 @@ give_resource(Resource, Type, Pid, Ref, Meta, State) ->
                               {max_concurrency, #state{}}
                                   | {ok, #state{}}
                                   | {{ok, reference()}, #state{}}.
-try_get_resource(false, _Resource, _Type, _Pid, _Meta, State) ->
+try_get_resource(false, Resource, Type, Pid, Meta, State) ->
+    lager:info("Gave max_concurrency ~p/~p to ~p:~p", [Type, Resource, Pid, Meta]),
     {max_concurrency, State};
 try_get_resource(true, Resource, Type, Pid, Meta, State) ->
     case Type of
@@ -1062,6 +1065,7 @@ increment_stat_limit(Resource, Limit, State) ->
                        State).
 
 increment_stat_refills(Token, State) ->
+    lager:info("Refill token ~p", [Token]),
     update_stat_window(Token,
                        fun(Stat) -> Stat#bg_stat_hist{refills=1+Stat#bg_stat_hist.refills} end,
                        default_refill(Token, State),
