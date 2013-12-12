@@ -111,6 +111,7 @@
          update_snapshot/1,
          update_perform/1,
          rehash_tree/1,
+         flush_buffer/1,
          close/1,
          destroy/1,
          read_meta/2,
