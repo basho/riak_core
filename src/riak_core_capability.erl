@@ -413,7 +413,11 @@ negotiate_capabilities(Node, Override, State=#state{registered=Registered,
 renegotiate_capabilities(State=#state{supported=[]}) ->
     State;
 renegotiate_capabilities(State) ->
-    Caps = orddict:fetch(node(), State#state.supported),
+    Caps = 
+        case orddict:find(node(), State#state.supported) of 
+            {ok, Val} -> Val;
+            error -> error("Node name mismatch, move or remove stale ring file")                       
+        end,
     Overrides = get_overrides(Caps),
     State2 = negotiate_capabilities(node(), Overrides, State),
     process_capability_changes(State#state.negotiated,
