@@ -767,7 +767,7 @@ handle_sync_event(core_status, _From, StateName, State=#state{index=Index,
 
 handle_info({set_concurrency_limit, Lock, Limit}, StateName, State) ->
     try_set_concurrency_limit(Lock, Limit),
-    {noreply, StateName, State};
+    {next_state, StateName, State};
 
 handle_info({'$vnode_proxy_ping', From, Msgs}, StateName, State) ->
     riak_core_vnode_proxy:cast(From, {vnode_proxy_pong, self(), Msgs}),
@@ -1044,9 +1044,9 @@ try_set_concurrency_limit(_Lock, _Limit, false) ->
 try_set_concurrency_limit(Lock, Limit, true) ->
     %% this is ok to do more than once
     case riak_core_bg_manager:set_concurrency_limit(Lock, Limit) of
-        undefined ->
+        unregistered ->
             %% not ready yet, try again later
-            lager:info("Background manager unavailable. Will try to set: ~p later.", [Lock]),
+            lager:debug("Background manager unavailable. Will try to set: ~p later.", [Lock]),
             erlang:send_after(250, ?MODULE, {set_concurrency_limit, Lock, Limit});
         _ ->
             lager:debug("Registered lock: ~p", [Lock]),

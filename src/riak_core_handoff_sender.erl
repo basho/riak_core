@@ -98,7 +98,7 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
         max_concurrency ->
             %% shared lock not registered yet or limit reached.  Failing with
             %% max_concurrency will cause this partition to be retried again later.
-            lager:info("Failed to get vnode lock for partition ~p", [SrcPartition]),
+            lager:debug("Failed to get vnode lock for partition ~p", [SrcPartition]),
             exit({shutdown, max_concurrency});
         ok ->
             %% Got the lock or didn't try to. If we got it, our process is now monitored;
@@ -609,7 +609,7 @@ maybe_get_vnode_lock(riak_kv_vnode=Module, SrcPartition) ->
                 max_concurrency -> max_concurrency
             end;
         false ->
-            lager:info("Handoff is skipping the background manager vnode lock: ~p", [Lock]),
+            lager:debug("Handoff is skipping the background manager vnode lock: ~p", [Lock]),
             ok
     end;
 maybe_get_vnode_lock(_Module, _SrcPartition) ->
