@@ -39,11 +39,7 @@
           %% and their state
           locks  :: [{bg_eqc_type(), [{reference(), pid(), [], held | released}]}],
           %% number of tokens taken by type
-          tokens :: [{bg_eqc_type(), non_neg_integer()}],
-          %% current history samples accumulator: [{resource, limit, refills, given}]
-          samples :: [{bg_eqc_type(), non_neg_integer(), non_neg_integer(), non_neg_integer()}],
-          %% snapshot of samples on window interval
-          history :: [[{bg_eqc_type(), non_neg_integer(), non_neg_integer(), non_neg_integer()}]]
+          tokens :: [{bg_eqc_type(), non_neg_integer()}]
          }).
 
 run_eqc() ->
@@ -82,9 +78,7 @@ initial_state() ->
        limits = [],
        counts = [],
        locks  = [],
-       tokens = [],
-       samples = [],
-       history = []
+       tokens = []
       }.
 
 %% ------ Grouped operator: set_concurrency_limit
@@ -298,8 +292,7 @@ set_token_rate_pre(S) ->
 %% Note that set_token_rate takes a rate, which is {Period, Count},
 %% but this test generates it's own refill messages, so rate is not modeled.
 set_token_rate_next(S=#state{counts=Counts}, _Value, [Type, Count]) ->
-    S2 = update_sample(Type, Count, 0, 0, S),
-    S2#state{ counts = lists:keystore(Type, 1, Counts, {Type, Count}) }.
+    S#state{ counts = lists:keystore(Type, 1, Counts, {Type, Count}) }.
 
 %% @doc set_token_rate command
 set_token_rate(Type, Count) ->
@@ -418,24 +411,6 @@ refill_tokens(Type) ->
     %% TODO: find way to get rid of this timer sleep
     timer:sleep(100).
 
-%% ------ Grouped operator: sample_history
-%% @doc sample_history args generator
-sample_history_args(_S) ->
-    [].
-
-%% @doc sample_history precondition
-sample_history_pre(S, []) ->
-    is_alive(S).
-
-%% @doc sample_history next state function
-sample_history_next(S, _Value, []) ->
-    do_sample_history(S).
-
-%% @doc sample_history command
-sample_history() ->
-    riak_core_bg_manager ! sample_history,
-    timer:sleep(100).
-
 %% ------ Grouped operator: crash
 %% @doc crash args generator
 crash_args(_S) ->
@@ -471,12 +446,11 @@ revive_pre(#state{alive=Alive}) ->
 
 %% @doc revive_next - Next state function
 revive_next(S, _Value, _Args) ->
-    S2 = S#state{ alive = true },
-    clear_history(S2).
+    S#state{ alive = true }.
 
 %% @doc revive command
 revive() ->
-    {ok, _BgMgr} = riak_core_bg_manager:start(window_interval()).
+    {ok, _BgMgr} = riak_core_bg_manager:start().
 
 %% @doc revive_post - Postcondition for revive
 revive_post(_S, _Args, _Res) ->
@@ -507,65 +481,6 @@ ps_post(State, [Resource], Result) ->
     NumTokens = num_tokens_taken(Resource, State),
     %% TODO: could validate record entries in addition to correct counts
     eq(length(Result), NumLocks+NumTokens).
-
-%% ------ Grouped operator: head query
-%% @doc head arguments generator
-head_args(_S) ->
-    %% [Resource, Offset, NumSamples]
-    [oneof([all, lock_type(), token_type()]), 0, choose(0,5)].
-
-%% @doc ps precondition
-head_pre(S) ->
-    is_alive(S).
-
-%% @doc ps next state function
-head_next(S, _Value, _Args) ->
-    S.
-
-%% @doc head command
-head(Resource, Offset, NumSamples) ->
-    riak_core_bg_manager:head(Resource, Offset, NumSamples).
-
-%% @doc ps postcondition
-head_post(#state{history=RevHistory}, [Resource, Offset, NumSamples], Result) ->
-    History = lists:reverse(RevHistory),
-    Start = Offset+1,
-    Len = min(NumSamples, length(History) - Offset),
-    Keep = lists:sublist(History, Start, Len),
-    H2 = [lists:filter(fun({R,_L,_R,_G}) -> Resource == all orelse R == Resource end, Samples)
-          || Samples <- Keep, Samples =/= []],
-    H3 = lists:filter(fun(S) -> S =/= [] end, H2),
-    eq(length(Result), length(H3)).
-
-%% ------ Grouped operator: tail query
-%% @doc tail arguments generator
-tail_args(_S) ->
-    %% [Resource, Offset, NumSamples]
-    [oneof([all, lock_type(), token_type()]), 0, choose(0,5)].
-
-%% @doc ps precondition
-tail_pre(S) ->
-    is_alive(S).
-
-%% @doc ps next state function
-tail_next(S, _Value, _Args) ->
-    S.
-
-%% @doc tail command
-tail(Resource, Offset, NumSamples) ->
-    riak_core_bg_manager:tail(Resource, Offset, NumSamples).
-
-%% @doc ps postcondition
-tail_post(#state{history=RevHistory}, [Resource, Offset, NumSamples], Result) ->
-    History = lists:reverse(RevHistory),
-    HistLen = length(History),
-    Start = HistLen - Offset + 1,
-    Len = min(NumSamples, HistLen - Offset),
-    Keep = lists:sublist(History, Start, Len),
-    H2 = [lists:filter(fun({R,_L,_R,_G}) -> Resource == all orelse R == Resource end, Samples)
-          || Samples <- Keep, Samples =/= []],
-    H3 = lists:filter(fun(S) -> S =/= [] end, H2),
-    eq(length(Result), length(H3)).
 
 %% ------ Grouped operator: bypass
 %% @doc bypass arguments generator
@@ -754,17 +669,14 @@ weight(_S, set_token_rate) -> 3;
 weight(_S, token_rate) -> 0;
 weight(_S, get_token) -> 20;
 weight(_S, refill_tokens) -> 10;
-weight(_S, sample_history) -> 10;
 weight(_S, ps) -> 3;
-weight(_S, head) -> 3;
-weight(_S, tail) -> 3;
 weight(_S, crash) -> 3;
 weight(_S, revive) -> 1;
 weight(_S, _Cmd) -> 1.
 
 %% Other Functions
 limit(Type, State) ->
-    limit(Type, 0, State).
+    limit(Type, undefined, State).
 
 limit(Type, Default, #state{limits=Limits}) ->
     case lists:keyfind(Type, 1, Limits) of
@@ -791,38 +703,6 @@ num_tokens_taken(Resource, #state{tokens=Tokens}) ->
                 0,
                 [Count || {R, Count} <- Tokens, R == Resource]).
 
-clear_history(State) ->
-    State#state{history=[], samples=[]}.
-
-%% @doc Snapshot current history samples and reset samples to empty
-do_sample_history(State=#state{limits=Limits, counts=Counts}) ->
-    %% First, grab updates for all resources
-    S2 = lists:foldl(fun({Resource, Limit}, S) ->
-                             update_sample(Resource, Limit, 0, 0, S)
-                     end,
-                     State,
-                     Limits++Counts),
-    NewHistory = [S2#state.samples | S2#state.history],
-    S2#state{history=NewHistory, samples=[]}.
-
-%% @doc Update the current samples with supplied increments.
-%% Limit is overwritten unless undefined. It's not expected to change too often,
-%% hopefully less often than the sampling window (Niquist!).
-%% This should probably be called approximately every time the API is called.
-update_sample(Resource, Limit, Refill, Given, State=#state{samples=Samples}) ->
-    %% find sample counts for specified resource and increment per arguments.
-    {_R, Limit1, Refills1, Given1} = case lists:keyfind(Resource, 1, Samples) of
-                                      false -> {Resource, 0, 0, 0};
-                                      S -> S
-                                  end,
-    Sample = {Resource, defined_or_default(Limit, Limit1), Refill+Refills1,
-              Given+Given1},
-    Samples2 = lists:keystore(Resource, 1, Samples, Sample),
-    State#state{samples=Samples2}.
-
-defined_or_default(undefined, Default) -> Default;
-defined_or_default(Value, _Default) -> Value.
-
 is_alive(#state{alive=Alive}) ->
     Alive.
 
@@ -833,9 +713,6 @@ mk_token_rate(undefined) ->
 mk_token_rate(Count) ->
     %% erlang:send_after max is used so that we can trigger token refilling from EQC test
     {max_send_after(), Count}.
-
-window_interval() ->
-    max_send_after().
 
 max_send_after() ->
     4294967295.
@@ -862,8 +739,7 @@ update_locks(Type, TypeLocks, State=#state{locks=Locks}) ->
 
 add_held_lock(Type, Ref, Pid, Meta, State) ->
     All = all_locks(Type, State),
-    S2 = update_sample(Type, undefined, 0, 1, State),
-    update_locks(Type, [{Ref, Pid, Meta, held} | All], S2).
+    update_locks(Type, [{Ref, Pid, Meta, held} | All], State).
 
 release_locks(Pid, State=#state{locks=Locks}) ->
     lists:foldl(fun({Type, ByType}, StateAcc) ->
@@ -879,12 +755,10 @@ mark_locks_released(Pid, Locks) ->
 
 increment_token_count(Type, State=#state{tokens=Tokens}) ->
     CurCount = num_tokens(Type, State),
-    S2 = update_sample(Type, undefined, 0, 1, State),
-    S2#state{ tokens = lists:keystore(Type, 1, Tokens, {Type, CurCount + 1}) }.
+    State#state{ tokens = lists:keystore(Type, 1, Tokens, {Type, CurCount + 1}) }.
 
 reset_token_count(Type, State=#state{tokens=Tokens}) ->
-    S2 = update_sample(Type, undefined, 1, 0, State),
-    S2#state{ tokens = lists:keystore(Type, 1, Tokens, {Type, 0}) }.
+    State#state{ tokens = lists:keystore(Type, 1, Tokens, {Type, 0}) }.
 
 stop_pid(Other) when not is_pid(Other) ->
     ok;
@@ -922,7 +796,7 @@ prop_bgmgr() ->
                                                                                     [protected, set, named_table]},
                                                                                    {?BG_ENTRY_ETS_TABLE,
                                                                                     [protected, bag, named_table]}]),
-                             {ok, _BgMgr} = riak_core_bg_manager:start(window_interval()),
+                             {ok, _BgMgr} = riak_core_bg_manager:start(),
                              {H, S, Res} = run_commands(?MODULE,Cmds),
                              InfoTable = ets:tab2list(?BG_INFO_ETS_TABLE),
                              EntryTable = ets:tab2list(?BG_ENTRY_ETS_TABLE),
@@ -944,8 +818,6 @@ prop_bgmgr() ->
                                     io:format("locks = ~p~n", [S#state.locks]),
                                     io:format("counts = ~p~n", [S#state.counts]),
                                     io:format("tokens = ~p~n", [S#state.tokens]),
-                                    io:format("samples = ~p~n", [S#state.samples]),
-                                    io:format("history = ~p~n", [S#state.history]),
                                     io:format("---------------~n"),
                                     io:format("~n~nbackground_mgr tables: ~n"),
                                     io:format("---------------~n"),
@@ -975,7 +847,7 @@ prop_bgmgr_parallel() ->
                                                                                    ?BG_INFO_ETS_OPTS},
                                                                                   {?BG_ENTRY_ETS_TABLE,
                                                                                    ?BG_ENTRY_ETS_OPTS}]),
-                             {ok, BgMgr} = riak_core_bg_manager:start(window_interval()),
+                             {ok, BgMgr} = riak_core_bg_manager:start(),
                              {Seq, Par, Res} = run_parallel_commands(?MODULE,Cmds),
                              InfoTable = ets:tab2list(?BG_INFO_ETS_TABLE),
                              EntryTable = ets:tab2list(?BG_ENTRY_ETS_TABLE),

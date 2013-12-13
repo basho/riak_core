@@ -41,7 +41,7 @@ bg_mgr_test_() ->
 
                          %% Same for locks.
                          ?assertEqual({unregistered, lock_a}, riak_core_bg_manager:get_lock(lock_a)),
-                         ?assertEqual(0, riak_core_bg_manager:set_concurrency_limit(lock_a, 52)),
+                         ?assertEqual(undefined, riak_core_bg_manager:set_concurrency_limit(lock_a, 52)),
                          ?assertEqual({badtype, lock_a},
                                       riak_core_bg_manager:set_token_rate(lock_a, {1, 5})),
 
@@ -112,26 +112,6 @@ filter_stat(Token, Stats) ->
 spawn_sync_request(Token, Pid, Meta) ->
     spawn(fun() -> ok = ?BG_MGR:get_token_blocking(Token, Pid, Meta, ?TIMEOUT) end).
 
-make_hist_stat(Type, Limit, Refills, Given, Blocked) ->
-     #bg_stat_hist
-        {
-          type=Type,
-          limit=Limit,
-          refills=Refills,
-          given=Given,
-          blocked=Blocked
-        }.
-          
-make_live_stat(Resource, Type, Pid, Meta, Status) ->
-    #bg_stat_live
-        {
-          resource=Resource,
-          type=Type,
-          consumer=Pid,
-          meta=Meta,
-          state=Status
-        }.
-
 -spec some_token_rates() -> [{bg_token(), {bg_period(), bg_count()}}].
 some_token_rates() ->
     [ {token1, {1*1000, 5}},
@@ -167,7 +147,7 @@ verify_token_rates() ->
 %% doesn't take down our test too.
 start_bg_mgr() ->
     %% setup with history window to 1 seconds
-    ?BG_MGR:start(1*1000),
+    ?BG_MGR:start(),
     timer:sleep(100).
 
 kill_bg_mgr() ->

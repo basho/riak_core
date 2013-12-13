@@ -49,35 +49,16 @@
 -type bg_count() :: pos_integer().                  %% token refill tokens to count at each refill period
 -type bg_rate() :: undefined | {bg_period(), bg_count()}.       %% token refill rate
 -type bg_concurrency_limit() :: non_neg_integer() | infinity.   %% max lock concurrency allowed
--type bg_state() :: given | blocked | failed.       %% state of an instance of a resource.
+-type bg_consumer() :: {pid, [bg_meta()]}.          %% a consumer of a resource
 
 %% Results of a "ps" of live given or blocked locks/tokens
 -record(bg_stat_live,
         {
           resource   :: bg_resource(),            %% resource name, e.g. 'aae_hashtree_lock'
           type       :: bg_resource_type(),       %% resource type, e.g. 'lock'
-          consumer   :: pid(),                    %% process asking for token
-          meta       :: [bg_meta()],              %% associated meta data
-          state      :: bg_state()                %% result of last request, e.g. 'given'
+          owner      :: bg_consumer()             %% this consumer has the lock or token
         }).
 -type bg_stat_live() :: #bg_stat_live{}.
-
-%% Results of a "head" or "tail", per resource. Historical query result.
--record(bg_stat_hist,
-        {
-          type    :: undefined | bg_resource_type(),  %% undefined only on default
-          limit   :: non_neg_integer(),  %% maximum available, defined by token rate during interval
-          refills :: non_neg_integer(),  %% number of times a token was refilled during interval. 0 if lock
-          given   :: non_neg_integer(),  %% number of times this resource was handed out within interval
-          blocked :: non_neg_integer()   %% number of blocked processes waiting for a token
-        }).
--type bg_stat_hist() :: #bg_stat_hist{}.
--define(BG_DEFAULT_STAT_HIST,
-        #bg_stat_hist{type=undefined, limit=undefined, refills=0, given=0, blocked=0}).
-
--define(BG_DEFAULT_WINDOW_INTERVAL, 60*1000).    %% in milliseconds
--define(BG_DEFAULT_OUTPUT_SAMPLES, 20).     %% default number of sample windows displayed
--define(BG_DEFAULT_KEPT_SAMPLES, 10000).    %% number of history samples to keep
 
 -define(BG_INFO_ETS_TABLE, background_mgr_info_table).  %% name of private lock/token manager info ETS table
 -define(BG_INFO_ETS_OPTS, [private, set]).              %% creation time properties of info ETS table
