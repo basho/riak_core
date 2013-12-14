@@ -94,9 +94,30 @@ handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
 
-handle_cast({value, Value, TS}, State=#state{awaiting=Awaiting}) ->
-    [gen_server:reply(From, Value) || From <- Awaiting],
-    {noreply, State#state{value=Value, timestamp=TS, active=undefined, awaiting=[]}};
+handle_cast({value, Value, TS}, State=#state{awaiting=Awaiting, 
+                                             value=OldValue}) ->
+    case Value of
+        {error, Reason} ->
+            lager:debug("stat calc failed: ~p ~p", [Reason]),
+            {Reply, State1} = 
+                case OldValue of
+                    <<"stale:",_/binary>> ->
+                        {OldValue, State};
+                    _ ->
+                        V = tag_stale(OldValue),
+                        {V, State#state{value=V}}
+                end,
+            [gen_server:reply(From, Reply) 
+             || From <- Awaiting],
+            %% update the timestamp so as not to flood the failing 
+            %% process with update requests
+            {noreply, State1#state{timestamp=TS, active=undefined, 
+                                   awaiting=[]}};
+        _Else ->
+            [gen_server:reply(From, Value) || From <- Awaiting],
+            {noreply, State#state{value=Value, timestamp=TS, 
+                                  active=undefined, awaiting=[]}}
+    end;
 handle_cast(stop, State) ->
     {stop, normal, State};
 handle_cast(_Msg, State) ->
@@ -115,8 +136,8 @@ handle_info(timeout, State=#state{active=Pid, awaiting=Awaiting, value=Value}) -
     %% kill the pid, causing the above clause to be processed
     lager:debug("killed delinquent stats process ~p", [Pid]),
     exit(Pid, kill),
-    %% let the cache get staler
-    [gen_server:reply(From, Value) || From <- Awaiting],
+    %% let the cache get staler, tag so people can detect
+    [gen_server:reply(From, tag_stale(Value)) || From <- Awaiting],
     {noreply, State#state{active=undefined, awaiting=[]}};
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -157,4 +178,8 @@ do_calc_stat(Stat) ->
                                           folsom_utils:now_epoch()}) 
       end
      ).
+
+tag_stale(Value) ->
+    V = io_lib:format("stale: ~p", [Value]),
+    iolist_to_binary(V).
 
