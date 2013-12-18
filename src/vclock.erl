@@ -139,7 +139,7 @@ get_timestamp(Node, VClock) ->
 -spec get_entry(Node :: vclock_node(), VClock :: vclock()) -> {ok, dot()} | undefined.
 get_entry(Node, VClock) ->
     case lists:keyfind(Node, 1, VClock) of
-	false -> undefined;
+        false -> undefined;
         Entry -> {ok, Entry}
     end.
 
@@ -348,8 +348,8 @@ merge_same_id_test() ->
 
 get_entry_test() ->
     VC = vclock:fresh(),
-    VC1 = increment(c, increment(b, increment(a, VC))),
-    ?assertMatch({ok, {a, {1, _}}}, get_entry(a, VC1)),
+    VC1 = increment(a, increment(c, increment(b, increment(a, VC)))),
+    ?assertMatch({ok, {a, {2, _}}}, get_entry(a, VC1)),
     ?assertMatch({ok, {b, {1, _}}}, get_entry(b, VC1)),
     ?assertMatch({ok, {c, {1, _}}}, get_entry(c, VC1)),
     ?assertEqual(undefined, get_entry(d, VC1)).
