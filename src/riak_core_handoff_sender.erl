@@ -92,7 +92,28 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
     SrcNode = node(),
     SrcPartition = get_src_partition(Opts),
     TargetPartition = get_target_partition(Opts),
-     try
+
+    %% Consult handoff module for optional implemenation of handoff_started/2
+    case lists:member({handoff_started, 2}, Module:module_info(exports)) of
+        true ->
+            Source = {SrcPartition, SrcNode},
+            WorkerPid = self(),
+            case Module:handoff_started(Source, WorkerPid) of
+                true ->
+                    ok;
+                max_concurrency ->
+                    %% Handoff of that partition is busy or can't proceed. Stopping with
+                    %% max_concurrency will cause this partition to be retried again later.
+                    exit({shutdown, max_concurrency});
+                Error ->
+                    exit({shutdown, Error})
+            end;
+        false ->
+            %% optional callback not implemented, so we carry on.
+            ok
+    end,
+    
+    try
          Filter = get_filter(Opts),
          [_Name,Host] = string:tokens(atom_to_list(TargetNode), "@"),
          {ok, Port} = get_handoff_port(TargetNode),
@@ -568,4 +589,4 @@ remote_supports_batching(Node) ->
             lager:debug("remote node doesn't support batching"),
             false
     end.
-    
+
