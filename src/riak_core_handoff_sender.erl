@@ -22,6 +22,7 @@
 
 -module(riak_core_handoff_sender).
 -export([start_link/4, get_handoff_ssl_options/0]).
+-include("riak_core_locks.hrl").
 -include("riak_core_vnode.hrl").
 -include("riak_core_handoff.hrl").
 -define(ACK_COUNT, 1000).
@@ -92,7 +93,20 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
     SrcNode = node(),
     SrcPartition = get_src_partition(Opts),
     TargetPartition = get_target_partition(Opts),
-     try
+    %% Take per-vnode concurrency limit "lock". It will be released when this process exists/dies.
+    case maybe_get_vnode_lock(Module, SrcPartition) of
+        max_concurrency ->
+            %% shared lock not registered yet or limit reached.  Failing with
+            %% max_concurrency will cause this partition to be retried again later.
+            lager:debug("Failed to get vnode lock for partition ~p", [SrcPartition]),
+            exit({shutdown, max_concurrency});
+        ok ->
+            %% Got the lock or didn't try to. If we got it, our process is now monitored;
+            %% the lock will be released when we exit.
+            ok
+    end,
+
+    try
          Filter = get_filter(Opts),
          [_Name,Host] = string:tokens(atom_to_list(TargetNode), "@"),
          {ok, Port} = get_handoff_port(TargetNode),
@@ -568,4 +582,35 @@ remote_supports_batching(Node) ->
             lager:debug("remote node doesn't support batching"),
             false
     end.
-    
+
+%% @private
+%% @doc Return true iff neither of the "skip background manager" configuration
+%%      settings are defined as anything other than false. 'skip_background_manager'
+%%      turns off all use of bg-mgr. 'handoff_skip_background_manager' only stops
+%%      handoff from using bg-mgr.
+-spec use_bg_mgr() -> boolean().
+use_bg_mgr() ->
+    %% note we're tolerant here of any non-boolean value as well. Iff it's 'false', we don't skip.
+    GlobalSkip = app_helper:get_env(riak_core, skip_background_manager, false) =/= false,
+    HandoffSkip = app_helper:get_env(riak_core, handoff_skip_background_manager, false) =/= false,
+    not (GlobalSkip orelse HandoffSkip).
+
+%% @private
+%% @doc Unless skipping the background manager, try to acquire the per-vnode lock.
+%%      Sets our task meta-data in the lock as 'handoff', which is useful for
+%%      seeing what's holding the lock via @link riak_core_background_mgr:ps/0.
+-spec maybe_get_vnode_lock(Module::module(), SrcPartition::integer()) -> ok | max_concurrency.
+maybe_get_vnode_lock(riak_kv_vnode=Module, SrcPartition) ->
+    Lock = ?VNODE_LOCK(Module, SrcPartition),
+    case use_bg_mgr() of
+        true  ->
+            case riak_core_bg_manager:get_lock(Lock, self(), [{task, handoff}]) of
+                {ok, _Ref} -> ok;
+                max_concurrency -> max_concurrency
+            end;
+        false ->
+            lager:debug("Handoff is skipping the background manager vnode lock: ~p", [Lock]),
+            ok
+    end;
+maybe_get_vnode_lock(_Module, _SrcPartition) ->
+    ok.

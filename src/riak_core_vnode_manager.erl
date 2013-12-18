@@ -582,7 +582,6 @@ get_vnode(IdxList, Mod, State) ->
                  lager:debug("Will start VNode for partition ~p", [Idx]),
                  {ok, Pid} =
                      riak_core_vnode_sup:start_vnode(Mod, Idx, ForwardTo),
-                 lager:debug("Started VNode, waiting for initialization to complete ~p, ~p ", [Pid, Idx]),
                  ok = riak_core_vnode:wait_for_init(Pid),
                  lager:debug("VNode initialization ready ~p, ~p", [Pid, Idx]),
                  {Idx, Pid}
