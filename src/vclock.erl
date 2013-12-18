@@ -135,7 +135,7 @@ get_timestamp(Node, VClock) ->
 	false           -> undefined
     end.
 
-% @doc Get the {counter, timestamp} entry value in a VClock set from Node.
+% @doc Get the entry `dot()' for `vclock_node()' from `vclock()'.
 -spec get_entry(Node :: vclock_node(), VClock :: vclock()) -> {ok, dot()} | undefined.
 get_entry(Node, VClock) ->
     case lists:keyfind(Node, 1, VClock) of
@@ -145,7 +145,7 @@ get_entry(Node, VClock) ->
 
 %% @doc is the given argument a valid dot, or entry?
 -spec valid_entry(dot()) -> boolean().
-valid_entry({_, {_, _}}) ->
+valid_entry({_, {Cnt, TS}}) when is_integer(Cnt), is_integer(TS) ->
     true;
 valid_entry(_) ->
     false.
