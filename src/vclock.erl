@@ -35,6 +35,7 @@
          fresh/2,
          descends/2,
          dominates/2,
+         descends_dot/2,
          merge/1,
          get_counter/2,
          get_timestamp/2,
@@ -86,6 +87,18 @@ descends(Va, Vb) ->
         {_, {CtrA, _TSA}} ->
             (CtrA >= CtrB) andalso descends(Va,RestB)
         end.
+
+%% @doc does the given `vclock()' descend from the given `dot()'. The
+%% `dot()' can be any vclock entry returned from
+%% `get_entry/2'. returns `true' if the `vclock()' has an entry for
+%% the `actor' in the `dot()', and that the counter for that entry is
+%% at least that of the given `dot()'. False otherwise. Call with a
+%% valid entry or you'll get an error.
+%%
+%% @see descends/2, get_entry/3, dominates/2
+-spec descends_dot(vclock(), dot()) -> boolean().
+descends_dot(Vclock, Dot) ->
+    descends(Vclock, [Dot]).
 
 -spec dominates(vclock(), vclock()) -> boolean().
 dominates(A, B) ->
