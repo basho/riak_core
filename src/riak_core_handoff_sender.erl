@@ -93,27 +93,10 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
     SrcPartition = get_src_partition(Opts),
     TargetPartition = get_target_partition(Opts),
 
-    %% Consult handoff module for optional implemenation of handoff_started/2
-    case lists:member({handoff_started, 2}, Module:module_info(exports)) of
-        true ->
-            Source = {SrcPartition, SrcNode},
-            WorkerPid = self(),
-            case Module:handoff_started(Source, WorkerPid) of
-                true ->
-                    ok;
-                max_concurrency ->
-                    %% Handoff of that partition is busy or can't proceed. Stopping with
-                    %% max_concurrency will cause this partition to be retried again later.
-                    exit({shutdown, max_concurrency});
-                Error ->
-                    exit({shutdown, Error})
-            end;
-        false ->
-            %% optional callback not implemented, so we carry on.
-            ok
-    end,
-    
     try
+        %% Give workers one more chance to abort or get a lock or whatever.
+        maybe_call_handoff_started(Module, SrcPartition, SrcNode),
+
          Filter = get_filter(Opts),
          [_Name,Host] = string:tokens(atom_to_list(TargetNode), "@"),
          {ok, Port} = get_handoff_port(TargetNode),
@@ -590,3 +573,29 @@ remote_supports_batching(Node) ->
             false
     end.
 
+%% @private
+%% @doc The optional call to handoff_started/2 allows vnodes one last chance to abort
+%% the handoff process. the function is passed the source vnode's partition number
+%% and node name (this node) because the callback does not have access to the full vnode
+%% state at this time. In addition the worker pid is passed so the vnode may use that
+%% information in its decision to cancel the handoff or not (e.g. get a lock on behalf
+%% of the process.
+maybe_call_handoff_started(Module, SrcPartition, SrcNode) ->
+    case lists:member({handoff_started, 2}, Module:module_info(exports)) of
+        true ->
+            Source = {SrcPartition, SrcNode},
+            WorkerPid = self(),
+            case Module:handoff_started(Source, WorkerPid) of
+                true ->
+                    ok;
+                max_concurrency ->
+                    %% Handoff of that partition is busy or can't proceed. Stopping with
+                    %% max_concurrency will cause this partition to be retried again later.
+                    exit({shutdown, max_concurrency});
+                Error ->
+                    exit({shutdown, Error})
+            end;
+        false ->
+            %% optional callback not implemented, so we carry on.
+            ok
+    end.
