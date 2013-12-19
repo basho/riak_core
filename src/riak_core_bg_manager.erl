@@ -95,6 +95,11 @@
          all_tokens/1
         ]).
 
+%% Convenience
+-export([use_bg_mgr/0,
+         use_bg_mgr/2
+         ]).
+
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
@@ -899,3 +904,19 @@ do_query(Resource, Types) ->
     E = lists:flatten([Entry || Entry <- Entries,
                                 lists:member(?e_type(Entry), Types)]),
     fmt_live_entries(E).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Configuration Switch Helpers
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% @doc Return true iff the riak_core "use background manager" configuration
+%%      setting is not false; defaults to true.
+-spec use_bg_mgr() -> boolean().
+use_bg_mgr() ->
+    app_helper:get_env(riak_core, use_background_manager, true).
+
+%% @doc Return true iff both the global configuration switch is on (see @link use_bg_mgr/0)
+%%      the setting of the supplied Dependency/Key is not false. Defaults to true.
+-spec use_bg_mgr(atom(), atom()) -> boolean().
+use_bg_mgr(Dependency, Key) ->
+    use_bg_mgr() andalso app_helper:get_env(Dependency, Key, true).
