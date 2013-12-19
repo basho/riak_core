@@ -358,7 +358,7 @@ maybe_resolve(PKey, Existing, _, Method, AllowPut) ->
     case AllowPut of
         false ->
             ok;
-        _ ->
+        true ->
             Stored = riak_core_metadata_manager:put(PKey, RContext, RValue),
             broadcast(PKey, Stored)
     end,

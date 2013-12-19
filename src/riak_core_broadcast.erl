@@ -618,9 +618,9 @@ init_peers(Members) ->
         N ->
             %% 10 or more members, use a tree similar to riak_core_gossip
             %% but with higher fanout (larger initial eager set size)
-            NEagers = round(math:log(N)+1),
+            NEagers = round(math:log(N) + 1),
             Tree = riak_core_util:build_tree(NEagers, Members, [cycles]),
             InitEagers = orddict:fetch(node(), Tree),
-            InitLazys  = [lists:nth(random:uniform(N - (NEagers +1)), Members -- [node() | InitEagers])]
+            InitLazys  = [lists:nth(random:uniform(N - (NEagers + 1)), Members -- [node() | InitEagers])]
     end,
     {InitEagers, InitLazys}.
