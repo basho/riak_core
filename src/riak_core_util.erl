@@ -79,7 +79,13 @@
 %% @doc Get the current "moment".  Current implementation is the
 %%      number of seconds from year 0 to now, universal time, in
 %%      the gregorian calendar.
-moment() -> calendar:datetime_to_gregorian_seconds(calendar:universal_time()).
+
+%% 719528 days from Jan 1, 0 to Jan 1, 1970
+%%  *86400 seconds/day
+-define(SEC_TO_EPOCH, 62167219200).
+moment() -> 
+    {Mega, Sec, _Micro} = os:timestamp(),
+    (Mega * 1000000) + Sec + ?SEC_TO_EPOCH.
 
 %% @spec compare_dates(string(), string()) -> boolean()
 %% @doc Compare two RFC1123 date strings or two now() tuples (or one
@@ -230,9 +236,15 @@ mkclientid(RemoteNode) ->
 
 %% @spec chash_key(BKey :: riak_object:bkey()) -> chash:index()
 %% @doc Create a binary used for determining replica placement.
-chash_key({Bucket,Key}) ->
+chash_key({Bucket,Key}=BKey) ->
     BucketProps = riak_core_bucket:get_bucket(Bucket),
-    {chash_keyfun, {M, F}} = proplists:lookup(chash_keyfun, BucketProps),
+    chash_key(BKey, BucketProps).
+    
+%% @spec chash_key(BKey :: riak_object:bkey(), [{atom(), any()}]) -> 
+%%          chash:index()
+%% @doc Create a binary used for determining replica placement.
+chash_key({Bucket,Key}, BucketProps) ->
+    {_, {M, F}} = lists:keyfind(chash_keyfun, 1, BucketProps),
     M:F({Bucket,Key}).
 
 %% @spec chash_std_keyfun(BKey :: riak_object:bkey()) -> chash:index()
