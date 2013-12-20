@@ -17,6 +17,29 @@
 %% under the License.
 %%
 %% @doc
+%% The background manager allows tokens and locks to be "acquired" by
+%% competing processes in a way that limits the total load on the cluster.
+%%
+%% The model is different than your typical semaphore. Here, we are
+%% interested in coordinating background jobs that start, run, and die.
+%%
+%% The term "given" is a general version of "held", "acquired", or
+%% "allocated" for both locks and tokens. Held doesn't make sense for
+%% tokens since they aren't held. So, "given" applies to both locks
+%% and tokens, but you can think "held" for locks if that's more fun.
+%%
+%% Resources are defined by their "names", which is the same as "type"
+%% or "kind". A lock name might be the atom 'aae_hashtree_lock' or the
+%% tuple '{my_ultimate_lock, 42}'.
+%%
+%% Usage:
+%% 1. register your lock/token and set it's max concurrency/rate.
+%% 2. "get" a lock/token by it's resource type/name
+%% 3. do stuff
+%% 4. let your process die, which gives back a lock.
+%%
+%% @private
+%% Internal Notes:
 %% We use two ETS tables to store critical data. In the event this process crashes,
 %% the tables will be given back to the table manager and we can reclaim them when
 %% we restart. Thus, limits and states are maintained across restarts of the
