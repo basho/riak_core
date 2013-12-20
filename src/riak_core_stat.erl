@@ -26,7 +26,8 @@
 -export([start_link/0, get_stats/0, get_stats/1, update/1,
          register_stats/0, produce_stats/0, vnodeq_stats/0,
 	 register_stats/2,
-	 prefix/0]).
+	 prefix/0,
+         stat_system/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -46,6 +47,17 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 register_stats() ->
+    case stat_system() of
+        legacy   -> register_stats_legacy();
+        exometer -> register_stats_exometer()
+    end.
+
+register_stats_legacy() ->
+    [(catch folsom_metrics:delete_metric({?APP, Name})) || {Name, _Type} <- stats()],
+    [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()],
+    riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
+
+register_stats_exometer() ->
     register_stats(common, system_stats()),
     register_stats(?APP, stats()).
 
@@ -53,11 +65,9 @@ register_stats() ->
 %% @doc (Re-)Register a list of metrics for App.
 register_stats(App, Stats) ->
     P = prefix(),
-    lists:foreach(fun(Stat) ->
-			  register_stat_(P, App, Stat)
-		  end, Stats).
+    [register_stat_int(P, App, Stat) || Stat <- Stats].
 
-register_stat_(P, App, Stat) ->
+register_stat_int(P, App, Stat) ->
     {Name, Type, Opts} = case Stat of
 			     {N, T}     -> {N, T, []};
 			     {N, T, Os} -> {N, T, Os}
@@ -71,12 +81,24 @@ stat_name(P, App, N) when is_list(N) ->
 
 stat_name_([P, [] | Rest]) -> [P | Rest];
 stat_name_(N) -> N.
-    
+
 
 %% @spec get_stats() -> proplist()
 %% @doc Get the current aggregation of stats.
 get_stats() ->
-    get_stats(?APP) ++ vnodeq_stats().
+    case stat_system() of
+        legacy -> get_stats_legacy();
+        exometer ->
+            get_stats(?APP) ++ vnodeq_stats()
+    end.
+
+get_stats_legacy() ->
+    case riak_core_stat_cache:get_stats(?APP) of
+        {ok, Stats, _TS} ->
+            Stats;
+        Error -> Error
+    end.
+
 
 get_stats(App) ->
     P = prefix(),
@@ -92,8 +114,24 @@ produce_stats() ->
     lists:append([gossip_stats(),
                   vnodeq_stats()]).
 
+%% @doc (Exometer) stat name prefix.
+%%
+%% This function can be transformed at compile-time by setting the
+%% OS environment variable `RIAK_CORE_STAT_PREFIX'. The result will be
+%% converted to an atom. Default is `riak'.
+%% @end
 prefix() ->
-    app_helper:get_env(riak_core, stat_prefix, riak).
+    riak.
+
+%% @doc Switch function to determine which stats system to use.
+%%
+%% This function can be transformed at compile-time by setting the
+%% OS environment variable `RIAK_CORE_STAT_SYSTEM' to either "legacy"
+%% or "exometer". The result will be converted to an atom.
+%% Default is `exometer'.
+%% @end
+stat_system() ->
+    exometer.
 
 %% gen_server
 
@@ -105,8 +143,10 @@ handle_call(_Req, _From, State) ->
     {reply, ok, State}.
 
 handle_cast({update, Arg}, State) ->
-    exometer:update([prefix(), ?APP, Arg], update_value(Arg)),
-    %% update1(Arg),
+    case stat_system() of
+        legacy   -> update1(Arg);
+        exometer -> exometer:update([prefix(), ?APP, Arg], update_value(Arg))
+    end,
     {noreply, State};
 handle_cast(_Req, State) ->
     {noreply, State}.
@@ -119,6 +159,36 @@ terminate(_Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+%% @spec update1(term()) -> ok
+%% @doc Update the given stat.
+update1(rejected_handoffs) ->
+    folsom_metrics:notify_existing_metric({?APP, rejected_handoffs}, {inc, 1}, counter);
+
+update1(handoff_timeouts) ->
+    folsom_metrics:notify_existing_metric({?APP, handoff_timeouts}, {inc, 1}, counter);
+
+update1(ignored_gossip) ->
+    folsom_metrics:notify_existing_metric({?APP, ignored_gossip_total}, {inc, 1}, counter);
+
+update1(gossip_received) ->
+    folsom_metrics:notify_existing_metric({?APP, gossip_received}, 1, spiral);
+
+update1(rings_reconciled) ->
+    folsom_metrics:notify_existing_metric({?APP, rings_reconciled}, 1, spiral);
+
+update1(dropped_vnode_requests) ->
+    folsom_metrics:notify_existing_metric({?APP, dropped_vnode_requests_total}, {inc, 1}, counter);
+
+update1(converge_timer_begin) ->
+    folsom_metrics:notify_existing_metric({?APP, converge_delay}, timer_start, duration);
+update1(converge_timer_end) ->
+    folsom_metrics:notify_existing_metric({?APP, converge_delay}, timer_end, duration);
+
+update1(rebalance_timer_begin) ->
+    folsom_metrics:notify_existing_metric({?APP, rebalance_delay}, timer_start, duration);
+update1(rebalance_timer_end) ->
+    folsom_metrics:notify_existing_metric({?APP, rebalance_delay}, timer_end, duration).
 
 update_value(converge_timer_begin) -> timer_begin;
 update_value(rebalance_timer_begin) -> timer_begin;
@@ -139,9 +209,17 @@ stats() ->
      {rebalance_delay, duration}
     ].
 
+%% used by legacy
+register_stat(Name, counter) ->
+    folsom_metrics:new_counter(Name);
+register_stat(Name, spiral) ->
+    folsom_metrics:new_spiral(Name);
+register_stat(Name, duration) ->
+    folsom_metrics:new_duration(Name).
+
+%% used by exometer
 system_stats() ->
     [{cpu_stats, cpu, [{sample_interval, 5000}]}].
-     
 
 gossip_stats() ->
     lists:flatten([backwards_compat(Stat, Type, riak_core_stat_q:calc_stat({{?APP, Stat}, Type})) ||
@@ -157,11 +235,18 @@ backwards_compat(rings_reconciled, spiral, Stats) ->
 backwards_compat(gossip_received, spiral, Stats) ->
     {gossip_received, safe_trunc(proplists:get_value(one, Stats, unavailable))};
 backwards_compat(Name, counter, Stats) ->
-    {Name, proplists:get_value(value, Stats)};
+    case stat_system() of
+        legacy   -> {Name, Stats};
+        exometer -> {Name, proplists:get_value(value, Stats)}
+    end;
 backwards_compat(Name, duration, Stats) ->
+    Mean = case stat_system() of
+               legacy   -> arithmetic_mean;
+               exometer -> mean
+           end,
     [{join(Name, min), safe_trunc(proplists:get_value(min, Stats, unavailable))},
      {join(Name, max), safe_trunc(proplists:get_value(max, Stats, unavailable))},
-     {join(Name, mean), safe_trunc(proplists:get_value(arithmetic_mean, Stats, unavailable))},
+     {join(Name, mean), safe_trunc(proplists:get_value(Mean, Stats, unavailable))},
      {join(Name, last), proplists:get_value(last, Stats, unavailable)}].
 
 join(Atom1, Atom2) ->
@@ -205,11 +290,21 @@ vnodeq_aggregate(Service, MQLs0) ->
                  1 ->
                      lists:nth(Len div 2 + 1, MQLs)
              end,
-    P = prefix(),
-    [{[P, riak_core, vnodeq_atom(Service,<<"s_running">>)], [{value, Len}]},
-     {[P, riak_core, vnodeq_atom(Service,<<"q">>)],
-      [{min, lists:nth(1, MQLs)}, {median, Median}, {mean, Mean},
-       {max, lists:nth(Len, MQLs)}, {total, Total}]}].
+    case stat_system() of
+        legacy ->
+            [{vnodeq_atom(Service, <<"s_running">>), Len},
+             {vnodeq_atom(Service, <<"q_min">>), lists:nth(1, MQLs)},
+             {vnodeq_atom(Service, <<"q_median">>), Median},
+             {vnodeq_atom(Service, <<"q_mean">>), Mean},
+             {vnodeq_atom(Service, <<"q_max">>), lists:nth(Len, MQLs)},
+             {vnodeq_atom(Service, <<"q_total">>), Total}];
+        exometer ->
+            P = prefix(),
+            [{[P, riak_core, vnodeq_atom(Service,<<"s_running">>)], [{value, Len}]},
+             {[P, riak_core, vnodeq_atom(Service,<<"q">>)],
+              [{min, lists:nth(1, MQLs)}, {median, Median}, {mean, Mean},
+               {max, lists:nth(Len, MQLs)}, {total, Total}]}]
+    end.
 
 vnodeq_atom(Service, Desc) ->
     binary_to_atom(<<(atom_to_binary(Service, latin1))/binary, Desc/binary>>, latin1).
@@ -221,38 +316,97 @@ vnodeq_aggregate_empty_test() ->
     ?assertEqual([], vnodeq_aggregate(service_vnode, [])).
 
 vnodeq_aggregate_odd1_test() ->
-    P = prefix(),
-    ?assertEqual([{[P, riak_core, service_vnodes_running], 1},
-                  {[P, riak_core, service_vnodeq],
-		   [{min, 10}, {median, 10}, {mean, 10}, {max, 10}, {total, 10}]}],
-                 vnodeq_aggregate(service_vnode, [10])).
+    case system_stat() ->
+            ?assertEqual([{service_vnodes_running, 1},
+                          {service_vnodeq_min, 10},
+                          {service_vnodeq_median, 10},
+                          {service_vnodeq_mean, 10},
+                          {service_vnodeq_max, 10},
+                          {service_vnodeq_total, 10}],
+                         vnodeq_aggregate(service_vnode, [10]));
+        exometer ->
+            P = prefix(),
+            ?assertEqual([{[P, riak_core, service_vnodes_running], 1},
+                          {[P, riak_core, service_vnodeq],
+                           [{min, 10}, {median, 10}, {mean, 10}, {max, 10},
+                            {total, 10}]}],
+                         vnodeq_aggregate(service_vnode, [10]))
+    end.
 
 vnodeq_aggregate_odd3_test() ->
-    P = prefix(),
-    ?assertEqual([{[P, riak_core, service_vnodes_running], 3},
-                  {[P, riak_core, service_vnodeq],
-		   [{min, 1}, {median, 2}, {mean, 2}, {max, 3}, {total, 6}]}],
-                 vnodeq_aggregate(service_vnode, [1, 2, 3])).
+    case stat_system() of
+        legacy ->
+            ?assertEqual([{service_vnodes_running, 3},
+                          {service_vnodeq_min, 1},
+                          {service_vnodeq_median, 2},
+                          {service_vnodeq_mean, 2},
+                          {service_vnodeq_max, 3},
+                          {service_vnodeq_total, 6}],
+                         vnodeq_aggregate(service_vnode, [1, 2, 3]));
+        exometer ->
+            P = prefix(),
+            ?assertEqual([{[P, riak_core, service_vnodes_running], 3},
+                          {[P, riak_core, service_vnodeq],
+                           [{min, 1}, {median, 2}, {mean, 2}, {max, 3},
+                            {total, 6}]}],
+                         vnodeq_aggregate(service_vnode, [1, 2, 3]))
+    end.
 
 vnodeq_aggregate_odd5_test() ->
-    P = prefix(),
-    ?assertEqual([{[P, riak_core, service_vnodes_running], 5},
-                  {[P, riak_core, service_vnodeq], 
-		   [{min, 0}, {median, 1}, {mean, 2}, {max, 5}, {total, 10}]}],
-                 vnodeq_aggregate(service_vnode, [1, 0, 5, 0, 4])).
+    case stat_system() of
+        legacy ->
+            ?assertEqual([{service_vnodes_running, 5},
+                          {service_vnodeq_min, 0},
+                          {service_vnodeq_median, 1},
+                          {service_vnodeq_mean, 2},
+                          {service_vnodeq_max, 5},
+                          {service_vnodeq_total, 10}],
+                         vnodeq_aggregate(service_vnode, [1, 0, 5, 0, 4]));
+        exometer ->
+            P = prefix(),
+            ?assertEqual([{[P, riak_core, service_vnodes_running], 5},
+                          {[P, riak_core, service_vnodeq], 
+                           [{min, 0}, {median, 1}, {mean, 2}, {max, 5},
+                            {total, 10}]}],
+                         vnodeq_aggregate(service_vnode, [1, 0, 5, 0, 4]))
+    end.
 
 vnodeq_aggregate_even2_test() ->
-    P = prefix(),
-    ?assertEqual([{[P, riak_core, service_vnodes_running], 2},
-                  {[P, riak_core, service_vnodeq],
-		   [{min, 10}, {median, 15}, {mean, 15}, {max, 20}, {total, 30}]}],
-                 vnodeq_aggregate(service_vnode, [10, 20])).
+    case stat_system() of
+        legacy ->
+            ?assertEqual([{service_vnodes_running, 2},
+                          {service_vnodeq_min, 10},
+                          {service_vnodeq_median, 15},
+                          {service_vnodeq_mean, 15},
+                          {service_vnodeq_max, 20},
+                          {service_vnodeq_total, 30}],
+                         vnodeq_aggregate(service_vnode, [10, 20]));
+        exometer ->
+            P = prefix(),
+            ?assertEqual([{[P, riak_core, service_vnodes_running], 2},
+                          {[P, riak_core, service_vnodeq],
+                           [{min, 10}, {median, 15}, {mean, 15}, {max, 20},
+                            {total, 30}]}],
+                         vnodeq_aggregate(service_vnode, [10, 20]))
+    end.
 
 vnodeq_aggregate_even4_test() ->
-    P = prefix(),
-    ?assertEqual([{[P, riak_core, service_vnodes_running], 4},
-                  {[P, riak_core, service_vnodeq]
-		   [{min, 0}, {median, 5}, {mean, 7}, {max, 20}, {total, 30}]}],
-                 vnodeq_aggregate(service_vnode, [0, 10, 0, 20])).
+    case stat_system() of
+        legacy ->
+            ?assertEqual([{service_vnodes_running, 4},
+                          {service_vnodeq_min, 0},
+                          {service_vnodeq_median, 5},
+                          {service_vnodeq_mean, 7},
+                          {service_vnodeq_max, 20},
+                          {service_vnodeq_total, 30}],
+                         vnodeq_aggregate(service_vnode, [0, 10, 0, 20]));
+        exometer ->
+            P = prefix(),
+            ?assertEqual([{[P, riak_core, service_vnodes_running], 4},
+                          {[P, riak_core, service_vnodeq]
+                           [{min, 0}, {median, 5}, {mean, 7}, {max, 20},
+                            {total, 30}]}],
+                         vnodeq_aggregate(service_vnode, [0, 10, 0, 20]))
+    end.
 
 -endif.

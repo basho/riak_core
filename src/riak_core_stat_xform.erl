@@ -23,16 +23,25 @@
 
 
 parse_transform(Forms, _) ->
-    case os:getenv("RIAK_CORE_STAT_PREFIX") of
-	false ->
-	    Forms;
+    L = [{prefix     , env("RIAK_CORE_STAT_PREFIX")},
+         {stat_system, env("RIAK_CORE_STAT_SYSTEM")}],
+    transform(Forms, [X || {_,V} = X <- L, V =/= undefined]).
+
+env(Var) ->
+    case os:getenv(Var) of
+	false -> undefined;
 	Str ->
-	    transform(Forms, list_to_atom(Str))
+	    list_to_atom(Str)
     end.
 
-transform([{function,L,prefix,0,[_]}|T], Pfx) ->
-    [{function, L, prefix, 0,
-      [{clause, L, [], [], [{atom,L,Pfx}]}]}|T];
+transform([{function,L,F,0,_}|T] = Form, L) ->
+    case lists:keyfind(F, 1, L) of
+        {_, V} when is_atom(V) ->
+            [{function, L, F, 0,
+              [{clause, L, [], [], [{atom,L,V}]}]}|T];
+        false ->
+            Form
+    end;
 transform([H|T], Pfx) ->
     [H | transform(T, Pfx)];
 transform([], _) ->

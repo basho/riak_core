@@ -958,15 +958,23 @@ parse_cidr(CIDR) ->
     {ok, Addr} = inet_parse:address(IP),
     {Addr, list_to_integer(Mask)}.
 
+-define(only_exometer(Expr),
+        case riak_core_stat:stat_system() of
+            legacy ->
+                io:fwrite(
+                  "Error: only available for the Exometer stat system~n", []);
+            exometer ->
+                Expr
+        end).
 
 stat_show(Arg) ->
-    print_stats(find_entries(Arg)).
+    ?only_exometer(print_stats(find_entries(Arg))).
 
 stat_showall(Arg) ->
-    print_stats(find_entries(Arg, '_')).
+    ?only_exometer(print_stats(find_entries(Arg, '_'))).
 
 find_entries(Arg) ->
-    find_entries(Arg, enabled).
+    ?only_exometer(find_entries(Arg, enabled)).
 
 find_entries(Arg, Status) ->
     Patterns = lists:flatten([parse_stat_entry(S, Status) || S <- Arg]),
@@ -985,12 +993,14 @@ get_value(E, _Status) ->
     end.
 
 stat_enable(Arg) ->
-    [io:fwrite("~p: ~p~n", [N, change_status(N, enabled)])
-     || {N, _, _} <- find_entries(Arg, disabled)].
+    ?only_exometer(
+       [io:fwrite("~p: ~p~n", [N, change_status(N, enabled)])
+        || {N, _, _} <- find_entries(Arg, disabled)]).
 
 stat_disable(Arg) ->
-    [io:fwrite("~p: ~p~n", [N, change_status(N, disabled)])
-     || {N, _, _} <- find_entries(Arg, enabled)].
+    ?only_exometer(
+       [io:fwrite("~p: ~p~n", [N, change_status(N, disabled)])
+        || {N, _, _} <- find_entries(Arg, enabled)]).
 
 change_status(N, St) ->
     case exometer:setopts(N, [{status, St}]) of
@@ -1001,8 +1011,11 @@ change_status(N, St) ->
     end.
 
 stat_info(Arg) ->
-    {Attrs, RestArg} = pick_info_attrs(split_arg(Arg)),
-    [print_info(E, Attrs) || E <- find_entries(RestArg, '_')].
+    ?only_exometer(
+       begin
+           {Attrs, RestArg} = pick_info_attrs(split_arg(Arg)),
+           [print_info(E, Attrs) || E <- find_entries(RestArg, '_')]
+       end).
 
 pick_info_attrs(Arg) ->
     lists:foldr(
@@ -1096,8 +1109,6 @@ replace_parts([H|T]) ->
     end;
 replace_parts([]) ->
     [].
-
-	     
 
 
 
