@@ -31,17 +31,32 @@
 
 -module(vclock).
 
--export([fresh/0,descends/2,merge/1,get_counter/2,get_timestamp/2,
-	increment/2,increment/3,all_nodes/1,equal/2,prune/3,timestamp/0]).
--export([fresh/2]).
+-export([fresh/0,
+         fresh/2,
+         descends/2,
+         dominates/2,
+         descends_dot/2,
+         merge/1,
+         get_counter/2,
+         get_timestamp/2,
+         get_entry/2,
+         valid_entry/1,
+         increment/2,
+         increment/3,
+         all_nodes/1,
+         equal/2,
+         prune/3,
+         timestamp/0]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--export_type([vclock/0, timestamp/0, vclock_node/0]).
+-export_type([vclock/0, timestamp/0, vclock_node/0, dot/0]).
 
 -opaque vclock() :: [vc_entry()].
+-opaque dot() :: vc_entry().
+
 % The timestamp is present but not used, in case a client wishes to inspect it.
 -type vc_entry() :: {vclock_node(), {counter(), timestamp()}}.
 
@@ -72,6 +87,22 @@ descends(Va, Vb) ->
         {_, {CtrA, _TSA}} ->
             (CtrA >= CtrB) andalso descends(Va,RestB)
         end.
+
+%% @doc does the given `vclock()' descend from the given `dot()'. The
+%% `dot()' can be any vclock entry returned from
+%% `get_entry/2'. returns `true' if the `vclock()' has an entry for
+%% the `actor' in the `dot()', and that the counter for that entry is
+%% at least that of the given `dot()'. False otherwise. Call with a
+%% valid entry or you'll get an error.
+%%
+%% @see descends/2, get_entry/3, dominates/2
+-spec descends_dot(vclock(), dot()) -> boolean().
+descends_dot(Vclock, Dot) ->
+    descends(Vclock, [Dot]).
+
+-spec dominates(vclock(), vclock()) -> boolean().
+dominates(A, B) ->
+    descends(A, B) andalso not equal(A, B).
 
 % @doc Combine all VClocks in the input list into their least possible
 %      common descendant.
@@ -116,6 +147,21 @@ get_timestamp(Node, VClock) ->
 	{_, {_Ctr, TS}} -> TS;
 	false           -> undefined
     end.
+
+% @doc Get the entry `dot()' for `vclock_node()' from `vclock()'.
+-spec get_entry(Node :: vclock_node(), VClock :: vclock()) -> {ok, dot()} | undefined.
+get_entry(Node, VClock) ->
+    case lists:keyfind(Node, 1, VClock) of
+        false -> undefined;
+        Entry -> {ok, Entry}
+    end.
+
+%% @doc is the given argument a valid dot, or entry?
+-spec valid_entry(dot()) -> boolean().
+valid_entry({_, {Cnt, TS}}) when is_integer(Cnt), is_integer(TS) ->
+    true;
+valid_entry(_) ->
+    false.
 
 % @doc Increment VClock at Node.
 -spec increment(Node :: vclock_node(), VClock :: vclock()) -> vclock().
@@ -312,5 +358,24 @@ merge_same_id_test() ->
     VC2 = [{<<"1">>, {1, 3}},{<<"3">>,{1,5}}],
     ?assertEqual([{<<"1">>, {1, 3}},{<<"2">>,{1,4}},{<<"3">>,{1,5}}],
                  vclock:merge([VC1, VC2])).
+
+get_entry_test() ->
+    VC = vclock:fresh(),
+    VC1 = increment(a, increment(c, increment(b, increment(a, VC)))),
+    ?assertMatch({ok, {a, {2, _}}}, get_entry(a, VC1)),
+    ?assertMatch({ok, {b, {1, _}}}, get_entry(b, VC1)),
+    ?assertMatch({ok, {c, {1, _}}}, get_entry(c, VC1)),
+    ?assertEqual(undefined, get_entry(d, VC1)).
+
+valid_entry_test() ->
+    VC = vclock:fresh(),
+    VC1 = increment(c, increment(b, increment(a, VC))),
+    [begin
+         {ok, E} = get_entry(Actor, VC1),
+         ?assert(valid_entry(E))
+     end || Actor <- [a, b, c]],
+    ?assertNot(valid_entry(undefined)),
+    ?assertNot(valid_entry("huffle-puff")),
+    ?assertNot(valid_entry([])).
 
 -endif.
