@@ -31,7 +31,7 @@
          integer_to_list/2,
          unique_id_62/0,
          str_to_node/1,
-         chash_key/1,
+         chash_key/1, chash_key/2,
          chash_std_keyfun/1,
          chash_bucketonly_keyfun/1,
          mkclientid/1,
@@ -75,14 +75,15 @@
 %% Public API
 %% ===================================================================
 
+%% 719528 days from Jan 1, 0 to Jan 1, 1970
+%%  *86400 seconds/day
+-define(SEC_TO_EPOCH, 62167219200).
+
 %% @spec moment() -> integer()
 %% @doc Get the current "moment".  Current implementation is the
 %%      number of seconds from year 0 to now, universal time, in
 %%      the gregorian calendar.
 
-%% 719528 days from Jan 1, 0 to Jan 1, 1970
-%%  *86400 seconds/day
--define(SEC_TO_EPOCH, 62167219200).
 moment() -> 
     {Mega, Sec, _Micro} = os:timestamp(),
     (Mega * 1000000) + Sec + ?SEC_TO_EPOCH.
@@ -98,10 +99,6 @@ compare_dates(A, B) when is_list(A) ->
     compare_dates(rfc1123_to_now(A), B);
 compare_dates(A, B) when is_list(B) ->
     compare_dates(A, rfc1123_to_now(B)).
-
-%% 719528 days from Jan 1, 0 to Jan 1, 1970
-%%  *86400 seconds/day
--define(SEC_TO_EPOCH, 62167219200).
 
 rfc1123_to_now(String) when is_list(String) ->
     GSec = calendar:datetime_to_gregorian_seconds(
@@ -236,7 +233,7 @@ mkclientid(RemoteNode) ->
 
 %% @spec chash_key(BKey :: riak_object:bkey()) -> chash:index()
 %% @doc Create a binary used for determining replica placement.
-chash_key({Bucket,Key}=BKey) ->
+chash_key({Bucket,_Key}=BKey) ->
     BucketProps = riak_core_bucket:get_bucket(Bucket),
     chash_key(BKey, BucketProps).
     
