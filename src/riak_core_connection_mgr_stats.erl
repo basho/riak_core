@@ -60,7 +60,7 @@ register_stats() ->
 %% produce_stats() function.
 get_stats() ->
     case riak_core_stat_cache:get_stats(?APP) of
-        {ok, Stats} ->
+        {ok, Stats, _TS} ->
             Stats;
         Error -> Error
     end.
