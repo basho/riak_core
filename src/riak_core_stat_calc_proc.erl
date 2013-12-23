@@ -99,20 +99,13 @@ handle_cast({value, Value, TS}, State=#state{awaiting=Awaiting,
     case Value of
         {error, Reason} ->
             lager:debug("stat calc failed: ~p ~p", [Reason]),
-            {Reply, State1} = 
-                case OldValue of
-                    <<"stale:",_/binary>> ->
-                        {OldValue, State};
-                    _ ->
-                        V = tag_stale(OldValue),
-                        {V, State#state{value=V}}
-                end,
+            Reply = maybe_tag_stale(OldValue),
             [gen_server:reply(From, Reply) 
              || From <- Awaiting],
             %% update the timestamp so as not to flood the failing 
             %% process with update requests
-            {noreply, State1#state{timestamp=TS, active=undefined, 
-                                   awaiting=[]}};
+            {noreply, State#state{timestamp=TS, active=undefined, 
+                                  awaiting=[], value = Reply}};
         _Else ->
             [gen_server:reply(From, Value) || From <- Awaiting],
             {noreply, State#state{value=Value, timestamp=TS, 
@@ -137,7 +130,7 @@ handle_info(timeout, State=#state{active=Pid, awaiting=Awaiting, value=Value}) -
     lager:debug("killed delinquent stats process ~p", [Pid]),
     exit(Pid, kill),
     %% let the cache get staler, tag so people can detect
-    [gen_server:reply(From, tag_stale(Value)) || From <- Awaiting],
+    [gen_server:reply(From, maybe_tag_stale(Value)) || From <- Awaiting],
     {noreply, State#state{active=undefined, awaiting=[]}};
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -174,12 +167,15 @@ do_calc_stat(Stat) ->
     spawn_link(
       fun() ->
               StatVal = riak_core_stat_q:calc_stat(Stat),
-              gen_server:cast(ServerPid, {value, StatVal, 
-                                          folsom_utils:now_epoch()}) 
-      end
+              gen_server:cast(ServerPid, {value, StatVal, folsom_utils:now_epoch()}) end
      ).
 
-tag_stale(Value) ->
-    V = io_lib:format("stale: ~p", [Value]),
-    iolist_to_binary(V).
+maybe_tag_stale(Value) ->
+    case Value of
+        <<"stale:",_/binary>> ->
+            Value;
+        _ ->
+            V = io_lib:format("stale: ~p", [Value]),
+            iolist_to_binary(V)
+    end.
 
