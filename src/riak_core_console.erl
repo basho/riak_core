@@ -824,21 +824,31 @@ check_limit(Str) ->
     end.
 
 add_user([Username|Options]) ->
-    case riak_core_security:add_user(list_to_binary(Username),
+    try riak_core_security:add_user(list_to_binary(Username),
                                      parse_options(Options)) of
         ok -> ok;
         Error ->
             io:format("~p~n", [Error]),
             Error
+    catch
+        throw:{error, {invalid_option, Option}} ->
+            io:format("Invalid option ~p, options are of the form key=value~n",
+                      [Option]),
+            error
     end.
 
 alter_user([Username|Options]) ->
-    case riak_core_security:alter_user(list_to_binary(Username),
-                                     parse_options(Options)) of
+    try riak_core_security:alter_user(list_to_binary(Username),
+                                       parse_options(Options)) of
         ok -> ok;
         Error ->
             io:format("~p~n", [Error]),
             Error
+    catch
+        throw:{error, {invalid_option, Option}} ->
+            io:format("Invalid option ~p, options are of the form key=value~n",
+                      [Option]),
+            error
     end.
 
 del_user([Username]) ->
@@ -856,7 +866,7 @@ add_source([Users, CIDR, Source | Options]) ->
         Other ->
             [list_to_binary(O) || O <- Other]
     end,
-    case riak_core_security:add_source(Unames, parse_cidr(CIDR),
+    try riak_core_security:add_source(Unames, parse_cidr(CIDR),
                                   list_to_atom(Source),
                                   parse_options(Options)) of
         ok ->
@@ -864,6 +874,11 @@ add_source([Users, CIDR, Source | Options]) ->
         Error ->
             io:format("~p~n", [Error]),
             Error
+    catch
+        throw:{error, {invalid_option, Option}} ->
+            io:format("Invalid option ~p, options are of the form key=value~n",
+                      [Option]),
+            error
     end.
 
 del_source([Users, CIDR]) ->
