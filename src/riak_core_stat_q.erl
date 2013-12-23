@@ -23,9 +23,7 @@
 %%      A `Path' is a list of atoms | binaries. The module creates a set
 %%      of `ets:select/1' guards, one for each element in `Path'
 %%      For each stat that has a key that matches `Path' we calculate the
-%%      current value and return it. This module makes use of
-%%     `riak_core_stat_calc_proc'
-%%      to cache and limit stat calculations.
+%%      current value and return it.
 
 -module(riak_core_stat_q).
 
@@ -37,7 +35,7 @@
 -type path() :: [] | [atom()|binary()].
 -type stats() :: [stat()].
 -type stat() :: {stat_name(), stat_value()}.
--type stat_name() :: tuple().
+-type stat_name() :: list().
 -type stat_value() :: integer() | [tuple()].
 
 %% @doc To allow for namespacing, and adding richer dimensions, stats
@@ -53,6 +51,12 @@
 %% in `Path' as a wild card.
 -spec get_stats(path()) -> stats().
 get_stats(Path) ->
+    case riak_core_stat:stat_system() of
+        legacy   -> get_stats_legacy(Path);
+        exometer -> get_stats_exometer(Path)
+    end.
+
+get_stats_legacy(Path) ->
     %% get all the stats that are at Path
     NamesNTypes = names_and_types(Path),
     calculate_stats(NamesNTypes).
@@ -82,13 +86,38 @@ guard(Elem, Cnt) when Cnt > 0 ->
 size_guard(N) ->
     {'>=', {size, '$1'}, N}.
 
+
+get_stats_exometer(Path) ->
+    exometer:get_values(Path).
+
 calculate_stats(NamesAndTypes) ->
-    [{Name, get_stat({Name, Type})} || {Name, {metric, _, Type, _}} <- NamesAndTypes].
+    [{Name, get_stat(Name)} || {Name, _, _} <- NamesAndTypes].
 
 %% Create/lookup a cache/calculation process
 get_stat(Stat) ->
     Pid = riak_core_stat_calc_sup:calc_proc(Stat),
     riak_core_stat_calc_proc:value(Pid).
+
+%% Encapsulate getting a stat value from exometer.
+%%
+%% If for any reason we can't get a stats value
+%% return 'unavailable'.
+%% @TODO experience shows that once a stat is
+%% broken it stays that way. Should we delete
+%% stats that are broken?
+calc_stat(Stat) ->
+    case riak_core_stat:stat_system() of
+        legacy   -> calc_stat_legacy(Stat);
+        exometer -> calc_stat_exometer(Stat)
+    end.
+
+calc_stat_exometer({Name, _Type}) when is_tuple(Name) ->
+    stat_return(exometer:get_value([riak_core_stat:prefix()|tuple_to_list(Name)]));
+calc_stat_exometer({[_|_] = Name, _Type}) ->
+    stat_return(exometer:get_value([riak_core_stat:prefix()|Name])).
+
+stat_return({error,not_found}) -> unavailable;
+stat_return({ok, Value}) -> Value.
 
 throw_folsom_error({error, _, _} = Err) ->
     throw(Err);
@@ -101,7 +130,7 @@ throw_folsom_error(Other) -> Other.
 %% @TODO experience shows that once a stat is
 %% broken it stays that way. Should we delete
 %% stats that are broken?
-calc_stat({Name, gauge}) ->
+calc_stat_legacy({Name, gauge}) ->
     try
         GaugeVal = throw_folsom_error(folsom_metrics:get_metric_value(Name)),
         calc_gauge(GaugeVal)
@@ -109,14 +138,14 @@ calc_stat({Name, gauge}) ->
             log_error(Name, ErrClass, ErrReason),
             unavailable
     end;
-calc_stat({Name, histogram}) ->
+calc_stat_legacy({Name, histogram}) ->
     try
         throw_folsom_error(folsom_metrics:get_histogram_statistics(Name))
     catch ErrClass:ErrReason ->
             log_error(Name, ErrClass, ErrReason),
             unavailable
     end;
-calc_stat({Name, _Type}) ->
+calc_stat_legacy({Name, _Type}) ->
     try throw_folsom_error(folsom_metrics:get_metric_value(Name))
     catch ErrClass:ErrReason ->
             log_error(Name, ErrClass, ErrReason),
@@ -126,7 +155,7 @@ calc_stat({Name, _Type}) ->
 log_error(StatName, ErrClass, ErrReason) ->
     lager:warning("Failed to calculate stat ~p with ~p:~p", [StatName, ErrClass, ErrReason]).
 
-%% some crazy people put funs in folsom gauges
+%% some crazy people put funs in gauges (exometer has a 'function' metric)
 %% so that they can have a consistent interface
 %% to access stats from disperate sources
 calc_gauge({function, Mod, Fun}) ->

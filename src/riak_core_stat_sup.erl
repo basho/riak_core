@@ -48,8 +48,16 @@ start_link() ->
 init([]) ->
     Children = lists:flatten(
                  [?CHILD(folsom_sup, supervisor),
-                  ?CHILD(riak_core_stats_sup, supervisor),
-                  ?CHILD(riak_core_stat_calc_sup, supervisor)
+                  ?CHILD(riak_core_stats_sup, supervisor)
+                  | extra_stat_procs()
                  ]),
 
     {ok, {{rest_for_one, 10, 10}, Children}}.
+
+extra_stat_procs() ->
+    case riak_core_stat:stat_system() of
+        legacy ->
+            [?CHILD(riak_core_stat_calc_sup, supervisor)];
+        exometer ->
+            []
+    end.

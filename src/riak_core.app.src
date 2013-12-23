@@ -15,6 +15,7 @@
                   crypto,
                   riak_sysmon,
                   os_mon,
+                  exometer,
                   basho_stats,
                   eleveldb,
                   pbkdf2,
