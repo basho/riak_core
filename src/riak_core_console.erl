@@ -23,7 +23,8 @@
          stage_leave/1, stage_remove/1, stage_replace/1, stage_resize_ring/1,
          stage_force_replace/1, print_staged/1, commit_staged/1,
          clear_staged/1, transfer_limit/1, pending_claim_percentage/2,
-         transfers/1, add_user/1, add_source/1, grant/1, revoke/1,
+         transfers/1, add_user/1, alter_user/1, del_user/1,
+         add_source/1, del_source/1, grant/1, revoke/1,
          print_users/1, print_user/1, print_sources/1, ciphers/1]).
 
 %% @doc Return for a given ring and node, percentage currently owned and
@@ -823,8 +824,35 @@ check_limit(Str) ->
     end.
 
 add_user([Username|Options]) ->
-    case riak_core_security:add_user(list_to_binary(Username),
+    try riak_core_security:add_user(list_to_binary(Username),
                                      parse_options(Options)) of
+        ok -> ok;
+        Error ->
+            io:format("~p~n", [Error]),
+            Error
+    catch
+        throw:{error, {invalid_option, Option}} ->
+            io:format("Invalid option ~p, options are of the form key=value~n",
+                      [Option]),
+            error
+    end.
+
+alter_user([Username|Options]) ->
+    try riak_core_security:alter_user(list_to_binary(Username),
+                                       parse_options(Options)) of
+        ok -> ok;
+        Error ->
+            io:format("~p~n", [Error]),
+            Error
+    catch
+        throw:{error, {invalid_option, Option}} ->
+            io:format("Invalid option ~p, options are of the form key=value~n",
+                      [Option]),
+            error
+    end.
+
+del_user([Username]) ->
+    case riak_core_security:del_user(list_to_binary(Username)) of
         ok -> ok;
         Error ->
             io:format("~p~n", [Error]),
@@ -838,9 +866,29 @@ add_source([Users, CIDR, Source | Options]) ->
         Other ->
             [list_to_binary(O) || O <- Other]
     end,
-    case riak_core_security:add_source(Unames, parse_cidr(CIDR),
+    try riak_core_security:add_source(Unames, parse_cidr(CIDR),
                                   list_to_atom(Source),
                                   parse_options(Options)) of
+        ok ->
+            ok;
+        Error ->
+            io:format("~p~n", [Error]),
+            Error
+    catch
+        throw:{error, {invalid_option, Option}} ->
+            io:format("Invalid option ~p, options are of the form key=value~n",
+                      [Option]),
+            error
+    end.
+
+del_source([Users, CIDR]) ->
+    Unames = case string:tokens(Users, ",") of
+        ["all"] ->
+            all;
+        Other ->
+            [list_to_binary(O) || O <- Other]
+    end,
+    case riak_core_security:del_source(Unames, parse_cidr(CIDR)) of
         ok ->
             ok;
         Error ->
@@ -961,8 +1009,13 @@ parse_options(Options) ->
 parse_options([], Acc) ->
     Acc;
 parse_options([H|T], Acc) ->
-    [Key, Value] = string:tokens(H, "="),
-    parse_options(T, [{Key, Value}|Acc]).
+    case re:split(H, "=", [{parts, 2}, {return, list}]) of
+        [Key, Value] ->
+            parse_options(T, [{Key, Value}|Acc]);
+        _Other ->
+            throw({error, {invalid_option, H}})
+    end.
+
 
 parse_cidr(CIDR) ->
     [IP, Mask] = string:tokens(CIDR, "/"),

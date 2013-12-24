@@ -23,12 +23,12 @@
 -export([print_users/0, print_sources/0, print_user/1]).
 
 %% API
--export([authenticate/3, add_user/2, add_source/4, add_grant/3,
-         add_revoke/3, check_permission/2, check_permissions/2,
+-export([authenticate/3, add_user/2, alter_user/2, del_user/1,
+         add_source/4, del_source/2,
+         add_grant/3, add_revoke/3, check_permission/2, check_permissions/2,
          get_username/1, is_enabled/0,
          get_ciphers/0, set_ciphers/1, print_ciphers/0]).
 %% TODO add rm_source, API to deactivate/remove users
-
 
 -define(DEFAULT_CIPHER_LIST,
 "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256"
@@ -56,6 +56,8 @@
 ":CAMELLIA256-SHA:DHE-RSA-CAMELLIA128-SHA:DHE-DSS-CAMELLIA128-SHA"
 ":ADH-CAMELLIA128-SHA:CAMELLIA128-SHA").
 
+-define(TOMBSTONE, '$deleted').
+
 -record(context,
         {username,
          grants,
@@ -70,8 +72,10 @@ prettyprint_users(Users0, Width) ->
 
 print_sources() ->
     Sources = riak_core_metadata:fold(fun({{Username, CIDR}, [{Source, Options}]}, Acc) ->
-                                    [{Username, CIDR, Source, Options}|Acc]
-                            end, [], {<<"security">>, <<"sources">>}),
+                                              [{Username, CIDR, Source, Options}|Acc];
+                                         ({{_, _}, [?TOMBSTONE]}, Acc) ->
+                                              Acc
+                                      end, [], {<<"security">>, <<"sources">>}),
 
     print_sources(Sources).
 
@@ -83,16 +87,20 @@ print_sources(Sources) ->
             {Users, CIDR, Source, Options} <- GS]).
 
 print_users() ->
-    Users = riak_core_metadata:fold(fun({Username, Options}, Acc) ->
+    Users = riak_core_metadata:fold(fun({_Username, [?TOMBSTONE]}, Acc) ->
+                                            Acc;
+                                        ({Username, Options}, Acc) ->
                                     [{Username, Options}|Acc]
                             end, [], {<<"security">>, <<"roles">>}),
-    riak_core_console_table:print([{username, 20}, {roles, 20}, {password, 40}, {options, 30}],
+    riak_core_console_table:print([{username, 10}, {roles, 15}, {password, 40}, {options, 30}],
                 [begin
                      Roles = case proplists:get_value("roles", Options) of
                                  undefined ->
                                      "";
                                  List ->
-                                     prettyprint_permissions(List, 20)
+                                     prettyprint_permissions([binary_to_list(R)
+                                                              || R <- List,
+                                                                 user_exists(R)], 20)
                              end,
                      Password = case proplists:get_value("password", Options) of
                                     undefined ->
@@ -310,6 +318,50 @@ add_user(Username, Options) ->
             {error, user_exists}
     end.
 
+alter_user(Username, Options) ->
+    User = riak_core_metadata:get({<<"security">>, <<"roles">>}, Username),
+    case User of
+        undefined ->
+            {error, {unknown_user, Username}};
+        UserData ->
+            case validate_options(Options) of
+                {ok, NewOptions} ->
+                    MergedOptions = lists:ukeymerge(1, lists:sort(NewOptions),
+                                                    lists:sort(UserData)),
+
+                    riak_core_metadata:put({<<"security">>, <<"roles">>},
+                                           Username, MergedOptions),
+                    ok;
+                Error ->
+                    Error
+            end
+    end.
+
+del_user(Username) ->
+    User = riak_core_metadata:get({<<"security">>, <<"roles">>}, Username),
+    case User of
+        undefined ->
+            {error, {unknown_user, Username}};
+        _UserData ->
+            riak_core_metadata:delete({<<"security">>, <<"roles">>},
+                                   Username),
+            %% delete any associated grants, so if a user with the same name
+            %% is added again, they don't pick up these grants
+            riak_core_metadata:fold(fun({Key, _Value}, Acc) ->
+                                            %% apparently destructive
+                                            %% iteration is allowed
+                                            riak_core_metadata:delete({<<"security">>,
+                                                                       <<"grants">>},
+                                                                       Key),
+                                            Acc
+                                    end, undefined,
+                                    {<<"security">> ,<<"grants">>},
+                                    [{match, {Username, '_'}}]),
+            delete_user_from_roles(Username),
+            delete_user_from_sources(Username),
+            ok
+    end.
+
 add_grant(all, Bucket, Grants) ->
     %% all is always valid
     case validate_permissions(Grants) of
@@ -402,7 +454,12 @@ add_revoke(User, Bucket, Revokes) ->
 
 add_source(all, CIDR, Source, Options) ->
     %% all is always valid
-    add_source_int([all], anchor_mask(CIDR), Source, Options),
+
+    %% TODO check if there are already 'user' sources for this CIDR
+    %% with the same source
+    riak_core_metadata:put({<<"security">>, <<"sources">>},
+                           {all, anchor_mask(CIDR)},
+                           {Source, Options}),
     ok;
 add_source([H|_T]=UserList, CIDR, Source, Options) when is_binary(H) ->
     %% list of lists, weeeee
@@ -413,6 +470,8 @@ add_source([H|_T]=UserList, CIDR, Source, Options) when is_binary(H) ->
                                            <<"roles">>}),
     Valid = case UnknownUsers of
                 [] ->
+                    %% TODO check if there is already an 'all' source for this CIDR
+                    %% with the same source
                     ok;
                 _ ->
                     {error, {unknown_users, UnknownUsers}}
@@ -430,6 +489,20 @@ add_source([H|_T]=UserList, CIDR, Source, Options) when is_binary(H) ->
 add_source(User, CIDR, Source, Options) ->
     %% single user
     add_source([User], CIDR, Source, Options).
+
+del_source(all, CIDR) ->
+    %% all is always valid
+    riak_core_metadata:delete({<<"security">>, <<"sources">>},
+                              {all, anchor_mask(CIDR)}),
+    ok;
+del_source([H|_T]=UserList, CIDR) when is_binary(H) ->
+    [riak_core_metadata:delete({<<"security">>, <<"sources">>},
+                              {User, anchor_mask(CIDR)}) || User <- UserList],
+    ok;
+del_source(User, CIDR) ->
+    %% single user
+    del_source([User], CIDR).
+
 
 is_enabled() ->
     %% TODO this should be some kind of capability or cluster-wide config
@@ -490,10 +563,15 @@ add_revoke_int([User|Users], Bucket, Permissions) ->
 
             %% TODO - do deletes here, once cluster metadata supports it for
             %% real, if NeePerms == []
-
-            riak_core_metadata:put({<<"security">>, <<"grants">>}, {User,
-                                                                  Bucket},
-                                   NewPerms),
+            
+            case NewPerms of
+                [] ->
+                    riak_core_metadata:delete({<<"security">>, <<"grants">>},
+                                           {User, Bucket});
+                _ ->
+                    riak_core_metadata:put({<<"security">>, <<"grants">>},
+                                           {User, Bucket}, NewPerms)
+            end,
             add_revoke_int(Users, Bucket, Permissions)
     end.
 
@@ -561,10 +639,14 @@ accumulate_grants([], Seen, Acc) ->
     {Acc, Seen};
 accumulate_grants([Role|Roles], Seen, Acc) ->
     Options = riak_core_metadata:get({<<"security">>, <<"roles">>}, Role),
-    NestedRoles = [R || R <- lookup("roles", Options), not lists:member(R, Seen)],
+    NestedRoles = [R || R <- lookup("roles", Options),
+                        not lists:member(R,Seen),
+                        user_exists(R)],
     {NewAcc, NewSeen} = accumulate_grants(NestedRoles, [Role|Seen], Acc),
 
-    Grants = riak_core_metadata:fold(fun({{R, Bucket}, [Permissions]}, A) ->
+    Grants = riak_core_metadata:fold(fun({{_R, _Bucket}, [?TOMBSTONE]}, A) ->
+                                             A;
+                                        ({{R, Bucket}, [Permissions]}, A) ->
                                              [{{R, Bucket}, Permissions}|A]
                                      end, [], {<<"security">>, <<"grants">>},
                                      [{match, {Role, '_'}}]),
@@ -769,4 +851,49 @@ flatten_once(List) ->
                         A ++ Acc
                 end, [], List).
 
+user_exists(Username) ->
+    User = riak_core_metadata:get({<<"security">>, <<"roles">>}, Username),
+    case User of
+        undefined ->
+            false;
+        _ -> true
+    end.
+
+delete_user_from_roles(Username) ->
+    %% delete the user out of any other user's 'roles' option
+    %% this is kind of a pain, as we have to iterate ALL roles
+    riak_core_metadata:fold(fun({_, [?TOMBSTONE]}, Acc) ->
+                                    Acc;
+                               ({Uname, [Options]}, Acc) ->
+                                    case proplists:get_value("roles", Options) of
+                                        undefined ->
+                                            Acc;
+                                        Roles ->
+                                            case lists:member(Username,
+                                                              Roles) of
+                                                true ->
+                                                    NewRoles = lists:keystore("roles", 1, Options, {"roles", Roles -- [Username]}),
+                                                    riak_core_metadata:put({<<"security">>,
+                                                                            <<"roles">>},
+                                                                           Uname,
+                                                                           NewRoles),
+                                                    Acc;
+                                                false ->
+                                                    Acc
+                                            end
+                                    end
+                            end, undefined,
+                            {<<"security">>,<<"roles">>}).
+
+
+delete_user_from_sources(Username) ->
+    riak_core_metadata:fold(fun({{User, _CIDR}=Key, _}, Acc)
+                                  when User == Username ->
+                                    riak_core_metadata:delete({<<"security">>,
+                                                               <<"sources">>},
+                                                              Key),
+                                    Acc;
+                               ({{_, _}, _}, Acc) ->
+                                    Acc
+                            end, [], {<<"security">>, <<"sources">>}).
 
