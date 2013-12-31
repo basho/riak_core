@@ -94,6 +94,10 @@ start(_StartType, _StartArgs) ->
             riak_core_capability:register({riak_core, security},
                                           [true, false],
                                           false),
+            riak_core_capability:register({riak_core, bucket_types},
+                                          [true, false],
+                                          false),
+
             {ok, Pid};
         {error, Reason} ->
             {error, Reason}
