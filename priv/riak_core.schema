@@ -145,3 +145,15 @@
   {default, off},
   {commented, on}
 ]}.
+
+%% @doc Enable or skip use of the background manager. When enabled, participating
+%% Riak subsystems will coordinate access to shared resources. This will help
+%% to prevent system response degradation under times of heavy load from multiple
+%% background tasks. To disable background coordination entirely, set this parameter
+%% to false. Specific subsystems may also have their own controls over use of the
+%% background manager. Riak 2.0+.
+{mapping, "use_bg_manager", "riak_core.use_background_manager", [
+    {datatype, {enum, [true, false]}},
+    {level, advanced},
+    {default, true}
+]}.
