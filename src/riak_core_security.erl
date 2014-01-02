@@ -860,8 +860,21 @@ group_sources(Sources) ->
         end, dict:new(), Sources),
     R1 = [{Users, CIDR, Source, Options} || {{CIDR, Source, Options}, Users} <-
                                        dict:to_list(D)],
+    %% Split any entries where the user list contains 'all' so that 'all' has
+    %% its own entry. We could actually elide any user sources that overlap
+    %% with an 'all' source, but that may be more confusing because deleting
+    %% the all source would then 'ressurrect' the user sources.
+    R2 = lists:foldl(fun({Users, CIDR, Source, Options}=E, Acc) ->
+                    case lists:member(all, Users) of
+                        true ->
+                            [{[all], CIDR, Source, Options},
+                             {Users -- [all], CIDR, Source, Options}|Acc];
+                        false ->
+                            [E|Acc]
+                    end
+            end, [], R1),
     %% sort the result by the same criteria that sort_sources uses
-    R2 = lists:sort(fun({UserA, _, _, _}, {UserB, _, _, _}) ->
+    R3 = lists:sort(fun({UserA, _, _, _}, {UserB, _, _, _}) ->
                     case {UserA, UserB} of
                         {[all], [all]} ->
                             true;
@@ -873,10 +886,10 @@ group_sources(Sources) ->
                         {_, _} ->
                             true
                     end
-            end, R1),
+            end, R2),
     lists:sort(fun({_, {_, MaskA}, _, _}, {_, {_, MaskB}, _, _}) ->
                 MaskA > MaskB
-        end, R2).
+        end, R3).
 
 group_grants(Grants) ->
     D = lists:foldl(fun({{_User, Bucket}, G}, Acc) ->
