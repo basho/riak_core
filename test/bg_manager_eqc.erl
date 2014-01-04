@@ -783,6 +783,12 @@ wait_for_pid(Pid) ->
     Mref = erlang:monitor(process, Pid),
     receive
         {'DOWN', Mref, process, _, _} ->
+            %% listing all resources is no longer in the gen_server, so
+            %% we need to let the DOWN handler have a chance to complete
+            %% and delete the entry from the table. It's now a race to
+            %% see who notices the dead pid. Maybe bg-mgr should verify
+            %% that a process is still alive when doing the query.
+            timer:sleep(10),
             ok
     after
         5000 ->

@@ -115,7 +115,9 @@
          all_locks/0,
          all_locks/1,
          all_tokens/0,
-         all_tokens/1
+         all_tokens/1,
+         print_log/0,
+         iter_log/1
         ]).
 
 %% Convenience
@@ -130,6 +132,9 @@
 -define(SERVER, ?MODULE).
 
 -define(NOT_TRANSFERED(S), S#state.info_table == undefined orelse S#state.entry_table == undefined).
+
+-define(MAX_LOG_BYTES, 1000000).    %% maximum size of a single logfile
+-define(MAX_LOG_FILES, 5).          %% maximum number of logfiles in the wrap rotation
 
 %%%===================================================================
 %%% API
@@ -404,7 +409,9 @@ query_resource(Resource, Types) ->
         {info_table:: ets:tid(),          %% TableID of ?BG_INFO_ETS_TABLE
          entry_table:: ets:tid(),         %% TableID of ?BG_ENTRY_ETS_TABLE
          enabled :: boolean(),            %% Global enable/disable switch, true at startup
-         bypassed:: boolean()             %% Global kill switch. false at startup
+         bypassed:: boolean(),            %% Global kill switch. false at startup
+         loglevel::atom(),                %% Logging level = on | off | debug
+         log::disk_log:log()
         }).
 
 %%%===================================================================
@@ -423,10 +430,14 @@ init([]) ->
     %% We have two to claim...
     ok = riak_core_table_manager:claim_table(?BG_INFO_ETS_TABLE),
     ok = riak_core_table_manager:claim_table(?BG_ENTRY_ETS_TABLE),
+    {ok, Log} = open_disk_log(read_write),
     State = #state{info_table=undefined, %% resolved in the ETS-TRANSFER handler
                    entry_table=undefined, %% resolved in the ETS-TRANSFER handler
                    enabled=true,
-                   bypassed=false},
+                   bypassed=false,
+                   loglevel=app_helper:get_env(riak_core, background_manager_loglevel, debug),
+                   log=Log
+                  },
     {ok, State}.
 
 %% @private
@@ -458,7 +469,7 @@ handle_call(disable, _From, State) ->
     State2 = update_enabled(false, State),
     {reply, status_of(true, State2), State2};
 handle_call({get_lock, Lock, Pid, Meta}, _From, State) ->
-    do_handle_call_exception(fun do_get_resource/5, [Lock, lock, Pid, Meta, State], State);
+    do_handle_call_exception(fun logged_do_get_resource/5, [Lock, lock, Pid, Meta, State], State);
 handle_call({lock_count, Lock}, _From, State) ->
     {reply, held_count(Lock, State), State};
 handle_call({lock_limit_reached, Lock}, _From, State) ->
@@ -480,7 +491,7 @@ handle_call({token_info, Token}, _From, State) ->
 handle_call({set_token_rate, Token, Rate}, _From, State) ->
     do_handle_call_exception(fun do_set_token_rate/3, [Token, Rate, State], State);
 handle_call({get_token, Token, Pid, Meta}, _From, State) ->
-    do_handle_call_exception(fun do_get_resource/5, [Token, token, Pid, Meta, State], State).
+    do_handle_call_exception(fun logged_do_get_resource/5, [Token, token, Pid, Meta, State], State).
 
 %% @private
 %% @doc Handling cast messages
@@ -583,6 +594,7 @@ validate_hold(_Obj, _TableId) -> %% tokens don't monitor processes
 update_bypassed(_Bypassed, State) when ?NOT_TRANSFERED(State) ->
     State;
 update_bypassed(Bypassed, State=#state{info_table=TableId}) ->
+    maybe_log(bypass, Bypassed, ok, State),
     ets:insert(TableId, {bypassed, Bypassed}),
     State#state{bypassed=Bypassed}.
 
@@ -590,6 +602,7 @@ update_bypassed(Bypassed, State=#state{info_table=TableId}) ->
 update_enabled(_Enabled, State) when ?NOT_TRANSFERED(State) ->
     State;
 update_enabled(Enabled, State=#state{info_table=TableId}) ->
+    maybe_log(enable, Enabled, ok, State),
     ets:insert(TableId, {enabled, Enabled}),
     State#state{enabled=Enabled}.
 
@@ -749,6 +762,7 @@ do_enabled(Resource, State) ->
 
 do_enable_resource(Resource, Enabled, State) ->
     Info = resource_info(Resource, State),
+    maybe_log(enable, {Resource, Enabled}, ok, State),
     State2 = update_resource_enabled(Resource, Enabled, Info, State),
     {reply, status_of(Enabled, State2), State2}.
 
@@ -759,6 +773,7 @@ update_resource_enabled(Resource, Value, Default, State) ->
                      State).
 
 update_limit(Resource, Limit, Default, State) ->
+    maybe_log(set_limit, {Resource, Limit}, ok, State),
     update_resource_info(Resource,
                          fun(Info) -> Info#resource_info{limit=Limit} end,
                          Default#resource_info{limit=Limit},
@@ -852,6 +867,20 @@ try_get_resource(true, Resource, Type, Pid, Meta, State) ->
     end.
 
 %% @private
+%% @doc
+%% Wrap the call to do_get_resource/5 so we can log it's operation
+%% and status, depending on the logging level in effect.
+logged_do_get_resource(Resource, Type, Pid, Meta, State) ->
+    {_R, Result, _S} = Reply = do_get_resource(Resource, Type, Pid, Meta, State),
+    Status = case Result of
+                 ok -> ok;
+                 {ok, _Ref} -> ok;
+                 Other -> Other
+             end,
+    maybe_log(get_resource, {Resource, Type, Meta}, Status, State),
+    Reply.
+
+%% @private
 %% @doc reply now if resource is available. Returns max_concurrency
 %%      if resource not available or globally or specifically disabled.
 -spec do_get_resource(bg_resource(), bg_resource_type(), pid(), [{atom(), any()}], #state{}) ->
@@ -943,3 +972,113 @@ use_bg_mgr() ->
 -spec use_bg_mgr(atom(), atom()) -> boolean().
 use_bg_mgr(Dependency, Key) ->
     use_bg_mgr() andalso app_helper:get_env(Dependency, Key, true).
+
+%%%%%%%%%%
+%% Logging
+%%%%%%%%%%
+
+%% %% @private
+%% %% @doc Create a logfile in the platform-dir/log/
+open_disk_log(RWorRO) ->
+    DataDir = app_helper:get_env(riak_core, platform_data_dir, "/tmp"),
+    Log = now(),
+    LogFile = lists:flatten(io_lib:format("~s/~s/events.log",
+                                          [DataDir, ?MODULE])),
+    ok = filelib:ensure_dir(LogFile),
+    case open_disk_log(Log, LogFile, RWorRO) of
+        {ok, Log} ->
+            {ok, Log};
+        {repaired, _L, Recovered, Bad} ->
+            lager:info("Repaired damaged logfile, ~p, ~p", [Recovered, Bad]),
+            {ok, Log};
+        Error ->
+            lager:error("Failed to open logfile: '~p' error: ~p", [LogFile, Error]),
+            {ok, undefined}
+    end.
+
+open_disk_log(Name, Path, RWorRO) ->
+    Size = app_helper:get_env(riak_core, background_manager_log_size, {?MAX_LOG_BYTES, ?MAX_LOG_FILES}),
+    open_disk_log(Name, Path, RWorRO, [{type, wrap}, {format, internal}, {size, Size}]).
+
+open_disk_log(Name, Path, RWorRO, OtherOpts) ->
+    disk_log:open([{name, Name}, {file, Path}, {mode, RWorRO}|OtherOpts]).
+
+%% @private
+%% @doc Write binary terms to disk_log file.
+%% Terms are always written asychrnonously. If some get lost due to crash,
+%% that's not bad, but we never want to block the operational path.
+log(_Op, _Args, _Status, #state{log=undefined}) ->
+    ok;
+log(Op, Args, Status, #state{log=WriteLog}) ->
+    Timestamp = erlang:now(),
+    disk_log:alog_terms(WriteLog, [{Timestamp, Op, Args, Status}]).
+
+%% @private
+%% @doc Log an operation if log level is "debug", none if we're "off",
+%% and only specific operations if we're "on".
+maybe_log(Op, Args, Status, State=#state{loglevel=debug}) ->
+    log(Op, Args, Status, State);
+maybe_log(get_resource=Op, Args, Status, State=#state{loglevel=on}) ->
+    log(Op, Args, Status, State);
+maybe_log(bypass=Op, Args, Status, State=#state{loglevel=on}) ->
+    log(Op, Args, Status, State);
+maybe_log(enable=Op, Args, Status, State=#state{loglevel=on}) ->
+    log(Op, Args, Status, State);
+maybe_log(_Op, _Args, _Status, _State) ->
+    ok.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Called from outside of riak
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% @private
+%% @doc Format the timestamp into human readable date string.
+format_utc_timestamp(TS) ->
+    {{Year,Month,Day},{Hour,Minute,Second}} = 
+	calendar:now_to_universal_time(TS),
+    Mstr = element(Month,{"Jan","Feb","Mar","Apr","May","Jun","Jul",
+			  "Aug","Sep","Oct","Nov","Dec"}),
+    io_lib:format("~w/~s/~w:~w:~w:~w",
+		  [Day,Mstr,Year,Hour,Minute,Second]).
+
+%% @private
+%% @doc
+%% Print a single term from the background manager's log file.
+print_entry({TS, get_resource, {Resource, Type, Meta}, Status}) ->
+    io:format("~s get_~p ~p ~p ~p~n", [format_utc_timestamp(TS), Type, Resource, Meta, Status]);
+print_entry({TS, Op, {Resource, Value}, Status}) ->
+    io:format("~s ~p ~p ~p ~p~n", [format_utc_timestamp(TS), Op, Resource, Value, Status]);
+print_entry({TS, Op, Args, Status}) ->
+    io:format("~s ~p ~p ~p~n", [format_utc_timestamp(TS), Op, Args, Status]);
+print_entry(Term) ->
+    io:format("Unexpected: ~p~n", [Term]).
+
+%% @doc
+%% Pretty print background manager's logfile.
+print_log() ->
+    iter_log(fun print_entry/1).
+
+%% @doc
+%% Iterate function Fun over the terms in the background manager's logfile.
+iter_log(Fun) ->
+    {ok, ReadLog} = open_disk_log(read_only),
+    iter_disk_log(Fun, ReadLog).
+
+%% @private
+%% @doc
+%% Iterate a function over the background manger's logfile terms.
+iter_disk_log(Fun, DiskLog) ->
+    iter_disk_log(disk_log:chunk(DiskLog, start), Fun, DiskLog).
+
+iter_disk_log(eof, _Fun, _DiskLog) ->
+    ok;
+iter_disk_log({Cont, Terms}, Fun, DiskLog) ->
+    try
+        [Fun(Term) || Term <- Terms],
+        ok
+    catch X:Y ->
+            io:format("~s:fold_disk_log: caught ~p ~p @ ~p\n",
+                      [?MODULE, X, Y, erlang:get_stacktrace()]),
+            ok
+    end,
+    iter_disk_log(disk_log:chunk(DiskLog, Cont), Fun, DiskLog).
