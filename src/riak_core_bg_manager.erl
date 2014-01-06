@@ -435,7 +435,7 @@ init([]) ->
                    entry_table=undefined, %% resolved in the ETS-TRANSFER handler
                    enabled=true,
                    bypassed=false,
-                   loglevel=app_helper:get_env(riak_core, background_manager_loglevel, debug),
+                   loglevel=app_helper:get_env(riak_core, background_manager_loglevel, on),
                    log=Log
                   },
     {ok, State}.
