@@ -94,7 +94,7 @@
 %% R14B04 via a custom source repository & branch.
 {mapping, "dtrace", "riak_core.dtrace_support", [
   {default, off},
-  {datatype, {flag, on, off}}
+  {datatype, flag}
 ]}.
 
 %% Platform-specific installation paths (substituted by rebar)
@@ -125,7 +125,7 @@
 %% @doc Enable consensus subsystem. Set to true to enable the
 %% consensus subsystem used for strongly consistent Riak operations.
 {mapping, "strong_consistency", "riak_core.enable_consensus", [
-  {datatype, {flag, on, off}},
+  {datatype, flag},
   {default, off},
   {commented, on}
 ]}.
