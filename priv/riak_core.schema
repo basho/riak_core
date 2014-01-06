@@ -94,20 +94,8 @@
 %% R14B04 via a custom source repository & branch.
 {mapping, "dtrace", "riak_core.dtrace_support", [
   {default, off},
-  {datatype, {enum, [on, off]}}
+  {datatype, {flag, on, off}}
 ]}.
-
-{ translation,
-  "riak_core.dtrace_support",
-  fun(Conf) ->
-    Setting = cuttlefish:conf_get("dtrace", Conf),
-    case Setting of
-      on -> true;
-      off -> false;
-      _Default -> false
-    end
-  end
-}.
 
 %% Platform-specific installation paths (substituted by rebar)
 {mapping, "platform_bin_dir", "riak_core.platform_bin_dir", [
@@ -137,17 +125,7 @@
 %% @doc Enable consensus subsystem. Set to true to enable the
 %% consensus subsystem used for strongly consistent Riak operations.
 {mapping, "strong_consistency", "riak_core.enable_consensus", [
-  {datatype, {enum, [on, off]}},
+  {datatype, {flag, on, off}},
   {default, off},
   {commented, on}
 ]}.
-
-{translation, "riak_core.enable_consensus",
- fun(Conf) ->
-  case cuttlefish:conf_get("strong_consistency", Conf) of
-      on -> true;
-      off -> false;
-      _ -> false
-  end
- end
-}.
