@@ -111,8 +111,8 @@ validate_ssl_config([{cacertdir, CACertDir}|Rest], Acc) ->
         Certs when is_list(Certs) ->
             validate_ssl_config(Rest, [{cacerts, Certs}|Acc])
     end;
-validate_ssl_config([_|Rest], Acc) ->
-    validate_ssl_config(Rest, Acc).
+validate_ssl_config([E|Rest], Acc) ->
+    validate_ssl_config(Rest, [E|Acc]).
 
 upgrade_client_to_ssl(Socket, App) ->
     case maybe_use_ssl(App) of
