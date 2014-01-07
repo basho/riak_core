@@ -1032,14 +1032,14 @@ maybe_log(_Op, _Args, _Status, _State) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% @private
-%% @doc Format the timestamp into human readable date string.
+%% @doc Format the timestamp into a human readable date string. Timezone depends
+%% on the value of the app env var 'sasl/utc_log' which is true or false. If true,
+%% then universal time is returned, otherwise local time prevails.
+%% @link https://github.com/basho/lager/blob/master/src/lager_stdlib.erl#L80
 format_utc_timestamp(TS) ->
-    {{Year,Month,Day},{Hour,Minute,Second}} = 
-	calendar:now_to_universal_time(TS),
-    Mstr = element(Month,{"Jan","Feb","Mar","Apr","May","Jun","Jul",
-			  "Aug","Sep","Oct","Nov","Dec"}),
-    io_lib:format("~w/~s/~w:~w:~w:~w",
-		  [Day,Mstr,Year,Hour,Minute,Second]).
+    DateTimeMsecs = lager_util:localtime_ms(TS),
+    {D,T} = lager_util:format_time(lager_util:maybe_utc(DateTimeMsecs)),
+    lists:flatten([D,$ ,T]).
 
 %% @private
 %% @doc
