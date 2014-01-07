@@ -1,7 +1,7 @@
 %%-*- mode: erlang -*-
 %% Default Bucket Properties
 
-%% @doc the number of replicas stored. Note: See Replication
+%% @doc The number of replicas stored. Note: See Replication
 %% Properties for further discussion.
 %% http://docs.basho.com/riak/latest/dev/advanced/cap-controls/
 {mapping, "buckets.default.n_val", "riak_core.default_bucket_props.n_val", [
