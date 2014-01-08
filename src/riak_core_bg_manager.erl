@@ -133,7 +133,7 @@
 
 -define(NOT_TRANSFERED(S), S#state.info_table == undefined orelse S#state.entry_table == undefined).
 
--define(MAX_LOG_BYTES, 1000000).    %% maximum size of a single logfile
+-define(MAX_LOG_BYTES, 100 * 1024). %% maximum size of a single logfile
 -define(MAX_LOG_FILES, 5).          %% maximum number of logfiles in the wrap rotation
 
 %%%===================================================================
