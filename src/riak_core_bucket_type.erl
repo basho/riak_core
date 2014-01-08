@@ -170,6 +170,8 @@ update(BucketType, Props) when is_binary(BucketType)->
 
 %% @doc Return the properties associated with the given bucket type.
 -spec get(bucket_type()) -> undefined | bucket_type_props().
+get(<<"default">>) ->
+    riak_core_bucket_props:defaults();
 get(BucketType) when is_binary(BucketType) ->
     riak_core_claimant:get_bucket_type(BucketType, undefined).
 
