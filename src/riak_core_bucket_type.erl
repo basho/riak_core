@@ -108,6 +108,11 @@
 -type bucket_type()       :: binary().
 -type bucket_type_props() :: [{term(), term()}].
 
+-define(IF_CAPABLE(X, E), case riak_core_capability:get({riak_core, bucket_types}) of
+                              true -> X;
+                              false -> E
+                          end).
+
 
 %% @doc The hardcoded defaults for all bucket types.
 -spec defaults() -> bucket_type_props().
@@ -141,15 +146,16 @@ defaults() ->
 create(?DEFAULT_TYPE, _Props) ->
     {error, default_type};
 create(BucketType, Props) when is_binary(BucketType) ->
-    riak_core_claimant:create_bucket_type(BucketType,
-                                          riak_core_bucket_props:merge(Props, defaults())).
+    ?IF_CAPABLE(riak_core_claimant:create_bucket_type(BucketType,
+                                                      riak_core_bucket_props:merge(Props, defaults())),
+                {error, not_capable}).
 
 %% @doc Returns the state the type is in.
 -spec status(bucket_type()) -> undefined | created | ready | active.
 status(?DEFAULT_TYPE) ->
     active;
 status(BucketType) when is_binary(BucketType) ->
-    riak_core_claimant:bucket_type_status(BucketType).
+    ?IF_CAPABLE(riak_core_claimant:bucket_type_status(BucketType), undefined).
 
 %% @doc Activate the type. This will succeed only if the type is in the `ready' state. Otherwise,
 %% an error is returned.
@@ -157,7 +163,7 @@ status(BucketType) when is_binary(BucketType) ->
 activate(?DEFAULT_TYPE) ->
     ok;
 activate(BucketType) when is_binary(BucketType) ->
-    riak_core_claimant:activate_bucket_type(BucketType).
+    ?IF_CAPABLE(riak_core_claimant:activate_bucket_type(BucketType), {error, undefined}).
 
 %% @doc Update an existing bucket type. Updates may only be performed
 %% on active types. Properties not provided will keep their existing
@@ -166,7 +172,7 @@ activate(BucketType) when is_binary(BucketType) ->
 update(?DEFAULT_TYPE, _Props) ->
     {error, no_default_update}; %% default props are in the app.config
 update(BucketType, Props) when is_binary(BucketType)->
-    riak_core_claimant:update_bucket_type(BucketType, Props).
+    ?IF_CAPABLE(riak_core_claimant:update_bucket_type(BucketType, Props), {error, not_capable}).
 
 %% @doc Return the properties associated with the given bucket type.
 -spec get(bucket_type()) -> undefined | bucket_type_props().

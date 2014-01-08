@@ -710,7 +710,8 @@ get_remote_type_status(BucketType, Props) ->
                                          riak_core_metadata,
                                          get, [?BUCKET_TYPE_PREFIX, BucketType, [{default, []}]]),
     SortedProps = lists:ukeysort(1, Props),
-    DiffProps = [P || P <- AllProps, lists:ukeysort(1, P) =/= SortedProps],
+    %% P may be a {badrpc, ...} in addition to a list of properties when there are older nodes involved
+    DiffProps = [P || P <- AllProps, (not is_list(P) orelse lists:ukeysort(1, P) =/= SortedProps)],
     case {DiffProps, BadNodes} of
         {[], []} -> ready;
         %% unreachable nodes may or may not have correct value, so we assume they dont
