@@ -167,11 +167,14 @@ reset_bucket(Bucket) ->
 get_buckets(Ring) ->
     RingNames = riak_core_ring:get_buckets(Ring),
     RingBuckets = [get_bucket(Name, Ring) || Name <- RingNames],
-    MetadataBuckets = riak_core_metadata:fold(fun({_Key, Props}, Acc) ->
+    MetadataBuckets = riak_core_metadata:fold(fun({_, undefined}, Acc) ->
+                                                      Acc;
+                                                 ({_Key, Props}, Acc) ->
                                                       [Props | Acc]
                                               end,
                                               [], ?METADATA_PREFIX,
-                                              [{resolver, fun riak_core_bucket_props:resolve/2}]),
+                                              [{resolver, fun riak_core_bucket_props:resolve/2},
+                                               {default, undefined}]),
     RingBuckets ++ MetadataBuckets.
 
 %% @doc returns a proplist containing all buckets and their respective N values
