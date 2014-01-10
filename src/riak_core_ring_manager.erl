@@ -244,7 +244,7 @@ do_write_ringfile(Ring, FN) ->
             lager:error("Unable to write ring to \"~s\" - ~p\n", [FN, Err]),
             {error,Err}
     end.
-    
+
 
 %% @spec find_latest_ringfile() -> string()
 find_latest_ringfile() ->
@@ -286,7 +286,7 @@ prune_ringfiles() ->
                     {error, Reason};
                 {ok, []} -> ok;
                 {ok, Filenames} ->
-                    Timestamps = [TS || {"riak_core_ring", C1, TS} <- 
+                    Timestamps = [TS || {"riak_core_ring", C1, TS} <-
                      [list_to_tuple(string:tokens(FN, ".")) || FN <- Filenames],
                                         C1 =:= Cluster],
                     if Timestamps /= [] ->
@@ -300,8 +300,8 @@ prune_ringfiles() ->
                                          io_lib:format(
                                            "~B~2.10.0B~2.10.0B~2.10.0B~2.10.0B~2.10.0B",K))
                                        || K <- Keep],
-                            DelFNs = [Dir ++ "/" ++ FN || FN <- Filenames, 
-                                                          lists:all(fun(TS) -> 
+                            DelFNs = [Dir ++ "/" ++ FN || FN <- Filenames,
+                                                          lists:all(fun(TS) ->
                                                                             string:str(FN,TS)=:=0
                                                                     end, KeepTSs)],
                             [file:delete(DelFN) || DelFN <- DelFNs],
@@ -399,7 +399,7 @@ handle_call({ring_trans, Fun, Args}, _From, State=#state{raw_ring=Ring}) ->
         {ignore, Reason} ->
             {reply, {not_changed, Reason}, State};
         Other ->
-            lager:error("ring_trans: invalid return value: ~p", 
+            lager:error("ring_trans: invalid return value: ~p",
                                    [Other]),
             {reply, not_changed, State}
     end;
@@ -644,7 +644,7 @@ back_test() ->
     ?assertEqual([[7,8,9]], back(1, X, List2)),
     ?assertEqual([], back(1, X, List3)),
     ?assertEqual([[7,8,3]], back(2, X, List1)),
-    ?assertEqual([[11,12,13]], back(3, X, List1)).    
+    ?assertEqual([[11,12,13]], back(3, X, List1)).
 
 prune_list_test() ->
     TSList1 = [[2011,2,28,16,32,16],[2011,2,28,16,32,36],[2011,2,28,16,30,27],[2011,2,28,16,32,16],[2011,2,28,16,32,36]],
@@ -652,7 +652,7 @@ prune_list_test() ->
     PrunedList1 = [[2011,2,28,16,30,27],[2011,2,28,16,32,16]],
     PrunedList2 = [[2011,2,28,16,31,16],[2011,2,28,16,32,36]],
     ?assertEqual(PrunedList1, prune_list(TSList1)),
-    ?assertEqual(PrunedList2, prune_list(TSList2)).    
+    ?assertEqual(PrunedList2, prune_list(TSList2)).
 
 set_ring_global_test() ->
     setup_ets(test),
@@ -673,6 +673,7 @@ set_my_ring_test() ->
     cleanup_ets(test).
 
 refresh_my_ring_test() ->
+    setup_ets(test),
     Core_Settings = [{ring_creation_size, 4},
                      {ring_state_dir, "/tmp"},
                      {cluster_name, "test"}],
@@ -703,22 +704,22 @@ do_write_ringfile_test() ->
     file:delete(?TMP_RINGFILE),
     file:change_mode(?TEST_RINGFILE, 8#00644),
     file:delete(?TEST_RINGFILE),
-    
+
     %% Check happy path
     GenR = fun(Name) -> riak_core_ring:fresh(64, Name) end,
     ?assertEqual(ok, do_write_ringfile(GenR(happy), ?TEST_RINGFILE)),
-    
+
     %% Check write fails (create .tmp file with no write perms)
     ok = file:write_file(?TMP_RINGFILE, <<"no write for you">>),
     ok = file:change_mode(?TMP_RINGFILE, 8#00444),
     ?assertMatch({error,_}, do_write_ringfile(GenR(tmp_perms), ?TEST_RINGFILE)),
     ok = file:change_mode(?TMP_RINGFILE, 8#00644),
     ok = file:delete(?TMP_RINGFILE),
-    
+
     %% Check rename fails
     ok = file:change_mode(?TEST_RINGDIR, 8#00444),
     ?assertMatch({error,_}, do_write_ringfile(GenR(ring_perms), ?TEST_RINGFILE)),
     ok = file:change_mode(?TEST_RINGDIR, 8#00755).
-    
+
 -endif.
 
