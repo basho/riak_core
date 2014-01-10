@@ -23,12 +23,23 @@
 %% @doc Change net_kernel's ticktime on-the-fly.
 
 -module(riak_core_net_ticktime).
--export([start_set_net_ticktime_daemon/2,
+-export([enable/0,
+         start_set_net_ticktime_daemon/2,
          stop_set_net_ticktime_daemon/1]).
 
 -define(REGNAME, net_kernel_net_ticktime_change_daemon).
 
+-spec enable() -> ok.
+enable() ->
+    riak_core_capability:register({riak_core, net_ticktime},
+                                  [supported, unsupported],
+                                  unsupported).
+
 start_set_net_ticktime_daemon(Node, Time) ->
+    Capability = riak_core_capability:get({riak_core, net_ticktime}),
+    start_set_net_ticktime_daemon(Node, Time, Capability).
+
+start_set_net_ticktime_daemon(Node, Time, supported) ->
     EbinDir = filename:dirname(code:which(?MODULE)),
     try
         Dirs = rpc:call(Node, code, get_path, []),
@@ -57,9 +68,18 @@ start_set_net_ticktime_daemon(Node, Time) ->
                         catch _:_ ->
                                 ok
                         end
-                end).
+                end);
+start_set_net_ticktime_daemon(Node, _Time, unsupported) ->
+    lager:info("Not starting tick daemon on ~p. Capability unsupported. "
+               "Some nodes in the Riak cluster do not have ~p loaded\n",
+               [Node, ?MODULE]),
+    ok.
 
 stop_set_net_ticktime_daemon(Node) ->
+    Capability = riak_core_capability:get({riak_core, net_ticktime}),
+    stop_set_net_ticktime_daemon(Node, Capability).
+
+stop_set_net_ticktime_daemon(Node, supported) ->
     try
         case rpc:call(Node, erlang, whereis, [?REGNAME]) of
             Pid when is_pid(Pid) ->
@@ -73,7 +93,10 @@ stop_set_net_ticktime_daemon(Node) ->
     catch _:_ ->
             %% Network problems or timeouts, we don't try too hard
             error
-    end.
+    end;
+stop_set_net_ticktime_daemon(Node, unsupported) ->
+    lager:info("Not stopping tick daemon on ~p. Capability unsupported\n", [Node]),
+    ok.
 
 async_start_set_net_ticktime_daemons(Time, Nodes) ->
     Pids = [spawn(fun() ->
@@ -119,4 +142,3 @@ set_net_ticktime(Time) ->
         A when is_atom(A) ->
             A
     end.
-

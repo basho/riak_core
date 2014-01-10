@@ -97,6 +97,9 @@ start(_StartType, _StartArgs) ->
             riak_core_capability:register({riak_core, bucket_types},
                                           [true, false],
                                           false),
+            riak_core_capability:register({riak_core, net_ticktime},
+                                          [supported, unsupported],
+                                          unsupported),
 
             {ok, Pid};
         {error, Reason} ->
