@@ -229,7 +229,9 @@ authenticate(Username, Password, ConnInfo) ->
             {error, unknown_user};
         UserData ->
             Sources0 = riak_core_metadata:fold(fun({{Un, CIDR}, [{Source, Options}]}, Acc) ->
-                                                      [{Un, CIDR, Source, Options}|Acc]
+                                                      [{Un, CIDR, Source, Options}|Acc];
+                                                  ({{_, _}, [?TOMBSTONE]}, Acc) ->
+                                                       Acc
                                               end, [], {<<"security">>, <<"sources">>}),
             Sources = sort_sources(Sources0),
             case match_source(Sources, Username,
