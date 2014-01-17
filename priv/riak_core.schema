@@ -138,7 +138,7 @@
   {default, "{{platform_log_dir}}"}
 ]}.
 
-%% @doc Enable consensus subsystem. Set to true to enable the
+%% @doc Enable consensus subsystem. Set to 'on' to enable the
 %% consensus subsystem used for strongly consistent Riak operations.
 {mapping, "strong_consistency", "riak_core.enable_consensus", [
   {datatype, flag},
