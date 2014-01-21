@@ -36,14 +36,12 @@ enable() ->
                                   false).
 
 start_set_net_ticktime_daemon(Node, Time) ->
-    Capability = riak_core_capability:get({riak_core, net_ticktime}),
-    start_set_net_ticktime_daemon(Node, Time, Capability).
+    start_set_net_ticktime_daemon(Node, Time, net_ticktime_active()).
 
 start_set_net_ticktime_daemon(Node, Time, true) ->
     EbinDir = filename:dirname(code:which(?MODULE)),
     try
         Dirs = rpc:call(Node, code, get_path, []),
-        lager:info("Node: ~p EbinDir: ~p Member? ~p", [Node, EbinDir, lists:member(EbinDir, Dirs)]),
         case lists:member(EbinDir, Dirs) of
             false ->
                 lager:info("start_set_net_ticktime_daemon: adding to code path "
@@ -142,4 +140,13 @@ set_net_ticktime(Time) ->
             Status;
         A when is_atom(A) ->
             A
+    end.
+
+-spec net_ticktime_active() -> boolean().
+net_ticktime_active() ->
+    case catch riak_core_capability:get({riak_core, net_ticktime}) of
+        true ->
+            true;
+        _ ->
+            false
     end.
