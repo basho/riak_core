@@ -98,8 +98,8 @@ start(_StartType, _StartArgs) ->
                                           [true, false],
                                           false),
             riak_core_capability:register({riak_core, net_ticktime},
-                                          [supported, unsupported],
-                                          unsupported),
+                                          [true, false],
+                                          false),
 
             {ok, Pid};
         {error, Reason} ->
