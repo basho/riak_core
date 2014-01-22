@@ -102,7 +102,7 @@ descends_dot(Vclock, Dot) ->
 
 -spec dominates(vclock(), vclock()) -> boolean().
 dominates(A, B) ->
-    descends(A, B) andalso not equal(A, B).
+    descends(A, B) andalso not descends(B, A).
 
 % @doc Combine all VClocks in the input list into their least possible
 %      common descendant.
@@ -377,5 +377,11 @@ valid_entry_test() ->
     ?assertNot(valid_entry(undefined)),
     ?assertNot(valid_entry("huffle-puff")),
     ?assertNot(valid_entry([])).
+
+dominates_test() ->
+    A1 = vclock:increment(a, vclock:fresh()),
+    timer:sleep(1000), %% Sleep 1, to alter timestamp for same actor.
+    A2 = vclock:increment(a, vclock:fresh()),
+    ?assertEqual(false, vclock:dominates(A1, A2)).
 
 -endif.
