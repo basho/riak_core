@@ -392,10 +392,4 @@ valid_entry_test() ->
     ?assertNot(valid_entry("huffle-puff")),
     ?assertNot(valid_entry([])).
 
-dominates_test() ->
-    A1 = vclock:increment(a, vclock:fresh()),
-    timer:sleep(1000), %% Sleep 1, to alter timestamp for same actor.
-    A2 = vclock:increment(a, vclock:fresh()),
-    ?assertEqual(false, vclock:dominates(A1, A2)).
-
 -endif.
