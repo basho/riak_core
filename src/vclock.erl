@@ -100,8 +100,22 @@ descends(Va, Vb) ->
 descends_dot(Vclock, Dot) ->
     descends(Vclock, [Dot]).
 
+%% @doc true if `A' strictly dominates `B'. Note: uses timestamp
+%% information as well as causal information. In Riak it is possible
+%% to have vclocks that are identical except for timestamps. See
+%% source comment for more details.
+%%
+
 -spec dominates(vclock(), vclock()) -> boolean().
 dominates(A, B) ->
+    %% In a sane world if two vclocks descend each other they MUST be
+    %% equal. In riak they can descend each other and have different
+    %% timestamps(!) How? Deleted keys, re-written, then restored is
+    %% one example. See riak_kv#679 for others. This is why we must
+    %% check descends both ways rather than checking descends(A, B)
+    %% and not equal(A, B). Do not "optimise" this to dodge the second
+    %% descends call! I know that the laws of causality say that each
+    %% actor must act serially, but Riak breaks that, so timestamps.
     descends(A, B) andalso not descends(B, A).
 
 % @doc Combine all VClocks in the input list into their least possible
