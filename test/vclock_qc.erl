@@ -117,7 +117,7 @@ fresh() ->
     {new_model(), vclock:fresh()}.
 
 dominates({AM, AV}, {BM, BV}) ->
-    {model_descends(AM, BM) andalso AM =/= BM,
+    {model_descends(AM, BM) andalso not model_descends(BM, AM),
      vclock:dominates(AV, BV)}.
 
 descends({AM, AV}, {BM, BV}) ->
