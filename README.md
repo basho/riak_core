@@ -35,7 +35,7 @@ There are numerous ways to file issues or start conversations around
 something Core related
 
 * The
-  [Riak Users List](lists.basho.com/mailman/listinfo/riak-users_lists.basho.com)
+  [Riak Users List](http://lists.basho.com/mailman/listinfo/riak-users_lists.basho.com)
   is the main place for all discussion around Riak.
 * There is a
   [Riak Core-specific mailing list](http://lists.basho.com/mailman/listinfo/riak-core_lists.basho.com)
