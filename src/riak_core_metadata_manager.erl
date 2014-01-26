@@ -329,12 +329,13 @@ init([Opts]) ->
         undefined ->
             {stop, no_data_dir};
         DataRoot ->
-            ets:new(?ETS, [named_table, {read_concurrency, true}, {write_concurrency, true}]),
+            ?ETS = ets:new(?ETS, [named_table,
+                                  {read_concurrency, true}, {write_concurrency, true}]),
             Nodename = proplists:get_value(nodename, Opts, node()),
             State = #state{serverid=Nodename,
                            data_root=DataRoot,
                            iterators=new_ets_tab()},
-            init_manifest(State),
+            {ok, _} = init_manifest(State),
             %% TODO: should do this out-of-band from startup so we don't block
             init_from_files(State),
             {ok, State}
@@ -399,8 +400,7 @@ handle_info({'DOWN', ItRef, process, _Pid, _Reason}, State) ->
 -spec terminate(term(), #state{}) -> term().
 terminate(_Reason, _State) ->
     close_dets_tabs(),
-    close_manifest(),
-    ok.
+    ok = close_manifest().
 
 %% @private
 -spec code_change(term() | {down, term()}, #state{}, term()) -> {ok, #state{}}.
@@ -557,8 +557,8 @@ read_merge_write(PKey, Obj, State) ->
     end.
 
 store({FullPrefix, Key}=PKey, Metadata, State) ->
-    maybe_init_ets(FullPrefix),
-    maybe_init_dets(FullPrefix, State),
+    _ = maybe_init_ets(FullPrefix),
+    maybe_init_dets(FullPrefix, State#state.data_root),
 
     Objs = [{Key, Metadata}],
     Hash = riak_core_metadata_object:hash(Metadata),
@@ -596,7 +596,7 @@ init_from_file(TabName, State) ->
     FileName = dets_file(State#state.data_root, FullPrefix),
     {ok, TabName} = dets:open_file(TabName, [{file, FileName}]),
     TabId = init_ets(FullPrefix),
-    dets:to_ets(TabName, TabId),
+    TabId = dets:to_ets(TabName, TabId),
     State.
 
 ets_tab(FullPrefix) ->
@@ -619,13 +619,13 @@ init_ets(FullPrefix) ->
 new_ets_tab() ->
     ets:new(undefined, [{read_concurrency, true}, {write_concurrency, true}]).
 
-maybe_init_dets(FullPrefix, State) ->
+maybe_init_dets(FullPrefix, DataRoot) ->
     case dets:info(dets_tabname(FullPrefix)) of
-        undefined -> init_dets(FullPrefix, State);
-        _ -> State
+        undefined -> init_dets(FullPrefix, DataRoot);
+        _ -> ok
     end.
 
-init_dets(FullPrefix, #state{data_root=DataRoot}) ->
+init_dets(FullPrefix, DataRoot) ->
     TabName = dets_tabname(FullPrefix),
     FileName = dets_file(DataRoot, FullPrefix),
     {ok, TabName} = dets:open_file(TabName, [{file, FileName}]),

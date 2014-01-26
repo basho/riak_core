@@ -181,7 +181,7 @@ exchange(_Event, _From, State) ->
 repair(Peer, {missing_prefix, Type, Prefix}) ->
     repair_prefix(Peer, Type, Prefix);
 repair(Peer, {key_diffs, Prefix, Diffs}) ->
-    [repair_keys(Peer, Prefix, Diff) || Diff <- Diffs],
+    _ = [repair_keys(Peer, Prefix, Diff) || Diff <- Diffs],
     ok.
 
 %% @private

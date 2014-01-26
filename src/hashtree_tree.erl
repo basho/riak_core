@@ -340,7 +340,7 @@ insert_hash(Key, Hash, Opts, NodeName, Tree) ->
 insert_hash(Key, Hash, Opts, NodeName, Node, Tree=#hashtree_tree{dirty=Dirty}) ->
     Node2 = hashtree:insert(Key, Hash, Node, Opts),
     Dirty2 = gb_sets:add_element(NodeName, Dirty),
-    set_node(NodeName, Node2, Tree),
+    _ = set_node(NodeName, Node2, Tree),
     Tree#hashtree_tree{dirty=Dirty2}.
 
 %% @private
@@ -357,7 +357,7 @@ update_dirty_parents(DirtyParents, Tree) ->
                                   DirtyNode = lookup_node(DirtyParent, Tree),
                                   {DirtySnap, DirtyNode2} = hashtree:update_snapshot(DirtyNode),
                                   NextDirty = update_dirty(DirtyParent, DirtySnap, DirtyAcc, Tree),
-                                  set_node(DirtyParent, DirtyNode2, Tree),
+                                  _ = set_node(DirtyParent, DirtyNode2, Tree),
                                   NextDirty
                           end, gb_sets:new(), DirtyParents),
             update_dirty_parents(NextDirty, Tree)
@@ -365,15 +365,16 @@ update_dirty_parents(DirtyParents, Tree) ->
 
 %% @private
 update_dirty(DirtyName, DirtyNode, NextDirty, Tree) ->
-    hashtree:update_perform(DirtyNode),
+    %% ignore returned tree b/c we are tracking dirty nodes in this fold seperately
+    _ = hashtree:update_perform(DirtyNode),
     case parent_node(DirtyName, Tree) of
         undefined ->
             NextDirty;
         {ParentName, ParentNode} ->
             TopHash = extract_top_hash(hashtree:top_hash(DirtyNode)),
             ParentKey = to_parent_key(DirtyName),
-            %% ignore returned tree b/c we are tracking dirty in this fold seperately
-            insert_hash(ParentKey, TopHash, [], ParentName, ParentNode, Tree),
+            %% ignore returned tree b/c we are tracking dirty nodes in this fold seperately
+            _ = insert_hash(ParentKey, TopHash, [], ParentName, ParentNode, Tree),
             gb_sets:add_element(ParentName, NextDirty)
     end.
 
