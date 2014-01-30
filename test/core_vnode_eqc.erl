@@ -99,7 +99,7 @@ prop_simple() ->
                                  io:format(user, "Result: ~p\n", [Res])
                              end,
                              conjunction([{res, equals(Res, ok)},
-                                          {async, 
+                                          {async,
                                            equals(lists:sort(async_work(S#qcst.asyncdone_pid)),
                                                   lists:sort(filter_work(S#qcst.async_work,
                                                       S#qcst.asyncdone_pid)))}]))
@@ -118,7 +118,7 @@ active_preflist(S) ->
 
 %% Generate the async pool size
 gen_async_pool() ->
-    oneof([0, 1, 10]).
+    oneof([0, 4, 10]).
 
 initial_state() ->
     stopped.
@@ -174,6 +174,7 @@ next_state_data(_From,_To,S=#qcst{counters=Counters},_R,
 next_state_data(_From,_To,S=#qcst{crash_reasons=CRs},_R,
                 {call,mock_vnode,crash,[{Index,_Node}]}) ->
     S#qcst{crash_reasons=orddict:store(Index, Index, CRs)};
+
 %% Update the expected async work
 next_state_data(_From,_To,S=#qcst{counters=Counters,
                                   async_work=Work}, R,
@@ -188,7 +189,7 @@ next_state_data(_From,_To,S=#qcst{counters=Counters,
     S2;
 next_state_data(_From,_To,S,_R,_C) ->
     S.
-% 
+%
 
 setup(S) ->
     [{setup,   {call,?MODULE,enable_async,[gen_async_pool()]}},
@@ -220,12 +221,12 @@ running(S) ->
 
 precondition(_From,_To,#qcst{started=Started},{call,?MODULE,start_vnode,[Index]}) ->
     not lists:member(Index, Started);
-precondition(_From,_To,#qcst{started=Started},{call,_Mod,Func,[Preflist]}) 
+precondition(_From,_To,#qcst{started=Started},{call,_Mod,Func,[Preflist]})
   when Func =:= get_index; Func =:= get_counter; Func =:= neverreply; Func =:= returnreply;
        Func =:= latereply; Func =:= crash; Func =:= get_crash_reason ->
     preflist_is_active(Preflist, Started);
 precondition(_From,_To,#qcst{started=Started,async_size=AsyncSize},
-             {call,_Mod,Func,[Preflist, _DonePid]}) 
+             {call,_Mod,Func,[Preflist, _DonePid]})
   when Func =:= asyncnoreply; Func =:= asyncreply; Func =:= asynccrash ->
     preflist_is_active(Preflist, Started) andalso AsyncSize > 0;
 precondition(_From,_To,_S,_C) ->
@@ -238,7 +239,7 @@ postcondition(_From,_To,_S,
 postcondition(_From,_To,#qcst{crash_reasons=CRs},
               {call,mock_vnode,get_crash_reason,[{Index,_Node}]},{ok, Reason}) ->
     %% there is the potential for a race here if get_crash_reason is called
-    %% before the EXIT signal is sent to the vnode, but it didn't appear 
+    %% before the EXIT signal is sent to the vnode, but it didn't appear
     %% even with 1k tests - just a note in case a heisenbug rears its head
     %% on some future, less deterministic day.
     Expected = orddict:fetch(Index, CRs),
@@ -287,9 +288,9 @@ prepare(AsyncSize) ->
     application:set_env(riak_core, core_vnode_eqc_pool_size, AsyncSize),
     start_servers(),
     proc_lib:spawn_link(
-      fun() -> 
+      fun() ->
               %% io:format(user, "Starting async work collector ~p\n", [self()]),
-              async_work_proc([], []) 
+              async_work_proc([], [])
       end).
 
 
@@ -308,18 +309,18 @@ returnreply(Preflist) ->
 latereply(Preflist) ->
     {ok, Ref} = mock_vnode:latereply(Preflist),
     check_receive(length(Preflist), latereply, Ref).
-    
+
 asyncreply(Preflist, AsyncDonePid) ->
     {ok, Ref} = mock_vnode:asyncreply(Preflist, AsyncDonePid),
     check_receive(length(Preflist), asyncreply, Ref),
     {ok, Ref}.
 asynccrash(Preflist, AsyncDonePid) ->
     {ok, Ref} = mock_vnode:asynccrash(Preflist, AsyncDonePid),
-    check_receive(length(Preflist), 
-                  {worker_crash, deliberate_async_crash, {crash, AsyncDonePid}}, 
+    check_receive(length(Preflist),
+                  {worker_crash, deliberate_async_crash, {crash, AsyncDonePid}},
                   Ref),
     {ok, Ref}.
-           
+
 check_receive(0, _Msg, _Ref) ->
     ok;
 check_receive(Replies, Msg, Ref) ->
@@ -361,7 +362,7 @@ stop_pid(undefined) ->
     ok;
 stop_pid(Pid) ->
     unlink(Pid),
-    exit(Pid, shutdown),
+    exit(Pid, kill), %% Don't wait for graceful shutdown
     ok = wait_for_pid(Pid).
 
 wait_for_pid(Pid) ->
