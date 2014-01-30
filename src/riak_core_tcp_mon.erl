@@ -229,9 +229,9 @@ handle_info(measurement_tick, State = #state{limit = Limit, stats = Stats,
     schedule_tick(State),
     Fun = fun(Socket, Conn = #conn{type = Type, ts_hist = TSHist, hist = Hist}) when Type /= error ->
                   try
-                      {ok, StatVals} = inet:getstat(Socket, Stats),
+                      {ok, StatVals} = inet:getstat(unwrap_socket(Socket), Stats),
                       TS = os:timestamp(), % read between the two split the difference
-                      {ok, OptVals} = inet:getopts(Socket, Opts),
+                      {ok, OptVals} = safe_getopts(Socket, Opts),
                       Hist2 = update_hist(OptVals, Limit,
                                           update_hist(StatVals, Limit, Hist)),
                       Conn#conn{ts_hist = prepend_trunc(TS, TSHist, Limit),
@@ -251,6 +251,21 @@ handle_info(measurement_tick, State = #state{limit = Limit, stats = Stats,
     {noreply, State#state{conns = gb_trees:map(Fun, Conns)}};
 handle_info({clear, Socket}, State = #state{conns = Conns}) ->
     {noreply, State#state{conns = gb_trees:delete_any(Socket, Conns)}}.
+
+unwrap_socket({sslsocket, Socket, _}) ->
+    unwrap_socket(Socket);
+
+unwrap_socket({gen_tcp, Socket, _}) ->
+    unwrap_socket(Socket);
+
+unwrap_socket(Socket) ->
+    Socket.
+
+safe_getopts({sslsocket, _, _} = Socket, Opts) ->
+    ssl:getopts(Socket, Opts);
+
+safe_getopts(Socket, Opts) ->
+    inet:getopts(Socket, Opts).
 
 terminate(_Reason, _State) ->
     lager:info("Shutting down TCP Monitor"),
@@ -398,5 +413,58 @@ updown() ->
 
 nodeupdown_test_() ->
     {timeout, 60, fun updown/0}.
+
+ssl_test_() ->
+    {timeout, 60, fun() ->
+        ssl:start(),
+        % Set the stat gathering interval to 100ms
+        {ok, TCPMonPid} = riak_core_tcp_mon:start_link([{interval, 100}]),
+        % set up a server to hear us out.
+        {ok, LS} = ssl:listen(0, [{active, true}, binary, {certfile, "../test/site1-cert.pem"}, {keyfile, "../test/site1-key.pem"}]),
+        {ok, {_, Port}} = ssl:sockname(LS),
+        spawn(fun () ->
+            %% server
+            {ok, S} = ssl:transport_accept(LS),
+            ok = ssl:ssl_accept(S),
+            ssl_recv_loop(S)
+        end),
+
+        {ok, Socket} = ssl:connect("localhost", Port, [binary, {active, true}, {certfile, "../test/site2-cert.pem"}, {keyfile, "../test/site2-key.pem"}]),
+        riak_core_tcp_mon:monitor(Socket, "test", ssl),
+        % so we have stats to see
+        lists:foreach(fun(_) ->
+            ssl:send(Socket, <<"TEST">>)
+        end, lists:seq(1, 100)),
+
+        % wait for stats to update
+        timer:sleep(1000),
+
+        Status1 = riak_core_tcp_mon:socket_status(Socket),
+        ?assertNotEqual([], Status1),
+
+        Status2 = riak_core_tcp_mon:status(),
+        Filtered = lists:filter(fun(StatBlock) ->
+            proplists:get_value(socket, StatBlock) =:= Socket
+        end, Status2),
+        ?assertNotEqual([], Filtered),
+        ?assertNotEqual([[{socket, Socket}]], Filtered),
+
+        % clean up my mess
+        ssl:close(Socket),
+        TCPMonPid = whereis(riak_core_tcp_mon),
+        unlink(TCPMonPid),
+        exit(TCPMonPid, kill),
+        ok
+    end}.
+
+ssl_recv_loop(S) ->
+    receive
+        {ssl, S, _Data} ->
+            ssl_recv_loop(S);
+        {ssl_closed, S} ->
+            ok;
+        {ssl_error, S, _Error} ->
+            ok
+    end.
 
 -endif.
