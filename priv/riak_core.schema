@@ -152,8 +152,8 @@
 %% background tasks. To disable background coordination entirely, set this parameter
 %% to false. Specific subsystems may also have their own controls over use of the
 %% background manager. Riak 2.0+.
-{mapping, "use_bg_manager", "riak_core.use_background_manager", [
-    {datatype, {enum, [true, false]}},
+{mapping, "background_manager", "riak_core.use_background_manager", [
+    {datatype, flag},
     {level, advanced},
-    {default, true}
+    {default, on}
 ]}.

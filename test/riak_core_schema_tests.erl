@@ -27,6 +27,7 @@ basic_schema_test() ->
     cuttlefish_unit:assert_config(Config, "riak_core.platform_lib_dir", "./lib"),
     cuttlefish_unit:assert_config(Config, "riak_core.platform_log_dir", "./log"),
     cuttlefish_unit:assert_config(Config, "riak_core.enable_consensus", false),
+    cuttlefish_unit:assert_config(Config, "riak_core.use_background_manager", true),
     ok.
 
 default_bucket_properties_test() ->
@@ -61,7 +62,8 @@ override_schema_test() ->
         {["platform_etc_dir"], "/absolute/etc"},
         {["platform_lib_dir"], "/absolute/lib"},
         {["platform_log_dir"], "/absolute/log"},
-        {["strong_consistency"], on}
+        {["strong_consistency"], on},
+        {["background_manager"], off}
     ],
 
     Config = cuttlefish_unit:generate_templated_config("../priv/riak_core.schema", Conf, context()),
@@ -83,6 +85,7 @@ override_schema_test() ->
     cuttlefish_unit:assert_config(Config, "riak_core.platform_lib_dir", "/absolute/lib"),
     cuttlefish_unit:assert_config(Config, "riak_core.platform_log_dir", "/absolute/log"),
     cuttlefish_unit:assert_config(Config, "riak_core.enable_consensus", true),
+    cuttlefish_unit:assert_config(Config, "riak_core.use_background_manager", false),
     ok.
 
 %% this context() represents the substitution variables that rebar
