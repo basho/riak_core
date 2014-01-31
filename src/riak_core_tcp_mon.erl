@@ -258,6 +258,9 @@ unwrap_socket({sslsocket, Socket, _}) ->
 unwrap_socket({gen_tcp, Socket, _}) ->
     Socket;
 
+unwrap_socket({gen_tcp, Socket}) ->
+    Socket;
+
 unwrap_socket(Socket) ->
     Socket.
 
