@@ -103,7 +103,9 @@
          itr_done/1,
          itr_value/1,
          itr_close/1,
-         property_hash/1]).
+         property_hash/1,
+         property_hash/2,
+         property_hash/3]).
 
 -export_type([bucket_type/0]).
 -type bucket_type()       :: binary().
@@ -113,7 +115,7 @@
                               true -> X;
                               false -> E
                           end).
--define(HASHED_BUCKET_TYPES_PROPS, [consistent, datatype, n_val, allow_mult, last_write_wins]).
+-define(DEFAULT_HASH_PROPS, [consistent, datatype, n_val, allow_mult, last_write_wins]).
 
 %% @doc The hardcoded defaults for all bucket types.
 -spec defaults() -> bucket_type_props().
@@ -223,9 +225,20 @@ itr_close(It) ->
 %% @doc Returns a hash of the bucket type properties whose values may
 %% have implications on the treatment or handling of buckets created
 %% using the bucket type.
--spec property_hash(undefined | bucket_type_props()) -> undefined | integer().
-property_hash(undefined) ->
+-spec property_hash(bucket_type()) -> undefined | integer().
+property_hash(Type) ->
+    property_hash(Type, ?DEFAULT_HASH_PROPS, ?MODULE:get(Type)).
+
+%% @doc Returns a hash of a specified set of bucket type properties
+%% whose values may have implications on the treatment or handling of
+%% buckets created using the bucket type.
+-spec property_hash(bucket_type(), [term()]) -> undefined | integer().
+property_hash(Type, PropKeys) ->
+    property_hash(Type, PropKeys, ?MODULE:get(Type)).
+
+-spec property_hash(bucket_type(), [term()], undefined | bucket_type_props()) ->
+                           undefined | integer().
+property_hash(_Type, _PropKeys, undefined) ->
     undefined;
-property_hash(Props) when is_list(Props) ->
-    erlang:phash2([lists:keyfind(Prop, 1, Props) ||
-                      Prop <- ?HASHED_BUCKET_TYPES_PROPS]).
+property_hash(_Type, PropKeys, Props) ->
+    erlang:phash2([lists:keyfind(PropKey, 1, Props) || PropKey <- PropKeys]).
