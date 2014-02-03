@@ -103,38 +103,38 @@
   {datatype, flag}
 ]}.
 
-%% Platform-specific installation paths (substituted by rebar)
+%% @doc Platform-specific installation paths (substituted by rebar)
 {mapping, "platform_bin_dir", "riak_core.platform_bin_dir", [
   {datatype, directory},
-  {level, advanced},
+  {level, basic},
   {default, "{{platform_bin_dir}}"}
 ]}.
 
 %% @see platform_bin_dir
 {mapping, "platform_data_dir", "riak_core.platform_data_dir", [
   {datatype, directory},
-  {level, advanced},
+  {level, basic},
   {default, "{{platform_data_dir}}"}
 ]}.
 
 %% @see platform_bin_dir
 {mapping, "platform_etc_dir", "riak_core.platform_etc_dir", [
   {datatype, directory},
-  {level, advanced},
+  {level, basic},
   {default, "{{platform_etc_dir}}"}
 ]}.
 
 %% @see platform_bin_dir
 {mapping, "platform_lib_dir", "riak_core.platform_lib_dir", [
   {datatype, directory},
-  {level, advanced},
+  {level, basic},
   {default, "{{platform_lib_dir}}"}
 ]}.
 
 %% @see platform_bin_dir
 {mapping, "platform_log_dir", "riak_core.platform_log_dir", [
   {datatype, directory},
-  {level, advanced},
+  {level, basic},
   {default, "{{platform_log_dir}}"}
 ]}.
 
