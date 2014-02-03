@@ -103,7 +103,6 @@
          itr_done/1,
          itr_value/1,
          itr_close/1,
-         property_hash/1,
          property_hash/2,
          property_hash/3]).
 
@@ -115,7 +114,6 @@
                               true -> X;
                               false -> E
                           end).
--define(DEFAULT_HASH_PROPS, [consistent, datatype, n_val, allow_mult, last_write_wins]).
 
 %% @doc The hardcoded defaults for all bucket types.
 -spec defaults() -> bucket_type_props().
@@ -221,13 +219,6 @@ itr_value(It) ->
 -spec itr_close(riak_core_metadata:iterator()) -> ok.
 itr_close(It) ->
     riak_core_metadata:itr_close(It).
-
-%% @doc Returns a hash of the bucket type properties whose values may
-%% have implications on the treatment or handling of buckets created
-%% using the bucket type.
--spec property_hash(bucket_type()) -> undefined | integer().
-property_hash(Type) ->
-    property_hash(Type, ?DEFAULT_HASH_PROPS, ?MODULE:get(Type)).
 
 %% @doc Returns a hash of a specified set of bucket type properties
 %% whose values may have implications on the treatment or handling of
