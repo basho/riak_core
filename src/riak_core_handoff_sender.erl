@@ -185,7 +185,9 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                                      
                                      type=Type,
                                      notsent_acc=UnsentAcc0,
-                                     notsent_fun=UnsentFun}),
+                                     notsent_fun=UnsentFun},
+                             false,
+                             [{refresh_iterator, true}]),
 
          %% IFF the vnode is using an async worker to perform the fold
          %% then sync_command will return error on vnode crash,
