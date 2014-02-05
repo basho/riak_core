@@ -421,13 +421,18 @@ init([]) ->
     lager:debug("Background Manager starting up."),
     %% Claiming a table will result in a handle_info('ETS-TRANSFER', ...) message.
     %% We have two to claim...
-    ok = riak_core_table_manager:claim_table(?BG_INFO_ETS_TABLE),
-    ok = riak_core_table_manager:claim_table(?BG_ENTRY_ETS_TABLE),
-    State = #state{info_table=undefined, %% resolved in the ETS-TRANSFER handler
-                   entry_table=undefined, %% resolved in the ETS-TRANSFER handler
+    {ok, {_, ?BG_INFO_ETS_TABLE}} = riak_core_table_manager:claim_table(?BG_INFO_ETS_TABLE),
+    {ok, {_, ?BG_ENTRY_ETS_TABLE}} = riak_core_table_manager:claim_table(?BG_ENTRY_ETS_TABLE),
+    State1 = #state{info_table=?BG_INFO_ETS_TABLE,
+                   entry_table=?BG_ENTRY_ETS_TABLE,
                    enabled=true,
                    bypassed=false},
-    {ok, State}.
+    State2 = validate_holds(State1),
+    State3 = restore_enabled(true, State2),
+    State4 = restore_bypassed(false, State3),
+    _ = reschedule_token_refills(State4),
+    lager:info("Final state (init): ~p", [State4]),
+    {ok, State4}.
 
 %% @private
 %% @doc Handling call messages
@@ -517,6 +522,9 @@ handle_info({'ETS-TRANSFER', TableId, Pid, TableName}, State) ->
             reschedule_token_refills(State5),
             {noreply, State5}
     end;
+handle_info({riak_core_table_manager, restarted, TableData}, State) ->
+    riak_core_table_manager:ensure_heired(TableData),
+    {noreply, State};
 handle_info({'DOWN', Ref, _, _, _}, State) ->
     State2 = release_resource(Ref, State),
     {noreply, State2};

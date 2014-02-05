@@ -1,4 +1,4 @@
--module(bg_manager_tests).
+-module(riak_core_bg_manager_tests).
 -compile(export_all).
 
 -include_lib("riak_core_bg_manager.hrl").
@@ -9,9 +9,38 @@
 -define(BG_MGR, riak_core_bg_manager).
 -define(TIMEOUT, 3000). %% blocking resource timeout
 
+bg_mgr_eqc_test_() -> {timeout, 60000, [
+        {timeout, 30000, ?_assert(bg_manager_eqc:run_eqc(simple))},
+        {timeout, 30000, ?_assert(bg_manager_eqc:run_eqc(para))}
+    ]}.
+
+start_up_test_() ->
+    {setup, fun() ->
+        case whereis(riak_core_table_manager) of
+            undefined -> ok;
+            P -> exit(P, kill)
+        end,
+        start_table_mgr()
+    end,
+    fun(_) ->
+        kill_bg_mgr(),
+        kill_table_mgr()
+    end,
+    fun(_) -> [
+
+        {"avoid start up race", fun() ->
+            % proof of a race condition (and it's fix) on start up.
+            {ok, _Pid} = riak_core_bg_manager:start_link(),
+            Got = riak_core_bg_manager:set_concurrency_limit(test_lock, 5),
+            ?assertEqual(undefined, Got)
+        end}
+
+    ] end}.
+
 bg_mgr_test_() ->
     {timeout, 60000,  %% Seconds to finish all of the tests
      {setup, fun() ->
+                     kill_and_wait(riak_core_table_manager),
                      start_table_mgr(),  %% unlinks from our test as well.
                      start_bg_mgr()      %% uses non-linking start.
              end, 
@@ -172,5 +201,19 @@ kill_table_mgr() ->
     Pid = erlang:whereis(riak_core_table_manager),
     ?assertNot(Pid == undefined),
     erlang:exit(Pid, kill).
+
+kill_and_wait(undefined) ->
+    ok;
+
+kill_and_wait(Atom) when is_atom(Atom) ->
+    kill_and_wait(whereis(Atom));
+
+kill_and_wait(Pid) when is_pid(Pid) ->
+    Mon = erlang:monitor(process, Pid),
+    exit(Pid, kill),
+    receive
+        {'DOWN', Mon, process, Pid, _} ->
+            ok
+    end.
 
 -endif.

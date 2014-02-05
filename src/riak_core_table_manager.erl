@@ -32,9 +32,23 @@
 
 -behaviour(gen_server).
 
+-ifdef(PULSE).
+-include_lib("pulse/include/pulse.hrl").
+-include_lib("pulse_otp/include/pulse_otp.hrl").
+-compile(export_all).
+-compile({parse_transform, pulse_instrument}).
+%-compile({pulse_replace_module, [{gen_server, pulse_gen_server}]}).
+-compile({pulse_skip, [
+%    {start_link,1},
+%    {claim_table,2},
+%    {wait_for_table_transfer,1}
+]}).
+-endif.
+
 %% API
 -export([start_link/1,
-         claim_table/1]).
+         claim_table/1,
+         ensure_heired/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -42,7 +56,12 @@
 
 -define(SERVER, ?MODULE).
 
--record(state, {tables}).
+%-record(state, {tables}).
+-record(table_state, {
+    table_id,
+    claimed_by :: 'undefined' | pid(),
+    second_claimant :: 'undefined' | pid()
+}).
 
 %%%===================================================================
 %%% API
@@ -68,7 +87,43 @@ start_link(TableSpecs) ->
 %%--------------------------------------------------------------------
 -spec claim_table(atom()) -> ok.
 claim_table(TableName) ->
-    gen_server:call(?SERVER, {claim_table, TableName}, infinity).
+    case gen_server:call(?SERVER, {claim_table, TableName}, infinity) of
+        ok ->
+            {ok, {TableId, Name}} = Return = wait_for_table_transfer(TableName),
+            ets:setopts(TableId, [{heir, whereis(?SERVER), Name}]),
+            Return;
+        Else ->
+            Else
+    end.
+
+wait_for_table_transfer(Name) ->
+    receive
+        {'ETS-TRANSFER', TableId, _FromPid, Name} ->
+            {ok, {TableId, Name}}
+    end.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Gives the registration table away to the caller, which should be
+%% the registrar process.
+%%
+%% @end
+%%--------------------------------------------------------------------
+ensure_heired({TableId, TableName}) ->
+    MgrPid = whereis(?MODULE),
+    ensure_heired(TableId, TableName, MgrPid).
+
+ensure_heired(_TableId, _TableName, undefined) ->
+    {error, no_proc};
+
+ensure_heired(TableId, TableName, MgrPid) ->
+    case ets:info(TableId, heir) of
+        MgrPid ->
+            ok;
+        _NotPid ->
+            ets:setopts(TableId, [{heir, MgrPid, TableName}]),
+            ok
+    end.
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -86,8 +141,18 @@ claim_table(TableName) ->
 %% presumably a supervisor such as riak_core_sup.
 init([TableSpecs]) ->
     lager:debug("Table Manager starting up with tables: ~p", [TableSpecs]),
-    Tables = lists:foldl(fun(Spec, TT) -> create_table(Spec, TT) end, [], TableSpecs),
-    {ok, #state{tables=Tables}}.
+    Self = self(),
+    Tables = lists:foldl(fun({Name, Opts}, Acc) ->
+        Tid = maybe_create_table(Name, Opts),
+        Claimed = case ets:info(Tid, owner) of
+            Self -> undefined;
+            Owner ->
+                alert_to_restart(Owner, Tid, Name),
+                Owner
+        end,
+        dict:store(Name, #table_state{table_id = Tid, claimed_by = Claimed}, Acc)
+    end, dict:new(), TableSpecs),
+    {ok, Tables}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -99,18 +164,14 @@ init([TableSpecs]) ->
                          {reply, Reply::term(), State::term()} |
                          {noreply, State::term()}.
 %% TableName :: atom()
-handle_call({claim_table, TableName}, {Pid, _Tag}, State) ->
+handle_call({claim_table, TableName}, From, State) ->
     %% The user process is (re-)claiming the table. Give it away.
     %% We remain the heir in case the user process exits.
-    case lookup_table(TableName, State) of
-        undefined ->
-            %% Table does not exist, which is madness.
-            {reply, {undefined_table, TableName}, State};
-        TableId ->
-            lager:debug("Giving away table ~p (~p) to ~p", [TableName, TableId, Pid]),
-            ets:give_away(TableId, Pid, TableName),
-            Reply = ok,
-            {reply, Reply, State}
+    case maybe_claim_table(TableName, From, State) of
+        {ok, NewState} ->
+            {reply, ok, NewState};
+        Else ->
+            {reply, Else, State}
     end;
 
 handle_call(_Msg, _From, State) ->
@@ -137,10 +198,11 @@ handle_cast(_Msg, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info({'ETS-TRANSFER', TableId, FromPid, _HeirData}, State) ->
+handle_info({'ETS-TRANSFER', _TableId, FromPid, TableName}, State) ->
     %% The table's user process exited and transferred the table back to us.
-    lager:debug("Table user process ~p exited, ~p received table ~p", [FromPid, self(), TableId]),
-    {noreply, State};
+    lager:debug("Table user process ~p exited, ~p received table ~p", [FromPid, self(), TableName]),
+    State2 = maybe_fallback_claim(TableName, State),
+    {noreply, State2};
 
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -174,14 +236,95 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal functions
 %%--------------------------------------------------------------------
 
+maybe_create_table(TableName, TableProps) ->
+    try create_table(TableName, TableProps) of
+        TableId ->
+            TableId
+    catch
+        error:badarg ->
+            recover_table_id(TableName)
+    end.
+
+recover_table_id(TableName) ->
+    AllTables = ets:all(),
+    case lists:member(TableName, AllTables) of
+        false ->
+            IdsOnly = lists:filter(fun(E) -> not is_atom(E) end, AllTables),
+            recover_table_id_deep(TableName, IdsOnly);
+        true ->
+            TableName
+    end.
+
+recover_table_id_deep(TableName, []) ->
+    throw({no_existant_table_found, TableName});
+
+recover_table_id_deep(TableName, [Id | Rest]) ->
+    case ets:info(Id, name) of
+        TableName ->
+            Id;
+        _ ->
+            recover_table_id_deep(TableName, Rest)
+    end.
+
 %% Create the initial table based on a table name and properties.
 %% The table will eventually be given away by claim_table, but we
 %% want to remain the heir in case the claimer crashes.
-create_table({TableName, TableProps}, Tables) ->
+create_table(TableName, TableProps) ->
     TableId = ets:new(TableName, TableProps),
     ets:setopts(TableId, [{heir, self(), undefined}]),
-    [{TableName, TableId} | Tables].
+    TableId.
 
--spec lookup_table(TableName::atom(), State::term()) -> ets:tid() | undefined.
-lookup_table(TableName, #state{tables=Tables}) ->
-    proplists:get_value(TableName, Tables).
+%-spec lookup_table(TableName::atom(), State::term()) -> ets:tid() | undefined.
+%lookup_table(TableName, #state{tables=Tables}) ->
+%    proplists:get_value(TableName, Tables).
+
+maybe_claim_table(TableName, {Pid, _Tag} = TryingToClaim, ClaimedDict) ->
+    case dict:find(TableName, ClaimedDict) of
+        error ->
+            {error, no_such_table};
+        {ok, #table_state{claimed_by = undefined} = TState} ->
+            lager:debug("Giving away table ~p (~p) to ~p", [TableName, TState, TryingToClaim]),
+            ets:give_away(TState#table_state.table_id, Pid, TableName),
+            TState2 = TState#table_state{claimed_by = Pid},
+            {ok, dict:store(TableName, TState2, ClaimedDict)};
+        {ok, #table_state{second_claimant = undefined} = TState} ->
+            lager:debug("Setting up secondary claimant for ~p", [TableName]),
+            TState2 = TState#table_state{second_claimant = TryingToClaim},
+            {ok, dict:store(TableName, TState2, ClaimedDict)};
+        {ok, _} ->
+            lager:debug("Table ~p already has 2 claimants", [TableName]),
+            {error, already_claimed}
+    end.
+
+maybe_fallback_claim(TableName, ClaimedDict) ->
+    case dict:find(TableName, ClaimedDict) of
+        error ->
+            ClaimedDict;
+        {ok, #table_state{second_claimant = undefined} = TState} ->
+            TState2 = TState#table_state{claimed_by = undefined},
+            dict:store(TableName, TState2, ClaimedDict);
+        {ok, TState} ->
+            ReplyTo = TState#table_state.second_claimant,
+            TState2 = TState#table_state{claimed_by = undefined, second_claimant = undefined},
+            ClaimedDict1 = dict:store(TableName, TState2, ClaimedDict),
+            case maybe_claim_table(TableName, ReplyTo, ClaimedDict1) of
+                {ok, OutDict} ->
+                    gen_server:reply(ReplyTo, ok),
+                    OutDict;
+                Else ->
+                    lager:warning("could not update claim to second claimantfor tstate ~p due to ~p", [TState, Else]),
+                    ClaimedDict1
+            end
+    end.
+
+alert_to_restart(Owner, TableId, TableName) ->
+    Owner ! {?MODULE, restarted, {TableId, TableName}}.
+
+%unclaim_table(TableId, ClaimedDict) ->
+%    case dict:find(TableId, ClaimedDict) of
+%        error ->
+%            ClaimedDict;
+%        {ok, {Tid, _}} ->
+%            dict:store(TableId, {Tid, unclaimed}, ClaimedDict)
+%    end.
+
