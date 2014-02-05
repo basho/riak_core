@@ -507,7 +507,7 @@ del_source(User, CIDR) ->
 
 
 is_enabled() ->
-    case riak_core_capability:get({riak_core, security}) of
+    try riak_core_capability:get({riak_core, security}) of
         true ->
            case  riak_core_metadata:get({<<"security">>, <<"status">>},
                                         enabled) of
@@ -517,6 +517,9 @@ is_enabled() ->
                    false
            end;
         _ ->
+            false
+    catch
+        throw:{unknown_capability, {riak_core, security}} ->
             false
     end.
 
