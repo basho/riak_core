@@ -403,10 +403,10 @@ query_resource(Resource, Types) ->
 %%%
 
 -record(state,
-        {info_table:: ets:tid(),          %% TableID of ?BG_INFO_ETS_TABLE
-         entry_table:: ets:tid(),         %% TableID of ?BG_ENTRY_ETS_TABLE
-         enabled :: boolean(),            %% Global enable/disable switch, true at startup
-         bypassed:: boolean()             %% Global kill switch. false at startup
+        {info_table:: ets:tab(),  %% TableID of ?BG_INFO_ETS_TABLE
+         entry_table:: ets:tab(), %% TableID of ?BG_ENTRY_ETS_TABLE
+         enabled :: boolean(),    %% Global enable/disable switch, true at startup
+         bypassed:: boolean()     %% Global kill switch. false at startup
         }).
 
 %%%===================================================================
@@ -561,7 +561,7 @@ validate_hold({Key,Entry}=Obj, TableId) when ?e_type(Entry) == lock ->
             ets:delete_object(TableId, Obj)
     end;
 validate_hold(_Obj, _TableId) -> %% tokens don't monitor processes
-    ok.
+    true.
 
 %% @doc Update state with bypassed status and store to ETS
 update_bypassed(_Bypassed, State) when ?NOT_TRANSFERED(State) ->
