@@ -119,53 +119,54 @@ resolve(PropsA, PropsB) when is_list(PropsA) andalso
     PropsASorted = lists:ukeysort(1, PropsA),
     PropsBSorted = lists:ukeysort(1, PropsB),
     {_, Resolved} = lists:foldl(fun({KeyA, _}=PropA, {[{KeyA, _}=PropB | RestB], Acc}) ->
-                                        {RestB, [{KeyA, resolve(PropA, PropB)} | Acc]};
+                                        {RestB, [{KeyA, resolve_prop(PropA, PropB)} | Acc]};
                                    (PropA, {RestB, Acc}) ->
                                         {RestB, [PropA | Acc]}
                                 end,
                                 {PropsBSorted, []},
                                 PropsASorted),
-    Resolved;
-resolve({allow_mult, Mult1}, {allow_mult, Mult2}) ->
+    Resolved.
+
+resolve_prop({allow_mult, Mult1}, {allow_mult, Mult2}) ->
     Mult1 orelse Mult2; %% assumes allow_mult=true is default
-resolve({basic_quorum, Basic1}, {basic_quorum, Basic2}) ->
+resolve_prop({basic_quorum, Basic1}, {basic_quorum, Basic2}) ->
     Basic1 andalso Basic2;
-resolve({big_vclock, Big1}, {big_vclock, Big2}) ->
+resolve_prop({big_vclock, Big1}, {big_vclock, Big2}) ->
     max(Big1, Big2);
-resolve({chash_keyfun, KeyFun1}, {chash_keyfun, _KeyFun2}) ->
+resolve_prop({chash_keyfun, KeyFun1}, {chash_keyfun, _KeyFun2}) ->
     KeyFun1; %% arbitrary choice
-resolve({dw, DW1}, {dw, DW2}) ->
+resolve_prop({dw, DW1}, {dw, DW2}) ->
     %% 'quorum' wins over set numbers
     max(DW1, DW2);
-resolve({last_write_wins, LWW1}, {last_write_wins, LWW2}) ->
+resolve_prop({last_write_wins, LWW1}, {last_write_wins, LWW2}) ->
     LWW1 andalso LWW2;
-resolve({linkfun, LinkFun1}, {linkfun, _LinkFun2}) ->
+resolve_prop({linkfun, LinkFun1}, {linkfun, _LinkFun2}) ->
     LinkFun1; %% arbitrary choice
-resolve({n_val, N1}, {n_val, N2}) ->
+resolve_prop({n_val, N1}, {n_val, N2}) ->
     max(N1, N2);
-resolve({notfound_ok, NF1}, {notfound_ok, NF2}) ->
+resolve_prop({notfound_ok, NF1}, {notfound_ok, NF2}) ->
     NF1 orelse NF2;
-resolve({old_vclock, Old1}, {old_vclock, Old2}) ->
+resolve_prop({old_vclock, Old1}, {old_vclock, Old2}) ->
     max(Old1, Old2);
-resolve({postcommit, PC1}, {postcommit, PC2}) ->
+resolve_prop({postcommit, PC1}, {postcommit, PC2}) ->
     resolve_hooks(PC1, PC2);
-resolve({pr, PR1}, {pr, PR2}) ->
+resolve_prop({pr, PR1}, {pr, PR2}) ->
     max(PR1, PR2);
-resolve({precommit, PC1}, {precommit, PC2}) ->
+resolve_prop({precommit, PC1}, {precommit, PC2}) ->
     resolve_hooks(PC1, PC2);
-resolve({pw, PW1}, {pw, PW2}) ->
+resolve_prop({pw, PW1}, {pw, PW2}) ->
     max(PW1, PW2);
-resolve({r, R1}, {r, R2}) ->
+resolve_prop({r, R1}, {r, R2}) ->
     max(R1, R2);
-resolve({rw, RW1}, {rw, RW2}) ->
+resolve_prop({rw, RW1}, {rw, RW2}) ->
     max(RW1, RW2);
-resolve({small_vclock, Small1}, {small_vclock, Small2}) ->
+resolve_prop({small_vclock, Small1}, {small_vclock, Small2}) ->
     max(Small1, Small2);
-resolve({w, W1}, {w, W2}) ->
+resolve_prop({w, W1}, {w, W2}) ->
     max(W1, W2);
-resolve({young_vclock, Young1}, {young_vclock, Young2}) ->
+resolve_prop({young_vclock, Young1}, {young_vclock, Young2}) ->
     max(Young1, Young2);
-resolve({_, V1}, {_, _V2}) ->
+resolve_prop({_, V1}, {_, _V2}) ->
     V1.
 
 resolve_hooks(Hooks1, Hooks2) ->
