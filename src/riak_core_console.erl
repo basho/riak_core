@@ -465,7 +465,7 @@ stage_replace(Node1, Node2) ->
                           [Node1]),
                 error;
             {error, invalid_replacement} ->
-                io:format("Failed: ~p is not a valid replacement candiate.~n"
+                io:format("Failed: ~p is not a valid replacement candidate.~n"
                           "Only newly joining nodes can be used for "
                           "replacement.~n", [Node2]),
                 error;
@@ -498,7 +498,7 @@ stage_force_replace(Node1, Node2) ->
                 is_claimant_error(Node1, "replace"),
                 error;
             {error, invalid_replacement} ->
-                io:format("Failed: ~p is not a valid replacement candiate.~n"
+                io:format("Failed: ~p is not a valid replacement candidate.~n"
                           "Only newly joining nodes can be used for "
                           "replacement.~n", [Node2]),
                 error;
