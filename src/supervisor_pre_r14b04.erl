@@ -243,7 +243,7 @@ init_children(State, StartSpec) ->
                 {ok, NChildren} ->
                     {ok, State#state{children = NChildren}};
                 {error, NChildren} ->
-                    terminate_children(NChildren, SupName),
+                    _ = terminate_children(NChildren, SupName),
                     {stop, shutdown}
             end;
         Error ->

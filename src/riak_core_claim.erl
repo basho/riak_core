@@ -411,7 +411,7 @@ choose_claim_v3(Ring, _ClaimNode, Params) ->
         undefined ->
             ok;
         _ ->
-            random:seed(OldSeed)
+            {_,_,_} = random:seed(OldSeed)
     end,
 
     lager:debug("Claim3 metrics: ~p\n", [NewMetrics]),
