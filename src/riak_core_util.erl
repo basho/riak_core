@@ -470,8 +470,9 @@ multicall_ann(Nodes, Mod, Fun, Args, Timeout) ->
 %%      2i and 2i+1. The conversion also supports a "cycles" mode where
 %%      the array is logically wrapped around to ensure leaf nodes also
 %%      have children by giving them backedges to other elements.
+
 -spec build_tree(N :: integer(), Nodes :: [term()], Opts :: [term()])
-                -> orddict:orddict(Node :: term(), Children :: [term()]).
+                -> orddict:orddict().
 build_tree(N, Nodes, Opts) ->
     case lists:member(cycles, Opts) of
         true -> 
