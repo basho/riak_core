@@ -400,8 +400,8 @@ maybe_commit_staged(State) ->
 maybe_commit_staged(Ring, State=#state{changes=Changes, seed=Seed}) ->
     Changes2 = filter_changes(Changes, Ring),
     case compute_next_ring(Changes2, Seed, Ring) of
-        {legacy, _} ->
-            {ignore, legacy};
+        {error, invalid_resize_claim} ->
+            lager:error("invalid_resize_claim BUG");
         {ok, NextRing} ->
             maybe_commit_staged(Ring, NextRing, State)
     end.
