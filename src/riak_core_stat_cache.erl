@@ -37,8 +37,6 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--type registered_app() :: {MFA::mfa(), RerfreshRateMillis::non_neg_integer()}.
-
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -209,7 +207,6 @@ make_freshness_stat(App, TS) ->
 make_freshness_stat_name(App) ->
     list_to_atom(atom_to_list(App) ++ "_stat_ts").
 
--spec register_mod(atom(), registered_app(), orddict:orddict()) -> orddict:orddict().
 register_mod(App, AppRegistration, Apps0) ->
     {{Mod, _, _}=MFA, RefreshRateMillis} = AppRegistration,
     ok = folsom_metrics:new_histogram({?MODULE, Mod}),

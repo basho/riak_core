@@ -1095,15 +1095,10 @@ complete_resize_transfers(State, Source, Mod) ->
 deletion_complete(State, Idx, Mod) ->
     transfer_complete(State, Idx, Mod).
 
--spec resize_transfers(chstate(), {integer(), term()}) ->
-                              [{{integer(),term()}, ordsets:ordset(), awaiting | complete}].
 resize_transfers(State, Source) ->
     {ok, Transfers} = get_meta({resize, Source}, [], State),
     Transfers.
 
--spec set_resize_transfers(chstate(),
-                           {integer(), term()},
-                           [{{integer(),term()},ordsets:ordset(),awaiting | complete}]) -> chstate().
 set_resize_transfers(State, Source, Transfers) ->
     update_meta({resize, Source}, Transfers, State).
 
