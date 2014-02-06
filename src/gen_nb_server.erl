@@ -111,7 +111,7 @@ handle_info({inet_async, ListSock, _Ref, {ok, CliSocket}}, #state{cb=Callback, s
   inet_db:register_socket(CliSocket, inet_tcp),
   case Callback:new_connection(CliSocket, ServerState) of
     {ok, NewServerState} ->
-      prim_inet:async_accept(ListSock, -1),
+      {ok, _} = prim_inet:async_accept(ListSock, -1),
       {noreply, State#state{server_state=NewServerState}};
     {stop, Reason, NewServerState} ->
       {stop, Reason, State#state{server_state=NewServerState}}

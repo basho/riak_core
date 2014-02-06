@@ -175,10 +175,10 @@ init([]) ->
     watch_for_ring_events(),
 
     %% Watch for node up/down events
-    net_kernel:monitor_nodes(true),
+    ok = net_kernel:monitor_nodes(true),
 
     %% Setup ETS table to track node status
-    ets:new(?MODULE, [protected, {read_concurrency, true}, named_table]),
+    ?MODULE = ets:new(?MODULE, [protected, {read_concurrency, true}, named_table]),
 
     {ok, schedule_broadcast(#state{})}.
 

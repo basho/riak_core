@@ -195,7 +195,7 @@ make_capability(Capability, Supported, Default, Legacy) ->
 %%%===================================================================
 
 init([]) ->
-    ets:new(?ETS, [named_table, {read_concurrency, true}]),
+    ?ETS = ets:new(?ETS, [named_table, {read_concurrency, true}]),
     schedule_tick(),
     Registered = load_registered(),
     State = init_state(Registered),
