@@ -1713,7 +1713,7 @@ update_seen(Node, CState=?CHSTATE{vclock=VClock, seen=Seen}) ->
 equal_cstate(StateA, StateB) ->
     equal_cstate(StateA, StateB, false).
 
-equal_cstate(StateA, StateB, Verbose) ->
+equal_cstate(StateA, StateB, false) ->
     T1 = equal_members(StateA?CHSTATE.members, StateB?CHSTATE.members),
     T2 = vclock:equal(StateA?CHSTATE.rvsn, StateB?CHSTATE.rvsn),
     T3 = equal_seen(StateA, StateB),
@@ -1729,19 +1729,7 @@ equal_cstate(StateA, StateB, Verbose) ->
                            meta=undefined, clustername=undefined},
     T5 = (StateA2 =:= StateB2),
 
-    case Verbose of
-        false ->
-            T1 and T2 and T3 and T4 and T5;
-        true ->
-            Failed =
-                lists:filter(fun({Test,_}) -> Test =:= false end,
-                             [{T1, members},
-                              {T2, rvsn},
-                              {T3, seen},
-                              {T4, ring},
-                              {T5, other}]),
-            Failed
-    end.
+    T1 andalso T2 andalso T3 andalso T4 andalso T5.
 
 %% @private
 equal_members(M1, M2) ->
