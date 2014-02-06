@@ -494,7 +494,8 @@ maybe_ensure_vnodes_started(Ring) ->
     Status = riak_core_ring:member_status(Ring, node()),
     case lists:member(Status, ExitingStates) of
         true ->
-            ensure_vnodes_started(Ring);
+            ensure_vnodes_started(Ring),
+            ok;
         _ ->
             ok
     end.
