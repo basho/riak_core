@@ -790,7 +790,8 @@ schedule_refill_tokens(Token, State) ->
         undefined ->
             ok;
         {Period, _Count} ->
-            erlang:send_after(Period, self(), {refill_tokens, Token})
+            erlang:send_after(Period, self(), {refill_tokens, Token}),
+            ok
     end.
 
 %% @private

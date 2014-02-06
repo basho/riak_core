@@ -401,7 +401,8 @@ schedule_broadcast(State) ->
         undefined ->
             ok;
         OldTref ->
-            erlang:cancel_timer(OldTref)
+            erlang:cancel_timer(OldTref),
+            ok
     end,
     Interval = app_helper:get_env(riak_core, gossip_interval),
     Tref = erlang:send_after(Interval, self(), broadcast),
@@ -710,7 +711,8 @@ health_fsm(checking, {'EXIT', Pid, Cause}, Service, #health_check{checking_pid =
 health_fsm(waiting, suspend, _Service, InCheck) ->
     case InCheck#health_check.interval_tref of
         undefined -> ok;
-        _ -> erlang:cancel_timer(InCheck#health_check.interval_tref)
+        _ -> erlang:cancel_timer(InCheck#health_check.interval_tref),
+             ok
     end,
     {ok, suspend, InCheck#health_check{interval_tref = undefined}};
 
@@ -721,7 +723,8 @@ health_fsm(waiting, check_health, Service, InCheck) ->
 health_fsm(waiting, remove, _Service, InCheck) ->
     case InCheck#health_check.interval_tref of
         undefined -> ok;
-        Tref -> erlang:cancel_timer(Tref)
+        Tref -> erlang:cancel_timer(Tref),
+                ok
     end,
     OutCheck = InCheck#health_check{interval_tref = undefined},
     {remove, waiting, OutCheck};
@@ -751,7 +754,8 @@ start_health_check(Service, #health_check{checking_pid = undefined} = CheckRec) 
     Pid = CheckRec#health_check.service_pid,
     case CheckRec#health_check.interval_tref of
         undefined -> ok;
-        Tref -> erlang:cancel_timer(Tref)
+        Tref -> erlang:cancel_timer(Tref),
+                ok
     end,
     CheckingPid = proc_lib:spawn_link(fun() ->
         case erlang:apply(Mod, Func, [Pid | Args]) of
