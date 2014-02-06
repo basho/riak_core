@@ -682,7 +682,7 @@ accumulate_grants([], Seen, Acc) ->
     {Acc, Seen};
 accumulate_grants([Role|Roles], Seen, Acc) ->
     Options = riak_core_metadata:get({<<"security">>, <<"roles">>}, Role),
-    NestedRoles = [R || R <- lookup("roles", Options),
+    NestedRoles = [R || R <- lookup("roles", Options, []),
                         not lists:member(R,Seen),
                         user_exists(R)],
     {NewAcc, NewSeen} = accumulate_grants(NestedRoles, [Role|Seen], Acc),
@@ -760,7 +760,7 @@ validate_options(Options) ->
 validate_role_option(Options) ->
     case lookup("roles", Options) of
         undefined ->
-            {ok, stash("roles", {"roles", []}, Options)};
+            {ok, Options};
         RoleStr ->
             Roles= [list_to_binary(R) || R <-
                                          string:tokens(RoleStr, ",")],
