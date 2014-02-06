@@ -143,7 +143,7 @@ replace_file(FN, Data) ->
 read_file(FName) ->
     {ok, FD} = file:open(FName, [read, raw, binary]),
     IOList = read_file(FD, []),
-    file:close(FD),
+    ok = file:close(FD),
     {ok, iolist_to_binary(IOList)}.
 
 read_file(FD, Acc) ->

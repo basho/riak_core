@@ -134,7 +134,7 @@ handle_call({collect, Duration, Nodes}, _From, State) ->
                          end, self()}),
     [{ok, N} = dbg:n(N) || N <- Nodes],
     dbg:p(all, [call]),
-    dbg:tpl(?MODULE, trigger_sentinel, []),
+    {ok, _} = dbg:tpl(?MODULE, trigger_sentinel, []),
     add_tracers(State#state.mfs),
     {reply, ok, State#state{trace=[], stop_tref = Tref, tracing = true}};
 handle_call(stop_collect, From, State = #state{tracing = true}) ->
@@ -190,10 +190,10 @@ code_change(_OldVsn, State, _Extra) ->
 add_tracers([]) ->
     ok;
 add_tracers([{M, F} | Rest]) ->
-    dbg:tpl(M, F, [{'_',[],[{message,{return_trace}}]}]),
-     add_tracers(Rest);
+    {ok, _} = dbg:tpl(M, F, [{'_',[],[{message,{return_trace}}]}]),
+    add_tracers(Rest);
 add_tracers([M | Rest]) ->
-    dbg:tpl(M,[{'_',[],[{message,{return_trace}}]}]),
+    {ok, _} = dbg:tpl(M,[{'_',[],[{message,{return_trace}}]}]),
     add_tracers(Rest).
 
 cancel_timer(undefined) ->

@@ -212,8 +212,8 @@ make_freshness_stat_name(App) ->
 -spec register_mod(atom(), registered_app(), orddict:orddict()) -> orddict:orddict().
 register_mod(App, AppRegistration, Apps0) ->
     {{Mod, _, _}=MFA, RefreshRateMillis} = AppRegistration,
-    folsom_metrics:new_histogram({?MODULE, Mod}),
-    folsom_metrics:new_meter({?MODULE, App}),
+    ok = folsom_metrics:new_histogram({?MODULE, Mod}),
+    ok = folsom_metrics:new_meter({?MODULE, App}),
     Apps = orddict:store(App, AppRegistration, Apps0),
     schedule_get_stats(RefreshRateMillis, App, MFA),
     Apps.
@@ -249,8 +249,9 @@ maybe_get_stats(App, From, Active, MFA) ->
 do_get_stats(App, {M, F, A}) ->
     spawn_link(fun() ->
                        Stats = folsom_metrics:histogram_timed_update({?MODULE, M}, M, F, A),
-                       folsom_metrics:notify_existing_metric({?MODULE, App}, 1, meter),
-                       gen_server:cast(?MODULE, {stats, App, Stats, folsom_utils:now_epoch()}) end).
+                       ok = folsom_metrics:notify_existing_metric({?MODULE, App}, 1, meter),
+                       gen_server:cast(?MODULE, {stats, App, Stats, folsom_utils:now_epoch()})
+               end).
 
 awaiting_for_pid(Pid, Active) ->
     case  [{App, Awaiting} || {App, {Proc, Awaiting}} <- orddict:to_list(Active),

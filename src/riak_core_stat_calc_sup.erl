@@ -42,8 +42,8 @@ calc_proc(Stat) ->
     Pid.
 
 stop_proc(Stat) ->
-    supervisor:terminate_child(?MODULE, Stat),
-    supervisor:delete_child(?MODULE, Stat),
+    ok = supervisor:terminate_child(?MODULE, Stat),
+    ok = supervisor:delete_child(?MODULE, Stat),
     ok.
 
 %% @private

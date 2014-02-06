@@ -81,7 +81,7 @@ handle_info({nodeup, Node, _InfoList}, #state{sndbuf=SndBuf,
             lager:error("Could not get dist for ~p\n~p\n", [Node, DistCtrl]),
             {noreply, State};
         Port ->
-            set_port_buffers(Port, SndBuf, RecBuf),
+            ok = set_port_buffers(Port, SndBuf, RecBuf),
             {noreply, State}
     end;
 handle_info({nodedown, _Node, _InfoList}, State) ->
