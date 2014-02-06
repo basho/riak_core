@@ -758,7 +758,10 @@ validate_options(Options) ->
     end.
 
 validate_role_option(Options) ->
-    case lookup("roles", Options) of
+    %% Allow for user error: roles=<list> is the desired syntax,
+    %% role=<list> should not result in a silent dumping of intended roles
+    %% into the extra, non-standard options
+    case lookup("roles", Options, lookup("role", Options)) of
         undefined ->
             {ok, Options};
         RoleStr ->
@@ -768,8 +771,9 @@ validate_role_option(Options) ->
                                  is_valid_role(R)],
             case InvalidRoles of
                 [] ->
+                    %% keydelete is necessary to remove any role= option
                     {ok, stash("roles", {"roles", Roles},
-                               Options)};
+                               lists:keydelete("role", 1, Options))};
                 _ ->
                     {error, {invalid_roles, InvalidRoles}}
             end
