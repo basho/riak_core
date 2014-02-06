@@ -95,7 +95,7 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
 
     try
         %% Give workers one more chance to abort or get a lock or whatever.
-        maybe_call_handoff_started(Module, SrcPartition, SrcNode),
+         FoldOpts = maybe_call_handoff_started(Module, SrcPartition),
 
          Filter = get_filter(Opts),
          [_Name,Host] = string:tokens(atom_to_list(TargetNode), "@"),
@@ -187,7 +187,7 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                                      notsent_acc=UnsentAcc0,
                                      notsent_fun=UnsentFun},
                              false,
-                             [{refresh_iterator, true}]),
+                             FoldOpts),
 
          %% IFF the vnode is using an async worker to perform the fold
          %% then sync_command will return error on vnode crash,
@@ -576,28 +576,29 @@ remote_supports_batching(Node) ->
     end.
 
 %% @private
-%% @doc The optional call to handoff_started/2 allows vnodes one last chance to abort
-%% the handoff process. the function is passed the source vnode's partition number
-%% and node name (this node) because the callback does not have access to the full vnode
-%% state at this time. In addition the worker pid is passed so the vnode may use that
-%% information in its decision to cancel the handoff or not (e.g. get a lock on behalf
-%% of the process.
-maybe_call_handoff_started(Module, SrcPartition, SrcNode) ->
+%% @doc The optional call to handoff_started/2 allows vnodes
+%% one last chance to abort the handoff process and to supply options
+%% to be passed to the ?FOLD_REQ if not aborted.the function is passed
+%% the source vnode's partition number because the callback does not
+%% have access to the full vnode state at this time. In addition the
+%% worker pid is passed so the vnode may use that information in its
+%% decision to cancel the handoff or not e.g. get a lock on behalf of
+%% the process.
+maybe_call_handoff_started(Module, SrcPartition) ->
     case lists:member({handoff_started, 2}, Module:module_info(exports)) of
         true ->
-            Source = {SrcPartition, SrcNode},
             WorkerPid = self(),
-            case Module:handoff_started(Source, WorkerPid) of
-                true ->
-                    ok;
-                max_concurrency ->
+            case Module:handoff_started(SrcPartition, WorkerPid) of
+                {ok, FoldOpts} ->
+                    FoldOpts;
+                {error, max_concurrency} ->
                     %% Handoff of that partition is busy or can't proceed. Stopping with
                     %% max_concurrency will cause this partition to be retried again later.
                     exit({shutdown, max_concurrency});
-                Error ->
+                {error, Error} ->
                     exit({shutdown, Error})
             end;
         false ->
-            %% optional callback not implemented, so we carry on.
-            ok
+            %% optional callback not implemented, so we carry on, w/ no addition fold options
+            []
     end.
