@@ -46,12 +46,10 @@
 %% Return preflist of all active primary nodes (with no
 %% substituion of fallbacks).  Used to simulate a
 %% preflist with N=ring_size
--spec active_owners(atom()) -> preflist().
 active_owners(Service) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     active_owners(Ring, riak_core_node_watcher:nodes(Service)).
 
--spec active_owners(ring(), [node()]) -> preflist().
 active_owners(Ring, UpNodes) ->
     UpNodes1 = UpNodes,
     Primaries = riak_core_ring:all_owners(Ring),
@@ -59,21 +57,18 @@ active_owners(Ring, UpNodes) ->
     Up.
 
 %% Get the active preflist taking account of which nodes are up
--spec get_apl(binary(), n_val(), atom()) -> preflist().
 get_apl(DocIdx, N, Service) ->
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
     get_apl_chbin(DocIdx, N, CHBin, riak_core_node_watcher:nodes(Service)).
 
 %% Get the active preflist taking account of which nodes are up
 %% for a given chash/upnodes list
--spec get_apl_chbin(binary(), n_val(), ring(), [node()]) -> preflist().
 get_apl_chbin(DocIdx, N, CHBin, UpNodes) ->
     [{Partition, Node} || {{Partition, Node}, _Type} <-
                               get_apl_ann_chbin(DocIdx, N, CHBin, UpNodes)].
 
 %% Get the active preflist taking account of which nodes are up
 %% for a given ring/upnodes list
--spec get_apl(binary(), n_val(), ring(), [node()]) -> preflist().
 get_apl(DocIdx, N, Ring, UpNodes) ->
     [{Partition, Node} || {{Partition, Node}, _Type} <- 
                               get_apl_ann(DocIdx, N, Ring, UpNodes)].
