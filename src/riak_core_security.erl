@@ -187,7 +187,7 @@ check_permission({Permission}, Context0) ->
             {true, Context};
         false ->
             %% no applicable grant
-            {false, io_lib:format("Permission denied: User '~s' does not have"
+            {false, io_lib:format("Permission denied: User '~s' does not have "
                                   "'~s' on ANY", [Context#context.username,
                                                  Permission]), Context}
     end;
@@ -200,7 +200,7 @@ check_permission({Permission, Bucket}, Context0) ->
             {true, Context};
         false ->
             %% no applicable grant
-            {false, io_lib:format("Permission denied: User '~s' does not have"
+            {false, io_lib:format("Permission denied: User '~s' does not have "
                                   "'~s' on ~p", [Context#context.username,
                                                  Permission,
                                                  Bucket]), Context}
