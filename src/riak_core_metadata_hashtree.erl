@@ -97,7 +97,7 @@ prefix_hash(Prefix) ->
 %% @doc Return the bucket for a node in the tree managed by this
 %% process running on `Node'.
 -spec get_bucket(node(), hashtree_tree:tree_node(),
-                 non_neg_integer(), non_neg_integer()) -> ordict:ordict().
+                 non_neg_integer(), non_neg_integer()) -> orddict:orddict().
 get_bucket(Node, Prefixes, Level, Bucket) ->
     gen_server:call({?SERVER, Node}, {get_bucket, Prefixes, Level, Bucket}, infinity).
 
