@@ -210,12 +210,7 @@ handle_cast({send_ring_to, _Node}, State=#state{gossip_tokens=0}) ->
 handle_cast({send_ring_to, Node}, State) ->
     {ok, MyRing0} = riak_core_ring_manager:get_raw_ring(),
     MyRing = update_gossip_version(MyRing0),
-    GossipVsn = case gossip_version() of
-                    ?LEGACY_RING_VSN ->
-                        ?LEGACY_RING_VSN;
-                    _ ->
-                        rpc_gossip_version(MyRing, Node)
-                end,
+    GossipVsn = rpc_gossip_version(MyRing, Node),
     RingOut = riak_core_ring:downgrade(GossipVsn, MyRing),
     riak_core_ring:check_tainted(RingOut,
                                  "Error: riak_core_gossip/send_ring_to :: "
@@ -225,35 +220,21 @@ handle_cast({send_ring_to, Node}, State) ->
     {noreply, State#state{gossip_tokens=Tokens}};
 
 handle_cast({distribute_ring, Ring}, State) ->
-    RingOut = case check_legacy_gossip(Ring, State) of
-                  true ->
-                      riak_core_ring:downgrade(?LEGACY_RING_VSN, Ring);
-                  false ->
-                      Ring
-              end,
     Nodes = riak_core_ring:active_members(Ring),
-    riak_core_ring:check_tainted(RingOut,
+    riak_core_ring:check_tainted(Ring,
                                  "Error: riak_core_gossip/distribute_ring :: "
                                  "Sending tainted ring over gossip"),
-    gen_server:abcast(Nodes, ?MODULE, {reconcile_ring, RingOut}),
+    gen_server:abcast(Nodes, ?MODULE, {reconcile_ring, Ring}),
     {noreply, State};
 
 handle_cast({reconcile_ring, RingIn}, State) ->
     OtherRing = riak_core_ring:upgrade(RingIn),
     State2 = update_known_versions(OtherRing, State),
-    case check_legacy_gossip(RingIn, State2) of
-        true ->
-            LegacyRing = riak_core_ring:downgrade(?LEGACY_RING_VSN, OtherRing),
-            riak_core_gossip_legacy:handle_cast({reconcile_ring, LegacyRing},
-                                                State2),
-            {noreply, State2};
-        false ->
-            %% Compare the two rings, see if there is anything that
-            %% must be done to make them equal...
-            riak_core_stat:update(gossip_received),
-            riak_core_ring_manager:ring_trans(fun reconcile/2, [OtherRing]),
-            {noreply, State2}
-    end;
+    %% Compare the two rings, see if there is anything that
+    %% must be done to make them equal...
+    riak_core_stat:update(gossip_received),
+    riak_core_ring_manager:ring_trans(fun reconcile/2, [OtherRing]),
+    {noreply, State2};
 
 handle_cast(gossip_ring, State) ->
     % Gossip the ring to some random other node...

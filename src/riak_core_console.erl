@@ -96,18 +96,12 @@ print_member_status(Ring, LegacyGossip) ->
     ok.
 
 ring_status([]) ->
-    case riak_core_gossip:legacy_gossip() of
-        true ->
-            io:format("Currently in legacy gossip mode.~n"),
-            ok;
-        false ->
-            {Claimant, RingReady, Down, MarkedDown, Changes} =
-                riak_core_status:ring_status(),
-            claimant_status(Claimant, RingReady),
-            ownership_status(Down, Changes),
-            unreachable_status(Down -- MarkedDown),
-            ok
-    end.
+    {Claimant, RingReady, Down, MarkedDown, Changes} =
+        riak_core_status:ring_status(),
+    claimant_status(Claimant, RingReady),
+    ownership_status(Down, Changes),
+    unreachable_status(Down -- MarkedDown),
+    ok.
 
 claimant_status(Claimant, RingReady) ->
     io:format("~34..=s Claimant ~35..=s~n", ["", ""]),
@@ -889,13 +883,7 @@ del_source([Users, CIDR]) ->
         Other ->
             [list_to_binary(O) || O <- Other]
     end,
-    case riak_core_security:del_source(Unames, parse_cidr(CIDR)) of
-        ok ->
-            ok;
-        Error ->
-            io:format("~p~n", [Error]),
-            Error
-    end.
+    riak_core_security:del_source(Unames, parse_cidr(CIDR)).
 
 grant([Grants, "ON", "ANY", "TO", Users]) ->
     Unames = case string:tokens(Users, ",") of
