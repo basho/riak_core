@@ -172,7 +172,8 @@ handle_sync_event({shutdown, Time}, From, _StateName, #state{queue=Q,
                 infinity ->
                     ok;
                 _ when is_integer(Time) ->
-                    erlang:send_after(Time, self(), shutdown)
+                    erlang:send_after(Time, self(), shutdown),
+                    ok
             end,
             {next_state, shutdown, State#state{shutdown=From, queue=queue:new()}}
     end;
