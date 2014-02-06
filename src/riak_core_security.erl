@@ -409,12 +409,7 @@ add_revoke(all, Bucket, Revokes) ->
     %% all is always valid
     case validate_permissions(Revokes) of
         ok ->
-            case add_revoke_int([all], Bucket, revokes) of
-                ok ->
-                    ok;
-                Error2 ->
-                    Error2
-            end;
+            add_revoke_int([all], Bucket, revokes);
         Error ->
             Error
     end;
@@ -440,12 +435,7 @@ add_revoke([H|_T]=UserList, Bucket, Revokes) when is_binary(H) ->
     case Valid2 of
         ok ->
             %% add a source for each user
-            case add_revoke_int(UserList, Bucket, Revokes) of
-                ok ->
-                    ok;
-                Error2 ->
-                    Error2
-            end;
+            add_revoke_int(UserList, Bucket, Revokes);
         Error ->
             Error
     end;
@@ -749,12 +739,8 @@ validate_options(Options) ->
         undefined ->
             validate_role_option(Options);
         Pass ->
-            case validate_password_option(Pass, Options) of
-                {ok, NewOptions} ->
-                    validate_role_option(NewOptions);
-                Error ->
-                    Error
-            end
+            {ok, NewOptions} = validate_password_option(Pass, Options),
+            validate_role_option(NewOptions)
     end.
 
 validate_role_option(Options) ->
