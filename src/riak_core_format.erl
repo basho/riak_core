@@ -82,9 +82,9 @@ human_size(S, [M|_]) ->
 human_time(Micros) ->
     human_time(Micros, {1000, "us"}, [{1000, "ms"}, {60, "s"}, {60, "min"}, {24, "hr"}, {365, "d"}]).
 
--spec human_time(non_neg_integer(), {pos_integer(), string()},
+-spec human_time(number(), {pos_integer(), string()},
                  [{pos_integer(), string()}]) ->
-                        {number(), string()}.
+                        {float(), string()}.
 human_time(T, {Divisor, Unit}, Units) when T < Divisor orelse Units == [] ->
     {float(T), Unit};
 human_time(T, {Divisor, _}, [Next|Units]) ->
