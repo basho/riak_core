@@ -561,7 +561,7 @@ validate_hold({Key,Entry}=Obj, TableId) when ?e_type(Entry) == lock ->
             ets:delete_object(TableId, Obj)
     end;
 validate_hold(_Obj, _TableId) -> %% tokens don't monitor processes
-    ok.
+    true.
 
 %% @doc Update state with bypassed status and store to ETS
 update_bypassed(_Bypassed, State) when ?NOT_TRANSFERED(State) ->
