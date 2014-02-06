@@ -55,13 +55,13 @@
           %% Initially trees rooted at each node are the same.
           %% Portions of that tree belonging to this node are
           %% shared in this set.
-          common_eagers :: ordset:ordset(nodename()),
+          common_eagers :: ordsets:ordset(nodename()),
 
           %% Initially trees rooted at each node share the same lazy links.
           %% Typically this set will contain a single element. However, it may
           %% contain more in large clusters and may be empty for clusters with
           %% less than three nodes.
-          common_lazys  :: ordset:ordset(nodename()),
+          common_lazys  :: ordsets:ordset(nodename()),
 
           %% A mapping of sender node (root of each broadcast tree)
           %% to this node's portion of the tree. Elements are
@@ -69,14 +69,14 @@
           %% propogate to this node. Nodes that are never the
           %% root of a message will never have a key added to
           %% `eager_sets'
-          eager_sets    :: [{nodename(), ordset:ordset(nodename())}],
+          eager_sets    :: [{nodename(), ordsets:ordset(nodename())}],
 
           %% A Mapping of sender node (root of each spanning tree)
           %% to this node's set of lazy peers. Elements are added
           %% to this structure as messages rooted at a node
           %% propogate to this node. Nodes that are never the root
           %% of a message will never have a key added to `lazy_sets'
-          lazy_sets     :: [{nodename(), ordset:ordset(nodename())}],
+          lazy_sets     :: [{nodename(), ordsets:ordset(nodename())}],
 
           %% Lazy messages that have not been acked. Messages are added to
           %% this set when a node is sent a lazy message (or when it should be
@@ -94,7 +94,7 @@
 
           %% Set of all known members. Used to determine
           %% which members have joined and left during a membership update
-          all_members   :: ordset:ordset(nodename())
+          all_members   :: ordsets:ordset(nodename())
          }).
 
 %%%===================================================================
@@ -155,13 +155,13 @@ ring_update(Ring) ->
 
 %% @doc Returns the broadcast servers view of full cluster membership.
 %% Wait indefinitely for a response is returned from the process
--spec broadcast_members() -> ordset:ordset(nodename()).
+-spec broadcast_members() -> ordsets:ordset(nodename()).
 broadcast_members() ->
     broadcast_members(infinity).
 
 %% @doc Returns the broadcast servers view of full cluster membership.
 %% Waits `Timeout' ms for a response from the server
--spec broadcast_members(infinity | pos_integer()) -> ordset:ordset(nodename()).
+-spec broadcast_members(infinity | pos_integer()) -> ordsets:ordset(nodename()).
 broadcast_members(Timeout) ->
     gen_server:call(?SERVER, broadcast_members, Timeout).
 
@@ -190,21 +190,21 @@ cancel_exchanges(WhichExchanges) ->
 
 %% @doc return the peers for `Node' for the tree rooted at `Root'.
 %% Wait indefinitely for a response is returned from the process
--spec debug_get_peers(node(), node()) -> {ordset:ordset(node()), ordset:ordset(node())}.
+-spec debug_get_peers(node(), node()) -> {ordsets:ordset(node()), ordsets:ordset(node())}.
 debug_get_peers(Node, Root) ->
     debug_get_peers(Node, Root, infinity).
 
 %% @doc return the peers for `Node' for the tree rooted at `Root'.
 %% Waits `Timeout' ms for a response from the server
 -spec debug_get_peers(node(), node(), infinity | pos_integer()) ->
-                             {ordset:ordset(node()), ordset:ordset(node())}.
+                             {ordsets:ordset(node()), ordsets:ordset(node())}.
 debug_get_peers(Node, Root, Timeout) ->
     gen_server:call({?SERVER, Node}, {get_peers, Root}, Timeout).
 
 %% @doc return peers for all `Nodes' for tree rooted at `Root'
 %% Wait indefinitely for a response is returned from the process
 -spec debug_get_tree(node(), [node()]) ->
-                            [{node(), {ordset:ordset(node()), ordset:ordset(node())}}].
+                            [{node(), {ordsets:ordset(node()), ordsets:ordset(node())}}].
 debug_get_tree(Root, Nodes) ->
     [begin
          Peers = try debug_get_peers(Node, Root)
