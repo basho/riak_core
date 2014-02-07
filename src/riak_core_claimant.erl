@@ -984,10 +984,10 @@ internal_ring_changed(Node, CState) ->
     case {IsClaimant, riak_core_ring:cluster_name(CState5)} of
         {true, undefined} ->
             ClusterName = {Node, erlang:now()},
-            riak_core_util:rpc_every_member(riak_core_ring_manager,
-                                            set_cluster_name,
-                                            [ClusterName],
-                                            1000),
+            {_,_} = riak_core_util:rpc_every_member(riak_core_ring_manager,
+                                                    set_cluster_name,
+                                                    [ClusterName],
+                                                    1000),
             ok;
         _ ->
             ClusterName = riak_core_ring:cluster_name(CState5),
