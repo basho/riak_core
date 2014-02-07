@@ -401,11 +401,6 @@ commission(Base, Test, {Wants, Choose}) ->
     BulkJoinCmds =  [ [ {join, sim_node(I)} || I <- lists:seq(2, Nodes) ] ],
 
     Dir = commission_test_dir(Base, RingSize, Nodes, NVal, TN, Choose),
-    %% TODO: What was this supposed to do?
-    %% filename:join(Base,
-    %%               lists:flatten(io_lib:format("q~b_s~b_n~b_t~b_~p",
-    %%                                           [RingSize, Nodes, NVal, TN,
-    %%                                            element(2, Choose)]))),
     case filelib:is_dir(Dir) of
         true ->
             throw(already_generated);
