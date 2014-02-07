@@ -363,8 +363,6 @@ generate_plan([], _, State) ->
     {{ok, [], []}, State};
 generate_plan(Changes, Ring, State=#state{seed=Seed}) ->
     case compute_all_next_rings(Changes, Seed, Ring) of
-        legacy ->
-            {{error, legacy}, State};
         {error, invalid_resize_claim} ->
             {{error, invalid_resize_claim}, State};
         {ok, NextRings} ->
@@ -792,8 +790,6 @@ compute_all_next_rings(Changes, Seed, Ring) ->
 %% @private
 compute_all_next_rings(Changes, Seed, Ring, Acc) ->
     case compute_next_ring(Changes, Seed, Ring) of
-        {legacy, _} ->
-            legacy;
         {error, invalid_resize_claim}=Err ->
             Err;
         {ok, NextRing} ->
@@ -815,14 +811,10 @@ compute_next_ring(Changes, Seed, Ring) ->
     {_, Ring3} = maybe_handle_joining(node(), Ring2),
     {_, Ring4} = do_claimant_quiet(node(), Ring3, Replacing, Seed),
     {Valid, Ring5} = maybe_compute_resize(Ring, Ring4),
-    Members = riak_core_ring:all_members(Ring5),
-    AnyLegacy = riak_core_gossip:any_legacy_gossip(Ring5, Members),
-    case {Valid, AnyLegacy} of
-        {false, _} ->
+    case Valid of
+        false ->
             {error, invalid_resize_claim};
-        {true, true} ->
-            {legacy, Ring};
-        {true, false} ->
+        true ->
             {ok, Ring5}
     end.
 
