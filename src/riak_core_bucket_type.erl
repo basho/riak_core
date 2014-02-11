@@ -102,7 +102,9 @@
          itr_next/1,
          itr_done/1,
          itr_value/1,
-         itr_close/1]).
+         itr_close/1,
+         property_hash/2,
+         property_hash/3]).
 
 -export_type([bucket_type/0]).
 -type bucket_type()       :: binary().
@@ -112,7 +114,6 @@
                               true -> X;
                               false -> E
                           end).
-
 
 %% @doc The hardcoded defaults for all bucket types.
 -spec defaults() -> bucket_type_props().
@@ -218,3 +219,17 @@ itr_value(It) ->
 -spec itr_close(riak_core_metadata:iterator()) -> ok.
 itr_close(It) ->
     riak_core_metadata:itr_close(It).
+
+%% @doc Returns a hash of a specified set of bucket type properties
+%% whose values may have implications on the treatment or handling of
+%% buckets created using the bucket type.
+-spec property_hash(bucket_type(), [term()]) -> undefined | integer().
+property_hash(Type, PropKeys) ->
+    property_hash(Type, PropKeys, ?MODULE:get(Type)).
+
+-spec property_hash(bucket_type(), [term()], undefined | bucket_type_props()) ->
+                           undefined | integer().
+property_hash(_Type, _PropKeys, undefined) ->
+    undefined;
+property_hash(_Type, PropKeys, Props) ->
+    erlang:phash2([lists:keyfind(PropKey, 1, Props) || PropKey <- PropKeys]).
