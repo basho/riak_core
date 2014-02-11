@@ -46,7 +46,8 @@
 %% @doc Default location of ringstate
 {mapping, "ring.state_dir", "riak_core.ring_state_dir", [
   {datatype, directory},
-  {default, "#(platform_data_dir)/ring"}
+  {default, "#(platform_data_dir)/ring"},
+  {level, advanced}
 ]}.
 
 %% @doc Default cert location for https can be overridden
