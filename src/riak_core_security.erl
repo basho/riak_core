@@ -101,7 +101,7 @@ print_users() ->
                                  List ->
                                      prettyprint_permissions([binary_to_list(R)
                                                               || R <- List,
-                                                                 user_exists(R)], 20)
+                                                                 group_exists(R)], 20)
                              end,
                      Password = case proplists:get_value("password", Options) of
                                     undefined ->
