@@ -117,7 +117,7 @@ print_users() ->
             {Username, [Options]} <- Users]).
 
 print_user(User) ->
-    case riak_core_metadata:get({<<"security">>, <<"users">>}, User) of
+    case role_details(User, user) of
         undefined ->
             io:format("No such user ~p~n", [User]),
             {error, {unknown_user, User}};
@@ -224,7 +224,7 @@ get_username(#context{username=Username}) ->
     Username.
 
 authenticate(Username, Password, ConnInfo) ->
-    case riak_core_metadata:get({<<"security">>, <<"users">>}, Username) of
+    case role_details(Username, user) of
         undefined ->
             {error, unknown_user};
         UserData ->
@@ -305,8 +305,7 @@ authenticate(Username, Password, ConnInfo) ->
     end.
 
 add_user(Username, Options) ->
-    User = riak_core_metadata:get({<<"security">>, <<"users">>}, Username),
-    case User of
+    case role_details(Username, user) of
         undefined ->
             case validate_options(Options) of
                 {ok, NewOptions} ->
@@ -321,8 +320,7 @@ add_user(Username, Options) ->
     end.
 
 alter_user(Username, Options) ->
-    User = riak_core_metadata:get({<<"security">>, <<"users">>}, Username),
-    case User of
+    case role_details(Username, user) of
         undefined ->
             {error, {unknown_user, Username}};
         UserData ->
@@ -340,8 +338,7 @@ alter_user(Username, Options) ->
     end.
 
 del_user(Username) ->
-    User = riak_core_metadata:get({<<"security">>, <<"users">>}, Username),
-    case User of
+    case role_details(Username, user) of
         undefined ->
             {error, {unknown_user, Username}};
         _UserData ->
@@ -463,7 +460,7 @@ add_source([H|_T]=UserList, CIDR, Source, Options) when is_binary(H) ->
 
     %% We only allow sources to be assigned to users, so don't check
     %% for valid group names
-    UnknownUsers = unknown_roles(UserList, <<"users">>),
+    UnknownUsers = unknown_roles(UserList, user),
 
     Valid = case UnknownUsers of
                 [] ->
@@ -759,12 +756,12 @@ validate_groups_option(Options) ->
         GroupStr ->
             Groups= [list_to_binary(G) || G <-
                                          string:tokens(GroupStr, ",")],
-            UnknownGroups = unknown_roles(Groups, <<"groups">>),
-            case UnknownGroups of
+
+            case unknown_roles(Groups, group) of
                 [] ->
                     {ok, stash("groups", {"groups", Groups},
                                Options)};
-                _ ->
+                UnknownGroups ->
                     {error, {unknown_groups, UnknownGroups}}
             end
     end.
@@ -893,33 +890,6 @@ flatten_once(List) ->
                         A ++ Acc
                 end, [], List).
 
-%% When we don't know whether a role name is a group or a user, use this
-role_details(Rolename) ->
-    Details = role_details(Rolename, <<"users">>),
-    case Details of
-        unknown ->
-            role_details(Rolename, <<"groups">>);
-        _ ->
-            Details
-    end.
-
-role_details(Rolename, RoleType) ->
-    riak_core_metadata:get({<<"security">>, RoleType}, Rolename).
-
-user_exists(Username) ->
-    role_exists(Username, <<"users">>).
-
-group_exists(Groupname) ->
-    role_exists(Groupname, <<"groups">>).
-
-role_exists(Rolename, RoleType) ->
-    Role = riak_core_metadata:get({<<"security">>, RoleType}, Rolename),
-    case Role of
-        undefined ->
-            false;
-        _ -> true
-    end.
-
 %% XXX - not yet invoked because we haven't defined del_group/1
 delete_group_from_roles(Groupname) ->
     %% delete the group out of any user or group's 'roles' option
@@ -963,15 +933,53 @@ delete_user_from_sources(Username) ->
                                     Acc
                             end, [], {<<"security">>, <<"sources">>}).
 
+%%%% Role identification functions
 
 %% Take a list of roles (users & groups) and return any that can't
 %% be found.
 unknown_roles(RoleList) ->
-    unknown_roles(unknown_roles(RoleList, <<"users">>), <<"groups">>).
+    unknown_roles(unknown_roles(RoleList, user), group).
 
+unknown_roles(RoleList, user) ->
+    unknown_roles(RoleList, <<"users">>);
+unknown_roles(RoleList, group) ->
+    unknown_roles(RoleList, <<"groups">>);
 unknown_roles(RoleList, RoleType) ->
     riak_core_metadata:fold(fun({Rolename, _}, Acc) ->
                                     Acc -- [Rolename]
                             end, RoleList, {<<"security">>,
                                             RoleType}).
+
+%% When we don't know whether a role name is a group or a user, use this
+role_details(Rolename) ->
+    case role_details(Rolename, user) of
+        unknown ->
+            role_details(Rolename, group);
+        Details ->
+            Details
+    end.
+
+role_details(Rolename, user) ->
+    role_details(Rolename, <<"users">>);
+role_details(Rolename, group) ->
+    role_details(Rolename, <<"groups">>);
+role_details(Rolename, RoleType) ->
+    riak_core_metadata:get({<<"security">>, RoleType}, Rolename).
+
+user_exists(Username) ->
+    role_exists(Username, user).
+
+group_exists(Groupname) ->
+    role_exists(Groupname, group).
+
+role_exists(Rolename, user) ->
+    role_exists(Rolename, <<"users">>);
+role_exists(Rolename, group) ->
+    role_exists(Rolename, <<"groups">>);
+role_exists(Rolename, RoleType) ->
+    case role_details(Rolename, RoleType) of
+        undefined ->
+            false;
+        _ -> true
+    end.
 
