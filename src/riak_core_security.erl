@@ -91,10 +91,10 @@ print_users() ->
                                             Acc;
                                         ({Username, Options}, Acc) ->
                                     [{Username, Options}|Acc]
-                            end, [], {<<"security">>, <<"roles">>}),
-    riak_core_console_table:print([{username, 10}, {roles, 15}, {password, 40}, {options, 30}],
+                            end, [], {<<"security">>, <<"users">>}),
+    riak_core_console_table:print([{username, 10}, {groups, 15}, {password, 40}, {options, 30}],
                 [begin
-                     Roles = case proplists:get_value("roles", Options) of
+                     Groups = case proplists:get_value("groups", Options) of
                                  undefined ->
                                      "";
                                  List ->
@@ -109,22 +109,22 @@ print_users() ->
                                         proplists:get_value(hash_pass, Pw)
                                 end,
                      OtherOptions = lists:keydelete("password", 1,
-                                                    lists:keydelete("roles", 1,
+                                                    lists:keydelete("groups", 1,
                                                                     Options)),
-                     [Username, Roles, Password,
+                     [Username, Groups, Password,
                       lists:flatten(io_lib:format("~p", [OtherOptions]))]
                  end ||
             {Username, [Options]} <- Users]).
 
 print_user(User) ->
-    case riak_core_metadata:get({<<"security">>, <<"roles">>}, User) of
+    case riak_core_metadata:get({<<"security">>, <<"users">>}, User) of
         undefined ->
-            io:format("No such role ~p~n", [User]),
-            {error, {unknown_role, User}};
+            io:format("No such user ~p~n", [User]),
+            {error, {unknown_user, User}};
         _U ->
             Grants = accumulate_grants(User),
             io:format("~nInherited permissions~n~n"),
-            riak_core_console_table:print([{role, 20}, {type, 10}, {bucket, 10}, {grants, 40}],
+            riak_core_console_table:print([{user, 20}, {type, 10}, {bucket, 10}, {grants, 40}],
                         [begin
                              case Bucket of
                                  any ->
@@ -224,7 +224,7 @@ get_username(#context{username=Username}) ->
     Username.
 
 authenticate(Username, Password, ConnInfo) ->
-    case riak_core_metadata:get({<<"security">>, <<"roles">>}, Username) of
+    case riak_core_metadata:get({<<"security">>, <<"users">>}, Username) of
         undefined ->
             {error, unknown_user};
         UserData ->
@@ -305,12 +305,12 @@ authenticate(Username, Password, ConnInfo) ->
     end.
 
 add_user(Username, Options) ->
-    User = riak_core_metadata:get({<<"security">>, <<"roles">>}, Username),
+    User = riak_core_metadata:get({<<"security">>, <<"users">>}, Username),
     case User of
         undefined ->
             case validate_options(Options) of
                 {ok, NewOptions} ->
-                    riak_core_metadata:put({<<"security">>, <<"roles">>},
+                    riak_core_metadata:put({<<"security">>, <<"users">>},
                                            Username, NewOptions),
                     ok;
                 Error ->
@@ -321,7 +321,7 @@ add_user(Username, Options) ->
     end.
 
 alter_user(Username, Options) ->
-    User = riak_core_metadata:get({<<"security">>, <<"roles">>}, Username),
+    User = riak_core_metadata:get({<<"security">>, <<"users">>}, Username),
     case User of
         undefined ->
             {error, {unknown_user, Username}};
@@ -331,7 +331,7 @@ alter_user(Username, Options) ->
                     MergedOptions = lists:ukeymerge(1, lists:sort(NewOptions),
                                                     lists:sort(UserData)),
 
-                    riak_core_metadata:put({<<"security">>, <<"roles">>},
+                    riak_core_metadata:put({<<"security">>, <<"users">>},
                                            Username, MergedOptions),
                     ok;
                 Error ->
@@ -340,12 +340,12 @@ alter_user(Username, Options) ->
     end.
 
 del_user(Username) ->
-    User = riak_core_metadata:get({<<"security">>, <<"roles">>}, Username),
+    User = riak_core_metadata:get({<<"security">>, <<"users">>}, Username),
     case User of
         undefined ->
             {error, {unknown_user, Username}};
         _UserData ->
-            riak_core_metadata:delete({<<"security">>, <<"roles">>},
+            riak_core_metadata:delete({<<"security">>, <<"users">>},
                                    Username),
             %% delete any associated grants, so if a user with the same name
             %% is added again, they don't pick up these grants
@@ -359,7 +359,6 @@ del_user(Username) ->
                                     end, undefined,
                                     {<<"security">> ,<<"grants">>},
                                     [{match, {Username, '_'}}]),
-            delete_user_from_roles(Username),
             delete_user_from_sources(Username),
             ok
     end.
@@ -372,19 +371,17 @@ add_grant(all, Bucket, Grants) ->
         Error ->
             Error
     end;
-add_grant([H|_T]=UserList, Bucket, Grants) when is_binary(H) ->
+add_grant([H|_T]=RoleList, Bucket, Grants) when is_binary(H) ->
     %% list of lists, weeeee
     %% validate the users...
-    
-    UnknownUsers = riak_core_metadata:fold(fun({Username, _}, Acc) ->
-                                                   Acc -- [Username]
-                                           end, UserList, {<<"security">>,
-                                           <<"roles">>}),
-    Valid = case UnknownUsers of
+
+    UnknownRoles = unknown_roles(RoleList),
+
+    Valid = case UnknownRoles of
                 [] ->
                     ok;
                 _ ->
-                    {error, {unknown_users, UnknownUsers}}
+                    {error, {unknown_roles, UnknownRoles}}
             end,
 
     Valid2 = case Valid of
@@ -395,14 +392,14 @@ add_grant([H|_T]=UserList, Bucket, Grants) when is_binary(H) ->
     end,
     case Valid2 of
         ok ->
-            %% add a source for each user
-            add_grant_int(UserList, Bucket, Grants);
+            %% add a grant for each role
+            add_grant_int(RoleList, Bucket, Grants);
         Error ->
             Error
     end;
-add_grant(User, Bucket, Grants) ->
-    %% single user
-    add_grant([User], Bucket, Grants).
+add_grant(Role, Bucket, Grants) ->
+    %% single role
+    add_grant([Role], Bucket, Grants).
 
 
 add_revoke(all, Bucket, Revokes) ->
@@ -418,18 +415,15 @@ add_revoke(all, Bucket, Revokes) ->
         Error ->
             Error
     end;
-add_revoke([H|_T]=UserList, Bucket, Revokes) when is_binary(H) ->
+add_revoke([H|_T]=RoleList, Bucket, Revokes) when is_binary(H) ->
     %% list of lists, weeeee
-    %% validate the users...
-    UnknownUsers = riak_core_metadata:fold(fun({Username, _}, Acc) ->
-                                                   Acc -- [Username]
-                                           end, UserList, {<<"security">>,
-                                           <<"roles">>}),
-    Valid = case UnknownUsers of
+    %% validate the role...
+    UnknownRoles = unknown_roles(RoleList),
+    Valid = case UnknownRoles of
                 [] ->
                     ok;
                 _ ->
-                    {error, {unknown_users, UnknownUsers}}
+                    {error, {unknown_roles, UnknownRoles}}
             end,
     Valid2 = case Valid of
         ok ->
@@ -439,8 +433,8 @@ add_revoke([H|_T]=UserList, Bucket, Revokes) when is_binary(H) ->
     end,
     case Valid2 of
         ok ->
-            %% add a source for each user
-            case add_revoke_int(UserList, Bucket, Revokes) of
+            %% revoke any matching grant for each role
+            case add_revoke_int(RoleList, Bucket, Revokes) of
                 ok ->
                     ok;
                 Error2 ->
@@ -466,10 +460,11 @@ add_source(all, CIDR, Source, Options) ->
 add_source([H|_T]=UserList, CIDR, Source, Options) when is_binary(H) ->
     %% list of lists, weeeee
     %% validate the users...
-    UnknownUsers = riak_core_metadata:fold(fun({Username, _}, Acc) ->
-                                                   Acc -- [Username]
-                                           end, UserList, {<<"security">>,
-                                           <<"roles">>}),
+
+    %% We only allow sources to be assigned to users, so don't check
+    %% for valid group names
+    UnknownUsers = unknown_roles(UserList, <<"users">>),
+
     Valid = case UnknownUsers of
                 [] ->
                     %% TODO check if there is already an 'all' source for this CIDR
@@ -591,15 +586,15 @@ status() ->
 
 add_revoke_int([], _, _) ->
     ok;
-add_revoke_int([User|Users], Bucket, Permissions) ->
-    UserGrants = riak_core_metadata:get({<<"security">>, <<"grants">>}, {User,
+add_revoke_int([Role|Roles], Bucket, Permissions) ->
+    RoleGrants = riak_core_metadata:get({<<"security">>, <<"grants">>}, {Role,
                                                                          Bucket}),
 
     %% check if there is currently a GRANT we can revoke
-    case UserGrants of
+    case RoleGrants of
         undefined ->
             %% can't REVOKE what wasn't GRANTED
-            add_revoke_int(Users, Bucket, Permissions);
+            add_revoke_int(Roles, Bucket, Permissions);
         GrantedPermissions ->
             NewPerms = [X || X <- GrantedPermissions, not lists:member(X,
                                                                        Permissions)],
@@ -610,12 +605,12 @@ add_revoke_int([User|Users], Bucket, Permissions) ->
             case NewPerms of
                 [] ->
                     riak_core_metadata:delete({<<"security">>, <<"grants">>},
-                                           {User, Bucket});
+                                           {Role, Bucket});
                 _ ->
                     riak_core_metadata:put({<<"security">>, <<"grants">>},
-                                           {User, Bucket}, NewPerms)
+                                           {Role, Bucket}, NewPerms)
             end,
-            add_revoke_int(Users, Bucket, Permissions)
+            add_revoke_int(Roles, Bucket, Permissions)
     end.
 
 add_source_int([], _, _, _) ->
@@ -627,9 +622,9 @@ add_source_int([User|Users], CIDR, Source, Options) ->
 
 add_grant_int([], _, _) ->
     ok;
-add_grant_int([User|Users], Bucket, Permissions) ->
+add_grant_int([Role|Roles], Bucket, Permissions) ->
     BucketPermissions = case riak_core_metadata:get({<<"security">>, <<"grants">>},
-                                               {User, Bucket}) of
+                                               {Role, Bucket}) of
                             undefined ->
                                 [];
                             Perms ->
@@ -637,9 +632,9 @@ add_grant_int([User|Users], Bucket, Permissions) ->
                         end,
     NewPerms = lists:umerge(lists:sort(BucketPermissions),
                             lists:sort(Permissions)),
-    riak_core_metadata:put({<<"security">>, <<"grants">>}, {User, Bucket},
+    riak_core_metadata:put({<<"security">>, <<"grants">>}, {Role, Bucket},
                            NewPerms),
-    add_grant_int(Users, Bucket, Permissions).
+    add_grant_int(Roles, Bucket, Permissions).
 
 match_grant(Bucket, Grants) ->
     AnyGrants = proplists:get_value(any, Grants, []),
@@ -670,9 +665,9 @@ maybe_refresh_context(Context) ->
 %% Contexts are only valid until the GRANT epoch changes, and it will change
 %% whenever a GRANT or a REVOKE is performed. This is a little coarse grained
 %% right now, but it'll do for the moment.
-get_context(Username) when is_binary(Username) ->
-    Grants = group_grants(accumulate_grants(Username)),
-    #context{username=Username, grants=Grants, epoch=os:timestamp()}.
+get_context(Rolename) when is_binary(Rolename) ->
+    Grants = group_grants(accumulate_grants(Rolename)),
+    #context{username=Rolename, grants=Grants, epoch=os:timestamp()}.
 
 accumulate_grants(Role) ->
     {Grants, _Seen} = accumulate_grants([Role], [], []),
@@ -680,20 +675,20 @@ accumulate_grants(Role) ->
 
 accumulate_grants([], Seen, Acc) ->
     {Acc, Seen};
-accumulate_grants([Role|Roles], Seen, Acc) ->
-    Options = riak_core_metadata:get({<<"security">>, <<"roles">>}, Role),
-    NestedRoles = [R || R <- lookup("roles", Options, []),
-                        not lists:member(R,Seen),
-                        user_exists(R)],
-    {NewAcc, NewSeen} = accumulate_grants(NestedRoles, [Role|Seen], Acc),
+accumulate_grants([User|Users], Seen, Acc) ->
+    Options = riak_core_metadata:get({<<"security">>, <<"users">>}, User),
+    Groups = [G || G <- lookup("groups", Options, []),
+                        not lists:member(G,Seen),
+                        group_exists(G)],
+    {NewAcc, NewSeen} = accumulate_grants(Groups, [User|Seen], Acc),
 
     Grants = riak_core_metadata:fold(fun({{_R, _Bucket}, [?TOMBSTONE]}, A) ->
                                              A;
                                         ({{R, Bucket}, [Permissions]}, A) ->
                                              [{{R, Bucket}, Permissions}|A]
                                      end, [], {<<"security">>, <<"grants">>},
-                                     [{match, {Role, '_'}}]),
-    accumulate_grants(Roles, NewSeen, [Grants|NewAcc]).
+                                     [{match, {User, '_'}}]),
+    accumulate_grants(Users, NewSeen, [Grants|NewAcc]).
 
 %% lookup a key in a list of key/value tuples. Like proplists:get_value but
 %% faster.
@@ -747,31 +742,30 @@ validate_options(Options) ->
     %% Check if password is an option
     case lookup("password", Options) of
         undefined ->
-            validate_role_option(Options);
+            validate_groups_option(Options);
         Pass ->
             case validate_password_option(Pass, Options) of
                 {ok, NewOptions} ->
-                    validate_role_option(NewOptions);
+                    validate_groups_option(NewOptions);
                 Error ->
                     Error
             end
     end.
 
-validate_role_option(Options) ->
-    case lookup("roles", Options) of
+validate_groups_option(Options) ->
+    case lookup("groups", Options) of
         undefined ->
             {ok, Options};
-        RoleStr ->
-            Roles= [list_to_binary(R) || R <-
-                                         string:tokens(RoleStr, ",")],
-            InvalidRoles = [R || R <- Roles, not
-                                 is_valid_role(R)],
-            case InvalidRoles of
+        GroupStr ->
+            Groups= [list_to_binary(G) || G <-
+                                         string:tokens(GroupStr, ",")],
+            UnknownGroups = unknown_roles(Groups, <<"groups">>),
+            case UnknownGroups of
                 [] ->
-                    {ok, stash("roles", {"roles", Roles},
+                    {ok, stash("groups", {"groups", Groups},
                                Options)};
                 _ ->
-                    {error, {invalid_roles, InvalidRoles}}
+                    {error, {unknown_groups, UnknownGroups}}
             end
     end.
 
@@ -816,14 +810,6 @@ validate_permissions([Perm|T], Known) ->
             end;
         _ ->
             {error, {unknown_permission, Perm}}
-    end.
-
-is_valid_role(Role) ->
-    case riak_core_metadata:get({<<"security">>, <<"roles">>}, Role) of
-        undefined ->
-            false;
-        _ ->
-            true
     end.
 
 match_source([], _User, _PeerIP) ->
@@ -897,7 +883,7 @@ group_sources(Sources) ->
         end, R3).
 
 group_grants(Grants) ->
-    D = lists:foldl(fun({{_User, Bucket}, G}, Acc) ->
+    D = lists:foldl(fun({{_Role, Bucket}, G}, Acc) ->
                 dict:append(Bucket, G, Acc)
         end, dict:new(), Grants),
     [{Bucket, lists:usort(flatten_once(P))} || {Bucket, P} <- dict:to_list(D)].
@@ -908,38 +894,49 @@ flatten_once(List) ->
                 end, [], List).
 
 user_exists(Username) ->
-    User = riak_core_metadata:get({<<"security">>, <<"roles">>}, Username),
-    case User of
+    role_exists(Username, <<"users">>).
+
+group_exists(Groupname) ->
+    role_exists(Groupname, <<"groups">>).
+
+role_exists(Rolename, RoleType) ->
+    Role = riak_core_metadata:get({<<"security">>, RoleType}, Rolename),
+    case Role of
         undefined ->
             false;
         _ -> true
     end.
 
-delete_user_from_roles(Username) ->
-    %% delete the user out of any other user's 'roles' option
+%% XXX - not yet invoked because we haven't defined del_group/1
+delete_group_from_roles(Groupname) ->
+    %% delete the group out of any user or group's 'roles' option
     %% this is kind of a pain, as we have to iterate ALL roles
+    delete_group_from_roles(Groupname, <<"users">>),
+    delete_group_from_roles(Groupname, <<"groups">>).
+
+delete_group_from_roles(Groupname, RoleType) ->
     riak_core_metadata:fold(fun({_, [?TOMBSTONE]}, Acc) ->
                                     Acc;
-                               ({Uname, [Options]}, Acc) ->
-                                    case proplists:get_value("roles", Options) of
+                               ({Rolename, [Options]}, Acc) ->
+                                    case proplists:get_value("groups", Options) of
                                         undefined ->
                                             Acc;
-                                        Roles ->
-                                            case lists:member(Username,
-                                                              Roles) of
+                                        Groups ->
+                                            case lists:member(Groupname,
+                                                              Groups) of
                                                 true ->
-                                                    NewRoles = lists:keystore("roles", 1, Options, {"roles", Roles -- [Username]}),
+                                                    NewGroups = lists:keystore("groups", 1, Options, {"groups", Groups -- [Groupname]}),
                                                     riak_core_metadata:put({<<"security">>,
-                                                                            <<"roles">>},
-                                                                           Uname,
-                                                                           NewRoles),
+                                                                            RoleType},
+                                                                           Rolename,
+                                                                           NewGroups),
                                                     Acc;
                                                 false ->
                                                     Acc
                                             end
                                     end
                             end, undefined,
-                            {<<"security">>,<<"roles">>}).
+                            {<<"security">>,RoleType}).
 
 
 delete_user_from_sources(Username) ->
@@ -952,4 +949,16 @@ delete_user_from_sources(Username) ->
                                ({{_, _}, _}, Acc) ->
                                     Acc
                             end, [], {<<"security">>, <<"sources">>}).
+
+
+%% Take a list of roles (users & groups) and return any that can't
+%% be found.
+unknown_roles(RoleList) ->
+    unknown_roles(unknown_roles(RoleList, <<"users">>), <<"groups">>).
+
+unknown_roles(RoleList, RoleType) ->
+    riak_core_metadata:fold(fun({Rolename, _}, Acc) ->
+                                    Acc -- [Rolename]
+                            end, RoleList, {<<"security">>,
+                                            RoleType}).
 
