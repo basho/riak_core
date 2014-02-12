@@ -94,7 +94,7 @@ print_users() ->
                                         ({Username, Options}, Acc) ->
                                     [{Username, Options}|Acc]
                             end, [], {<<"security">>, <<"users">>}),
-    riak_core_console_table:print([{username, 10}, {groups, 15}, {password, 40}, {options, 30}],
+    riak_core_console_table:print([{username, 10}, {'member of', 15}, {password, 40}, {options, 30}],
                 [begin
                      Groups = case proplists:get_value("groups", Options) of
                                  undefined ->
@@ -124,7 +124,7 @@ print_groups() ->
                                         ({Groupname, Options}, Acc) ->
                                     [{Groupname, Options}|Acc]
                             end, [], {<<"security">>, <<"groups">>}),
-    riak_core_console_table:print([{group, 10}, {groups, 15}, {options, 30}],
+    riak_core_console_table:print([{group, 10}, {'member of', 15}, {options, 30}],
                 [begin
                      GroupOptions = case proplists:get_value("groups", Options) of
                                  undefined ->
