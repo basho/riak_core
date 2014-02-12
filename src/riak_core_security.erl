@@ -665,9 +665,9 @@ maybe_refresh_context(Context) ->
 %% Contexts are only valid until the GRANT epoch changes, and it will change
 %% whenever a GRANT or a REVOKE is performed. This is a little coarse grained
 %% right now, but it'll do for the moment.
-get_context(Rolename) when is_binary(Rolename) ->
-    Grants = group_grants(accumulate_grants(Rolename)),
-    #context{username=Rolename, grants=Grants, epoch=os:timestamp()}.
+get_context(Username) when is_binary(Username) ->
+    Grants = group_grants(accumulate_grants(Username)),
+    #context{username=Username, grants=Grants, epoch=os:timestamp()}.
 
 accumulate_grants(Role) ->
     {Grants, _Seen} = accumulate_grants([Role], [], []),
@@ -675,20 +675,20 @@ accumulate_grants(Role) ->
 
 accumulate_grants([], Seen, Acc) ->
     {Acc, Seen};
-accumulate_grants([User|Users], Seen, Acc) ->
-    Options = riak_core_metadata:get({<<"security">>, <<"users">>}, User),
+accumulate_grants([Role|Roles], Seen, Acc) ->
+    Options = role_details(Role),
     Groups = [G || G <- lookup("groups", Options, []),
                         not lists:member(G,Seen),
                         group_exists(G)],
-    {NewAcc, NewSeen} = accumulate_grants(Groups, [User|Seen], Acc),
+    {NewAcc, NewSeen} = accumulate_grants(Groups, [Role|Seen], Acc),
 
     Grants = riak_core_metadata:fold(fun({{_R, _Bucket}, [?TOMBSTONE]}, A) ->
                                              A;
                                         ({{R, Bucket}, [Permissions]}, A) ->
                                              [{{R, Bucket}, Permissions}|A]
                                      end, [], {<<"security">>, <<"grants">>},
-                                     [{match, {User, '_'}}]),
-    accumulate_grants(Users, NewSeen, [Grants|NewAcc]).
+                                     [{match, {Role, '_'}}]),
+    accumulate_grants(Roles, NewSeen, [Grants|NewAcc]).
 
 %% lookup a key in a list of key/value tuples. Like proplists:get_value but
 %% faster.
@@ -892,6 +892,19 @@ flatten_once(List) ->
     lists:foldl(fun(A, Acc) ->
                         A ++ Acc
                 end, [], List).
+
+%% When we don't know whether a role name is a group or a user, use this
+role_details(Rolename) ->
+    Details = role_details(Rolename, <<"users">>),
+    case Details of
+        unknown ->
+            role_details(Rolename, <<"groups">>);
+        _ ->
+            Details
+    end.
+
+role_details(Rolename, RoleType) ->
+    riak_core_metadata:get({<<"security">>, RoleType}, Rolename).
 
 user_exists(Username) ->
     role_exists(Username, <<"users">>).
