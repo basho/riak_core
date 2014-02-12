@@ -24,6 +24,7 @@
          stage_force_replace/1, print_staged/1, commit_staged/1,
          clear_staged/1, transfer_limit/1, pending_claim_percentage/2,
          transfers/1, add_user/1, alter_user/1, del_user/1,
+         add_group/1, alter_group/1, del_group/1,
          add_source/1, del_source/1, grant/1, revoke/1,
          print_users/1, print_user/1, print_sources/1,
          security_enable/1, security_disable/1, security_status/1, ciphers/1]).
@@ -825,8 +826,14 @@ check_limit(Str) ->
     end.
 
 add_user([Username|Options]) ->
-    try riak_core_security:add_user(list_to_binary(Username),
-                                     parse_options(Options)) of
+    add_role(Username, Options, add_user).
+
+add_group([Groupname|Options]) ->
+    add_role(Groupname, Options, add_group).
+
+add_role(Name, Options, Rcs_fun) ->
+    try apply(riak_core_security, Rcs_fun, [list_to_binary(Name),
+                                            parse_options(Options)]) of
         ok -> ok;
         Error ->
             io:format("~p~n", [Error]),
@@ -839,8 +846,14 @@ add_user([Username|Options]) ->
     end.
 
 alter_user([Username|Options]) ->
-    try riak_core_security:alter_user(list_to_binary(Username),
-                                       parse_options(Options)) of
+    alter_role(Username, Options, alter_user).
+
+alter_group([Groupname|Options]) ->
+    alter_role(Groupname, Options, alter_group).
+
+alter_role(Name, Options, Rcs_fun) ->
+    try apply(riak_core_security, Rcs_fun, [list_to_binary(Name),
+                                            parse_options(Options)]) of
         ok -> ok;
         Error ->
             io:format("~p~n", [Error]),
@@ -853,7 +866,13 @@ alter_user([Username|Options]) ->
     end.
 
 del_user([Username]) ->
-    case riak_core_security:del_user(list_to_binary(Username)) of
+    del_role(Username, del_user).
+
+del_group([Groupname]) ->
+    del_role(Groupname, del_group).
+
+del_role(Name, Rcs_fun) ->
+    case apply(riak_core_security, Rcs_fun, [list_to_binary(Name)]) of
         ok -> ok;
         Error ->
             io:format("~p~n", [Error]),
