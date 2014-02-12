@@ -24,6 +24,7 @@
 
 %% API
 -export([authenticate/3, add_user/2, alter_user/2, del_user/1,
+         add_group/2, alter_group/2, del_group/1,
          add_source/4, del_source/2,
          add_grant/3, add_revoke/3, check_permission/2, check_permissions/2,
          get_username/1, is_enabled/0, enable/0, disable/0, status/0,
@@ -117,7 +118,7 @@ print_users() ->
             {Username, [Options]} <- Users]).
 
 print_user(User) ->
-    case role_details(User, user) of
+    case user_details(User) of
         undefined ->
             io:format("No such user ~p~n", [User]),
             {error, {unknown_user, User}};
@@ -224,7 +225,7 @@ get_username(#context{username=Username}) ->
     Username.
 
 authenticate(Username, Password, ConnInfo) ->
-    case role_details(Username, user) of
+    case user_details(Username) of
         undefined ->
             {error, unknown_user};
         UserData ->
@@ -305,8 +306,8 @@ authenticate(Username, Password, ConnInfo) ->
     end.
 
 add_user(Username, Options) ->
-    case role_details(Username, user) of
-        undefined ->
+    case user_exists(Username) of
+        false ->
             case validate_options(Options) of
                 {ok, NewOptions} ->
                     riak_core_metadata:put({<<"security">>, <<"users">>},
@@ -315,12 +316,27 @@ add_user(Username, Options) ->
                 Error ->
                     Error
             end;
-        _ ->
+        true ->
             {error, user_exists}
     end.
 
+add_group(Groupname, Options) ->
+    case group_exists(Groupname) of
+        false ->
+            case validate_groups_option(Options) of
+                {ok, NewOptions} ->
+                    riak_core_metadata:put({<<"security">>, <<"groups">>},
+                                           Groupname, NewOptions),
+                    ok;
+                Error ->
+                    Error
+            end;
+        true ->
+            {error, group_exists}
+    end.
+
 alter_user(Username, Options) ->
-    case role_details(Username, user) of
+    case user_details(Username) of
         undefined ->
             {error, {unknown_user, Username}};
         UserData ->
@@ -337,11 +353,29 @@ alter_user(Username, Options) ->
             end
     end.
 
-del_user(Username) ->
-    case role_details(Username, user) of
+alter_group(Groupname, Options) ->
+    case group_details(Groupname) of
         undefined ->
+            {error, {unknown_group, Groupname}};
+        GroupData ->
+            case validate_groups_option(Options) of
+                {ok, NewOptions} ->
+                    MergedOptions = lists:ukeymerge(1, lists:sort(NewOptions),
+                                                    lists:sort(GroupData)),
+
+                    riak_core_metadata:put({<<"security">>, <<"groups">>},
+                                           Groupname, MergedOptions),
+                    ok;
+                Error ->
+                    Error
+            end
+    end.
+
+del_user(Username) ->
+    case user_exists(Username) of
+        false ->
             {error, {unknown_user, Username}};
-        _UserData ->
+        true ->
             riak_core_metadata:delete({<<"security">>, <<"users">>},
                                    Username),
             %% delete any associated grants, so if a user with the same name
@@ -357,6 +391,29 @@ del_user(Username) ->
                                     {<<"security">> ,<<"grants">>},
                                     [{match, {Username, '_'}}]),
             delete_user_from_sources(Username),
+            ok
+    end.
+
+del_group(Groupname) ->
+    case group_exists(Groupname) of
+        false ->
+            {error, {unknown_group, Groupname}};
+        true ->
+            riak_core_metadata:delete({<<"security">>, <<"groups">>},
+                                   Groupname),
+            %% delete any associated grants, so if a user with the same name
+            %% is added again, they don't pick up these grants
+            riak_core_metadata:fold(fun({Key, _Value}, Acc) ->
+                                            %% apparently destructive
+                                            %% iteration is allowed
+                                            riak_core_metadata:delete({<<"security">>,
+                                                                       <<"grants">>},
+                                                                       Key),
+                                            Acc
+                                    end, undefined,
+                                    {<<"security">> ,<<"grants">>},
+                                    [{match, {Groupname, '_'}}]),
+            delete_group_from_roles(Groupname),
             ok
     end.
 
@@ -949,6 +1006,12 @@ unknown_roles(RoleList, RoleType) ->
                                     Acc -- [Rolename]
                             end, RoleList, {<<"security">>,
                                             RoleType}).
+
+user_details(U) ->
+    role_details(U, user).
+
+group_details(G) ->
+    role_details(G, group).
 
 %% When we don't know whether a role name is a group or a user, use this
 role_details(Rolename) ->
