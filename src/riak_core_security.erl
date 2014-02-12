@@ -126,7 +126,7 @@ print_groups() ->
                             end, [], {<<"security">>, <<"groups">>}),
     riak_core_console_table:print([{group, 10}, {groups, 15}, {options, 30}],
                 [begin
-                     Groups = case proplists:get_value("groups", Options) of
+                     GroupOptions = case proplists:get_value("groups", Options) of
                                  undefined ->
                                      "";
                                  List ->
@@ -135,7 +135,7 @@ print_groups() ->
                                                                  group_exists(R)], 20)
                              end,
                      OtherOptions = lists:keydelete("groups", 1, Options),
-                     [Groupname, Groups,
+                     [Groupname, GroupOptions,
                       lists:flatten(io_lib:format("~p", [OtherOptions]))]
                  end ||
             {Groupname, [Options]} <- Groups]).
