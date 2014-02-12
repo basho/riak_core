@@ -20,7 +20,8 @@
 -module(riak_core_security).
 
 %% printing functions
--export([print_users/0, print_sources/0, print_user/1]).
+-export([print_users/0, print_sources/0, print_user/1,
+         print_groups/0, print_group/1]).
 
 %% API
 -export([authenticate/3, add_user/2, alter_user/2, del_user/1,
@@ -117,6 +118,28 @@ print_users() ->
                  end ||
             {Username, [Options]} <- Users]).
 
+print_groups() ->
+    Groups = riak_core_metadata:fold(fun({_Groupname, [?TOMBSTONE]}, Acc) ->
+                                             Acc;
+                                        ({Groupname, Options}, Acc) ->
+                                    [{Groupname, Options}|Acc]
+                            end, [], {<<"security">>, <<"groups">>}),
+    riak_core_console_table:print([{group, 10}, {groups, 15}, {options, 30}],
+                [begin
+                     Groups = case proplists:get_value("groups", Options) of
+                                 undefined ->
+                                     "";
+                                 List ->
+                                     prettyprint_permissions([binary_to_list(R)
+                                                              || R <- List,
+                                                                 group_exists(R)], 20)
+                             end,
+                     OtherOptions = lists:keydelete("groups", 1, Options),
+                     [Groupname, Groups,
+                      lists:flatten(io_lib:format("~p", [OtherOptions]))]
+                 end ||
+            {Groupname, [Options]} <- Groups]).
+
 print_user(User) ->
     case user_details(User) of
         undefined ->
@@ -125,7 +148,7 @@ print_user(User) ->
         _U ->
             Grants = accumulate_grants(User),
             io:format("~nInherited permissions~n~n"),
-            riak_core_console_table:print([{user, 20}, {type, 10}, {bucket, 10}, {grants, 40}],
+            riak_core_console_table:print([{group, 20}, {type, 10}, {bucket, 10}, {grants, 40}],
                         [begin
                              case Bucket of
                                  any ->
@@ -140,6 +163,49 @@ print_user(User) ->
                              end
                          end ||
                          {{Username, Bucket}, Permissions} <- Grants, Username /= User]),
+            GroupedGrants = group_grants(Grants),
+            io:format("~nApplied permissions~n~n"),
+            riak_core_console_table:print([{type, 10}, {bucket, 10}, {grants, 40}],
+                        [begin
+                             case Bucket of
+                                 any ->
+                                     ["*", "*",
+                                      prettyprint_permissions(Permissions, 40)];
+                                 {T, B} ->
+                                     [T, B,
+                                      prettyprint_permissions(Permissions, 40)];
+                                 T ->
+                                     [T, "*",
+                                      prettyprint_permissions(Permissions, 40)]
+                             end
+                         end ||
+                         {Bucket, Permissions} <- GroupedGrants]),
+            ok
+    end.
+
+print_group(Group) ->
+    case group_details(Group) of
+        undefined ->
+            io:format("No such group ~p~n", [Group]),
+            {error, {unknown_group, Group}};
+        _U ->
+            Grants = accumulate_grants(Group),
+            io:format("~nInherited permissions~n~n"),
+            riak_core_console_table:print([{group, 20}, {type, 10}, {bucket, 10}, {grants, 40}],
+                        [begin
+                             case Bucket of
+                                 any ->
+                                     [Groupname, "*", "*",
+                                      prettyprint_permissions(Permissions, 40)];
+                                 {T, B} ->
+                                     [Groupname, T, B,
+                                      prettyprint_permissions(Permissions, 40)];
+                                 T ->
+                                     [Groupname, T, "*",
+                                      prettyprint_permissions(Permissions, 40)]
+                             end
+                         end ||
+                         {{Groupname, Bucket}, Permissions} <- Grants, Groupname /= Group]),
             GroupedGrants = group_grants(Grants),
             io:format("~nApplied permissions~n~n"),
             riak_core_console_table:print([{type, 10}, {bucket, 10}, {grants, 40}],
@@ -1016,7 +1082,7 @@ group_details(G) ->
 %% When we don't know whether a role name is a group or a user, use this
 role_details(Rolename) ->
     case role_details(Rolename, user) of
-        unknown ->
+        undefined ->
             role_details(Rolename, group);
         Details ->
             Details
