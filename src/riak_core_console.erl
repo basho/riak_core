@@ -27,6 +27,7 @@
          add_group/1, alter_group/1, del_group/1,
          add_source/1, del_source/1, grant/1, revoke/1,
          print_users/1, print_user/1, print_sources/1,
+         print_groups/1, print_group/1,
          security_enable/1, security_disable/1, security_status/1, ciphers/1]).
 
 %% @doc Return for a given ring and node, percentage currently owned and
@@ -1007,6 +1008,12 @@ print_users([]) ->
 
 print_user([User]) ->
     riak_core_security:print_user(list_to_binary(User)).
+
+print_groups([]) ->
+    riak_core_security:print_groups().
+
+print_group([Group]) ->
+    riak_core_security:print_group(list_to_binary(Group)).
 
 print_sources([]) ->
     riak_core_security:print_sources().
