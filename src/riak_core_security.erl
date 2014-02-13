@@ -374,13 +374,18 @@ authenticate(Username, Password, ConnInfo) ->
 add_user(Username, Options) ->
     case user_exists(Username) of
         false ->
-            case validate_options(Options) of
-                {ok, NewOptions} ->
-                    riak_core_metadata:put({<<"security">>, <<"users">>},
-                                           Username, NewOptions),
-                    ok;
-                Error ->
-                    Error
+            case group_exists(Username) of
+                false ->
+                    case validate_options(Options) of
+                        {ok, NewOptions} ->
+                            riak_core_metadata:put({<<"security">>, <<"users">>},
+                                                   Username, NewOptions),
+                            ok;
+                        Error ->
+                            Error
+                    end;
+                true ->
+                    {error, group_exists_with_same_name}
             end;
         true ->
             {error, user_exists}
@@ -389,13 +394,18 @@ add_user(Username, Options) ->
 add_group(Groupname, Options) ->
     case group_exists(Groupname) of
         false ->
-            case validate_groups_option(Options) of
-                {ok, NewOptions} ->
-                    riak_core_metadata:put({<<"security">>, <<"groups">>},
-                                           Groupname, NewOptions),
-                    ok;
-                Error ->
-                    Error
+            case user_exists(Groupname) of
+                false ->
+                    case validate_groups_option(Options) of
+                        {ok, NewOptions} ->
+                            riak_core_metadata:put({<<"security">>, <<"groups">>},
+                                                   Groupname, NewOptions),
+                            ok;
+                        Error ->
+                            Error
+                    end;
+                true ->
+                    {error, user_exists_with_same_name}
             end;
         true ->
             {error, group_exists}
