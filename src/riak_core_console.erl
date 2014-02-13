@@ -827,14 +827,13 @@ check_limit(Str) ->
     end.
 
 add_user([Username|Options]) ->
-    add_role(Username, Options, add_user).
+    add_role(Username, Options, fun riak_core_security:add_user/2).
 
 add_group([Groupname|Options]) ->
-    add_role(Groupname, Options, add_group).
+    add_role(Groupname, Options, fun riak_core_security:add_group/2).
 
-add_role(Name, Options, Rcs_fun) ->
-    try apply(riak_core_security, Rcs_fun, [list_to_binary(Name),
-                                            parse_options(Options)]) of
+add_role(Name, Options, Fun) ->
+    try Fun(list_to_binary(Name), parse_options(Options)) of
         ok -> ok;
         Error ->
             io:format("~p~n", [Error]),
@@ -847,14 +846,13 @@ add_role(Name, Options, Rcs_fun) ->
     end.
 
 alter_user([Username|Options]) ->
-    alter_role(Username, Options, alter_user).
+    alter_role(Username, Options, fun riak_core_security:alter_user/2).
 
 alter_group([Groupname|Options]) ->
-    alter_role(Groupname, Options, alter_group).
+    alter_role(Groupname, Options, fun riak_core_security:alter_group/2).
 
-alter_role(Name, Options, Rcs_fun) ->
-    try apply(riak_core_security, Rcs_fun, [list_to_binary(Name),
-                                            parse_options(Options)]) of
+alter_role(Name, Options, Fun) ->
+    try Fun(list_to_binary(Name), parse_options(Options)) of
         ok -> ok;
         Error ->
             io:format("~p~n", [Error]),
@@ -867,13 +865,13 @@ alter_role(Name, Options, Rcs_fun) ->
     end.
 
 del_user([Username]) ->
-    del_role(Username, del_user).
+    del_role(Username, fun riak_core_security:del_user/1).
 
 del_group([Groupname]) ->
-    del_role(Groupname, del_group).
+    del_role(Groupname, fun riak_core_security:del_group/1).
 
-del_role(Name, Rcs_fun) ->
-    case apply(riak_core_security, Rcs_fun, [list_to_binary(Name)]) of
+del_role(Name, Fun) ->
+    case Fun(list_to_binary(Name)) of
         ok -> ok;
         Error ->
             io:format("~p~n", [Error]),
