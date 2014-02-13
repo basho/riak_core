@@ -802,12 +802,7 @@ prop_bgmgr() ->
             aggregate(command_names(Cmds),
                       ?TRAPEXIT(
                          begin
-                             stop_pid(whereis(riak_core_table_manager)),
                              stop_pid(whereis(riak_core_bg_manager)),
-                             {ok, _TableMgr} = riak_core_table_manager:start_link([{?BG_INFO_ETS_TABLE,
-                                                                                    ?BG_INFO_ETS_OPTS},
-                                                                                  {?BG_ENTRY_ETS_TABLE,
-                                                                                   ?BG_ENTRY_ETS_OPTS}]),
                              {ok, _BgMgr} = riak_core_bg_manager:start(),
                              {H, S, Res} = run_commands(?MODULE,Cmds),
                              InfoTable = ets:tab2list(?BG_INFO_ETS_TABLE),
@@ -816,7 +811,6 @@ prop_bgmgr() ->
                              RunnngPids = running_procs(S),
                              %% cleanup processes not killed during test
                              [stop_pid(Pid) || Pid <- RunnngPids],
-                             stop_pid(whereis(riak_core_table_manager)),
                              stop_pid(whereis(riak_core_bg_manager)),
                              ?WHENFAIL(
                                 begin
@@ -853,18 +847,12 @@ prop_bgmgr_parallel() ->
             aggregate(command_names(Cmds),
                       ?TRAPEXIT(
                          begin
-                             stop_pid(whereis(riak_core_table_manager)),
                              stop_pid(whereis(riak_core_bg_manager)),
-                             {ok, TableMgr} = riak_core_table_manager:start_link([{?BG_INFO_ETS_TABLE,
-                                                                                   ?BG_INFO_ETS_OPTS},
-                                                                                  {?BG_ENTRY_ETS_TABLE,
-                                                                                   ?BG_ENTRY_ETS_OPTS}]),
                              {ok, BgMgr} = riak_core_bg_manager:start(),
                              {Seq, Par, Res} = run_parallel_commands(?MODULE,Cmds),
                              InfoTable = ets:tab2list(?BG_INFO_ETS_TABLE),
                              EntryTable = ets:tab2list(?BG_ENTRY_ETS_TABLE),
                              Monitors = bg_manager_monitors(),
-                             stop_pid(TableMgr),
                              stop_pid(BgMgr),
                              ?WHENFAIL(
                                 begin

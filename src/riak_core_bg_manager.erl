@@ -138,10 +138,12 @@
 %% @doc Starts the server
 -spec start_link() -> {ok, pid()} | ignore | {error, term}.
 start_link() ->
+    _ = maybe_create_ets(),
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 %% Test entry point to start stand-alone server
 start() ->
+    _ = maybe_create_ets(),
     gen_server:start({local, ?SERVER}, ?MODULE, [], []).
 
 %% @doc Global kill switch - causes all locks/tokens to be given out freely without limits.
@@ -419,15 +421,15 @@ query_resource(Resource, Types) ->
                   {stop, term()}.
 init([]) ->
     lager:debug("Background Manager starting up."),
-    %% Claiming a table will result in a handle_info('ETS-TRANSFER', ...) message.
-    %% We have two to claim...
-    ok = riak_core_table_manager:claim_table(?BG_INFO_ETS_TABLE),
-    ok = riak_core_table_manager:claim_table(?BG_ENTRY_ETS_TABLE),
-    State = #state{info_table=undefined, %% resolved in the ETS-TRANSFER handler
-                   entry_table=undefined, %% resolved in the ETS-TRANSFER handler
+    State = #state{info_table=?BG_INFO_ETS_TABLE,
+                   entry_table=?BG_ENTRY_ETS_TABLE,
                    enabled=true,
                    bypassed=false},
-    {ok, State}.
+    State2 = validate_holds(State),
+    State3 = restore_enabled(true, State2),
+    State4 = restore_bypassed(false, State3),
+    reschedule_token_refills(State4),
+    {ok, State4}.
 
 %% @private
 %% @doc Handling call messages
@@ -499,24 +501,6 @@ handle_cast({bypass, _Other}, State) ->
 -spec handle_info(term(), #state{}) -> {noreply, #state{}} |
                                        {noreply, #state{}, non_neg_integer()} |
                                        {stop, term(), #state{}}.
-%% Handle transfer of ETS table from table manager
-handle_info({'ETS-TRANSFER', TableId, Pid, TableName}, State) ->
-    lager:debug("table_mgr (~p) -> bg_mgr (~p) receiving ownership of TableId: ~p", [Pid, self(), TableId]),
-    State2 = case TableName of
-                 ?BG_INFO_ETS_TABLE -> State#state{info_table=TableId};
-                 ?BG_ENTRY_ETS_TABLE -> State#state{entry_table=TableId}
-             end,
-    case {State2#state.info_table, State2#state.entry_table} of
-        {undefined, _E} -> {noreply, State2};
-        {_I, undefined} -> {noreply, State2};
-        {_I, _E} ->
-            %% Got both tables, we can proceed with reviving ourself
-            State3 = validate_holds(State2),
-            State4 = restore_enabled(true, State3),
-            State5 = restore_bypassed(false, State4),
-            reschedule_token_refills(State5),
-            {noreply, State5}
-    end;
 handle_info({'DOWN', Ref, _, _, _}, State) ->
     State2 = release_resource(Ref, State),
     {noreply, State2};
@@ -943,3 +927,19 @@ use_bg_mgr() ->
 -spec use_bg_mgr(atom(), atom()) -> boolean().
 use_bg_mgr(Dependency, Key) ->
     use_bg_mgr() andalso app_helper:get_env(Dependency, Key, true).
+
+maybe_create_ets() ->
+    TableSpecs = [
+        {?BG_INFO_ETS_TABLE, ?BG_INFO_ETS_OPTS},
+        {?BG_ENTRY_ETS_TABLE, ?BG_ENTRY_ETS_OPTS}
+    ],
+    lists:map(fun maybe_create_ets/1, TableSpecs).
+
+maybe_create_ets({Name, Options}) ->
+    case ets:info(Name) of
+        undefined ->
+            ets:new(Name, Options);
+        _ ->
+            ok
+    end.
+
