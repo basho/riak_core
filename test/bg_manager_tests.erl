@@ -12,7 +12,6 @@
 bg_mgr_test_() ->
     {timeout, 60000,  %% Seconds to finish all of the tests
      {setup, fun() ->
-                     start_table_mgr(),  %% unlinks from our test as well.
                      start_bg_mgr()      %% uses non-linking start.
              end, 
       fun(_) -> ok end,                           %% cleanup
@@ -160,17 +159,5 @@ crash_and_restart_token_manager() ->
     timer:sleep(100),
     start_bg_mgr(),
     timer:sleep(100).
-
-start_table_mgr() ->
-    {ok,Pid} = riak_core_table_manager:start_link([{?BG_INFO_ETS_TABLE, ?BG_INFO_ETS_OPTS},
-                                                   {?BG_ENTRY_ETS_TABLE, ?BG_ENTRY_ETS_OPTS}
-                                                  ]),
-    unlink(Pid),
-    timer:sleep(100).
-
-kill_table_mgr() ->
-    Pid = erlang:whereis(riak_core_table_manager),
-    ?assertNot(Pid == undefined),
-    erlang:exit(Pid, kill).
 
 -endif.

@@ -38,13 +38,6 @@
 -define(CHILD(I, Type, Timeout), ?CHILD(I, Type, Timeout, [])).
 -define(CHILD(I, Type), ?CHILD(I, Type, 5000)).
 
-%% ETS tables to be created and maintained by riak_core_table_manager, which is not linked
-%% to any processes except this supervisor. Please keep it that way so tables don't get lost
-%% when their user processes crash. Implement ETS-TRANSFER handler for user processes.
--define(TBL_MGR_ARGS, [{?BG_INFO_ETS_TABLE, ?BG_INFO_ETS_OPTS},
-                       {?BG_ENTRY_ETS_TABLE, ?BG_ENTRY_ETS_OPTS}
-                      ]).
-
 %% ===================================================================
 %% API functions
 %% ===================================================================
@@ -66,8 +59,7 @@ init([]) ->
                    permanent, 30000, supervisor, [riak_ensemble_sup]},
 
     Children = lists:flatten(
-                 [?CHILD(riak_core_table_manager, worker, 5000, [?TBL_MGR_ARGS]),
-                  ?CHILD(riak_core_bg_manager, worker),
+                 [?CHILD(riak_core_bg_manager, worker),
                   ?CHILD(riak_core_sysmon_minder, worker),
                   ?CHILD(riak_core_vnode_sup, supervisor, 305000),
                   ?CHILD(riak_core_eventhandler_sup, supervisor),

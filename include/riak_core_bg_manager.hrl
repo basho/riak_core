@@ -38,12 +38,12 @@
 -type bg_stat_live() :: #bg_stat_live{}.
 
 -define(BG_INFO_ETS_TABLE, background_mgr_info_table).  %% name of lock/token manager info ETS table
--define(BG_INFO_ETS_OPTS, [protected,                   %% creation time properties of info ETS table
+-define(BG_INFO_ETS_OPTS, [public,                   %% creation time properties of info ETS table
                            named_table,
                            set]).
 
 -define(BG_ENTRY_ETS_TABLE, background_mgr_entry_table). %% name of lock/token manager entry ETS table
--define(BG_ENTRY_ETS_OPTS, [protected,                   %% creation time properties of entry ETS table
+-define(BG_ENTRY_ETS_OPTS, [public,                   %% creation time properties of entry ETS table
                             named_table,
                             bag]).
 
