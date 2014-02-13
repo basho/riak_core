@@ -8,18 +8,6 @@
 -include_lib("pulse/include/pulse.hrl").
 -include_lib("pulse_otp/include/pulse_otp.hrl").
 -compile({parse_transform, pulse_instrument}).
--compile({pulse_skip, [
-%    {wait_for_exit,1},
-%    {maybe_kill,1}
-%    {claim_test_,0}%,
-%    {prop_claims,0},
-%    {start_claimant,1},
-%    {kill_claimant,2},
-%    {restart_manager,1}
-]}).
-%-compile({pulse_side_effect, [
-%    {riak_core_table_manager, wait_for_table_transfer, '_'}
-%]}).
 -compile(export_all).
 
 -define(tables, [a,b,c,d,e]).

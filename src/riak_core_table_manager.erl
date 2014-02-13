@@ -21,9 +21,9 @@
 %% -------------------------------------------------------------------
 
 %% @doc A gen_server process that creates and serves as heir to a
-%% ETS table; and coordinates with matching user processes. If a user
-%% process exits, this server will inherit the ETS table and hand it
-%% back to the user process when it restarts.
+%% ETS tables. Creates tables passed in and then gives them to the first
+%% process to claim them, setting itself as the heir in case the claiming
+%% process exits.
 %%
 %% For theory of operation, please see the web page:
 %% http://steve.vinoski.net/blog/2011/03/23/dont-lose-your-ets-tables/
@@ -37,12 +37,6 @@
 -include_lib("pulse_otp/include/pulse_otp.hrl").
 -compile(export_all).
 -compile({parse_transform, pulse_instrument}).
-%-compile({pulse_replace_module, [{gen_server, pulse_gen_server}]}).
--compile({pulse_skip, [
-%    {start_link,1},
-%    {claim_table,2},
-%    {wait_for_table_transfer,1}
-]}).
 -endif.
 
 %% API
@@ -55,6 +49,11 @@
          terminate/2, code_change/3]).
 
 -define(SERVER, ?MODULE).
+
+-type ets_option() :: term().
+-type table_name() :: atom().
+-type table_spec() :: {table_name(), [ets_option()]}.
+-type table_data() :: {ets:tid(), table_name()}.
 
 %-record(state, {tables}).
 -record(table_state, {
@@ -69,23 +68,38 @@
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Starts the server
+%% Starts the server possibly creating the given ets tables. In the case
+%% where a table was unclaimed, it is lost. If a table was claimed, control
+%% was given to the claiming process. On start, that process will recieve
+%% a message from the table manager for each table it has claimed that
+%% the table manager should be heir to:
+%%
+%%    {riak_core_table_manager, restarted, TableData}
+%%
+%% The `TableData' should be passed in to the {@link ensure_heired/1}
+%% function.
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec start_link([term()]) -> {ok, Pid::pid()} | ignore | {error, Error::term()}.
+-spec start_link([table_spec()]) -> {ok, Pid::pid()} | ignore | {error, Error::term()}.
 start_link(TableSpecs) ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [TableSpecs], []).
 
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Gives the registration table away to the caller, which should be
-%% the registrar process.
+%% Gives the named table away to the caller. If a second process attempts
+%% to claim the table, that process will be blocked until the first process
+%% dies. The ets table is then given to the second process. This is to
+%% avoid a race condition when a claiming process is restarted by a
+%% supervisor possibly sooner than the ets-transfer message reaches the
+%% table manager.
+%%
+%% A third process attempting to claim is simply denied.
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec claim_table(atom()) -> ok.
+-spec claim_table(atom()) -> {ok, {ets:tid(), atom()}} | {'error', 'already_claimed'}.
 claim_table(TableName) ->
     case gen_server:call(?SERVER, {claim_table, TableName}, infinity) of
         ok ->
@@ -104,11 +118,20 @@ wait_for_table_transfer(Name) ->
 
 %%--------------------------------------------------------------------
 %% @doc
-%% Gives the registration table away to the caller, which should be
-%% the registrar process.
+%% Sets the heir of the given table (referenced in the TableData) is the
+%% table manager. If the table manager is restarted, the table manager
+%% attempts to recreate all the tables passed into {@link start_link/1}.
+%% If any of those tables already exist, the owner process of that table
+%% is sent a message:
+%%
+%%     {riak_core_table_manager, restarted, TableData}
+%%
+%% The `TableData' should be passed into this function by the owner,which
+%% will properly set the heir to the new table_manager process.
 %%
 %% @end
 %%--------------------------------------------------------------------
+-spec ensure_heired(table_data()) -> 'ok' | {'error', 'no_proc'}.
 ensure_heired({TableId, TableName}) ->
     MgrPid = whereis(?MODULE),
     ensure_heired(TableId, TableName, MgrPid).
@@ -274,10 +297,6 @@ create_table(TableName, TableProps) ->
     ets:setopts(TableId, [{heir, self(), undefined}]),
     TableId.
 
-%-spec lookup_table(TableName::atom(), State::term()) -> ets:tid() | undefined.
-%lookup_table(TableName, #state{tables=Tables}) ->
-%    proplists:get_value(TableName, Tables).
-
 maybe_claim_table(TableName, {Pid, _Tag} = TryingToClaim, ClaimedDict) ->
     case dict:find(TableName, ClaimedDict) of
         error ->
@@ -319,12 +338,4 @@ maybe_fallback_claim(TableName, ClaimedDict) ->
 
 alert_to_restart(Owner, TableId, TableName) ->
     Owner ! {?MODULE, restarted, {TableId, TableName}}.
-
-%unclaim_table(TableId, ClaimedDict) ->
-%    case dict:find(TableId, ClaimedDict) of
-%        error ->
-%            ClaimedDict;
-%        {ok, {Tid, _}} ->
-%            dict:store(TableId, {Tid, unclaimed}, ClaimedDict)
-%    end.
 
