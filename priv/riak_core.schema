@@ -7,7 +7,7 @@
 {mapping, "buckets.default.n_val", "riak_core.default_bucket_props.n_val", [
   {datatype, integer},
   {default, 3},
-  {level, advanced}
+  hidden
 ]}.
 
 %% @doc Number of partitions in the cluster (only valid when first
@@ -46,28 +46,29 @@
 %% @doc Default location of ringstate
 {mapping, "ring.state_dir", "riak_core.ring_state_dir", [
   {datatype, directory},
-  {default, "{{ring_state_dir}}"}
+  {default, "#(platform_data_dir)/ring"},
+  hidden
 ]}.
 
 %% @doc Default cert location for https can be overridden
 %% with the ssl config variable, for example:
 {mapping, "ssl.certfile", "riak_core.ssl.certfile", [
   {datatype, file},
-  {commented, "{{platform_etc_dir}}/cert.pem"}
+  {commented, "#(platform_etc_dir)/cert.pem"}
 ]}.
 
 %% @doc Default key location for https can be overridden with the ssl
 %% config variable, for example:
 {mapping, "ssl.keyfile", "riak_core.ssl.keyfile", [
   {datatype, file},
-  {commented, "{{platform_etc_dir}}/key.pem"}
+  {commented, "#(platform_etc_dir)/key.pem"}
 ]}.
 
 %% @doc Default signing authority location for https can be overridden
 %% with the ssl config variable, for example:
 {mapping, "ssl.cacertfile", "riak_core.ssl.cacertfile", [
   {datatype, file},
-  {commented, "{{platform_etc_dir}}/cacertfile.pem"}
+  {commented, "#(platform_etc_dir)/cacertfile.pem"}
 ]}.
 
 %% @doc handoff.port is the TCP port that Riak uses for
@@ -75,7 +76,7 @@
 {mapping, "handoff.port", "riak_core.handoff_port", [
   {default, {{handoff_port}} },
   {datatype, integer},
-  {level, advanced}
+  hidden
 ]}.
 
 %% @doc To encrypt riak_core intra-cluster data handoff traffic,
@@ -85,13 +86,13 @@
 {mapping, "handoff.ssl.certfile", "riak_core.handoff_ssl_options.certfile", [
 %%  {commented, "/tmp/erlserver.pem"},
   {datatype, file},
-  {level, advanced}
+  hidden
 ]}.
 
 %% @doc if you need a seperate keyfile for handoff
 {mapping, "handoff.ssl.keyfile", "riak_core.handoff_ssl_options.keyfile", [
   {datatype, file},
-  {level, advanced}
+  hidden
 ]}.
 
 %% @doc DTrace support Do not enable 'dtrace' unless your Erlang/OTP
@@ -106,35 +107,30 @@
 %% @doc Platform-specific installation paths (substituted by rebar)
 {mapping, "platform_bin_dir", "riak_core.platform_bin_dir", [
   {datatype, directory},
-  {level, basic},
   {default, "{{platform_bin_dir}}"}
 ]}.
 
 %% @see platform_bin_dir
 {mapping, "platform_data_dir", "riak_core.platform_data_dir", [
   {datatype, directory},
-  {level, basic},
   {default, "{{platform_data_dir}}"}
 ]}.
 
 %% @see platform_bin_dir
 {mapping, "platform_etc_dir", "riak_core.platform_etc_dir", [
   {datatype, directory},
-  {level, basic},
   {default, "{{platform_etc_dir}}"}
 ]}.
 
 %% @see platform_bin_dir
 {mapping, "platform_lib_dir", "riak_core.platform_lib_dir", [
   {datatype, directory},
-  {level, basic},
   {default, "{{platform_lib_dir}}"}
 ]}.
 
 %% @see platform_bin_dir
 {mapping, "platform_log_dir", "riak_core.platform_log_dir", [
   {datatype, directory},
-  {level, basic},
   {default, "{{platform_log_dir}}"}
 ]}.
 

@@ -14,7 +14,7 @@ basic_schema_test() ->
     cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.n_val", 3),
     cuttlefish_unit:assert_config(Config, "riak_core.ring_creation_size", 64),
     cuttlefish_unit:assert_config(Config, "riak_core.handoff_concurrency", 2),
-    cuttlefish_unit:assert_config(Config, "riak_core.ring_state_dir", "./ring"),
+    cuttlefish_unit:assert_config(Config, "riak_core.ring_state_dir", "./data/ring"),
     cuttlefish_unit:assert_not_configured(Config, "riak_core.ssl.certfile"),
     cuttlefish_unit:assert_not_configured(Config, "riak_core.ssl.keyfile"),
     cuttlefish_unit:assert_not_configured(Config, "riak_core.ssl.cacertfile"),
@@ -94,7 +94,6 @@ override_schema_test() ->
 context() ->
     [
         {handoff_port, "8099"},
-        {ring_state_dir , "./ring"},
         {platform_bin_dir , "./bin"},
         {platform_data_dir, "./data"},
         {platform_etc_dir , "./etc"},
