@@ -874,12 +874,31 @@ set_pending_resize(Resizing, Orig) ->
     %% all existing indexes must transfer data when the ring is being resized
     Next = [{Idx, Owner, '$resize', [], awaiting} ||
                {Idx, Owner} <- riak_core_ring:all_owners(Orig)],
+
+    %% Whether or not the ring is shrinking or expanding, some
+    %% ownership may be shared between the old and new ring. To prevent
+    %% degenerate cases where partitions whose ownership does not
+    %% change are transferred a bunch of data which they in turn must
+    %% ignore on each subsequent transfer, we move them to the front
+    %% of the next list which is treated as ordered.
+    FutureOwners = riak_core_ring:all_owners(Resizing),
+    SortedNext = lists:sort(fun({Idx, Owner, _, _, _}, _) ->
+                                    %% we only need to check one element because the end result
+                                    %% is the same as if we checked both:
+                                    %%
+                                    %% true, false -> true
+                                    %% true, true -> true
+                                    %% false, false -> false
+                                    %% false, true -> false
+                                    lists:member({Idx, Owner}, FutureOwners)
+                            end, Next),
+
     %% Resizing is assumed to have a modified chring, we need to put back
     %% the original chring to not install the resized one pre-emptively. The
     %% resized ring is stored in ring metadata for later use
     FutureCHash = chash(Resizing),
     ResetRing = set_chash(Resizing, chash(Orig)),
-    set_resized_ring(set_pending_changes(ResetRing, Next), FutureCHash).
+    set_resized_ring(set_pending_changes(ResetRing, SortedNext), FutureCHash).
 
 -spec maybe_abort_resize(chstate()) -> {boolean(), chstate()}.
 maybe_abort_resize(State) ->
