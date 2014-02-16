@@ -75,18 +75,134 @@
   {default, "{{platform_data_dir}}/anti_entropy"}
 ]}.
 
-%% @doc The LevelDB options used by AAE to generate the LevelDB-backed
-%% on-disk hashtrees.
-{mapping, "anti_entropy.write_buffer_size", "riak_core.anti_entropy_leveldb_opts.write_buffer_size", [
-  {default, "4MB"},
-  {datatype, bytesize}
-]}.
 
-{mapping, "anti_entropy.max_open_files", "riak_core.anti_entropy_leveldb_opts.max_open_files", [
-  {default, 20},
-  {datatype, integer}
-]}.
+%% @doc This parameter defines the percentage, 1 to 100, of total
+%% server memory to assign to leveldb.  leveldb will dynamically
+%% adjust it internal cache sizs as Riak activates / inactivates
+%% vnodes on this server to stay within this size.  The memory size
+%% can alternately be assigned as a byte count via total_leveldb_mem instead.
+{mapping, "anti_entropy.total_leveldb_mem_percent", "riak_core.aae_total_leveldb_mem_percent",
+ [{default, "80"},
+  {datatype, integer}]}.
 
+
+%% @doc This parameter defines the number of bytes of
+%% server memory to assign to leveldb.  leveldb will dynamically
+%% adjust it internal cache sizes as Riak activates / inactivates
+%% vnodes on this server to stay within this size.  The memory size
+%% can alternately be assigned as percentage of total server memory
+%% via total_leveldb_mem_percent instead.
+{mapping, "anti_entropy.total_leveldb_mem", "riak_core.aae_total_leveldb_mem",
+ [{datatype, bytesize},
+  {level, advanced}]}.
+
+
+%% @doc The 'sync' parameter defines how new key/value data is placed in the
+%% recovery log. The recovery log is only used if the Riak program crashes or
+%% the server loses power unexpectedly. The parameter's original intent was
+%% to guarantee that each new key / value was written to the physical disk
+%% before leveldb responded with “write good”. The reality in modern servers
+%% is that many layers of data caching exist between the database program and
+%% the physical disks. This flag influences only one of the layers.
+{mapping, "anti_entropy.sync", "riak_core.aae_sync",
+ [{default, false},
+  {datatype, {enum, [true, false]}},
+  {level, advanced}]}.
+
+%% @doc limited_developer_mem is a Riak specific option that is used when
+%% a developer is testing a high number of vnodes and/or several VMs
+%% on a machine with limited physical memory.  Do NOT use this option
+%% if making performance measurements.  This option overwrites values
+%% given to write_buffer_size_min and write_buffer_size_max.
+{mapping, "anti_entropy.limited_developer_mem", "riak_core.aae_limited_developer_mem",
+ [{default, false},
+  {datatype, {enum, [true, false]}},
+  {level, advanced}]}.
+
+
+%% @doc Each vnode first stores new key/value data in a memory based write
+%% buffer. This write buffer is in parallel to the recovery log mentioned
+%% in the “sync” parameter. Riak creates each vnode with a randomly sized
+%% write buffer for performance reasons. The random size is somewhere
+%% between write_buffer_size_min and write_buffer_size_max.
+{mapping, "anti_entropy.write_buffer_size_min", "riak_core.aae_write_buffer_size_min",
+ [{default, "30MB"},
+  {datatype, bytesize},
+  {level, advanced}]}.
+
+{mapping, "anti_entropy.write_buffer_size_max", "riak_core.aae_write_buffer_size_max",
+ [{default, "60MB"},
+  {datatype, bytesize},
+  {level, advanced}]}.
+
+
+%% @doc Each database .sst table file can include an optional "bloom filter"
+%% that is highly effective in shortcutting data queries that are destined
+%% to not find the requested key. The bloom_filter typically increases the
+%% size of an .sst table file by about 2%. This option must be set to true
+%% in the riak.conf to take effect.
+{mapping, "anti_entropy.bloomfilter", "riak_core.aae_use_bloomfilter",
+ [{default, on},
+  {datatype, {enum, [on, off]}}]}.
+
+{translation,
+ "riak_core.aae_use_bloomfilter",
+ fun(Conf) ->
+         case cuttlefish_util:conf_get_value("anti_entropy.bloomfilter", Conf) of
+             on -> true;
+             off -> false;
+             _ -> true
+         end
+ end
+}.
+
+
+%% @doc sst_block_size defines the size threshold for a block / chunk of data
+%% within one .sst table file. Each new block gets an index entry in the .sst
+%% table file's master index.
+{mapping, "anti_entropy.block_size", "riak_core.aae_sst_block_size",
+[{default, "4KB"},
+ {datatype, bytesize},
+ {level, advanced}]}.
+
+
+%% @doc block_restart_interval defines the key count threshold for a new key
+%% entry in the key index for a block.
+%% Most clients should leave this parameter alone.
+{mapping, "anti_entropy.block_restart_interval", "riak_core.aae_block_restart_interval",
+ [{default, 16},
+  {datatype, integer},
+  {level, advanced}]}.
+
+
+%% @doc verify_checksums controls whether or not validation occurs when Riak
+%% requests data from the leveldb database on behalf of the user.
+{mapping, "anti_entropy.verify_checksums", "riak_core.aae_verify_checksums",
+ [{default, true},
+  {datatype, {enum, [true, false]}},
+  {level, advanced}]}.
+
+
+%% @doc verify_compaction controls whether or not validation occurs when
+%% leveldb reads data as part of its background compaction operations.
+{mapping, "anti_entropy.verify_compaction", "riak_core.aae_verify_compaction",
+ [{default, true},
+  {datatype, {enum, [true, false]}},
+  {level, advanced}]}.
+
+%% @doc The number of worker threads performing LevelDB operations.
+{mapping, "anti_entropy.threads", "riak_core.aae_eleveldb_threads",
+ [{default, 71},
+  {datatype, integer},
+  {level, advanced}]}.
+
+%% @doc Option to override LevelDB's use of fadvise(DONTNEED) with
+%% fadvise(WILLNEED) instead.  WILLNEED can reduce disk activity on
+%% systems where physical memory exceeds the database size.
+{mapping, "anti_entropy.fadvise_willneed", "riak_core.aae_fadvise_willneed",
+ [{default, false},
+  {datatype, {enum, [true, false]}},
+  {level, advanced}]}.
 
 %% Default Bucket Properties
 
