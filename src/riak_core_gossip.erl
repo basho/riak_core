@@ -252,7 +252,12 @@ handle_cast({rejoin, RingIn}, State) ->
         true ->
             Legacy = check_legacy_gossip(Ring, State),
             OtherNode = riak_core_ring:owner_node(OtherRing),
-            riak_core:join(Legacy, node(), OtherNode, true, true),
+            case riak_core:join(Legacy, node(), OtherNode, true, true) of
+                ok -> ok;
+                {error, Reason} ->
+                    lager:error("Could not rejoin cluster: ~p", [Reason]),
+                    ok
+            end,
             {noreply, State};
         false ->
             {noreply, State}
