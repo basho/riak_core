@@ -153,7 +153,7 @@ code_change(_OldVsn, State, _Extra) ->
 schedule_next_gossip() ->
     MaxInterval = app_helper:get_env(riak_core, gossip_interval),
     Interval = random:uniform(MaxInterval),
-    timer:apply_after(Interval, gen_server, cast, [?MODULE, gossip_ring]),
+    {ok, _} = timer:apply_after(Interval, gen_server, cast, [?MODULE, gossip_ring]),
     ok.
 
 claim_until_balanced(Ring) ->
