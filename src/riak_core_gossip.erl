@@ -337,34 +337,45 @@ reconcile(Ring0, [OtherRing0]) ->
     end.
 
 log_membership_changes(OldRing, NewRing) ->
-    OldStatus = orddict:from_list(riak_core_ring:all_member_status(OldRing)),
-    NewStatus = orddict:from_list(riak_core_ring:all_member_status(NewRing)),
+    OldStatus = riak_core_ring:all_member_status(OldRing),
+    NewStatus = riak_core_ring:all_member_status(NewRing),
 
-    %% Pad both old and new status to the same length
-    OldDummyStatus = [{Node, undefined} || {Node, _} <- NewStatus],
-    OldStatus2 = orddict:merge(fun(_, Status, _) ->
-                                       Status
-                               end, OldStatus, OldDummyStatus),
+    do_log_membership_changes(lists:sort(OldStatus), lists:sort(NewStatus)).
 
-    NewDummyStatus = [{Node, undefined} || {Node, _} <- OldStatus],
-    NewStatus2 = orddict:merge(fun(_, Status, _) ->
-                                       Status
-                               end, NewStatus, NewDummyStatus),
+do_log_membership_changes([], []) ->
+    ok;
+do_log_membership_changes([{Node, Status}|Old], [{Node, Status}|New]) ->
+    %% No change
+    do_log_membership_changes(Old, New);
+do_log_membership_changes([{Node, Status1}|Old], [{Node, Status2}|New]) ->
+    %% State changed, did not join or leave
+    log_node_changed(Node, Status1, Status2),
+    do_log_membership_changes(Old, New);
+do_log_membership_changes([{OldNode, _OldStatus}|_]=Old, [{NewNode, NewStatus}|New]) when NewNode < OldNode->
+    %% Node added
+    log_node_added(NewNode, NewStatus),
+    do_log_membership_changes(Old, New);
+do_log_membership_changes([{OldNode, OldStatus}|Old], [{NewNode, _NewStatus}|_]=New) when OldNode < NewNode ->
+    %% Node removed
+    log_node_removed(OldNode, OldStatus),
+    do_log_membership_changes(Old, New);
+do_log_membership_changes([{OldNode, OldStatus}|Old], []) ->
+    %% Trailing nodes were removed
+    log_node_removed(OldNode, OldStatus),
+    do_log_membership_changes(Old, []);
+do_log_membership_changes([], [{NewNode, NewStatus}|New]) ->
+    %% Trailing nodes were added
+    log_node_added(NewNode, NewStatus),
+    do_log_membership_changes([], New).
 
-    %% Merge again to determine changed status
-    orddict:merge(fun(_, Same, Same) ->
-                          Same;
-                     (Node, undefined, New) ->
-                          lager:info("'~s' joined cluster with status '~s'~n",
-                                     [Node, New]);
-                     (Node, Old, undefined) ->
-                          lager:info("'~s' removed from cluster (previously: "
-                                     "'~s')~n", [Node, Old]);
-                     (Node, Old, New) ->
-                          lager:info("'~s' changed from '~s' to '~s'~n",
-                                     [Node, Old, New])
-                  end, OldStatus2, NewStatus2),
-    ok.
+log_node_changed(Node, Old, New) ->
+    lager:info("'~s' changed from '~s' to '~s'~n", [Node, Old, New]).
+
+log_node_added(Node, New) ->
+    lager:info("'~s' joined cluster with status '~s'~n", [Node, New]).
+
+log_node_removed(Node, Old) ->
+    lager:info("'~s' removed from cluster (previously: '~s')~n", [Node, Old]).
 
 remove_from_cluster(Ring, ExitingNode) ->
     remove_from_cluster(Ring, ExitingNode, erlang:now()).
