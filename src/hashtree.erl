@@ -178,7 +178,7 @@
                 ref            :: term(),
                 path           :: string(),
                 itr            :: term(),
-                write_buffer   :: [{binary(), binary()}],
+                write_buffer   :: [{put, binary(), binary()} | {delete, binary()}],
                 write_buffer_count :: integer(),
                 dirty_segments :: array()
                }).
