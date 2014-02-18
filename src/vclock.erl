@@ -54,11 +54,8 @@
 
 -export_type([vclock/0, timestamp/0, vclock_node/0, dot/0]).
 
--opaque vclock() :: [vc_entry()].
--opaque dot() :: vc_entry().
-
-% The timestamp is present but not used, in case a client wishes to inspect it.
--type vc_entry() :: {vclock_node(), {counter(), timestamp()}}.
+-type vclock() :: [dot()].
+-opaque dot() :: {vclock_node(), {counter(), timestamp()}}.
 
 % Nodes can have any term() as a name, but they must differ from each other.
 -type   vclock_node() :: term().
@@ -75,7 +72,7 @@ fresh(Node, Count) ->
     [{Node, {Count, timestamp()}}].
 
 % @doc Return true if Va is a direct descendant of Vb, else false -- remember, a vclock is its own descendant!
--spec descends(Va :: vclock()|[], Vb :: vclock()|[]) -> boolean().
+-spec descends(Va :: vclock(), Vb :: vclock()) -> boolean().
 descends(_, []) ->
     % all vclocks descend from the empty vclock
     true;
@@ -123,7 +120,7 @@ dominates(A, B) ->
 
 % @doc Combine all VClocks in the input list into their least possible
 %      common descendant.
--spec merge(VClocks :: [vclock()]) -> vclock() | [].
+-spec merge(VClocks :: [vclock()]) -> vclock().
 merge([])             -> [];
 merge([SingleVclock]) -> SingleVclock;
 merge([First|Rest])   -> merge(Rest, lists:keysort(1, First)).
