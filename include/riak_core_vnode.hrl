@@ -1,5 +1,5 @@
 -type sender_type() :: fsm | server | raw.
--type sender() :: {sender_type(), reference(), pid()} |
+-type sender() :: {sender_type(), reference() | tuple(), pid()} |
                   %% TODO: Double-check that these special cases are kosher
                   {server, undefined, undefined} | % special case in
                                                    % riak_core_vnode_master.erl
@@ -8,6 +8,7 @@
                   ignore.
 -type partition() :: non_neg_integer().
 -type vnode_req() :: term().
+-type keyspaces() :: [{partition(), [partition()]}].
 
 -record(riak_vnode_req_v1, {
           index :: partition(),
@@ -16,7 +17,7 @@
 
 -record(riak_coverage_req_v1, {
           index :: partition(),
-          keyspaces :: [{partition(), [partition()]}],
+          keyspaces :: keyspaces(),
           sender=ignore :: sender(),
           request :: vnode_req()}).
 
