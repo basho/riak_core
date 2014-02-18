@@ -69,7 +69,7 @@ epoch_to_datetime(S) ->
 %% @doc Formats a byte size into a human-readable size with units.
 %%      Thanks StackOverflow:
 %%      http://stackoverflow.com/questions/2163691/simpler-way-to-format-bytesize-in-a-human-readable-way
--spec human_size(non_neg_integer(), list()) -> iolist().
+-spec human_size(number(), list()) -> {float(), iolist()}.
 human_size(S, [_|[_|_] = L]) when S >= 1024 -> human_size(S/1024, L);
 human_size(S, [M|_]) ->
     {float(S), M}.
