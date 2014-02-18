@@ -374,7 +374,7 @@ handle_call(refresh_my_ring, _From, State) ->
     FreshRing = riak_core_ring:fresh(),
     State2 = set_ring(FreshRing, State),
     %% Make sure the fresh ring gets written before stopping
-    do_write_ringfile(FreshRing),
+    ok = do_write_ringfile(FreshRing),
 
     %% Handoff is complete and fresh ring is written
     %% so we can safely stop now.
@@ -427,7 +427,7 @@ handle_cast(write_ringfile, test) ->
     {noreply,test};
 
 handle_cast(write_ringfile, State=#state{raw_ring=Ring}) ->
-    do_write_ringfile(Ring),
+    ok = do_write_ringfile(Ring),
     {noreply,State}.
 
 
@@ -526,7 +526,7 @@ setup_ets(Mode) ->
                  live -> protected;
                  test -> public
              end,
-    ets:new(?ETS, [named_table, Access, {read_concurrency, true}]),
+    ?ETS = ets:new(?ETS, [named_table, Access, {read_concurrency, true}]),
     Id = reset_ring_id(),
     ets:insert(?ETS, [{changes, 0}, {promoted, 0}, {id, Id}]),
     ok.
@@ -625,8 +625,8 @@ prune_write_notify_ring(Ring, State) ->
 
 prune_write_ring(Ring, State) ->
     riak_core_ring:check_tainted(Ring, "Error: Persisting tainted ring"),
-    riak_core_ring_manager:prune_ringfiles(),
-    do_write_ringfile(Ring),
+    ok = riak_core_ring_manager:prune_ringfiles(),
+    ok = do_write_ringfile(Ring),
     State2 = set_ring(Ring, State),
     State2.
 
