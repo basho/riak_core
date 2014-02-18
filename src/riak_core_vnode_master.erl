@@ -210,19 +210,12 @@ do_proxy_cast({VMaster, Node}, Req=?COVERAGE_REQ{index=Idx}, How) ->
     Mod = vmaster_to_vmod(VMaster),
     Proxy = riak_core_vnode_proxy:reg_name(Mod, Idx, Node),
     send_an_event(Proxy, Req, How),
-    ok;
-do_proxy_cast({VMaster, Node}, Other, How) ->
-    send_a_cast({VMaster, Node}, Other, How).
+    ok.
 
 send_an_event(Dest, Event, normal) ->
     gen_fsm:send_event(Dest, Event);
 send_an_event(Dest, Event, unreliable) ->
     riak_core_send_msg:send_event_unreliable(Dest, Event).
-
-send_a_cast(Dest, Msg, normal) ->
-    gen_server:cast(Dest, Msg);
-send_a_cast(Dest, Msg, unreliable) ->
-    riak_core_send_msg:cast_unreliable(Dest, Msg).
 
 handle_cast({wait_for_service, Service}, State) ->
     case Service of
