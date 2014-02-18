@@ -63,7 +63,7 @@
 
 -callback sock_opts() -> [gen_tcp:listen_option()].
 
--callback new_connection(gen_tcp:socket(), State::term()) ->    
+-callback new_connection(inet:socket(), State::term()) ->
     {ok, NewState::term()} | 
     {stop, Reason::term(), NewState::term()}.
 
