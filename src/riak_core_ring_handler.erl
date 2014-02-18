@@ -65,14 +65,11 @@ ensure_vnodes_started(Ring) ->
         AppMods ->
             case ensure_vnodes_started(AppMods, Ring, []) of
                 [] ->
-                    Legacy = riak_core_gossip:legacy_gossip(),
                     Ready = riak_core_ring:ring_ready(Ring),
                     FutureIndices = riak_core_ring:future_indices(Ring, node()),
                     Status = riak_core_ring:member_status(Ring, node()),
-                    case {Legacy, Ready, FutureIndices, Status} of
-                        {true, _, _, _} ->
-                            riak_core_ring_manager:refresh_my_ring();
-                        {_, true, [], leaving} ->
+                    case {Ready, FutureIndices, Status} of
+                        {true, [], leaving} ->
                             riak_core_ring_manager:ring_trans(
                               fun(Ring2, _) -> 
                                       Ring3 = riak_core_ring:exit_member(node(), Ring2, node()),
@@ -85,12 +82,12 @@ ensure_vnodes_started(Ring) ->
                                 _ ->
                                     ok
                             end;
-                        {_, _, _, invalid} ->
+                        {_, _, invalid} ->
                             riak_core_ring_manager:refresh_my_ring();
-                        {_, _, _, exiting} ->
+                        {_, _, exiting} ->
                             %% Deliberately do nothing.
                             ok;
-                        {_, _, _, _} ->
+                        {_, _, _} ->
                             ok
                     end;
                 _ -> ok
