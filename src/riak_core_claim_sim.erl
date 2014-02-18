@@ -163,7 +163,7 @@ read_ringfile(RingFile) ->
     end.
 
 setup_environment(Vars) ->
-    [application:set_env(riak_core, Key, Val) || {Key, Val} <- Vars],
+    _ = [application:set_env(riak_core, Key, Val) || {Key, Val} <- Vars],
     ok.
 
 %% Perform the dry run, if printing is disabled, return the ring
@@ -237,7 +237,7 @@ make_rebalance(IoDev, TN) ->
             o(IoDev, "Pending: ~p~n", [length(Next)]),
             BadPL = riak_core_ring_util:check_ring(Ring2, TN),
             o(IoDev, "Preflists violating targetN=~p: ~p~n", [TN, length(BadPL)]),
-            [o(IoDev, "~b transfers from ~p to ~p~n", [Count, PrevOwner, NewOwner])
+            _ = [o(IoDev, "~b transfers from ~p to ~p~n", [Count, PrevOwner, NewOwner])
              || {{PrevOwner, NewOwner}, Count} <- dict:to_list(Tally)],
             ok
     end.
@@ -368,15 +368,15 @@ o(IoDev, Fmt, Args) ->
 
 %% Run each commission test against each commission claim
 commission() ->
-    commission("."),
-    ok.
+    commission(".").
 
 commission(Base) ->
     Claims = commission_claims(),
-    [begin
+    _ = [begin
          io:format("~p\n", [Test]),
          commission(Base, Test, Claims)
-     end || Test <- commission_tests_first()].
+     end || Test <- commission_tests_first()],
+    ok.
 
 commission(Base, Test) ->
     commission(Base, Test, commission_claims()).

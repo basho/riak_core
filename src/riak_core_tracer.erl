@@ -132,7 +132,7 @@ handle_call({collect, Duration, Nodes}, _From, State) ->
                                  end,
                                  Pid
                          end, self()}),
-    [{ok, N} = dbg:n(N) || N <- Nodes],
+    _ = [{ok, N} = dbg:n(N) || N <- Nodes],
     dbg:p(all, [call]),
     {ok, _} = dbg:tpl(?MODULE, trigger_sentinel, []),
     add_tracers(State#state.mfs),

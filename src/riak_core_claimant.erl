@@ -764,7 +764,7 @@ bootstrap_members(Ring) ->
     RootMembers = riak_ensemble_manager:get_members(root),
     Known = riak_ensemble_manager:rget(members, []),
     Need = Members -- Known,
-    [riak_ensemble_manager:join(node(), Member) || Member <- Need],
+    _ = [riak_ensemble_manager:join(node(), Member) || Member <- Need],
 
     RootNodes = [Node || {_, Node} <- RootMembers],
     RootAdd = Members -- RootNodes,
@@ -1018,10 +1018,9 @@ inform_removed_nodes(Node, OldRing, NewRing) ->
     Invalid = riak_core_ring:members(NewRing, [invalid]),
     Changed = ordsets:intersection(ordsets:from_list(Exiting),
                                    ordsets:from_list(Invalid)),
-    lists:map(fun(ExitingNode) ->
-                      %% Tell exiting node to shutdown.
-                      riak_core_ring_manager:refresh_ring(ExitingNode, CName)
-              end, Changed),
+    %% Tell exiting node to shutdown.
+    _ = [riak_core_ring_manager:refresh_ring(ExitingNode, CName) || 
+            ExitingNode <- Changed],
     ok.
 
 do_claimant_quiet(Node, CState, Replacing, Seed) ->
@@ -1194,7 +1193,7 @@ update_ring(CNode, CState, Replacing, Seed, Log, false) ->
             OldS = ordsets:from_list([{Idx,O,NO} || {Idx,O,NO,_,_} <- Next0]),
             NewS = ordsets:from_list([{Idx,O,NO} || {Idx,O,NO,_,_} <- Next4]),
             Diff = ordsets:subtract(NewS, OldS),
-            [Log(next, NChange) || NChange <- Diff],
+            _ = [Log(next, NChange) || NChange <- Diff],
             ?ROUT("Updating ring :: next3 : ~p~n", [Next4]),
             CState5 = riak_core_ring:set_pending_changes(CState4, Next4),
             CState6 = riak_core_ring:increment_ring_version(CNode, CState5),
@@ -1355,7 +1354,7 @@ remove_node(CState, Node, Status, Replacing, Seed, Log, Indices) ->
                PrevOwner /= NewOwner,
                not lists:member(Idx, RemovedIndices)],
 
-    [Log(reassign, {Idx, NewOwner, CState}) || {Idx, NewOwner} <- Reassign],
+    _ = [Log(reassign, {Idx, NewOwner, CState}) || {Idx, NewOwner} <- Reassign],
 
     %% Unlike rebalance_ring, remove_node can be called when Next is non-empty,
     %% therefore we need to merge the values. Original Next has priority.

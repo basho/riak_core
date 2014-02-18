@@ -114,7 +114,7 @@ recursive_gossip(Ring, Node) ->
     Nodes = riak_core_ring:active_members(Ring),
     Tree = riak_core_util:build_tree(2, Nodes, [cycles]),
     Children = orddict:fetch(Node, Tree),
-    [send_ring(node(), OtherNode) || OtherNode <- Children],
+    _ = [send_ring(node(), OtherNode) || OtherNode <- Children],
     ok.
 recursive_gossip(Ring) ->
     %% A non-active member will not show-up in the tree decomposition

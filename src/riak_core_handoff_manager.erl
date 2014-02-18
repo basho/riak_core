@@ -208,7 +208,7 @@ handle_call({set_concurrency,Limit},_From,State=#state{handoffs=HS}) ->
             %% a reason of 'max_concurrency' and we want to be able to do
             %% something with that if necessary.
             {_Keep,Discard}=lists:split(Limit,HS),
-            [erlang:exit(Pid,max_concurrency) ||
+            _ = [erlang:exit(Pid,max_concurrency) ||
                 #handoff_status{transport_pid=Pid} <- Discard],
             {reply, ok, State};
         false ->

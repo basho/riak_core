@@ -178,7 +178,7 @@ maybe_start_vnode_proxies(Ring) ->
     case Larger of
         true ->
             FutureIdxs = riak_core_ring:all_owners(riak_core_ring:future_ring(Ring)),
-            [riak_core_vnode_proxy_sup:start_proxy(Mod, Idx) || {Idx, _} <- FutureIdxs,
+            _ = [riak_core_vnode_proxy_sup:start_proxy(Mod, Idx) || {Idx, _} <- FutureIdxs,
                                                                 Mod <- Mods],
             ok;
         false ->
@@ -193,7 +193,8 @@ maybe_stop_vnode_proxies(Ring) ->
             ProxySpecs = supervisor:which_children(riak_core_vnode_proxy_sup),
             Running = [{I,M} || {{M,I},_,_,_} <- ProxySpecs, lists:member(M, Mods)],
             ToShutdown = Running -- Idxs,
-            [riak_core_vnode_proxy_sup:stop_proxy(M,I) || {I, M} <- ToShutdown];
+            _ = [riak_core_vnode_proxy_sup:stop_proxy(M,I) || {I, M} <- ToShutdown],
+            ok;
         _ ->
             ok
     end.

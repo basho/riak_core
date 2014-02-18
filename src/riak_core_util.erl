@@ -282,7 +282,7 @@ node_hostname() ->
 %% @doc Start depedent applications of App.
 start_app_deps(App) ->
     {ok, DepApps} = application:get_key(App, applications),
-    [ensure_started(A) || A <- DepApps],
+    _ = [ensure_started(A) || A <- DepApps],
     ok.
     
 

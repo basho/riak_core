@@ -304,7 +304,7 @@ prune_ringfiles() ->
                                                           lists:all(fun(TS) ->
                                                                             string:str(FN,TS)=:=0
                                                                     end, KeepTSs)],
-                            [file:delete(DelFN) || DelFN <- DelFNs],
+                            _ = [file:delete(DelFN) || DelFN <- DelFNs],
                             ok;
                        true ->
                             %% directory wasn't empty, but there are no ring

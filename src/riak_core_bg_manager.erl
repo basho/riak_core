@@ -541,7 +541,7 @@ status_of(_E,_S) -> disabled.
 %%      Walk through the given resources and release any holds by dead processes.
 %%      Assumes TableId is always valid (called only after transfer)
 validate_holds(State=#state{entry_table=TableId}) ->
-    [validate_hold(Obj, TableId) || Obj <- ets:match_object(TableId, {{given, '_'},'_'})],
+    _ = [validate_hold(Obj, TableId) || Obj <- ets:match_object(TableId, {{given, '_'},'_'})],
     State.
 
 %% @private
@@ -706,7 +706,7 @@ release_resource(Ref, State=#state{entry_table=TableId}) ->
     %% There should only be one instance of the object, but we'll zap all that match.
     Given = [Obj || Obj <- ets:match_object(TableId, {{given, '_'},'_'})],
     Matches = [Obj || {_Key,Entry}=Obj <- Given, ?e_ref(Entry) == Ref],
-    [ets:delete_object(TableId, Obj) || Obj <- Matches],
+    _ = [ets:delete_object(TableId, Obj) || Obj <- Matches],
     State.
 
 maybe_honor_limit(true, Lock, Limit, #state{entry_table=TableId}) ->
@@ -716,7 +716,7 @@ maybe_honor_limit(true, Lock, Limit, #state{entry_table=TableId}) ->
         true ->
             {_Keep, Discards} = lists:split(Limit, Held),
             %% killing of processes will generate 'DOWN' messages and release the locks
-            [erlang:exit(?e_pid(Discard), max_concurrency) || Discard <- Discards],
+            _ = [erlang:exit(?e_pid(Discard), max_concurrency) || Discard <- Discards],
             ok;
         false ->
             ok
@@ -780,7 +780,8 @@ resource_info_tuple(Resource, State) ->
 %% after a crash. Assumes table is available. Called only after Transfer.
 reschedule_token_refills(State) ->
     Tokens = all_registered_resources(token, State),
-    [schedule_refill_tokens(Token, State) || Token <- Tokens].
+    _ = [schedule_refill_tokens(Token, State) || Token <- Tokens],
+    ok.
  
 %% Schedule a timer event to refill tokens of given type
 schedule_refill_tokens(_Token, State) when ?NOT_TRANSFERED(State) ->
