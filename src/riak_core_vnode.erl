@@ -119,7 +119,7 @@ behaviour_info(_Other) ->
           pool_config :: tuple() | undefined,
           manager_event_timer :: reference(),
           inactivity_timeout :: non_neg_integer() 
-               }).
+         }).
 
 start_link(Mod, Index, Forward) ->
     start_link(Mod, Index, 0, Forward).
@@ -285,7 +285,8 @@ forward_or_vnode_command(Sender, Request, State=#state{forward=Forward,
         {_, undefined, _} -> vnode_command(Sender, Request, State);
         %% implicit forwarding after ownership_transfer/hinted_handoff
         {_, F, _} when not is_list(F) ->
-            vnode_forward(implicit, {Index, Forward}, Sender, Request, State);
+            vnode_forward(implicit, {Index, Forward}, Sender, Request, State),
+            continue(State);
         %% during resize we can't forward a request w/o request hash, always handle locally
         {_, _, undefined} -> vnode_command(Sender, Request, State);
         %% possible forwarding during ring resizing
@@ -402,8 +403,7 @@ vnode_forward(Type, ForwardTo, Sender, Request, State) ->
     lager:debug("Forwarding (~p) {~p,~p} -> ~p~n",
                 [Type, State#state.index, node(), ForwardTo]),
     riak_core_vnode_master:command_unreliable(ForwardTo, Request, Sender,
-                                              riak_core_vnode_master:reg_name(State#state.mod)),
-    continue(State).
+                                              riak_core_vnode_master:reg_name(State#state.mod)).
 
 %% @doc during ring resizing if we have completed a transfer to the index that will
 %% handle request in future ring we forward to it. Otherwise we delegate
