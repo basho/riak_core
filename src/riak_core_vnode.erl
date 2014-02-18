@@ -375,6 +375,11 @@ vnode_handoff_command(Sender, Request, ForwardTo,
             riak_core_vnode_worker_pool:handle_work(Pool, Work, From),
             continue(State, NewModState);
         {forward, NewModState} ->
+            %% FIXME: vnode_forward returns a gen_fsm state return
+            %% value by calling continue/1 internally. Questions:
+            %% 1) Why are we not passing the NewModState to vnode_forward?
+            %% 2) If vnode_forward produces the gen_fsm state return
+            %%    type, why not use it?
             case HOType of
                 %% resize op and transfer ongoing
                 resize_transfer -> vnode_forward(resize, ForwardTo, Sender,
@@ -383,7 +388,7 @@ vnode_handoff_command(Sender, Request, ForwardTo,
                 %% via forward_or_vnode_command
                 undefined -> vnode_forward(resize, ForwardTo, Sender,
                                            {resize_forward, Request}, State);
-                %% normal explicit forwarding during owhership transfer
+                %% normal explicit forwarding during ownership transfer
                 _ -> vnode_forward(explicit, HOTarget, Sender, Request, State)
             end,
             continue(State, NewModState);
