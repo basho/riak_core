@@ -626,7 +626,7 @@ prune_write_notify_ring(Ring, State) ->
 prune_write_ring(Ring, State) ->
     riak_core_ring:check_tainted(Ring, "Error: Persisting tainted ring"),
     ok = riak_core_ring_manager:prune_ringfiles(),
-    ok = do_write_ringfile(Ring),
+    _ = do_write_ringfile(Ring),
     State2 = set_ring(Ring, State),
     State2.
 
