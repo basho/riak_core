@@ -86,7 +86,7 @@ all_events({trace, Pid, call, {M,F,A}}) ->
     [{node(Pid), {M,F,A}}].
 
 test_all_events(Ms) ->
-    riak_core_tracer:start_link(),
+    {ok, _Pid} = riak_core_tracer:start_link(),
     riak_core_tracer:reset(),
     riak_core_tracer:filter(Ms, fun all_events/1),
     riak_core_tracer:collect(5000).
