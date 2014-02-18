@@ -163,7 +163,7 @@ make_request(Request, Sender, Index) ->
               request=Request}.
 
 %% Make a request record - exported for use by legacy modules
--spec make_coverage_request(vnode_req(), [{partition(), [partition()]}], sender(), partition()) -> #riak_coverage_req_v1{}.
+-spec make_coverage_request(vnode_req(), keyspaces(), sender(), partition()) -> #riak_coverage_req_v1{}.
 make_coverage_request(Request, KeySpaces, Sender, Index) ->
     #riak_coverage_req_v1{index=Index,
                           keyspaces=KeySpaces,
