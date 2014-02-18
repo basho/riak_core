@@ -204,16 +204,8 @@ check_permission({Permission, Bucket}, Context0) ->
                                                  Bucket]), Context}
     end.
 
-%% FIXME: It was expected that 'MatchG' in the function below could be
-%% the atom 'all' or 'undefined', but match_grant always returns a
-%% list!
-
-%% has_grant(Permission, all) ->
-%%     true;
 has_grant(Permission, MatchG) when is_list(MatchG) ->
     lists:member(Permission, MatchG).
-%% has_grant(_Permission, _) ->
-%%     false.
 
 check_permissions(Permission, Ctx) when is_tuple(Permission) ->
     %% single permission
