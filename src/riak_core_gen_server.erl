@@ -518,7 +518,7 @@ process_msg(Parent, Name, State, Mod, Time, TimeoutState, Queue,
 	_Msg when Debug =:= [] ->
 	    handle_msg(Msg, Parent, Name, State, Mod, TimeoutState, Queue);
 	_Msg ->
-	    Debug1 = sys:handle_debug(Debug, {?MODULE, print_event}, 
+	    Debug1 = sys:handle_debug(Debug, fun print_event/3,
 				      Name, {in, Msg}),
 	    handle_msg(Msg, Parent, Name, State, Mod, TimeoutState, Queue,
                        Debug1)
@@ -756,18 +756,18 @@ handle_msg({'$gen_call', From, Msg},
 	    Debug1 = reply(Name, From, Reply, NState, Debug),
 	    loop(Parent, Name, NState, Mod, Time1, TimeoutState, Queue, Debug1);
 	{noreply, NState} ->
-	    Debug1 = sys:handle_debug(Debug, {?MODULE, print_event}, Name,
+	    Debug1 = sys:handle_debug(Debug, fun print_event/3, Name,
 				      {noreply, NState}),
 	    loop(Parent, Name, NState, Mod, infinity, TimeoutState, Queue,
                  Debug1);
 	{noreply, NState, Time1} ->
-	    Debug1 = sys:handle_debug(Debug, {?MODULE, print_event}, Name,
+	    Debug1 = sys:handle_debug(Debug, fun print_event/3, Name,
 				      {noreply, NState}),
 	    loop(Parent, Name, NState, Mod, Time1, TimeoutState, Queue, Debug1);
 	{stop, Reason, Reply, NState} ->
 	    {'EXIT', R} = 
 		(catch terminate(Reason, Name, Msg, Mod, NState, Debug)),
-	    reply(Name, From, Reply, NState, Debug),
+	    _ = reply(Name, From, Reply, NState, Debug),
 	    exit(R);
 	Other ->
 	    handle_common_reply(Other, Parent, Name, Msg, Mod, State,
@@ -798,12 +798,12 @@ handle_common_reply(Reply, Parent, Name, Msg, Mod, State, TimeoutState, Queue,
                     Debug) ->
     case Reply of
 	{noreply, NState} ->
-	    Debug1 = sys:handle_debug(Debug, {?MODULE, print_event}, Name,
+	    Debug1 = sys:handle_debug(Debug, fun print_event/3, Name,
 				      {noreply, NState}),
 	    loop(Parent, Name, NState, Mod, infinity, TimeoutState, Queue,
                  Debug1);
 	{noreply, NState, Time1} ->
-	    Debug1 = sys:handle_debug(Debug, {?MODULE, print_event}, Name,
+	    Debug1 = sys:handle_debug(Debug, fun print_event/3, Name,
 				      {noreply, NState}),
 	    loop(Parent, Name, NState, Mod, Time1, TimeoutState, Queue, Debug1);
 	{stop, Reason, NState} ->
@@ -816,7 +816,7 @@ handle_common_reply(Reply, Parent, Name, Msg, Mod, State, TimeoutState, Queue,
 
 reply(Name, {To, Tag}, Reply, State, Debug) ->
     reply({To, Tag}, Reply),
-    sys:handle_debug(Debug, {?MODULE, print_event}, Name, 
+    sys:handle_debug(Debug, fun print_event/3, Name,
 		     {out, Reply, To, State} ).
 
 
@@ -826,10 +826,8 @@ reply(Name, {To, Tag}, Reply, State, Debug) ->
 system_continue(Parent, Debug, [Name, State, Mod, Time, TimeoutState, Queue]) ->
     loop(Parent, Name, State, Mod, Time, TimeoutState, Queue, Debug).
 
--ifdef(use_specs).
--spec system_terminate(_, _, _, [_]) -> no_return().
--endif.
 
+-spec system_terminate(_, _, _, [_]) -> no_return().
 system_terminate(Reason, _Parent, Debug, [Name, State, Mod, _Time,
                                           _TimeoutState, _Queue]) ->
     terminate(Reason, Name, [], Mod, State, Debug).
