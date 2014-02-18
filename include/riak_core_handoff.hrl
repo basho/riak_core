@@ -36,6 +36,6 @@
           type                  :: ho_type(),
           req_origin            :: node(),
           filter_mod_fun        :: {module(), atom()},
-          size                  :: {non_neg_integer(), bytes | objects}
+          size                  :: {function(), dynamic} | {non_neg_integer(), bytes | objects}
         }).
 -type handoff_status() :: #handoff_status{}.
