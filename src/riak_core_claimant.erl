@@ -403,7 +403,7 @@ maybe_commit_staged(Ring, State=#state{changes=Changes, seed=Seed}) ->
         {legacy, _} ->
             {ignore, legacy};
         {error, invalid_resize_claim} ->
-            lager:error("invalid_resize_claim BUG");
+            {ignore, invalid_resize_claim};
         {ok, NextRing} ->
             maybe_commit_staged(Ring, NextRing, State)
     end.
