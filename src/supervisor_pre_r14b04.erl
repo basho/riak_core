@@ -64,7 +64,7 @@
 %%--------------------------------------------------------------------------
 
 -record(child, {% pid is undefined when child is not running
-	        pid = undefined :: child(),
+	        pid = undefined :: child() | [pid()],
 		name,
 		mfargs          :: mfargs(),
 		restart_type    :: restart(),
@@ -899,7 +899,7 @@ wait_dynamic_children(_Child, _Pids, 0, undefined, EStack) ->
 wait_dynamic_children(_Child, _Pids, 0, TRef, EStack) ->
 	%% If the timer has expired before its cancellation, we must empty the
 	%% mail-box of the 'timeout'-message.
-    erlang:cancel_timer(TRef),
+    _ = erlang:cancel_timer(TRef),
     receive
         {timeout, TRef, kill} ->
             EStack
@@ -1238,16 +1238,15 @@ report_error(Error, Reason, Child, SupName) ->
 		{offender, extract_child(Child)}],
     error_logger:error_report(supervisor_report, ErrorMsg).
 
-
-extract_child(Child) when is_pid(Child#child.pid) ->
-    [{pid, Child#child.pid},
+extract_child(Child) when is_list(Child#child.pid) ->
+    [{nb_children, length(Child#child.pid)},
      {name, Child#child.name},
      {mfargs, Child#child.mfargs},
      {restart_type, Child#child.restart_type},
      {shutdown, Child#child.shutdown},
      {child_type, Child#child.child_type}];
 extract_child(Child) ->
-    [{nb_children, length(Child#child.pid)},
+    [{pid, Child#child.pid},
      {name, Child#child.name},
      {mfargs, Child#child.mfargs},
      {restart_type, Child#child.restart_type},
