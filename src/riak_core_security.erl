@@ -384,7 +384,7 @@ add_grant(all, Bucket, Grants) ->
 add_grant([H|_T]=UserList, Bucket, Grants) when is_binary(H) ->
     %% list of lists, weeeee
     %% validate the users...
-    
+
     UnknownUsers = riak_core_metadata:fold(fun({Username, _}, Acc) ->
                                                    Acc -- [Username]
                                            end, UserList, {<<"security">>,
@@ -605,7 +605,7 @@ add_revoke_int([User|Users], Bucket, Permissions) ->
 
             %% TODO - do deletes here, once cluster metadata supports it for
             %% real, if NeePerms == []
-            
+
             case NewPerms of
                 [] ->
                     riak_core_metadata:delete({<<"security">>, <<"grants">>},
@@ -947,4 +947,3 @@ delete_user_from_sources(Username) ->
                                ({{_, _}, _}, Acc) ->
                                     Acc
                             end, [], {<<"security">>, <<"sources">>}).
-
