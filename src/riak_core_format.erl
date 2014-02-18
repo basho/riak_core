@@ -38,7 +38,7 @@ fmt(FmtStr, Args) ->
 
 %% @doc Create a human friendly string `Str' for number of bytes
 %%      `Bytes' and format based on format string `Fmt'.
--spec human_size_fmt(string(), non_neg_integer()) -> Str::string().
+-spec human_size_fmt(string(), number()) -> string().
 human_size_fmt(Fmt, Bytes) ->
     Fmt2 = Fmt ++ " ~s",
     {Value, Units} = human_size(Bytes, ["B","KB","MB","GB","TB","PB"]),
