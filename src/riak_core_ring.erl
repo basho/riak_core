@@ -144,10 +144,10 @@
 -define(CHSTATE, #chstate_v2).
 -record(chstate_v2, {
     nodename :: term(),          % the Node responsible for this chstate
-    vclock   :: vclock:vclock(), % for this chstate object, entries are
+    vclock   :: vclock:vclock() | undefined, % for this chstate object, entries are
                                  % {Node, Ctr}
     chring   :: chash:chash(),   % chash ring of {IndexAsInt, Node} mappings
-    meta     :: dict(),          % dict of cluster-wide other data (primarily
+    meta     :: dict() | undefined,  % dict of cluster-wide other data (primarily
                                  % bucket N-value, etc)
 
     clustername :: {term(), term()},
