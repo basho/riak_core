@@ -75,7 +75,7 @@ handle_call(_Req, _From, State) ->
     {reply, ok, State}.
 
 handle_cast({update, Arg}, State) ->
-    update1(Arg),
+    ok = update1(Arg),
     {noreply, State};
 handle_cast(_Req, State) ->
     {noreply, State}.
