@@ -181,8 +181,7 @@ check_permission({Permission}, Context0) ->
     %% permissions that don't tie to a particular bucket, like 'ping' and
     %% 'stats'.
     MatchG = match_grant(any, Context#context.grants),
-    case MatchG /= undefined andalso
-         (lists:member(Permission, MatchG) orelse MatchG == 'all') of
+    case has_grant(Permission, MatchG) of
         true ->
             {true, Context};
         false ->
@@ -194,8 +193,7 @@ check_permission({Permission}, Context0) ->
 check_permission({Permission, Bucket}, Context0) ->
     Context = maybe_refresh_context(Context0),
     MatchG = match_grant(Bucket, Context#context.grants),
-    case MatchG /= undefined andalso
-         (lists:member(Permission, MatchG) orelse MatchG == 'all') of
+    case has_grant(Permission, MatchG) of
         true ->
             {true, Context};
         false ->
@@ -205,6 +203,17 @@ check_permission({Permission, Bucket}, Context0) ->
                                                  Permission,
                                                  Bucket]), Context}
     end.
+
+%% FIXME: It was expected that 'MatchG' in the function below could be
+%% the atom 'all' or 'undefined', but match_grant always returns a
+%% list!
+
+%% has_grant(Permission, all) ->
+%%     true;
+has_grant(Permission, MatchG) when is_list(MatchG) ->
+    lists:member(Permission, MatchG).
+%% has_grant(_Permission, _) ->
+%%     false.
 
 check_permissions(Permission, Ctx) when is_tuple(Permission) ->
     %% single permission
