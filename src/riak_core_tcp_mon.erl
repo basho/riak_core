@@ -89,7 +89,7 @@ socket_status(Socket) ->
 
 format() ->
     Status = status(),
-    io:fwrite([format(Status, recv_kbps),
+    io:write([format(Status, recv_kbps),
               format(Status, send_kbps)]).
 
 format(Status, Stat) ->
@@ -224,9 +224,9 @@ handle_info({nodedown, Node, _InfoList}, State) ->
     end,
     {noreply, State#state{conns = Conns2}};
 
-handle_info(measurement_tick, State = #state{limit = Limit, stats = Stats,
+handle_info(measurement_tick, State0 = #state{limit = Limit, stats = Stats,
                                              opts = Opts, conns = Conns}) ->
-    schedule_tick(State),
+    State = schedule_tick(State0),
     Fun = fun(Socket, Conn = #conn{type = Type, ts_hist = TSHist, hist = Hist}) when Type /= error ->
                   try
                       {ok, StatVals} = inet:getstat(unwrap_socket(Socket), Stats),
