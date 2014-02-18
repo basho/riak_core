@@ -386,8 +386,8 @@ handle_cast(force_handoffs, State) ->
     {ok, Ring, CHBin} = riak_core_ring_manager:get_raw_ring_chashbin(),
     State2 = update_handoff(AllVNodes, Ring, CHBin, State),
 
-    [maybe_trigger_handoff(Mod, Idx, Pid, State2)
-     || {Mod, Idx, Pid} <- AllVNodes],
+    _ = [maybe_trigger_handoff(Mod, Idx, Pid, State2)
+         || {Mod, Idx, Pid} <- AllVNodes],
 
     {noreply, State2};
 
@@ -524,7 +524,7 @@ trigger_ownership_handoff(Transfers, Mods, Ring, State) ->
                               S =:= awaiting,
                               Node =:= node(),
                               not lists:member(Mod, CMods)],
-    [maybe_trigger_handoff(Mod, Idx, State) || {Mod, Idx} <- Awaiting],
+    _ = [maybe_trigger_handoff(Mod, Idx, State) || {Mod, Idx} <- Awaiting],
     ok.
 
 limit_ownership_handoff(Transfers, IsResizing) ->
@@ -591,7 +591,7 @@ get_vnode(IdxList, Mod, State) ->
     Pairs = Started ++ riak_core_util:pmap(StartFun, NotStarted, MaxStart),
     % Return Pids in same order as input
     PairsDict = dict:from_list(Pairs),
-    [begin
+    _ = [begin
          Pid = dict:fetch(Idx, PairsDict),
          MonRef = erlang:monitor(process, Pid),
          IdxRec = #idxrec{key={Idx,Mod},idx=Idx,mod=Mod,pid=Pid,
@@ -599,10 +599,7 @@ get_vnode(IdxList, Mod, State) ->
          MonRec = #monrec{monref=MonRef, key={Idx,Mod}},
          add_vnode_rec([IdxRec, MonRec], State)
      end || Idx <- NotStarted],
-    [begin
-         Pid = dict:fetch(Idx, PairsDict),
-         Pid
-     end || Idx <- IdxList].
+    [ dict:fetch(Idx, PairsDict) || Idx <- IdxList].
 
 
 get_forward(Mod, Idx, #state{forwarding=Fwd}) ->
@@ -966,7 +963,7 @@ get_plus_one([_, _, PlusOne]) ->
 %%      targeting this node with `Reason'.
 -spec kill_repairs([repair()], term()) -> ok.
 kill_repairs(Repairs, Reason) ->
-    [kill_repair(Repair, Reason) || Repair <- Repairs],
+    _ = [kill_repair(Repair, Reason) || Repair <- Repairs],
     ok.
 
 kill_repair(Repair, Reason) ->

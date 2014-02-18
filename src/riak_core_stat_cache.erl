@@ -132,7 +132,7 @@ handle_cast({stats, App, Stats0, TS}, State0=#state{tab=Tab, active=Active, apps
     ets:insert(Tab, {App, TS, Stats}),
     State = case orddict:find(App, Active) of
                 {ok, {_Pid, Awaiting}} ->
-                    [gen_server:reply(From, {ok, [make_freshness_stat(App, TS) |Stats], TS}) || From <- Awaiting, From /= ?SERVER],
+                    _ = [gen_server:reply(From, {ok, [make_freshness_stat(App, TS) |Stats], TS}) || From <- Awaiting, From /= ?SERVER],
                     State0#state{active=orddict:erase(App, Active)};
                 error ->
                     State0
@@ -152,7 +152,7 @@ handle_info({'EXIT', FromPid, Reason}, State0=#state{active=Active, apps=Apps}) 
                  not_found ->
                      {stop, Reason, State0};
                  {ok, {App, Awaiting}} ->
-                     [gen_server:reply(From, {error, Reason}) || From <- Awaiting, From /= ?SERVER],
+                     _ = [gen_server:reply(From, {error, Reason}) || From <- Awaiting, From /= ?SERVER],
                      {ok, {MFA, RefreshRateMillis}} = orddict:find(App, Apps),
                      Apps2 = update_fail_count(App, Apps),
                      FailCnt = get_fail_count(App, Apps2),

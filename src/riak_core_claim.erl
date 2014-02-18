@@ -455,7 +455,7 @@ claim_v3(Wants, Owners, Params) ->
             NIs = build_nis(Wants, Owners),
 
             lager:debug("claim3 - NIs\n",[]),
-            [lager:debug("  ~p\n", [NI]) || NI <- NIs],
+            _ = [lager:debug("  ~p\n", [NI]) || NI <- NIs],
 
             %% Generate plans that resolve violations and overloads
             Plans = lists:usort(make_plans(Trials, NIs, Q, TN)),

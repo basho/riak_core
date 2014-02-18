@@ -1313,7 +1313,7 @@ pretty_print(Ring, Opts) ->
     case OptLegend of
         true ->
             io:format(Out, "~36..=s Nodes ~36..=s~n", ["", ""]),
-            [begin
+            _ = [begin
                  NodeIndices = [Idx || {Idx,Owner} <- Indices,
                                        Owner =:= Node],
                  RingPercent = length(NodeIndices) * 100 / RingSize,

@@ -49,7 +49,7 @@ stop_proxy(Mod, Index) ->
 start_proxies(Mod) ->
     lager:debug("Starting vnode proxies for: ~p", [Mod]),
     Indices = get_indices(),
-    [start_proxy(Mod, Index) || Index <- Indices],
+    _ = [start_proxy(Mod, Index) || Index <- Indices],
     ok.
 
 %% @private

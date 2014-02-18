@@ -454,7 +454,7 @@ node_down(Node, State) ->
 
 node_delete(Node) ->
     Services = internal_get_services(Node),
-    [internal_delete(Node, Service) || Service <- Services],
+    _ = [internal_delete(Node, Service) || Service <- Services],
     ets:delete(?MODULE, Node),
     Services.
 
@@ -470,8 +470,8 @@ node_update(Node, Services) ->
 
     %% Update ets table with changes; make sure to touch unchanged
     %% service with latest timestamp
-    [internal_delete(Node, Ss) || Ss <- Deleted],
-    [internal_insert(Node, Ss) || Ss <- Added],
+    _ = [internal_delete(Node, Ss) || Ss <- Deleted],
+    _ = [internal_insert(Node, Ss) || Ss <- Added],
 
     %% Keep track of the last time we recv'd data from a node
     ets:insert(?MODULE, {Node, Now}),
