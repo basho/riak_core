@@ -1803,8 +1803,7 @@ reconcile_test() ->
     Ring1 = transfer_node(0,x,Ring0),
     %% Only members and seen should have changed
     {new_ring, Ring2} = reconcile(fresh(2,someone_else),Ring1),
-    ?assertMatch([{false, members}, {false, seen}],
-                 equal_cstate(Ring1, Ring2, true)),
+    ?assertNot(equal_cstate(Ring1, Ring2, false)),
     RingB0 = fresh(2,node()),
     RingB1 = transfer_node(0,x,RingB0),
     RingB2 = RingB1?CHSTATE{nodename=b},
