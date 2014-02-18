@@ -989,7 +989,7 @@ start_manager_event_timer(Event, State=#state{mod=Mod, index=Idx}) ->
 stop_manager_event_timer(#state{manager_event_timer=undefined}) ->
     ok;
 stop_manager_event_timer(#state{manager_event_timer=T}) ->
-    gen_fsm:cancel_timer(T),
+    _ = gen_fsm:cancel_timer(T),
     ok.
 
 is_request_forwardable(#riak_core_fold_req_v2{forwardable=false}) ->
