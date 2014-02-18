@@ -772,20 +772,16 @@ validate_role_option(Options) ->
 
 %% Handle 'password' option if given
 validate_password_option(Pass, Options) ->
-    case riak_core_pw_auth:hash_password(list_to_binary(Pass)) of
-        {ok, HashedPass, AuthName, HashFunction, Salt, Iterations} ->
-            %% Add to options, replacing plaintext password
-            NewOptions = stash("password", {"password",
-                                            [{hash_pass, HashedPass},
-                                             {auth_name, AuthName},
-                                             {hash_func, HashFunction},
-                                             {salt, Salt},
-                                             {iterations, Iterations}]},
-                               Options),
-            {ok, NewOptions};
-        {error, Error} ->
-            {error, Error}
-    end.
+    {ok, HashedPass, AuthName, HashFunction, Salt, Iterations} = riak_core_pw_auth:hash_password(list_to_binary(Pass)),
+    %% Add to options, replacing plaintext password
+    NewOptions = stash("password", {"password",
+                                    [{hash_pass, HashedPass},
+                                     {auth_name, AuthName},
+                                     {hash_func, HashFunction},
+                                     {salt, Salt},
+                                     {iterations, Iterations}]},
+                       Options),
+    {ok, NewOptions}.
 
 
 validate_permissions(Perms) ->
