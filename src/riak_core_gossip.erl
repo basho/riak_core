@@ -265,7 +265,7 @@ handle_cast(gossip_ring, State) ->
 handle_cast({rejoin, RingIn}, State) ->
     OtherRing = riak_core_ring:upgrade(RingIn),
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
-    SameCluster = (riak_core_ring:cluster_name(Ring) =:= 
+    SameCluster = (riak_core_ring:cluster_name(Ring) =:=
                        riak_core_ring:cluster_name(OtherRing)),
     case SameCluster of
         true ->
@@ -444,7 +444,7 @@ attempt_simple_transfer(Seed, Ring, [{P, Exit}|Rest], TargetN, Exit, Idx, Last) 
                                            fun({_, Owner}) -> Node /= Owner end,
                                            Rest))
                           end,
-            case lists:filter(fun(N) -> 
+            case lists:filter(fun(N) ->
                                  Next = StepsToNext(N),
                                  (Next+1 >= TargetN)
                                           orelse (Next == length(Rest))
