@@ -52,7 +52,7 @@ start_set_net_ticktime_daemon(Node, Time) ->
                             lager:info("start_set_net_ticktime_daemon: started "
                                        "changing net_ticktime on ~p to ~p\n",
                                  [Node, Time]),
-                            random:seed(os:timestamp()),
+                            _ = random:seed(os:timestamp()),
                             set_net_ticktime_daemon_loop(Time, 1)
                         catch _:_ ->
                                 ok
