@@ -54,6 +54,10 @@
           tokens :: [{bg_eqc_type(), non_neg_integer()}]
          }).
 
+% for eunit happiness
+run_eqc_test() ->
+    ?assert(run_eqc()).
+
 run_eqc() ->
     run_eqc(100).
 
@@ -462,7 +466,9 @@ revive_next(S, _Value, _Args) ->
 
 %% @doc revive command
 revive() ->
-    {ok, _BgMgr} = riak_core_bg_manager:start().
+    {ok, BgMgr} = Out = riak_core_bg_manager:start_link(),
+    unlink(BgMgr),
+    Out.
 
 %% @doc revive_post - Postcondition for revive
 revive_post(_S, _Args, _Res) ->
@@ -803,7 +809,8 @@ prop_bgmgr() ->
                       ?TRAPEXIT(
                          begin
                              stop_pid(whereis(riak_core_bg_manager)),
-                             {ok, _BgMgr} = riak_core_bg_manager:start(),
+                             {ok, BgMgr} = riak_core_bg_manager:start_link(),
+                             unlink(BgMgr),
                              {H, S, Res} = run_commands(?MODULE,Cmds),
                              InfoTable = ets:tab2list(?BG_INFO_ETS_TABLE),
                              EntryTable = ets:tab2list(?BG_ENTRY_ETS_TABLE),
