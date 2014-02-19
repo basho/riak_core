@@ -146,23 +146,23 @@ print_user(User) ->
             io:format("No such user ~p~n", [User]),
             {error, {unknown_user, User}};
         _U ->
-            Grants = accumulate_grants(User),
+            Grants = accumulate_grants(User, user),
             io:format("~nInherited permissions~n~n"),
             riak_core_console_table:print([{group, 20}, {type, 10}, {bucket, 10}, {grants, 40}],
                         [begin
                              case Bucket of
                                  any ->
-                                     [Username, "*", "*",
+                                     [chop_name(Username), "*", "*",
                                       prettyprint_permissions(Permissions, 40)];
                                  {T, B} ->
-                                     [Username, T, B,
+                                     [chop_name(Username), T, B,
                                       prettyprint_permissions(Permissions, 40)];
                                  T ->
-                                     [Username, T, "*",
+                                     [chop_name(Username), T, "*",
                                       prettyprint_permissions(Permissions, 40)]
                              end
                          end ||
-                         {{Username, Bucket}, Permissions} <- Grants, Username /= User]),
+                         {{Username, Bucket}, Permissions} <- Grants, Username /= <<"user/", User/binary>>]),
             GroupedGrants = group_grants(Grants),
             io:format("~nApplied permissions~n~n"),
             riak_core_console_table:print([{type, 10}, {bucket, 10}, {grants, 40}],
@@ -189,19 +189,19 @@ print_group(Group) ->
             io:format("No such group ~p~n", [Group]),
             {error, {unknown_group, Group}};
         _U ->
-            Grants = accumulate_grants(Group),
+            Grants = accumulate_grants(Group, group),
             io:format("~nInherited permissions~n~n"),
             riak_core_console_table:print([{group, 20}, {type, 10}, {bucket, 10}, {grants, 40}],
                         [begin
                              case Bucket of
                                  any ->
-                                     [Groupname, "*", "*",
+                                     [chop_name(Groupname), "*", "*",
                                       prettyprint_permissions(Permissions, 40)];
                                  {T, B} ->
-                                     [Groupname, T, B,
+                                     [chop_name(Groupname), T, B,
                                       prettyprint_permissions(Permissions, 40)];
                                  T ->
-                                     [Groupname, T, "*",
+                                     [chop_name(Groupname), T, "*",
                                       prettyprint_permissions(Permissions, 40)]
                              end
                          end ||
@@ -446,15 +446,14 @@ del_user(Username) ->
                                    Username),
             %% delete any associated grants, so if a user with the same name
             %% is added again, they don't pick up these grants
+            Prefix = {<<"security">>, <<"usergrants">>},
             riak_core_metadata:fold(fun({Key, _Value}, Acc) ->
                                             %% apparently destructive
                                             %% iteration is allowed
-                                            riak_core_metadata:delete({<<"security">>,
-                                                                       <<"grants">>},
-                                                                       Key),
+                                            riak_core_metadata:delete(Prefix, Key),
                                             Acc
                                     end, undefined,
-                                    {<<"security">> ,<<"grants">>},
+                                    Prefix,
                                     [{match, {Username, '_'}}]),
             delete_user_from_sources(Username),
             ok
@@ -469,15 +468,14 @@ del_group(Groupname) ->
                                    Groupname),
             %% delete any associated grants, so if a user with the same name
             %% is added again, they don't pick up these grants
+            Prefix = {<<"security">>, <<"groupgrants">>},
             riak_core_metadata:fold(fun({Key, _Value}, Acc) ->
                                             %% apparently destructive
                                             %% iteration is allowed
-                                            riak_core_metadata:delete({<<"security">>,
-                                                                       <<"grants">>},
-                                                                       Key),
+                                            riak_core_metadata:delete(Prefix, Key),
                                             Acc
                                     end, undefined,
-                                    {<<"security">> ,<<"grants">>},
+                                    Prefix,
                                     [{match, {Groupname, '_'}}]),
             delete_group_from_roles(Groupname),
             ok
@@ -492,28 +490,31 @@ add_grant(all, Bucket, Grants) ->
             Error
     end;
 add_grant([H|_T]=RoleList, Bucket, Grants) when is_binary(H) ->
-    %% list of lists, weeeee
-    %% validate the users...
+    RoleTypes = lists:map(
+                   fun(Name) -> {chop_name(Name), role_type(Name)} end,
+                   RoleList
+                 ),
 
-    UnknownRoles = unknown_roles(RoleList),
+    UnknownRoles = lists:foldl(
+                     fun({Name, unknown}, Accum) ->
+                             Accum ++ [Name];
+                        ({_Name, _Type}, Accum) ->
+                             Accum
+                     end,
+                     [], RoleTypes),
 
-    Valid = case UnknownRoles of
-                [] ->
-                    ok;
-                _ ->
-                    {error, {unknown_roles, UnknownRoles}}
-            end,
+    NameOverlaps = lists:foldl(
+                     fun({Name, both}, Accum) ->
+                             Accum ++ [Name];
+                        ({_Name, _Type}, Accum) ->
+                             Accum
+                     end,
+                     [], RoleTypes),
 
-    Valid2 = case Valid of
-        ok ->
-            validate_permissions(Grants);
-        Other ->
-            Other
-    end,
-    case Valid2 of
-        ok ->
-            %% add a grant for each role
-            add_grant_int(RoleList, Bucket, Grants);
+    case check_grant_blockers(UnknownRoles, NameOverlaps,
+                              validate_permissions(Grants)) of
+        none ->
+            add_grant_int(RoleTypes, Bucket, Grants);
         Error ->
             Error
     end;
@@ -536,30 +537,31 @@ add_revoke(all, Bucket, Revokes) ->
             Error
     end;
 add_revoke([H|_T]=RoleList, Bucket, Revokes) when is_binary(H) ->
-    %% list of lists, weeeee
-    %% validate the role...
-    UnknownRoles = unknown_roles(RoleList),
-    Valid = case UnknownRoles of
-                [] ->
-                    ok;
-                _ ->
-                    {error, {unknown_roles, UnknownRoles}}
-            end,
-    Valid2 = case Valid of
-        ok ->
-            validate_permissions(Revokes);
-        Other ->
-            Other
-    end,
-    case Valid2 of
-        ok ->
-            %% revoke any matching grant for each role
-            case add_revoke_int(RoleList, Bucket, Revokes) of
-                ok ->
-                    ok;
-                Error2 ->
-                    Error2
-            end;
+    RoleTypes = lists:map(
+                   fun(Name) -> {chop_name(Name), role_type(Name)} end,
+                   RoleList
+                 ),
+
+    UnknownRoles = lists:foldl(
+                     fun({Name, unknown}, Accum) ->
+                             Accum ++ [Name];
+                        ({_Name, _Type}, Accum) ->
+                             Accum
+                     end,
+                     [], RoleTypes),
+
+    NameOverlaps = lists:foldl(
+                     fun({Name, both}, Accum) ->
+                             Accum ++ [Name];
+                        ({_Name, _Type}, Accum) ->
+                             Accum
+                     end,
+                     [], RoleTypes),
+
+    case check_grant_blockers(UnknownRoles, NameOverlaps,
+                              validate_permissions(Revokes)) of
+        none ->
+            add_revoke_int(RoleTypes, Bucket, Revokes);
         Error ->
             Error
     end;
@@ -706,9 +708,9 @@ status() ->
 
 add_revoke_int([], _, _) ->
     ok;
-add_revoke_int([Role|Roles], Bucket, Permissions) ->
-    RoleGrants = riak_core_metadata:get({<<"security">>, <<"grants">>}, {Role,
-                                                                         Bucket}),
+add_revoke_int([{Name, RoleType}|Roles], Bucket, Permissions) ->
+    Prefix = {<<"security">>, list_to_binary(atom_to_list(RoleType) ++ "grants")},
+    RoleGrants = riak_core_metadata:get(Prefix, {Name, Bucket}),
 
     %% check if there is currently a GRANT we can revoke
     case RoleGrants of
@@ -720,15 +722,13 @@ add_revoke_int([Role|Roles], Bucket, Permissions) ->
                                                                        Permissions)],
 
             %% TODO - do deletes here, once cluster metadata supports it for
-            %% real, if NeePerms == []
+            %% real, if NewPerms == []
             
             case NewPerms of
                 [] ->
-                    riak_core_metadata:delete({<<"security">>, <<"grants">>},
-                                           {Role, Bucket});
+                    riak_core_metadata:delete(Prefix, {Name, Bucket});
                 _ ->
-                    riak_core_metadata:put({<<"security">>, <<"grants">>},
-                                           {Role, Bucket}, NewPerms)
+                    riak_core_metadata:put(Prefix, {Name, Bucket}, NewPerms)
             end,
             add_revoke_int(Roles, Bucket, Permissions)
     end.
@@ -742,9 +742,9 @@ add_source_int([User|Users], CIDR, Source, Options) ->
 
 add_grant_int([], _, _) ->
     ok;
-add_grant_int([Role|Roles], Bucket, Permissions) ->
-    BucketPermissions = case riak_core_metadata:get({<<"security">>, <<"grants">>},
-                                               {Role, Bucket}) of
+add_grant_int([{Name, RoleType}|Roles], Bucket, Permissions) ->
+    Prefix = {<<"security">>, list_to_binary(atom_to_list(RoleType) ++ "grants")},
+    BucketPermissions = case riak_core_metadata:get(Prefix, {Name, Bucket}) of
                             undefined ->
                                 [];
                             Perms ->
@@ -752,8 +752,7 @@ add_grant_int([Role|Roles], Bucket, Permissions) ->
                         end,
     NewPerms = lists:umerge(lists:sort(BucketPermissions),
                             lists:sort(Permissions)),
-    riak_core_metadata:put({<<"security">>, <<"grants">>}, {Role, Bucket},
-                           NewPerms),
+    riak_core_metadata:put(Prefix, {Name, Bucket}, NewPerms),
     add_grant_int(Roles, Bucket, Permissions).
 
 match_grant(Bucket, Grants) ->
@@ -786,29 +785,32 @@ maybe_refresh_context(Context) ->
 %% whenever a GRANT or a REVOKE is performed. This is a little coarse grained
 %% right now, but it'll do for the moment.
 get_context(Username) when is_binary(Username) ->
-    Grants = group_grants(accumulate_grants(Username)),
+    Grants = group_grants(accumulate_grants(Username, user)),
     #context{username=Username, grants=Grants, epoch=os:timestamp()}.
 
-accumulate_grants(Role) ->
-    {Grants, _Seen} = accumulate_grants([Role], [], []),
+accumulate_grants(Role, Type) ->
+    {Grants, _Seen} = accumulate_grants([Role], [], [], Type),
     lists:flatten(Grants).
 
-accumulate_grants([], Seen, Acc) ->
+accumulate_grants([], Seen, Acc, _Type) ->
     {Acc, Seen};
-accumulate_grants([Role|Roles], Seen, Acc) ->
-    Options = role_details(Role),
+accumulate_grants([Role|Roles], Seen, Acc, Type) ->
+    Options = role_details(Role, Type),
     Groups = [G || G <- lookup("groups", Options, []),
                         not lists:member(G,Seen),
                         group_exists(G)],
-    {NewAcc, NewSeen} = accumulate_grants(Groups, [Role|Seen], Acc),
+    {NewAcc, NewSeen} = accumulate_grants(Groups, [Role|Seen], Acc, group),
+
+    TypeAsBinary = atom_to_binary(Type, latin1),
+    Prefix = {<<"security">>, <<TypeAsBinary/binary, "grants">>},
 
     Grants = riak_core_metadata:fold(fun({{_R, _Bucket}, [?TOMBSTONE]}, A) ->
                                              A;
                                         ({{R, Bucket}, [Permissions]}, A) ->
-                                             [{{R, Bucket}, Permissions}|A]
-                                     end, [], {<<"security">>, <<"grants">>},
+                                             [{{<<TypeAsBinary/binary, "/", R/binary>>, Bucket}, Permissions}|A]
+                                     end, [], Prefix,
                                      [{match, {Role, '_'}}]),
-    accumulate_grants(Roles, NewSeen, [Grants|NewAcc]).
+    accumulate_grants(Roles, NewSeen, [Grants|NewAcc], Type).
 
 %% lookup a key in a list of key/value tuples. Like proplists:get_value but
 %% faster.
@@ -1013,7 +1015,29 @@ flatten_once(List) ->
                         A ++ Acc
                 end, [], List).
 
-%% XXX - not yet invoked because we haven't defined del_group/1
+check_grant_blockers([], [], ok) ->
+    none;
+check_grant_blockers([], [], Error) ->
+    Error;
+check_grant_blockers(UnknownRoles, [], ok) ->
+    {error, {unknown_roles, UnknownRoles}};
+check_grant_blockers([], NameOverlaps, ok) ->
+    {error, {duplicate_roles, NameOverlaps}};
+check_grant_blockers(UnknownRoles, NameOverlaps, ok) ->
+    {errors, [{unknown_roles, UnknownRoles},
+             {duplicate_roles, NameOverlaps}]};
+check_grant_blockers(UnknownRoles, [], Error) ->
+    {errors, [{unknown_roles, UnknownRoles}, Error]};
+check_grant_blockers([], NameOverlaps, Error) ->
+    {errors, [{duplicate_roles, NameOverlaps},
+              Error]};
+check_grant_blockers(UnknownRoles, NameOverlaps, Error) ->
+    {errors, [{unknown_roles, UnknownRoles},
+             {duplicate_roles, NameOverlaps},
+              Error]}.
+
+
+
 delete_group_from_roles(Groupname) ->
     %% delete the group out of any user or group's 'roles' option
     %% this is kind of a pain, as we have to iterate ALL roles
@@ -1058,11 +1082,8 @@ delete_user_from_sources(Username) ->
 
 %%%% Role identification functions
 
-%% Take a list of roles (users & groups) and return any that can't
+%% Take a list of roles (users or groups) and return any that can't
 %% be found.
-unknown_roles(RoleList) ->
-    unknown_roles(unknown_roles(RoleList, user), group).
-
 unknown_roles(RoleList, user) ->
     unknown_roles(RoleList, <<"users">>);
 unknown_roles(RoleList, group) ->
@@ -1079,14 +1100,34 @@ user_details(U) ->
 group_details(G) ->
     role_details(G, group).
 
-%% When we don't know whether a role name is a group or a user, use this
-role_details(Rolename) ->
-    case role_details(Rolename, user) of
-        undefined ->
-            role_details(Rolename, group);
-        Details ->
-            Details
-    end.
+chop_name(<<"user/", Name/binary>>) ->
+    Name;
+chop_name(<<"group/", Name/binary>>) ->
+    Name;
+chop_name(Name) ->
+    Name.
+
+%% When we need to know whether a role name is a group or user (or
+%% both), use this
+role_type(<<"user/", Name/binary>>) ->
+    role_type(role_details(Name, user),
+              undefined);
+role_type(<<"group/", Name/binary>>) ->
+    role_type(undefined,
+              role_details(Name, group));
+role_type(Name) ->
+    role_type(role_details(Name, user),
+              role_details(Name, group)).
+
+role_type(undefined, undefined) ->
+    unknown;
+role_type(_UserDetails, undefined) ->
+    user;
+role_type(undefined, _GroupDetails) ->
+    group;
+role_type(_UserDetails, _GroupDetails) ->
+    both.
+
 
 role_details(Rolename, user) ->
     role_details(Rolename, <<"users">>);
