@@ -103,9 +103,7 @@
          get_token/2,
          get_token/3,
          token_info/0,
-         token_info/1,
-         %% Testing
-         start/0
+         token_info/1
         ]).
 
 %% reporting
@@ -138,11 +136,6 @@
 start_link() ->
     _ = maybe_create_ets(),
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
-
-%% Test entry point to start stand-alone server
-start() ->
-    _ = maybe_create_ets(),
-    gen_server:start({local, ?SERVER}, ?MODULE, [], []).
 
 %% @doc Global kill switch - causes all locks/tokens to be given out freely without limits.
 %% Nothing will be tracked or recorded.

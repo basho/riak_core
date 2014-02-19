@@ -146,12 +146,14 @@ verify_token_rates() ->
 %% doesn't take down our test too.
 start_bg_mgr() ->
     %% setup with history window to 1 seconds
-    ?BG_MGR:start(),
+    {ok, Pid} = ?BG_MGR:start_link(),
+    unlink(Pid),
     timer:sleep(100).
 
 kill_bg_mgr() ->
     Pid = erlang:whereis(?BG_MGR),
     ?assertNot(Pid == undefined),
+    unlink(Pid),
     erlang:exit(Pid, kill).
 
 crash_and_restart_token_manager() ->
