@@ -975,7 +975,12 @@ revoke([Grants, "ON", "ANY", "FROM", Users]) ->
         Other2 ->
             Other2
     end,
-    riak_core_security:add_revoke(Unames, any, Permissions);
+    case riak_core_security:add_revoke(Unames, any, Permissions) of
+        ok -> ok;
+        Error ->
+            io:format("~p~n", [Error]),
+            Error
+    end;
 revoke([Grants, "ON", Type, Bucket, "FROM", Users]) ->
     revoke([Grants, "ON", {list_to_binary(Type), list_to_binary(Bucket)},
             "FROM",
@@ -995,7 +1000,12 @@ revoke([Grants, "ON", Bucket, "FROM", Users]) ->
         Other2 ->
             Other2
     end,
-    riak_core_security:add_revoke(Unames, Bucket, Permissions);
+    case riak_core_security:add_revoke(Unames, Bucket, Permissions) of
+        ok -> ok;
+        Error ->
+            io:format("~p~n", [Error]),
+            Error
+    end;
 revoke(_) ->
     io:format("Usage: revoke <permissions> ON <type> [bucket] FROM <users>"),
     error.
