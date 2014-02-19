@@ -401,10 +401,13 @@ query_resource(Resource, Types) ->
 %%%
 
 -record(state,
-        {info_table:: ets:tid(),          %% TableID of ?BG_INFO_ETS_TABLE
-         entry_table:: ets:tid(),         %% TableID of ?BG_ENTRY_ETS_TABLE
-         enabled :: boolean(),            %% Global enable/disable switch, true at startup
-         bypassed:: boolean()             %% Global kill switch. false at startup
+        {info_table = ?BG_INFO_ETS_TABLE :: ets:tid(),
+         entry_table = ?BG_ENTRY_ETS_TABLE :: ets:tid(),
+         enabled = true :: boolean(),
+         % if false, all tokens/locks are considered at max concurrency.
+         bypassed = false :: boolean()
+         % if true, no tracking is done and locks/tokens given away as
+         % as requested.
         }).
 
 %%%===================================================================
@@ -419,11 +422,7 @@ query_resource(Resource, Types) ->
                   {stop, term()}.
 init([]) ->
     lager:debug("Background Manager starting up."),
-    State = #state{info_table=?BG_INFO_ETS_TABLE,
-                   entry_table=?BG_ENTRY_ETS_TABLE,
-                   enabled=true,
-                   bypassed=false},
-    State2 = validate_holds(State),
+    State2 = validate_holds(#state{}),
     State3 = restore_enabled(true, State2),
     State4 = restore_bypassed(false, State3),
     reschedule_token_refills(State4),
