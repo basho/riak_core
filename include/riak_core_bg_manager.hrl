@@ -21,12 +21,12 @@
 -type bg_resource()      :: bg_token() | bg_lock().
 -type bg_resource_type() :: lock | token.
 
--type bg_meta()  :: {atom(), any()}.                %% meta data to associate with a lock/token
+-type bg_meta()  :: undefined | {atom(), any()}.    %% meta data to associate with a lock/token
 -type bg_period() :: pos_integer().                 %% token refill period in milliseconds
 -type bg_count() :: pos_integer().                  %% token refill tokens to count at each refill period
 -type bg_rate() :: undefined | {bg_period(), bg_count()}.       %% token refill rate
 -type bg_concurrency_limit() :: non_neg_integer() | infinity.   %% max lock concurrency allowed
--type bg_consumer() :: {pid, [bg_meta()]}.          %% a consumer of a resource
+-type bg_consumer() :: {undefined | pid(), bg_meta()}.          %% a consumer of a resource
 
 %% Results of a "ps" of live given or blocked locks/tokens
 -record(bg_stat_live,

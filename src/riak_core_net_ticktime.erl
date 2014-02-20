@@ -52,7 +52,7 @@ start_set_net_ticktime_daemon(Node, Time) ->
                             lager:info("start_set_net_ticktime_daemon: started "
                                        "changing net_ticktime on ~p to ~p\n",
                                  [Node, Time]),
-                            random:seed(os:timestamp()),
+                            _ = random:seed(os:timestamp()),
                             set_net_ticktime_daemon_loop(Time, 1)
                         catch _:_ ->
                                 ok
@@ -100,10 +100,12 @@ set_net_ticktime_daemon_loop(Time, Count) ->
             %% connected to us.  Force them to change their tick time,
             %% in case they're using something different.  And pick up
             %% any regular nodes that have connected since we started.
-            if Count rem 5 == 0 ->
+            if
+                Count rem 5 == 0 ->
                     async_start_set_net_ticktime_daemons(
-                      Time, da_nodes(nodes(connected)));
-               true ->
+                      Time, da_nodes(nodes(connected))),
+                    ok;
+                true ->
                     ok
             end,
             set_net_ticktime_daemon_loop(Time, Count + 1)

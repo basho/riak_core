@@ -42,8 +42,8 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 register_stats() ->
-    [(catch folsom_metrics:delete_metric({?APP, Name})) || {Name, _Type} <- stats()],
-    [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()],
+    _ = [(catch folsom_metrics:delete_metric({?APP, Name})) || {Name, _Type} <- stats()],
+    _ = [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()],
     riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
 
 %% @spec get_stats() -> proplist()
@@ -75,7 +75,7 @@ handle_call(_Req, _From, State) ->
     {reply, ok, State}.
 
 handle_cast({update, Arg}, State) ->
-    update1(Arg),
+    ok = update1(Arg),
     {noreply, State};
 handle_cast(_Req, State) ->
     {noreply, State}.

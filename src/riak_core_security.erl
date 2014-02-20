@@ -181,8 +181,7 @@ check_permission({Permission}, Context0) ->
     %% permissions that don't tie to a particular bucket, like 'ping' and
     %% 'stats'.
     MatchG = match_grant(any, Context#context.grants),
-    case MatchG /= undefined andalso
-         (lists:member(Permission, MatchG) orelse MatchG == 'all') of
+    case has_grant(Permission, MatchG) of
         true ->
             {true, Context};
         false ->
@@ -194,8 +193,7 @@ check_permission({Permission}, Context0) ->
 check_permission({Permission, Bucket}, Context0) ->
     Context = maybe_refresh_context(Context0),
     MatchG = match_grant(Bucket, Context#context.grants),
-    case MatchG /= undefined andalso
-         (lists:member(Permission, MatchG) orelse MatchG == 'all') of
+    case has_grant(Permission, MatchG) of
         true ->
             {true, Context};
         false ->
@@ -205,6 +203,9 @@ check_permission({Permission, Bucket}, Context0) ->
                                                  Permission,
                                                  Bucket]), Context}
     end.
+
+has_grant(Permission, MatchG) when is_list(MatchG) ->
+    lists:member(Permission, MatchG).
 
 check_permissions(Permission, Ctx) when is_tuple(Permission) ->
     %% single permission
@@ -375,7 +376,7 @@ add_grant(all, Bucket, Grants) ->
 add_grant([H|_T]=UserList, Bucket, Grants) when is_binary(H) ->
     %% list of lists, weeeee
     %% validate the users...
-    
+
     UnknownUsers = riak_core_metadata:fold(fun({Username, _}, Acc) ->
                                                    Acc -- [Username]
                                            end, UserList, {<<"security">>,
@@ -409,12 +410,7 @@ add_revoke(all, Bucket, Revokes) ->
     %% all is always valid
     case validate_permissions(Revokes) of
         ok ->
-            case add_revoke_int([all], Bucket, revokes) of
-                ok ->
-                    ok;
-                Error2 ->
-                    Error2
-            end;
+            add_revoke_int([all], Bucket, revokes);
         Error ->
             Error
     end;
@@ -440,12 +436,7 @@ add_revoke([H|_T]=UserList, Bucket, Revokes) when is_binary(H) ->
     case Valid2 of
         ok ->
             %% add a source for each user
-            case add_revoke_int(UserList, Bucket, Revokes) of
-                ok ->
-                    ok;
-                Error2 ->
-                    Error2
-            end;
+            add_revoke_int(UserList, Bucket, Revokes);
         Error ->
             Error
     end;
@@ -498,7 +489,7 @@ del_source(all, CIDR) ->
                               {all, anchor_mask(CIDR)}),
     ok;
 del_source([H|_T]=UserList, CIDR) when is_binary(H) ->
-    [riak_core_metadata:delete({<<"security">>, <<"sources">>},
+    _ = [riak_core_metadata:delete({<<"security">>, <<"sources">>},
                               {User, anchor_mask(CIDR)}) || User <- UserList],
     ok;
 del_source(User, CIDR) ->
@@ -606,7 +597,7 @@ add_revoke_int([User|Users], Bucket, Permissions) ->
 
             %% TODO - do deletes here, once cluster metadata supports it for
             %% real, if NeePerms == []
-            
+
             case NewPerms of
                 [] ->
                     riak_core_metadata:delete({<<"security">>, <<"grants">>},
@@ -749,12 +740,8 @@ validate_options(Options) ->
         undefined ->
             validate_role_option(Options);
         Pass ->
-            case validate_password_option(Pass, Options) of
-                {ok, NewOptions} ->
-                    validate_role_option(NewOptions);
-                Error ->
-                    Error
-            end
+            {ok, NewOptions} = validate_password_option(Pass, Options),
+            validate_role_option(NewOptions)
     end.
 
 validate_role_option(Options) ->
@@ -777,20 +764,16 @@ validate_role_option(Options) ->
 
 %% Handle 'password' option if given
 validate_password_option(Pass, Options) ->
-    case riak_core_pw_auth:hash_password(list_to_binary(Pass)) of
-        {ok, HashedPass, AuthName, HashFunction, Salt, Iterations} ->
-            %% Add to options, replacing plaintext password
-            NewOptions = stash("password", {"password",
-                                            [{hash_pass, HashedPass},
-                                             {auth_name, AuthName},
-                                             {hash_func, HashFunction},
-                                             {salt, Salt},
-                                             {iterations, Iterations}]},
-                               Options),
-            {ok, NewOptions};
-        {error, Error} ->
-            {error, Error}
-    end.
+    {ok, HashedPass, AuthName, HashFunction, Salt, Iterations} = riak_core_pw_auth:hash_password(list_to_binary(Pass)),
+    %% Add to options, replacing plaintext password
+    NewOptions = stash("password", {"password",
+                                    [{hash_pass, HashedPass},
+                                     {auth_name, AuthName},
+                                     {hash_func, HashFunction},
+                                     {salt, Salt},
+                                     {iterations, Iterations}]},
+                       Options),
+    {ok, NewOptions}.
 
 
 validate_permissions(Perms) ->
@@ -952,4 +935,3 @@ delete_user_from_sources(Username) ->
                                ({{_, _}, _}, Acc) ->
                                     Acc
                             end, [], {<<"security">>, <<"sources">>}).
-

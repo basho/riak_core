@@ -363,8 +363,6 @@ generate_plan([], _, State) ->
     {{ok, [], []}, State};
 generate_plan(Changes, Ring, State=#state{seed=Seed}) ->
     case compute_all_next_rings(Changes, Seed, Ring) of
-        legacy ->
-            {{error, legacy}, State};
         {error, invalid_resize_claim} ->
             {{error, invalid_resize_claim}, State};
         {ok, NextRings} ->
@@ -400,8 +398,8 @@ maybe_commit_staged(State) ->
 maybe_commit_staged(Ring, State=#state{changes=Changes, seed=Seed}) ->
     Changes2 = filter_changes(Changes, Ring),
     case compute_next_ring(Changes2, Seed, Ring) of
-        {legacy, _} ->
-            {ignore, legacy};
+        {error, invalid_resize_claim} ->
+            {ignore, invalid_resize_claim};
         {ok, NextRing} ->
             maybe_commit_staged(Ring, NextRing, State)
     end.
@@ -762,7 +760,7 @@ bootstrap_members(Ring) ->
     RootMembers = riak_ensemble_manager:get_members(root),
     Known = riak_ensemble_manager:rget(members, []),
     Need = Members -- Known,
-    [riak_ensemble_manager:join(node(), Member) || Member <- Need],
+    _ = [riak_ensemble_manager:join(node(), Member) || Member <- Need],
 
     RootNodes = [Node || {_, Node} <- RootMembers],
     RootAdd = Members -- RootNodes,
@@ -792,8 +790,6 @@ compute_all_next_rings(Changes, Seed, Ring) ->
 %% @private
 compute_all_next_rings(Changes, Seed, Ring, Acc) ->
     case compute_next_ring(Changes, Seed, Ring) of
-        {legacy, _} ->
-            legacy;
         {error, invalid_resize_claim}=Err ->
             Err;
         {ok, NextRing} ->
@@ -815,14 +811,10 @@ compute_next_ring(Changes, Seed, Ring) ->
     {_, Ring3} = maybe_handle_joining(node(), Ring2),
     {_, Ring4} = do_claimant_quiet(node(), Ring3, Replacing, Seed),
     {Valid, Ring5} = maybe_compute_resize(Ring, Ring4),
-    Members = riak_core_ring:all_members(Ring5),
-    AnyLegacy = riak_core_gossip:any_legacy_gossip(Ring5, Members),
-    case {Valid, AnyLegacy} of
-        {false, _} ->
+    case Valid of
+        false ->
             {error, invalid_resize_claim};
-        {true, true} ->
-            {legacy, Ring};
-        {true, false} ->
+        true ->
             {ok, Ring5}
     end.
 
@@ -992,10 +984,10 @@ internal_ring_changed(Node, CState) ->
     case {IsClaimant, riak_core_ring:cluster_name(CState5)} of
         {true, undefined} ->
             ClusterName = {Node, erlang:now()},
-            riak_core_util:rpc_every_member(riak_core_ring_manager,
-                                            set_cluster_name,
-                                            [ClusterName],
-                                            1000),
+            {_,_} = riak_core_util:rpc_every_member(riak_core_ring_manager,
+                                                    set_cluster_name,
+                                                    [ClusterName],
+                                                    1000),
             ok;
         _ ->
             ClusterName = riak_core_ring:cluster_name(CState5),
@@ -1016,10 +1008,9 @@ inform_removed_nodes(Node, OldRing, NewRing) ->
     Invalid = riak_core_ring:members(NewRing, [invalid]),
     Changed = ordsets:intersection(ordsets:from_list(Exiting),
                                    ordsets:from_list(Invalid)),
-    lists:map(fun(ExitingNode) ->
-                      %% Tell exiting node to shutdown.
-                      riak_core_ring_manager:refresh_ring(ExitingNode, CName)
-              end, Changed),
+    %% Tell exiting node to shutdown.
+    _ = [riak_core_ring_manager:refresh_ring(ExitingNode, CName) || 
+            ExitingNode <- Changed],
     ok.
 
 do_claimant_quiet(Node, CState, Replacing, Seed) ->
@@ -1192,7 +1183,7 @@ update_ring(CNode, CState, Replacing, Seed, Log, false) ->
             OldS = ordsets:from_list([{Idx,O,NO} || {Idx,O,NO,_,_} <- Next0]),
             NewS = ordsets:from_list([{Idx,O,NO} || {Idx,O,NO,_,_} <- Next4]),
             Diff = ordsets:subtract(NewS, OldS),
-            [Log(next, NChange) || NChange <- Diff],
+            _ = [Log(next, NChange) || NChange <- Diff],
             ?ROUT("Updating ring :: next3 : ~p~n", [Next4]),
             CState5 = riak_core_ring:set_pending_changes(CState4, Next4),
             CState6 = riak_core_ring:increment_ring_version(CNode, CState5),
@@ -1353,7 +1344,7 @@ remove_node(CState, Node, Status, Replacing, Seed, Log, Indices) ->
                PrevOwner /= NewOwner,
                not lists:member(Idx, RemovedIndices)],
 
-    [Log(reassign, {Idx, NewOwner, CState}) || {Idx, NewOwner} <- Reassign],
+    _ = [Log(reassign, {Idx, NewOwner, CState}) || {Idx, NewOwner} <- Reassign],
 
     %% Unlike rebalance_ring, remove_node can be called when Next is non-empty,
     %% therefore we need to merge the values. Original Next has priority.

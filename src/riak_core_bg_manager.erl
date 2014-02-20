@@ -403,10 +403,10 @@ query_resource(Resource, Types) ->
 %%%
 
 -record(state,
-        {info_table:: ets:tid(),          %% TableID of ?BG_INFO_ETS_TABLE
-         entry_table:: ets:tid(),         %% TableID of ?BG_ENTRY_ETS_TABLE
-         enabled :: boolean(),            %% Global enable/disable switch, true at startup
-         bypassed:: boolean()             %% Global kill switch. false at startup
+        {info_table:: ets:tid() | atom(),  %% TableID of ?BG_INFO_ETS_TABLE
+         entry_table:: ets:tid() | atom(), %% TableID of ?BG_ENTRY_ETS_TABLE
+         enabled :: boolean(),             %% Global enable/disable switch, true at startup
+         bypassed:: boolean()              %% Global kill switch. false at startup
         }).
 
 %%%===================================================================
@@ -541,7 +541,7 @@ status_of(_E,_S) -> disabled.
 %%      Walk through the given resources and release any holds by dead processes.
 %%      Assumes TableId is always valid (called only after transfer)
 validate_holds(State=#state{entry_table=TableId}) ->
-    [validate_hold(Obj, TableId) || Obj <- ets:match_object(TableId, {{given, '_'},'_'})],
+    _ = [validate_hold(Obj, TableId) || Obj <- ets:match_object(TableId, {{given, '_'},'_'})],
     State.
 
 %% @private
@@ -561,7 +561,7 @@ validate_hold({Key,Entry}=Obj, TableId) when ?e_type(Entry) == lock ->
             ets:delete_object(TableId, Obj)
     end;
 validate_hold(_Obj, _TableId) -> %% tokens don't monitor processes
-    ok.
+    true.
 
 %% @doc Update state with bypassed status and store to ETS
 update_bypassed(_Bypassed, State) when ?NOT_TRANSFERED(State) ->
@@ -706,7 +706,7 @@ release_resource(Ref, State=#state{entry_table=TableId}) ->
     %% There should only be one instance of the object, but we'll zap all that match.
     Given = [Obj || Obj <- ets:match_object(TableId, {{given, '_'},'_'})],
     Matches = [Obj || {_Key,Entry}=Obj <- Given, ?e_ref(Entry) == Ref],
-    [ets:delete_object(TableId, Obj) || Obj <- Matches],
+    _ = [ets:delete_object(TableId, Obj) || Obj <- Matches],
     State.
 
 maybe_honor_limit(true, Lock, Limit, #state{entry_table=TableId}) ->
@@ -716,7 +716,7 @@ maybe_honor_limit(true, Lock, Limit, #state{entry_table=TableId}) ->
         true ->
             {_Keep, Discards} = lists:split(Limit, Held),
             %% killing of processes will generate 'DOWN' messages and release the locks
-            [erlang:exit(?e_pid(Discard), max_concurrency) || Discard <- Discards],
+            _ = [erlang:exit(?e_pid(Discard), max_concurrency) || Discard <- Discards],
             ok;
         false ->
             ok
@@ -780,7 +780,8 @@ resource_info_tuple(Resource, State) ->
 %% after a crash. Assumes table is available. Called only after Transfer.
 reschedule_token_refills(State) ->
     Tokens = all_registered_resources(token, State),
-    [schedule_refill_tokens(Token, State) || Token <- Tokens].
+    _ = [schedule_refill_tokens(Token, State) || Token <- Tokens],
+    ok.
  
 %% Schedule a timer event to refill tokens of given type
 schedule_refill_tokens(_Token, State) when ?NOT_TRANSFERED(State) ->
@@ -790,7 +791,8 @@ schedule_refill_tokens(Token, State) ->
         undefined ->
             ok;
         {Period, _Count} ->
-            erlang:send_after(Period, self(), {refill_tokens, Token})
+            erlang:send_after(Period, self(), {refill_tokens, Token}),
+            ok
     end.
 
 %% @private

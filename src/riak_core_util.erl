@@ -143,7 +143,7 @@ replace_file(FN, Data) ->
 read_file(FName) ->
     {ok, FD} = file:open(FName, [read, raw, binary]),
     IOList = read_file(FD, []),
-    file:close(FD),
+    ok = file:close(FD),
     {ok, iolist_to_binary(IOList)}.
 
 read_file(FD, Acc) ->
@@ -282,7 +282,7 @@ node_hostname() ->
 %% @doc Start depedent applications of App.
 start_app_deps(App) ->
     {ok, DepApps} = application:get_key(App, applications),
-    [ensure_started(A) || A <- DepApps],
+    _ = [ensure_started(A) || A <- DepApps],
     ok.
     
 
@@ -401,8 +401,6 @@ rpc_every_member(Module, Function, Args, Timeout) ->
 
 %% @doc Same as rpc_every_member/4, but annotate the result set with
 %%      the name of the node returning the result.
--spec rpc_every_member_ann(module(), atom(), [term()], integer()|infinity)
-                          -> {Results::[{node(), term()}], Down::[node()]}.
 rpc_every_member_ann(Module, Function, Args, Timeout) ->
     {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
     Nodes = riak_core_ring:all_members(MyRing),
@@ -411,13 +409,13 @@ rpc_every_member_ann(Module, Function, Args, Timeout) ->
 
 %% @doc Perform an RPC call to a list of nodes in parallel, returning the
 %%      results in the same order as the input list.
--spec multi_rpc([node()], module(), function(), [any()]) -> [any()].
+-spec multi_rpc([node()], module(), atom(), [any()]) -> [any()].
 multi_rpc(Nodes, Mod, Fun, Args) ->
     multi_rpc(Nodes, Mod, Fun, Args, infinity).
 
 %% @doc Perform an RPC call to a list of nodes in parallel, returning the
 %%      results in the same order as the input list.
--spec multi_rpc([node()], module(), function(), [any()], timeout()) -> [any()].
+-spec multi_rpc([node()], module(), atom(), [any()], timeout()) -> [any()].
 multi_rpc(Nodes, Mod, Fun, Args, Timeout) ->
     pmap(fun(Node) ->
                  rpc:call(Node, Mod, Fun, Args, Timeout)
@@ -426,7 +424,7 @@ multi_rpc(Nodes, Mod, Fun, Args, Timeout) ->
 %% @doc Perform an RPC call to a list of nodes in parallel, returning the
 %%      results in the same order as the input list. Each result is tagged
 %%      with the corresponding node name.
--spec multi_rpc_ann([node()], module(), function(), [any()])
+-spec multi_rpc_ann([node()], module(), atom(), [any()])
                    -> [{node(), any()}].
 multi_rpc_ann(Nodes, Mod, Fun, Args) ->
     multi_rpc_ann(Nodes, Mod, Fun, Args, infinity).
@@ -434,7 +432,7 @@ multi_rpc_ann(Nodes, Mod, Fun, Args) ->
 %% @doc Perform an RPC call to a list of nodes in parallel, returning the
 %%      results in the same order as the input list. Each result is tagged
 %%      with the corresponding node name.
--spec multi_rpc_ann([node()], module(), function(), [any()], timeout())
+-spec multi_rpc_ann([node()], module(), atom(), [any()], timeout())
                    -> [{node(), any()}].
 multi_rpc_ann(Nodes, Mod, Fun, Args, Timeout) ->
     Results = multi_rpc(Nodes, Mod, Fun, Args, Timeout),
@@ -445,7 +443,7 @@ multi_rpc_ann(Nodes, Mod, Fun, Args, Timeout) ->
 %%      of nodes that are down/unreachable. The results will be returned in
 %%      the same order as the input list, and each result is tagged with the
 %%      corresponding node name.
--spec multicall_ann([node()], module(), function(), [any()])
+-spec multicall_ann([node()], module(), atom(), [any()])
                    -> {Results :: [{node(), any()}], Down :: [node()]}.
 multicall_ann(Nodes, Mod, Fun, Args) ->
     multicall_ann(Nodes, Mod, Fun, Args, infinity).
@@ -455,7 +453,7 @@ multicall_ann(Nodes, Mod, Fun, Args) ->
 %%      of nodes that are down/unreachable. The results will be returned in
 %%      the same order as the input list, and each result is tagged with the
 %%      corresponding node name.
--spec multicall_ann([node()], module(), function(), [any()], timeout())
+-spec multicall_ann([node()], module(), atom(), [any()], timeout())
                    -> {Results :: [{node(), any()}], Down :: [node()]}.
 multicall_ann(Nodes, Mod, Fun, Args, Timeout) ->
     L = multi_rpc_ann(Nodes, Mod, Fun, Args, Timeout),
@@ -472,8 +470,9 @@ multicall_ann(Nodes, Mod, Fun, Args, Timeout) ->
 %%      2i and 2i+1. The conversion also supports a "cycles" mode where
 %%      the array is logically wrapped around to ensure leaf nodes also
 %%      have children by giving them backedges to other elements.
+
 -spec build_tree(N :: integer(), Nodes :: [term()], Opts :: [term()])
-                -> orddict:orddict(Node :: term(), Children :: [term()]).
+                -> orddict:orddict().
 build_tree(N, Nodes, Opts) ->
     case lists:member(cycles, Opts) of
         true -> 

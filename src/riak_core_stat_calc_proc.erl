@@ -100,14 +100,13 @@ handle_cast({value, Value, TS}, State=#state{awaiting=Awaiting,
         {error, Reason} ->
             lager:debug("stat calc failed: ~p ~p", [Reason]),
             Reply = maybe_tag_stale(OldValue),
-            [gen_server:reply(From, Reply) 
-             || From <- Awaiting],
+            _ = [gen_server:reply(From, Reply) || From <- Awaiting],
             %% update the timestamp so as not to flood the failing 
             %% process with update requests
             {noreply, State#state{timestamp=TS, active=undefined, 
                                   awaiting=[], value = Reply}};
         _Else ->
-            [gen_server:reply(From, Value) || From <- Awaiting],
+            _ = [gen_server:reply(From, Value) || From <- Awaiting],
             {noreply, State#state{value=Value, timestamp=TS, 
                                   active=undefined, awaiting=[]}}
     end;
@@ -118,7 +117,7 @@ handle_cast(_Msg, State) ->
 
 %% don't let a crashing stat calc crash the server
 handle_info({'EXIT', FromPid, Reason}, State=#state{active=FromPid, awaiting=Awaiting}) when Reason /= normal ->
-    [gen_server:reply(From, {error, Reason}) || From <- Awaiting],
+    _ = [gen_server:reply(From, {error, Reason}) || From <- Awaiting],
     {noreply, State#state{active=undefined, awaiting=[]}};
 handle_info({'EXIT', _FromPid, Reason}, State=#state{active=undefined, 
                                                     awaiting=[]}) 
@@ -130,7 +129,7 @@ handle_info(timeout, State=#state{active=Pid, awaiting=Awaiting, value=Value}) -
     lager:debug("killed delinquent stats process ~p", [Pid]),
     exit(Pid, kill),
     %% let the cache get staler, tag so people can detect
-    [gen_server:reply(From, maybe_tag_stale(Value)) || From <- Awaiting],
+    _ = [gen_server:reply(From, maybe_tag_stale(Value)) || From <- Awaiting],
     {noreply, State#state{active=undefined, awaiting=[]}};
 handle_info(_Info, State) ->
     {noreply, State}.

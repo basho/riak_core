@@ -51,7 +51,7 @@ init(_) ->
     {SndBuf, RecBuf} = get_riak_env_vars(),
     DistCtrl = erlang:system_info(dist_ctrl),
     %% make sure that buffers are correct on existing connections.
-    [set_port_buffers(Port, SndBuf, RecBuf)
+    _ = [set_port_buffers(Port, SndBuf, RecBuf)
      || {_Node, Port} <- DistCtrl],
     {ok, #state{sndbuf=SndBuf, recbuf=RecBuf}}.
 
@@ -61,7 +61,7 @@ get_riak_env_vars() ->
     {SndBuf, RecBuf}.
 
 handle_call({set_dist_buf_sizes, SndBuf, RecBuf}, _From, State) ->
-    [set_port_buffers(Port, SndBuf, RecBuf)
+    _ = [set_port_buffers(Port, SndBuf, RecBuf)
      || {_Node, Port} <- erlang:system_info(dist_ctrl)],
     {reply, ok, State#state{sndbuf=SndBuf, recbuf=RecBuf}};
 handle_call(Msg, _From, State) ->
@@ -81,7 +81,7 @@ handle_info({nodeup, Node, _InfoList}, #state{sndbuf=SndBuf,
             lager:error("Could not get dist for ~p\n~p\n", [Node, DistCtrl]),
             {noreply, State};
         Port ->
-            set_port_buffers(Port, SndBuf, RecBuf),
+            ok = set_port_buffers(Port, SndBuf, RecBuf),
             {noreply, State}
     end;
 handle_info({nodedown, _Node, _InfoList}, State) ->

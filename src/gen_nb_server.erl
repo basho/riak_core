@@ -27,9 +27,6 @@
 %% API
 -export([start_link/4]).
 
-%% Behavior callbacks
--export([behaviour_info/1]).
-
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
@@ -40,18 +37,35 @@
                 sock,
                 server_state}).
 
-%% @hidden
-behaviour_info(callbacks) ->
-  [{init, 1},
-   {handle_call, 3},
-   {handle_cast, 2},
-   {handle_info, 2},
-   {terminate, 2},
-   {sock_opts, 0},
-   {new_connection, 2}];
+-callback init(InitArgs::list()) -> 
+    {ok, State::term()} | 
+    {error, Reason::term()}.
 
-behaviour_info(_) ->
-  undefined.
+-callback handle_call(Msg::term(), From::{pid(), term()}, State::term()) -> 
+    {reply, Reply::term(), State::term()} | 
+    {reply, Reply::term(), State::term(), number() | hibernate} | 
+    {noreply, State::term()} | 
+    {noreply, State::term(), number() | hibernate} | 
+    {stop, Reason::term(), State::term()}.
+
+-callback handle_cast(Msg::term(), State::term()) ->
+    {noreply, State::term()} | 
+    {noreply, State::term(), number() | hibernate} | 
+    {stop, Reason::term(), State::term()}.
+
+-callback handle_info(Msg::term(), State::term()) ->
+    {noreply, State::term()} | 
+    {noreply, State::term(), number() | hibernate} | 
+    {stop, Reason::term(), State::term()}.
+
+-callback terminate(Reason::term(), State::term()) ->    
+    ok.
+
+-callback sock_opts() -> [gen_tcp:listen_option()].
+
+-callback new_connection(inet:socket(), State::term()) ->
+    {ok, NewState::term()} | 
+    {stop, Reason::term(), NewState::term()}.
 
 %% @spec start_link(CallbackModule, IpAddr, Port, InitParams) -> Result
 %% CallbackModule = atom()
@@ -111,7 +125,7 @@ handle_info({inet_async, ListSock, _Ref, {ok, CliSocket}}, #state{cb=Callback, s
   inet_db:register_socket(CliSocket, inet_tcp),
   case Callback:new_connection(CliSocket, ServerState) of
     {ok, NewServerState} ->
-      prim_inet:async_accept(ListSock, -1),
+      {ok, _} = prim_inet:async_accept(ListSock, -1),
       {noreply, State#state{server_state=NewServerState}};
     {stop, Reason, NewServerState} ->
       {stop, Reason, State#state{server_state=NewServerState}}

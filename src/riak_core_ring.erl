@@ -144,10 +144,10 @@
 -define(CHSTATE, #chstate_v2).
 -record(chstate_v2, {
     nodename :: term(),          % the Node responsible for this chstate
-    vclock   :: vclock:vclock(), % for this chstate object, entries are
+    vclock   :: vclock:vclock() | undefined, % for this chstate object, entries are
                                  % {Node, Ctr}
     chring   :: chash:chash(),   % chash ring of {IndexAsInt, Node} mappings
-    meta     :: dict(),          % dict of cluster-wide other data (primarily
+    meta     :: dict() | undefined,  % dict of cluster-wide other data (primarily
                                  % bucket N-value, etc)
 
     clustername :: {term(), term()},
@@ -1095,15 +1095,10 @@ complete_resize_transfers(State, Source, Mod) ->
 deletion_complete(State, Idx, Mod) ->
     transfer_complete(State, Idx, Mod).
 
--spec resize_transfers(chstate(), {integer(), term()}) ->
-                              [{{integer(),term()}, ordsets:ordset(), awaiting | complete}].
 resize_transfers(State, Source) ->
     {ok, Transfers} = get_meta({resize, Source}, [], State),
     Transfers.
 
--spec set_resize_transfers(chstate(),
-                           {integer(), term()},
-                           [{{integer(),term()},ordsets:ordset(),awaiting | complete}]) -> chstate().
 set_resize_transfers(State, Source, Transfers) ->
     update_meta({resize, Source}, Transfers, State).
 
@@ -1318,7 +1313,7 @@ pretty_print(Ring, Opts) ->
     case OptLegend of
         true ->
             io:format(Out, "~36..=s Nodes ~36..=s~n", ["", ""]),
-            [begin
+            _ = [begin
                  NodeIndices = [Idx || {Idx,Owner} <- Indices,
                                        Owner =:= Node],
                  RingPercent = length(NodeIndices) * 100 / RingSize,
@@ -1718,7 +1713,7 @@ update_seen(Node, CState=?CHSTATE{vclock=VClock, seen=Seen}) ->
 equal_cstate(StateA, StateB) ->
     equal_cstate(StateA, StateB, false).
 
-equal_cstate(StateA, StateB, Verbose) ->
+equal_cstate(StateA, StateB, false) ->
     T1 = equal_members(StateA?CHSTATE.members, StateB?CHSTATE.members),
     T2 = vclock:equal(StateA?CHSTATE.rvsn, StateB?CHSTATE.rvsn),
     T3 = equal_seen(StateA, StateB),
@@ -1734,19 +1729,7 @@ equal_cstate(StateA, StateB, Verbose) ->
                            meta=undefined, clustername=undefined},
     T5 = (StateA2 =:= StateB2),
 
-    case Verbose of
-        false ->
-            T1 and T2 and T3 and T4 and T5;
-        true ->
-            Failed =
-                lists:filter(fun({Test,_}) -> Test =:= false end,
-                             [{T1, members},
-                              {T2, rvsn},
-                              {T3, seen},
-                              {T4, ring},
-                              {T5, other}]),
-            Failed
-    end.
+    T1 andalso T2 andalso T3 andalso T4 andalso T5.
 
 %% @private
 equal_members(M1, M2) ->
@@ -1820,8 +1803,7 @@ reconcile_test() ->
     Ring1 = transfer_node(0,x,Ring0),
     %% Only members and seen should have changed
     {new_ring, Ring2} = reconcile(fresh(2,someone_else),Ring1),
-    ?assertMatch([{false, members}, {false, seen}],
-                 equal_cstate(Ring1, Ring2, true)),
+    ?assertNot(equal_cstate(Ring1, Ring2, false)),
     RingB0 = fresh(2,node()),
     RingB1 = transfer_node(0,x,RingB0),
     RingB2 = RingB1?CHSTATE{nodename=b},

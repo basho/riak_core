@@ -127,12 +127,7 @@ put_tag(Tag) ->
         true ->
             FTag = iolist_to_binary(Tag),
             put(?DTRACE_TAG_KEY, FTag),
-            case get(?MAGIC) of
-                dtrace ->
-                    dtrace:put_utag(FTag);
-                dyntrace ->
-                    dyntrace:put_tag(FTag)
-            end;
+            dyntrace:put_tag(FTag);
         false ->
             ok
     end.

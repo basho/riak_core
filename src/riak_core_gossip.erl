@@ -114,7 +114,7 @@ recursive_gossip(Ring, Node) ->
     Nodes = riak_core_ring:active_members(Ring),
     Tree = riak_core_util:build_tree(2, Nodes, [cycles]),
     Children = orddict:fetch(Node, Tree),
-    [send_ring(node(), OtherNode) || OtherNode <- Children],
+    _ = [send_ring(node(), OtherNode) || OtherNode <- Children],
     ok.
 recursive_gossip(Ring) ->
     %% A non-active member will not show-up in the tree decomposition
@@ -210,12 +210,7 @@ handle_cast({send_ring_to, _Node}, State=#state{gossip_tokens=0}) ->
 handle_cast({send_ring_to, Node}, State) ->
     {ok, MyRing0} = riak_core_ring_manager:get_raw_ring(),
     MyRing = update_gossip_version(MyRing0),
-    GossipVsn = case gossip_version() of
-                    ?LEGACY_RING_VSN ->
-                        ?LEGACY_RING_VSN;
-                    _ ->
-                        rpc_gossip_version(MyRing, Node)
-                end,
+    GossipVsn = rpc_gossip_version(MyRing, Node),
     RingOut = riak_core_ring:downgrade(GossipVsn, MyRing),
     riak_core_ring:check_tainted(RingOut,
                                  "Error: riak_core_gossip/send_ring_to :: "
@@ -225,35 +220,21 @@ handle_cast({send_ring_to, Node}, State) ->
     {noreply, State#state{gossip_tokens=Tokens}};
 
 handle_cast({distribute_ring, Ring}, State) ->
-    RingOut = case check_legacy_gossip(Ring, State) of
-                  true ->
-                      riak_core_ring:downgrade(?LEGACY_RING_VSN, Ring);
-                  false ->
-                      Ring
-              end,
     Nodes = riak_core_ring:active_members(Ring),
-    riak_core_ring:check_tainted(RingOut,
+    riak_core_ring:check_tainted(Ring,
                                  "Error: riak_core_gossip/distribute_ring :: "
                                  "Sending tainted ring over gossip"),
-    gen_server:abcast(Nodes, ?MODULE, {reconcile_ring, RingOut}),
+    gen_server:abcast(Nodes, ?MODULE, {reconcile_ring, Ring}),
     {noreply, State};
 
 handle_cast({reconcile_ring, RingIn}, State) ->
     OtherRing = riak_core_ring:upgrade(RingIn),
     State2 = update_known_versions(OtherRing, State),
-    case check_legacy_gossip(RingIn, State2) of
-        true ->
-            LegacyRing = riak_core_ring:downgrade(?LEGACY_RING_VSN, OtherRing),
-            riak_core_gossip_legacy:handle_cast({reconcile_ring, LegacyRing},
-                                                State2),
-            {noreply, State2};
-        false ->
-            %% Compare the two rings, see if there is anything that
-            %% must be done to make them equal...
-            riak_core_stat:update(gossip_received),
-            riak_core_ring_manager:ring_trans(fun reconcile/2, [OtherRing]),
-            {noreply, State2}
-    end;
+    %% Compare the two rings, see if there is anything that
+    %% must be done to make them equal...
+    riak_core_stat:update(gossip_received),
+    riak_core_ring_manager:ring_trans(fun reconcile/2, [OtherRing]),
+    {noreply, State2};
 
 handle_cast(gossip_ring, State) ->
     % Gossip the ring to some random other node...
@@ -265,13 +246,18 @@ handle_cast(gossip_ring, State) ->
 handle_cast({rejoin, RingIn}, State) ->
     OtherRing = riak_core_ring:upgrade(RingIn),
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
-    SameCluster = (riak_core_ring:cluster_name(Ring) =:= 
+    SameCluster = (riak_core_ring:cluster_name(Ring) =:=
                        riak_core_ring:cluster_name(OtherRing)),
     case SameCluster of
         true ->
             Legacy = check_legacy_gossip(Ring, State),
             OtherNode = riak_core_ring:owner_node(OtherRing),
-            riak_core:join(Legacy, node(), OtherNode, true, true),
+            case riak_core:join(Legacy, node(), OtherNode, true, true) of
+                ok -> ok;
+                {error, Reason} ->
+                    lager:error("Could not rejoin cluster: ~p", [Reason]),
+                    ok
+            end,
             {noreply, State};
         false ->
             {noreply, State}
@@ -351,34 +337,45 @@ reconcile(Ring0, [OtherRing0]) ->
     end.
 
 log_membership_changes(OldRing, NewRing) ->
-    OldStatus = orddict:from_list(riak_core_ring:all_member_status(OldRing)),
-    NewStatus = orddict:from_list(riak_core_ring:all_member_status(NewRing)),
+    OldStatus = riak_core_ring:all_member_status(OldRing),
+    NewStatus = riak_core_ring:all_member_status(NewRing),
 
-    %% Pad both old and new status to the same length
-    OldDummyStatus = [{Node, undefined} || {Node, _} <- NewStatus],
-    OldStatus2 = orddict:merge(fun(_, Status, _) ->
-                                       Status
-                               end, OldStatus, OldDummyStatus),
+    do_log_membership_changes(lists:sort(OldStatus), lists:sort(NewStatus)).
 
-    NewDummyStatus = [{Node, undefined} || {Node, _} <- OldStatus],
-    NewStatus2 = orddict:merge(fun(_, Status, _) ->
-                                       Status
-                               end, NewStatus, NewDummyStatus),
+do_log_membership_changes([], []) ->
+    ok;
+do_log_membership_changes([{Node, Status}|Old], [{Node, Status}|New]) ->
+    %% No change
+    do_log_membership_changes(Old, New);
+do_log_membership_changes([{Node, Status1}|Old], [{Node, Status2}|New]) ->
+    %% State changed, did not join or leave
+    log_node_changed(Node, Status1, Status2),
+    do_log_membership_changes(Old, New);
+do_log_membership_changes([{OldNode, _OldStatus}|_]=Old, [{NewNode, NewStatus}|New]) when NewNode < OldNode->
+    %% Node added
+    log_node_added(NewNode, NewStatus),
+    do_log_membership_changes(Old, New);
+do_log_membership_changes([{OldNode, OldStatus}|Old], [{NewNode, _NewStatus}|_]=New) when OldNode < NewNode ->
+    %% Node removed
+    log_node_removed(OldNode, OldStatus),
+    do_log_membership_changes(Old, New);
+do_log_membership_changes([{OldNode, OldStatus}|Old], []) ->
+    %% Trailing nodes were removed
+    log_node_removed(OldNode, OldStatus),
+    do_log_membership_changes(Old, []);
+do_log_membership_changes([], [{NewNode, NewStatus}|New]) ->
+    %% Trailing nodes were added
+    log_node_added(NewNode, NewStatus),
+    do_log_membership_changes([], New).
 
-    %% Merge again to determine changed status
-    orddict:merge(fun(_, Same, Same) ->
-                          Same;
-                     (Node, undefined, New) ->
-                          lager:info("'~s' joined cluster with status '~s'~n",
-                                     [Node, New]);
-                     (Node, Old, undefined) ->
-                          lager:info("'~s' removed from cluster (previously: "
-                                     "'~s')~n", [Node, Old]);
-                     (Node, Old, New) ->
-                          lager:info("'~s' changed from '~s' to '~s'~n",
-                                     [Node, Old, New])
-                  end, OldStatus2, NewStatus2),
-    ok.
+log_node_changed(Node, Old, New) ->
+    lager:info("'~s' changed from '~s' to '~s'~n", [Node, Old, New]).
+
+log_node_added(Node, New) ->
+    lager:info("'~s' joined cluster with status '~s'~n", [Node, New]).
+
+log_node_removed(Node, Old) ->
+    lager:info("'~s' removed from cluster (previously: '~s')~n", [Node, Old]).
 
 remove_from_cluster(Ring, ExitingNode) ->
     remove_from_cluster(Ring, ExitingNode, erlang:now()).
@@ -428,7 +425,7 @@ attempt_simple_transfer(Seed, Ring, [{P, Exit}|Rest], TargetN, Exit, Idx, Last) 
                                            fun({_, Owner}) -> Node /= Owner end,
                                            Rest))
                           end,
-            case lists:filter(fun(N) -> 
+            case lists:filter(fun(N) ->
                                  Next = StepsToNext(N),
                                  (Next+1 >= TargetN)
                                           orelse (Next == length(Rest))

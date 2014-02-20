@@ -24,6 +24,7 @@
          responsible_index/2, responsible_position/2, index_owner/2,
          num_partitions/1]).
 -export([iterator/2, exact_iterator/2, itr_value/1, itr_pop/2, itr_next/1, itr_next_while/2]).
+-export_type([chashbin/0]).
 
 %% 160 bits for hash, 16 bits for node id
 -define(UNIT, 176).
