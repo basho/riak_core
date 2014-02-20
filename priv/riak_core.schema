@@ -154,6 +154,6 @@
 %% use of the background manager.
 {mapping, "background_manager", "riak_core.use_background_manager", [
     {datatype, flag},
-    {level, advanced},
-    {default, on}
+    {default, on},
+    hidden
 ]}.
