@@ -141,3 +141,15 @@
   {default, off},
   {commented, on}
 ]}.
+
+%% @doc Whether to enable the background manager globally. When
+%% enabled, participating Riak subsystems will coordinate access to
+%% shared resources. This will help to prevent system response
+%% degradation under times of heavy load from multiple background
+%% tasks. Specific subsystems may also have their own controls over
+%% use of the background manager.
+{mapping, "background_manager", "riak_core.use_background_manager", [
+    {datatype, flag},
+    {default, on},
+    hidden
+]}.
