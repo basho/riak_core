@@ -167,22 +167,42 @@ enabled() ->
 %%      has not already been registered, this will have no effect.
 -spec enable(bg_resource()) -> enabled | unregistered | bypassed.
 enable(Resource) ->
-    gen_server:call(?SERVER, {enable, Resource}).
+    case gen_server:call(?SERVER, {enable, Resource}) of
+        {unregistered, Resource} ->
+            unregistered;
+        Else ->
+            Else
+    end.
 
 %% @doc Disable handing out resource of the given kind.
 -spec disable(bg_resource()) -> disabled | unregistered | bypassed.
 disable(Resource) ->
-    gen_server:call(?SERVER, {disable, Resource}).
+    case gen_server:call(?SERVER, {disable, Resource}) of
+        {unregistered, Resource} ->
+            unregistered;
+        Else ->
+            Else
+    end.
 
 -spec enabled(bg_resource()) -> enabled | disabled | bypassed.
 enabled(Resource) ->
-    gen_server:call(?SERVER, {enabled, Resource}).
+    case gen_server:call(?SERVER, {enabled, Resource}) of
+        {unregistered, Resource} ->
+            unregistered;
+        Else ->
+            Else
+    end.
 
 %% @doc Disable handing out resource of the given kind. If kill == true,
 %%      processes that currently hold the given resource will be killed.
 -spec disable(bg_resource(), boolean()) -> disabled | unregistered | bypassed.
 disable(Resource, Kill) ->
-    gen_server:call(?SERVER, {disable, Resource, Kill}).
+    case gen_server:call(?SERVER, {disable, Resource, Kill}) of
+        {unregistered, Resource} ->
+            unregistered;
+        Else ->
+            Else
+    end.
 
 %%%%%%%%%%%
 %% Lock API
@@ -192,7 +212,12 @@ disable(Resource, Kill) ->
 %%      If the background manager is unavailable, undefined is returned.
 -spec concurrency_limit(bg_lock()) -> bg_concurrency_limit() | undefined.
 concurrency_limit(Lock) ->
-    gen_server:call(?MODULE, {concurrency_limit, Lock}, infinity).
+    case gen_server:call(?MODULE, {concurrency_limit, Lock}, infinity) of
+        {unregistered, Lock} ->
+            unregistered;
+        Else ->
+            Else
+    end.
 
 %% @doc same as `set_concurrency_limit(Type, Limit, false)'
 -spec set_concurrency_limit(bg_lock(), bg_concurrency_limit()) ->

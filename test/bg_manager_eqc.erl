@@ -56,7 +56,7 @@
 
 % for eunit happiness
 run_eqc_test() ->
-    ?assert(run_eqc()).
+    {timeout, 10000, ?_assert(run_eqc())}.
 
 run_eqc() ->
     run_eqc(100).
