@@ -703,10 +703,10 @@ limit(#resource_info{type=token, limit={_Period,MaxCount}}) -> MaxCount.
 release_resource(_Ref, State) when ?NOT_TRANSFERED(State) ->
     State;
 release_resource(Ref, State=#state{entry_table=TableId}) ->
+    %% NB: This requires a full table-scan, regardless of how you slice it.
     %% There should only be one instance of the object, but we'll zap all that match.
-    Given = [Obj || Obj <- ets:match_object(TableId, {{given, '_'},'_'})],
-    Matches = [Obj || {_Key,Entry}=Obj <- Given, ?e_ref(Entry) == Ref],
-    [ets:delete_object(TableId, Obj) || Obj <- Matches],
+    ets:match_delete(TableId,
+                     {{given, '_'},?RESOURCE_ENTRY('_', '_', '_', '_', Ref)}),
     State.
 
 maybe_honor_limit(true, Lock, Limit, #state{entry_table=TableId}) ->
