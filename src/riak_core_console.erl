@@ -750,7 +750,7 @@ commit_staged([]) ->
             io:format("The plan has changed. Verify with "
                       "'riak-admin cluster plan' before committing~n");
         {error, invalid_resize_claim} ->
-            io:format("Unable to commit staged ring changes while ring is resizing.~n"
+            io:format("Unable to commit staged ring changes.~n"
                       "Check that there are no pending changes in 'riak-admin ring-status'~n"
                       "If there are, try again once they are completed,~n"
                       "Otherwise try again shortly.~n");
