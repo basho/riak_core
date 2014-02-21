@@ -37,7 +37,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--type registered_app() :: {MFA::mfa(), RerfreshRateMillis::non_neg_integer()}.
+-type registered_app() :: {MFA::{module(), atom(), [term()]}, RerfreshRateMillis::non_neg_integer()}.
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
