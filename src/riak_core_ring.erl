@@ -185,6 +185,8 @@
                            awaiting | complete}
                         | {undefined, undefined, undefined}.
 
+-type resize_transfer() :: {{integer(),term()}, ordsets:ordset(node()), awaiting | complete}.
+
 %% ===================================================================
 %% Public API
 %% ===================================================================
@@ -1095,10 +1097,15 @@ complete_resize_transfers(State, Source, Mod) ->
 deletion_complete(State, Idx, Mod) ->
     transfer_complete(State, Idx, Mod).
 
+-spec resize_transfers(chstate(), {integer(), term()}) ->
+                              [resize_transfer()].
 resize_transfers(State, Source) ->
     {ok, Transfers} = get_meta({resize, Source}, [], State),
     Transfers.
 
+-spec set_resize_transfers(chstate(),
+                           {integer(), term()},
+                           [resize_transfer()]) -> chstate().
 set_resize_transfers(State, Source, Transfers) ->
     update_meta({resize, Source}, Transfers, State).
 
