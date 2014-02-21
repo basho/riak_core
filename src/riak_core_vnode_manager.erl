@@ -368,7 +368,7 @@ handle_call(_, _From, State) ->
 
 %% @private
 handle_cast({Partition, Mod, start_vnode}, State) ->
-    get_vnode(Partition, Mod, State),
+    _ = get_vnode(Partition, Mod, State),
     {noreply, State};
 handle_cast({unregister, Index, Mod, Pid}, #state{idxtab=T} = State) ->
     %% Update forwarding state to ensure vnode is not restarted in
@@ -851,7 +851,7 @@ maybe_start_vnodes(State=#state{vnode_start_tokens=Tokens,
         {_, []} ->
             State;
         {_, [{Idx, Mod} | NeverStarted2]} ->
-            get_vnode(Idx, Mod, State),
+            _ = get_vnode(Idx, Mod, State),
             gen_server:cast(?MODULE, maybe_start_vnodes),
             State#state{vnode_start_tokens=Tokens-1,
                         never_started=NeverStarted2}
