@@ -564,6 +564,8 @@ delmon(MonRef, _State=#state{idxtab=T}) ->
 add_vnode_rec(I,  _State=#state{idxtab=T}) -> ets:insert(T,I).
 
 %% @private
+-spec get_vnode(Idx::integer() | [integer()], Mod::term(), State:: #state{}) ->
+          pid() | [pid()].
 get_vnode(Idx, Mod, State) when not is_list(Idx) ->
     [Result] = get_vnode([Idx], Mod, State),
     Result;
