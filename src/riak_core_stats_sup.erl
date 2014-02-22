@@ -41,8 +41,8 @@ start_server(Mod) ->
     Pid.
 
 stop_server(Mod) ->
-    ok = supervisor:terminate_child(?MODULE, Mod),
-    ok = supervisor:delete_child(?MODULE, Mod),
+    _ = supervisor:terminate_child(?MODULE, Mod),
+    _ = supervisor:delete_child(?MODULE, Mod),
     ok.
 
 %% @private

@@ -42,8 +42,8 @@ start_proxy(Mod, Index) ->
     Pid.
 
 stop_proxy(Mod, Index) ->
-    ok = supervisor:terminate_child(?MODULE, {Mod, Index}),
-    ok = supervisor:delete_child(?MODULE, {Mod, Index}),
+    _ = supervisor:terminate_child(?MODULE, {Mod, Index}),
+    _ = supervisor:delete_child(?MODULE, {Mod, Index}),
     ok.
 
 start_proxies(Mod) ->
