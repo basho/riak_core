@@ -486,7 +486,7 @@ add_grant(all, Bucket, Grants) ->
     %% all is always valid
     case validate_permissions(Grants) of
         ok ->
-            add_grant_int([all], Bucket, Grants);
+            add_grant_int([{all, group}], Bucket, Grants);
         Error ->
             Error
     end;
@@ -513,7 +513,7 @@ add_revoke(all, Bucket, Revokes) ->
     %% all is always valid
     case validate_permissions(Revokes) of
         ok ->
-            add_revoke_int([all], Bucket, revokes);
+            add_revoke_int([{all, group}], Bucket, revokes);
         Error ->
             Error
     end;
