@@ -163,8 +163,24 @@ print_user(User) ->
                              end
                          end ||
                          {{Username, Bucket}, Permissions} <- Grants, Username /= <<"user/", User/binary>>]),
+            io:format("~nDedicated permissions (~ts)~n~n", [User]),
+            riak_core_console_table:print([{type, 10}, {bucket, 10}, {grants, 40}],
+                        [begin
+                             case Bucket of
+                                 any ->
+                                     ["*", "*",
+                                      prettyprint_permissions(Permissions, 40)];
+                                 {T, B} ->
+                                     [T, B,
+                                      prettyprint_permissions(Permissions, 40)];
+                                 T ->
+                                     [T, "*",
+                                      prettyprint_permissions(Permissions, 40)]
+                             end
+                         end ||
+                         {{Username, Bucket}, Permissions} <- Grants, Username == <<"user/", User/binary>>]),
             GroupedGrants = group_grants(Grants),
-            io:format("~nApplied permissions~n~n"),
+            io:format("~nCumulative permissions (~ts)~n~n", [User]),
             riak_core_console_table:print([{type, 10}, {bucket, 10}, {grants, 40}],
                         [begin
                              case Bucket of
@@ -206,8 +222,24 @@ print_group(Group) ->
                              end
                          end ||
                          {{Groupname, Bucket}, Permissions} <- Grants, Groupname /= Group]),
+            io:format("~nDedicated permissions (~ts)~n~n", [Group]),
+            riak_core_console_table:print([{type, 10}, {bucket, 10}, {grants, 40}],
+                        [begin
+                             case Bucket of
+                                 any ->
+                                     ["*", "*",
+                                      prettyprint_permissions(Permissions, 40)];
+                                 {T, B} ->
+                                     [T, B,
+                                      prettyprint_permissions(Permissions, 40)];
+                                 T ->
+                                     [T, "*",
+                                      prettyprint_permissions(Permissions, 40)]
+                             end
+                         end ||
+                         {{Groupname, Bucket}, Permissions} <- Grants, chop_name(Groupname) == Group]),
             GroupedGrants = group_grants(Grants),
-            io:format("~nApplied permissions~n~n"),
+            io:format("~nCumulative permissions (~ts)~n~n", [Group]),
             riak_core_console_table:print([{type, 10}, {bucket, 10}, {grants, 40}],
                         [begin
                              case Bucket of
@@ -371,6 +403,8 @@ authenticate(Username, Password, ConnInfo) ->
             end
     end.
 
+add_user(<<"all">>, _Options) ->
+    {error, reserved_name};
 add_user(Username, Options) ->
     case user_exists(Username) of
         false ->
@@ -386,6 +420,8 @@ add_user(Username, Options) ->
             {error, user_exists}
     end.
 
+add_group(<<"all">>, _Options) ->
+    {error, reserved_name};
 add_group(Groupname, Options) ->
     case group_exists(Groupname) of
         false ->
@@ -401,6 +437,8 @@ add_group(Groupname, Options) ->
             {error, group_exists}
     end.
 
+alter_user(<<"all">>, _Options) ->
+    {error, reserved_name};
 alter_user(Username, Options) ->
     case user_details(Username) of
         undefined ->
@@ -419,6 +457,8 @@ alter_user(Username, Options) ->
             end
     end.
 
+alter_group(<<"all">>, _Options) ->
+    {error, reserved_name};
 alter_group(Groupname, Options) ->
     case group_details(Groupname) of
         undefined ->
@@ -437,6 +477,8 @@ alter_group(Groupname, Options) ->
             end
     end.
 
+del_user(<<"all">>) ->
+    {error, reserved_name};
 del_user(Username) ->
     case user_exists(Username) of
         false ->
@@ -459,6 +501,8 @@ del_user(Username) ->
             ok
     end.
 
+del_group(<<"all">>) ->
+    {error, reserved_name};
 del_group(Groupname) ->
     case group_exists(Groupname) of
         false ->
@@ -485,7 +529,7 @@ add_grant(all, Bucket, Grants) ->
     %% all is always valid
     case validate_permissions(Grants) of
         ok ->
-            add_grant_int([all], Bucket, Grants);
+            add_grant_int([{all, group}], Bucket, Grants);
         Error ->
             Error
     end;
@@ -527,7 +571,7 @@ add_revoke(all, Bucket, Revokes) ->
     %% all is always valid
     case validate_permissions(Revokes) of
         ok ->
-            case add_revoke_int([all], Bucket, revokes) of
+            case add_revoke_int([{all, group}], Bucket, Revokes) of
                 ok ->
                     ok;
                 Error2 ->
@@ -799,7 +843,15 @@ get_context(Username) when is_binary(Username) ->
     #context{username=Username, grants=Grants, epoch=os:timestamp()}.
 
 accumulate_grants(Role, Type) ->
-    {Grants, _Seen} = accumulate_grants([Role], [], [], Type),
+    %% The 'all' grants always apply
+    All = riak_core_metadata:fold(fun({{_R, _Bucket}, [?TOMBSTONE]}, A) ->
+                                          A;
+                                     ({{_R, Bucket}, [Permissions]}, A) ->
+                                          [{{<<"group/all">>, Bucket},
+                                            Permissions}|A]
+                                  end, [], metadata_grant_prefix(group),
+                                  [{match, {all, '_'}}]),
+    {Grants, _Seen} = accumulate_grants([Role], [], All, Type),
     lists:flatten(Grants).
 
 accumulate_grants([], Seen, Acc, _Type) ->
@@ -889,8 +941,9 @@ validate_groups_option(Options) ->
         undefined ->
             {ok, Options};
         GroupStr ->
-            Groups= [list_to_binary(G) || G <-
-                                         string:tokens(GroupStr, ",")],
+            %% Don't let the admin assign "all" as a container
+            Groups= [list_to_binary(G) ||
+                        G <- string:tokens(GroupStr, ","), G /= "all"],
 
             case unknown_roles(Groups, group) of
                 [] ->
@@ -938,7 +991,7 @@ validate_permissions([Perm|T], Known) ->
                     end
             catch
                 error:badarg ->
-                            {error, {unknown_permission, Perm}}
+                    {error, {unknown_permission, Perm}}
             end;
         _ ->
             {error, {unknown_permission, Perm}}
