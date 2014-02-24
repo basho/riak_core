@@ -189,7 +189,8 @@
                     remaining_segments :: ['*' | integer()],
                     acc_fun            :: fun(([{binary(),binary()}]) -> any()),
                     segment_acc        :: [{binary(), binary()}],
-                    final_acc          :: [{integer(), any()}]
+                    final_acc          :: [{integer(), any()}],
+                    prefetch=false     :: boolean()
                    }).
 
 -opaque hashtree() :: #state{}.
@@ -718,6 +719,7 @@ iterator_move(undefined, _Seek) ->
     {error, invalid_iterator};
 iterator_move(Itr, Seek) ->
     try
+
         eleveldb:iterator_move(Itr, Seek)
     catch
         _:badarg ->
@@ -742,38 +744,63 @@ iterate({ok, K, V}, IS=#itr_state{itr=Itr,
                   _ ->
                       CurSeg
               end,
-    case {SegId, Seg, Segments} of
-        {bad, -1, _} ->
+    case {SegId, Seg, Segments, IS#itr_state.prefetch} of
+        {bad, -1, _, _} ->
             %% Non-segment encountered, end traversal
             IS;
-        {Id, Segment, _} ->
+        {Id, Segment, _, _} ->
             %% Still reading existing segment
             IS2 = IS#itr_state{current_segment=Segment,
-                               segment_acc=[{K,V} | Acc]},
-            iterate(iterator_move(Itr, next), IS2);
-        {Id, _, [Seg|Remaining]} ->
+                               segment_acc=[{K,V} | Acc],
+                               prefetch=true},
+            iterate(iterator_move(Itr, prefetch), IS2);
+        {Id, _, [Seg|Remaining], _} ->
             %% Pointing at next segment we are interested in
             IS2 = IS#itr_state{current_segment=Seg,
                                remaining_segments=Remaining,
                                segment_acc=[{K,V}],
-                               final_acc=[{Segment, F(Acc)} | FinalAcc]},
-            iterate(iterator_move(Itr, next), IS2);
-        {Id, _, ['*']} ->
+                               final_acc=[{Segment, F(Acc)} | FinalAcc],
+                               prefetch=true},
+            iterate(iterator_move(Itr, prefetch), IS2);
+        {Id, _, ['*'], _} ->
             %% Pointing at next segment we are interested in
             IS2 = IS#itr_state{current_segment=Seg,
                                remaining_segments=['*'],
                                segment_acc=[{K,V}],
-                               final_acc=[{Segment, F(Acc)} | FinalAcc]},
-            iterate(iterator_move(Itr, next), IS2);
-        {Id, _, [NextSeg|Remaining]} ->
+                               final_acc=[{Segment, F(Acc)} | FinalAcc],
+                               prefetch=true},
+            iterate(iterator_move(Itr, prefetch), IS2);
+        {Id, NextSeg, [NextSeg|Remaining], _} ->
+            %% A previous prefetch_stop left us at the start of the
+            %% next interesting segment.
+            IS2 = IS#itr_state{current_segment=NextSeg,
+                               remaining_segments=Remaining,
+                               segment_acc=[{K,V}],
+                               prefetch=true},
+            iterate(iterator_move(Itr, prefetch), IS2);
+        {Id, _, [_NextSeg | _Remaining], true} ->
+            %% Pointing at uninteresting segment, but need to halt the
+            %% prefetch to ensure the interator can be reused
+            IS2 = IS#itr_state{segment_acc=[],
+                               final_acc=[{Segment, F(Acc)} | FinalAcc],
+                               prefetch=false},
+            iterate(iterator_move(Itr, prefetch_stop), IS2);
+        {Id, _, [NextSeg | Remaining], false} ->
             %% Pointing at uninteresting segment, seek to next interesting one
+            Seek = encode(Id, NextSeg, <<>>),
             IS2 = IS#itr_state{current_segment=NextSeg,
                                remaining_segments=Remaining,
                                segment_acc=[],
                                final_acc=[{Segment, F(Acc)} | FinalAcc]},
-            Seek = encode(Id, NextSeg, <<>>),
             iterate(iterator_move(Itr, Seek), IS2);
-        _ ->
+        {_, _, _, true} ->
+            %% Done with traversal, but need to stop the prefetch to
+            %% ensure the iterator can be reused. The next operation
+            %% with this iterator is a seek so no need to be concerned
+            %% with the data returned here.
+            _ = iterator_move(Itr, prefetch_stop),
+            IS#itr_state{prefetch=false};
+        {_, _, _, false} ->
             %% Done with traversal
             IS
     end.
