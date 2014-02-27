@@ -342,14 +342,7 @@ reload_ring(live) ->
                                    [lager:posix_error(Reason)]),
                     throw({error, Reason});
                 Ring ->
-                    %% Upgrade the ring data structure if necessary.
-                    case riak_core_ring:legacy_ring(Ring) of
-                        true ->
-                            lager:info("Upgrading legacy ring"),
-                            riak_core_ring:upgrade(Ring);
-                        false ->
-                            Ring
-                    end
+                    Ring
             end;
         {error, not_found} ->
             lager:warning("No ring file available."),

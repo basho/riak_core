@@ -117,20 +117,10 @@ default_choose_claim(Ring) ->
     default_choose_claim(Ring, node()).
 
 default_choose_claim(Ring, Node) ->
-    case riak_core_ring:legacy_ring(Ring) of
-        true ->
-            choose_claim_v1(Ring, Node);
-        false ->
-            choose_claim_v2(Ring, Node)
-    end.
+    choose_claim_v2(Ring, Node).
 
 default_choose_claim(Ring, Node, Params) ->
-    case riak_core_ring:legacy_ring(Ring) of
-        true ->
-            choose_claim_v1(Ring, Node, Params);
-        false ->
-            choose_claim_v2(Ring, Node, Params)
-    end.
+    choose_claim_v2(Ring, Node, Params).
 
 %% @spec default_wants_claim(riak_core_ring()) -> {yes, integer()} | no
 %% @doc Want a partition if we currently have less than floor(ringsize/nodes).
@@ -138,12 +128,7 @@ default_wants_claim(Ring) ->
     default_wants_claim(Ring, node()).
 
 default_wants_claim(Ring, Node) ->
-    case riak_core_ring:legacy_ring(Ring) of
-        true ->
-            wants_claim_v1(Ring, Node);
-        false ->
-            wants_claim_v2(Ring, Node)
-    end.
+    wants_claim_v2(Ring, Node).
 
 %% @deprecated
 wants_claim_v1(Ring) ->

@@ -39,8 +39,7 @@
 -export ([distribute_ring/1, send_ring/1, send_ring/2, remove_from_cluster/2,
           remove_from_cluster/3, random_gossip/1,
           recursive_gossip/1, random_recursive_gossip/1, rejoin/2,
-          gossip_version/0, legacy_gossip/0, legacy_gossip/1,
-          any_legacy_gossip/2]).
+          gossip_version/0]).
 
 -include("riak_core_ring.hrl").
 
@@ -79,19 +78,6 @@ stop() ->
 
 rejoin(Node, Ring) ->
     gen_server:cast({?MODULE, Node}, {rejoin, Ring}).
-
-legacy_gossip() ->
-    false.
-
-legacy_gossip(_Node) ->
-    false.
-
-%% @doc Determine if any of the `Nodes' are using legacy gossip by querying
-%%      each node's capability directly over RPC. The proper way to check
-%%      for legacy gossip is to use {@link legacy_gossip/1}. This function
-%%      is used to support staged clustering in `riak_core_claimant'.
-any_legacy_gossip(_Ring, _Nodes) ->
-    false.
 
 %% @doc Gossip state to a random node in the ring.
 random_gossip(Ring) ->
@@ -161,16 +147,12 @@ update_gossip_version(Ring) ->
             Ring2
     end.
 
-check_legacy_gossip(_Ring, _State) ->
-    false.
-
 update_known_version(Node, {OtherRing, GVsns}) ->
     case riak_core_ring:get_member_meta(OtherRing, Node, gossip_vsn) of
         undefined ->
             case riak_core_ring:owner_node(OtherRing) of
                 Node ->
-                    %% Ring owner defaults to legacy gossip if unspecified.
-                    {OtherRing, orddict:store(Node, ?LEGACY_RING_VSN, GVsns)};
+                    {OtherRing, orddict:store(Node, ?CURRENT_RING_VSN, GVsns)};
                 _ ->
                     {OtherRing, GVsns}
             end;
@@ -250,9 +232,8 @@ handle_cast({rejoin, RingIn}, State) ->
                        riak_core_ring:cluster_name(OtherRing)),
     case SameCluster of
         true ->
-            Legacy = check_legacy_gossip(Ring, State),
             OtherNode = riak_core_ring:owner_node(OtherRing),
-            case riak_core:join(Legacy, node(), OtherNode, true, true) of
+            case riak_core:join(node(), OtherNode, true, true) of
                 ok -> ok;
                 {error, Reason} ->
                     lager:error("Could not rejoin cluster: ~p", [Reason]),
@@ -292,8 +273,6 @@ schedule_next_reset() ->
     erlang:send_after(Reset, ?MODULE, reset_tokens).
 
 reconcile(Ring0, [OtherRing0]) ->
-    %% Due to rolling upgrades and legacy gossip, a ring's cluster name
-    %% may be temporarily undefined. This is eventually fixed by the claimant.
     {Ring, OtherRing} = riak_core_ring:reconcile_names(Ring0, OtherRing0),
     Node = node(),
     OtherNode = riak_core_ring:owner_node(OtherRing),

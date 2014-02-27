@@ -20,7 +20,7 @@
 %%
 %% -------------------------------------------------------------------
 -module(riak_core).
--export([stop/0, stop/1, join/1, join/5, staged_join/1, remove/1, down/1,
+-export([stop/0, stop/1, join/1, join/4, staged_join/1, remove/1, down/1,
          leave/0, remove_from_cluster/1]).
 -export([vnode_modules/0, health_check/1]).
 -export([register/1, register/2, bucket_fixups/0, bucket_validators/0]).
@@ -72,45 +72,25 @@ join(Node, Auto) when is_atom(Node) ->
 join(Node, Node, _) ->
     {error, self_join};
 join(_, Node, Auto) ->
-    join(riak_core_gossip:legacy_gossip(), node(), Node, false, Auto).
+    join(node(), Node, false, Auto).
 
-join(true, _, Node, _Rejoin, _Auto) ->
-    legacy_join(Node);
-join(false, _, Node, Rejoin, Auto) ->
+join(_, Node, Rejoin, Auto) ->
     case net_adm:ping(Node) of
         pang ->
             {error, not_reachable};
         pong ->
-            %% Failure due to trying to join older node that
-            %% doesn't define legacy_gossip will be handled
-            %% in standard_join based on seeing a legacy ring.
             standard_join(Node, Rejoin, Auto)
     end.
 
 get_other_ring(Node) ->
-    case rpc:call(Node, riak_core_ring_manager, get_my_ring, []) of
-        {ok, Ring} ->
-            case riak_core_ring:legacy_ring(Ring) of
-                true ->
-                    {ok, Ring};
-                false ->
-                    rpc:call(Node, riak_core_ring_manager, get_raw_ring, [])
-            end;
-        Error ->
-            Error
-    end.
+    rpc:call(Node, riak_core_ring_manager, get_my_ring, []).
 
 standard_join(Node, Rejoin, Auto) when is_atom(Node) ->
     case net_adm:ping(Node) of
         pong ->
             case get_other_ring(Node) of
                 {ok, Ring} ->
-                    case riak_core_ring:legacy_ring(Ring) of
-                        true ->
-                            legacy_join(Node);
-                        false ->
-                            standard_join(Node, Ring, Rejoin, Auto)
-                    end;
+                    standard_join(Node, Ring, Rejoin, Auto);
                 _ ->
                     {error, unable_to_get_join_ring}
             end;
@@ -149,23 +129,6 @@ maybe_auto_join(false, _Node, Ring) ->
     Ring;
 maybe_auto_join(true, Node, Ring) ->
     riak_core_ring:update_member_meta(Node, Ring, Node, '$autojoin', true).
-
-legacy_join(Node) when is_atom(Node) ->
-    {ok, OurRingSize} = application:get_env(riak_core, ring_creation_size),
-    case net_adm:ping(Node) of
-        pong ->
-            case rpc:call(Node,
-                          application,
-                          get_env,
-                          [riak_core, ring_creation_size]) of
-                {ok, OurRingSize} ->
-                    riak_core_gossip:send_ring(Node, node());
-                _ ->
-                    {error, different_ring_sizes}
-            end;
-        pang ->
-            {error, not_reachable}
-    end.
 
 remove(Node) ->
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
