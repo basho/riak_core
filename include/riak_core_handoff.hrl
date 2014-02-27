@@ -17,7 +17,7 @@
 -type ho_type() :: ownership_handoff | hinted_handoff | repair | resize_transfer.
 -type predicate() :: fun((any()) -> boolean()).
 
--type index() :: integer().
+-type index() :: chash:index_as_int().
 -type mod_src_tgt() :: {module(), index(), index()} | {undefined, undefined, undefined}.
 -type mod_partition() :: {module(), index()}.
 

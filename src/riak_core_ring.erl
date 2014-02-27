@@ -273,7 +273,7 @@ nearly_equal(RingA, RingB) ->
 
 %% @doc Determine if a given Index/Node `IdxNode' combination is a
 %%      primary.
--spec is_primary(chstate(), {integer(), node()}) -> boolean().
+-spec is_primary(chstate(), {chash:index_as_int(), node()}) -> boolean().
 is_primary(Ring, IdxNode) ->
     Owners = all_owners(Ring),
     lists:member(IdxNode, Owners).
@@ -402,7 +402,7 @@ get_buckets(State) ->
         end, [], Keys).
 
 %% @doc Return the node that owns the given index.
--spec index_owner(State :: chstate(), Idx :: integer()) -> Node :: term().
+-spec index_owner(State :: chstate(), Idx :: chash:index_as_int()) -> Node :: term().
 index_owner(State, Idx) ->
     {Idx, Owner} = lists:keyfind(Idx, 1, all_owners(State)),
     Owner.
@@ -410,12 +410,12 @@ index_owner(State, Idx) ->
 %% @doc Return the node that will own this index after transtions have completed
 %%      this function will error if the ring is shrinking and Idx no longer exists
 %%      in it
--spec future_owner(chstate(), integer()) -> term().
+-spec future_owner(chstate(), chash:index_as_int()) -> term().
 future_owner(State, Idx) ->
     index_owner(future_ring(State), Idx).
 
 %% @doc Return all partition indices owned by the node executing this function.
--spec my_indices(State :: chstate()) -> [integer()].
+-spec my_indices(State :: chstate()) -> [chash:index_as_int()].
 my_indices(State) ->
     [I || {I,Owner} <- ?MODULE:all_owners(State), Owner =:= node()].
 
@@ -439,7 +439,7 @@ owner_node(State) ->
 %% @doc For a given object key, produce the ordered list of
 %%      {partition,node} pairs that could be responsible for that object.
 -spec preflist(Key :: binary(), State :: chstate()) ->
-                               [{Index :: integer(), Node :: term()}].
+                               [{Index :: chash:index_as_int(), Node :: term()}].
 preflist(Key, State) -> chash:successors(Key, State?CHSTATE.chring).
 
 %% @doc Return a randomly-chosen node from amongst the owners.
@@ -450,7 +450,7 @@ random_node(State) ->
 
 %% @doc Return a partition index not owned by the node executing this function.
 %%      If this node owns all partitions, return any index.
--spec random_other_index(State :: chstate()) -> integer().
+-spec random_other_index(State :: chstate()) -> chash:index_as_int().
 random_other_index(State) ->
     L = [I || {I,Owner} <- ?MODULE:all_owners(State), Owner =/= node()],
     case L of
@@ -458,7 +458,7 @@ random_other_index(State) ->
         _ -> lists:nth(random:uniform(length(L)), L)
     end.
 
--spec random_other_index(State :: chstate(), Exclude :: [term()]) -> integer() | no_indices.
+-spec random_other_index(State :: chstate(), Exclude :: [term()]) -> chash:index_as_int() | no_indices.
 random_other_index(State, Exclude) when is_list(Exclude) ->
     L = [I || {I, Owner} <- ?MODULE:all_owners(State),
               Owner =/= node(),

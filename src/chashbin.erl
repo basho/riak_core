@@ -31,9 +31,9 @@
 -define(ENTRY, binary-unit:?UNIT).
 
 -type owners_bin() :: <<_:_*?UNIT>>.
--type index()      :: non_neg_integer().
+-type index()      :: chash:index_as_int().
 -type pred_fun()   :: fun(({index(), node()}) -> boolean()).
--type chash_key()  :: <<_:160>> | non_neg_integer().
+-type chash_key()  :: index() | chash:index().
 
 -record(chashbin, {size   :: pos_integer(),
                    owners :: owners_bin(),

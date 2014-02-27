@@ -29,7 +29,7 @@
 %% API
 -export([create_plan/5]).
 
--type index() :: non_neg_integer().
+-type index() :: chash:index_as_int().
 -type req_id() :: non_neg_integer().
 -type coverage_vnodes() :: [{index(), node()}].
 -type vnode_filters() :: [{node(), [{index(), [index()]}]}].
