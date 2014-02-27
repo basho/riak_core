@@ -403,10 +403,10 @@ query_resource(Resource, Types) ->
 %%%
 
 -record(state,
-        {info_table:: ets:tid() | atom(),  %% TableID of ?BG_INFO_ETS_TABLE
-         entry_table:: ets:tid() | atom(), %% TableID of ?BG_ENTRY_ETS_TABLE
-         enabled :: boolean(),             %% Global enable/disable switch, true at startup
-         bypassed:: boolean()              %% Global kill switch. false at startup
+        {info_table:: ets:tab(),  %% TableID of ?BG_INFO_ETS_TABLE
+         entry_table:: ets:tab(), %% TableID of ?BG_ENTRY_ETS_TABLE
+         enabled :: boolean(),    %% Global enable/disable switch, true at startup
+         bypassed:: boolean()     %% Global kill switch. false at startup
         }).
 
 %%%===================================================================
