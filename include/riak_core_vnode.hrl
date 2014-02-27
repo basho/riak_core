@@ -6,7 +6,7 @@
                   {fsm, undefined, pid()} |        % special case in
                                                    % riak_kv_util:make_request/2.erl
                   ignore.
--type partition() :: non_neg_integer().
+-type partition() :: chash:index_as_int().
 -type vnode_req() :: term().
 -type keyspaces() :: [{partition(), [partition()]}].
 

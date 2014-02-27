@@ -35,7 +35,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--type index() :: non_neg_integer().
+-type index() :: chash:index_as_int().
 -type n_val() :: non_neg_integer().
 -type ring() :: riak_core_ring:riak_core_ring().
 -type preflist() :: [{index(), node()}].
