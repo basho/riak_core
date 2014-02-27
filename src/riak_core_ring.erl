@@ -309,7 +309,7 @@ fresh(RingSize, NodeName) ->
 %% @doc change the size of the ring to `NewRingSize'. If the ring
 %%      is larger than the current ring any new indexes will be owned
 %%      by a dummy host
--spec resize(chstate(), integer()) -> chstate().
+-spec resize(chstate(), pos_integer()) -> chstate().
 resize(State, NewRingSize) ->
     NewRing = lists:foldl(fun({Idx,Owner}, RingAcc) ->
                                   chash:update(Idx, Owner, RingAcc)
@@ -366,11 +366,11 @@ my_indices(State) ->
     [I || {I,Owner} <- ?MODULE:all_owners(State), Owner =:= node()].
 
 %% @doc Return the number of partitions in this Riak ring.
--spec num_partitions(State :: chstate()) -> integer().
+-spec num_partitions(State :: chstate()) -> pos_integer().
 num_partitions(State) ->
     chash:size(State?CHSTATE.chring).
 
--spec future_num_partitions(chstate()) -> integer().
+-spec future_num_partitions(chstate()) -> pos_integer().
 future_num_partitions(State=?CHSTATE{chring=CHRing}) ->
     case resized_ring(State) of
         {ok, C} -> chash:size(C);
