@@ -30,7 +30,6 @@
          add_grant/3, add_revoke/3, check_permission/2, check_permissions/2,
          get_username/1, is_enabled/0, enable/0, disable/0, status/0,
          get_ciphers/0, set_ciphers/1, print_ciphers/0]).
-%% TODO add rm_source, API to deactivate/remove users
 
 -define(DEFAULT_CIPHER_LIST,
 "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256"
@@ -60,10 +59,21 @@
 
 -define(TOMBSTONE, '$deleted').
 
+-ifdef(TEST).
+-define(REFRESH_TIME, 1).
+-else.
+-define(REFRESH_TIME, 1000).
+-endif.
+
 -record(context,
         {username,
          grants,
          epoch}).
+
+-type context() :: #context{}.
+-type bucket() :: {binary(), binary()} | binary().
+-type permission() :: {string()} | {string(), bucket()}.
+-type userlist() :: all | string() | [string()].
 
 prettyprint_users([all], _) ->
     "all";
@@ -273,6 +283,8 @@ prettyprint_permissions([Permission|Rest], Width, [H|T] =Acc) ->
 prettyprint_permissions([Permission|Rest], Width, Acc) ->
     prettyprint_permissions(Rest, Width, [[Permission] | Acc]).
 
+-spec check_permission(Permission :: permission(), Context :: context()) ->
+    {true, context()} | {false, string(), context()}.
 check_permission({Permission}, Context0) ->
     Context = maybe_refresh_context(Context0),
     %% The user needs to have this permission applied *globally*
@@ -322,6 +334,8 @@ check_permissions([Permission|Rest], Ctx) ->
 get_username(#context{username=Username}) ->
     Username.
 
+-spec authenticate(Username::binary(), Password::binary(), ConnInfo ::
+                   [{atom(), any()}]) -> {ok, context()} | {error, term()}.
 authenticate(Username, Password, ConnInfo) ->
     case user_details(Username) of
         undefined ->
@@ -403,6 +417,8 @@ authenticate(Username, Password, ConnInfo) ->
             end
     end.
 
+-spec add_user(Username :: binary(), Options :: [{string(), term()}]) ->
+    ok | {error, term()}.
 add_user(<<"all">>, _Options) ->
     {error, reserved_name};
 add_user(Username, Options) ->
@@ -437,6 +453,8 @@ add_group(Groupname, Options) ->
             {error, group_exists}
     end.
 
+-spec alter_user(Username :: binary(), Options :: [{string(), term()}]) ->
+    ok | {error, term()}.
 alter_user(<<"all">>, _Options) ->
     {error, reserved_name};
 alter_user(Username, Options) ->
@@ -525,6 +543,7 @@ del_group(Groupname) ->
             ok
     end.
 
+-spec add_grant(userlist(), bucket(), [string()]) -> ok | {error, term()}.
 add_grant(all, Bucket, Grants) ->
     %% all is always valid
     case validate_permissions(Grants) of
@@ -567,6 +586,7 @@ add_grant(Role, Bucket, Grants) ->
     add_grant([Role], Bucket, Grants).
 
 
+-spec add_revoke(userlist(), bucket(), [string()]) -> ok | {error, term()}.
 add_revoke(all, Bucket, Revokes) ->
     %% all is always valid
     case validate_permissions(Revokes) of
@@ -614,6 +634,9 @@ add_revoke(User, Bucket, Revokes) ->
     add_revoke([User], Bucket, Revokes).
 
 
+-spec add_source(Users :: all | binary() | [binary()], CIDR ::
+                 {inet:ip_address(), non_neg_integer()}, Source :: string(),
+                 Options :: [{string(), term()}]) -> ok | {error, term()}.
 add_source(all, CIDR, Source, Options) ->
     %% all is always valid
 
@@ -821,7 +844,7 @@ match_grant(Bucket, Grants) ->
 maybe_refresh_context(Context) ->
     %% TODO replace this with a cluster metadata hash check, or something
     Epoch = os:timestamp(),
-    case timer:now_diff(Epoch, Context#context.epoch) < 1000 of
+    case timer:now_diff(Epoch, Context#context.epoch) < ?REFRESH_TIME of
         false ->
             %% context has expired
             get_context(Context#context.username);

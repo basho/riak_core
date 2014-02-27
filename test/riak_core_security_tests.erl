@@ -1,0 +1,182 @@
+-module(riak_core_security_tests).
+-compile(export_all).
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+start_manager(Node) ->
+    Dir = atom_to_list(Node),
+    case length(Dir) of
+        0 -> exit(no_dir); %% make sure we don't do something stupid below
+        _ -> ok
+    end,
+    os:cmd("mkdir " ++ Dir),
+    os:cmd("rm -rf " ++ Dir ++ "/"),
+    {ok, Mgr} = riak_core_metadata_manager:start_link([{data_dir, Dir},
+                                     {node_name, Node}]),
+    TreeDir = Dir ++ "/trees",
+    {ok, Tree} = riak_core_metadata_hashtree:start_link(TreeDir),
+    {ok, Bcst} = riak_core_broadcast:start_link([node()], [], [], []),
+    unlink(Bcst),
+    unlink(Tree),
+    unlink(Mgr),
+
+    application:set_env(riak_core, permissions, [{riak_kv,[get,put]}]),
+    {Mgr, Tree, Bcst}.
+
+stop_manager({Mgr, Tree, Bcst}) ->
+    catch exit(Mgr, kill),
+    catch exit(Tree, kill),
+    catch exit(Bcst, kill),
+    ok.
+
+sync_test_() ->
+    {foreach,
+     fun() ->
+             start_manager(node())
+     end,
+     fun(S) ->
+             stop_manager(S)
+     end,
+     [ {"trust auth works",
+        fun() ->
+                ?assertMatch({error, _}, riak_core_security:authenticate(<<"user">>, <<"password">>,
+                                                [{ip, {127, 0, 0, 1}}])),
+                ?assertEqual(ok, riak_core_security:add_user(<<"user">>,
+                                            [{"password","password"}])),
+                ?assertMatch({error, _}, riak_core_security:authenticate(<<"user">>, <<"password">>,
+                                                [{ip, {127, 0, 0, 1}}])),
+                ?assertEqual(ok, riak_core_security:add_source(all, {{127, 0, 0, 1}, 32}, trust, [])),
+                ?assertMatch({ok, _}, riak_core_security:authenticate(<<"user">>, <<"password">>,
+                                                [{ip, {127, 0, 0, 1}}])),
+                %% make sure these don't crash, at least
+                ?assertEqual(ok, riak_core_security:print_users()),
+                ?assertEqual(ok, riak_core_security:print_sources()),
+                ?assertEqual(ok, riak_core_security:print_user(<<"user">>)),
+                ok
+        end},
+       { "password auth works",
+        fun() ->
+                ?assertMatch({error, _}, riak_core_security:authenticate(<<"user">>, <<"password">>,
+                                                [{ip, {127, 0, 0, 1}}])),
+                ?assertEqual(ok, riak_core_security:add_user(<<"user">>,
+                                            [])),
+                ?assertMatch({error, _}, riak_core_security:authenticate(<<"user">>, <<"password">>,
+                                                [{ip, {127, 0, 0, 1}}])),
+                ?assertEqual(ok, riak_core_security:add_source(all, {{127, 0, 0, 1}, 32}, password, [])),
+                ?assertMatch({error, _}, riak_core_security:authenticate(<<"user">>, <<"badpassword">>,
+                                                [{ip, {127, 0, 0, 1}}])),
+                ?assertEqual({error, missing_password}, riak_core_security:authenticate(<<"user">>, <<"password">>,
+                                                [{ip, {127, 0, 0, 1}}])),
+                ?assertEqual(ok, riak_core_security:alter_user(<<"user">>, [{"password", "password"}])),
+                ?assertMatch({error, _}, riak_core_security:authenticate(<<"user">>, <<"badpassword">>,
+                                                [{ip, {127, 0, 0, 1}}])),
+                ?assertMatch({ok, _}, riak_core_security:authenticate(<<"user">>, <<"password">>,
+                                                [{ip, {127, 0, 0, 1}}])),
+                %% make sure these don't crash, at least
+                ?assertEqual(ok, riak_core_security:print_users()),
+                ?assertEqual(ok, riak_core_security:print_sources()),
+                ?assertEqual(ok, riak_core_security:print_user(<<"user">>)),
+                ok
+        end},
+       { "user grant/revoke on type/bucket works",
+        fun() ->
+                ?assertEqual(ok, riak_core_security:add_user(<<"user">>,
+                                            [{"password","password"}])),
+                ?assertEqual(ok, riak_core_security:add_source(all, {{127, 0, 0, 1}, 32}, password, [])),
+                {ok, Ctx} = riak_core_security:authenticate(<<"user">>, <<"password">>,
+                                                [{ip, {127, 0, 0, 1}}]),
+                ?assertMatch({false, _,  _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
+                ?assertEqual(ok, riak_core_security:add_grant(<<"user">>, {<<"default">>, <<"mybucket">>}, ["riak_kv.get"])),
+                ?assertMatch({error, {unknown_permission, _}}, riak_core_security:add_grant(<<"user">>, {<<"default">>, <<"mybucket">>}, ["riak_kv.upsert"])),
+                ?assertMatch({true, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
+                ?assertEqual(ok, riak_core_security:add_revoke(<<"user">>, {<<"default">>, <<"mybucket">>}, ["riak_kv.get"])),
+                ?assertMatch({error, {unknown_permission, _}}, riak_core_security:add_revoke(<<"user">>, {<<"default">>, <<"mybucket">>}, ["riak_kv.upsert"])),
+                ?assertMatch({false, _, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
+                %% make sure these don't crash, at least
+                ?assertEqual(ok, riak_core_security:print_users()),
+                ?assertEqual(ok, riak_core_security:print_sources()),
+                ?assertEqual(ok, riak_core_security:print_user(<<"user">>)),
+                ok
+        end},
+       { "group grant/revoke on type/bucket works",
+        fun() ->
+                ?assertEqual(ok, riak_core_security:add_user(<<"user">>,
+                                            [{"password","password"}])),
+                ?assertEqual(ok, riak_core_security:add_group(<<"group">>,
+                                            [])),
+                ?assertEqual(ok, riak_core_security:add_source(<<"user">>, {{127, 0, 0, 1}, 32}, password, [])),
+                {ok, Ctx} = riak_core_security:authenticate(<<"user">>, <<"password">>,
+                                                [{ip, {127, 0, 0, 1}}]),
+                ?assertMatch({false, _,  _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
+                ?assertEqual(ok, riak_core_security:add_grant(<<"group">>, {<<"default">>, <<"mybucket">>}, ["riak_kv.get"])),
+                ?assertMatch({error, {unknown_permission, _}}, riak_core_security:add_grant(<<"group">>, {<<"default">>, <<"mybucket">>}, ["riak_kv.upsert"])),
+                ?assertMatch({false, _, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
+                ?assertEqual(ok, riak_core_security:alter_user(<<"user">>, [{"groups", ["group"]}])),
+                ?assertMatch({true, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
+                ?assertEqual(ok, riak_core_security:add_revoke(<<"group">>, {<<"default">>, <<"mybucket">>}, ["riak_kv.get"])),
+                ?assertMatch({error, {unknown_permission, _}}, riak_core_security:add_revoke(<<"group">>, {<<"default">>, <<"mybucket">>}, ["riak_kv.upsert"])),
+                ?assertMatch({false, _, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
+                ?assertEqual(ok, riak_core_security:add_grant(<<"group">>, {<<"default">>, <<"mybucket">>}, ["riak_kv.get"])),
+                ?assertMatch({true, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
+                ?assertMatch({error, {unknown_groups, _}}, riak_core_security:alter_user(<<"user">>, [{"groups", ["nogroup"]}])),
+                ?assertEqual(ok, riak_core_security:alter_user(<<"user">>, [{"groups", []}])),
+                ?assertMatch({false, _, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
+                ?assertEqual(ok, riak_core_security:alter_user(<<"user">>, [{"groups", ["group"]}])),
+                %% make sure these don't crash, at least
+                ?assertEqual(ok, riak_core_security:print_users()),
+                ?assertEqual(ok, riak_core_security:print_sources()),
+                ?assertEqual(ok, riak_core_security:print_user(<<"user">>)),
+                ?assertEqual(ok, riak_core_security:print_groups()),
+                ?assertEqual(ok, riak_core_security:print_group(<<"group">>)),
+                ok
+        end},
+       { "all grant/revoke on type/bucket works",
+        fun() ->
+                ?assertEqual(ok, riak_core_security:add_user(<<"user">>,
+                                            [{"password","password"}])),
+                ?assertEqual(ok, riak_core_security:add_source(<<"user">>, {{127, 0, 0, 1}, 32}, password, [])),
+                {ok, Ctx} = riak_core_security:authenticate(<<"user">>, <<"password">>,
+                                                [{ip, {127, 0, 0, 1}}]),
+                ?assertMatch({false, _,  _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
+                ?assertEqual(ok, riak_core_security:add_grant(all, {<<"default">>, <<"mybucket">>}, ["riak_kv.get"])),
+                ?assertMatch({error, {unknown_permission, _}}, riak_core_security:add_grant(all, {<<"default">>, <<"mybucket">>}, ["riak_kv.upsert"])),
+                ?assertMatch({true, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
+                ?assertEqual(ok, riak_core_security:add_revoke(all, {<<"default">>, <<"mybucket">>}, ["riak_kv.get"])),
+                ?assertMatch({false, _,  _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
+                %% make sure these don't crash, at least
+                ?assertEqual(ok, riak_core_security:print_users()),
+                ?assertEqual(ok, riak_core_security:print_sources()),
+                ?assertEqual(ok, riak_core_security:print_user(<<"user">>)),
+                ?assertEqual(ok, riak_core_security:print_groups()),
+                ?assertEqual({error, {unknown_group, <<"all">>}}, riak_core_security:print_group(<<"all">>)),
+                ok
+        end},
+       { "groups can be members of groups and inherit permissions from them",
+        fun() ->
+                ?assertEqual(ok, riak_core_security:add_group(<<"sysadmin">>, [])),
+                ?assertEqual(ok, riak_core_security:add_group(<<"superuser">>, [{"groups", ["sysadmin"]}])),
+                ?assertEqual(ok, riak_core_security:add_user(<<"user">>,
+                                            [{"password","password"}])),
+                ?assertEqual(ok, riak_core_security:add_source(<<"user">>, {{127, 0, 0, 1}, 32}, password, [{"groups", ["superuser"]}])),
+                %% sysadmins can get/put on any key in a default bucket
+                ?assertEqual(ok, riak_core_security:add_grant(<<"sysadmin">>, <<"default">>, ["riak_kv.get", "riak_kv.put"])),
+                %% authenticating from the wrong IP
+                ?assertMatch({error, no_matching_sources}, riak_core_security:authenticate(<<"user">>, <<"password">>,
+                                                [{ip, {10, 0, 0, 1}}])),
+                {ok, Ctx} = riak_core_security:authenticate(<<"user">>, <<"password">>,
+                                                [{ip, {127, 0, 0, 1}}]),
+                ?assertMatch({false, _, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
+                ?assertMatch({false, _, _}, riak_core_security:check_permissions({"riak_kv.put", {<<"default">>, <<"myotherbucket">>}}, Ctx)),
+                ?assertEqual(ok, riak_core_security:alter_user(<<"user">>, [{"groups", ["superuser"]}])),
+                %?assertEqual(ok, riak_core_security:print_user(<<"user">>)),
+                %?assertEqual(ok, riak_core_security:print_group(<<"sysadmin">>)),
+                ?assertEqual(ok, riak_core_security:print_users()),
+                ?assertMatch({true, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
+                ?assertMatch({true, _}, riak_core_security:check_permissions({"riak_kv.put", {<<"default">>, <<"myotherbucket">>}}, Ctx)),
+                ok
+        end}
+     ]}.
+
+-endif.
+
