@@ -46,7 +46,8 @@
          all_nodes/1,
          equal/2,
          prune/3,
-         timestamp/0]).
+         timestamp/0,
+         sort/1]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -221,6 +222,12 @@ timestamp() ->
 -spec equal(VClockA :: vclock(), VClockB :: vclock()) -> boolean().
 equal(VA,VB) ->
     lists:sort(VA) =:= lists:sort(VB).
+
+% @doc Sort a vclock. This is here because the opaque vclock() type causes
+%      dialyzer to warn if it's done externally.
+-spec sort(VClockA :: vclock()) -> (VClockA :: vclock()).
+sort(Vclock) ->
+    lists:sort(Vclock).
 
 % @doc Possibly shrink the size of a vclock, depending on current age and size.
 -spec prune(V::vclock(), Now::integer(), BucketProps::term()) -> vclock().
