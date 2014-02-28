@@ -401,7 +401,7 @@ rpc_every_member(Module, Function, Args, Timeout) ->
 
 %% @doc Same as rpc_every_member/4, but annotate the result set with
 %%      the name of the node returning the result.
--spec rpc_every_member_ann(module(), atom(), [term()], integer()|infinity)
+-spec rpc_every_member_ann(atom(), atom(), [any()], timeout())
                           -> {Results::[{node(), term()}], Down::[node()]}.
 rpc_every_member_ann(Module, Function, Args, Timeout) ->
     {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
@@ -411,13 +411,13 @@ rpc_every_member_ann(Module, Function, Args, Timeout) ->
 
 %% @doc Perform an RPC call to a list of nodes in parallel, returning the
 %%      results in the same order as the input list.
--spec multi_rpc([node()], module(), function(), [any()]) -> [any()].
+-spec multi_rpc([node()], module(), atom(), [any()]) -> [any()].
 multi_rpc(Nodes, Mod, Fun, Args) ->
     multi_rpc(Nodes, Mod, Fun, Args, infinity).
 
 %% @doc Perform an RPC call to a list of nodes in parallel, returning the
 %%      results in the same order as the input list.
--spec multi_rpc([node()], module(), function(), [any()], timeout()) -> [any()].
+-spec multi_rpc([node()], module(), atom(), [any()], timeout()) -> [any()].
 multi_rpc(Nodes, Mod, Fun, Args, Timeout) ->
     pmap(fun(Node) ->
                  rpc:call(Node, Mod, Fun, Args, Timeout)
@@ -426,7 +426,7 @@ multi_rpc(Nodes, Mod, Fun, Args, Timeout) ->
 %% @doc Perform an RPC call to a list of nodes in parallel, returning the
 %%      results in the same order as the input list. Each result is tagged
 %%      with the corresponding node name.
--spec multi_rpc_ann([node()], module(), function(), [any()])
+-spec multi_rpc_ann([node()], module(), atom(), [any()])
                    -> [{node(), any()}].
 multi_rpc_ann(Nodes, Mod, Fun, Args) ->
     multi_rpc_ann(Nodes, Mod, Fun, Args, infinity).
@@ -434,7 +434,7 @@ multi_rpc_ann(Nodes, Mod, Fun, Args) ->
 %% @doc Perform an RPC call to a list of nodes in parallel, returning the
 %%      results in the same order as the input list. Each result is tagged
 %%      with the corresponding node name.
--spec multi_rpc_ann([node()], module(), function(), [any()], timeout())
+-spec multi_rpc_ann([node()], module(), atom(), [any()], timeout())
                    -> [{node(), any()}].
 multi_rpc_ann(Nodes, Mod, Fun, Args, Timeout) ->
     Results = multi_rpc(Nodes, Mod, Fun, Args, Timeout),
@@ -445,7 +445,7 @@ multi_rpc_ann(Nodes, Mod, Fun, Args, Timeout) ->
 %%      of nodes that are down/unreachable. The results will be returned in
 %%      the same order as the input list, and each result is tagged with the
 %%      corresponding node name.
--spec multicall_ann([node()], module(), function(), [any()])
+-spec multicall_ann([node()], module(), atom(), [any()])
                    -> {Results :: [{node(), any()}], Down :: [node()]}.
 multicall_ann(Nodes, Mod, Fun, Args) ->
     multicall_ann(Nodes, Mod, Fun, Args, infinity).
@@ -455,7 +455,7 @@ multicall_ann(Nodes, Mod, Fun, Args) ->
 %%      of nodes that are down/unreachable. The results will be returned in
 %%      the same order as the input list, and each result is tagged with the
 %%      corresponding node name.
--spec multicall_ann([node()], module(), function(), [any()], timeout())
+-spec multicall_ann([node()], module(), atom(), [any()], timeout())
                    -> {Results :: [{node(), any()}], Down :: [node()]}.
 multicall_ann(Nodes, Mod, Fun, Args, Timeout) ->
     L = multi_rpc_ann(Nodes, Mod, Fun, Args, Timeout),
