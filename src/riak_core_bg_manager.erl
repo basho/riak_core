@@ -103,9 +103,7 @@
          get_token/2,
          get_token/3,
          token_info/0,
-         token_info/1,
-         %% Testing
-         start/0
+         token_info/1
         ]).
 
 %% reporting
@@ -129,8 +127,6 @@
 
 -define(SERVER, ?MODULE).
 
--define(NOT_TRANSFERED(S), S#state.info_table == undefined orelse S#state.entry_table == undefined).
-
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -140,11 +136,6 @@
 start_link() ->
     _ = maybe_create_ets(),
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
-
-%% Test entry point to start stand-alone server
-start() ->
-    _ = maybe_create_ets(),
-    gen_server:start({local, ?SERVER}, ?MODULE, [], []).
 
 %% @doc Global kill switch - causes all locks/tokens to be given out freely without limits.
 %% Nothing will be tracked or recorded.
@@ -176,22 +167,42 @@ enabled() ->
 %%      has not already been registered, this will have no effect.
 -spec enable(bg_resource()) -> enabled | unregistered | bypassed.
 enable(Resource) ->
-    gen_server:call(?SERVER, {enable, Resource}).
+    case gen_server:call(?SERVER, {enable, Resource}) of
+        {unregistered, Resource} ->
+            unregistered;
+        Else ->
+            Else
+    end.
 
 %% @doc Disable handing out resource of the given kind.
 -spec disable(bg_resource()) -> disabled | unregistered | bypassed.
 disable(Resource) ->
-    gen_server:call(?SERVER, {disable, Resource}).
+    case gen_server:call(?SERVER, {disable, Resource}) of
+        {unregistered, Resource} ->
+            unregistered;
+        Else ->
+            Else
+    end.
 
 -spec enabled(bg_resource()) -> enabled | disabled | bypassed.
 enabled(Resource) ->
-    gen_server:call(?SERVER, {enabled, Resource}).
+    case gen_server:call(?SERVER, {enabled, Resource}) of
+        {unregistered, Resource} ->
+            unregistered;
+        Else ->
+            Else
+    end.
 
 %% @doc Disable handing out resource of the given kind. If kill == true,
 %%      processes that currently hold the given resource will be killed.
 -spec disable(bg_resource(), boolean()) -> disabled | unregistered | bypassed.
 disable(Resource, Kill) ->
-    gen_server:call(?SERVER, {disable, Resource, Kill}).
+    case gen_server:call(?SERVER, {disable, Resource, Kill}) of
+        {unregistered, Resource} ->
+            unregistered;
+        Else ->
+            Else
+    end.
 
 %%%%%%%%%%%
 %% Lock API
@@ -201,7 +212,12 @@ disable(Resource, Kill) ->
 %%      If the background manager is unavailable, undefined is returned.
 -spec concurrency_limit(bg_lock()) -> bg_concurrency_limit() | undefined.
 concurrency_limit(Lock) ->
-    gen_server:call(?MODULE, {concurrency_limit, Lock}, infinity).
+    case gen_server:call(?MODULE, {concurrency_limit, Lock}, infinity) of
+        {unregistered, Lock} ->
+            unregistered;
+        Else ->
+            Else
+    end.
 
 %% @doc same as `set_concurrency_limit(Type, Limit, false)'
 -spec set_concurrency_limit(bg_lock(), bg_concurrency_limit()) ->
@@ -403,10 +419,13 @@ query_resource(Resource, Types) ->
 %%%
 
 -record(state,
-        {info_table:: ets:tid(),          %% TableID of ?BG_INFO_ETS_TABLE
-         entry_table:: ets:tid(),         %% TableID of ?BG_ENTRY_ETS_TABLE
-         enabled :: boolean(),            %% Global enable/disable switch, true at startup
-         bypassed:: boolean()             %% Global kill switch. false at startup
+        {info_table = ?BG_INFO_ETS_TABLE :: ets:tid(),
+         entry_table = ?BG_ENTRY_ETS_TABLE :: ets:tid(),
+         enabled = true :: boolean(),
+         % if false, all tokens/locks are considered at max concurrency.
+         bypassed = false :: boolean()
+         % if true, no tracking is done and locks/tokens given away as
+         % as requested.
         }).
 
 %%%===================================================================
@@ -421,11 +440,7 @@ query_resource(Resource, Types) ->
                   {stop, term()}.
 init([]) ->
     lager:debug("Background Manager starting up."),
-    State = #state{info_table=?BG_INFO_ETS_TABLE,
-                   entry_table=?BG_ENTRY_ETS_TABLE,
-                   enabled=true,
-                   bypassed=false},
-    State2 = validate_holds(State),
+    State2 = validate_holds(#state{}),
     State3 = restore_enabled(true, State2),
     State4 = restore_bypassed(false, State3),
     reschedule_token_refills(State4),
@@ -564,15 +579,11 @@ validate_hold(_Obj, _TableId) -> %% tokens don't monitor processes
     ok.
 
 %% @doc Update state with bypassed status and store to ETS
-update_bypassed(_Bypassed, State) when ?NOT_TRANSFERED(State) ->
-    State;
 update_bypassed(Bypassed, State=#state{info_table=TableId}) ->
     ets:insert(TableId, {bypassed, Bypassed}),
     State#state{bypassed=Bypassed}.
 
 %% @doc Update state with enabled status and store to ETS
-update_enabled(_Enabled, State) when ?NOT_TRANSFERED(State) ->
-    State;
 update_enabled(Enabled, State=#state{info_table=TableId}) ->
     ets:insert(TableId, {enabled, Enabled}),
     State#state{enabled=Enabled}.
@@ -608,8 +619,6 @@ do_handle_call_exception(Function, Args, State) ->
     end.
 
 %% @doc Throws {unregistered, Resource} for unknown Lock.
-do_disable_lock(_Lock, _Kill, State) when ?NOT_TRANSFERED(State) ->
-    {noreply, State};
 do_disable_lock(Lock, Kill, State) ->
     Info = resource_info(Lock, State),
     enforce_type_or_throw(Lock, lock, Info),
@@ -637,9 +646,6 @@ do_set_token_rate(Token, Rate, State) ->
             {reply, Error, State}
     end.
 
-do_get_type_info(_Type, State) when ?NOT_TRANSFERED(State) ->
-    %% Table not trasnferred yet.
-    [];
 do_get_type_info(Type, State) ->
     S = fun({R,_T,E,L}) -> {R,E,L} end,
     Resources = all_registered_resources(Type, State),
@@ -647,8 +653,6 @@ do_get_type_info(Type, State) ->
     {reply, Infos, State}.
 
 %% Returns empty if the ETS table has not been transferred to us yet.
-do_resource_limit(_Type, _Resource, State) when ?NOT_TRANSFERED(State) ->
-    {reply, undefined, state};
 do_resource_limit(_Type, Resource, State) ->
     Info = resource_info(Resource, State),
     Rate = ?resource_limit(Info),
@@ -700,8 +704,6 @@ limit(#resource_info{type=token, limit={_Period,MaxCount}}) -> MaxCount.
 %% @private
 %% @doc Release the resource associated with the given reference. This is mostly
 %%      meaningful for locks.
-release_resource(_Ref, State) when ?NOT_TRANSFERED(State) ->
-    State;
 release_resource(Ref, State=#state{entry_table=TableId}) ->
     %% There should only be one instance of the object, but we'll zap all that match.
     Given = [Obj || Obj <- ets:match_object(TableId, {{given, '_'},'_'})],
@@ -758,8 +760,6 @@ update_resource_info(Resource, Fun, Default, State=#state{info_table=TableId}) -
     State.
 
 %% @doc Throws unregistered for unknown Resource
-resource_info(_Resource, State) when ?NOT_TRANSFERED(State) ->
-    throw(table_id_undefined);
 resource_info(Resource, #state{info_table=TableId}) ->
     Key = {info,Resource},
     case ets:lookup(TableId, Key) of
@@ -783,8 +783,6 @@ reschedule_token_refills(State) ->
     [schedule_refill_tokens(Token, State) || Token <- Tokens].
  
 %% Schedule a timer event to refill tokens of given type
-schedule_refill_tokens(_Token, State) when ?NOT_TRANSFERED(State) ->
-    ok;
 schedule_refill_tokens(Token, State) ->
     case ?resource_limit(resource_info(Token, State)) of
         undefined ->
@@ -842,10 +840,6 @@ try_get_resource(true, Resource, Type, Pid, Meta, State) ->
                              {reply, max_concurrency, #state{}}
                                  | {reply, {ok, #state{}}}
                                  | {reply, {{ok, reference()}, #state{}}}.
-do_get_resource(_Resource, _Type, _Pid, _Meta, State) when ?NOT_TRANSFERED(State) ->
-    %% Table transfer has not occurred yet. Reply "max_concurrency" so that callers
-    %% will try back later, hopefully when we have our table back.
-    {reply, max_concurrency, State};
 %% @doc When the API is bypassed, we ignore concurrency limits.
 do_get_resource(Resource, Type, Pid, Meta, State=#state{bypassed=true}) ->
     {Result, State2} = try_get_resource(true, Resource, Type, Pid, Meta, State),
