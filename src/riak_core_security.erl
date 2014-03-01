@@ -292,8 +292,7 @@ check_permission({Permission}, Context0) ->
     %% permissions that don't tie to a particular bucket, like 'ping' and
     %% 'stats'.
     MatchG = match_grant(any, Context#context.grants),
-    case MatchG /= undefined andalso
-         (lists:member(Permission, MatchG) orelse MatchG == 'all') of
+    case lists:member(Permission, MatchG) of
         true ->
             {true, Context};
         false ->
@@ -305,8 +304,7 @@ check_permission({Permission}, Context0) ->
 check_permission({Permission, Bucket}, Context0) ->
     Context = maybe_refresh_context(Context0),
     MatchG = match_grant(Bucket, Context#context.grants),
-    case MatchG /= undefined andalso
-         (lists:member(Permission, MatchG) orelse MatchG == 'all') of
+    case lists:member(Permission, MatchG) of
         true ->
             {true, Context};
         false ->
@@ -591,12 +589,7 @@ add_revoke(all, Bucket, Revokes) ->
     %% all is always valid
     case validate_permissions(Revokes) of
         ok ->
-            case add_revoke_int([{all, group}], Bucket, Revokes) of
-                ok ->
-                    ok;
-                Error2 ->
-                    Error2
-            end;
+            add_revoke_int([{all, group}], Bucket, Revokes);
         Error ->
             Error
     end;
@@ -683,7 +676,7 @@ del_source(all, CIDR) ->
     ok;
 del_source([H|_T]=UserList, CIDR) when is_binary(H) ->
     _ = [riak_core_metadata:delete({<<"security">>, <<"sources">>},
-                              {User, anchor_mask(CIDR)}) || User <- UserList],
+                                   {User, anchor_mask(CIDR)}) || User <- UserList],
     ok;
 del_source(User, CIDR) ->
     %% single user
@@ -951,12 +944,8 @@ validate_options(Options) ->
         undefined ->
             validate_groups_option(Options);
         Pass ->
-            case validate_password_option(Pass, Options) of
-                {ok, NewOptions} ->
-                    validate_groups_option(NewOptions);
-                Error ->
-                    Error
-            end
+            {ok, NewOptions} = validate_password_option(Pass, Options),
+            validate_groups_option(NewOptions)
     end.
 
 validate_groups_option(Options) ->
@@ -979,20 +968,16 @@ validate_groups_option(Options) ->
 
 %% Handle 'password' option if given
 validate_password_option(Pass, Options) ->
-    case riak_core_pw_auth:hash_password(list_to_binary(Pass)) of
-        {ok, HashedPass, AuthName, HashFunction, Salt, Iterations} ->
-            %% Add to options, replacing plaintext password
-            NewOptions = stash("password", {"password",
-                                            [{hash_pass, HashedPass},
-                                             {auth_name, AuthName},
-                                             {hash_func, HashFunction},
-                                             {salt, Salt},
-                                             {iterations, Iterations}]},
-                               Options),
-            {ok, NewOptions};
-        {error, Error} ->
-            {error, Error}
-    end.
+    {ok, HashedPass, AuthName, HashFunction, Salt, Iterations} = 
+        riak_core_pw_auth:hash_password(list_to_binary(Pass)),
+    NewOptions = stash("password", {"password",
+                                    [{hash_pass, HashedPass},
+                                     {auth_name, AuthName},
+                                     {hash_func, HashFunction},
+                                     {salt, Salt},
+                                     {iterations, Iterations}]},
+                       Options),
+    {ok, NewOptions}.
 
 
 validate_permissions(Perms) ->
