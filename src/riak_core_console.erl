@@ -19,15 +19,13 @@
 %% -------------------------------------------------------------------
 
 -module(riak_core_console).
--export([member_status/1, ring_status/1, print_member_status/2,
+-export([member_status/1, ring_status/1, print_member_status/1,
          stage_leave/1, stage_remove/1, stage_replace/1, stage_resize_ring/1,
          stage_force_replace/1, print_staged/1, commit_staged/1,
          clear_staged/1, transfer_limit/1, pending_claim_percentage/2,
          transfers/1, add_user/1, alter_user/1, del_user/1,
-         add_group/1, alter_group/1, del_group/1,
          add_source/1, del_source/1, grant/1, revoke/1,
          print_users/1, print_user/1, print_sources/1,
-         print_groups/1, print_group/1,
          security_enable/1, security_disable/1, security_status/1, ciphers/1]).
 
 %% @doc Return for a given ring and node, percentage currently owned and
@@ -43,15 +41,9 @@ pending_claim_percentage(Ring, Node) ->
 
 member_status([]) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    print_member_status(Ring, legacy_gossip(Ring)).
+    print_member_status(Ring).
 
-legacy_gossip(Ring) ->
-    Members = riak_core_ring:all_members(Ring),
-    LegacyGossip =
-        [{Node, riak_core_gossip:legacy_gossip(Node)} || Node <- Members],
-    orddict:from_list(LegacyGossip).
-
-print_member_status(Ring, LegacyGossip) ->
+print_member_status(Ring) ->
     io:format("~33..=s Membership ~34..=s~n", ["", ""]),
     io:format("Status     Ring    Pending    Node~n"),
     io:format("~79..-s~n", [""]),
@@ -61,23 +53,17 @@ print_member_status(Ring, LegacyGossip) ->
     {Joining, Valid, Down, Leaving, Exiting} =
         lists:foldl(fun({Node, Status},
                         {Joining0, Valid0, Down0, Leaving0, Exiting0}) ->
-                            StatusOut =
-                                case orddict:fetch(Node, LegacyGossip) of
-                                    true -> "(legacy)";
-                                    false -> Status
-                                end,
-
                             {RingPercent, NextPercent} =
                                 pending_claim_percentage(Ring, Node),
 
                             case IsPending of
                                 true ->
                                     io:format("~-8s  ~5.1f%    ~5.1f%    ~p~n",
-                                              [StatusOut, RingPercent,
+                                              [Status, RingPercent,
                                                NextPercent, Node]);
                                 false ->
                                     io:format("~-8s  ~5.1f%      --      ~p~n",
-                                              [StatusOut, RingPercent, Node])
+                                              [Status, RingPercent, Node])
                             end,
                             case Status of
                                 joining ->
@@ -98,18 +84,12 @@ print_member_status(Ring, LegacyGossip) ->
     ok.
 
 ring_status([]) ->
-    case riak_core_gossip:legacy_gossip() of
-        true ->
-            io:format("Currently in legacy gossip mode.~n"),
-            ok;
-        false ->
-            {Claimant, RingReady, Down, MarkedDown, Changes} =
-                riak_core_status:ring_status(),
-            claimant_status(Claimant, RingReady),
-            ownership_status(Down, Changes),
-            unreachable_status(Down -- MarkedDown),
-            ok
-    end.
+    {Claimant, RingReady, Down, MarkedDown, Changes} =
+        riak_core_status:ring_status(),
+    claimant_status(Claimant, RingReady),
+    ownership_status(Down, Changes),
+    unreachable_status(Down -- MarkedDown),
+    ok.
 
 claimant_status(Claimant, RingReady) ->
     io:format("~34..=s Claimant ~35..=s~n", ["", ""]),
@@ -603,9 +583,6 @@ is_claimant_error(Node, Action) ->
 
 print_staged([]) ->
     case riak_core_claimant:plan() of
-        {error, legacy} ->
-            io:format("The cluster is running in legacy mode and does not "
-                      "support plan/commit.~n");
         {error, ring_not_ready} ->
             io:format("Cannot plan until cluster state has converged.~n"
                       "Check 'Ring Ready' in 'riak-admin ring_status'~n");
@@ -681,9 +658,7 @@ print_plan(Changes, Ring, NextRings) ->
     ok.
 
 output(Ring, NextRing) ->
-    Members = riak_core_ring:all_members(NextRing),
-    LegacyGossip = orddict:from_list([{Node, false} || Node <- Members]),
-    riak_core_console:print_member_status(NextRing, LegacyGossip),
+    riak_core_console:print_member_status(NextRing),
     io:format("~n"),
 
     FutureRing = riak_core_ring:future_ring(NextRing),
@@ -745,9 +720,6 @@ commit_staged([]) ->
     case riak_core_claimant:commit() of
         ok ->
             io:format("Cluster changes committed~n");
-        {error, legacy} ->
-            io:format("The cluster is running in legacy mode and does not "
-                      "support plan/commit.~n");
         {error, nothing_planned} ->
             io:format("You must verify the plan with "
                       "'riak-admin cluster plan' before committing~n");
@@ -832,13 +804,8 @@ check_limit(Str) ->
     end.
 
 add_user([Username|Options]) ->
-    add_role(Username, Options, fun riak_core_security:add_user/2).
-
-add_group([Groupname|Options]) ->
-    add_role(Groupname, Options, fun riak_core_security:add_group/2).
-
-add_role(Name, Options, Fun) ->
-    try Fun(list_to_binary(Name), parse_options(Options)) of
+    try riak_core_security:add_user(list_to_binary(Username),
+                                     parse_options(Options)) of
         ok -> ok;
         Error ->
             io:format("~p~n", [Error]),
@@ -851,13 +818,8 @@ add_role(Name, Options, Fun) ->
     end.
 
 alter_user([Username|Options]) ->
-    alter_role(Username, Options, fun riak_core_security:alter_user/2).
-
-alter_group([Groupname|Options]) ->
-    alter_role(Groupname, Options, fun riak_core_security:alter_group/2).
-
-alter_role(Name, Options, Fun) ->
-    try Fun(list_to_binary(Name), parse_options(Options)) of
+    try riak_core_security:alter_user(list_to_binary(Username),
+                                       parse_options(Options)) of
         ok -> ok;
         Error ->
             io:format("~p~n", [Error]),
@@ -870,13 +832,7 @@ alter_role(Name, Options, Fun) ->
     end.
 
 del_user([Username]) ->
-    del_role(Username, fun riak_core_security:del_user/1).
-
-del_group([Groupname]) ->
-    del_role(Groupname, fun riak_core_security:del_group/1).
-
-del_role(Name, Fun) ->
-    case Fun(list_to_binary(Name)) of
+    case riak_core_security:del_user(list_to_binary(Username)) of
         ok -> ok;
         Error ->
             io:format("~p~n", [Error]),
@@ -912,13 +868,7 @@ del_source([Users, CIDR]) ->
         Other ->
             [list_to_binary(O) || O <- Other]
     end,
-    case riak_core_security:del_source(Unames, parse_cidr(CIDR)) of
-        ok ->
-            ok;
-        Error ->
-            io:format("~p~n", [Error]),
-            Error
-    end.
+    riak_core_security:del_source(Unames, parse_cidr(CIDR)).
 
 grant([Grants, "ON", "ANY", "TO", Users]) ->
     Unames = case string:tokens(Users, ",") of
@@ -980,12 +930,7 @@ revoke([Grants, "ON", "ANY", "FROM", Users]) ->
         Other2 ->
             Other2
     end,
-    case riak_core_security:add_revoke(Unames, any, Permissions) of
-        ok -> ok;
-        Error ->
-            io:format("~p~n", [Error]),
-            Error
-    end;
+    riak_core_security:add_revoke(Unames, any, Permissions);
 revoke([Grants, "ON", Type, Bucket, "FROM", Users]) ->
     revoke([Grants, "ON", {list_to_binary(Type), list_to_binary(Bucket)},
             "FROM",
@@ -1005,12 +950,7 @@ revoke([Grants, "ON", Bucket, "FROM", Users]) ->
         Other2 ->
             Other2
     end,
-    case riak_core_security:add_revoke(Unames, Bucket, Permissions) of
-        ok -> ok;
-        Error ->
-            io:format("~p~n", [Error]),
-            Error
-    end;
+    riak_core_security:add_revoke(Unames, Bucket, Permissions);
 revoke(_) ->
     io:format("Usage: revoke <permissions> ON <type> [bucket] FROM <users>"),
     error.
@@ -1021,12 +961,6 @@ print_users([]) ->
 
 print_user([User]) ->
     riak_core_security:print_user(list_to_binary(User)).
-
-print_groups([]) ->
-    riak_core_security:print_groups().
-
-print_group([Group]) ->
-    riak_core_security:print_group(list_to_binary(Group)).
 
 print_sources([]) ->
     riak_core_security:print_sources().
