@@ -912,13 +912,7 @@ del_source([Users, CIDR]) ->
         Other ->
             [list_to_binary(O) || O <- Other]
     end,
-    case riak_core_security:del_source(Unames, parse_cidr(CIDR)) of
-        ok ->
-            ok;
-        Error ->
-            io:format("~p~n", [Error]),
-            Error
-    end.
+    riak_core_security:del_source(Unames, parse_cidr(CIDR)).
 
 grant([Grants, "ON", "ANY", "TO", Users]) ->
     Unames = case string:tokens(Users, ",") of
@@ -933,12 +927,7 @@ grant([Grants, "ON", "ANY", "TO", Users]) ->
         Other2 ->
             Other2
     end,
-    case riak_core_security:add_grant(Unames, any, Permissions) of
-        ok -> ok;
-        Error ->
-            io:format("~p~n", [Error]),
-            Error
-    end;
+    riak_core_security:add_grant(Unames, any, Permissions);
 grant([Grants, "ON", Type, Bucket, "TO", Users]) ->
     grant([Grants, "ON", {list_to_binary(Type), list_to_binary(Bucket)}, "TO",
            Users]);
@@ -1067,13 +1056,13 @@ parse_options([], Acc) ->
     Acc;
 parse_options([H|T], Acc) ->
     case re:split(H, "=", [{parts, 2}, {return, list}]) of
-        [Key, Value] ->
+        [Key, Value] when is_list(Key), is_list(Value) ->
             parse_options(T, [{Key, Value}|Acc]);
         _Other ->
             throw({error, {invalid_option, H}})
     end.
 
-
+-spec parse_cidr(string()) -> {inet:ip_address(), non_neg_integer()}.
 parse_cidr(CIDR) ->
     [IP, Mask] = string:tokens(CIDR, "/"),
     {ok, Addr} = inet_parse:address(IP),

@@ -541,7 +541,7 @@ del_group(Groupname) ->
             ok
     end.
 
--spec add_grant(userlist(), bucket(), [string()]) -> ok | {error, term()}.
+-spec add_grant(userlist(), bucket() | any, [string()]) -> ok | {error, term()}.
 add_grant(all, Bucket, Grants) ->
     %% all is always valid
     case validate_permissions(Grants) of
@@ -584,7 +584,7 @@ add_grant(Role, Bucket, Grants) ->
     add_grant([Role], Bucket, Grants).
 
 
--spec add_revoke(userlist(), bucket(), [string()]) -> ok | {error, term()}.
+-spec add_revoke(userlist(), bucket() | any, [string()]) -> ok | {error, term()}.
 add_revoke(all, Bucket, Revokes) ->
     %% all is always valid
     case validate_permissions(Revokes) of
@@ -628,7 +628,7 @@ add_revoke(User, Bucket, Revokes) ->
 
 
 -spec add_source(Users :: all | binary() | [binary()], CIDR ::
-                 {inet:ip_address(), non_neg_integer()}, Source :: string(),
+                 {inet:ip_address(), non_neg_integer()}, Source :: atom(),
                  Options :: [{string(), term()}]) -> ok | {error, term()}.
 add_source(all, CIDR, Source, Options) ->
     %% all is always valid
