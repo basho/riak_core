@@ -90,7 +90,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--type capability() :: atom().
+-type capability() :: atom() | {atom(), atom()}.
 -type mode() :: term().
 
 -record(capability, {supported :: [mode()],
@@ -195,7 +195,7 @@ make_capability(Capability, Supported, Default, Legacy) ->
 %%%===================================================================
 
 init([]) ->
-    ets:new(?ETS, [named_table, {read_concurrency, true}]),
+    ?ETS = ets:new(?ETS, [named_table, {read_concurrency, true}]),
     schedule_tick(),
     Registered = load_registered(),
     State = init_state(Registered),
@@ -409,11 +409,6 @@ add_supported_to_ring(Node, Supported, Ring) ->
 %% list of application env overrides, and the current view of all node's
 %% supported capabilities, determine the most preferred mode for each capability
 %% that is supported by all nodes.
--spec preferred_modes([{capability(), [mode()]}],
-                      [{node(), [{capability(), [mode()]}]}],
-                      registered(),
-                      [{capability(), [mode()]}])
-                     -> [{capability(), mode()}].
 preferred_modes(MyCaps, Capabilities, Registered, Override) ->
     N1 = reformat_capabilities(Registered, Capabilities),
     N2 = intersect_capabilities(N1),

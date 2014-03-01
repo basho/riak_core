@@ -172,7 +172,8 @@ handle_sync_event({shutdown, Time}, From, _StateName, #state{queue=Q,
                 infinity ->
                     ok;
                 _ when is_integer(Time) ->
-                    erlang:send_after(Time, self(), shutdown)
+                    erlang:send_after(Time, self(), shutdown),
+                    ok
             end,
             {next_state, shutdown, State#state{shutdown=From, queue=queue:new()}}
     end;
@@ -194,8 +195,8 @@ handle_info({'DOWN', _Ref, _, Pid, Info}, StateName, #state{monitors=Monitors} =
     end;
 handle_info(shutdown, shutdown, #state{monitors=Monitors} = State) ->
     %% we've waited too long to shutdown, time to force the issue.
-    [riak_core_vnode:reply(From, {error, vnode_shutdown}) || {_, _, From, _}
-        <- Monitors],
+    _ = [riak_core_vnode:reply(From, {error, vnode_shutdown}) || 
+            {_, _, From, _} <- Monitors],
     {stop, shutdown, State};
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.

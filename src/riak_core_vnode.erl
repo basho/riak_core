@@ -119,7 +119,7 @@ behaviour_info(_Other) ->
           pool_config :: tuple() | undefined,
           manager_event_timer :: reference(),
           inactivity_timeout :: non_neg_integer() 
-               }).
+         }).
 
 start_link(Mod, Index, Forward) ->
     start_link(Mod, Index, 0, Forward).
@@ -285,7 +285,8 @@ forward_or_vnode_command(Sender, Request, State=#state{forward=Forward,
         {_, undefined, _} -> vnode_command(Sender, Request, State);
         %% implicit forwarding after ownership_transfer/hinted_handoff
         {_, F, _} when not is_list(F) ->
-            vnode_forward(implicit, {Index, Forward}, Sender, Request, State);
+            vnode_forward(implicit, {Index, Forward}, Sender, Request, State),
+            continue(State);
         %% during resize we can't forward a request w/o request hash, always handle locally
         {_, _, undefined} -> vnode_command(Sender, Request, State);
         %% possible forwarding during ring resizing
@@ -375,6 +376,11 @@ vnode_handoff_command(Sender, Request, ForwardTo,
             riak_core_vnode_worker_pool:handle_work(Pool, Work, From),
             continue(State, NewModState);
         {forward, NewModState} ->
+            %% FIXME: vnode_forward returns a gen_fsm state return
+            %% value by calling continue/1 internally. Questions:
+            %% 1) Why are we not passing the NewModState to vnode_forward?
+            %% 2) If vnode_forward produces the gen_fsm state return
+            %%    type, why not use it?
             case HOType of
                 %% resize op and transfer ongoing
                 resize_transfer -> vnode_forward(resize, ForwardTo, Sender,
@@ -383,7 +389,7 @@ vnode_handoff_command(Sender, Request, ForwardTo,
                 %% via forward_or_vnode_command
                 undefined -> vnode_forward(resize, ForwardTo, Sender,
                                            {resize_forward, Request}, State);
-                %% normal explicit forwarding during owhership transfer
+                %% normal explicit forwarding during ownership transfer
                 _ -> vnode_forward(explicit, HOTarget, Sender, Request, State)
             end,
             continue(State, NewModState);
@@ -397,8 +403,7 @@ vnode_forward(Type, ForwardTo, Sender, Request, State) ->
     lager:debug("Forwarding (~p) {~p,~p} -> ~p~n",
                 [Type, State#state.index, node(), ForwardTo]),
     riak_core_vnode_master:command_unreliable(ForwardTo, Request, Sender,
-                                              riak_core_vnode_master:reg_name(State#state.mod)),
-    continue(State).
+                                              riak_core_vnode_master:reg_name(State#state.mod)).
 
 %% @doc during ring resizing if we have completed a transfer to the index that will
 %% handle request in future ring we forward to it. Otherwise we delegate
@@ -984,7 +989,8 @@ start_manager_event_timer(Event, State=#state{mod=Mod, index=Idx}) ->
 stop_manager_event_timer(#state{manager_event_timer=undefined}) ->
     ok;
 stop_manager_event_timer(#state{manager_event_timer=T}) ->
-    gen_fsm:cancel_timer(T).
+    _ = gen_fsm:cancel_timer(T),
+    ok.
 
 is_request_forwardable(#riak_core_fold_req_v2{forwardable=false}) ->
     false;

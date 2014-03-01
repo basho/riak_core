@@ -74,13 +74,9 @@ start_link() ->
 init([]) ->
     {ok, #state{excl=sets:new(), handoffs=[]}}.
 
--spec add_outbound(ho_type(),atom(),integer(),term(),pid(),[{atom(),term()}]) ->
-                          {ok, pid()} | {error, term()}.
 add_outbound(HOType,Module,Idx,Node,VnodePid,Opts) ->
     add_outbound(HOType,Module,Idx,Idx,Node,VnodePid,Opts).
 
--spec add_outbound(ho_type(),atom(),integer(),integer(),term(),pid(),[{atom,term()}]) ->
-                          {ok, pid()} | {error, term()}.
 add_outbound(HOType,Module,SrcIdx,TargetIdx,Node,VnodePid,Opts) ->
     case application:get_env(riak_core, disable_outbound_handoff) of
         {ok, true} ->
@@ -212,7 +208,7 @@ handle_call({set_concurrency,Limit},_From,State=#state{handoffs=HS}) ->
             %% a reason of 'max_concurrency' and we want to be able to do
             %% something with that if necessary.
             {_Keep,Discard}=lists:split(Limit,HS),
-            [erlang:exit(Pid,max_concurrency) ||
+            _ = [erlang:exit(Pid,max_concurrency) ||
                 #handoff_status{transport_pid=Pid} <- Discard],
             {reply, ok, State};
         false ->

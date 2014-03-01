@@ -38,7 +38,7 @@ fmt(FmtStr, Args) ->
 
 %% @doc Create a human friendly string `Str' for number of bytes
 %%      `Bytes' and format based on format string `Fmt'.
--spec human_size_fmt(string(), non_neg_integer()) -> Str::string().
+-spec human_size_fmt(string(), number()) -> string().
 human_size_fmt(Fmt, Bytes) ->
     Fmt2 = Fmt ++ " ~s",
     {Value, Units} = human_size(Bytes, ["B","KB","MB","GB","TB","PB"]),
@@ -69,7 +69,7 @@ epoch_to_datetime(S) ->
 %% @doc Formats a byte size into a human-readable size with units.
 %%      Thanks StackOverflow:
 %%      http://stackoverflow.com/questions/2163691/simpler-way-to-format-bytesize-in-a-human-readable-way
--spec human_size(non_neg_integer(), list()) -> iolist().
+-spec human_size(number(), list()) -> {float(), iolist()}.
 human_size(S, [_|[_|_] = L]) when S >= 1024 -> human_size(S/1024, L);
 human_size(S, [M|_]) ->
     {float(S), M}.
@@ -82,9 +82,9 @@ human_size(S, [M|_]) ->
 human_time(Micros) ->
     human_time(Micros, {1000, "us"}, [{1000, "ms"}, {60, "s"}, {60, "min"}, {24, "hr"}, {365, "d"}]).
 
--spec human_time(non_neg_integer(), {pos_integer(), string()},
+-spec human_time(number(), {pos_integer(), string()},
                  [{pos_integer(), string()}]) ->
-                        {number(), string()}.
+                        {float(), string()}.
 human_time(T, {Divisor, Unit}, Units) when T < Divisor orelse Units == [] ->
     {float(T), Unit};
 human_time(T, {Divisor, _}, [Next|Units]) ->

@@ -615,7 +615,7 @@ del_source(all, CIDR) ->
                               {all, anchor_mask(CIDR)}),
     ok;
 del_source([H|_T]=UserList, CIDR) when is_binary(H) ->
-    [riak_core_metadata:delete({<<"security">>, <<"sources">>},
+    _ = [riak_core_metadata:delete({<<"security">>, <<"sources">>},
                               {User, anchor_mask(CIDR)}) || User <- UserList],
     ok;
 del_source(User, CIDR) ->

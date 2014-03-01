@@ -163,7 +163,7 @@ read_ringfile(RingFile) ->
     end.
 
 setup_environment(Vars) ->
-    [application:set_env(riak_core, Key, Val) || {Key, Val} <- Vars],
+    _ = [application:set_env(riak_core, Key, Val) || {Key, Val} <- Vars],
     ok.
 
 %% Perform the dry run, if printing is disabled, return the ring
@@ -237,7 +237,7 @@ make_rebalance(IoDev, TN) ->
             o(IoDev, "Pending: ~p~n", [length(Next)]),
             BadPL = riak_core_ring_util:check_ring(Ring2, TN),
             o(IoDev, "Preflists violating targetN=~p: ~p~n", [TN, length(BadPL)]),
-            [o(IoDev, "~b transfers from ~p to ~p~n", [Count, PrevOwner, NewOwner])
+            _ = [o(IoDev, "~b transfers from ~p to ~p~n", [Count, PrevOwner, NewOwner])
              || {{PrevOwner, NewOwner}, Count} <- dict:to_list(Tally)],
             ok
     end.
@@ -368,15 +368,15 @@ o(IoDev, Fmt, Args) ->
 
 %% Run each commission test against each commission claim
 commission() ->
-    commission("."),
-    ok.
+    commission(".").
 
 commission(Base) ->
     Claims = commission_claims(),
-    [begin
+    _ = [begin
          io:format("~p\n", [Test]),
          commission(Base, Test, Claims)
-     end || Test <- commission_tests_first()].
+     end || Test <- commission_tests_first()],
+    ok.
 
 commission(Base, Test) ->
     commission(Base, Test, commission_claims()).
@@ -401,10 +401,6 @@ commission(Base, Test, {Wants, Choose}) ->
     BulkJoinCmds =  [ [ {join, sim_node(I)} || I <- lists:seq(2, Nodes) ] ],
 
     Dir = commission_test_dir(Base, RingSize, Nodes, NVal, TN, Choose),
-    filename:join(Base,
-                  lists:flatten(io_lib:format("q~b_s~b_n~b_t~b_~p", 
-                                              [RingSize, Nodes, NVal, TN,
-                                               element(2, Choose)]))),
     case filelib:is_dir(Dir) of
         true ->
             throw(already_generated);
@@ -412,7 +408,7 @@ commission(Base, Test, {Wants, Choose}) ->
             ok
     end,
     
-    filelib:ensure_dir(filename:join(Dir, empty)),
+    ok = filelib:ensure_dir(filename:join(Dir, empty)),
 
     {ok, SeqFh} = file:open(filename:join([Dir, "sequential.txt"]), [write]),
     io:format(SeqFh, "cmds,balance,violations,diversity\n", []),
@@ -431,7 +427,7 @@ commission(Base, Test, {Wants, Choose}) ->
                   put(sim_seq, Seq+1),
                   FN = filename:join([Dir, 
                                       "sj"++integer_to_list(Seq)++".ring" ]),
-                  file:write_file(FN, term_to_binary(Ring2)),
+                  ok = file:write_file(FN, term_to_binary(Ring2)),
 
                   Stats = try
                               riak_core_claim_util:ring_stats(Ring2, TN)
@@ -448,7 +444,7 @@ commission(Base, Test, {Wants, Choose}) ->
           end},
     put(sim_seq, 2),
     dryrun(Ring, SeqJoinCmds, SeqSimOpts),
-    file:close(SeqFh),
+    ok = file:close(SeqFh),
 
     %% Bulk node joins
     %%   bulk join N nodes to a single node
@@ -466,7 +462,7 @@ commission(Base, Test, {Wants, Choose}) ->
                   put(sim_seq, Seq+1),
                   FN = filename:join([Dir, 
                                       "bk"++integer_to_list(Nodes)++".ring" ]),
-                  file:write_file(FN, term_to_binary(Ring2)),
+                  ok = file:write_file(FN, term_to_binary(Ring2)),
 
                   Stats = try
                               riak_core_claim_util:ring_stats(Ring2, TN)

@@ -260,10 +260,10 @@ transfers([]) ->
         end,
 
     io:format("~nActive Transfers:~n~n", []),
-    [DisplayXfer(Xfer) || Xfer <- lists:flatten(Xfers)],
+    _ = [DisplayXfer(Xfer) || Xfer <- lists:flatten(Xfers)],
 
     io:format("~n"),
-    [DisplayDown(Node) || Node <- Down],
+    _ = [DisplayDown(Node) || Node <- Down],
     ok.
 
 print_v2_status(Type, Mod, {SrcPartition, TargetPartition}, StartTS) ->
@@ -631,7 +631,7 @@ print_plan(Changes, Ring, NextRings) ->
     io:format("Action         Details(s)~n"),
     io:format("~79..-s~n", [""]),
 
-    lists:map(fun({Node, join}) ->
+    lists:foreach(fun({Node, join}) ->
                       io:format("join           ~p~n", [Node]);
                  ({Node, leave}) ->
                       io:format("leave          ~p~n", [Node]);
@@ -651,7 +651,7 @@ print_plan(Changes, Ring, NextRings) ->
     io:format("~79..-s~n", [""]),
     io:format("~n"),
 
-    lists:map(fun({Node, remove}) ->
+    lists:foreach(fun({Node, remove}) ->
                       io:format("WARNING: All of ~p replicas will be lost~n", [Node]);
                  ({Node, {force_replace, _}}) ->
                       io:format("WARNING: All of ~p replicas will be lost~n", [Node]);
@@ -670,13 +670,13 @@ print_plan(Changes, Ring, NextRings) ->
                       "cluster transitions~n~n", [Transitions])
     end,
 
-    lists:mapfoldl(fun({Ring1, Ring2}, I) ->
+    _ = lists:foldl(fun({Ring1, Ring2}, I) ->
                            io:format("~79..#s~n", [""]),
                            io:format("~24.. s After cluster transition ~b/~b~n",
                                      ["", I, Transitions]),
                            io:format("~79..#s~n~n", [""]),
                            output(Ring1, Ring2),
-                           {ok, I+1}
+                           I+1
                    end, 1, NextRings),
     ok.
 
@@ -713,8 +713,8 @@ output(Ring, NextRing) ->
         _ ->
             io:format("Partitions reassigned from cluster changes: ~p~n",
                       [length(Reassigned)]),
-            [io:format("  ~b reassigned from ~p to ~p~n", [Count, PrevOwner, NewOwner])
-             || {{PrevOwner, NewOwner}, Count} <- ReassignedTally],
+            _ = [io:format("  ~b reassigned from ~p to ~p~n", [Count, PrevOwner, NewOwner])
+                 || {{PrevOwner, NewOwner}, Count} <- ReassignedTally],
             io:format("~n"),
             ok
     end,
@@ -727,8 +727,8 @@ output(Ring, NextRing) ->
         _ ->
             io:format("Transfers resulting from cluster changes: ~p~n",
                       [length(Next)]),
-            [io:format("  ~b transfers from ~p to ~p~n", [Count, PrevOwner, NewOwner])
-             || {{PrevOwner, NewOwner}, Count} <- NextTally],
+            _ = [io:format("  ~b transfers from ~p to ~p~n", [Count, PrevOwner, NewOwner])
+                 || {{PrevOwner, NewOwner}, Count} <- NextTally],
             ok,
             io:format("~n")
     end,
@@ -757,6 +757,11 @@ commit_staged([]) ->
         {error, plan_changed} ->
             io:format("The plan has changed. Verify with "
                       "'riak-admin cluster plan' before committing~n");
+        {error, invalid_resize_claim} ->
+            io:format("Unable to commit staged ring changes.~n"
+                      "Check that there are no pending changes in 'riak-admin ring-status'~n"
+                      "If there are, try again once they are completed,~n"
+                      "Otherwise try again shortly.~n");
         _ ->
             io:format("Unable to commit cluster changes. Plan "
                       "may have changed, please verify the~n"

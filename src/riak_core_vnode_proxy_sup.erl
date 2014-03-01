@@ -42,14 +42,14 @@ start_proxy(Mod, Index) ->
     Pid.
 
 stop_proxy(Mod, Index) ->
-    supervisor:terminate_child(?MODULE, {Mod, Index}),
-    supervisor:delete_child(?MODULE, {Mod, Index}),
+    _ = supervisor:terminate_child(?MODULE, {Mod, Index}),
+    _ = supervisor:delete_child(?MODULE, {Mod, Index}),
     ok.
 
 start_proxies(Mod) ->
     lager:debug("Starting vnode proxies for: ~p", [Mod]),
     Indices = get_indices(),
-    [start_proxy(Mod, Index) || Index <- Indices],
+    _ = [start_proxy(Mod, Index) || Index <- Indices],
     ok.
 
 %% @private
