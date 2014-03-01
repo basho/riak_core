@@ -42,7 +42,7 @@
 -type preflist_ann() :: [{{index(), node()}, primary|fallback}].
 -type iterator() :: term().
 -type chashbin() :: term().
--type docidx() :: <<_:160>>.
+-type docidx() :: chash:index().
 
 %% Return preflist of all active primary nodes (with no
 %% substituion of fallbacks).  Used to simulate a
