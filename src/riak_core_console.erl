@@ -332,7 +332,7 @@ print_arrowbox(SrcAtom, TargetAtom, Objs, Bytes, Progress) ->
                  "" -> string:centre(Target0, 25);
                  _ -> Target0
              end,
-    
+
     ToFrom = riak_core_format:fmt("~25s ~10s ~25s",
                                   [Src, ?ARROW, Target]),
     Width = length(ToFrom),
@@ -343,18 +343,18 @@ print_arrowbox(SrcAtom, TargetAtom, Objs, Bytes, Progress) ->
     io:format("~s~n", [ToFrom]),
     Fmt = "~-25s ~10s ~-25s~n",
     case SCont1 /= "" orelse TCont1 /= "" of
-        true -> 
+        true ->
             io:format(Fmt, [SCont1, "", TCont1]);
         _ -> ok
-    end, 
+    end,
     case SCont2 /= "" orelse TCont2 /= "" of
-        true -> 
+        true ->
             io:format(Fmt, [SCont2, "", TCont2]);
         _ -> ok
-    end, 
+    end,
     io:format("~s~n", [string:centre("     "++Prog, Width)]),
     io:format("~s~n", [string:centre(Bytes, Width)]).
-    
+
 
 wrap(String) ->
     Len = length(String),
@@ -367,7 +367,7 @@ wrap(String) ->
                N =< 50->
             One = lists:sublist(String, 26, 25),
             {One, ""};
-        _ -> 
+        _ ->
             {"", ""}
     end.
 
@@ -524,7 +524,7 @@ stage_resize_ring(["abort"]) ->
                 io:format("Success: staged abort resize ring request~n"),
                 ok;
             {error, not_resizing} ->
-                io:format("Failed: ring is not resizing or resize has completed"),
+                io:format("Failed: ring is not resizing or resize has completed~n"),
                 error
         end
     catch
@@ -539,7 +539,7 @@ stage_resize_ring([SizeStr]) ->
         Size -> stage_resize_ring(Size)
     catch
         error:badarg ->
-            io:format("Failed: Ring size must be an integer.")
+            io:format("Failed: Ring size must be an integer.~n")
     end;
 stage_resize_ring(NewRingSize) ->
     try
@@ -734,7 +734,7 @@ output(Ring, NextRing) ->
     end,
     ok.
 
-tally(Changes) ->    
+tally(Changes) ->
     Tally =
         lists:foldl(fun({_, PrevOwner, NewOwner}, Tally) ->
                             dict:update_counter({PrevOwner, NewOwner}, 1, Tally)
@@ -831,6 +831,62 @@ check_limit(Str) ->
             {false, 0}
     end.
 
+security_error_xlate({errors, Errors}) ->
+    string:join(
+      lists:map(fun(X) -> security_error_xlate({error, X}) end,
+                Errors),
+      "~n");
+security_error_xlate({error, unknown_user}) ->
+    "User not recognized";
+security_error_xlate({error, {unknown_permission, Name}}) ->
+    io_lib:format("Permission not recognized: ~s", [Name]);
+security_error_xlate({error, {unknown_user, Name}}) ->
+    io_lib:format("User not recognized: ~s", [Name]);
+security_error_xlate({error, {unknown_group, Name}}) ->
+    io_lib:format("User not recognized: ~s", [Name]);
+security_error_xlate({error, {unknown_users, Names}}) ->
+    io_lib:format("User(s) not recognized: ~s",
+                  [
+                   string:join(
+                     lists:map(fun(X) -> binary_to_list(X) end, Names),
+                     ", ")
+                  ]);
+security_error_xlate({error, {unknown_groups, Names}}) ->
+    io_lib:format("Group(s) not recognized: ~s",
+                  [
+                   string:join(
+                     lists:map(fun(X) -> binary_to_list(X) end, Names),
+                     ", ")
+                  ]);
+security_error_xlate({error, {unknown_roles, Names}}) ->
+    io_lib:format("Name(s) not recognized: ~s",
+                  [
+                   string:join(
+                    lists:map(fun(X) -> binary_to_list(X) end, Names),
+                    ", ")
+                  ]);
+security_error_xlate({error, {duplicate_roles, Names}}) ->
+    io_lib:format("Ambiguous names need to be prefixed with 'user/' or 'group/': ~s",
+                  [
+                   string:join(
+                     lists:map(fun(X) -> binary_to_list(X) end, Names),
+                     ", ")
+                  ]);
+security_error_xlate({error, reserved_name}) ->
+    "This name is reserved for system use";
+security_error_xlate({error, no_matching_sources}) ->
+    "No matching source";
+security_error_xlate({error, user_exists}) ->
+    "User already exists";
+security_error_xlate({error, group_exists}) ->
+    "Group already exists";
+
+%% If we get something we hadn't planned on, better an ugly error
+%% message than an ugly RPC call failure
+security_error_xlate(Error) ->
+    io_lib:format("~p", [Error]).
+
+
 add_user([Username|Options]) ->
     add_role(Username, Options, fun riak_core_security:add_user/2).
 
@@ -839,9 +895,12 @@ add_group([Groupname|Options]) ->
 
 add_role(Name, Options, Fun) ->
     try Fun(list_to_binary(Name), parse_options(Options)) of
-        ok -> ok;
+        ok ->
+            io:format("Succesfully added ~s~n", [Name]),
+            ok;
         Error ->
-            io:format("~p~n", [Error]),
+            io:format(security_error_xlate(Error)),
+            io:format("~n"),
             Error
     catch
         throw:{error, {invalid_option, Option}} ->
@@ -858,9 +917,12 @@ alter_group([Groupname|Options]) ->
 
 alter_role(Name, Options, Fun) ->
     try Fun(list_to_binary(Name), parse_options(Options)) of
-        ok -> ok;
+        ok ->
+            io:format("Changes to ~s applied~n", [Name]),
+            ok;
         Error ->
-            io:format("~p~n", [Error]),
+            io:format(security_error_xlate(Error)),
+            io:format("~n"),
             Error
     catch
         throw:{error, {invalid_option, Option}} ->
@@ -877,9 +939,12 @@ del_group([Groupname]) ->
 
 del_role(Name, Fun) ->
     case Fun(list_to_binary(Name)) of
-        ok -> ok;
+        ok ->
+            io:format("Succesfully deleted ~s~n", [Name]),
+            ok;
         Error ->
-            io:format("~p~n", [Error]),
+            io:format(security_error_xlate(Error)),
+            io:format("~n"),
             Error
     end.
 
@@ -894,9 +959,11 @@ add_source([Users, CIDR, Source | Options]) ->
                                   list_to_atom(Source),
                                   parse_options(Options)) of
         ok ->
+            io:format("Succesfully added source~n"),
             ok;
         Error ->
-            io:format("~p~n", [Error]),
+            io:format(security_error_xlate(Error)),
+            io:format("~n"),
             Error
     catch
         throw:{error, {invalid_option, Option}} ->
@@ -912,7 +979,15 @@ del_source([Users, CIDR]) ->
         Other ->
             [list_to_binary(O) || O <- Other]
     end,
-    riak_core_security:del_source(Unames, parse_cidr(CIDR)).
+    case riak_core_security:del_source(Unames, parse_cidr(CIDR)) of
+        ok ->
+            io:format("Succesfully deleted source~n"),
+            ok;
+        Error ->
+            io:format(security_error_xlate(Error)),
+            io:format("~n"),
+            Error
+    end.
 
 grant([Grants, "ON", "ANY", "TO", Users]) ->
     Unames = case string:tokens(Users, ",") of
@@ -927,7 +1002,15 @@ grant([Grants, "ON", "ANY", "TO", Users]) ->
         Other2 ->
             Other2
     end,
-    riak_core_security:add_grant(Unames, any, Permissions);
+    case riak_core_security:add_grant(Unames, any, Permissions) of
+        ok ->
+            io:format("Succesfully granted~n"),
+            ok;
+        Error ->
+            io:format(security_error_xlate(Error)),
+            io:format("~n"),
+            Error
+    end;
 grant([Grants, "ON", Type, Bucket, "TO", Users]) ->
     grant([Grants, "ON", {list_to_binary(Type), list_to_binary(Bucket)}, "TO",
            Users]);
@@ -947,13 +1030,16 @@ grant([Grants, "ON", Bucket, "TO", Users]) ->
             Other2
     end,
     case riak_core_security:add_grant(Unames, Bucket, Permissions) of
-        ok -> ok;
+        ok ->
+            io:format("Succesfully granted~n"),
+            ok;
         Error ->
-            io:format("~p~n", [Error]),
+            io:format(security_error_xlate(Error)),
+            io:format("~n"),
             Error
     end;
 grant(_) ->
-    io:format("Usage: grant <permissions> ON (<type> [bucket]|ANY) TO <users>"),
+    io:format("Usage: grant <permissions> ON (<type> [bucket]|ANY) TO <users>~n"),
     error.
 
 revoke([Grants, "ON", "ANY", "FROM", Users]) ->
@@ -970,9 +1056,12 @@ revoke([Grants, "ON", "ANY", "FROM", Users]) ->
             Other2
     end,
     case riak_core_security:add_revoke(Unames, any, Permissions) of
-        ok -> ok;
+        ok ->
+            io:format("Succesfully revoked~n"),
+            ok;
         Error ->
-            io:format("~p~n", [Error]),
+            io:format(security_error_xlate(Error)),
+            io:format("~n"),
             Error
     end;
 revoke([Grants, "ON", Type, Bucket, "FROM", Users]) ->
@@ -995,13 +1084,16 @@ revoke([Grants, "ON", Bucket, "FROM", Users]) ->
             Other2
     end,
     case riak_core_security:add_revoke(Unames, Bucket, Permissions) of
-        ok -> ok;
+        ok ->
+            io:format("Succesfully revoked~n"),
+            ok;
         Error ->
-            io:format("~p~n", [Error]),
+            io:format(security_error_xlate(Error)),
+            io:format("~n"),
             Error
     end;
 revoke(_) ->
-    io:format("Usage: revoke <permissions> ON <type> [bucket] FROM <users>"),
+    io:format("Usage: revoke <permissions> ON <type> [bucket] FROM <users>~n"),
     error.
 
 
@@ -1009,13 +1101,28 @@ print_users([]) ->
     riak_core_security:print_users().
 
 print_user([User]) ->
-    riak_core_security:print_user(list_to_binary(User)).
+    case riak_core_security:print_user(list_to_binary(User)) of
+        ok ->
+            ok;
+        Error ->
+            io:format(security_error_xlate(Error)),
+            io:format("~n"),
+            Error
+    end.
+
 
 print_groups([]) ->
     riak_core_security:print_groups().
 
 print_group([Group]) ->
-    riak_core_security:print_group(list_to_binary(Group)).
+    case riak_core_security:print_group(list_to_binary(Group)) of
+        ok ->
+            ok;
+        Error ->
+            io:format(security_error_xlate(Error)),
+            io:format("~n"),
+            Error
+    end.
 
 print_sources([]) ->
     riak_core_security:print_sources().

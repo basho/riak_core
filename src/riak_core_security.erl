@@ -153,7 +153,6 @@ print_groups() ->
 print_user(User) ->
     case user_details(User) of
         undefined ->
-            io:format("No such user ~p~n", [User]),
             {error, {unknown_user, User}};
         _U ->
             Grants = accumulate_grants(User, user),
@@ -578,10 +577,7 @@ add_grant([H|_T]=RoleList, Bucket, Grants) when is_binary(H) ->
             add_grant_int(RoleTypes, Bucket, Grants);
         Error ->
             Error
-    end;
-add_grant(Role, Bucket, Grants) ->
-    %% single role
-    add_grant([Role], Bucket, Grants).
+    end.
 
 
 -spec add_revoke(userlist(), bucket() | any, [string()]) -> ok | {error, term()}.
@@ -621,11 +617,7 @@ add_revoke([H|_T]=RoleList, Bucket, Revokes) when is_binary(H) ->
             add_revoke_int(RoleTypes, Bucket, Revokes);
         Error ->
             Error
-    end;
-add_revoke(User, Bucket, Revokes) ->
-    %% single user
-    add_revoke([User], Bucket, Revokes).
-
+    end.
 
 -spec add_source(Users :: all | binary() | [binary()], CIDR ::
                  {inet:ip_address(), non_neg_integer()}, Source :: atom(),
@@ -770,7 +762,7 @@ metadata_grant_prefix(user) ->
     {<<"security">>, <<"usergrants">>};
 metadata_grant_prefix(group) ->
     {<<"security">>, <<"groupgrants">>}.
-     
+
 
 add_revoke_int([], _, _) ->
     ok;
@@ -789,7 +781,7 @@ add_revoke_int([{Name, RoleType}|Roles], Bucket, Permissions) ->
 
             %% TODO - do deletes here, once cluster metadata supports it for
             %% real, if NewPerms == []
-            
+
             case NewPerms of
                 [] ->
                     riak_core_metadata:delete(Prefix, {Name, Bucket});
@@ -968,7 +960,7 @@ validate_groups_option(Options) ->
 
 %% Handle 'password' option if given
 validate_password_option(Pass, Options) ->
-    {ok, HashedPass, AuthName, HashFunction, Salt, Iterations} = 
+    {ok, HashedPass, AuthName, HashFunction, Salt, Iterations} =
         riak_core_pw_auth:hash_password(list_to_binary(Pass)),
     NewOptions = stash("password", {"password",
                                     [{hash_pass, HashedPass},
@@ -1088,8 +1080,8 @@ flatten_once(List) ->
 
 check_grant_blockers([], [], ok) ->
     none;
-check_grant_blockers([], [], Error) ->
-    Error;
+check_grant_blockers([], [], {error, Error}) ->
+    {error, Error};
 check_grant_blockers(UnknownRoles, [], ok) ->
     {error, {unknown_roles, UnknownRoles}};
 check_grant_blockers([], NameOverlaps, ok) ->
@@ -1097,12 +1089,12 @@ check_grant_blockers([], NameOverlaps, ok) ->
 check_grant_blockers(UnknownRoles, NameOverlaps, ok) ->
     {errors, [{unknown_roles, UnknownRoles},
              {duplicate_roles, NameOverlaps}]};
-check_grant_blockers(UnknownRoles, [], Error) ->
+check_grant_blockers(UnknownRoles, [], {error, Error}) ->
     {errors, [{unknown_roles, UnknownRoles}, Error]};
-check_grant_blockers([], NameOverlaps, Error) ->
+check_grant_blockers([], NameOverlaps, {error, Error}) ->
     {errors, [{duplicate_roles, NameOverlaps},
               Error]};
-check_grant_blockers(UnknownRoles, NameOverlaps, Error) ->
+check_grant_blockers(UnknownRoles, NameOverlaps, {error, Error}) ->
     {errors, [{unknown_roles, UnknownRoles},
              {duplicate_roles, NameOverlaps},
               Error]}.
@@ -1223,4 +1215,3 @@ role_exists(Rolename, RoleType) ->
             false;
         _ -> true
     end.
-
