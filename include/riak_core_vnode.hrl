@@ -33,3 +33,6 @@
 -define(VNODE_REQ, #riak_vnode_req_v1).
 -define(COVERAGE_REQ, #riak_coverage_req_v1).
 -define(FOLD_REQ, #riak_core_fold_req_v2).
+
+-type handoff_type() :: resize_transfer | ownership_transfer | hinted_handoff.
+-type handoff_dest() :: {handoff_type(), {partition(), node()}}.
