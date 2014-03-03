@@ -30,7 +30,6 @@
          add_grant/3, add_revoke/3, check_permission/2, check_permissions/2,
          get_username/1, is_enabled/0, enable/0, disable/0, status/0,
          get_ciphers/0, set_ciphers/1, print_ciphers/0]).
-%% TODO add rm_source, API to deactivate/remove users
 
 -define(DEFAULT_CIPHER_LIST,
 "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256"
@@ -60,10 +59,21 @@
 
 -define(TOMBSTONE, '$deleted').
 
+-ifdef(TEST).
+-define(REFRESH_TIME, 1).
+-else.
+-define(REFRESH_TIME, 1000).
+-endif.
+
 -record(context,
         {username,
          grants,
          epoch}).
+
+-type context() :: #context{}.
+-type bucket() :: {binary(), binary()} | binary().
+-type permission() :: {string()} | {string(), bucket()}.
+-type userlist() :: all | string() | [string()].
 
 prettyprint_users([all], _) ->
     "all";
@@ -163,8 +173,24 @@ print_user(User) ->
                              end
                          end ||
                          {{Username, Bucket}, Permissions} <- Grants, Username /= <<"user/", User/binary>>]),
+            io:format("~nDedicated permissions (~ts)~n~n", [User]),
+            riak_core_console_table:print([{type, 10}, {bucket, 10}, {grants, 40}],
+                        [begin
+                             case Bucket of
+                                 any ->
+                                     ["*", "*",
+                                      prettyprint_permissions(Permissions, 40)];
+                                 {T, B} ->
+                                     [T, B,
+                                      prettyprint_permissions(Permissions, 40)];
+                                 T ->
+                                     [T, "*",
+                                      prettyprint_permissions(Permissions, 40)]
+                             end
+                         end ||
+                         {{Username, Bucket}, Permissions} <- Grants, Username == <<"user/", User/binary>>]),
             GroupedGrants = group_grants(Grants),
-            io:format("~nApplied permissions~n~n"),
+            io:format("~nCumulative permissions (~ts)~n~n", [User]),
             riak_core_console_table:print([{type, 10}, {bucket, 10}, {grants, 40}],
                         [begin
                              case Bucket of
@@ -206,8 +232,24 @@ print_group(Group) ->
                              end
                          end ||
                          {{Groupname, Bucket}, Permissions} <- Grants, Groupname /= Group]),
+            io:format("~nDedicated permissions (~ts)~n~n", [Group]),
+            riak_core_console_table:print([{type, 10}, {bucket, 10}, {grants, 40}],
+                        [begin
+                             case Bucket of
+                                 any ->
+                                     ["*", "*",
+                                      prettyprint_permissions(Permissions, 40)];
+                                 {T, B} ->
+                                     [T, B,
+                                      prettyprint_permissions(Permissions, 40)];
+                                 T ->
+                                     [T, "*",
+                                      prettyprint_permissions(Permissions, 40)]
+                             end
+                         end ||
+                         {{Groupname, Bucket}, Permissions} <- Grants, chop_name(Groupname) == Group]),
             GroupedGrants = group_grants(Grants),
-            io:format("~nApplied permissions~n~n"),
+            io:format("~nCumulative permissions (~ts)~n~n", [Group]),
             riak_core_console_table:print([{type, 10}, {bucket, 10}, {grants, 40}],
                         [begin
                              case Bucket of
@@ -241,6 +283,8 @@ prettyprint_permissions([Permission|Rest], Width, [H|T] =Acc) ->
 prettyprint_permissions([Permission|Rest], Width, Acc) ->
     prettyprint_permissions(Rest, Width, [[Permission] | Acc]).
 
+-spec check_permission(Permission :: permission(), Context :: context()) ->
+    {true, context()} | {false, string(), context()}.
 check_permission({Permission}, Context0) ->
     Context = maybe_refresh_context(Context0),
     %% The user needs to have this permission applied *globally*
@@ -248,8 +292,7 @@ check_permission({Permission}, Context0) ->
     %% permissions that don't tie to a particular bucket, like 'ping' and
     %% 'stats'.
     MatchG = match_grant(any, Context#context.grants),
-    case MatchG /= undefined andalso
-         (lists:member(Permission, MatchG) orelse MatchG == 'all') of
+    case lists:member(Permission, MatchG) of
         true ->
             {true, Context};
         false ->
@@ -261,8 +304,7 @@ check_permission({Permission}, Context0) ->
 check_permission({Permission, Bucket}, Context0) ->
     Context = maybe_refresh_context(Context0),
     MatchG = match_grant(Bucket, Context#context.grants),
-    case MatchG /= undefined andalso
-         (lists:member(Permission, MatchG) orelse MatchG == 'all') of
+    case lists:member(Permission, MatchG) of
         true ->
             {true, Context};
         false ->
@@ -290,6 +332,8 @@ check_permissions([Permission|Rest], Ctx) ->
 get_username(#context{username=Username}) ->
     Username.
 
+-spec authenticate(Username::binary(), Password::binary(), ConnInfo ::
+                   [{atom(), any()}]) -> {ok, context()} | {error, term()}.
 authenticate(Username, Password, ConnInfo) ->
     case user_details(Username) of
         undefined ->
@@ -371,6 +415,10 @@ authenticate(Username, Password, ConnInfo) ->
             end
     end.
 
+-spec add_user(Username :: binary(), Options :: [{string(), term()}]) ->
+    ok | {error, term()}.
+add_user(<<"all">>, _Options) ->
+    {error, reserved_name};
 add_user(Username, Options) ->
     case user_exists(Username) of
         false ->
@@ -386,6 +434,8 @@ add_user(Username, Options) ->
             {error, user_exists}
     end.
 
+add_group(<<"all">>, _Options) ->
+    {error, reserved_name};
 add_group(Groupname, Options) ->
     case group_exists(Groupname) of
         false ->
@@ -401,6 +451,10 @@ add_group(Groupname, Options) ->
             {error, group_exists}
     end.
 
+-spec alter_user(Username :: binary(), Options :: [{string(), term()}]) ->
+    ok | {error, term()}.
+alter_user(<<"all">>, _Options) ->
+    {error, reserved_name};
 alter_user(Username, Options) ->
     case user_details(Username) of
         undefined ->
@@ -419,6 +473,8 @@ alter_user(Username, Options) ->
             end
     end.
 
+alter_group(<<"all">>, _Options) ->
+    {error, reserved_name};
 alter_group(Groupname, Options) ->
     case group_details(Groupname) of
         undefined ->
@@ -437,6 +493,8 @@ alter_group(Groupname, Options) ->
             end
     end.
 
+del_user(<<"all">>) ->
+    {error, reserved_name};
 del_user(Username) ->
     case user_exists(Username) of
         false ->
@@ -459,6 +517,8 @@ del_user(Username) ->
             ok
     end.
 
+del_group(<<"all">>) ->
+    {error, reserved_name};
 del_group(Groupname) ->
     case group_exists(Groupname) of
         false ->
@@ -481,11 +541,12 @@ del_group(Groupname) ->
             ok
     end.
 
+-spec add_grant(userlist(), bucket() | any, [string()]) -> ok | {error, term()}.
 add_grant(all, Bucket, Grants) ->
     %% all is always valid
     case validate_permissions(Grants) of
         ok ->
-            add_grant_int([all], Bucket, Grants);
+            add_grant_int([{all, group}], Bucket, Grants);
         Error ->
             Error
     end;
@@ -523,16 +584,12 @@ add_grant(Role, Bucket, Grants) ->
     add_grant([Role], Bucket, Grants).
 
 
+-spec add_revoke(userlist(), bucket() | any, [string()]) -> ok | {error, term()}.
 add_revoke(all, Bucket, Revokes) ->
     %% all is always valid
     case validate_permissions(Revokes) of
         ok ->
-            case add_revoke_int([all], Bucket, revokes) of
-                ok ->
-                    ok;
-                Error2 ->
-                    Error2
-            end;
+            add_revoke_int([{all, group}], Bucket, Revokes);
         Error ->
             Error
     end;
@@ -570,6 +627,9 @@ add_revoke(User, Bucket, Revokes) ->
     add_revoke([User], Bucket, Revokes).
 
 
+-spec add_source(Users :: all | binary() | [binary()], CIDR ::
+                 {inet:ip_address(), non_neg_integer()}, Source :: atom(),
+                 Options :: [{string(), term()}]) -> ok | {error, term()}.
 add_source(all, CIDR, Source, Options) ->
     %% all is always valid
 
@@ -616,7 +676,7 @@ del_source(all, CIDR) ->
     ok;
 del_source([H|_T]=UserList, CIDR) when is_binary(H) ->
     _ = [riak_core_metadata:delete({<<"security">>, <<"sources">>},
-                              {User, anchor_mask(CIDR)}) || User <- UserList],
+                                   {User, anchor_mask(CIDR)}) || User <- UserList],
     ok;
 del_source(User, CIDR) ->
     %% single user
@@ -777,7 +837,7 @@ match_grant(Bucket, Grants) ->
 maybe_refresh_context(Context) ->
     %% TODO replace this with a cluster metadata hash check, or something
     Epoch = os:timestamp(),
-    case timer:now_diff(Epoch, Context#context.epoch) < 1000 of
+    case timer:now_diff(Epoch, Context#context.epoch) < ?REFRESH_TIME of
         false ->
             %% context has expired
             get_context(Context#context.username);
@@ -799,7 +859,15 @@ get_context(Username) when is_binary(Username) ->
     #context{username=Username, grants=Grants, epoch=os:timestamp()}.
 
 accumulate_grants(Role, Type) ->
-    {Grants, _Seen} = accumulate_grants([Role], [], [], Type),
+    %% The 'all' grants always apply
+    All = riak_core_metadata:fold(fun({{_R, _Bucket}, [?TOMBSTONE]}, A) ->
+                                          A;
+                                     ({{_R, Bucket}, [Permissions]}, A) ->
+                                          [{{<<"group/all">>, Bucket},
+                                            Permissions}|A]
+                                  end, [], metadata_grant_prefix(group),
+                                  [{match, {all, '_'}}]),
+    {Grants, _Seen} = accumulate_grants([Role], [], All, Type),
     lists:flatten(Grants).
 
 accumulate_grants([], Seen, Acc, _Type) ->
@@ -876,12 +944,8 @@ validate_options(Options) ->
         undefined ->
             validate_groups_option(Options);
         Pass ->
-            case validate_password_option(Pass, Options) of
-                {ok, NewOptions} ->
-                    validate_groups_option(NewOptions);
-                Error ->
-                    Error
-            end
+            {ok, NewOptions} = validate_password_option(Pass, Options),
+            validate_groups_option(NewOptions)
     end.
 
 validate_groups_option(Options) ->
@@ -889,8 +953,9 @@ validate_groups_option(Options) ->
         undefined ->
             {ok, Options};
         GroupStr ->
-            Groups= [list_to_binary(G) || G <-
-                                         string:tokens(GroupStr, ",")],
+            %% Don't let the admin assign "all" as a container
+            Groups= [list_to_binary(G) ||
+                        G <- string:tokens(GroupStr, ","), G /= "all"],
 
             case unknown_roles(Groups, group) of
                 [] ->
@@ -903,20 +968,16 @@ validate_groups_option(Options) ->
 
 %% Handle 'password' option if given
 validate_password_option(Pass, Options) ->
-    case riak_core_pw_auth:hash_password(list_to_binary(Pass)) of
-        {ok, HashedPass, AuthName, HashFunction, Salt, Iterations} ->
-            %% Add to options, replacing plaintext password
-            NewOptions = stash("password", {"password",
-                                            [{hash_pass, HashedPass},
-                                             {auth_name, AuthName},
-                                             {hash_func, HashFunction},
-                                             {salt, Salt},
-                                             {iterations, Iterations}]},
-                               Options),
-            {ok, NewOptions};
-        {error, Error} ->
-            {error, Error}
-    end.
+    {ok, HashedPass, AuthName, HashFunction, Salt, Iterations} = 
+        riak_core_pw_auth:hash_password(list_to_binary(Pass)),
+    NewOptions = stash("password", {"password",
+                                    [{hash_pass, HashedPass},
+                                     {auth_name, AuthName},
+                                     {hash_func, HashFunction},
+                                     {salt, Salt},
+                                     {iterations, Iterations}]},
+                       Options),
+    {ok, NewOptions}.
 
 
 validate_permissions(Perms) ->
@@ -938,7 +999,7 @@ validate_permissions([Perm|T], Known) ->
                     end
             catch
                 error:badarg ->
-                            {error, {unknown_permission, Perm}}
+                    {error, {unknown_permission, Perm}}
             end;
         _ ->
             {error, {unknown_permission, Perm}}
