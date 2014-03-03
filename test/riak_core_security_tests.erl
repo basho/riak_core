@@ -167,7 +167,7 @@ security_test_() ->
                 ?assertEqual(ok, riak_core_security:add_group(<<"superuser">>, [{"groups", ["sysadmin"]}])),
                 ?assertEqual(ok, riak_core_security:add_user(<<"user">>,
                                             [{"password","password"}])),
-                ?assertEqual(ok, riak_core_security:add_source(<<"user">>, {{127, 0, 0, 1}, 32}, password, [{"groups", ["superuser"]}])),
+                ?assertEqual(ok, riak_core_security:add_source(<<"user">>, {{127, 0, 0, 1}, 32}, password, [])),
                 %% sysadmins can get/put on any key in a default bucket
                 ?assertEqual(ok, riak_core_security:add_grant(<<"sysadmin">>, <<"default">>, ["riak_kv.get", "riak_kv.put"])),
                 %% authenticating from the wrong IP
