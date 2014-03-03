@@ -97,6 +97,15 @@ sync_test_() ->
                 ?assertEqual(ok, riak_core_security:print_users()),
                 ?assertEqual(ok, riak_core_security:print_sources()),
                 ?assertEqual(ok, riak_core_security:print_user(<<"user">>)),
+                %% delete the user
+                ?assertMatch(ok, riak_core_security:del_user(<<"user">>)),
+                %% re-add them
+                ?assertEqual(ok, riak_core_security:add_user(<<"user">>,
+                                                             [{"password","password"}])),
+                %% make sure their old grants are gone
+                {ok, Ctx2} = riak_core_security:authenticate(<<"user">>, <<"password">>,
+                                                [{ip, {127, 0, 0, 1}}]),
+                ?assertMatch({false, _,  _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx2)),
                 ok
         end},
        { "group grant/revoke on type/bucket works",
@@ -169,11 +178,46 @@ sync_test_() ->
                 ?assertMatch({false, _, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
                 ?assertMatch({false, _, _}, riak_core_security:check_permissions({"riak_kv.put", {<<"default">>, <<"myotherbucket">>}}, Ctx)),
                 ?assertEqual(ok, riak_core_security:alter_user(<<"user">>, [{"groups", ["superuser"]}])),
-                %?assertEqual(ok, riak_core_security:print_user(<<"user">>)),
-                %?assertEqual(ok, riak_core_security:print_group(<<"sysadmin">>)),
-                ?assertEqual(ok, riak_core_security:print_users()),
                 ?assertMatch({true, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
                 ?assertMatch({true, _}, riak_core_security:check_permissions({"riak_kv.put", {<<"default">>, <<"myotherbucket">>}}, Ctx)),
+                %% make sure these don't crash, at least
+                ?assertEqual(ok, riak_core_security:print_users()),
+                ?assertEqual(ok, riak_core_security:print_sources()),
+                ?assertEqual(ok, riak_core_security:print_user(<<"user">>)),
+                ?assertEqual(ok, riak_core_security:print_groups()),
+                ?assertEqual(ok, riak_core_security:print_group(<<"superuser">>)),
+                ?assertEqual(ok, riak_core_security:print_group(<<"sysadmin">>)),
+                ?assertEqual(ok, riak_core_security:alter_group(<<"superuser">>, [{"groups", []}])),
+                ?assertMatch({false, _, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
+                ?assertEqual(ok, riak_core_security:alter_group(<<"superuser">>, [{"groups", ["sysadmin"]}])),
+                ?assertMatch({true, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
+                ?assertMatch(ok, riak_core_security:del_group(<<"sysadmin">>)),
+                ?assertMatch({false, _, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
+                %% check re-adding the group does not resurrect old permissions or memberships
+                ?assertEqual(ok, riak_core_security:add_group(<<"sysadmin">>, [])),
+                ?assertMatch({false, _, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
+                ?assertEqual(ok, riak_core_security:add_grant(<<"sysadmin">>, <<"default">>, ["riak_kv.get", "riak_kv.put"])),
+                ?assertMatch({false, _, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
+                %% re-adding the group membership does restore the permissions, though
+                ?assertEqual(ok, riak_core_security:alter_group(<<"superuser">>, [{"groups", ["sysadmin"]}])),
+                ?assertMatch({true, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
+                ok
+        end},
+       { "user/group disambiguation",
+        fun() ->
+                ?assertEqual(ok, riak_core_security:add_group(<<"sysadmin">>, [])),
+                ?assertEqual(ok, riak_core_security:add_user(<<"sysadmin">>, [{"password", "password"}])),
+                ?assertEqual(ok, riak_core_security:add_source(all, {{127, 0, 0, 1}, 32}, password, [])),
+                ?assertEqual({error, {duplicate_roles, [<<"sysadmin">>]}}, riak_core_security:add_grant(<<"sysadmin">>, <<"default">>, ["riak_kv.get", "riak_kv.put"])),
+                ?assertEqual(ok, riak_core_security:add_grant(<<"user/sysadmin">>, <<"default">>, ["riak_kv.get", "riak_kv.put"])),
+                ?assertEqual(ok, riak_core_security:add_grant(<<"group/sysadmin">>, any, ["riak_kv.get", "riak_kv.put"])),
+                {ok, Ctx} = riak_core_security:authenticate(<<"sysadmin">>, <<"password">>,
+                                                [{ip, {127, 0, 0, 1}}]),
+                ?assertMatch({true, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
+                ?assertMatch({false, _, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"custom">>, <<"mybucket">>}}, Ctx)),
+                ?assertEqual(ok, riak_core_security:alter_user(<<"sysadmin">>, [{"groups", ["sysadmin"]}])),
+                ?assertMatch({true, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"custom">>, <<"mybucket">>}}, Ctx)),
+                ?assertMatch({true, _}, riak_core_security:check_permissions({"riak_kv.get"}, Ctx)),
                 ok
         end}
      ]}.
