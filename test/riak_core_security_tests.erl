@@ -30,7 +30,7 @@ stop_manager({Mgr, Tree, Bcst}) ->
     catch exit(Bcst, kill),
     ok.
 
-sync_test_() ->
+security_test_() ->
     {foreach,
      fun() ->
              start_manager(node())
