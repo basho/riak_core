@@ -113,7 +113,7 @@ security_test_() ->
                                             [{"password","password"}])),
                 ?assertEqual(ok, riak_core_security:add_group(<<"group">>,
                                             [])),
-                ?assertEqual(ok, riak_core_security:add_source(<<"user">>, {{127, 0, 0, 1}, 32}, password, [])),
+                ?assertEqual(ok, riak_core_security:add_source([<<"user">>], {{127, 0, 0, 1}, 32}, password, [])),
                 {ok, Ctx} = riak_core_security:authenticate(<<"user">>, <<"password">>,
                                                 [{ip, {127, 0, 0, 1}}]),
                 ?assertMatch({false, _,  _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
@@ -143,7 +143,7 @@ security_test_() ->
         fun() ->
                 ?assertEqual(ok, riak_core_security:add_user(<<"user">>,
                                             [{"password","password"}])),
-                ?assertEqual(ok, riak_core_security:add_source(<<"user">>, {{127, 0, 0, 1}, 32}, password, [])),
+                ?assertEqual(ok, riak_core_security:add_source([<<"user">>], {{127, 0, 0, 1}, 32}, password, [])),
                 {ok, Ctx} = riak_core_security:authenticate(<<"user">>, <<"password">>,
                                                 [{ip, {127, 0, 0, 1}}]),
                 ?assertMatch({false, _,  _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
@@ -166,7 +166,7 @@ security_test_() ->
                 ?assertEqual(ok, riak_core_security:add_group(<<"superuser">>, [{"groups", ["sysadmin"]}])),
                 ?assertEqual(ok, riak_core_security:add_user(<<"user">>,
                                             [{"password","password"}])),
-                ?assertEqual(ok, riak_core_security:add_source(<<"user">>, {{127, 0, 0, 1}, 32}, password, [])),
+                ?assertEqual(ok, riak_core_security:add_source([<<"user">>], {{127, 0, 0, 1}, 32}, password, [])),
                 %% sysadmins can get/put on any key in a default bucket
                 ?assertEqual(ok, riak_core_security:add_grant([<<"sysadmin">>], <<"default">>, ["riak_kv.get", "riak_kv.put"])),
                 %% authenticating from the wrong IP
