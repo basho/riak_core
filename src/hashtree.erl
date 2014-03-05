@@ -119,6 +119,8 @@
          compare/4,
          top_hash/1,
          get_bucket/3,
+         get_buckets/1,
+         get_buckets/2,
          key_hashes/2,
          levels/1,
          segments/1,
@@ -439,6 +441,17 @@ get_bucket(Level, Bucket, State) ->
             get_disk_bucket(Level, Bucket, State)
     end.
 
+-spec get_buckets(hashtree()) -> orddict().
+get_buckets(#state{levels=L}=State) ->
+    get_buckets(L, State).
+
+-spec get_buckets(integer(), hashtree()) -> orddict().
+get_buckets(Levels, State) ->
+    lists:foldl(fun(Level, Orddict) ->
+                get_buckets(Level, Orddict, State)
+        end, orddict:new(), lists:seq(1, Levels)).
+
+
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
@@ -478,6 +491,22 @@ esha_update(Ctx, Bin) ->
 esha_final(Ctx) ->
     crypto:sha_final(Ctx).
 -endif.
+
+-spec get_buckets(integer(), orddict(), hashtree()) -> orddict().
+get_buckets(Level, Results, #state{width=W,levels=L}=State) ->
+    ByLevel = erlang:trunc(W / (L - 1)),
+    Buckets = case Level of
+        1 ->
+            [0];
+        X ->
+            lists:seq(0, erlang:trunc(ByLevel * (X - 1)))
+    end,
+    lists:foldl(fun(Bucket, Orddict) ->
+                orddict:store({Level, Bucket},
+                               get_bucket(Level, Bucket, State),
+                              Orddict)
+        end, Results, Buckets).
+
 
 -spec set_bucket(integer(), integer(), any(), hashtree()) -> hashtree().
 set_bucket(Level, Bucket, Val, State) ->
