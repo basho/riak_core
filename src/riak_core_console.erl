@@ -896,7 +896,7 @@ add_group([Groupname|Options]) ->
 add_role(Name, Options, Fun) ->
     try Fun(list_to_binary(Name), parse_options(Options)) of
         ok ->
-            io:format("Succesfully added ~s~n", [Name]),
+            io:format("Successfully added ~s~n", [Name]),
             ok;
         Error ->
             io:format(security_error_xlate(Error)),
@@ -940,7 +940,7 @@ del_group([Groupname]) ->
 del_role(Name, Fun) ->
     case Fun(list_to_binary(Name)) of
         ok ->
-            io:format("Succesfully deleted ~s~n", [Name]),
+            io:format("Successfully deleted ~s~n", [Name]),
             ok;
         Error ->
             io:format(security_error_xlate(Error)),
@@ -959,7 +959,7 @@ add_source([Users, CIDR, Source | Options]) ->
                                   list_to_atom(Source),
                                   parse_options(Options)) of
         ok ->
-            io:format("Succesfully added source~n"),
+            io:format("Successfully added source~n"),
             ok;
         Error ->
             io:format(security_error_xlate(Error)),
@@ -979,15 +979,8 @@ del_source([Users, CIDR]) ->
         Other ->
             [list_to_binary(O) || O <- Other]
     end,
-    case riak_core_security:del_source(Unames, parse_cidr(CIDR)) of
-        ok ->
-            io:format("Succesfully deleted source~n"),
-            ok;
-        Error ->
-            io:format(security_error_xlate(Error)),
-            io:format("~n"),
-            Error
-    end.
+    riak_core_security:del_source(Unames, parse_cidr(CIDR)),
+    io:format("Deleted source~n").
 
 grant([Grants, "ON", "ANY", "TO", Users]) ->
     Unames = case string:tokens(Users, ",") of
@@ -996,15 +989,10 @@ grant([Grants, "ON", "ANY", "TO", Users]) ->
         Other ->
             [list_to_binary(O) || O <- Other]
     end,
-    Permissions = case string:tokens(Grants, ",") of
-        ["all"] ->
-            all;
-        Other2 ->
-            Other2
-    end,
+    Permissions = string:tokens(Grants, ","),
     case riak_core_security:add_grant(Unames, any, Permissions) of
         ok ->
-            io:format("Succesfully granted~n"),
+            io:format("Successfully granted~n"),
             ok;
         Error ->
             io:format(security_error_xlate(Error)),
@@ -1023,15 +1011,10 @@ grant([Grants, "ON", Bucket, "TO", Users]) ->
         Other ->
             [list_to_binary(O) || O <- Other]
     end,
-    Permissions = case string:tokens(Grants, ",") of
-        ["all"] ->
-            all;
-        Other2 ->
-            Other2
-    end,
+    Permissions = string:tokens(Grants, ","),
     case riak_core_security:add_grant(Unames, Bucket, Permissions) of
         ok ->
-            io:format("Succesfully granted~n"),
+            io:format("Successfully granted~n"),
             ok;
         Error ->
             io:format(security_error_xlate(Error)),
@@ -1049,15 +1032,10 @@ revoke([Grants, "ON", "ANY", "FROM", Users]) ->
         Other ->
             [list_to_binary(O) || O <- Other]
     end,
-    Permissions = case string:tokens(Grants, ",") of
-        ["all"] ->
-            all;
-        Other2 ->
-            Other2
-    end,
+    Permissions = string:tokens(Grants, ","),
     case riak_core_security:add_revoke(Unames, any, Permissions) of
         ok ->
-            io:format("Succesfully revoked~n"),
+            io:format("Successfully revoked~n"),
             ok;
         Error ->
             io:format(security_error_xlate(Error)),
@@ -1077,15 +1055,10 @@ revoke([Grants, "ON", Bucket, "FROM", Users]) ->
         Other ->
             [list_to_binary(O) || O <- Other]
     end,
-    Permissions = case string:tokens(Grants, ",") of
-        ["all"] ->
-            all;
-        Other2 ->
-            Other2
-    end,
+    Permissions = string:tokens(Grants, ","),
     case riak_core_security:add_revoke(Unames, Bucket, Permissions) of
         ok ->
-            io:format("Succesfully revoked~n"),
+            io:format("Successfully revoked~n"),
             ok;
         Error ->
             io:format(security_error_xlate(Error)),

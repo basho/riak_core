@@ -73,7 +73,7 @@
 -type context() :: #context{}.
 -type bucket() :: {binary(), binary()} | binary().
 -type permission() :: {string()} | {string(), bucket()}.
--type userlist() :: all | string() | [string()].
+-type userlist() :: all | [binary()].
 
 prettyprint_users([all], _) ->
     "all";
@@ -619,8 +619,8 @@ add_revoke([H|_T]=RoleList, Bucket, Revokes) when is_binary(H) ->
             Error
     end.
 
--spec add_source(Users :: all | binary() | [binary()], CIDR ::
-                 {inet:ip_address(), non_neg_integer()}, Source :: atom(),
+-spec add_source(userlist(), CIDR :: {inet:ip_address(), non_neg_integer()},
+                 Source :: atom(),
                  Options :: [{string(), term()}]) -> ok | {error, term()}.
 add_source(all, CIDR, Source, Options) ->
     %% all is always valid
@@ -656,10 +656,7 @@ add_source([H|_T]=UserList, CIDR, Source, Options) when is_binary(H) ->
             ok;
         Error ->
             Error
-    end;
-add_source(User, CIDR, Source, Options) ->
-    %% single user
-    add_source([User], CIDR, Source, Options).
+    end.
 
 del_source(all, CIDR) ->
     %% all is always valid
@@ -669,11 +666,7 @@ del_source(all, CIDR) ->
 del_source([H|_T]=UserList, CIDR) when is_binary(H) ->
     _ = [riak_core_metadata:delete({<<"security">>, <<"sources">>},
                                    {User, anchor_mask(CIDR)}) || User <- UserList],
-    ok;
-del_source(User, CIDR) ->
-    %% single user
-    del_source([User], CIDR).
-
+    ok.
 
 is_enabled() ->
     try riak_core_capability:get({riak_core, security}) of
