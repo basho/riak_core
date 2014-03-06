@@ -183,6 +183,7 @@ security_test_() ->
                 ?assertEqual(ok, riak_core_security:print_users()),
                 ?assertEqual(ok, riak_core_security:print_sources()),
                 ?assertEqual(ok, riak_core_security:print_user(<<"user">>)),
+                ?assertEqual(ok, riak_core_security:print_grants(<<"user">>)),
                 ?assertEqual(ok, riak_core_security:print_groups()),
                 ?assertEqual(ok, riak_core_security:print_group(<<"superuser">>)),
                 ?assertEqual(ok, riak_core_security:print_group(<<"sysadmin">>)),
@@ -217,6 +218,27 @@ security_test_() ->
                 ?assertEqual(ok, riak_core_security:alter_user(<<"sysadmin">>, [{"groups", ["sysadmin"]}])),
                 ?assertMatch({true, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"custom">>, <<"mybucket">>}}, Ctx)),
                 ?assertMatch({true, _}, riak_core_security:check_permissions({"riak_kv.get"}, Ctx)),
+                ?assertEqual(ok, riak_core_security:print_grants(<<"sysadmin">>)),
+                ok
+        end},
+       { "Expected user/group errors",
+        fun() ->
+                ?assertMatch({error, _}, riak_core_security:add_group(<<"all">>, [])),
+                ?assertMatch({error, _}, riak_core_security:alter_user(<<"sysadmin">>, [{"password", "password"}])),
+                ?assertMatch({error, _}, riak_core_security:print_user(<<"sysadmin">>)),
+                ?assertMatch({error, _}, riak_core_security:alter_group(<<"sysadmin">>, [{"password", "password"}])),
+                ?assertMatch({error, _}, riak_core_security:print_group(<<"sysadmin">>)),
+                ?assertEqual(ok, riak_core_security:add_group(<<"sysadmin">>, [])),
+                ?assertMatch({error, _}, riak_core_security:add_group(<<"sysadmin">>, [])),
+                ?assertEqual(ok, riak_core_security:add_user(<<"sysadmin">>, [])),
+                ?assertEqual({error, {duplicate_roles, [<<"sysadmin">>]}}, riak_core_security:add_grant([<<"sysadmin">>], <<"default">>, ["riak_kv.get", "riak_kv.put"])),
+                ?assertMatch({error, {unknown_roles, [<<"sysadm">>]}}, riak_core_security:add_grant([<<"sysadm">>], any, ["riak_kv.put"])),
+                ?assertMatch({error, {unknown_permission, _}}, riak_core_security:add_grant([<<"group/sysadmin">>], any, ["riak_kv.upsert"])),
+                ?assertMatch({errors, [_, _]}, riak_core_security:add_grant([<<"group/foo">>], any, ["riak_kv.upsert"])),
+                ?assertMatch({errors, [_, _]}, riak_core_security:add_grant([<<"sysadmin">>], any, ["riak_kv.upsert"])),
+                ?assertMatch({error, {unknown_role, _}}, riak_core_security:print_grants(<<"foo">>)),
+                ?assertEqual(ok, riak_core_security:add_user(<<"fred">>, [])),
+                ?assertMatch({error, {unknown_role, _}}, riak_core_security:print_grants(<<"group/fred">>)),
                 ok
         end}
      ]}.

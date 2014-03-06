@@ -27,7 +27,7 @@
          add_group/1, alter_group/1, del_group/1,
          add_source/1, del_source/1, grant/1, revoke/1,
          print_users/1, print_user/1, print_sources/1,
-         print_groups/1, print_group/1,
+         print_groups/1, print_group/1, print_grants/1,
          security_enable/1, security_disable/1, security_status/1, ciphers/1]).
 
 %% @doc Return for a given ring and node, percentage currently owned and
@@ -838,12 +838,16 @@ security_error_xlate({errors, Errors}) ->
       "~n");
 security_error_xlate({error, unknown_user}) ->
     "User not recognized";
+security_error_xlate({error, unknown_group}) ->
+    "Group not recognized";
 security_error_xlate({error, {unknown_permission, Name}}) ->
     io_lib:format("Permission not recognized: ~s", [Name]);
+security_error_xlate({error, {unknown_role, Name}}) ->
+    io_lib:format("Name not recognized: ~s", [Name]);
 security_error_xlate({error, {unknown_user, Name}}) ->
     io_lib:format("User not recognized: ~s", [Name]);
 security_error_xlate({error, {unknown_group, Name}}) ->
-    io_lib:format("User not recognized: ~s", [Name]);
+    io_lib:format("Group not recognized: ~s", [Name]);
 security_error_xlate({error, {unknown_users, Names}}) ->
     io_lib:format("User(s) not recognized: ~s",
                   [
@@ -896,7 +900,6 @@ add_group([Groupname|Options]) ->
 add_role(Name, Options, Fun) ->
     try Fun(list_to_binary(Name), parse_options(Options)) of
         ok ->
-            io:format("Successfully added ~s~n", [Name]),
             ok;
         Error ->
             io:format(security_error_xlate(Error)),
@@ -918,7 +921,6 @@ alter_group([Groupname|Options]) ->
 alter_role(Name, Options, Fun) ->
     try Fun(list_to_binary(Name), parse_options(Options)) of
         ok ->
-            io:format("Changes to ~s applied~n", [Name]),
             ok;
         Error ->
             io:format(security_error_xlate(Error)),
@@ -1069,6 +1071,15 @@ revoke(_) ->
     io:format("Usage: revoke <permissions> ON <type> [bucket] FROM <users>~n"),
     error.
 
+print_grants([Name]) ->
+    case riak_core_security:print_grants(list_to_binary(Name)) of
+        ok ->
+            ok;
+        Error ->
+            io:format(security_error_xlate(Error)),
+            io:format("~n"),
+            Error
+    end.
 
 print_users([]) ->
     riak_core_security:print_users().
