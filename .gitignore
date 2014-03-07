@@ -9,3 +9,5 @@ doc/*
 /.eqc-info
 /current_counterexample.eqc
 .local_dialyzer_plt
+dialyzer_warnings
+dialyzer_unhandled_warnings
