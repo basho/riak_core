@@ -21,13 +21,23 @@
 -module(riak_core_console_table).
 
 %% API
--export([print/2,
+-export([print/2, print/3,
          create_table/2]).
 
 -spec print(list(), list()) -> ok.
+print(_Spec, []) ->
+    ok;
 print(Spec, Rows) ->
     Table = create_table(Spec, Rows),
-    io:format("~s", [Table]).
+    io:format("~n~s~n", [Table]).
+
+
+-spec print(list(), list(), list()) -> ok.
+print(_Hdr, _Spec, []) ->
+    ok;
+print(Header, Spec, Rows) ->
+    Table = create_table(Spec, Rows),
+    io:format("~s~n~n~s~n", [Header, Table]).
 
 -spec create_table(list(), list()) -> iolist().
 create_table(Spec, Rows) ->
@@ -57,7 +67,7 @@ get_row_length(Spec, Rows) ->
     Res = lists:foldl(fun({_Name, MinSize}, Total) ->
                         Longest = find_longest_field(Rows, length(Total)+1),
                         Size = erlang:max(MinSize, Longest),
-                        [Size | Total] 
+                        [Size | Total]
                 end, [], Spec),
     lists:reverse(Res).
 
@@ -87,9 +97,9 @@ align(Str, Size) when is_binary(Str) ->
     align(binary_to_list(Str), Size);
 align(Str, Size) when is_atom(Str) ->
     align(atom_to_list(Str), Size);
-%align(Str, Size) when is_list(Str), length(Str) > Size -> 
+%align(Str, Size) when is_list(Str), length(Str) > Size ->
     %Truncated = lists:sublist(Str, Size),
-    %Truncated ++ " |"; 
+    %Truncated ++ " |";
 %align(Str, Size) when is_list(Str), length(Str) =:= Size ->
     %Str ++ " |";
 align(Str, Size) when is_list(Str) ->
@@ -153,4 +163,3 @@ pad_field(Field, MaxHeight) when length(Field) < MaxHeight ->
     Field ++ ["" || _ <- lists:seq(1, MaxHeight - length(Field))];
 pad_field(Field, _MaxHeight) ->
     Field.
-
