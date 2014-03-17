@@ -493,20 +493,23 @@ esha_final(Ctx) ->
 -endif.
 
 -spec get_buckets(integer(), orddict(), hashtree()) -> orddict().
-get_buckets(Level, Results, #state{width=W,levels=L}=State) ->
-    ByLevel = erlang:trunc(W / (L - 1)),
-    Buckets = case Level of
-        1 ->
-            [0];
-        X ->
-            lists:seq(0, erlang:trunc(ByLevel * (X - 1)))
-    end,
+get_buckets(1, Results, State) ->
+    get_buckets(1, [0], Results, State);
+
+get_buckets(Level, Results,
+            #state{levels=L, segments=S, width=W}=State) ->
+    Multiple = math:pow(W, (L - Level + 1)),
+    Upper = erlang:trunc(S / Multiple),
+    Buckets = lists:seq(0, Upper - 1),
+    get_buckets(Level, Buckets, Results, State).
+
+-spec get_buckets(integer(), list(), orddict(), hashtree()) -> orddict().
+get_buckets(Level, Buckets, Results, State) ->
     lists:foldl(fun(Bucket, Orddict) ->
                 orddict:store({Level, Bucket},
                                get_bucket(Level, Bucket, State),
                               Orddict)
         end, Results, Buckets).
-
 
 -spec set_bucket(integer(), integer(), any(), hashtree()) -> hashtree().
 set_bucket(Level, Bucket, Val, State) ->
@@ -1105,6 +1108,77 @@ snapshot_test() ->
     destroy(B2),
     ?assertEqual([{different, <<"10">>}], KeyDiff),
     ok.
+
+get_buckets_test_() ->
+    {timeout, 60,
+     fun() ->
+                A0 = insert(<<"10">>, <<"42">>, new()),
+                A1 = update_tree(A0),
+                B1 = get_buckets(A1),
+
+                %% Level 1 should be constrainted at 0.
+                ?assertMatch({ok, _}, orddict:find({1, 0}, B1)),
+                ?assertMatch(error, orddict:find({1, 1}, B1)),
+
+                %% Level 2 should be constrainted at 0.
+                ?assertMatch({ok, _}, orddict:find({2, 0}, B1)),
+                ?assertMatch(error, orddict:find({2, 1}, B1)),
+
+                %% Level 3 should be constrainted at 1024.
+                ?assertMatch({ok, _}, orddict:find({3, 1023}, B1)),
+                ?assertMatch(error, orddict:find({3, 1024}, B1)),
+
+                close(A0),
+                destroy(A0),
+
+                A2 = insert(<<"10">>, <<"42">>, new({0, 0},
+                                                    [{segments, 100},
+                                                     {width, 11}])),
+                A3 = update_tree(A2),
+                B2 = get_buckets(A3),
+
+                ?debugFmt("~p", [B2]),
+
+                %% Level 1 should be constrainted at 0.
+                ?assertMatch({ok, _}, orddict:find({1, 0}, B2)),
+                ?assertMatch(error, orddict:find({1, 1}, B2)),
+
+                %% Level 2 should be constrainted at 9.
+                ?assertMatch({ok, _}, orddict:find({2, 8}, B2)),
+                ?assertMatch(error, orddict:find({2, 9}, B2)),
+
+                close(A2),
+                destroy(A2),
+
+                A4 = insert(<<"10">>, <<"42">>, new({0, 0},
+                                                    [{segments, 1024 * 1024},
+                                                     {width, 32}])),
+                A5 = update_tree(A4),
+                B3 = get_buckets(A5),
+
+                %% Level 1 should be constrainted at 0.
+                ?assertMatch({ok, _}, orddict:find({1, 0}, B3)),
+                ?assertMatch(error, orddict:find({1, 1}, B3)),
+
+                %% Level 2 should be constrainted at 0.
+                ?assertMatch({ok, _}, orddict:find({2, 0}, B3)),
+                ?assertMatch(error, orddict:find({2, 1}, B3)),
+
+                %% Level 3 should be constrainted at 32.
+                ?assertMatch({ok, _}, orddict:find({3, 31}, B3)),
+                ?assertMatch(error, orddict:find({3, 32}, B3)),
+
+                %% Level 4 should be constrainted at 1024.
+                ?assertMatch({ok, _}, orddict:find({4, 1023}, B3)),
+                ?assertMatch(error, orddict:find({4, 1024}, B3)),
+
+                %% Level 5 should be constrainted at 32768.
+                ?assertMatch({ok, _}, orddict:find({5, 32767}, B3)),
+                ?assertMatch(error, orddict:find({5, 32768}, B3)),
+
+                close(A5),
+                destroy(A5)
+        end}.
 
 delta_test() ->
     T1 = update_tree(insert(<<"1">>, esha(term_to_binary(make_ref())),
