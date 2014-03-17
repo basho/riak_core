@@ -194,7 +194,7 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                                                           VMaster, infinity),
 
          %% Send any straggler entries remaining in the buffer:
-        AccRecord = send_objects(AccRecord0#ho_acc.item_queue, AccRecord0),
+         AccRecord = send_objects(AccRecord0#ho_acc.item_queue, AccRecord0),
 
          if AccRecord == {error, vnode_shutdown} ->
                  ?log_info("because the local vnode was shutdown", []),
@@ -275,11 +275,10 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
              gen_fsm:send_event(ParentPid, {handoff_error, Err, Reason})
      end.
 
-%% When a tcp error occurs, the ErrStatus argument is set to {error, Reason}.
-%% Since we can't abort the fold, this clause is just a no-op.
 visit_item(_K, _V, Acc=#ho_acc{error={error, _Reason}}) ->
-    Acc;
-visit_item(K, V, Acc = #ho_acc{ack = _AccSyncThreshold, acksync_threshold = _AccSyncThreshold}) ->
+    %% When a TCP/SSL error occurs, #ho_acc.error is set to {error, Reason}.
+    throw(Acc);
+visit_item(K, V, Acc = #ho_acc{ack = AccSyncThreshold, acksync_threshold = AccSyncThreshold}) ->
     #ho_acc{module=Module,
             socket=Sock,
             src_target={SrcPartition, TargetPartition},
