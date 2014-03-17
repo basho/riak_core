@@ -1237,7 +1237,7 @@ expand(V, N, Acc) ->
 
 open_opts([K | Ks], Opts) ->
     case application:get_env(riak_core, K) of
-        {eok, V} ->
+        {ok, V} ->
             open_opts(Ks, [{K, V} | Opts]);
         _ ->
             open_opts(Ks, Opts)
