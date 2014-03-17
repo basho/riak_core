@@ -301,6 +301,13 @@ get_vnode_pid(State=#state{vnode_pid=Pid}) ->
 
 -ifdef(TEST).
 
+update_msg_counter() ->
+    Count = case erlang:get(count) of
+        undefined -> 0;
+        Val -> Val
+    end,
+    put(count, Count+1).
+
 fake_loop() ->
     receive
         block ->
@@ -311,11 +318,7 @@ fake_loop() ->
             Pid ! {count, erlang:get(count)},
             fake_loop();
         _Msg ->
-            Count = case erlang:get(count) of
-                        undefined -> 0;
-                        Val -> Val
-                    end,
-            put(count, Count+1),
+            update_msg_counter(),
             fake_loop()
     end.
 
@@ -323,11 +326,7 @@ fake_loop_slow() ->
     timer:sleep(100),
     receive
         _Msg ->
-            Count = case erlang:get(count) of
-                        undefined -> 0;
-                        Val -> Val
-                    end,
-            put(count, Count+1),
+            update_msg_counter(),
             fake_loop_slow()
     end.
 
@@ -356,18 +355,17 @@ overload_test_() ->
              exit(ProxyPid, kill)
      end,
      [
-      fun({VnodePid, ProxyPid}) ->
+      fun({_VnodePid, ProxyPid}) ->
               {"should not discard in normal operation", timeout, 60,
                fun() ->
-                       [ProxyPid ! hello || _ <- lists:seq(1, 50000)],
+                       ToSend = ?DEFAULT_OVERLOAD_THRESHOLD-2,
+                       [ProxyPid ! hello || _ <- lists:seq(1, ToSend)],
                        %% synchronize on the mailbox
-                       Reply = gen:call(ProxyPid, '$vnode_proxy_call', sync, infinity),
-                       ?assertEqual({ok, ok}, Reply),
-                       VnodePid ! {get_count, self()},
+                       ProxyPid ! {get_count, self()},
                        receive
                            {count, Count} ->
-                               %% 50000 messages + 1 unanswered vnode_proxy_ping
-                               ?assertEqual(50001, Count)
+                               %% ToSend messages + 1 unanswered vnode_proxy_ping
+                               ?assertEqual(ToSend+1, Count)
                        end
                end
               }
