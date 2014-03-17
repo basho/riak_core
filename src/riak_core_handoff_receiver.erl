@@ -81,10 +81,10 @@ handle_info({tcp_closed,_Socket},State=#state{partition=Partition,count=Count,
     lager:info("Handoff receiver for partition ~p exited after processing ~p"
                           " objects from ~p", [Partition, Count, Peer]),
     {stop, normal, State};
-handle_info({tcp_error, _Socket, _Reason}, State=#state{partition=Partition,count=Count,
-                                                        peer=Peer}) ->
+handle_info({tcp_error, _Socket, Reason}, State=#state{partition=Partition,count=Count,
+                                                       peer=Peer}) ->
     lager:info("Handoff receiver for partition ~p exited after processing ~p"
-                          " objects from ~p", [Partition, Count, Peer]),
+                          " objects from ~p: TCP error ~p", [Partition, Count, Peer, Reason]),
     {stop, normal, State};
 handle_info({tcp, Socket, Data}, State) ->
     [MsgType|MsgData] = Data,
