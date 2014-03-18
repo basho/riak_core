@@ -143,9 +143,14 @@ defaults() ->
 %% calls and the type is not active. An error will also be returned if the properties
 %% are not valid. Properties not provided will be taken from those returned by
 %% {@see defaults/0}.
+%%
+%% `default` and `any` are reserved names; `any` because the security subsystem needs a
+%% way to refer to any bucket type when granting permissions.
 -spec create(bucket_type(), bucket_type_props()) -> ok | {error, term()}.
 create(?DEFAULT_TYPE, _Props) ->
     {error, default_type};
+create(<<"any">>, _Props) ->
+    {error, reserved_name};
 create(BucketType, Props) when is_binary(BucketType) ->
     ?IF_CAPABLE(riak_core_claimant:create_bucket_type(BucketType,
                                                       riak_core_bucket_props:merge(Props, defaults())),
