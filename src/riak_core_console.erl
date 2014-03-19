@@ -1002,10 +1002,10 @@ grant([Grants, "ON", "ANY", "TO", Users]) ->
             Error
     end;
 grant([Grants, "ON", Type, Bucket, "TO", Users]) ->
-    grant([Grants, "ON", {list_to_binary(Type), list_to_binary(Bucket)}, "TO",
+    grant([Grants, "ON", {unicode:characters_to_binary(Type, utf8), unicode:characters_to_binary(Bucket, utf8)}, "TO",
            Users]);
 grant([Grants, "ON", Type, "TO", Users]) when is_list(Type) ->
-    grant([Grants, "ON", list_to_binary(Type), "TO", Users]);
+    grant([Grants, "ON", unicode:characters_to_binary(Type, utf8), "TO", Users]);
 grant([Grants, "ON", Bucket, "TO", Users]) ->
     Unames = case string:tokens(Users, ",") of
         ["all"] ->
@@ -1045,11 +1045,11 @@ revoke([Grants, "ON", "ANY", "FROM", Users]) ->
             Error
     end;
 revoke([Grants, "ON", Type, Bucket, "FROM", Users]) ->
-    revoke([Grants, "ON", {list_to_binary(Type), list_to_binary(Bucket)},
+    revoke([Grants, "ON", {unicode:characters_to_binary(Type, utf8), unicode:characters_to_binary(Bucket, utf8)},
             "FROM",
            Users]);
 revoke([Grants, "ON", Type, "FROM", Users]) when is_list(Type) ->
-    revoke([Grants, "ON", list_to_binary(Type), "FROM", Users]);
+    revoke([Grants, "ON", unicode:characters_to_binary(Type, utf8), "FROM", Users]);
 revoke([Grants, "ON", Bucket, "FROM", Users]) ->
     Unames = case string:tokens(Users, ",") of
         ["all"] ->
