@@ -63,6 +63,7 @@
           item_queue_byte_size :: non_neg_integer(),
 
           acksync_threshold    :: non_neg_integer(),
+          acksync_timer        :: timer:tref(),
 
           type                 :: ho_type(),
 
@@ -216,8 +217,10 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
            total_objects=TotalObjects,
            total_bytes=TotalBytes,
            stats=FinalStats,
+           acksync_timer=TRef,
            notsent_acc=NotSentAcc} = AccRecord,
 
+         _ = timer:cancel(TRef),
          case ErrStatus of
              ok ->
                  %% One last sync to make sure the message has been received.
@@ -281,11 +284,40 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
              gen_fsm:send_event(ParentPid, {handoff_error, Err, Reason})
      end.
 
+start_visit_item_timer() ->
+    Ival = case app_helper:get_env(riak_core, handoff_receive_timeout) of
+               TO when is_integer(TO) ->
+                   erlang:max(1000, TO div 3);
+               _ ->
+                   60*1000
+           end,
+    timer:send_interval(Ival, tick_send_sync).
+
+visit_item(K, V, Acc0 = #ho_acc{acksync_threshold = AccSyncThreshold}) ->
+    %% Eventually, a vnode worker proc will be doing this fold, but we don't
+    %% know the pid of that proc ahead of time.  So we have to start the
+    %% timer some time after the fold has started execution on that proc
+    %% ... like now, perhaps.
+    Acc = case get(is_visit_item_timer_set) of
+              undefined ->
+                  put(is_visit_item_timer_set, true),
+                  {ok, TRef} = start_visit_item_timer(),
+                  Acc0#ho_acc{acksync_timer = TRef};
+              _ ->
+                  Acc0
+          end,
+    receive
+        tick_send_sync ->
+            visit_item2(K, V, Acc#ho_acc{ack = AccSyncThreshold})
+    after 0 ->
+            visit_item2(K, V, Acc)
+    end.
+
 %% When a tcp error occurs, the ErrStatus argument is set to {error, Reason}.
 %% Since we can't abort the fold, this clause is just a no-op.
-visit_item(_K, _V, Acc=#ho_acc{error={error, _Reason}}) ->
+visit_item2(_K, _V, Acc=#ho_acc{error={error, _Reason}}) ->
     Acc;
-visit_item(K, V, Acc = #ho_acc{ack = _AccSyncThreshold, acksync_threshold = _AccSyncThreshold}) ->
+visit_item2(K, V, Acc = #ho_acc{ack = _AccSyncThreshold, acksync_threshold = _AccSyncThreshold}) ->
     #ho_acc{module=Module,
             socket=Sock,
             src_target={SrcPartition, TargetPartition},
@@ -305,14 +337,14 @@ visit_item(K, V, Acc = #ho_acc{ack = _AccSyncThreshold, acksync_threshold = _Acc
             case TcpMod:recv(Sock, 0, RecvTimeout) of
                 {ok,[?PT_MSG_OLDSYNC|<<"sync">>]} ->
                     Acc2 = Acc#ho_acc{ack=0, error=ok, stats=Stats3},
-                    visit_item(K, V, Acc2);
+                    visit_item2(K, V, Acc2);
                 {error, Reason} ->
                     Acc#ho_acc{ack=0, error={error, Reason}, stats=Stats3}
             end;
         {error, Reason} ->
             Acc#ho_acc{ack=0, error={error, Reason}, stats=Stats3}
     end;
-visit_item(K, V, Acc) ->
+visit_item2(K, V, Acc) ->
     #ho_acc{filter=Filter,
             module=Module,
             total_objects=TotalObjects,
