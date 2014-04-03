@@ -39,6 +39,8 @@ merge(Overriding, Other) ->
                {riak_core_bucket_type:bucket_type(), undefined | binary()} | binary(),
                undefined | [{atom(), any()}],
                [{atom(), any()}]) -> {ok, [{atom(), any()}]} | {error, [{atom(), atom()}]}.
+validate(create, {<<"any">>, _Bucket}, _ExistingProps, _BucketProps) ->
+    {error, [{reserved_name, "The name 'any' may not be used for bucket types"}]};
 validate(CreateOrUpdate, Bucket, ExistingProps, BucketProps) ->
     CoreErrors = validate_core_props(CreateOrUpdate, Bucket, ExistingProps, BucketProps),
     validate(CreateOrUpdate, Bucket, ExistingProps, BucketProps, riak_core:bucket_validators(), CoreErrors).
