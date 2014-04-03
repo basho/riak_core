@@ -279,7 +279,7 @@ existing_type_name(#state{types=Types}) ->
     oneof(ExistingTypes).
 
 new_type_name() ->
-    binary(10).
+    ?SUCHTHAT(X, binary(10), X =/= <<"any">>).
 
 bucket_name() ->
     binary(10).
