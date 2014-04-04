@@ -136,6 +136,9 @@ defaults() ->
      {last_write_wins,false},
      {precommit, []},
      {postcommit, []},
+     %% @HACK this is a riak_kv only thing, yet there is nowhere else
+     %% to put it (except maybe fixups?)
+     {dvv_enabled, true},
      {chash_keyfun, {riak_core_util, chash_std_keyfun}}].
 
 %% @doc Create the type. The type is not activated (available to nodes) at this time. This
