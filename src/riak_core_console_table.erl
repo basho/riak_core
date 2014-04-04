@@ -29,7 +29,7 @@ print(_Spec, []) ->
     ok;
 print(Spec, Rows) ->
     Table = create_table(Spec, Rows),
-    io:format("~n~s~n", [Table]).
+    io:format("~n~ts~n", [Table]).
 
 
 -spec print(list(), list(), list()) -> ok.
@@ -37,7 +37,7 @@ print(_Hdr, _Spec, []) ->
     ok;
 print(Header, Spec, Rows) ->
     Table = create_table(Spec, Rows),
-    io:format("~s~n~n~s~n", [Header, Table]).
+    io:format("~ts~n~n~ts~n", [Header, Table]).
 
 -spec create_table(list(), list()) -> iolist().
 create_table(Spec, Rows) ->
@@ -94,7 +94,7 @@ align(undefined, Size) ->
 align(Str, Size) when is_integer(Str) ->
     align(integer_to_list(Str), Size);
 align(Str, Size) when is_binary(Str) ->
-    align(binary_to_list(Str), Size);
+    align(unicode:characters_to_list(Str, utf8), Size);
 align(Str, Size) when is_atom(Str) ->
     align(atom_to_list(Str), Size);
 %align(Str, Size) when is_list(Str), length(Str) > Size ->
@@ -131,7 +131,7 @@ find_longest_field(Rows, ColumnNo) ->
 field_length(Field) when is_atom(Field) ->
     field_length(atom_to_list(Field));
 field_length(Field) when is_binary(Field) ->
-    field_length(binary_to_list(Field));
+    field_length(unicode:characters_to_list(Field, utf8));
 field_length(Field) when is_list(Field) ->
     Lines = string:tokens(lists:flatten(Field), "\n"),
     lists:foldl(fun(Line, Longest) ->
@@ -144,7 +144,7 @@ field_length(Field) ->
 expand_field(Field) when is_atom(Field) ->
     expand_field(atom_to_list(Field));
 expand_field(Field) when is_binary(Field) ->
-    expand_field(binary_to_list(Field));
+    expand_field(unicode:characters_to_list(Field, utf8));
 expand_field(Field) when is_list(Field) ->
     string:tokens(lists:flatten(Field), "\n");
 expand_field(Field) ->
