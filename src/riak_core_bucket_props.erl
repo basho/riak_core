@@ -39,11 +39,10 @@ merge(Overriding, Other) ->
                {riak_core_bucket_type:bucket_type(), undefined | binary()} | binary(),
                undefined | [{atom(), any()}],
                [{atom(), any()}]) -> {ok, [{atom(), any()}]} | {error, [{atom(), atom()}]}.
-validate(create, {<<"any">>, _Bucket}, _ExistingProps, _BucketProps) ->
-    {error, [{reserved_name, "The name 'any' may not be used for bucket types"}]};
 validate(CreateOrUpdate, Bucket, ExistingProps, BucketProps) ->
+    ReservedErrors = validate_reserved_names(Bucket),
     CoreErrors = validate_core_props(CreateOrUpdate, Bucket, ExistingProps, BucketProps),
-    validate(CreateOrUpdate, Bucket, ExistingProps, BucketProps, riak_core:bucket_validators(), CoreErrors).
+    validate(CreateOrUpdate, Bucket, ExistingProps, BucketProps, riak_core:bucket_validators(), [ReservedErrors, CoreErrors]).
 
 validate(_CreateOrUpdate, _Bucket, _ExistingProps, Props, [], ErrorLists) ->
     case lists:flatten(ErrorLists) of
@@ -94,6 +93,17 @@ validate_core_prop(_, {_Bucket, _}, _Existing, {active, _}) ->
 validate_core_prop(_, _, _, _) ->
     %% all other properties are valid from the perspective of riak_core
     true.
+
+validate_reserved_names(Bucket) ->
+    case validate_reserved_name(Bucket) of
+        ok -> [];
+        ErrStr -> [{reserved_name, ErrStr}]
+    end.
+
+validate_reserved_name({<<"any">>, _}) ->
+    "The name 'any' may not be used for bucket types";
+validate_reserved_name(_) ->
+    ok.
 
 -spec defaults() -> [{atom(), any()}].
 defaults() ->
