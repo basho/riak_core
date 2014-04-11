@@ -321,6 +321,10 @@ handle_info(tick, State) ->
     State2 = tick(State),
     {noreply, State2};
 
+handle_info(reset_ring_id, State) ->
+    State2 = State#state{last_ring_id=undefined},
+    {noreply, State2};
+
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -743,7 +747,7 @@ type_claimant(Props) ->
     end.
 
 maybe_bootstrap_root_ensemble(Ring) ->
-    IsEnabled = (whereis(riak_ensemble_sup) =/= undefined),
+    IsEnabled = riak_ensemble_manager:enabled(),
     IsClaimant = (riak_core_ring:claimant(Ring) == node()),
     IsReady = riak_core_ring:ring_ready(Ring),
     case IsEnabled and IsClaimant and IsReady of
@@ -754,7 +758,6 @@ maybe_bootstrap_root_ensemble(Ring) ->
     end.
 
 bootstrap_root_ensemble(Ring) ->
-    %% TODO: Need to make bootstrapping safe even if claimant dies/has state deleted
     bootstrap_members(Ring),
     ok.
 
@@ -762,9 +765,13 @@ bootstrap_members(Ring) ->
     Name = riak_core_ring:cluster_name(Ring),
     Members = riak_core_ring:all_members(Ring),
     RootMembers = riak_ensemble_manager:get_members(root),
-    Known = riak_ensemble_manager:rget(members, []),
+    Known = riak_ensemble_manager:cluster(),
     Need = Members -- Known,
-    _ = [riak_ensemble_manager:join(node(), Member) || Member <- Need],
+    L = [riak_ensemble_manager:join(node(), Member) || Member <- Need,
+                                                       Member =/= node()],
+    Failed = [Result || Result <- L,
+                        Result =/= ok],
+    (Failed =:= []) orelse reset_ring_id(self()),
 
     RootNodes = [Node || {_, Node} <- RootMembers],
     RootAdd = Members -- RootNodes,
@@ -776,12 +783,27 @@ bootstrap_members(Ring) ->
         [] ->
             ok;
         _ ->
-            RootLeader = riak_ensemble_manager:rleader_pid(),
-            spawn(fun() ->
-                          riak_ensemble_peer:update_members(RootLeader, Changes, 10000)
-                  end),
+            Self = self(),
+            spawn_link(fun() ->
+                               async_bootstrap_members(Self, Changes)
+                       end),
             ok
     end.
+
+async_bootstrap_members(Claimant, Changes) ->
+    RootLeader = riak_ensemble_manager:rleader_pid(),
+    case riak_ensemble_peer:update_members(RootLeader, Changes, 10000) of
+        ok ->
+            ok;
+        _ ->
+            reset_ring_id(Claimant),
+            ok
+    end.
+
+%% Reset last_ring_id, ensuring future tick re-examines the ring even if the
+%% ring has not changed.
+reset_ring_id(Pid) ->
+    Pid ! reset_ring_id.
 
 %% =========================================================================
 %% Claimant rebalance/reassign logic
