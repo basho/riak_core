@@ -9,7 +9,7 @@
 { translation,
   "riak_core.anti_entropy",
   fun(Conf) ->
-    Setting = cuttlefish_util:conf_get_value("anti_entropy", Conf),
+    Setting = cuttlefish:conf_get("anti_entropy", Conf),
     case Setting of
       on -> {on, []};
       debug -> {on, [debug]};
@@ -38,8 +38,8 @@
 {translation,
  "riak_core.anti_entropy_build_limit",
  fun(Conf) ->
-    {cuttlefish_util:conf_get_value("anti_entropy.build_limit.number", Conf),
-     cuttlefish_util:conf_get_value("anti_entropy.build_limit.per_timespan", Conf)}
+    {cuttlefish:conf_get("anti_entropy.build_limit.number", Conf),
+     cuttlefish:conf_get("anti_entropy.build_limit.per_timespan", Conf)}
  end}.
 
 %% @doc Determine how often hash trees are expired after being built.
@@ -148,7 +148,7 @@
 {translation,
  "riak_core.aae_use_bloomfilter",
  fun(Conf) ->
-         case cuttlefish_util:conf_get_value("anti_entropy.bloomfilter", Conf) of
+         case cuttlefish:conf_get("anti_entropy.bloomfilter", Conf) of
              on -> true;
              off -> false;
              _ -> true
@@ -241,7 +241,7 @@
 {translation,
   "riak_core.default_bucket_props.pr",
   fun(Conf) ->
-    Setting = cuttlefish_util:conf_get_value("buckets.default.pr", Conf),
+    Setting = cuttlefish:conf_get("buckets.default.pr", Conf),
     case Setting of
       "quorum" -> quorum;
       "all" -> all;
@@ -262,7 +262,7 @@
 {translation,
   "riak_core.default_bucket_props.r",
   fun(Conf) ->
-    Setting = cuttlefish_util:conf_get_value("buckets.default.r", Conf),
+    Setting = cuttlefish:conf_get("buckets.default.r", Conf),
     case Setting of
       "quorum" -> quorum;
       "all" -> all;
@@ -283,7 +283,7 @@
 {translation,
   "riak_core.default_bucket_props.w",
   fun(Conf) ->
-    Setting = cuttlefish_util:conf_get_value("buckets.default.w", Conf),
+    Setting = cuttlefish:conf_get("buckets.default.w", Conf),
     case Setting of
       "quorum" -> quorum;
       "all" -> all;
@@ -304,7 +304,7 @@
 {translation,
   "riak_core.default_bucket_props.pw",
   fun(Conf) ->
-    Setting = cuttlefish_util:conf_get_value("buckets.default.pw", Conf),
+    Setting = cuttlefish:conf_get("buckets.default.pw", Conf),
     case Setting of
       "quorum" -> quorum;
       "all" -> all;
@@ -325,7 +325,7 @@
 {translation,
   "riak_core.default_bucket_props.dw",
   fun(Conf) ->
-    Setting = cuttlefish_util:conf_get_value("buckets.default.dw", Conf),
+    Setting = cuttlefish:conf_get("buckets.default.dw", Conf),
     case Setting of
       "quorum" -> quorum;
       "all" -> all;
@@ -346,7 +346,7 @@
 {translation,
   "riak_core.default_bucket_props.rw",
   fun(Conf) ->
-    Setting = cuttlefish_util:conf_get_value("buckets.default.rw", Conf),
+    Setting = cuttlefish:conf_get("buckets.default.rw", Conf),
     case Setting of
       "quorum" -> quorum;
       "all" -> all;
@@ -374,7 +374,7 @@
 {translation,
  "riak_core.default_bucket_props.allow_mult",
  fun(Conf) ->
-  Setting = cuttlefish_util:conf_get_value("buckets.default.siblings", Conf),
+  Setting = cuttlefish:conf_get("buckets.default.siblings", Conf),
     case Setting of
       on -> true;
       off -> false;
@@ -496,7 +496,7 @@
 { translation,
   "riak_core.dtrace_support",
   fun(Conf) ->
-    Setting = cuttlefish_util:conf_get_value("dtrace", Conf),
+    Setting = cuttlefish:conf_get("dtrace", Conf),
     case Setting of
       on -> true;
       off -> false;
