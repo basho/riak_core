@@ -401,30 +401,25 @@
 
 %% @doc Default location of ringstate
 {mapping, "ring.state_dir", "riak_core.ring_state_dir", [
-  {datatype, directory},
-  {default, "$(platform_data_dir)/ring"},
-  hidden
+  {default, "{{ring_state_dir}}"}
 ]}.
 
 %% @doc Default cert location for https can be overridden
 %% with the ssl config variable, for example:
 {mapping, "ssl.certfile", "riak_core.ssl.certfile", [
-  {datatype, file},
-  {commented, "$(platform_etc_dir)/cert.pem"}
+  {commented, "{{platform_etc_dir}}/cert.pem"}
 ]}.
 
 %% @doc Default key location for https can be overridden with the ssl
 %% config variable, for example:
 {mapping, "ssl.keyfile", "riak_core.ssl.keyfile", [
-  {datatype, file},
-  {commented, "$(platform_etc_dir)/key.pem"}
+  {commented, "{{platform_etc_dir}}/key.pem"}
 ]}.
 
 %% @doc Default signing authority location for https can be overridden
 %% with the ssl config variable, for example:
 {mapping, "ssl.cacertfile", "riak_core.ssl.cacertfile", [
-  {datatype, file},
-  {commented, "$(platform_etc_dir)/cacertfile.pem"}
+  {commented, "{{platform_etc_dir}}/cacertfile.pem"}
 ]}.
 
 %% @doc handoff.ip is the network address that Riak binds to for
