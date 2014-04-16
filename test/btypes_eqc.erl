@@ -279,7 +279,7 @@ existing_type_name(#state{types=Types}) ->
     oneof(ExistingTypes).
 
 new_type_name() ->
-    binary(10).
+    ?SUCHTHAT(X, binary(10), X =/= <<"any">>).
 
 bucket_name() ->
     binary(10).
@@ -315,6 +315,10 @@ prop_btype_invariant() ->
             aggregate(command_names(Cmds),
                       ?TRAPEXIT(
                          begin
+                             meck:new(riak_core_capability, []),
+                             meck:expect(riak_core_capability, get,
+                                         fun({riak_core, bucket_types}) -> true;
+                                            (X) -> meck:passthrough([X]) end),
                              os:cmd("rm -r ./btypes_eqc_meta"),
                              application:set_env(riak_core, claimant_tick, 4294967295),
                              application:set_env(riak_core, broadcast_lazy_timer, 4294967295),
@@ -336,6 +340,7 @@ prop_btype_invariant() ->
                              riak_core_ring_manager:stop(),
                              stop_pid(RingEvents),
                              os:cmd("rm -r ./btypes_eqc_meta"),
+                             meck:unload(riak_core_capability),
                              pretty_commands(?MODULE, Cmds, {H, S, Res},
                                              Res == ok)
                          end))).
