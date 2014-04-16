@@ -38,7 +38,7 @@ command(#state{vclocks=Vs}) ->
           [{call, ?MODULE, increment, [gen_actor_id(), elements(Vs)]} || length(Vs) > 0] ++
           [{call, ?MODULE, get_counter, [gen_actor_id(), elements(Vs)]} || length(Vs) > 0] ++
           [{call, ?MODULE, get_timestamp, [gen_actor_id(), elements(Vs)]} || length(Vs) > 0] ++
-          [{call, ?MODULE, get_entry, [gen_actor_id(), elements(Vs)]}     || length(Vs) > 0] ++
+          [{call, ?MODULE, get_dot, [gen_actor_id(), elements(Vs)]}     || length(Vs) > 0] ++
           [{call, ?MODULE, merge, [list(elements(Vs))]} || length(Vs) > 0] ++
           [{call, ?MODULE, descends, [elements(Vs), elements(Vs)]} || length(Vs) > 0] ++
           [{call, ?MODULE, descends_dot, [elements(Vs), elements(Vs), gen_actor_id()]} || length(Vs) > 0] ++
@@ -50,7 +50,7 @@ next_state(S,_V,{call,_,get_counter,[_, _]}) ->
     S;
 next_state(S,_V,{call,_,get_timestamp,[_, _]}) ->
     S;
-next_state(S,_V,{call,_,get_entry,[_, _]}) ->
+next_state(S,_V,{call,_,get_dot,[_, _]}) ->
     S;
 next_state(S,_V,{call,_,descends,[_, _]}) ->
     S;
@@ -73,11 +73,11 @@ postcondition(_S, {call, _, get_counter, _}, {MRes, Res}) ->
     MRes == Res;
 postcondition(_S, {call, _, get_timestamp, _}, {MRes, Res}) ->
     timestamp_values_equal(MRes, Res);
-postcondition(_S, {call, _, get_entry, _}, {{_Actor, 0, 0}, undefined}) ->
+postcondition(_S, {call, _, get_dot, _}, {{_Actor, 0, 0}, undefined}) ->
     true;
-postcondition(_S, {call, _, get_entry, _}, {{Actor, Cnt, TS}, {ok, {Actor, {Cnt, TS}}}}) ->
+postcondition(_S, {call, _, get_dot, _}, {{Actor, Cnt, TS}, {ok, {Actor, {Cnt, TS}}}}) ->
     true;
-postcondition(_S, {call, _, get_entry, _}, {_, _}) ->
+postcondition(_S, {call, _, get_dot, _}, {_, _}) ->
     false;
 postcondition(_S, {call, _, descends, _}, {MRes, Res}) ->
     MRes == Res;
@@ -111,7 +111,7 @@ gen_actor_id() ->
     elements(?ACTOR_IDS).
 
 gen_entry(Actor, S) ->
-    ?LET({_M, V}, elements(S), vclock:get_entry(Actor, V)).
+    ?LET({_M, V}, elements(S), vclock:get_dot(Actor, V)).
 
 fresh() ->
     {new_model(), vclock:fresh()}.
@@ -125,7 +125,7 @@ descends({AM, AV}, {BM, BV}) ->
      vclock:descends(AV, BV)}.
 
 descends_dot(A, {BM, BV}, Actor) ->
-    {AMDot, AVDot} = get_entry(Actor, A),
+    {AMDot, AVDot} = get_dot(Actor, A),
     ModelDescends = model_descends_dot(BM, AMDot),
     case AVDot of
         undefined ->
@@ -137,8 +137,8 @@ descends_dot(A, {BM, BV}, Actor) ->
 get_counter(A, {M, V}) ->
     {model_counter(A, M), vclock:get_counter(A, V)}.
 
-get_entry(A, {M, V}) ->
-    {model_entry(A, M), vclock:get_entry(A, V)}.
+get_dot(A, {M, V}) ->
+    {model_entry(A, M), vclock:get_dot(A, V)}.
 
 increment(A, {M, V}) ->
     TS = timestamp(),
