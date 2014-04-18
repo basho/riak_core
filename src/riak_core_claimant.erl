@@ -769,13 +769,16 @@ bootstrap_members(Ring) ->
     Need = Members -- Known,
     L = [riak_ensemble_manager:join(node(), Member) || Member <- Need,
                                                        Member =/= node()],
-    Failed = [Result || Result <- L,
-                        Result =/= ok],
-    (Failed =:= []) orelse reset_ring_id(self()),
+    _ = maybe_reset_ring_id(L),
 
     RootNodes = [Node || {_, Node} <- RootMembers],
     RootAdd = Members -- RootNodes,
     RootDel = RootNodes -- Members,
+
+    Res = [riak_ensemble_manager:remove(node(), N) || N <- RootDel,
+                                                      N =/= node()],
+    _ = maybe_reset_ring_id(Res),
+
     Changes =
         [{add, {Name, Node}} || Node <- RootAdd] ++
         [{del, {Name, Node}} || Node <- RootDel],
@@ -799,6 +802,10 @@ async_bootstrap_members(Claimant, Changes) ->
             reset_ring_id(Claimant),
             ok
     end.
+
+maybe_reset_ring_id(Results) ->
+    Failed = [R || R <- Results, R =/= ok],
+    (Failed =:= []) orelse reset_ring_id(self()).
 
 %% Reset last_ring_id, ensuring future tick re-examines the ring even if the
 %% ring has not changed.
