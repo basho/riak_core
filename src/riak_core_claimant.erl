@@ -763,7 +763,7 @@ bootstrap_root_ensemble(Ring) ->
 
 bootstrap_members(Ring) ->
     Name = riak_core_ring:cluster_name(Ring),
-    Members = riak_core_ring:all_members(Ring),
+    Members = riak_core_ring:ready_members(Ring),
     RootMembers = riak_ensemble_manager:get_members(root),
     Known = riak_ensemble_manager:cluster(),
     Need = Members -- Known,
@@ -1114,14 +1114,23 @@ maybe_remove_exiting(Node, CState) ->
         Node ->
             %% Change exiting nodes to invalid, skipping this node.
             Exiting = riak_core_ring:members(CState, [exiting]) -- [Node],
-            Changed = (Exiting /= []),
+            RootMembers = riak_ensemble_manager:get_members(root),
             CState2 =
                 lists:foldl(fun(ENode, CState0) ->
+                              L = [N || {_, N} <- RootMembers, N =:= ENode],
+                              case L of 
+                                    [] ->
                                     ClearedCS =
-                                        riak_core_ring:clear_member_meta(Node, CState0, ENode),
-                                    riak_core_ring:set_member(Node, ClearedCS, ENode,
-                                                              invalid, same_vclock)
+                                      riak_core_ring:clear_member_meta(Node, CState0, ENode),
+                                      riak_core_ring:set_member(Node, ClearedCS, ENode,
+                                          invalid,
+                                          same_vclock);
+                                    _ ->
+                                        reset_ring_id(self()),
+                                        CState0
+                                end
                             end, CState, Exiting),
+            Changed = (CState2 /= CState),
             {Changed, CState2};
         _ ->
             {false, CState}
