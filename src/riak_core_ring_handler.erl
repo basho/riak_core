@@ -73,16 +73,11 @@ ensure_vnodes_started(Ring) ->
                         {true, _, _, _} ->
                             riak_core_ring_manager:refresh_my_ring();
                         {_, true, [], leaving} ->
-                            riak_core_ring_manager:ring_trans(
-                              fun(Ring2, _) -> 
-                                      Ring3 = riak_core_ring:exit_member(node(), Ring2, node()),
-                                      {new_ring, Ring3}
-                              end, []),
-                            %% Shutdown if we are the only node in the cluster
-                            case riak_core_ring:random_other_node(Ring) of
-                                no_node ->
-                                    riak_core_ring_manager:refresh_my_ring();
-                                _ ->
+                            case ready_to_exit(AppMods) of
+                                true ->
+                                    exit_ring_trans(),
+                                    maybe_shutdown(Ring);
+                                false ->
                                     ok
                             end;
                         {_, _, _, invalid} ->
@@ -95,6 +90,33 @@ ensure_vnodes_started(Ring) ->
                     end;
                 _ -> ok
             end
+    end.
+
+%% Shutdown if we are the only node in the cluster
+maybe_shutdown(Ring) ->
+    case riak_core_ring:random_other_node(Ring) of
+        no_node ->
+            riak_core_ring_manager:refresh_my_ring();
+        _ ->
+            ok
+    end.
+
+exit_ring_trans() ->
+    riak_core_ring_manager:ring_trans(
+        fun(Ring2, _) -> 
+                Ring3 = riak_core_ring:exit_member(node(), Ring2, node()),
+                {new_ring, Ring3}
+        end, []).
+
+ready_to_exit([]) ->
+    true;
+ready_to_exit([{_App, Mod} | AppMods]) ->
+    case erlang:function_exported(Mod, ready_to_exit, 0) andalso
+             (not Mod:ready_to_exit()) of 
+        true ->
+            false;
+        false ->
+            ready_to_exit(AppMods)
     end.
 
 ensure_vnodes_started([], _Ring, Acc) ->
