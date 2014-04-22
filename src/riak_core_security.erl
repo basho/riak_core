@@ -76,7 +76,7 @@
          epoch}).
 
 -type context() :: #context{}.
--type bucket() :: {string(), string()} | binary().
+-type bucket() :: {binary(), binary()} | binary().
 -type permission() :: {string()} | {string(), bucket()}.
 -type userlist() :: all | [string()].
 
