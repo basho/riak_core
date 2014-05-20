@@ -159,7 +159,7 @@ init([Mod,
       RequestArgs]) ->
     Exports = Mod:module_info(exports),
     case Mod:init(From, RequestArgs) of
-	{error, Reason, _} -> gen_fsm:terminate({error, Reason});
+	{error, Reason, ModState} -> terminate(Reason, From, ModState);
 	{Request, VNodeSelector, NVal, PrimaryVNodeCoverage, 
 	 NodeCheckService, VNodeMaster, Timeout, ModState} -> 
 	    maybe_start_timeout_timer(Timeout),
