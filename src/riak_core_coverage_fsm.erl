@@ -159,6 +159,8 @@ init([Mod,
       RequestArgs]) ->
     Exports = Mod:module_info(exports),
     maybe_transition_to_initialize(Mod, Exports, ReqId, Mod:init(From, RequestArgs));
+
+
 init({test, Args, StateProps}) ->
     %% Call normal init
     {ok, initialize, StateData, 0} = init(Args),
