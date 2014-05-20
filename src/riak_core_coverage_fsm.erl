@@ -158,25 +158,28 @@ init([Mod,
       From={_, ReqId, _},
       RequestArgs]) ->
     Exports = Mod:module_info(exports),
-    {Request, VNodeSelector, NVal, PrimaryVNodeCoverage,
-     NodeCheckService, VNodeMaster, Timeout, ModState} =
-        Mod:init(From, RequestArgs),
-    maybe_start_timeout_timer(Timeout),
-    PlanFun = plan_callback(Mod, Exports),
-    ProcessFun = process_results_callback(Mod, Exports),
-    StateData = #state{mod=Mod,
-                       mod_state=ModState,
-                       node_check_service=NodeCheckService,
-                       vnode_selector=VNodeSelector,
-                       n_val=NVal,
-                       pvc = PrimaryVNodeCoverage,
-                       request=Request,
-                       req_id=ReqId,
-                       timeout=infinity,
-                       vnode_master=VNodeMaster,
-                       plan_fun = PlanFun,
-                       process_fun = ProcessFun},
-    {ok, initialize, StateData, 0};
+    case Mod:init(From, RequestArgs) of
+	{error, Reason, ModState} -> Mod:finish({error, Reason}, ModState);
+	{Request, VNodeSelector, NVal, PrimaryVNodeCoverage, 
+	 NodeCheckService, VNodeMaster, Timeout, ModState} -> 
+	    maybe_start_timeout_timer(Timeout),
+	    PlanFun = plan_callback(Mod, Exports),
+	    ProcessFun = process_results_callback(Mod, Exports),
+	    StateData = #state{mod=Mod,
+			       mod_state=ModState,
+			       node_check_service=NodeCheckService,
+			       vnode_selector=VNodeSelector,
+			       n_val=NVal,
+			       pvc = PrimaryVNodeCoverage,
+			       request=Request,
+			       req_id=ReqId,
+			       timeout=infinity,
+			       vnode_master=VNodeMaster,
+			       plan_fun = PlanFun,
+			       process_fun = ProcessFun},
+	    {ok, initialize, StateData, 0}
+    end;
+
 init({test, Args, StateProps}) ->
     %% Call normal init
     {ok, initialize, StateData, 0} = init(Args),
