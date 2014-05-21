@@ -159,7 +159,7 @@ init([Mod,
       RequestArgs]) ->
     Exports = Mod:module_info(exports),
     case Mod:init(From, RequestArgs) of
-	{error, Reason, ModState} -> {error, Reason, ModState};
+	{stop, _, _}=Stop -> Stop;
 	{Request, VNodeSelector, NVal, PrimaryVNodeCoverage, 
 	 NodeCheckService, VNodeMaster, Timeout, ModState} -> 
 	    maybe_start_timeout_timer(Timeout),
