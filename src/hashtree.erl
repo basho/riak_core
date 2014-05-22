@@ -1129,10 +1129,18 @@ sha_test_() ->
     }.
 
 prop_sha() ->
-    ?FORALL(Size, choose(256, 1024*1024),
-            ?FORALL(Chunk, choose(1, Size),
+    %% NOTE: Generating 1MB (1024 * 1024) size binaries is incredibly slow
+    %% with EQC and was using over 2GB of memory
+    ?FORALL({Size, NumChunks}, {choose(1, 1024), choose(1, 16)},
                     ?FORALL(Bin, binary(Size),
-                            sha(Chunk, Bin) =:= esha(Bin)))).
+                            begin
+                                %% we need at least one chunk,
+                                %% and then we divide the binary size
+                                %% into the number of chunks (as a natural
+                                %% number)
+                                ChunkSize = max(1, (Size div NumChunks)),
+                                sha(ChunkSize, Bin) =:= esha(Bin)
+                            end)).
 
 eqc_test_() ->
     {timeout, 5,
