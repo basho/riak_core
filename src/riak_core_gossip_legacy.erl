@@ -173,7 +173,7 @@ claim_until_balanced(Ring) ->
 remove_from_cluster(ExitingNode) ->
     % Set the remote node to stop claiming.
     % Ignore return of rpc as this should succeed even if node is offline
-    rpc:call(ExitingNode, application, set_env,
+    _ = riak_core_util:safe_rpc(ExitingNode, application, set_env,
              [riak_core, wants_claim_fun, {riak_core_claim, never_wants_claim}]),
 
     % Get a list of indices owned by the ExitingNode...

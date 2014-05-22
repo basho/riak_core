@@ -624,7 +624,7 @@ rec_nodes(Tag, [N|Tail], Name, Badnodes, Replies, Time, TimerId) ->
 	    %% Collect all replies that already have arrived
 	    rec_nodes_rest(Tag, Tail, Name, [N | Badnodes], Replies)
     after Time ->
-	    case rpc:call(N, erlang, whereis, [Name]) of
+	    case riak_core_util:safe_rpc(N, erlang, whereis, [Name]) of
 		Pid when is_pid(Pid) -> % It exists try again.
 		    rec_nodes(Tag, [N|Tail], Name, Badnodes,
 			      Replies, infinity, TimerId);

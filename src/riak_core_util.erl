@@ -38,6 +38,8 @@
          start_app_deps/1,
          build_tree/3,
          orddict_delta/2,
+         safe_rpc/4,
+         safe_rpc/5,
          rpc_every_member/4,
          rpc_every_member_ann/4,
          pmap/2,
@@ -219,8 +221,8 @@ unique_id_62() ->
 %%      and code:load_file/1 on each node.
 reload_all(Module) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    [{rpc:call(Node, code, purge, [Module]),
-     rpc:call(Node, code, load_file, [Module])} ||
+    [{safe_rpc(Node, code, purge, [Module]),
+     safe_rpc(Node, code, load_file, [Module])} ||
         Node <- riak_core_ring:all_members(Ring)].
 
 %% @spec mkclientid(RemoteNode :: term()) -> ClientID :: list()
@@ -389,6 +391,34 @@ pmap_collect_rest(Pending, Done) ->
     end.
 
 
+%% @doc Wraps an rpc:call/4 in a try/catch to handle the case where the
+%%      'rex' process is not running on the remote node. This is safe in
+%%      the sense that it won't crash the calling process if the rex
+%%      process is down.
+-spec safe_rpc(Node :: node(), Module :: atom(), Function :: atom(), Args :: [any()]) -> {'badrpc', any()} | any().
+safe_rpc(Node, Module, Function, Args) ->
+    try rpc:call(Node, Module, Function, Args) of
+        Result ->
+            Result
+    catch
+        'EXIT':{noproc, _NoProcDetails} ->
+            {badrpc, rpc_process_down}
+    end.
+
+%% @doc Wraps an rpc:call/5 in a try/catch to handle the case where the
+%%      'rex' process is not running on the remote node. This is safe in
+%%      the sense that it won't crash the calling process if the rex
+%%      process is down.
+-spec safe_rpc(Node :: node(), Module :: atom(), Function :: atom(), Args :: [any()], Timeout :: timeout()) -> {'badrpc', any()} | any().
+safe_rpc(Node, Module, Function, Args, Timeout) ->
+    try rpc:call(Node, Module, Function, Args, Timeout) of
+        Result ->
+            Result
+    catch
+        'EXIT':{noproc, _NoProcDetails} ->
+            {badrpc, rpc_process_down}
+    end.
+
 %% @spec rpc_every_member(atom(), atom(), [term()], integer()|infinity)
 %%          -> {Results::[term()], BadNodes::[node()]}
 %% @doc Make an RPC call to the given module and function on each
@@ -418,7 +448,7 @@ multi_rpc(Nodes, Mod, Fun, Args) ->
 -spec multi_rpc([node()], module(), atom(), [any()], timeout()) -> [any()].
 multi_rpc(Nodes, Mod, Fun, Args, Timeout) ->
     pmap(fun(Node) ->
-                 rpc:call(Node, Mod, Fun, Args, Timeout)
+                 safe_rpc(Node, Mod, Fun, Args, Timeout)
          end, Nodes).
 
 %% @doc Perform an RPC call to a list of nodes in parallel, returning the

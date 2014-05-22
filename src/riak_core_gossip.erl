@@ -193,7 +193,7 @@ rpc_gossip_version(Ring, Node) ->
     GossipVsn = riak_core_ring:get_member_meta(Ring, Node, gossip_vsn),
     case GossipVsn of
         undefined ->
-            case rpc:call(Node, riak_core_gossip, gossip_version, [], 1000) of
+            case riak_core_util:safe_rpc(Node, riak_core_gossip, gossip_version, [], 1000) of
                 {badrpc, _} ->
                     ?LEGACY_RING_VSN;
                 Vsn ->
