@@ -104,7 +104,8 @@
          itr_value/1,
          itr_close/1,
          property_hash/2,
-         property_hash/3]).
+         property_hash/3,
+	 maybe_bucket_type_exists/3]).
 
 -export_type([bucket_type/0]).
 -type bucket_type()       :: binary().
@@ -236,3 +237,10 @@ property_hash(_Type, _PropKeys, undefined) ->
     undefined;
 property_hash(_Type, PropKeys, Props) ->
     erlang:phash2([lists:keyfind(PropKey, 1, Props) || PropKey <- PropKeys]).
+
+maybe_bucket_type_exists([]=BucketType, ExistsFun, _DoesNotExistFun) ->
+    ExistsFun(BucketType);
+maybe_bucket_type_exists(undefined, _ExistsFun, DoesNotExistFun) ->
+    DoesNotExistFun({error, no_type});
+maybe_bucket_type_exists(BucketType, ExistsFun, DoesNotExistFun) ->
+    maybe_bucket_type_exists(riak_core_bucket_type:get(BucketType), ExistsFun, DoesNotExistFun).
