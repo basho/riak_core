@@ -1122,11 +1122,12 @@ delta_test() ->
 
 -ifdef(EQC).
 sha_test_() ->
-    {timeout, 60,
-     fun() ->
-             ?assert(eqc:quickcheck(eqc:testing_time(4, prop_sha())))
-     end
-    }.
+    {spawn,
+     {timeout, 120,
+      fun() ->
+              ?assert(eqc:quickcheck(eqc:testing_time(4, prop_sha())))
+      end
+     }}.
 
 prop_sha() ->
     %% NOTE: Generating 1MB (1024 * 1024) size binaries is incredibly slow
@@ -1143,11 +1144,12 @@ prop_sha() ->
                             end)).
 
 eqc_test_() ->
-    {timeout, 5,
-     fun() ->
-             ?assert(eqc:quickcheck(eqc:testing_time(4, prop_correct())))
-     end
-    }.
+    {spawn,
+     {timeout, 120,
+      fun() ->
+              ?assert(eqc:quickcheck(eqc:testing_time(4, prop_correct())))
+      end
+     }}.
 
 objects() ->
     ?SIZED(Size, objects(Size+3)).
