@@ -218,11 +218,15 @@ exact_iterator(Idx, CHBin) ->
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 
-basic_test() ->
-    [basic_test_body(Size, NumNodes)
-     || Size     <- [8, 16, 32, 64, 128],
-        NumNodes <- [1, 2, 3, 4, 5, 8, Size div 2, Size]],
-    ok.
+basic_test_() ->
+    {spawn,
+     {timeout, 120,
+      fun() ->
+              [basic_test_body(Size, NumNodes)
+               || Size     <- [8, 16, 32, 64, 128],
+                  NumNodes <- [1, 2, 3, 4, 5, 8, Size div 2, Size]]
+      end
+     }}.
 
 basic_test_body(Size, NumNodes) ->
     RingTop = 1 bsl 160,
