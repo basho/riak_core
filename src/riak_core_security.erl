@@ -1118,7 +1118,7 @@ group_sources(Sources) ->
     %% exclusively) 'all' so that 'all' has its own entry. We could
     %% actually elide any user sources that overlap with an 'all'
     %% source, but that may be more confusing because deleting the all
-    %% source would then 'ressurrect' the user sources.
+    %% source would then 'resurrect' the user sources.
     R2 = lists:foldl(fun({Users, CIDR, Source, Options}=E, Acc) ->
                     case Users =/= [all] andalso lists:member(all, Users) of
                         true ->
