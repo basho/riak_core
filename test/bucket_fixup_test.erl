@@ -55,8 +55,8 @@ fixup_test_() ->
              application:unset_env(riak_core, default_bucket_props),
              process_flag(trap_exit, true),
              catch application:stop(riak_core),
-             catch(riak_core_ring_manager:stop()),
-             catch(exit(whereis(riak_core_ring_events), shutdown))
+             riak_core_test_util:stop_pid(whereis(riak_core_ring_manager)),
+             riak_core_test_util:stop_pid(whereis(riak_core_ring_events))
      end,
      [
       fun do_no_harm/0,
