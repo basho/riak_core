@@ -236,3 +236,5 @@ property_hash(_Type, _PropKeys, undefined) ->
     undefined;
 property_hash(_Type, PropKeys, Props) ->
     erlang:phash2([lists:keyfind(PropKey, 1, Props) || PropKey <- PropKeys]).
+
+
