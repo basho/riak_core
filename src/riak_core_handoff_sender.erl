@@ -429,7 +429,7 @@ send_objects(ItemsReverseList, Acc) ->
     end.
 
 get_handoff_ip(Node) when is_atom(Node) ->
-    case rpc:call(Node, riak_core_handoff_listener, get_handoff_ip, [],
+    case riak_core_util:safe_rpc(Node, riak_core_handoff_listener, get_handoff_ip, [],
                   infinity) of
         {badrpc, _} ->
             error;

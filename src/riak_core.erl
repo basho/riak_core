@@ -93,13 +93,13 @@ join(false, _, Node, Rejoin, Auto) ->
     end.
 
 get_other_ring(Node) ->
-    case rpc:call(Node, riak_core_ring_manager, get_my_ring, []) of
+    case riak_core_util:safe_rpc(Node, riak_core_ring_manager, get_my_ring, []) of
         {ok, Ring} ->
             case riak_core_ring:legacy_ring(Ring) of
                 true ->
                     {ok, Ring};
                 false ->
-                    rpc:call(Node, riak_core_ring_manager, get_raw_ring, [])
+                    riak_core_util:safe_rpc(Node, riak_core_ring_manager, get_raw_ring, [])
             end;
         Error ->
             Error
@@ -159,12 +159,14 @@ legacy_join(Node) when is_atom(Node) ->
     {ok, OurRingSize} = application:get_env(riak_core, ring_creation_size),
     case net_adm:ping(Node) of
         pong ->
-            case rpc:call(Node,
+            case riak_core_util:safe_rpc(Node,
                           application,
                           get_env,
                           [riak_core, ring_creation_size]) of
                 {ok, OurRingSize} ->
                     riak_core_gossip:send_ring(Node, node());
+                {badrpc, rpc_process_down} ->
+                    {error, not_reachable};
                 _ ->
                     {error, different_ring_sizes}
             end;

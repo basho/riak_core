@@ -811,7 +811,7 @@ transfer_limit([NodeStr, LimitStr]) ->
             io:format("Invalid limit: ~s~n", [LimitStr]),
             error;
         true ->
-            case rpc:call(Node, riak_core_handoff_manager,
+            case riak_core_util:safe_rpc(Node, riak_core_handoff_manager,
                           set_concurrency, [Limit]) of
                 {badrpc, _} ->
                     io:format("Failed to set transfer limit for ~p~n", [Node]);

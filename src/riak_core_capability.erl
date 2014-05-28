@@ -605,7 +605,7 @@ query_capability(_, Capability, DefaultSup, undefined) ->
     {true, Default};
 query_capability(Node, Capability, DefaultSup, {App, Var, Map}) ->
     Default = {Capability, [DefaultSup]},
-    Result = rpc:call(Node, application, get_env, [App, Var]),
+    Result = riak_core_util:safe_rpc(Node, application, get_env, [App, Var]),
     case Result of
         {badrpc, _} ->
             {false, Default};

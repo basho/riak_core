@@ -1,8 +1,8 @@
 riak_core.erl:85: The pattern 'true' can never match the type 'false'
-riak_core.erl:185: The pattern 'true' can never match the type 'false'
-riak_core.erl:203: The pattern <'true', _> can never match the type <'false',_>
-riak_core.erl:239: The pattern 'true' can never match the type 'false'
-riak_core.erl:262: Function legacy_remove/1 will never be called
+riak_core.erl:187: The pattern 'true' can never match the type 'false'
+riak_core.erl:205: The pattern <'true', _> can never match the type <'false',_>
+riak_core.erl:241: The pattern 'true' can never match the type 'false'
+riak_core.erl:264: Function legacy_remove/1 will never be called
 riak_core_claimant.erl:370: The pattern 'legacy' can never match the type {'error','invalid_resize_claim'} | {'ok',[{_,_},...]}
 riak_core_claimant.erl:407: The pattern {'legacy', _} can never match the type {'error','invalid_resize_claim'} | {'ok',{'chstate_v2',_,'undefined' | [any()],{_,_},'undefined' | dict(),'undefined' | {_,_},'undefined' | [any()],[any()],_,'undefined' | [any()],'undefined' | [any()]}}
 riak_core_claimant.erl:819: The pattern {'legacy', _} can never match the type {'error','invalid_resize_claim'} | {'ok',{'chstate_v2',_,'undefined' | [any()],{_,_},'undefined' | dict(),'undefined' | {_,_},'undefined' | [any()],[any()],_,'undefined' | [any()],'undefined' | [any()]}}
