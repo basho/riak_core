@@ -26,6 +26,8 @@
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
 -include_lib("eunit/include/eunit.hrl").
+-define(QC_OUT(P),
+        eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 
 -compile(export_all).
 
@@ -53,6 +55,13 @@
           %% number of tokens taken by type
           tokens :: [{bg_eqc_type(), non_neg_integer()}]
          }).
+
+bgmgr_test_() ->
+    {timeout, 60,
+     fun() ->
+              ?assert(eqc:quickcheck(?QC_OUT(eqc:testing_time(30, prop_bgmgr()))))
+     end
+    }.
 
 run_eqc() ->
     run_eqc(100).
@@ -274,7 +283,15 @@ stop_process_pre(S, [Pid]) ->
 %% @doc stop_process command
 stop_process(Pid) ->
     Pid ! die,
-    wait_for_pid(Pid).
+    Res = wait_for_pid(Pid),
+    %% while not part of the test, this provides extra insurance that the
+    %% background manager receives the monitor message for the failed pid
+    %% (waiting for the test process to receive its monitor message is not
+    %% enough). This relies on local erlang message semantics a bit and may
+    %% not be bullet proof. The catch handles the case where the bg manager
+    %% has been crashed by the test.
+    catch riak_core_bg_manager:enabled(),
+    Res.
 
 %% @doc state transition for stop_process command
 stop_process_next(S=#state{procs=Procs}, _Value, [Pid]) ->
