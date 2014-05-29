@@ -56,7 +56,7 @@ append_bucket_defaults(Items) when is_list(Items) ->
 %% @doc Set the given BucketProps in Bucket or {BucketType, Bucket}. If BucketType does not
 %% exist, or is not active, {error, no_type} is returned.
 -spec set_bucket(binary() | {riak_core_bucket_type:bucket_type(), binary()}, [{atom(), any()}]) ->
-                        ok | {error, no_type}.
+                        ok | {error, no_type | [{atom(), atom()}]}.
 set_bucket({<<"default">>, Name}, BucketProps) ->
     set_bucket(Name, BucketProps);
 set_bucket({Type, _Name}=Bucket, BucketProps0) ->
