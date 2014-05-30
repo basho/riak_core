@@ -401,7 +401,7 @@ safe_rpc(Node, Module, Function, Args) ->
         Result ->
             Result
     catch
-        'EXIT':{noproc, _NoProcDetails} ->
+        exit:{noproc, _NoProcDetails} ->
             {badrpc, rpc_process_down}
     end.
 
