@@ -763,19 +763,22 @@ bootstrap_root_ensemble(Ring) ->
 
 bootstrap_members(Ring) ->
     Name = riak_core_ring:cluster_name(Ring),
-    Members = riak_core_ring:all_members(Ring),
+    Members = riak_core_ring:ready_members(Ring),
     RootMembers = riak_ensemble_manager:get_members(root),
     Known = riak_ensemble_manager:cluster(),
     Need = Members -- Known,
     L = [riak_ensemble_manager:join(node(), Member) || Member <- Need,
                                                        Member =/= node()],
-    Failed = [Result || Result <- L,
-                        Result =/= ok],
-    (Failed =:= []) orelse reset_ring_id(self()),
+    _ = maybe_reset_ring_id(L),
 
     RootNodes = [Node || {_, Node} <- RootMembers],
     RootAdd = Members -- RootNodes,
     RootDel = RootNodes -- Members,
+
+    Res = [riak_ensemble_manager:remove(node(), N) || N <- RootDel,
+                                                      N =/= node()],
+    _ = maybe_reset_ring_id(Res),
+
     Changes =
         [{add, {Name, Node}} || Node <- RootAdd] ++
         [{del, {Name, Node}} || Node <- RootDel],
@@ -799,6 +802,10 @@ async_bootstrap_members(Claimant, Changes) ->
             reset_ring_id(Claimant),
             ok
     end.
+
+maybe_reset_ring_id(Results) ->
+    Failed = [R || R <- Results, R =/= ok],
+    (Failed =:= []) orelse reset_ring_id(self()).
 
 %% Reset last_ring_id, ensuring future tick re-examines the ring even if the
 %% ring has not changed.
@@ -1114,14 +1121,22 @@ maybe_remove_exiting(Node, CState) ->
         Node ->
             %% Change exiting nodes to invalid, skipping this node.
             Exiting = riak_core_ring:members(CState, [exiting]) -- [Node],
-            Changed = (Exiting /= []),
+            RootMembers = riak_ensemble_manager:get_members(root),
             CState2 =
                 lists:foldl(fun(ENode, CState0) ->
-                                    ClearedCS =
-                                        riak_core_ring:clear_member_meta(Node, CState0, ENode),
-                                    riak_core_ring:set_member(Node, ClearedCS, ENode,
-                                                              invalid, same_vclock)
+                              L = [N || {_, N} <- RootMembers, N =:= ENode],
+                              case L of
+                                  [] ->
+                                      ClearedCS =
+                                          riak_core_ring:clear_member_meta(Node, CState0, ENode),
+                                      riak_core_ring:set_member(Node, ClearedCS, ENode,
+                                                                invalid, same_vclock);
+                                  _ ->
+                                      reset_ring_id(self()),
+                                      CState0
+                              end
                             end, CState, Exiting),
+            Changed = (CState2 /= CState),
             {Changed, CState2};
         _ ->
             {false, CState}
