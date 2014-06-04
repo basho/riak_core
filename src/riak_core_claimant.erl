@@ -1125,17 +1125,16 @@ maybe_remove_exiting(Node, CState) ->
             CState2 =
                 lists:foldl(fun(ENode, CState0) ->
                               L = [N || {_, N} <- RootMembers, N =:= ENode],
-                              case L of 
-                                    [] ->
-                                    ClearedCS =
-                                      riak_core_ring:clear_member_meta(Node, CState0, ENode),
+                              case L of
+                                  [] ->
+                                      ClearedCS =
+                                          riak_core_ring:clear_member_meta(Node, CState0, ENode),
                                       riak_core_ring:set_member(Node, ClearedCS, ENode,
-                                          invalid,
-                                          same_vclock);
-                                    _ ->
-                                        reset_ring_id(self()),
-                                        CState0
-                                end
+                                                                invalid, same_vclock);
+                                  _ ->
+                                      reset_ring_id(self()),
+                                      CState0
+                              end
                             end, CState, Exiting),
             Changed = (CState2 /= CState),
             {Changed, CState2};
