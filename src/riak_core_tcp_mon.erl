@@ -412,7 +412,12 @@ updown() ->
     ok.
 
 nodeupdown_test_() ->
-    {timeout, 60, fun updown/0}.
+    %% spawn is here because this test has been known to timeout
+    %% after 60 seconds. Locally, I've never seen it take more than
+    %% two seconds, so I'm inclined to believe it's either a
+    %% race-condition or prior-state related issue. The spawn is an
+    %% attempt at seeing if the failure still occasionally happens
+    {spawn, {timeout, 60, fun updown/0}}.
 
 ssl_test_() ->
     {timeout, 60, fun() ->
