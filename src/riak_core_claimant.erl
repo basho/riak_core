@@ -634,6 +634,7 @@ schedule_tick() ->
     erlang:send_after(Tick, ?MODULE, tick).
 
 tick(State=#state{last_ring_id=LastID}) ->
+    maybe_enable_ensembles(),
     case riak_core_ring_manager:get_ring_id() of
         LastID ->
             schedule_tick(),
@@ -744,6 +745,90 @@ type_claimant(Props) ->
     case lists:keyfind(claimant, 1, Props) of
         {claimant, Claimant} -> Claimant;
         false -> undefined
+    end.
+
+%% The consensus subsystem must be enabled by exactly one node in a cluster
+%% via a call to riak_ensemble_manager:enable(). We accomplished this by
+%% having the claimant be that one node. Likewise, we require that the cluster
+%% includes at least three nodes before we enable consensus. This prevents the
+%% claimant in a 1-node cluster from enabling consensus before being joined to
+%% another cluster.
+maybe_enable_ensembles() ->
+    Desired = riak_core_sup:ensembles_enabled(),
+    Enabled = riak_ensemble_manager:enabled(),
+    case Enabled of
+        Desired ->
+            ok;
+        _ ->
+            {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
+            IsReady = riak_core_ring:ring_ready(Ring),
+            IsClaimant = (riak_core_ring:claimant(Ring) == node()),
+            EnoughNodes = (length(riak_core_ring:ready_members(Ring)) >= 3),
+            case IsReady and IsClaimant and EnoughNodes of
+                true ->
+                    enable_ensembles(Ring);
+                false ->
+                    ok
+            end
+    end.
+
+%% We need to avoid a race where the current claimant enables consensus right
+%% before going offline and being replaced by a new claimant. It could be
+%% argued that this corner case is not important since changing the claimant
+%% requires the user manually marking the current claimant as down. But, it's
+%% better to be safe and handle things correctly.
+%%
+%% To solve this issue, the claimant first marks itself as the "ensemble
+%% singleton" in the ring metadata. Once the ring has converged, the claimant
+%% see that it previously marked itself as the singleton and will proceed to
+%% enable the consensus subsystem. If the claimant goes offline after marking
+%% itself the singleton, but before enabling consensus, then future claimants
+%% will be unable to enable consensus. Consensus will be enabled once the
+%% previous claimant comes back online.
+%%
+enable_ensembles(Ring) ->
+    Node = node(),
+    case ensemble_singleton(Ring) of
+        undefined ->
+            become_ensemble_singleton();
+        Node ->
+            %% Ring update is required after enabling consensus to ensure
+            %% that ensembles are properly bootstrapped.
+            riak_ensemble_manager:enable(),
+            riak_core_ring_manager:force_update(),
+            lager:info("Activated consensus subsystem for cluster");
+        _ ->
+            ok
+    end.
+
+ensemble_singleton(Ring) ->
+    case riak_core_ring:get_meta('$ensemble_singleton', Ring) of
+        undefined ->
+            undefined;
+        {ok, Node} ->
+            Members = riak_core_ring:all_members(Ring),
+            case lists:member(Node, Members) of
+                true ->
+                    Node;
+                false ->
+                    undefined
+            end
+    end.
+
+become_ensemble_singleton() ->
+    _ = riak_core_ring_manager:ring_trans(fun become_ensemble_singleton_trans/2,
+                                          undefined),
+    ok.
+
+become_ensemble_singleton_trans(Ring, _) ->
+    IsClaimant = (riak_core_ring:claimant(Ring) == node()),
+    NoSingleton = (ensemble_singleton(Ring) =:= undefined),
+    case IsClaimant and NoSingleton of
+        true ->
+            Ring2 = riak_core_ring:update_meta('$ensemble_singleton', node(), Ring),
+            {new_ring, Ring2};
+        false ->
+            ignore
     end.
 
 maybe_bootstrap_root_ensemble(Ring) ->
