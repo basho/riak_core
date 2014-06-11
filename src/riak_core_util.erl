@@ -300,19 +300,22 @@ ensure_started(App) ->
 
 %% @doc Invoke function `F' over each element of list `L' in parallel,
 %%      returning the results in the same order as the input list.
--spec pmap(function(), [node()]) -> [any()].
+-spec pmap(F, L1) -> L2 when
+      F :: fun((A) -> B),
+      L1 :: [A],
+      L2 :: [B].
 pmap(F, L) ->
     Parent = self(),
     lists:foldl(
       fun(X, N) ->
-              spawn(fun() ->
-                            Parent ! {pmap, N, F(X)}
-                    end),
+              spawn_link(fun() ->
+                                 Parent ! {pmap, N, F(X)}
+                         end),
               N+1
       end, 0, L),
     L2 = [receive {pmap, N, R} -> {N,R} end || _ <- L],
-    {_, L3} = lists:unzip(lists:keysort(1, L2)),
-    L3.
+    L3 = lists:keysort(1, L2),
+    [R || {_,R} <- L3].
 
 -record(pmap_acc,{
                   mapper,
