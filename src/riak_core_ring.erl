@@ -520,8 +520,8 @@ rename_node(State=?CHSTATE{chring=Ring, nodename=ThisNode, members=Members,
                            _ -> AccIn
                        end
                end, Ring, riak_core_ring:all_owners(State)),
-      members=proplists:substitute_aliases([{OldNode, NewNode}], Members),
-      seen=proplists:substitute_aliases([{OldNode, NewNode}], Seen),
+      members=orddict:from_list(proplists:substitute_aliases([{OldNode, NewNode}], Members)),
+      seen=orddict:from_list(proplists:substitute_aliases([{OldNode, NewNode}], Seen)),
       nodename=case ThisNode of OldNode -> NewNode; _ -> ThisNode end,
       claimant=case Claimant of OldNode -> NewNode; _ -> Claimant end,
       vclock=vclock:increment(NewNode, State?CHSTATE.vclock)}.
