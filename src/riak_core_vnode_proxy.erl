@@ -279,7 +279,7 @@ handle_overload(Msg, #state{mod=Mod, index=Index}) ->
         {'$gen_event', ?COVERAGE_REQ{sender=Sender, request=Request}} ->
             catch(Mod:handle_overload_command(Request, Sender, Index));
         _ ->
-            ok
+            catch(Mod:handle_overload_info(Msg, Index))
     end.
 
 %% @private
