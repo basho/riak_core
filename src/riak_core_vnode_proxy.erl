@@ -279,7 +279,7 @@ handle_overload(Msg, #state{mod=Mod, index=Index}) ->
         {'$gen_event', ?COVERAGE_REQ{sender=Sender, request=Request}} ->
             catch(Mod:handle_overload_command(Request, Sender, Index));
         _ ->
-            ok
+            catch(Mod:handle_overload_info(Msg, Index))
     end.
 
 %% @private
@@ -345,12 +345,18 @@ overload_test_() ->
                          fun(_Index, fakemod) -> {ok, VnodePid};
                             (Index, Mod) -> meck:passthrough([Index, Mod])
                          end),
+             meck:new(fakemod, [non_strict]),
+             meck:expect(fakemod, handle_overload_info, fun(hello, _Idx) ->
+                                                            ok
+                                                        end),
+
              {ok, ProxyPid} = riak_core_vnode_proxy:start_link(fakemod, 0),
              unlink(ProxyPid),
              {VnodePid, ProxyPid}
      end,
      fun({VnodePid, ProxyPid}) ->
              meck:unload(riak_core_vnode_manager),
+             meck:unload(fakemod),
              exit(VnodePid, kill),
              exit(ProxyPid, kill)
      end,
