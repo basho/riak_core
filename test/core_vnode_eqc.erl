@@ -60,6 +60,10 @@ simple_test_() ->
       ?_assertEqual(true, quickcheck(?QC_OUT(numtests(100, prop_simple()))))}}.
 
 setup_simple() ->
+    error_logger:tty(false),
+    application:set_env(sasl, sasl_error_logger, {file, "core_vnode_eqc_sasl.log"}),
+    error_logger:logfile({open, "core_vnode_eqc.log"}),
+
     Vars = [{ring_creation_size, 8},
             {ring_state_dir, "<nostore>"},
             {cluster_name, "test"},
@@ -447,4 +451,3 @@ filter_work(Work, Pid) ->
         end, Work).
 
 -endif.
-
