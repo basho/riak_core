@@ -847,11 +847,22 @@ bootstrap_root_ensemble(Ring) ->
     ok.
 
 bootstrap_members(Ring) ->
-    Name = riak_core_ring:cluster_name(Ring),
     Members = riak_core_ring:ready_members(Ring),
-    RootMembers = riak_ensemble_manager:get_members(root),
     Known = riak_ensemble_manager:cluster(),
     Need = Members -- Known,
+    {Pids, Bad} = rpc:multicall(Need, erlang, whereis, [riak_ensemble_manager]),
+    case not lists:member(undefined, Pids) andalso Bad =:= [] of
+        false ->
+            %% Some nodes haven't enabled SC yet. So just try again on next
+            %% tick.
+            ok;
+        true ->
+            do_bootstrap_members(Ring, Need, Members)
+    end.
+
+do_bootstrap_members(Ring, Need, Members) ->
+    Name = riak_core_ring:cluster_name(Ring),
+    RootMembers = riak_ensemble_manager:get_members(root),
     L = [riak_ensemble_manager:join(node(), Member) || Member <- Need,
                                                        Member =/= node()],
     _ = maybe_reset_ring_id(L),
@@ -861,20 +872,20 @@ bootstrap_members(Ring) ->
     RootDel = RootNodes -- Members,
 
     Res = [riak_ensemble_manager:remove(node(), N) || N <- RootDel,
-                                                      N =/= node()],
+        N =/= node()],
     _ = maybe_reset_ring_id(Res),
 
     Changes =
-        [{add, {Name, Node}} || Node <- RootAdd] ++
-        [{del, {Name, Node}} || Node <- RootDel],
+    [{add, {Name, Node}} || Node <- RootAdd] ++
+    [{del, {Name, Node}} || Node <- RootDel],
     case Changes of
         [] ->
             ok;
         _ ->
             Self = self(),
             spawn_link(fun() ->
-                               async_bootstrap_members(Self, Changes)
-                       end),
+                        async_bootstrap_members(Self, Changes)
+                end),
             ok
     end.
 
@@ -1133,7 +1144,7 @@ inform_removed_nodes(Node, OldRing, NewRing) ->
     Changed = ordsets:intersection(ordsets:from_list(Exiting),
                                    ordsets:from_list(Invalid)),
     %% Tell exiting node to shutdown.
-    _ = [riak_core_ring_manager:refresh_ring(ExitingNode, CName) || 
+    _ = [riak_core_ring_manager:refresh_ring(ExitingNode, CName) ||
             ExitingNode <- Changed],
     ok.
 
@@ -1304,7 +1315,7 @@ update_ring(CNode, CState, Replacing, Seed, Log, false) ->
     Next3 = rebalance_ring(CNode, CState4),
     Log(debug,{"Pending ownership transfers: ~b~n",
                [length(riak_core_ring:pending_changes(CState4))]}),
-    
+
     %% Remove transfers to/from down nodes
     Next4 = handle_down_nodes(CState4, Next3),
 
