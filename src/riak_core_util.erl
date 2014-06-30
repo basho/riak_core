@@ -60,7 +60,9 @@
          make_fold_req/1,
          make_fold_req/2,
          make_fold_req/4,
-         make_newest_fold_req/1
+         make_newest_fold_req/1,
+         proxy_spawn/1,
+         proxy/2
         ]).
 
 -include("riak_core_vnode.hrl").
@@ -86,7 +88,7 @@
 %%      number of seconds from year 0 to now, universal time, in
 %%      the gregorian calendar.
 
-moment() -> 
+moment() ->
     {Mega, Sec, _Micro} = os:timestamp(),
     (Mega * 1000000) + Sec + ?SEC_TO_EPOCH.
 
@@ -238,8 +240,8 @@ mkclientid(RemoteNode) ->
 chash_key({Bucket,_Key}=BKey) ->
     BucketProps = riak_core_bucket:get_bucket(Bucket),
     chash_key(BKey, BucketProps).
-    
-%% @spec chash_key(BKey :: riak_object:bkey(), [{atom(), any()}]) -> 
+
+%% @spec chash_key(BKey :: riak_object:bkey(), [{atom(), any()}]) ->
 %%          chash:index()
 %% @doc Create a binary used for determining replica placement.
 chash_key({Bucket,Key}, BucketProps) ->
@@ -286,7 +288,7 @@ start_app_deps(App) ->
     {ok, DepApps} = application:get_key(App, applications),
     _ = [ensure_started(A) || A <- DepApps],
     ok.
-    
+
 
 %% @spec ensure_started(Application :: atom()) -> ok
 %% @doc Start the named application if not already started.
@@ -508,7 +510,7 @@ multicall_ann(Nodes, Mod, Fun, Args, Timeout) ->
                 -> orddict:orddict().
 build_tree(N, Nodes, Opts) ->
     case lists:member(cycles, Opts) of
-        true -> 
+        true ->
             Expand = lists:flatten(lists:duplicate(N+1, Nodes));
         false ->
             Expand = Nodes
@@ -611,6 +613,22 @@ make_newest_fold_req(#riak_core_fold_req_v1{foldfun=FoldFun, acc0=Acc0}) ->
 make_newest_fold_req(?FOLD_REQ{} = F) ->
     F.
 
+%% @doc Spawn an intermediate proxy process to handle errors during gen_xxx
+%%      calls.
+proxy_spawn(Fun) ->
+    %% Note: using spawn_monitor does not trigger selective receive
+    %%       optimization, but spawn + monitor does. Silly Erlang.
+    Pid = spawn(?MODULE, proxy, [self(), Fun]),
+    MRef = monitor(process, Pid),
+    Pid ! {proxy, MRef},
+    receive
+        {proxy_reply, MRef, Result} ->
+            Result;
+        {'DOWN', MRef, _, _, Reason} ->
+            {error, Reason}
+    end.
+
+
 %% @private
 make_fold_reqv(v1, FoldFun, Acc0, _Forwardable, _Opts)
   when is_function(FoldFun, 3) ->
@@ -621,6 +639,17 @@ make_fold_reqv(v2, FoldFun, Acc0, Forwardable, Opts)
        andalso is_list(Opts) ->
     ?FOLD_REQ{foldfun=FoldFun, acc0=Acc0,
               forwardable=Forwardable, opts=Opts}.
+
+%% @private - used with proxy_spawn
+proxy(Parent, Fun) ->
+    _ = monitor(process, Parent),
+    receive
+        {proxy, MRef} ->
+            Result = Fun(),
+            Parent ! {proxy_reply, MRef, Result};
+        {'DOWN', _, _, _, _} ->
+            ok
+    end.
 
 %% ===================================================================
 %% EUnit tests
