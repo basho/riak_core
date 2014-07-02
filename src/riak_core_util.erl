@@ -623,6 +623,7 @@ proxy_spawn(Fun) ->
     Pid ! {proxy, MRef},
     receive
         {proxy_reply, MRef, Result} ->
+            demonitor(MRef, [flush]),
             Result;
         {'DOWN', MRef, _, _, Reason} ->
             {error, Reason}
