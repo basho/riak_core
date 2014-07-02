@@ -853,5 +853,21 @@ make_fold_req_test_() ->
      ]
     }.
 
+proxy_spawn_test() ->
+    A = proxy_spawn(fun() -> a end),
+    ?assertEqual(a, A),
+    B = proxy_spawn(fun() -> exit(killer_fun) end),
+    ?assertEqual({error, killer_fun}, B),
+
+    %% Ensure no errant 'DOWN' messages
+    receive
+        {'DOWN', _, _, _, _}=Msg ->
+            throw({error, {badmsg, Msg}});
+        _ ->
+            ok
+    after 1000 ->
+        ok
+    end.
+
 -endif.
 
