@@ -36,7 +36,18 @@ ${LOCAL_PLT}: compile
 
 dialyzer-run:
 	@echo "==> $(shell basename $(shell pwd)) (dialyzer)"
-	@if [ -f $(LOCAL_PLT) ]; then \
+# The bulk of the code below deals with the dialyzer.ignore-warnings file
+# which contains strings to ignore if output by dialyzer.
+# Typically the strings include line numbers. Using them exactly is hard
+# to maintain as the code changes. This approach instead ignores the line
+# numbers, but takes into account the number of times a string is listed
+# for a given file (See the sort + uniq -c commands, which add the count
+# as a prefix). So if one string is listed once, for example, and it
+# appears twice in the warnings, the user is alerted. It is possible but
+# unlikely that this approach could mask a warning if one ignored warning
+# is removed and two warnings of the same kind appear in the file, for
+# example. But it is a trade-off that seems worth it.
+	@-if [ -f $(LOCAL_PLT) ]; then \
 		PLTS="$(PLT) $(LOCAL_PLT)"; \
 	else \
 		PLTS=$(PLT); \
@@ -47,7 +58,20 @@ dialyzer-run:
 			exit 1; \
 		fi; \
 		dialyzer $(DIALYZER_FLAGS) --plts $${PLTS} -c ebin > dialyzer_warnings ; \
-		egrep -v "^\s*(done|Checking|Proceeding|Compiling)" dialyzer_warnings | grep -F -f dialyzer.ignore-warnings -v > dialyzer_unhandled_warnings ; \
+		sort dialyzer.ignore-warnings \
+		| sed -E 's/^([^:]+:)[^:]+:/\1/' \
+		| uniq -c \
+		| sed -E '/.*\.erl: /!s/^[[:space:]]*[0-9]+[[:space:]]*//' \
+		> dialyzer.ignore-warnings.tmp ; \
+		egrep -v "^[[:space:]]*(done|Checking|Proceeding|Compiling)" dialyzer_warnings \
+		| sort \
+		| sed -E 's/^([^:]+:)[^:]+:/\1/' \
+		| uniq -c \
+		| sed -E '/.*\.erl: /!s/^[[:space:]]*[0-9]+[[:space:]]*//' \
+		| grep -F -f dialyzer.ignore-warnings.tmp -v \
+		| sed -E 's/^[[:space:]]*[0-9]+[[:space:]]*//' \
+		> dialyzer_unhandled_warnings ; \
+		rm dialyzer.ignore-warnings.tmp; \
 		cat dialyzer_unhandled_warnings ; \
 		[ $$(cat dialyzer_unhandled_warnings | wc -l) -eq 0 ] ; \
 	else \
