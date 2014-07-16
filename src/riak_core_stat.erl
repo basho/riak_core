@@ -26,6 +26,7 @@
 -export([start_link/0, get_stats/0, get_stats/1, update/1,
          register_stats/0, produce_stats/0, vnodeq_stats/0,
 	 register_stats/2,
+	 register_vnode_stats/3, unregister_vnode_stats/2,
 	 prefix/0]).
 
 %% gen_server callbacks
@@ -63,6 +64,20 @@ register_stat(P, App, Stat) ->
 			     {N, T, Os} -> {N, T, Os}
 			 end,
     exometer:re_register(stat_name(P,App,Name), Type, Opts).
+
+register_vnode_stats(Module, Index, Pid) ->
+    P = prefix(),
+    exometer:ensure([P, ?APP, vnodes_running, Module],
+		    { function, exometer, select_count,
+		      [[{ {[P, ?APP, vnodeq, Module, '_'], '_', '_'},
+			  [], [true] }]], value, [value] }, []),
+    exometer:re_register(
+      [P, ?APP, vnodeq, Module, Index],
+      { function, erlang, process_info, [Pid, message_queue_len],
+	match, {'_', value} }, []).
+
+unregister_vnode_stats(Module, Index) ->
+    exometer:delete([riak_core_stat:prefix(), ?APP, vnodeq, Module, Index]).
 
 stat_name(P, App, N) when is_atom(N) ->
     stat_name_([P, App, N]);

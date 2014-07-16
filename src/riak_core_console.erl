@@ -1216,6 +1216,8 @@ print_info({N, _Type, _Status}, [A|Attrs]) ->
 split_arg([Str]) ->
     re:split(Str, "\\s", [{return,list}]).
 
+parse_stat_entry([], Status) ->
+    {{[riak_core_stat:prefix() | '_'], '_', Status}, [], ['$_']};
 parse_stat_entry("[" ++ _ = Expr, _Status) ->
     case erl_scan:string(ensure_trailing_dot(Expr)) of
 	{ok, Toks, _} ->
