@@ -509,7 +509,7 @@ reconcile(ExternState, MyState) ->
 -spec rename_node(State :: chstate(), OldNode :: atom(), NewNode :: atom()) ->
             chstate().
 rename_node(State=?CHSTATE{chring=Ring, nodename=ThisNode, members=Members,
-                           seen=Seen}, OldNode, NewNode) 
+                           claimant=Claimant, seen=Seen}, OldNode, NewNode)
   when is_atom(OldNode), is_atom(NewNode)  ->
     State?CHSTATE{
       chring=lists:foldl(
@@ -520,9 +520,10 @@ rename_node(State=?CHSTATE{chring=Ring, nodename=ThisNode, members=Members,
                            _ -> AccIn
                        end
                end, Ring, riak_core_ring:all_owners(State)),
-      members=proplists:substitute_aliases([{OldNode, NewNode}], Members),
-      seen=proplists:substitute_aliases([{OldNode, NewNode}], Seen),
+      members=orddict:from_list(proplists:substitute_aliases([{OldNode, NewNode}], Members)),
+      seen=orddict:from_list(proplists:substitute_aliases([{OldNode, NewNode}], Seen)),
       nodename=case ThisNode of OldNode -> NewNode; _ -> ThisNode end,
+      claimant=case Claimant of OldNode -> NewNode; _ -> Claimant end,
       vclock=vclock:increment(NewNode, State?CHSTATE.vclock)}.
 
 %% @doc Determine the integer ring index responsible

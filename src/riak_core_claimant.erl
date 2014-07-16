@@ -852,16 +852,18 @@ bootstrap_members(Ring) ->
     RootMembers = riak_ensemble_manager:get_members(root),
     Known = riak_ensemble_manager:cluster(),
     Need = Members -- Known,
-    L = [riak_ensemble_manager:join(node(), Member) || Member <- Need,
-                                                       Member =/= node()],
+    L = [riak_core_util:proxy_spawn(
+            fun() -> riak_ensemble_manager:join(node(), Member) end
+        ) || Member <- Need, Member =/= node()],
     _ = maybe_reset_ring_id(L),
 
     RootNodes = [Node || {_, Node} <- RootMembers],
     RootAdd = Members -- RootNodes,
     RootDel = RootNodes -- Members,
 
-    Res = [riak_ensemble_manager:remove(node(), N) || N <- RootDel,
-                                                      N =/= node()],
+    Res = [riak_core_util:proxy_spawn(
+              fun() -> riak_ensemble_manager:remove(node(), N) end
+           ) || N <- RootDel, N =/= node()],
     _ = maybe_reset_ring_id(Res),
 
     Changes =
@@ -1133,7 +1135,7 @@ inform_removed_nodes(Node, OldRing, NewRing) ->
     Changed = ordsets:intersection(ordsets:from_list(Exiting),
                                    ordsets:from_list(Invalid)),
     %% Tell exiting node to shutdown.
-    _ = [riak_core_ring_manager:refresh_ring(ExitingNode, CName) || 
+    _ = [riak_core_ring_manager:refresh_ring(ExitingNode, CName) ||
             ExitingNode <- Changed],
     ok.
 
@@ -1304,7 +1306,7 @@ update_ring(CNode, CState, Replacing, Seed, Log, false) ->
     Next3 = rebalance_ring(CNode, CState4),
     Log(debug,{"Pending ownership transfers: ~b~n",
                [length(riak_core_ring:pending_changes(CState4))]}),
-    
+
     %% Remove transfers to/from down nodes
     Next4 = handle_down_nodes(CState4, Next3),
 
