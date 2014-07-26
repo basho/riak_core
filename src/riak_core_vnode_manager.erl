@@ -377,6 +377,7 @@ handle_cast({unregister, Index, Mod, Pid}, #state{idxtab=T} = State) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     State2 = update_forwarding({Mod, Index}, Ring, State),
     ets:match_delete(T, {idxrec, {Index, Mod}, Index, Mod, Pid, '_'}),
+    unregister_vnode_stats(Mod, Index),
     riak_core_vnode_proxy:unregister_vnode(Mod, Index, Pid),
     {noreply, State2};
 handle_cast({vnode_event, Mod, Idx, Pid, Event}, State) ->
@@ -553,7 +554,8 @@ idx2vnode(Idx, Mod, _State=#state{idxtab=T}) ->
 %% @private
 delmon(MonRef, _State=#state{idxtab=T}) ->
     case ets:lookup(T, MonRef) of
-        [#monrec{key=Key}] ->
+        [#monrec{key= {Index, Mod} = Key}] ->
+	    unregister_vnode_stats(Mod, Index),
             ets:match_delete(T, {idxrec, Key, '_', '_', '_', MonRef}),
             ets:delete(T, MonRef);
         [] ->
@@ -581,6 +583,7 @@ get_vnode(IdxList, Mod, State) ->
                  lager:debug("Will start VNode for partition ~p", [Idx]),
                  {ok, Pid} =
                      riak_core_vnode_sup:start_vnode(Mod, Idx, ForwardTo),
+		 register_vnode_stats(Mod, Idx, Pid),
                  lager:debug("Started VNode, waiting for initialization to complete ~p, ~p ", [Pid, Idx]),
                  ok = riak_core_vnode:wait_for_init(Pid),
                  lager:debug("VNode initialization ready ~p, ~p", [Pid, Idx]),
@@ -708,7 +711,7 @@ should_handoff(Ring, _CHBin, Mod, Idx) ->
             case app_for_vnode_module(Mod) of
                 undefined -> false;
                 {ok, App} ->
-                    case lists:member(TargetNode, 
+                    case lists:member(TargetNode,
                                       riak_core_node_watcher:nodes(App)) of
                         false  -> false;
                         true -> {true, TargetNode}
@@ -986,3 +989,9 @@ kill_repair(Repair, Reason) ->
     riak_core_handoff_manager:kill_xfer(node(),
                                         {Mod, undefined, Partition},
                                         Reason).
+
+register_vnode_stats(Mod, Index, Pid) ->
+    riak_core_stat:register_vnode_stats(Mod, Index, Pid).
+
+unregister_vnode_stats(Mod, Index) ->
+    riak_core_stat:unregister_vnode_stats(Mod, Index).
