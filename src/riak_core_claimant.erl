@@ -734,7 +734,9 @@ maybe_activate_type(_BucketType, active, _Props) ->
     ok;
 maybe_activate_type(BucketType, ready, Props) ->
     ActiveProps = lists:keystore(active, 1, Props, {active, true}),
-    riak_core_metadata:put(?BUCKET_TYPE_PREFIX, BucketType, ActiveProps).
+    riak_core_metadata:put(?BUCKET_TYPE_PREFIX, BucketType, ActiveProps),
+    riak_kv_ensembles:possible_change(),
+    ok.
 
 %% @private
 type_active(Props) ->
