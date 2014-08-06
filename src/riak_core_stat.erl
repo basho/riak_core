@@ -237,36 +237,36 @@ vnodeq_aggregate_empty_test() ->
 
 vnodeq_aggregate_odd1_test() ->
     P = prefix(),
-    ?assertEqual([{[P, riak_core, service_vnodes_running], 1},
+    ?assertEqual([{[P, riak_core, service_vnodes_running], [{value, 1}]},
                   {[P, riak_core, service_vnodeq],
 		   [{min, 10}, {median, 10}, {mean, 10}, {max, 10}, {total, 10}]}],
                  vnodeq_aggregate(service_vnode, [10])).
 
 vnodeq_aggregate_odd3_test() ->
     P = prefix(),
-    ?assertEqual([{[P, riak_core, service_vnodes_running], 3},
+    ?assertEqual([{[P, riak_core, service_vnodes_running], [{value, 3}]},
                   {[P, riak_core, service_vnodeq],
 		   [{min, 1}, {median, 2}, {mean, 2}, {max, 3}, {total, 6}]}],
                  vnodeq_aggregate(service_vnode, [1, 2, 3])).
 
 vnodeq_aggregate_odd5_test() ->
     P = prefix(),
-    ?assertEqual([{[P, riak_core, service_vnodes_running], 5},
+    ?assertEqual([{[P, riak_core, service_vnodes_running], [{value, 5}]},
                   {[P, riak_core, service_vnodeq],
 		   [{min, 0}, {median, 1}, {mean, 2}, {max, 5}, {total, 10}]}],
                  vnodeq_aggregate(service_vnode, [1, 0, 5, 0, 4])).
 
 vnodeq_aggregate_even2_test() ->
     P = prefix(),
-    ?assertEqual([{[P, riak_core, service_vnodes_running], 2},
+    ?assertEqual([{[P, riak_core, service_vnodes_running], [{value, 2}]},
                   {[P, riak_core, service_vnodeq],
 		   [{min, 10}, {median, 15}, {mean, 15}, {max, 20}, {total, 30}]}],
                  vnodeq_aggregate(service_vnode, [10, 20])).
 
 vnodeq_aggregate_even4_test() ->
     P = prefix(),
-    ?assertEqual([{[P, riak_core, service_vnodes_running], 4},
-                  {[P, riak_core, service_vnodeq]
+    ?assertEqual([{[P, riak_core, service_vnodes_running], [{value, 4}]},
+                  {[P, riak_core, service_vnodeq],
 		   [{min, 0}, {median, 5}, {mean, 7}, {max, 20}, {total, 30}]}],
                  vnodeq_aggregate(service_vnode, [0, 10, 0, 20])).
 
