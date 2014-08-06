@@ -318,7 +318,7 @@ token_info(Token) ->
 all_resources() ->
     all_resources(all).
 
-%% @doc Get a list of all resources named `Resource`
+%% @doc Get a list of all resources named `Resource'
 -spec all_resources(bg_token() | bg_lock() | all) -> [bg_stat_live()].
 all_resources(Resource) ->
     query_resource(Resource, [token, lock]).
@@ -328,7 +328,7 @@ all_resources(Resource) ->
 all_locks() ->
     all_locks(all).
 
-%% @doc Returns all locks named `Name`
+%% @doc Returns all locks named `Name'
 -spec all_locks(bg_lock() | all) -> [bg_stat_live()].
 all_locks(Lock) ->
     query_resource(Lock, [lock]).
@@ -338,7 +338,7 @@ all_locks(Lock) ->
 all_tokens() ->
     all_tokens(all).
 
-%% @doc Returns all tokens named `Name`
+%% @doc Returns all tokens named `Name'
 -spec all_tokens(bg_token() | all) -> [bg_stat_live()].
 all_tokens(Token) ->
     query_resource(Token, [token]).
