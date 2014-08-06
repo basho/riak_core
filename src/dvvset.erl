@@ -2,7 +2,6 @@
 %%
 %% File:      dvvset.erl
 %%
-%% @title Dotted Version Vector Set
 %% @author    Ricardo Tomé Gonçalves <tome.wave@gmail.com>
 %% @author    Paulo Sérgio Almeida <pssalmeida@gmail.com>
 %

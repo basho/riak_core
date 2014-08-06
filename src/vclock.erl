@@ -94,7 +94,9 @@ descends(Va, Vb) ->
 %% at least that of the given `dot()'. False otherwise. Call with a
 %% valid entry or you'll get an error.
 %%
-%% @see descends/2, get_entry/3, dominates/2
+%% @see descends/2
+%% @see get_entry/3
+%% @see dominates/2
 -spec descends_dot(vclock(), dot()) -> boolean().
 descends_dot(Vclock, Dot) ->
     descends(Vclock, [Dot]).

@@ -165,19 +165,19 @@ clear() ->
 ring_changed(Node, Ring) ->
     internal_ring_changed(Node, Ring).
 
-%% @doc {@see riak_core_bucket_type:create/2}
+%% @see riak_core_bucket_type:create/2
 -spec create_bucket_type(riak_core_bucket_type:bucket_type(), [{atom(), any()}]) ->
                                 ok | {error, term()}.
 create_bucket_type(BucketType, Props) ->
     gen_server:call(claimant(), {create_bucket_type, BucketType, Props}, infinity).
 
-%% @doc {@see riak_core_bucket_type:status/1}
+%% @see riak_core_bucket_type:status/1
 -spec bucket_type_status(riak_core_bucket_type:bucket_type()) ->
                                 undefined | created | ready | active.
 bucket_type_status(BucketType) ->
     gen_server:call(claimant(), {bucket_type_status, BucketType}, infinity).
 
-%% @doc {@see riak_core_bucket_type:activate/1}
+%% @see riak_core_bucket_type:activate/1
 -spec activate_bucket_type(riak_core_bucket_type:bucket_type()) ->
                                   ok | {error, undefined | not_ready}.
 activate_bucket_type(BucketType) ->
@@ -206,13 +206,13 @@ get_bucket_type(BucketType, Default, RequireActive) ->
         Props -> maybe_filter_inactive_type(RequireActive, Default, Props)
     end.
 
-%% @doc {@see riak_core_bucket_type:update/2}
+%% @see riak_core_bucket_type:update/2
 -spec update_bucket_type(riak_core_bucket_type:bucket_type(), [{atom(), any()}]) ->
                                 ok | {error, term()}.
 update_bucket_type(BucketType, Props) ->
     gen_server:call(claimant(), {update_bucket_type, BucketType, Props}).
 
-%% @doc {@see riak_core_bucket_type:iterator/0}
+%% @see riak_core_bucket_type:iterator/0
 -spec bucket_type_iterator() -> riak_core_metadata:iterator().
 bucket_type_iterator() ->
     riak_core_metadata:iterator(?BUCKET_TYPE_PREFIX, [{default, undefined},
