@@ -1217,7 +1217,7 @@ split_arg([Str]) ->
     re:split(Str, "\\s", [{return,list}]).
 
 parse_stat_entry([], Status) ->
-    {{[riak_core_stat:prefix() | '_'], '_', Status}, [], ['$_']};
+    {{[riak_core_stat:prefix() | '_'], '_', '_'}, [{'=:=','$status',Status}], ['$_']};
 parse_stat_entry("[" ++ _ = Expr, _Status) ->
     case erl_scan:string(ensure_trailing_dot(Expr)) of
 	{ok, Toks, _} ->
@@ -1232,9 +1232,12 @@ parse_stat_entry("[" ++ _ = Expr, _Status) ->
 	    io:fwrite("(Scan error for ~p: ~p~n", [Expr, ScanErr]),
 	    []
     end;
-parse_stat_entry(Str, Status) when Status==enabled; Status==disabled; Status=='_' ->
+parse_stat_entry(Str, Status) when Status==enabled; Status==disabled ->
     Parts = re:split(Str, "\\.", [{return,list}]),
     {{replace_parts(Parts),'_',Status}, [], ['$_']};
+parse_stat_entry(Str, '_') ->
+    Parts = re:split(Str, "\\.", [{return,list}]),
+    {{replace_parts(Parts),'_','_'}, [], ['$_']};
 parse_stat_entry(_, Status) ->
     io:fwrite("(Illegal status: ~p~n", [Status]).
 
