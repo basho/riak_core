@@ -1190,17 +1190,22 @@ stat_info(Arg) ->
     [print_info(E, Attrs) || E <- find_entries(RestArg, '_')].
 
 pick_info_attrs(Arg) ->
-    lists:foldr(
-      fun("-name"     , {As, Ps}) -> {[name     |As], Ps};
-	 ("-type"     , {As, Ps}) -> {[type     |As], Ps};
-	 ("-module"   , {As, Ps}) -> {[module   |As], Ps};
-	 ("-value"    , {As, Ps}) -> {[value    |As], Ps};
-	 ("-cache"    , {As, Ps}) -> {[cache    |As], Ps};
-	 ("-status"   , {As, Ps}) -> {[status   |As], Ps};
-	 ("-timestamp", {As, Ps}) -> {[timestamp|As], Ps};
-	 ("-options"  , {As, Ps}) -> {[options  |As], Ps};
-	 (P, {As, Ps}) -> {As, [P|Ps]}
-      end, {[], []}, Arg).
+    case lists:foldr(
+           fun("-name"     , {As, Ps}) -> {[name     |As], Ps};
+              ("-type"     , {As, Ps}) -> {[type     |As], Ps};
+              ("-module"   , {As, Ps}) -> {[module   |As], Ps};
+              ("-value"    , {As, Ps}) -> {[value    |As], Ps};
+              ("-cache"    , {As, Ps}) -> {[cache    |As], Ps};
+              ("-status"   , {As, Ps}) -> {[status   |As], Ps};
+              ("-timestamp", {As, Ps}) -> {[timestamp|As], Ps};
+              ("-options"  , {As, Ps}) -> {[options  |As], Ps};
+              (P, {As, Ps}) -> {As, [P|Ps]}
+           end, {[], []}, Arg) of
+        {[], Rest} ->
+            {[name, type, module, value, cache, status, timestamp, options], Rest};
+        Other ->
+            Other
+    end.
 
 print_info({N, _Type, _Status}, [A|Attrs]) ->
     Hdr = lists:flatten(io_lib:fwrite("~p: ", [N])),
@@ -1211,7 +1216,7 @@ print_info({N, _Type, _Status}, [A|Attrs]) ->
 				io_lib:fwrite(Pad ++ "~w = ~p~n",
 					      [Ax, proplists:get_value(Ax, Info)])
 			end, Attrs)],
-    io:fwrite([Hdr, Body]).
+    io:put_chars([Hdr, Body]).
 
 split_arg([Str]) ->
     re:split(Str, "\\s", [{return,list}]).
