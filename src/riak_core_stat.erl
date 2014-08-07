@@ -145,8 +145,9 @@ update_value(_) -> 1.
 stats() ->
     [{ignored_gossip_total, counter},
      {rings_reconciled, spiral},
-     {ring_creation_size, {function, app_helper, get_env, [riak_core, ring_creation_size],
-			   value, [value]}},
+     {ring_creation_size,
+      {function, app_helper, get_env, [riak_core, ring_creation_size],
+       match, value}},
      {gossip_received, spiral},
      {rejected_handoffs, counter},
      {handoff_timeouts, counter},
