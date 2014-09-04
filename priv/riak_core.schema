@@ -153,3 +153,13 @@
     {default, off},
     hidden
 ]}.
+
+%% @doc Interval of time between vnode management
+%% activities. Modifying this will change the amount of time between
+%% attemps to trigger handoff between this node and any other member
+%% of the cluster.
+{mapping, "vnode_management_timer", "riak_core.vnode_management_timer", [
+    {default, "10s"},
+    {datatype, {duration, ms}},
+    hidden
+]}.

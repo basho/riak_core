@@ -28,6 +28,7 @@ basic_schema_test() ->
     cuttlefish_unit:assert_config(Config, "riak_core.platform_log_dir", "./log"),
     cuttlefish_unit:assert_config(Config, "riak_core.enable_consensus", false),
     cuttlefish_unit:assert_config(Config, "riak_core.use_background_manager", false),
+    cuttlefish_unit:assert_config(Config, "riak_core.vnode_management_timer", 10000),
     ok.
 
 default_bucket_properties_test() ->
@@ -63,7 +64,8 @@ override_schema_test() ->
         {["platform_lib_dir"], "/absolute/lib"},
         {["platform_log_dir"], "/absolute/log"},
         {["strong_consistency"], on},
-        {["background_manager"], on}
+        {["background_manager"], on},
+        {["vnode_management_timer"], "20s"}
     ],
 
     Config = cuttlefish_unit:generate_templated_config("../priv/riak_core.schema", Conf, context()),
@@ -86,6 +88,7 @@ override_schema_test() ->
     cuttlefish_unit:assert_config(Config, "riak_core.platform_log_dir", "/absolute/log"),
     cuttlefish_unit:assert_config(Config, "riak_core.enable_consensus", true),
     cuttlefish_unit:assert_config(Config, "riak_core.use_background_manager", true),
+    cuttlefish_unit:assert_config(Config, "riak_core.vnode_management_timer", 20000),
     ok.
 
 %% this context() represents the substitution variables that rebar
