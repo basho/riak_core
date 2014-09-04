@@ -73,16 +73,11 @@ ensure_vnodes_started(Ring) ->
                         {true, _, _, _} ->
                             riak_core_ring_manager:refresh_my_ring();
                         {_, true, [], leaving} ->
-                            riak_core_ring_manager:ring_trans(
-                              fun(Ring2, _) -> 
-                                      Ring3 = riak_core_ring:exit_member(node(), Ring2, node()),
-                                      {new_ring, Ring3}
-                              end, []),
-                            %% Shutdown if we are the only node in the cluster
-                            case riak_core_ring:random_other_node(Ring) of
-                                no_node ->
-                                    riak_core_ring_manager:refresh_my_ring();
-                                _ ->
+                            case ready_to_exit(AppMods) of
+                                true ->
+                                    exit_ring_trans(),
+                                    maybe_shutdown(Ring);
+                                false ->
                                     ok
                             end;
                         {_, _, _, invalid} ->
@@ -95,6 +90,33 @@ ensure_vnodes_started(Ring) ->
                     end;
                 _ -> ok
             end
+    end.
+
+%% Shutdown if we are the only node in the cluster
+maybe_shutdown(Ring) ->
+    case riak_core_ring:random_other_node(Ring) of
+        no_node ->
+            riak_core_ring_manager:refresh_my_ring();
+        _ ->
+            ok
+    end.
+
+exit_ring_trans() ->
+    riak_core_ring_manager:ring_trans(
+        fun(Ring2, _) -> 
+                Ring3 = riak_core_ring:exit_member(node(), Ring2, node()),
+                {new_ring, Ring3}
+        end, []).
+
+ready_to_exit([]) ->
+    true;
+ready_to_exit([{_App, Mod} | AppMods]) ->
+    case erlang:function_exported(Mod, ready_to_exit, 0) andalso
+             (not Mod:ready_to_exit()) of 
+        true ->
+            false;
+        false ->
+            ready_to_exit(AppMods)
     end.
 
 ensure_vnodes_started([], _Ring, Acc) ->
@@ -178,7 +200,7 @@ maybe_start_vnode_proxies(Ring) ->
     case Larger of
         true ->
             FutureIdxs = riak_core_ring:all_owners(riak_core_ring:future_ring(Ring)),
-            [riak_core_vnode_proxy_sup:start_proxy(Mod, Idx) || {Idx, _} <- FutureIdxs,
+            _ = [riak_core_vnode_proxy_sup:start_proxy(Mod, Idx) || {Idx, _} <- FutureIdxs,
                                                                 Mod <- Mods],
             ok;
         false ->
@@ -193,7 +215,8 @@ maybe_stop_vnode_proxies(Ring) ->
             ProxySpecs = supervisor:which_children(riak_core_vnode_proxy_sup),
             Running = [{I,M} || {{M,I},_,_,_} <- ProxySpecs, lists:member(M, Mods)],
             ToShutdown = Running -- Idxs,
-            [riak_core_vnode_proxy_sup:stop_proxy(M,I) || {I, M} <- ToShutdown];
+            _ = [riak_core_vnode_proxy_sup:stop_proxy(M,I) || {I, M} <- ToShutdown],
+            ok;
         _ ->
             ok
     end.

@@ -25,8 +25,29 @@
 -module(riak_core_test_util).
 
 -ifdef(TEST).
--export([setup_mockring1/0, fake_ring/2]).
+-export([setup_mockring1/0,
+         fake_ring/2,
+         stop_pid/1,
+         wait_for_pid/1]).
 -include_lib("eunit/include/eunit.hrl").
+
+stop_pid(Other) when not is_pid(Other) ->
+    ok;
+stop_pid(Pid) ->
+    unlink(Pid),
+    exit(Pid, shutdown),
+    ok = wait_for_pid(Pid).
+
+wait_for_pid(Pid) ->
+    Mref = erlang:monitor(process, Pid),
+    receive
+        {'DOWN', Mref, process, _, _} ->
+            ok
+    after
+        5000 ->
+            {error, didnotexit}
+    end.
+
 
 setup_mockring1() ->
     % requires a running riak_core_ring_manager, in test-mode is ok

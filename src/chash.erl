@@ -50,7 +50,7 @@
          successors/3,
          update/3]).
 
--export_type([chash/0]).
+-export_type([chash/0, index/0, index_as_int/0]).
     
 -define(RINGTOP, trunc(math:pow(2,160)-1)).  % SHA-1 space
 
@@ -65,10 +65,10 @@
 -type chash_node() :: term().
 %% Indices into the ring, used as keys for object location, are binary
 %% representations of 160-bit integers.
--type index() :: binary().
+-type index() :: <<_:160>>.
 -type index_as_int() :: integer().
 -type node_entry() :: {index_as_int(), chash_node()}.
--type num_partitions() :: integer().
+-type num_partitions() :: pos_integer().
 
 %% ===================================================================
 %% Public API

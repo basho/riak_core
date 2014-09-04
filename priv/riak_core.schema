@@ -1,0 +1,165 @@
+%%-*- mode: erlang -*-
+%% Default Bucket Properties
+
+%% @doc The number of replicas stored. Note: See Replication
+%% Properties for further discussion.
+%% http://docs.basho.com/riak/latest/dev/advanced/cap-controls/
+{mapping, "buckets.default.n_val", "riak_core.default_bucket_props.n_val", [
+  {datatype, integer},
+  {default, 3},
+  hidden
+]}.
+
+%% @doc Number of partitions in the cluster (only valid when first
+%% creating the cluster). Must be a power of 2, minimum 8 and maximum
+%% 1024.
+{mapping, "ring_size", "riak_core.ring_creation_size", [
+  {datatype, integer},
+  {default, 64},
+  {validators, ["ring_size^2", "ring_size_max", "ring_size_min"]},
+  {commented, 64}
+]}.
+
+%% ring_size validators
+{validator, "ring_size_max", "2048 and larger are supported, but considered advanced config",
+ fun(Size) ->
+  Size =< 1024
+ end}.
+
+{validator, "ring_size^2", "not a power of 2",
+ fun(Size) ->
+  (Size band (Size-1) =:= 0)
+ end}.
+
+{validator, "ring_size_min", "must be at least 8",
+ fun(Size) ->
+  Size >= 8
+ end}.
+
+%% @doc Number of concurrent node-to-node transfers allowed.
+{mapping, "transfer_limit", "riak_core.handoff_concurrency", [
+  {datatype, integer},
+  {default, 2},
+  {commented, 2}
+]}.
+
+%% @doc Default location of ringstate
+{mapping, "ring.state_dir", "riak_core.ring_state_dir", [
+  {datatype, directory},
+  {default, "$(platform_data_dir)/ring"},
+  hidden
+]}.
+
+%% @doc Default cert location for https can be overridden
+%% with the ssl config variable, for example:
+{mapping, "ssl.certfile", "riak_core.ssl.certfile", [
+  {datatype, file},
+  {commented, "$(platform_etc_dir)/cert.pem"}
+]}.
+
+%% @doc Default key location for https can be overridden with the ssl
+%% config variable, for example:
+{mapping, "ssl.keyfile", "riak_core.ssl.keyfile", [
+  {datatype, file},
+  {commented, "$(platform_etc_dir)/key.pem"}
+]}.
+
+%% @doc Default signing authority location for https can be overridden
+%% with the ssl config variable, for example:
+{mapping, "ssl.cacertfile", "riak_core.ssl.cacertfile", [
+  {datatype, file},
+  {commented, "$(platform_etc_dir)/cacertfile.pem"}
+]}.
+
+%% @doc handoff.port is the TCP port that Riak uses for
+%% intra-cluster data handoff.
+{mapping, "handoff.port", "riak_core.handoff_port", [
+  {default, {{handoff_port}} },
+  {datatype, integer},
+  hidden
+]}.
+
+%% @doc To encrypt riak_core intra-cluster data handoff traffic,
+%% uncomment the following line and edit its path to an appropriate
+%% certfile and keyfile.  (This example uses a single file with both
+%% items concatenated together.)
+{mapping, "handoff.ssl.certfile", "riak_core.handoff_ssl_options.certfile", [
+%%  {commented, "/tmp/erlserver.pem"},
+  {datatype, file},
+  hidden
+]}.
+
+%% @doc if you need a seperate keyfile for handoff
+{mapping, "handoff.ssl.keyfile", "riak_core.handoff_ssl_options.keyfile", [
+  {datatype, file},
+  hidden
+]}.
+
+%% @doc DTrace support Do not enable 'dtrace' unless your Erlang/OTP
+%% runtime is compiled to support DTrace.  DTrace is available in
+%% R15B01 (supported by the Erlang/OTP official source package) and in
+%% R14B04 via a custom source repository & branch.
+{mapping, "dtrace", "riak_core.dtrace_support", [
+  {default, off},
+  {datatype, flag}
+]}.
+
+%% @doc Platform-specific installation paths (substituted by rebar)
+{mapping, "platform_bin_dir", "riak_core.platform_bin_dir", [
+  {datatype, directory},
+  {default, "{{platform_bin_dir}}"}
+]}.
+
+%% @see platform_bin_dir
+{mapping, "platform_data_dir", "riak_core.platform_data_dir", [
+  {datatype, directory},
+  {default, "{{platform_data_dir}}"}
+]}.
+
+%% @see platform_bin_dir
+{mapping, "platform_etc_dir", "riak_core.platform_etc_dir", [
+  {datatype, directory},
+  {default, "{{platform_etc_dir}}"}
+]}.
+
+%% @see platform_bin_dir
+{mapping, "platform_lib_dir", "riak_core.platform_lib_dir", [
+  {datatype, directory},
+  {default, "{{platform_lib_dir}}"}
+]}.
+
+%% @see platform_bin_dir
+{mapping, "platform_log_dir", "riak_core.platform_log_dir", [
+  {datatype, directory},
+  {default, "{{platform_log_dir}}"}
+]}.
+
+%% @doc Enable consensus subsystem. Set to 'on' to enable the
+%% consensus subsystem used for strongly consistent Riak operations.
+{mapping, "strong_consistency", "riak_core.enable_consensus", [
+  {datatype, flag},
+  {default, off},
+  {commented, on}
+]}.
+
+%% @doc Whether to enable the background manager globally. When
+%% enabled, participating Riak subsystems will coordinate access to
+%% shared resources. This will help to prevent system response
+%% degradation under times of heavy load from multiple background
+%% tasks. Specific subsystems may also have their own controls over
+%% use of the background manager.
+{mapping, "background_manager", "riak_core.use_background_manager", [
+    {datatype, flag},
+    {default, off},
+    hidden
+]}.
+
+%% @doc Interval of time between vnode management
+%% activities. Modifying this will change the amount of time between
+%% attemps to trigger handoff between this node and any other member
+%% of the cluster.
+{mapping, "vnode_management_timer", "riak_core.vnode_management_timer", [
+    {default, "10s"},
+    {datatype, {duration, ms}},
+    hidden
+]}.

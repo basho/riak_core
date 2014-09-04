@@ -31,18 +31,33 @@
 
 -module(vclock).
 
--export([fresh/0,descends/2,merge/1,get_counter/2,get_timestamp/2,
-	increment/2,increment/3,all_nodes/1,equal/2,prune/3,timestamp/0]).
+-export([fresh/0,
+         fresh/2,
+         descends/2,
+         dominates/2,
+         descends_dot/2,
+         pure_dot/1,
+         merge/1,
+         get_counter/2,
+         get_timestamp/2,
+         get_dot/2,
+         valid_dot/1,
+         increment/2,
+         increment/3,
+         all_nodes/1,
+         equal/2,
+         prune/3,
+         timestamp/0]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--export_type([vclock/0, timestamp/0, vclock_node/0]).
+-export_type([vclock/0, timestamp/0, vclock_node/0, dot/0, pure_dot/0]).
 
--opaque vclock() :: [vc_entry()].
-% The timestamp is present but not used, in case a client wishes to inspect it.
--type vc_entry() :: {vclock_node(), {counter(), timestamp()}}.
+-type vclock() :: [dot()].
+-type dot() :: {vclock_node(), {counter(), timestamp()}}.
+-type pure_dot() :: {vclock_node(), counter()}.
 
 % Nodes can have any term() as a name, but they must differ from each other.
 -type   vclock_node() :: term().
@@ -54,8 +69,12 @@
 fresh() ->
     [].
 
+-spec fresh(vclock_node(), counter()) -> vclock().
+fresh(Node, Count) ->
+    [{Node, {Count, timestamp()}}].
+
 % @doc Return true if Va is a direct descendant of Vb, else false -- remember, a vclock is its own descendant!
--spec descends(Va :: vclock()|[], Vb :: vclock()|[]) -> boolean().
+-spec descends(Va :: vclock(), Vb :: vclock()) -> boolean().
 descends(_, []) ->
     % all vclocks descend from the empty vclock
     true;
@@ -68,9 +87,46 @@ descends(Va, Vb) ->
             (CtrA >= CtrB) andalso descends(Va,RestB)
         end.
 
+%% @doc does the given `vclock()' descend from the given `dot()'. The
+%% `dot()' can be any vclock entry returned from
+%% `get_entry/2'. returns `true' if the `vclock()' has an entry for
+%% the `actor' in the `dot()', and that the counter for that entry is
+%% at least that of the given `dot()'. False otherwise. Call with a
+%% valid entry or you'll get an error.
+%%
+%% @see descends/2, get_entry/3, dominates/2
+-spec descends_dot(vclock(), dot()) -> boolean().
+descends_dot(Vclock, Dot) ->
+    descends(Vclock, [Dot]).
+
+%% @doc in some cases the dot without timestamp data is needed.
+-spec pure_dot(dot()) -> pure_dot().
+pure_dot({N, {C, _TS}}) ->
+    {N, C}.
+
+%% @doc true if `A' strictly dominates `B'. Note: ignores
+%% timestamps. In Riak it is possible to have vclocks that are
+%% identical except for timestamps. When two vclocks descend each
+%% other, but are not equal, they are concurrent. See source comment
+%% for more details. (Actually you can have indentical clocks
+%% including timestamps, that represent different events, but let's
+%% not go there.)
+%%
+-spec dominates(vclock(), vclock()) -> boolean().
+dominates(A, B) ->
+    %% In a sane world if two vclocks descend each other they MUST be
+    %% equal. In riak they can descend each other and have different
+    %% timestamps(!) How? Deleted keys, re-written, then restored is
+    %% one example. See riak_kv#679 for others. This is why we must
+    %% check descends both ways rather than checking descends(A, B)
+    %% and not equal(A, B). Do not "optimise" this to dodge the second
+    %% descends call! I know that the laws of causality say that each
+    %% actor must act serially, but Riak breaks that.
+    descends(A, B) andalso not descends(B, A).
+
 % @doc Combine all VClocks in the input list into their least possible
 %      common descendant.
--spec merge(VClocks :: [vclock()]) -> vclock() | [].
+-spec merge(VClocks :: [vclock()]) -> vclock().
 merge([])             -> [];
 merge([SingleVclock]) -> SingleVclock;
 merge([First|Rest])   -> merge(Rest, lists:keysort(1, First)).
@@ -111,6 +167,21 @@ get_timestamp(Node, VClock) ->
 	{_, {_Ctr, TS}} -> TS;
 	false           -> undefined
     end.
+
+% @doc Get the entry `dot()' for `vclock_node()' from `vclock()'.
+-spec get_dot(Node :: vclock_node(), VClock :: vclock()) -> {ok, dot()} | undefined.
+get_dot(Node, VClock) ->
+    case lists:keyfind(Node, 1, VClock) of
+        false -> undefined;
+        Entry -> {ok, Entry}
+    end.
+
+%% @doc is the given argument a valid dot, or entry?
+-spec valid_dot(dot()) -> boolean().
+valid_dot({_, {Cnt, TS}}) when is_integer(Cnt), is_integer(TS) ->
+    true;
+valid_dot(_) ->
+    false.
 
 % @doc Increment VClock at Node.
 -spec increment(Node :: vclock_node(), VClock :: vclock()) -> vclock().
@@ -307,5 +378,24 @@ merge_same_id_test() ->
     VC2 = [{<<"1">>, {1, 3}},{<<"3">>,{1,5}}],
     ?assertEqual([{<<"1">>, {1, 3}},{<<"2">>,{1,4}},{<<"3">>,{1,5}}],
                  vclock:merge([VC1, VC2])).
+
+get_entry_test() ->
+    VC = vclock:fresh(),
+    VC1 = increment(a, increment(c, increment(b, increment(a, VC)))),
+    ?assertMatch({ok, {a, {2, _}}}, get_dot(a, VC1)),
+    ?assertMatch({ok, {b, {1, _}}}, get_dot(b, VC1)),
+    ?assertMatch({ok, {c, {1, _}}}, get_dot(c, VC1)),
+    ?assertEqual(undefined, get_dot(d, VC1)).
+
+valid_entry_test() ->
+    VC = vclock:fresh(),
+    VC1 = increment(c, increment(b, increment(a, VC))),
+    [begin
+         {ok, E} = get_dot(Actor, VC1),
+         ?assert(valid_dot(E))
+     end || Actor <- [a, b, c]],
+    ?assertNot(valid_dot(undefined)),
+    ?assertNot(valid_dot("huffle-puff")),
+    ?assertNot(valid_dot([])).
 
 -endif.

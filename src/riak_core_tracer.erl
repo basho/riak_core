@@ -54,15 +54,15 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 stop() ->
-    gen_server:call(?SERVER, stop).
+    gen_server:call(?SERVER, stop, infinity).
 
 reset() ->
-    gen_server:call(?SERVER, reset).
+    gen_server:call(?SERVER, reset, infinity).
 
 %% Set up a filter on trace messages to the list of [{M, F}]s.  The
 %% tracer function should return a list of events to log
 filter(MFs, Filter) ->
-    gen_server:call(?SERVER, {filter, MFs, Filter}).
+    gen_server:call(?SERVER, {filter, MFs, Filter}, infinity).
 
 %% Collect traces
 collect() ->
@@ -72,21 +72,21 @@ collect(Duration) ->
     collect(Duration, nodes()).
 
 collect(Duration, Nodes) ->
-    gen_server:call(?SERVER, {collect, Duration,  Nodes}).
+    gen_server:call(?SERVER, {collect, Duration,  Nodes}, infinity).
 
 %% Stop collection
 stop_collect() ->
-    gen_server:call(?SERVER, stop_collect).
+    gen_server:call(?SERVER, stop_collect, infinity).
 
 %% Return the trace
 results() ->
-    gen_server:call(?SERVER, results).
+    gen_server:call(?SERVER, results, infinity).
 
 all_events({trace, Pid, call, {M,F,A}}) ->
     [{node(Pid), {M,F,A}}].
 
 test_all_events(Ms) ->
-    riak_core_tracer:start_link(),
+    {ok, _Pid} = riak_core_tracer:start_link(),
     riak_core_tracer:reset(),
     riak_core_tracer:filter(Ms, fun all_events/1),
     riak_core_tracer:collect(5000).
@@ -128,13 +128,13 @@ handle_call({collect, Duration, Nodes}, _From, State) ->
                                          {Mega, Secs, Micro} = os:timestamp(),
                                          Ts = 1000000 * (1000000 * Mega + Secs) + Micro,
                                          TsEntries = [{Ts, E} || E <- Entries],
-                                         gen_server:call(Pid,  {traces, TsEntries})
+                                         gen_server:call(Pid,  {traces, TsEntries}, infinity)
                                  end,
                                  Pid
                          end, self()}),
-    dbg:p(all, call),
-    [{ok, N} = dbg:n(N) || N <- Nodes],
-    dbg:tpl(?MODULE, trigger_sentinel, []),
+    _ = [{ok, N} = dbg:n(N) || N <- Nodes],
+    dbg:p(all, [call]),
+    {ok, _} = dbg:tpl(?MODULE, trigger_sentinel, []),
     add_tracers(State#state.mfs),
     {reply, ok, State#state{trace=[], stop_tref = Tref, tracing = true}};
 handle_call(stop_collect, From, State = #state{tracing = true}) ->
@@ -190,10 +190,10 @@ code_change(_OldVsn, State, _Extra) ->
 add_tracers([]) ->
     ok;
 add_tracers([{M, F} | Rest]) ->
-    dbg:tpl(M, F, [{'_',[],[{message,{return_trace}}]}]),
-     add_tracers(Rest);
+    {ok, _} = dbg:tpl(M, F, [{'_',[],[{message,{return_trace}}]}]),
+    add_tracers(Rest);
 add_tracers([M | Rest]) ->
-    dbg:tpl(M,[{'_',[],[{message,{return_trace}}]}]),
+    {ok, _} = dbg:tpl(M,[{'_',[],[{message,{return_trace}}]}]),
     add_tracers(Rest).
 
 cancel_timer(undefined) ->

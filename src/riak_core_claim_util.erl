@@ -224,7 +224,7 @@ sort_by_down_fbmax(Failures) ->
 %% Adjacency calculations
 %% -------------------------------------------------------------------
 
-%% @doc Adjacency measures are useful for preflist diversity. Three different
+%% Adjacency measures are useful for preflist diversity. Three different
 %% forms of measurement are used.
 %%
 %% An adjacency list is a list of node pairs and the distance between them

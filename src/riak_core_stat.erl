@@ -42,8 +42,8 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 register_stats() ->
-    [(catch folsom_metrics:delete_metric({?APP, Name})) || {Name, _Type} <- stats()],
-    [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()],
+    _ = [(catch folsom_metrics:delete_metric({?APP, Name})) || {Name, _Type} <- stats()],
+    _ = [register_stat({?APP, Name}, Type) || {Name, Type} <- stats()],
     riak_core_stat_cache:register_app(?APP, {?MODULE, produce_stats, []}).
 
 %% @spec get_stats() -> proplist()
@@ -58,7 +58,7 @@ get_stats() ->
 update(Arg) ->
     gen_server:cast(?SERVER, {update, Arg}).
 
-% @spec produce_stats(state(), integer()) -> proplist()
+%% @spec produce_stats() -> proplist()
 %% @doc Produce a proplist-formatted view of the current aggregation
 %%      of stats.
 produce_stats() ->
@@ -75,7 +75,7 @@ handle_call(_Req, _From, State) ->
     {reply, ok, State}.
 
 handle_cast({update, Arg}, State) ->
-    update1(Arg),
+    ok = update1(Arg),
     {noreply, State};
 handle_cast(_Req, State) ->
     {noreply, State}.
@@ -89,7 +89,7 @@ terminate(_Reason, _State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-%% @spec update(term()) -> ok
+%% @spec update1(term()) -> ok
 %% @doc Update the given stat.
 update1(rejected_handoffs) ->
     folsom_metrics:notify_existing_metric({?APP, rejected_handoffs}, {inc, 1}, counter);

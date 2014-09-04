@@ -31,13 +31,15 @@
          integer_to_list/2,
          unique_id_62/0,
          str_to_node/1,
-         chash_key/1,
+         chash_key/1, chash_key/2,
          chash_std_keyfun/1,
          chash_bucketonly_keyfun/1,
          mkclientid/1,
          start_app_deps/1,
          build_tree/3,
          orddict_delta/2,
+         safe_rpc/4,
+         safe_rpc/5,
          rpc_every_member/4,
          rpc_every_member_ann/4,
          pmap/2,
@@ -53,10 +55,14 @@
          format_ip_and_port/2,
          peername/2,
          sockname/2,
+         sha/1,
+         md5/1,
          make_fold_req/1,
          make_fold_req/2,
          make_fold_req/4,
-         make_newest_fold_req/1
+         make_newest_fold_req/1,
+         proxy_spawn/1,
+         proxy/2
         ]).
 
 -include("riak_core_vnode.hrl").
@@ -73,11 +79,18 @@
 %% Public API
 %% ===================================================================
 
+%% 719528 days from Jan 1, 0 to Jan 1, 1970
+%%  *86400 seconds/day
+-define(SEC_TO_EPOCH, 62167219200).
+
 %% @spec moment() -> integer()
 %% @doc Get the current "moment".  Current implementation is the
 %%      number of seconds from year 0 to now, universal time, in
 %%      the gregorian calendar.
-moment() -> calendar:datetime_to_gregorian_seconds(calendar:universal_time()).
+
+moment() ->
+    {Mega, Sec, _Micro} = os:timestamp(),
+    (Mega * 1000000) + Sec + ?SEC_TO_EPOCH.
 
 %% @spec compare_dates(string(), string()) -> boolean()
 %% @doc Compare two RFC1123 date strings or two now() tuples (or one
@@ -90,10 +103,6 @@ compare_dates(A, B) when is_list(A) ->
     compare_dates(rfc1123_to_now(A), B);
 compare_dates(A, B) when is_list(B) ->
     compare_dates(A, rfc1123_to_now(B)).
-
-%% 719528 days from Jan 1, 0 to Jan 1, 1970
-%%  *86400 seconds/day
--define(SEC_TO_EPOCH, 62167219200).
 
 rfc1123_to_now(String) when is_list(String) ->
     GSec = calendar:datetime_to_gregorian_seconds(
@@ -138,7 +147,7 @@ replace_file(FN, Data) ->
 read_file(FName) ->
     {ok, FD} = file:open(FName, [read, raw, binary]),
     IOList = read_file(FD, []),
-    file:close(FD),
+    ok = file:close(FD),
     {ok, iolist_to_binary(IOList)}.
 
 read_file(FD, Acc) ->
@@ -185,9 +194,15 @@ integer_to_list(I0, Base, R0) ->
 -ifndef(old_hash).
 sha(Bin) ->
     crypto:hash(sha, Bin).
+
+md5(Bin) ->
+    crypto:hash(md5, Bin).
 -else.
 sha(Bin) ->
     crypto:sha(Bin).
+
+md5(Bin) ->
+    crypto:md5(Bin).
 -endif.
 
 %% @spec unique_id_62() -> string()
@@ -208,8 +223,8 @@ unique_id_62() ->
 %%      and code:load_file/1 on each node.
 reload_all(Module) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    [{rpc:call(Node, code, purge, [Module]),
-     rpc:call(Node, code, load_file, [Module])} ||
+    [{safe_rpc(Node, code, purge, [Module]),
+     safe_rpc(Node, code, load_file, [Module])} ||
         Node <- riak_core_ring:all_members(Ring)].
 
 %% @spec mkclientid(RemoteNode :: term()) -> ClientID :: list()
@@ -222,9 +237,15 @@ mkclientid(RemoteNode) ->
 
 %% @spec chash_key(BKey :: riak_object:bkey()) -> chash:index()
 %% @doc Create a binary used for determining replica placement.
-chash_key({Bucket,Key}) ->
+chash_key({Bucket,_Key}=BKey) ->
     BucketProps = riak_core_bucket:get_bucket(Bucket),
-    {chash_keyfun, {M, F}} = proplists:lookup(chash_keyfun, BucketProps),
+    chash_key(BKey, BucketProps).
+
+%% @spec chash_key(BKey :: riak_object:bkey(), [{atom(), any()}]) ->
+%%          chash:index()
+%% @doc Create a binary used for determining replica placement.
+chash_key({Bucket,Key}, BucketProps) ->
+    {_, {M, F}} = lists:keyfind(chash_keyfun, 1, BucketProps),
     M:F({Bucket,Key}).
 
 %% @spec chash_std_keyfun(BKey :: riak_object:bkey()) -> chash:index()
@@ -265,9 +286,9 @@ node_hostname() ->
 %% @doc Start depedent applications of App.
 start_app_deps(App) ->
     {ok, DepApps} = application:get_key(App, applications),
-    [ensure_started(A) || A <- DepApps],
+    _ = [ensure_started(A) || A <- DepApps],
     ok.
-    
+
 
 %% @spec ensure_started(Application :: atom()) -> ok
 %% @doc Start the named application if not already started.
@@ -281,19 +302,22 @@ ensure_started(App) ->
 
 %% @doc Invoke function `F' over each element of list `L' in parallel,
 %%      returning the results in the same order as the input list.
--spec pmap(function(), [node()]) -> [any()].
+-spec pmap(F, L1) -> L2 when
+      F :: fun((A) -> B),
+      L1 :: [A],
+      L2 :: [B].
 pmap(F, L) ->
     Parent = self(),
     lists:foldl(
       fun(X, N) ->
-              spawn(fun() ->
-                            Parent ! {pmap, N, F(X)}
-                    end),
+              spawn_link(fun() ->
+                                 Parent ! {pmap, N, F(X)}
+                         end),
               N+1
       end, 0, L),
     L2 = [receive {pmap, N, R} -> {N,R} end || _ <- L],
-    {_, L3} = lists:unzip(lists:keysort(1, L2)),
-    L3.
+    L3 = lists:keysort(1, L2),
+    [R || {_,R} <- L3].
 
 -record(pmap_acc,{
                   mapper,
@@ -372,6 +396,34 @@ pmap_collect_rest(Pending, Done) ->
     end.
 
 
+%% @doc Wraps an rpc:call/4 in a try/catch to handle the case where the
+%%      'rex' process is not running on the remote node. This is safe in
+%%      the sense that it won't crash the calling process if the rex
+%%      process is down.
+-spec safe_rpc(Node :: node(), Module :: atom(), Function :: atom(), Args :: [any()]) -> {'badrpc', any()} | any().
+safe_rpc(Node, Module, Function, Args) ->
+    try rpc:call(Node, Module, Function, Args) of
+        Result ->
+            Result
+    catch
+        exit:{noproc, _NoProcDetails} ->
+            {badrpc, rpc_process_down}
+    end.
+
+%% @doc Wraps an rpc:call/5 in a try/catch to handle the case where the
+%%      'rex' process is not running on the remote node. This is safe in
+%%      the sense that it won't crash the calling process if the rex
+%%      process is down.
+-spec safe_rpc(Node :: node(), Module :: atom(), Function :: atom(), Args :: [any()], Timeout :: timeout()) -> {'badrpc', any()} | any().
+safe_rpc(Node, Module, Function, Args, Timeout) ->
+    try rpc:call(Node, Module, Function, Args, Timeout) of
+        Result ->
+            Result
+    catch
+        'EXIT':{noproc, _NoProcDetails} ->
+            {badrpc, rpc_process_down}
+    end.
+
 %% @spec rpc_every_member(atom(), atom(), [term()], integer()|infinity)
 %%          -> {Results::[term()], BadNodes::[node()]}
 %% @doc Make an RPC call to the given module and function on each
@@ -384,8 +436,6 @@ rpc_every_member(Module, Function, Args, Timeout) ->
 
 %% @doc Same as rpc_every_member/4, but annotate the result set with
 %%      the name of the node returning the result.
--spec rpc_every_member_ann(module(), atom(), [term()], integer()|infinity)
-                          -> {Results::[{node(), term()}], Down::[node()]}.
 rpc_every_member_ann(Module, Function, Args, Timeout) ->
     {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
     Nodes = riak_core_ring:all_members(MyRing),
@@ -394,22 +444,22 @@ rpc_every_member_ann(Module, Function, Args, Timeout) ->
 
 %% @doc Perform an RPC call to a list of nodes in parallel, returning the
 %%      results in the same order as the input list.
--spec multi_rpc([node()], module(), function(), [any()]) -> [any()].
+-spec multi_rpc([node()], module(), atom(), [any()]) -> [any()].
 multi_rpc(Nodes, Mod, Fun, Args) ->
     multi_rpc(Nodes, Mod, Fun, Args, infinity).
 
 %% @doc Perform an RPC call to a list of nodes in parallel, returning the
 %%      results in the same order as the input list.
--spec multi_rpc([node()], module(), function(), [any()], timeout()) -> [any()].
+-spec multi_rpc([node()], module(), atom(), [any()], timeout()) -> [any()].
 multi_rpc(Nodes, Mod, Fun, Args, Timeout) ->
     pmap(fun(Node) ->
-                 rpc:call(Node, Mod, Fun, Args, Timeout)
+                 safe_rpc(Node, Mod, Fun, Args, Timeout)
          end, Nodes).
 
 %% @doc Perform an RPC call to a list of nodes in parallel, returning the
 %%      results in the same order as the input list. Each result is tagged
 %%      with the corresponding node name.
--spec multi_rpc_ann([node()], module(), function(), [any()])
+-spec multi_rpc_ann([node()], module(), atom(), [any()])
                    -> [{node(), any()}].
 multi_rpc_ann(Nodes, Mod, Fun, Args) ->
     multi_rpc_ann(Nodes, Mod, Fun, Args, infinity).
@@ -417,7 +467,7 @@ multi_rpc_ann(Nodes, Mod, Fun, Args) ->
 %% @doc Perform an RPC call to a list of nodes in parallel, returning the
 %%      results in the same order as the input list. Each result is tagged
 %%      with the corresponding node name.
--spec multi_rpc_ann([node()], module(), function(), [any()], timeout())
+-spec multi_rpc_ann([node()], module(), atom(), [any()], timeout())
                    -> [{node(), any()}].
 multi_rpc_ann(Nodes, Mod, Fun, Args, Timeout) ->
     Results = multi_rpc(Nodes, Mod, Fun, Args, Timeout),
@@ -428,7 +478,7 @@ multi_rpc_ann(Nodes, Mod, Fun, Args, Timeout) ->
 %%      of nodes that are down/unreachable. The results will be returned in
 %%      the same order as the input list, and each result is tagged with the
 %%      corresponding node name.
--spec multicall_ann([node()], module(), function(), [any()])
+-spec multicall_ann([node()], module(), atom(), [any()])
                    -> {Results :: [{node(), any()}], Down :: [node()]}.
 multicall_ann(Nodes, Mod, Fun, Args) ->
     multicall_ann(Nodes, Mod, Fun, Args, infinity).
@@ -438,7 +488,7 @@ multicall_ann(Nodes, Mod, Fun, Args) ->
 %%      of nodes that are down/unreachable. The results will be returned in
 %%      the same order as the input list, and each result is tagged with the
 %%      corresponding node name.
--spec multicall_ann([node()], module(), function(), [any()], timeout())
+-spec multicall_ann([node()], module(), atom(), [any()], timeout())
                    -> {Results :: [{node(), any()}], Down :: [node()]}.
 multicall_ann(Nodes, Mod, Fun, Args, Timeout) ->
     L = multi_rpc_ann(Nodes, Mod, Fun, Args, Timeout),
@@ -455,11 +505,12 @@ multicall_ann(Nodes, Mod, Fun, Args, Timeout) ->
 %%      2i and 2i+1. The conversion also supports a "cycles" mode where
 %%      the array is logically wrapped around to ensure leaf nodes also
 %%      have children by giving them backedges to other elements.
+
 -spec build_tree(N :: integer(), Nodes :: [term()], Opts :: [term()])
-                -> orddict:orddict(Node :: term(), Children :: [term()]).
+                -> orddict:orddict().
 build_tree(N, Nodes, Opts) ->
     case lists:member(cycles, Opts) of
-        true -> 
+        true ->
             Expand = lists:flatten(lists:duplicate(N+1, Nodes));
         false ->
             Expand = Nodes
@@ -562,6 +613,23 @@ make_newest_fold_req(#riak_core_fold_req_v1{foldfun=FoldFun, acc0=Acc0}) ->
 make_newest_fold_req(?FOLD_REQ{} = F) ->
     F.
 
+%% @doc Spawn an intermediate proxy process to handle errors during gen_xxx
+%%      calls.
+proxy_spawn(Fun) ->
+    %% Note: using spawn_monitor does not trigger selective receive
+    %%       optimization, but spawn + monitor does. Silly Erlang.
+    Pid = spawn(?MODULE, proxy, [self(), Fun]),
+    MRef = monitor(process, Pid),
+    Pid ! {proxy, MRef},
+    receive
+        {proxy_reply, MRef, Result} ->
+            demonitor(MRef, [flush]),
+            Result;
+        {'DOWN', MRef, _, _, Reason} ->
+            {error, Reason}
+    end.
+
+
 %% @private
 make_fold_reqv(v1, FoldFun, Acc0, _Forwardable, _Opts)
   when is_function(FoldFun, 3) ->
@@ -572,6 +640,17 @@ make_fold_reqv(v2, FoldFun, Acc0, Forwardable, Opts)
        andalso is_list(Opts) ->
     ?FOLD_REQ{foldfun=FoldFun, acc0=Acc0,
               forwardable=Forwardable, opts=Opts}.
+
+%% @private - used with proxy_spawn
+proxy(Parent, Fun) ->
+    _ = monitor(process, Parent),
+    receive
+        {proxy, MRef} ->
+            Result = Fun(),
+            Parent ! {proxy_reply, MRef, Result};
+        {'DOWN', _, _, _, _} ->
+            ok
+    end.
 
 %% ===================================================================
 %% EUnit tests
@@ -655,6 +734,39 @@ incr_counter(CounterPid) ->
 
 decr_counter(CounterPid) ->
     CounterPid ! down.
+
+pmap_test_() ->
+    Fgood = fun(X) -> 2 * X end,
+    Fbad = fun(3) -> throw(die_on_3);
+              (X) -> Fgood(X)
+           end,
+    Lin = [1,2,3,4],
+    Lout = [2,4,6,8],
+    {setup,
+     fun() -> error_logger:tty(false) end,
+     fun(_) -> error_logger:tty(true) end,
+     [fun() ->
+              % Test simple map case
+              ?assertEqual(Lout, pmap(Fgood, Lin)),
+              % Verify a crashing process will not stall pmap
+              Parent = self(),
+              Pid = spawn(fun() ->
+                                  % Caller trapping exits causes stall!!
+                                  % TODO: Consider pmapping in a spawned proc
+                                  % process_flag(trap_exit, true),
+                                  pmap(Fbad, Lin),
+                                  ?debugMsg("pmap finished just fine"),
+                                  Parent ! no_crash_yo
+                          end),
+              MonRef = monitor(process, Pid),
+              receive
+                  {'DOWN', MonRef, _, _, _} ->
+                      ok;
+                  no_crash_yo ->
+                      ?assert(pmap_did_not_crash_as_expected)
+              end
+      end
+     ]}.
 
 bounded_pmap_test_() ->
     Fun1 = fun(X) -> X+2 end,
@@ -740,6 +852,22 @@ make_fold_req_test_() ->
       end
      ]
     }.
+
+proxy_spawn_test() ->
+    A = proxy_spawn(fun() -> a end),
+    ?assertEqual(a, A),
+    B = proxy_spawn(fun() -> exit(killer_fun) end),
+    ?assertEqual({error, killer_fun}, B),
+
+    %% Ensure no errant 'DOWN' messages
+    receive
+        {'DOWN', _, _, _, _}=Msg ->
+            throw({error, {badmsg, Msg}});
+        _ ->
+            ok
+    after 1000 ->
+        ok
+    end.
 
 -endif.
 

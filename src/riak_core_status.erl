@@ -86,7 +86,7 @@ ring_status() ->
 
     %% Check if the claimant is running and if it believes the ring is ready
     Claimant = riak_core_ring:claimant(Ring),
-    case rpc:call(Claimant, riak_core_ring, ring_ready, [], 5000) of
+    case riak_core_util:safe_rpc(Claimant, riak_core_ring, ring_ready, [], 5000) of
         {badrpc, _} ->
             Down2 = lists:usort([Claimant|Down]),
             RingReady = undefined;

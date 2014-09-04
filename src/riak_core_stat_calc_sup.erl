@@ -32,7 +32,7 @@ init([]) ->
     {ok, {{one_for_one, 5, 10}, []}}.
 
 %% start a process for the given stat
-%% @see `riak_core_stat_calc_proc`
+%% {@see riak_core_stat_calc_proc}
 calc_proc(Stat) ->
     Ref = calc_proc_ref(Stat),
     Pid = case supervisor:start_child(?MODULE, Ref) of
@@ -42,8 +42,8 @@ calc_proc(Stat) ->
     Pid.
 
 stop_proc(Stat) ->
-    supervisor:terminate_child(?MODULE, Stat),
-    supervisor:delete_child(?MODULE, Stat),
+    _ = supervisor:terminate_child(?MODULE, Stat),
+    _ = supervisor:delete_child(?MODULE, Stat),
     ok.
 
 %% @private

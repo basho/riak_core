@@ -29,7 +29,7 @@
 
 -export([start_link/0, start_link/1, monitor/3, status/0, status/1, format/0, format/2]).
 -export([default_status_funs/0, raw/2, diff/2, rate/2, kbps/2,
-         socket_status/1, format_socket_stats/2 ]).
+         socket_status/1, format_socket_stats/2]).
 
 %% gen_server callbacks
 -behavior(gen_server).
@@ -76,20 +76,20 @@ start_link(Props) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, Props, []).
 
 monitor(Socket, Tag, Transport) ->
-    gen_server:call(?MODULE, {monitor, Socket, Tag, Transport}).
+    gen_server:call(?MODULE, {monitor, Socket, Tag, Transport}, infinity).
 
 status() ->
-    gen_server:call(?MODULE, status).
+    gen_server:call(?MODULE, status, infinity).
 
 status(Timeout) ->
     gen_server:call(?MODULE, status, Timeout).
 
 socket_status(Socket) ->
-  gen_server:call(?MODULE, {socket_status, Socket}).
+  gen_server:call(?MODULE, {socket_status, Socket}, infinity).
 
 format() ->
     Status = status(),
-    io:fwrite([format(Status, recv_kbps),
+    io:write([format(Status, recv_kbps),
               format(Status, send_kbps)]).
 
 format(Status, Stat) ->
@@ -224,14 +224,14 @@ handle_info({nodedown, Node, _InfoList}, State) ->
     end,
     {noreply, State#state{conns = Conns2}};
 
-handle_info(measurement_tick, State = #state{limit = Limit, stats = Stats,
+handle_info(measurement_tick, State0 = #state{limit = Limit, stats = Stats,
                                              opts = Opts, conns = Conns}) ->
-    schedule_tick(State),
+    State = schedule_tick(State0),
     Fun = fun(Socket, Conn = #conn{type = Type, ts_hist = TSHist, hist = Hist}) when Type /= error ->
                   try
-                      {ok, StatVals} = inet:getstat(Socket, Stats),
+                      {ok, StatVals} = inet:getstat(unwrap_socket(Socket), Stats),
                       TS = os:timestamp(), % read between the two split the difference
-                      {ok, OptVals} = inet:getopts(Socket, Opts),
+                      {ok, OptVals} = safe_getopts(Socket, Opts),
                       Hist2 = update_hist(OptVals, Limit,
                                           update_hist(StatVals, Limit, Hist)),
                       Conn#conn{ts_hist = prepend_trunc(TS, TSHist, Limit),
@@ -251,6 +251,24 @@ handle_info(measurement_tick, State = #state{limit = Limit, stats = Stats,
     {noreply, State#state{conns = gb_trees:map(Fun, Conns)}};
 handle_info({clear, Socket}, State = #state{conns = Conns}) ->
     {noreply, State#state{conns = gb_trees:delete_any(Socket, Conns)}}.
+
+unwrap_socket({sslsocket, Socket, _}) ->
+    unwrap_socket(Socket);
+
+unwrap_socket({gen_tcp, Socket, _}) ->
+    Socket;
+
+unwrap_socket({gen_tcp, Socket}) ->
+    Socket;
+
+unwrap_socket(Socket) ->
+    Socket.
+
+safe_getopts({sslsocket, _, _} = Socket, Opts) ->
+    ssl:getopts(Socket, Opts);
+
+safe_getopts(Socket, Opts) ->
+    inet:getopts(Socket, Opts).
 
 terminate(_Reason, _State) ->
     lager:info("Shutting down TCP Monitor"),
@@ -386,10 +404,7 @@ updown() ->
           end,
         lists:seq(1,10000)),
     receive
-        finished -> ok;
-        {'EXIT', _, normal} -> ok;
-        X -> io:format(user, "Unexpected message received ~p~n", [X]),
-            ?assert(fail)
+        finished -> ok
     end,
     gen_tcp:close(Socket),
     unlink(TCPMonPid),
@@ -397,6 +412,64 @@ updown() ->
     ok.
 
 nodeupdown_test_() ->
-    {timeout, 60, fun updown/0}.
+    %% spawn is here because this test has been known to timeout
+    %% after 60 seconds. Locally, I've never seen it take more than
+    %% two seconds, so I'm inclined to believe it's either a
+    %% race-condition or prior-state related issue. The spawn is an
+    %% attempt at seeing if the failure still occasionally happens
+    {spawn, {timeout, 60, fun updown/0}}.
+
+ssl_test_() ->
+    {timeout, 60, fun() ->
+        ssl:start(),
+        % Set the stat gathering interval to 100ms
+        {ok, TCPMonPid} = riak_core_tcp_mon:start_link([{interval, 100}]),
+        % set up a server to hear us out.
+        {ok, LS} = ssl:listen(0, [{active, true}, binary, {certfile, "../test/site1-cert.pem"}, {keyfile, "../test/site1-key.pem"}]),
+        {ok, {_, Port}} = ssl:sockname(LS),
+        spawn(fun () ->
+            %% server
+            {ok, S} = ssl:transport_accept(LS),
+            ok = ssl:ssl_accept(S),
+            ssl_recv_loop(S)
+        end),
+
+        {ok, Socket} = ssl:connect("localhost", Port, [binary, {active, true}, {certfile, "../test/site2-cert.pem"}, {keyfile, "../test/site2-key.pem"}]),
+        riak_core_tcp_mon:monitor(Socket, "test", ssl),
+        % so we have stats to see
+        lists:foreach(fun(_) ->
+            ssl:send(Socket, <<"TEST">>)
+        end, lists:seq(1, 100)),
+
+        % wait for stats to update
+        timer:sleep(1000),
+
+        Status1 = riak_core_tcp_mon:socket_status(Socket),
+        ?assertNotEqual([], Status1),
+
+        Status2 = riak_core_tcp_mon:status(),
+        Filtered = lists:filter(fun(StatBlock) ->
+            proplists:get_value(socket, StatBlock) =:= Socket
+        end, Status2),
+        ?assertNotEqual([], Filtered),
+        ?assertNotEqual([[{socket, Socket}]], Filtered),
+
+        % clean up my mess
+        ssl:close(Socket),
+        TCPMonPid = whereis(riak_core_tcp_mon),
+        unlink(TCPMonPid),
+        exit(TCPMonPid, kill),
+        ok
+    end}.
+
+ssl_recv_loop(S) ->
+    receive
+        {ssl, S, _Data} ->
+            ssl_recv_loop(S);
+        {ssl_closed, S} ->
+            ok;
+        {ssl_error, S, _Error} ->
+            ok
+    end.
 
 -endif.

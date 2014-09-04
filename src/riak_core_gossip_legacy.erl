@@ -153,7 +153,8 @@ code_change(_OldVsn, State, _Extra) ->
 schedule_next_gossip() ->
     MaxInterval = app_helper:get_env(riak_core, gossip_interval),
     Interval = random:uniform(MaxInterval),
-    timer:apply_after(Interval, gen_server, cast, [?MODULE, gossip_ring]).
+    {ok, _} = timer:apply_after(Interval, gen_server, cast, [?MODULE, gossip_ring]),
+    ok.
 
 claim_until_balanced(Ring) ->
     {WMod, WFun} = app_helper:get_env(riak_core, wants_claim_fun),
@@ -172,7 +173,7 @@ claim_until_balanced(Ring) ->
 remove_from_cluster(ExitingNode) ->
     % Set the remote node to stop claiming.
     % Ignore return of rpc as this should succeed even if node is offline
-    rpc:call(ExitingNode, application, set_env,
+    _ = riak_core_util:safe_rpc(ExitingNode, application, set_env,
              [riak_core, wants_claim_fun, {riak_core_claim, never_wants_claim}]),
 
     % Get a list of indices owned by the ExitingNode...

@@ -38,7 +38,7 @@
 	 terminate/2, code_change/3]).
 -record(state, {idxtab, sup_name, vnode_mod, legacy}).
 
--define(DEFAULT_TIMEOUT, 5000).
+-define(LONG_TIMEOUT, 120*1000).
 
 make_name(VNodeMod,Suffix) -> list_to_atom(atom_to_list(VNodeMod)++Suffix).
 reg_name(VNodeMod) ->  make_name(VNodeMod, "_master").
@@ -120,7 +120,7 @@ command_return_vnode({Index,Node}, Msg, Sender, VMaster) ->
     Req = make_request(Msg, Sender, Index),
     case riak_core_capability:get({riak_core, vnode_routing}, legacy) of
         legacy ->
-            gen_server:call({VMaster, Node}, {return_vnode, Req});
+            gen_server:call({VMaster, Node}, {return_vnode, Req}, ?LONG_TIMEOUT);
         proxy ->
             Mod = vmaster_to_vmod(VMaster),
             riak_core_vnode_proxy:command_return_vnode({Mod,Index,Node}, Req)
@@ -129,22 +129,29 @@ command_return_vnode({Index,Node}, Msg, Sender, VMaster) ->
 %% Send a synchronous command to an individual Index/Node combination.
 %% Will not return until the vnode has returned
 sync_command(IndexNode, Msg, VMaster) ->
-    sync_command(IndexNode, Msg, VMaster, ?DEFAULT_TIMEOUT).
+    sync_command(IndexNode, Msg, VMaster, ?LONG_TIMEOUT).
 
 sync_command({Index,Node}, Msg, VMaster, Timeout) ->
     %% Issue the call to the master, it will update the Sender with
     %% the From for handle_call so that the {reply} return gets
     %% sent here.
-    gen_server:call({VMaster, Node},
-                    make_request(Msg, {server, undefined, undefined}, Index), Timeout).
+    Request = make_request(Msg, {server, undefined, undefined}, Index),
+    case gen_server:call({VMaster, Node}, Request, Timeout) of
+        {vnode_error, {Error, _Args}} -> error(Error);
+        {vnode_error, Error} -> error(Error);
+        Else -> Else
+    end.
 
 %% Send a synchronous spawned command to an individual Index/Node combination.
 %% Will not return until the vnode has returned, but the vnode_master will
 %% continue to handle requests.
 sync_spawn_command({Index,Node}, Msg, VMaster) ->
-    gen_server:call({VMaster, Node},
-                    {spawn, make_request(Msg, {server, undefined, undefined}, Index)},
-                    infinity).
+    Request = make_request(Msg, {server, undefined, undefined}, Index),
+    case gen_server:call({VMaster, Node}, {spawn, Request}, infinity) of
+        {vnode_error, {Error, _Args}} -> error(Error);
+        {vnode_error, Error} -> error(Error);
+        Else -> Else
+    end.
 
 
 %% Make a request record - exported for use by legacy modules
@@ -156,7 +163,7 @@ make_request(Request, Sender, Index) ->
               request=Request}.
 
 %% Make a request record - exported for use by legacy modules
--spec make_coverage_request(vnode_req(), [{partition(), [partition()]}], sender(), partition()) -> #riak_coverage_req_v1{}.
+-spec make_coverage_request(vnode_req(), keyspaces(), sender(), partition()) -> #riak_coverage_req_v1{}.
 make_coverage_request(Request, KeySpaces, Sender, Index) ->
     #riak_coverage_req_v1{index=Index,
                           keyspaces=KeySpaces,
@@ -203,19 +210,12 @@ do_proxy_cast({VMaster, Node}, Req=?COVERAGE_REQ{index=Idx}, How) ->
     Mod = vmaster_to_vmod(VMaster),
     Proxy = riak_core_vnode_proxy:reg_name(Mod, Idx, Node),
     send_an_event(Proxy, Req, How),
-    ok;
-do_proxy_cast({VMaster, Node}, Other, How) ->
-    send_a_cast({VMaster, Node}, Other, How).
+    ok.
 
 send_an_event(Dest, Event, normal) ->
     gen_fsm:send_event(Dest, Event);
 send_an_event(Dest, Event, unreliable) ->
     riak_core_send_msg:send_event_unreliable(Dest, Event).
-
-send_a_cast(Dest, Msg, normal) ->
-    gen_server:cast(Dest, Msg);
-send_a_cast(Dest, Msg, unreliable) ->
-    riak_core_send_msg:cast_unreliable(Dest, Msg).
 
 handle_cast({wait_for_service, Service}, State) ->
     case Service of

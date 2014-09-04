@@ -93,13 +93,13 @@ join(false, _, Node, Rejoin, Auto) ->
     end.
 
 get_other_ring(Node) ->
-    case rpc:call(Node, riak_core_ring_manager, get_my_ring, []) of
+    case riak_core_util:safe_rpc(Node, riak_core_ring_manager, get_my_ring, []) of
         {ok, Ring} ->
             case riak_core_ring:legacy_ring(Ring) of
                 true ->
                     {ok, Ring};
                 false ->
-                    rpc:call(Node, riak_core_ring_manager, get_raw_ring, [])
+                    riak_core_util:safe_rpc(Node, riak_core_ring_manager, get_raw_ring, [])
             end;
         Error ->
             Error
@@ -159,12 +159,14 @@ legacy_join(Node) when is_atom(Node) ->
     {ok, OurRingSize} = application:get_env(riak_core, ring_creation_size),
     case net_adm:ping(Node) of
         pong ->
-            case rpc:call(Node,
+            case riak_core_util:safe_rpc(Node,
                           application,
                           get_env,
                           [riak_core, ring_creation_size]) of
                 {ok, OurRingSize} ->
                     riak_core_gossip:send_ring(Node, node());
+                {badrpc, rpc_process_down} ->
+                    {error, not_reachable};
                 _ ->
                     {error, different_ring_sizes}
             end;
@@ -350,10 +352,15 @@ register(App, [{bucket_validator, ValidationMod}|T]) ->
     register(App, T);
 register(App, [{stat_mod, StatMod}|T]) ->
     register_mod(App, StatMod, stat_mods),
+    register(App, T);
+register(App, [{permissions, Permissions}|T]) ->
+    register_mod(App, Permissions, permissions),
+    register(App, T);
+register(App, [{auth_mod, {AuthType, AuthMod}}|T]) ->
+    register_proplist({AuthType, AuthMod}, auth_mods),
     register(App, T).
 
-
-register_mod(App, Module, Type) when is_atom(Module), is_atom(Type) ->
+register_mod(App, Module, Type) when is_atom(Type) ->
     case Type of
         vnode_modules ->
             riak_core_vnode_proxy_sup:start_proxies(Module);
@@ -378,6 +385,18 @@ register_metadata(App, Value, Type) ->
             application:set_env(riak_core, Type,
                 lists:usort([{App,Value}|Values]))
     end.
+
+register_proplist({Key, Value}, Type) ->
+    case application:get_env(riak_core, Type) of
+        undefined ->
+            application:set_env(riak_core, Type, [{Key, Value}]);
+        {ok, Values} ->
+            application:set_env(riak_core, Type, lists:keystore(Key, 1,
+                                                                Values,
+                                                                {Key, Value}))
+    end.
+
+
 
 %% @spec add_guarded_event_handler(HandlerMod, Handler, Args) -> AddResult
 %%       HandlerMod = module()

@@ -21,6 +21,8 @@
 -module(riak_core_claimant).
 -behaviour(gen_server).
 
+-include("riak_core_bucket_type.hrl").
+
 %% API
 -export([start_link/0]).
 -export([leave_member/1,
@@ -32,7 +34,14 @@
          plan/0,
          commit/0,
          clear/0,
-         ring_changed/2]).
+         ring_changed/2,
+         create_bucket_type/2,
+         update_bucket_type/2,
+         bucket_type_status/1,
+         activate_bucket_type/1,
+         get_bucket_type/2,
+         get_bucket_type/3,
+         bucket_type_iterator/0]).
 -export([reassign_indices/1]). % helpers for claim sim
 
 %% gen_server callbacks
@@ -51,6 +60,7 @@
 -type ring_transition() :: {riak_core_ring(), riak_core_ring()}.
 
 -record(state, {
+          last_ring_id,
           %% The set of staged cluster changes
           changes :: [{node(), action()}],
 
@@ -155,6 +165,59 @@ clear() ->
 ring_changed(Node, Ring) ->
     internal_ring_changed(Node, Ring).
 
+%% @doc {@see riak_core_bucket_type:create/2}
+-spec create_bucket_type(riak_core_bucket_type:bucket_type(), [{atom(), any()}]) ->
+                                ok | {error, term()}.
+create_bucket_type(BucketType, Props) ->
+    gen_server:call(claimant(), {create_bucket_type, BucketType, Props}, infinity).
+
+%% @doc {@see riak_core_bucket_type:status/1}
+-spec bucket_type_status(riak_core_bucket_type:bucket_type()) ->
+                                undefined | created | ready | active.
+bucket_type_status(BucketType) ->
+    gen_server:call(claimant(), {bucket_type_status, BucketType}, infinity).
+
+%% @doc {@see riak_core_bucket_type:activate/1}
+-spec activate_bucket_type(riak_core_bucket_type:bucket_type()) ->
+                                  ok | {error, undefined | not_ready}.
+activate_bucket_type(BucketType) ->
+    gen_server:call(claimant(), {activate_bucket_type, BucketType}, infinity).
+
+%% @doc Lookup the properties for `BucketType'. If there are no properties or
+%% the type is inactive, the given `Default' value is returned.
+-spec get_bucket_type(riak_core_bucket_type:bucket_type(), X) -> [{atom(), any()}] | X.
+get_bucket_type(BucketType, Default) ->
+    get_bucket_type(BucketType, Default, true).
+
+%% @doc Lookup the properties for `BucketType'. If there are no properties or
+%% the type is inactive and `RequireActive' is `true', the given `Default' value is
+%% returned.
+-spec get_bucket_type(riak_core_bucket_type:bucket_type(), X, boolean()) ->
+                             [{atom(), any()}] | X.
+get_bucket_type(BucketType, Default, RequireActive) ->
+    %% we resolve w/ last-write-wins because conflicts only occur
+    %% during creation when the claimant is changed and create on a
+    %% new claimant happens before the original propogates. In this
+    %% case we want the newest create. Updates can also result in
+    %% conflicts so we choose the most recent as well.
+    case riak_core_metadata:get(?BUCKET_TYPE_PREFIX, BucketType,
+                                [{default, Default}]) of
+        Default -> Default;
+        Props -> maybe_filter_inactive_type(RequireActive, Default, Props)
+    end.
+
+%% @doc {@see riak_core_bucket_type:update/2}
+-spec update_bucket_type(riak_core_bucket_type:bucket_type(), [{atom(), any()}]) ->
+                                ok | {error, term()}.
+update_bucket_type(BucketType, Props) ->
+    gen_server:call(claimant(), {update_bucket_type, BucketType, Props}).
+
+%% @doc {@see riak_core_bucket_type:iterator/0}
+-spec bucket_type_iterator() -> riak_core_metadata:iterator().
+bucket_type_iterator() ->
+    riak_core_metadata:iterator(?BUCKET_TYPE_PREFIX, [{default, undefined},
+                                              {resolver, fun riak_core_bucket_props:resolve/2}]).
+
 %%%===================================================================
 %%% Claim sim helpers until refactor
 %%%===================================================================
@@ -172,6 +235,14 @@ stage(Node, Action) ->
 claimant() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     {?MODULE, riak_core_ring:claimant(Ring)}.
+
+maybe_filter_inactive_type(false, _Default, Props) ->
+    Props;
+maybe_filter_inactive_type(true, Default, Props) ->
+    case type_active(Props) of
+        true -> Props;
+        false -> Default
+    end.
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -205,6 +276,40 @@ handle_call(commit, _From, State) ->
     {Reply, State2} = commit_staged(State),
     {reply, Reply, State2};
 
+handle_call({create_bucket_type, BucketType, Props0}, _From, State) ->
+    Existing = get_bucket_type(BucketType, undefined, false),
+    case can_create_type(BucketType, Existing, Props0) of
+        {ok, Props} ->
+            InactiveProps = lists:keystore(active, 1, Props, {active, false}),
+            ClaimedProps = lists:keystore(claimant, 1, InactiveProps, {claimant, node()}),
+            riak_core_metadata:put(?BUCKET_TYPE_PREFIX, BucketType, ClaimedProps),
+            {reply, ok, State};
+        Error ->
+            {reply, Error, State}
+    end;
+
+handle_call({update_bucket_type, BucketType, Props0}, _From, State) ->
+    Existing = get_bucket_type(BucketType, [], false),
+    case can_update_type(BucketType, Existing, Props0) of
+        {ok, Props} ->
+            MergedProps = riak_core_bucket_props:merge(Props, Existing),
+            riak_core_metadata:put(?BUCKET_TYPE_PREFIX, BucketType, MergedProps),
+            {reply, ok, State};
+        Error ->
+            {reply, Error, State}
+    end;
+
+handle_call({bucket_type_status, BucketType}, _From, State) ->
+    Existing = get_bucket_type(BucketType, undefined, false),
+    Reply = get_type_status(BucketType, Existing),
+    {reply, Reply, State};
+
+handle_call({activate_bucket_type, BucketType}, _From, State) ->
+    Existing = get_bucket_type(BucketType, undefined, false),
+    Status = get_type_status(BucketType, Existing),
+    Reply = maybe_activate_type(BucketType, Status, Existing),
+    {reply, Reply, State};
+
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
@@ -214,6 +319,10 @@ handle_cast(_Msg, State) ->
 
 handle_info(tick, State) ->
     State2 = tick(State),
+    {noreply, State2};
+
+handle_info(reset_ring_id, State) ->
+    State2 = State#state{last_ring_id=undefined},
     {noreply, State2};
 
 handle_info(_Info, State) ->
@@ -297,6 +406,8 @@ maybe_commit_staged(Ring, State=#state{changes=Changes, seed=Seed}) ->
     case compute_next_ring(Changes2, Seed, Ring) of
         {legacy, _} ->
             {ignore, legacy};
+        {error, invalid_resize_claim} ->
+            {ignore, invalid_resize_claim};
         {ok, NextRing} ->
             maybe_commit_staged(Ring, NextRing, State)
     end.
@@ -522,13 +633,21 @@ schedule_tick() ->
                               10000),
     erlang:send_after(Tick, ?MODULE, tick).
 
-tick(State) ->
-    maybe_force_ring_update(),
-    schedule_tick(),
-    State.
+tick(State=#state{last_ring_id=LastID}) ->
+    maybe_enable_ensembles(),
+    case riak_core_ring_manager:get_ring_id() of
+        LastID ->
+            schedule_tick(),
+            State;
+        RingID ->
+            {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
+            maybe_bootstrap_root_ensemble(Ring),
+            maybe_force_ring_update(Ring),
+            schedule_tick(),
+            State#state{last_ring_id=RingID}
+    end.
 
-maybe_force_ring_update() ->
-    {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
+maybe_force_ring_update(Ring) ->
     IsClaimant = (riak_core_ring:claimant(Ring) == node()),
     IsReady = riak_core_ring:ring_ready(Ring),
     %% Do not force if we have any joining nodes unless any of them are
@@ -537,12 +656,12 @@ maybe_force_ring_update() ->
                  andalso (auto_joining_nodes(Ring) == [])),
     case IsClaimant and IsReady and (not JoinBlock) of
         true ->
-            maybe_force_ring_update(Ring);
+            do_maybe_force_ring_update(Ring);
         false ->
             ok
     end.
 
-maybe_force_ring_update(Ring) ->
+do_maybe_force_ring_update(Ring) ->
     case compute_next_ring([], erlang:now(), Ring) of
         {ok, NextRing} ->
             case same_plan(Ring, NextRing) of
@@ -555,6 +674,230 @@ maybe_force_ring_update(Ring) ->
         _ ->
             ok
     end.
+
+%% @private
+can_create_type(BucketType, undefined, Props) ->
+    riak_core_bucket_props:validate(create, {BucketType, undefined}, undefined, Props);
+can_create_type(BucketType, Existing, Props) ->
+    Active = type_active(Existing),
+    Claimed = node() =:= type_claimant(Existing),
+    case {Active, Claimed} of
+        %% if type is not active and this claimant has claimed it
+        %% then we can re-create the type.
+        {false, true} -> riak_core_bucket_props:validate(create, {BucketType, undefined},
+                                                         Existing, Props);
+        {true, _} -> {error, already_active};
+        {_, false} -> {error, not_claimed}
+    end.
+
+%% @private
+can_update_type(_BucketType, undefined, _Props) ->
+    {error, undefined};
+can_update_type(BucketType, Existing, Props) ->
+    case type_active(Existing) of
+        true -> riak_core_bucket_props:validate(update, {BucketType, undefined},
+                                                Existing, Props);
+        false -> {error, not_active}
+    end.
+
+%% @private
+get_type_status(_BucketType, undefined) ->
+    undefined;
+get_type_status(BucketType, Props) ->
+    case type_active(Props) of
+        true -> active;
+        false -> get_remote_type_status(BucketType, Props)
+    end.
+
+%% @private
+get_remote_type_status(BucketType, Props) ->
+    {ok, R} = riak_core_ring_manager:get_my_ring(),
+    Members = riak_core_ring:all_members(R),
+    {AllProps, BadNodes} = rpc:multicall(lists:delete(node(), Members),
+                                         riak_core_metadata,
+                                         get, [?BUCKET_TYPE_PREFIX, BucketType, [{default, []}]]),
+    SortedProps = lists:ukeysort(1, Props),
+    %% P may be a {badrpc, ...} in addition to a list of properties when there are older nodes involved
+    DiffProps = [P || P <- AllProps, (not is_list(P) orelse lists:ukeysort(1, P) =/= SortedProps)],
+    case {DiffProps, BadNodes} of
+        {[], []} -> ready;
+        %% unreachable nodes may or may not have correct value, so we assume they dont
+        {_, _} -> created
+    end.
+
+%% @private
+maybe_activate_type(_BucketType, undefined, _Props) ->
+    {error, undefined};
+maybe_activate_type(_BucketType, created, _Props) ->
+    {error, not_ready};
+maybe_activate_type(_BucketType, active, _Props) ->
+    ok;
+maybe_activate_type(BucketType, ready, Props) ->
+    ActiveProps = lists:keystore(active, 1, Props, {active, true}),
+    riak_core_metadata:put(?BUCKET_TYPE_PREFIX, BucketType, ActiveProps).
+
+%% @private
+type_active(Props) ->
+    {active, true} =:= lists:keyfind(active, 1, Props).
+
+%% @private
+type_claimant(Props) ->
+    case lists:keyfind(claimant, 1, Props) of
+        {claimant, Claimant} -> Claimant;
+        false -> undefined
+    end.
+
+%% The consensus subsystem must be enabled by exactly one node in a cluster
+%% via a call to riak_ensemble_manager:enable(). We accomplished this by
+%% having the claimant be that one node. Likewise, we require that the cluster
+%% includes at least three nodes before we enable consensus. This prevents the
+%% claimant in a 1-node cluster from enabling consensus before being joined to
+%% another cluster.
+maybe_enable_ensembles() ->
+    Desired = riak_core_sup:ensembles_enabled(),
+    Enabled = riak_ensemble_manager:enabled(),
+    case Enabled of
+        Desired ->
+            ok;
+        _ ->
+            {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
+            IsReady = riak_core_ring:ring_ready(Ring),
+            IsClaimant = (riak_core_ring:claimant(Ring) == node()),
+            EnoughNodes = (length(riak_core_ring:ready_members(Ring)) >= 3),
+            case IsReady and IsClaimant and EnoughNodes of
+                true ->
+                    enable_ensembles(Ring);
+                false ->
+                    ok
+            end
+    end.
+
+%% We need to avoid a race where the current claimant enables consensus right
+%% before going offline and being replaced by a new claimant. It could be
+%% argued that this corner case is not important since changing the claimant
+%% requires the user manually marking the current claimant as down. But, it's
+%% better to be safe and handle things correctly.
+%%
+%% To solve this issue, the claimant first marks itself as the "ensemble
+%% singleton" in the ring metadata. Once the ring has converged, the claimant
+%% see that it previously marked itself as the singleton and will proceed to
+%% enable the consensus subsystem. If the claimant goes offline after marking
+%% itself the singleton, but before enabling consensus, then future claimants
+%% will be unable to enable consensus. Consensus will be enabled once the
+%% previous claimant comes back online.
+%%
+enable_ensembles(Ring) ->
+    Node = node(),
+    case ensemble_singleton(Ring) of
+        undefined ->
+            become_ensemble_singleton();
+        Node ->
+            %% Ring update is required after enabling consensus to ensure
+            %% that ensembles are properly bootstrapped.
+            riak_ensemble_manager:enable(),
+            riak_core_ring_manager:force_update(),
+            lager:info("Activated consensus subsystem for cluster");
+        _ ->
+            ok
+    end.
+
+ensemble_singleton(Ring) ->
+    case riak_core_ring:get_meta('$ensemble_singleton', Ring) of
+        undefined ->
+            undefined;
+        {ok, Node} ->
+            Members = riak_core_ring:all_members(Ring),
+            case lists:member(Node, Members) of
+                true ->
+                    Node;
+                false ->
+                    undefined
+            end
+    end.
+
+become_ensemble_singleton() ->
+    _ = riak_core_ring_manager:ring_trans(fun become_ensemble_singleton_trans/2,
+                                          undefined),
+    ok.
+
+become_ensemble_singleton_trans(Ring, _) ->
+    IsClaimant = (riak_core_ring:claimant(Ring) == node()),
+    NoSingleton = (ensemble_singleton(Ring) =:= undefined),
+    case IsClaimant and NoSingleton of
+        true ->
+            Ring2 = riak_core_ring:update_meta('$ensemble_singleton', node(), Ring),
+            {new_ring, Ring2};
+        false ->
+            ignore
+    end.
+
+maybe_bootstrap_root_ensemble(Ring) ->
+    IsEnabled = riak_ensemble_manager:enabled(),
+    IsClaimant = (riak_core_ring:claimant(Ring) == node()),
+    IsReady = riak_core_ring:ring_ready(Ring),
+    case IsEnabled and IsClaimant and IsReady of
+        true ->
+            bootstrap_root_ensemble(Ring);
+        false ->
+            ok
+    end.
+
+bootstrap_root_ensemble(Ring) ->
+    bootstrap_members(Ring),
+    ok.
+
+bootstrap_members(Ring) ->
+    Name = riak_core_ring:cluster_name(Ring),
+    Members = riak_core_ring:ready_members(Ring),
+    RootMembers = riak_ensemble_manager:get_members(root),
+    Known = riak_ensemble_manager:cluster(),
+    Need = Members -- Known,
+    L = [riak_core_util:proxy_spawn(
+            fun() -> riak_ensemble_manager:join(node(), Member) end
+        ) || Member <- Need, Member =/= node()],
+    _ = maybe_reset_ring_id(L),
+
+    RootNodes = [Node || {_, Node} <- RootMembers],
+    RootAdd = Members -- RootNodes,
+    RootDel = RootNodes -- Members,
+
+    Res = [riak_core_util:proxy_spawn(
+              fun() -> riak_ensemble_manager:remove(node(), N) end
+           ) || N <- RootDel, N =/= node()],
+    _ = maybe_reset_ring_id(Res),
+
+    Changes =
+        [{add, {Name, Node}} || Node <- RootAdd] ++
+        [{del, {Name, Node}} || Node <- RootDel],
+    case Changes of
+        [] ->
+            ok;
+        _ ->
+            Self = self(),
+            spawn_link(fun() ->
+                               async_bootstrap_members(Self, Changes)
+                       end),
+            ok
+    end.
+
+async_bootstrap_members(Claimant, Changes) ->
+    RootLeader = riak_ensemble_manager:rleader_pid(),
+    case riak_ensemble_peer:update_members(RootLeader, Changes, 10000) of
+        ok ->
+            ok;
+        _ ->
+            reset_ring_id(Claimant),
+            ok
+    end.
+
+maybe_reset_ring_id(Results) ->
+    Failed = [R || R <- Results, R =/= ok],
+    (Failed =:= []) orelse reset_ring_id(self()).
+
+%% Reset last_ring_id, ensuring future tick re-examines the ring even if the
+%% ring has not changed.
+reset_ring_id(Pid) ->
+    Pid ! reset_ring_id.
 
 %% =========================================================================
 %% Claimant rebalance/reassign logic
@@ -767,10 +1110,10 @@ internal_ring_changed(Node, CState) ->
     case {IsClaimant, riak_core_ring:cluster_name(CState5)} of
         {true, undefined} ->
             ClusterName = {Node, erlang:now()},
-            riak_core_util:rpc_every_member(riak_core_ring_manager,
-                                            set_cluster_name,
-                                            [ClusterName],
-                                            1000),
+            {_,_} = riak_core_util:rpc_every_member(riak_core_ring_manager,
+                                                    set_cluster_name,
+                                                    [ClusterName],
+                                                    1000),
             ok;
         _ ->
             ClusterName = riak_core_ring:cluster_name(CState5),
@@ -791,10 +1134,9 @@ inform_removed_nodes(Node, OldRing, NewRing) ->
     Invalid = riak_core_ring:members(NewRing, [invalid]),
     Changed = ordsets:intersection(ordsets:from_list(Exiting),
                                    ordsets:from_list(Invalid)),
-    lists:map(fun(ExitingNode) ->
-                      %% Tell exiting node to shutdown.
-                      riak_core_ring_manager:refresh_ring(ExitingNode, CName)
-              end, Changed),
+    %% Tell exiting node to shutdown.
+    _ = [riak_core_ring_manager:refresh_ring(ExitingNode, CName) ||
+            ExitingNode <- Changed],
     ok.
 
 do_claimant_quiet(Node, CState, Replacing, Seed) ->
@@ -866,14 +1208,22 @@ maybe_remove_exiting(Node, CState) ->
         Node ->
             %% Change exiting nodes to invalid, skipping this node.
             Exiting = riak_core_ring:members(CState, [exiting]) -- [Node],
-            Changed = (Exiting /= []),
+            RootMembers = riak_ensemble_manager:get_members(root),
             CState2 =
                 lists:foldl(fun(ENode, CState0) ->
-                                    ClearedCS =
-                                        riak_core_ring:clear_member_meta(Node, CState0, ENode),
-                                    riak_core_ring:set_member(Node, ClearedCS, ENode,
-                                                              invalid, same_vclock)
+                              L = [N || {_, N} <- RootMembers, N =:= ENode],
+                              case L of
+                                  [] ->
+                                      ClearedCS =
+                                          riak_core_ring:clear_member_meta(Node, CState0, ENode),
+                                      riak_core_ring:set_member(Node, ClearedCS, ENode,
+                                                                invalid, same_vclock);
+                                  _ ->
+                                      reset_ring_id(self()),
+                                      CState0
+                              end
                             end, CState, Exiting),
+            Changed = (CState2 /= CState),
             {Changed, CState2};
         _ ->
             {false, CState}
@@ -956,7 +1306,7 @@ update_ring(CNode, CState, Replacing, Seed, Log, false) ->
     Next3 = rebalance_ring(CNode, CState4),
     Log(debug,{"Pending ownership transfers: ~b~n",
                [length(riak_core_ring:pending_changes(CState4))]}),
-    
+
     %% Remove transfers to/from down nodes
     Next4 = handle_down_nodes(CState4, Next3),
 
@@ -967,7 +1317,7 @@ update_ring(CNode, CState, Replacing, Seed, Log, false) ->
             OldS = ordsets:from_list([{Idx,O,NO} || {Idx,O,NO,_,_} <- Next0]),
             NewS = ordsets:from_list([{Idx,O,NO} || {Idx,O,NO,_,_} <- Next4]),
             Diff = ordsets:subtract(NewS, OldS),
-            [Log(next, NChange) || NChange <- Diff],
+            _ = [Log(next, NChange) || NChange <- Diff],
             ?ROUT("Updating ring :: next3 : ~p~n", [Next4]),
             CState5 = riak_core_ring:set_pending_changes(CState4, Next4),
             CState6 = riak_core_ring:increment_ring_version(CNode, CState5),
@@ -1128,7 +1478,7 @@ remove_node(CState, Node, Status, Replacing, Seed, Log, Indices) ->
                PrevOwner /= NewOwner,
                not lists:member(Idx, RemovedIndices)],
 
-    [Log(reassign, {Idx, NewOwner, CState}) || {Idx, NewOwner} <- Reassign],
+    _ = [Log(reassign, {Idx, NewOwner, CState}) || {Idx, NewOwner} <- Reassign],
 
     %% Unlike rebalance_ring, remove_node can be called when Next is non-empty,
     %% therefore we need to merge the values. Original Next has priority.

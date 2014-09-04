@@ -19,7 +19,6 @@
 -module('riak_core_vnode').
 -behaviour(gen_fsm).
 -include("riak_core_vnode.hrl").
--export([behaviour_info/1]).
 -export([start_link/3,
          start_link/4,
          wait_for_init/1,
@@ -64,23 +63,65 @@
         (R == normal orelse R == shutdown orelse
                                             (is_tuple(R) andalso element(1,R) == shutdown))).
 
--spec behaviour_info(atom()) -> 'undefined' | [{atom(), arity()}].
-behaviour_info(callbacks) ->
-    [{init,1},
-     {handle_command,3},
-     {handle_coverage,4},
-     {handle_exit,3},
-     {handoff_starting,2},
-     {handoff_cancelled,1},
-     {handoff_finished,2},
-     {handle_handoff_command,3},
-     {handle_handoff_data,2},
-     {encode_handoff_item,2},
-     {is_empty,1},
-     {terminate,2},
-     {delete,1}];
-behaviour_info(_Other) ->
-    undefined.
+-export_type([vnode_opt/0, pool_opt/0]).
+
+-type vnode_opt() :: pool_opt().
+-type pool_opt() :: {pool, WorkerModule::module(), PoolSize::pos_integer(), WorkerArgs::[term()]}.
+
+-callback init([partition()]) ->
+    {ok, ModState::term()} |
+    {ok, ModState::term(), [vnode_opt()]} |
+    {error, Reason::term()}.
+
+-callback handle_command(Request::term(), Sender::sender(), ModState::term()) ->
+    continue |
+    {reply, Reply::term(), NewModState::term()} |
+    {noreply, NewModState::term()} |
+    {async, Work::function(), From::sender(), NewModState::term()} |
+    {stop, Reason::term(), NewModState::term()}.
+
+-callback handle_coverage(Request::term(), keyspaces(), Sender::sender(), ModState::term()) ->
+    continue |
+    {reply, Reply::term(), NewModState::term()} |
+    {noreply, NewModState::term()} |
+    {async, Work::function(), From::sender(), NewModState::term()} |
+    {stop, Reason::term(), NewModState::term()}.
+
+-callback handle_exit(pid(), Reason::term(), ModState::term()) ->
+    {noreply, NewModState::term()} |
+    {stop, Reason::term(), NewModState::term()}.
+
+-callback handoff_starting(handoff_dest(), ModState::term()) ->
+    {boolean(), NewModState::term()}.
+
+-callback handoff_cancelled(ModState::term()) ->
+    {ok, NewModState::term()}.
+
+-callback handoff_finished(handoff_dest(), ModState::term()) ->
+    {ok, NewModState::term()}.
+
+-callback handle_handoff_command(Request::term(), Sender::sender(), ModState::term()) ->
+    {reply, Reply::term(), NewModState::term()} |
+    {noreply, NewModState::term()} |
+    {async, Work::function(), From::sender(), NewModState::term()} |
+    {forward, NewModState::term()} |
+    {drop, NewModState::term()} |
+    {stop, Reason::term(), NewModState::term()}.
+
+-callback handle_handoff_data(binary(), ModState::term()) ->
+    {reply, ok | {error, Reason::term()}, NewModState::term()}.
+
+-callback encode_handoff_item(Key::term(), Value::term()) ->
+    corrupted | binary().
+
+-callback is_empty(ModState::term()) ->
+    {boolean(), NewModState::term()} |
+    {false, Size::pos_integer(), NewModState::term()}.
+
+-callback terminate(Reason::term(), ModState::term()) ->
+    ok.
+
+-callback delete(ModState::term()) -> {ok, NewModState::term()}.
 
 %% handle_exit/3 is an optional behaviour callback that can be implemented.
 %% It will be called in the case that a process that is linked to the vnode
@@ -118,8 +159,8 @@ behaviour_info(_Other) ->
           pool_pid :: pid() | undefined,
           pool_config :: tuple() | undefined,
           manager_event_timer :: reference(),
-          inactivity_timeout :: non_neg_integer() 
-               }).
+          inactivity_timeout :: non_neg_integer()
+         }).
 
 start_link(Mod, Index, Forward) ->
     start_link(Mod, Index, 0, Forward).
@@ -205,7 +246,8 @@ do_init(State = #state{index=Index, mod=Mod, forward=Forward}) ->
             State2 = State#state{modstate=ModState, inactivity_timeout=Timeout2,
                                  pool_pid=PoolPid, pool_config=PoolConfig},
             lager:debug("vnode :: ~p/~p :: ~p~n", [Mod, Index, Forward]),
-            {ok, State2}
+            State3 = mod_set_forwarding(Forward, State2),
+            {ok, State3}
     end.
 
 wait_for_init(Vnode) ->
@@ -284,7 +326,8 @@ forward_or_vnode_command(Sender, Request, State=#state{forward=Forward,
         {_, undefined, _} -> vnode_command(Sender, Request, State);
         %% implicit forwarding after ownership_transfer/hinted_handoff
         {_, F, _} when not is_list(F) ->
-            vnode_forward(implicit, {Index, Forward}, Sender, Request, State);
+            vnode_forward(implicit, {Index, Forward}, Sender, Request, State),
+            continue(State);
         %% during resize we can't forward a request w/o request hash, always handle locally
         {_, _, undefined} -> vnode_command(Sender, Request, State);
         %% possible forwarding during ring resizing
@@ -299,7 +342,11 @@ vnode_command(_Sender, _Request, State=#state{modstate={deleted,_}}) ->
 vnode_command(Sender, Request, State=#state{mod=Mod,
                                             modstate=ModState,
                                             pool_pid=Pool}) ->
-    case Mod:handle_command(Request, Sender, ModState) of
+    case catch Mod:handle_command(Request, Sender, ModState) of
+        {'EXIT', ExitReason} ->
+            reply(Sender, {vnode_error, ExitReason}),
+            lager:error("~p command failed ~p", [Mod, ExitReason]),
+            {stop, ExitReason, State#state{modstate=ModState}};
         continue ->
             continue(State, ModState);
         {reply, Reply, NewModState} ->
@@ -378,7 +425,7 @@ vnode_handoff_command(Sender, Request, ForwardTo,
                 %% via forward_or_vnode_command
                 undefined -> vnode_forward(resize, ForwardTo, Sender,
                                            {resize_forward, Request}, State);
-                %% normal explicit forwarding during owhership transfer
+                %% normal explicit forwarding during ownership transfer
                 _ -> vnode_forward(explicit, HOTarget, Sender, Request, State)
             end,
             continue(State, NewModState);
@@ -392,8 +439,7 @@ vnode_forward(Type, ForwardTo, Sender, Request, State) ->
     lager:debug("Forwarding (~p) {~p,~p} -> ~p~n",
                 [Type, State#state.index, node(), ForwardTo]),
     riak_core_vnode_master:command_unreliable(ForwardTo, Request, Sender,
-                                              riak_core_vnode_master:reg_name(State#state.mod)),
-    continue(State).
+                                              riak_core_vnode_master:reg_name(State#state.mod)).
 
 %% @doc during ring resizing if we have completed a transfer to the index that will
 %% handle request in future ring we forward to it. Otherwise we delegate
@@ -591,9 +637,10 @@ finish_handoff(SeenIdxs, State=#state{mod=Mod,
         resize ->
             CurrentForwarding = resize_forwarding(State),
             NewForwarding = [Target | CurrentForwarding],
-            continue(State#state{handoff_target=none,
-                                 handoff_type=undefined,
-                                 forward=NewForwarding});
+            State2 = mod_set_forwarding(NewForwarding, State),
+            continue(State2#state{handoff_target=none,
+                                  handoff_type=undefined,
+                                  forward=NewForwarding});
         Res when Res == forward; Res == shutdown ->
             {_, HN} = Target,
             %% Have to issue the delete now.  Once unregistered the
@@ -607,10 +654,11 @@ finish_handoff(SeenIdxs, State=#state{mod=Mod,
             riak_core_vnode_manager:unregister_vnode(Idx, Mod),
             lager:debug("vnode hn/fwd :: ~p/~p :: ~p -> ~p~n",
                         [State#state.mod, State#state.index, State#state.forward, HN]),
-            continue(State#state{modstate={deleted,NewModState}, % like to fail if used
-                                 handoff_target=none,
-                                 handoff_type=undefined,
-                                 forward=HN})
+            State2 = mod_set_forwarding(HN, State),
+            continue(State2#state{modstate={deleted,NewModState}, % like to fail if used
+                                  handoff_target=none,
+                                  handoff_type=undefined,
+                                  forward=HN})
     end.
 
 maybe_shutdown_pool(#state{pool_pid=Pool}) ->
@@ -656,7 +704,8 @@ handle_event({set_forwarding, undefined}, _StateName,
 handle_event({set_forwarding, ForwardTo}, _StateName, State) ->
     lager:debug("vnode fwd :: ~p/~p :: ~p -> ~p~n",
                 [State#state.mod, State#state.index, State#state.forward, ForwardTo]),
-    continue(State#state{forward=ForwardTo});
+    State2 = mod_set_forwarding(ForwardTo, State),
+    continue(State2#state{forward=ForwardTo});
 handle_event(finish_handoff, _StateName,
              State=#state{modstate={deleted, _ModState}}) ->
     stop_manager_event_timer(State),
@@ -841,7 +890,7 @@ terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState,
                 ok
         end
     catch C:T ->
-        lager:error("Error while shutting down vnode worker pool ~p:~p trace : ~p", 
+        lager:error("Error while shutting down vnode worker pool ~p:~p trace : ~p",
                     [C, T, erlang:get_stacktrace()])
     after
         case ModState of
@@ -903,11 +952,13 @@ start_handoff(HOType, TargetIdx, TargetNode,
                                        handoff_type=HOType,
                                        handoff_target={TargetIdx, TargetNode}});
         {false, Size, NewModState} ->
-            NewState = start_outbound(HOType, TargetIdx, TargetNode, [{size, Size}], State),
-            continue(NewState#state{modstate=NewModState});
+            State2 = State#state{modstate=NewModState},
+            NewState = start_outbound(HOType, TargetIdx, TargetNode, [{size, Size}], State2),
+            continue(NewState);
         {false, NewModState} ->
-            NewState = start_outbound(HOType, TargetIdx, TargetNode, [], State),
-            continue(NewState#state{modstate=NewModState})
+            State2 = State#state{modstate=NewModState},
+            NewState = start_outbound(HOType, TargetIdx, TargetNode, [], State2),
+            continue(NewState)
     end.
 
 
@@ -918,7 +969,8 @@ start_outbound(HOType, TargetIdx, TargetNode, Opts, State=#state{index=Idx,mod=M
                         handoff_type=HOType,
                         handoff_target={TargetIdx, TargetNode}};
         {error,_Reason} ->
-            State
+            {ok, NewModState} = Mod:handoff_cancelled(State#state.modstate),
+            State#state{modstate=NewModState}
     end.
 
 %% @doc Send a reply to a vnode request.  If
@@ -973,7 +1025,8 @@ start_manager_event_timer(Event, State=#state{mod=Mod, index=Idx}) ->
 stop_manager_event_timer(#state{manager_event_timer=undefined}) ->
     ok;
 stop_manager_event_timer(#state{manager_event_timer=T}) ->
-    gen_fsm:cancel_timer(T).
+    _ = gen_fsm:cancel_timer(T),
+    ok.
 
 is_request_forwardable(#riak_core_fold_req_v2{forwardable=false}) ->
     false;
@@ -985,26 +1038,35 @@ is_request_forwardable(_) ->
     %%          v4 and v27 as well as any other vnode request type.
     true.
 
+mod_set_forwarding(Forward, State=#state{mod=Mod, modstate=ModState}) ->
+    case lists:member({set_vnode_forwarding, 2}, Mod:module_info(exports)) of
+        true ->
+            NewModState = Mod:set_vnode_forwarding(Forward, ModState),
+            State#state{modstate=NewModState};
+        false ->
+            State
+    end.
+
 %% ===================================================================
 %% Test API
 %% ===================================================================
 
 -ifdef(TEST).
 
-%% @doc Start the garbage collection server
+%% Start the garbage collection server
 test_link(Mod, Index) ->
     gen_fsm:start_link(?MODULE, [Mod, Index, 0, node()], []).
 
-%% @doc Get the current state of the fsm for testing inspection
+%% Get the current state of the fsm for testing inspection
 -spec current_state(pid()) -> {atom(), #state{}} | {error, term()}.
 current_state(Pid) ->
     gen_fsm:sync_send_all_state_event(Pid, current_state).
 
 pool_death_test() ->
-    meck:new(test_vnode),
+    meck:new(test_vnode, [non_strict, no_link]),
     meck:expect(test_vnode, init, fun(_) -> {ok, [], [{pool, test_pool_mod, 1, []}]} end),
     meck:expect(test_vnode, terminate, fun(_, _) -> normal end),
-    meck:new(test_pool_mod),
+    meck:new(test_pool_mod, [non_strict, no_link]),
     meck:expect(test_pool_mod, init_worker, fun(_, _, _) -> {ok, []} end),
 
     {ok, Pid} = ?MODULE:test_link(test_vnode, 0),

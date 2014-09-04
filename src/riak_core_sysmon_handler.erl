@@ -224,5 +224,5 @@ maybe_collect_garbage(_) ->
 reset_timer(undefined) ->
     erlang:send_after(?INACTIVITY_TIMEOUT, self(), inactivity_timeout);
 reset_timer(TimerRef) ->
-    erlang:cancel_timer(TimerRef),
+    _ = erlang:cancel_timer(TimerRef),
     reset_timer(undefined).

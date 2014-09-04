@@ -25,7 +25,7 @@
 -behaviour(application).
 
 %% Application callbacks
--export([start/2, prep_stop/1, stop/1]).
+-export([start/2, stop/1]).
 
 %% ===================================================================
 %% Application callbacks
@@ -64,18 +64,16 @@ start(_StartType, _StartArgs) ->
 
     %% add these defaults now to supplement the set that may have been
     %% configured in app.config
-    riak_core_bucket:append_bucket_defaults(
-      [{n_val,3},
-       {allow_mult,false},
-       {last_write_wins,false},
-       {precommit, []},
-       {postcommit, []},
-       {chash_keyfun, {riak_core_util, chash_std_keyfun}}]),
+    riak_core_bucket:append_bucket_defaults(riak_core_bucket_type:defaults()),
 
     %% Spin up the supervisor; prune ring files as necessary
     case riak_core_sup:start_link() of
         {ok, Pid} ->
-            riak_core:register(riak_core, [{stat_mod, riak_core_stat}]),
+            riak_core:register(riak_core, [{stat_mod, riak_core_stat},
+                                           {permissions, [get_bucket,
+                                                          set_bucket,
+                                                          get_bucket_type,
+                                                          set_bucket_type]}]),
             ok = riak_core_ring_events:add_guarded_handler(riak_core_ring_handler, []),
 
             riak_core_capability:register({riak_core, vnode_routing},
@@ -93,23 +91,20 @@ start(_StartType, _StartArgs) ->
             riak_core_capability:register({riak_core, fold_req_version},
                                           [v2, v1],
                                           v1),
+            riak_core_capability:register({riak_core, security},
+                                          [true, false],
+                                          false),
+            riak_core_capability:register({riak_core, bucket_types},
+                                          [true, false],
+                                          false),
+            riak_core_capability:register({riak_core, net_ticktime},
+                                          [true, false],
+                                          false),
 
             {ok, Pid};
         {error, Reason} ->
             {error, Reason}
     end.
-
-%% @doc Prepare to stop - called before the supervisor tree is shutdown
-prep_stop(_State) ->
-    try %% wrap with a try/catch - application carries on regardless,
-        %% no error message or logging about the failure otherwise.
-        lager:info("Stopping application riak_core - disabling web services.\n", []),
-        riak_core_sup:stop_webs()
-    catch
-        Type:Reason ->
-            lager:error("Stopping application riak_core - ~p:~p.\n", [Type, Reason])
-    end,
-    stopping.
 
 stop(_State) ->
     lager:info("Stopped  application riak_core.\n", []),

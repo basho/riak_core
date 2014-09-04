@@ -200,7 +200,8 @@ maybe_start_timeout_timer(infinity) ->
 maybe_start_timeout_timer(Bad) when not is_integer(Bad) ->
     maybe_start_timeout_timer(?DEFAULT_TIMEOUT);
 maybe_start_timeout_timer(Timeout) ->
-    gen_fsm:start_timer(Timeout, {timer_expired, Timeout}).
+    gen_fsm:start_timer(Timeout, {timer_expired, Timeout}),
+    ok.
 
 
 %% @private
@@ -259,8 +260,7 @@ waiting_results({{ReqId, VNode}, Results},
                     {next_state, waiting_results, UpdStateData, Timeout}
             end;
         Error ->
-            Mod:finish(Error, ModState),
-            {stop, Error, StateData}
+            Mod:finish(Error, ModState)
     end;
 waiting_results({timeout, _, _}, #state{mod=Mod, mod_state=ModState}) ->
     Mod:finish({error, timeout}, ModState);
