@@ -27,6 +27,7 @@
          register_stats/0, produce_stats/0, vnodeq_stats/0,
 	 register_stats/2,
 	 register_vnode_stats/3, unregister_vnode_stats/2,
+	 vnodeq_stats/1,
 	 prefix/0]).
 
 %% gen_server callbacks
@@ -71,6 +72,9 @@ register_vnode_stats(Module, Index, Pid) ->
 		    { function, exometer, select_count,
 		      [[{ {[P, ?APP, vnodeq, Module, '_'], '_', '_'},
 			  [], [true] }]], value, [value] }, []),
+    exometer:ensure([P, ?APP, vnodeq, Module],
+		    {function, riak_core_stat, vnodeq_stats, [Module],
+		     histogram, default}, []),
     exometer:re_register(
       [P, ?APP, vnodeq, Module, Index],
       { function, erlang, process_info, [Pid, message_queue_len],
@@ -91,7 +95,7 @@ stat_name_(N) -> N.
 %% @spec get_stats() -> proplist()
 %% @doc Get the current aggregation of stats.
 get_stats() ->
-    get_stats(?APP) ++ vnodeq_stats().
+    get_stats(?APP).
 
 get_stats(App) ->
     P = prefix(),
@@ -198,6 +202,9 @@ vnodeq_stats() ->
                                       orddict:append_list(S, [MQL], A)
                               end, orddict:new(), VnodesInfo),
     lists:flatten([vnodeq_aggregate(S, MQLs) || {S, MQLs} <- ServiceInfo]).
+
+vnodeq_stats(Mod) ->
+    [vnodeq_len(Pid) || {_, _, Pid} <- riak_core_vnode_manager:all_vnodes(Mod)].
 
 vnodeq_len(Pid) ->
     try
