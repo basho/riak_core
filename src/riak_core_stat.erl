@@ -27,6 +27,7 @@
          register_stats/0, produce_stats/0, vnodeq_stats/0,
 	 register_stats/2,
 	 register_vnode_stats/3, unregister_vnode_stats/2,
+	 vnodeq_stats/1,
 	 prefix/0]).
 
 %% gen_server callbacks
@@ -71,6 +72,9 @@ register_vnode_stats(Module, Index, Pid) ->
 		    { function, exometer, select_count,
 		      [[{ {[P, ?APP, vnodeq, Module, '_'], '_', '_'},
 			  [], [true] }]], value, [value] }, []),
+    exometer:ensure([P, ?APP, vnodeq, Module],
+		    {function, riak_core_stat, vnodeq_stats, [Module],
+		     histogram, default}, []),
     exometer:re_register(
       [P, ?APP, vnodeq, Module, Index],
       { function, erlang, process_info, [Pid, message_queue_len],
@@ -91,7 +95,7 @@ stat_name_(N) -> N.
 %% @spec get_stats() -> proplist()
 %% @doc Get the current aggregation of stats.
 get_stats() ->
-    get_stats(?APP) ++ vnodeq_stats().
+    get_stats(?APP).
 
 get_stats(App) ->
     P = prefix(),
@@ -200,6 +204,9 @@ vnodeq_stats() ->
                               end, orddict:new(), VnodesInfo),
     lists:flatten([vnodeq_aggregate(S, MQLs) || {S, MQLs} <- ServiceInfo]).
 
+vnodeq_stats(Mod) ->
+    [vnodeq_len(Pid) || {_, _, Pid} <- riak_core_vnode_manager:all_vnodes(Mod)].
+
 vnodeq_len(Pid) ->
     try
         element(2, erlang:process_info(Pid, message_queue_len))
@@ -238,36 +245,36 @@ vnodeq_aggregate_empty_test() ->
 
 vnodeq_aggregate_odd1_test() ->
     P = prefix(),
-    ?assertEqual([{[P, riak_core, service_vnodes_running], 1},
+    ?assertEqual([{[P, riak_core, service_vnodes_running], [{value, 1}]},
                   {[P, riak_core, service_vnodeq],
 		   [{min, 10}, {median, 10}, {mean, 10}, {max, 10}, {total, 10}]}],
                  vnodeq_aggregate(service_vnode, [10])).
 
 vnodeq_aggregate_odd3_test() ->
     P = prefix(),
-    ?assertEqual([{[P, riak_core, service_vnodes_running], 3},
+    ?assertEqual([{[P, riak_core, service_vnodes_running], [{value, 3}]},
                   {[P, riak_core, service_vnodeq],
 		   [{min, 1}, {median, 2}, {mean, 2}, {max, 3}, {total, 6}]}],
                  vnodeq_aggregate(service_vnode, [1, 2, 3])).
 
 vnodeq_aggregate_odd5_test() ->
     P = prefix(),
-    ?assertEqual([{[P, riak_core, service_vnodes_running], 5},
+    ?assertEqual([{[P, riak_core, service_vnodes_running], [{value, 5}]},
                   {[P, riak_core, service_vnodeq],
 		   [{min, 0}, {median, 1}, {mean, 2}, {max, 5}, {total, 10}]}],
                  vnodeq_aggregate(service_vnode, [1, 0, 5, 0, 4])).
 
 vnodeq_aggregate_even2_test() ->
     P = prefix(),
-    ?assertEqual([{[P, riak_core, service_vnodes_running], 2},
+    ?assertEqual([{[P, riak_core, service_vnodes_running], [{value, 2}]},
                   {[P, riak_core, service_vnodeq],
 		   [{min, 10}, {median, 15}, {mean, 15}, {max, 20}, {total, 30}]}],
                  vnodeq_aggregate(service_vnode, [10, 20])).
 
 vnodeq_aggregate_even4_test() ->
     P = prefix(),
-    ?assertEqual([{[P, riak_core, service_vnodes_running], 4},
-                  {[P, riak_core, service_vnodeq]
+    ?assertEqual([{[P, riak_core, service_vnodes_running], [{value, 4}]},
+                  {[P, riak_core, service_vnodeq],
 		   [{min, 0}, {median, 5}, {mean, 7}, {max, 20}, {total, 30}]}],
                  vnodeq_aggregate(service_vnode, [0, 10, 0, 20])).
 

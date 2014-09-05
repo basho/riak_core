@@ -30,7 +30,7 @@ start_link() ->
 
 init([]) ->
     Children = [stat_server(Mod) || {_App, Mod} <- riak_core:stat_mods()],
-    {ok, {{one_for_one, 5, 10}, [?CHILD(riak_core_stat_cache, worker)|Children]}}.
+    {ok, {{one_for_one, 5, 10}, Children}}.
 
 start_server(Mod) ->
     Ref = stat_server(Mod),
