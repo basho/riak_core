@@ -106,6 +106,7 @@
          new/3,
          insert/3,
          insert/4,
+         estimate_keys/1,
          delete/2,
          update_tree/1,
          update_snapshot/1,
@@ -151,6 +152,9 @@
 -define(WIDTH, 1024).
 -define(MEM_LEVELS, 0).
 
+-define(NUM_KEYS_REQUIRED, 1000).
+-define(MAX_NUM_SEGMENTS, 10000).
+
 -type tree_id_bin() :: <<_:176>>.
 -type segment_bin() :: <<_:256, _:_*8>>.
 -type bucket_bin()  :: <<_:320>>.
@@ -162,7 +166,7 @@
 
 -type keydiff() :: {missing | remote_missing | different, binary()}.
 
--type remote_fun() :: fun((get_bucket | key_hashes | init | final,
+-type remote_fun() :: fun((get_bucket | key_hashes | start_exchange_level | start_exchange_segments | init | final,
                            {integer(), integer()} | integer() | term()) -> any()).
 
 -type acc_fun(Acc) :: fun(([keydiff()], Acc) -> Acc).
@@ -427,6 +431,20 @@ read_meta(Key, State) when is_binary(Key) ->
         _ ->
             undefined
     end.
+
+-spec estimate_keys(hashtree()) -> {ok, integer()}.
+estimate_keys(State) ->
+    estimate_keys(State, 0, 0, ?NUM_KEYS_REQUIRED).
+
+estimate_keys(_State, ?MAX_NUM_SEGMENTS, Keys, _MaxKeys) ->
+    {ok, Keys*(?NUM_SEGMENTS div ?MAX_NUM_SEGMENTS)};
+
+estimate_keys(_State, CurrentSegment, Keys, MaxKeys) when Keys >= MaxKeys ->
+    {ok, (Keys * ?NUM_SEGMENTS) div (CurrentSegment + 1)};
+
+estimate_keys(State, CurrentSegment, Keys, MaxKeys) ->
+    [{_, KeyHashes2}] = key_hashes(State, CurrentSegment),
+    estimate_keys(State, CurrentSegment + 1, Keys + length(KeyHashes2), MaxKeys).
 
 -spec key_hashes(hashtree(), integer()) -> [{integer(), orddict()}].
 key_hashes(State, Segment) ->
@@ -1137,7 +1155,7 @@ local_compare(T1, T2) ->
                      [{_, KeyHashes2}] = key_hashes(T2, Segment),
                      KeyHashes2
              end,
-    AccFun = fun(Keys, KeyAcc) ->
+    AccFun = fun(Keys, KeyAcc, _Segment) ->
                      Keys ++ KeyAcc
              end,
     compare2(T1, Remote, AccFun, []).
@@ -1296,5 +1314,25 @@ prop_correct() ->
                         destroy(B0),
                         true
                     end)).
+
+est_prop() ->
+    %% It's hard to estimate under 10000 keys
+    ?FORALL(N, choose(10000, 500000),
+            begin
+                {ok, EstKeys} = estimate_keys(update_tree(insert_many(N, new()))),
+                Diff = abs(N - EstKeys),
+                MaxDiff = N div 5,
+                ?debugVal(Diff), ?debugVal(EstKeys),?debugVal(MaxDiff),
+                ?assertEqual(true, MaxDiff > Diff),
+                true
+            end).
+
+est_test_() ->
+    {spawn,
+     {timeout, 240,
+      fun() ->
+              ?assert(eqc:quickcheck(eqc:testing_time(10, est_prop())))
+      end
+     }}.
 
 -endif.
