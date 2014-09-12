@@ -153,7 +153,6 @@
 -define(MEM_LEVELS, 0).
 
 -define(NUM_KEYS_REQUIRED, 1000).
--define(MAX_NUM_SEGMENTS, 10000).
 
 -type tree_id_bin() :: <<_:176>>.
 -type segment_bin() :: <<_:256, _:_*8>>.
@@ -436,11 +435,12 @@ read_meta(Key, State) when is_binary(Key) ->
 estimate_keys(State) ->
     estimate_keys(State, 0, 0, ?NUM_KEYS_REQUIRED).
 
-estimate_keys(_State, ?MAX_NUM_SEGMENTS, Keys, _MaxKeys) ->
-    {ok, Keys*(?NUM_SEGMENTS div ?MAX_NUM_SEGMENTS)};
+estimate_keys(#state{segments=Segments}, CurrentSegment, Keys, _MaxKeys)
+  when (CurrentSegment * 100) >= Segments ->
+    {ok, Keys*(Segments div CurrentSegment)};
 
-estimate_keys(_State, CurrentSegment, Keys, MaxKeys) when Keys >= MaxKeys ->
-    {ok, (Keys * ?NUM_SEGMENTS) div (CurrentSegment + 1)};
+estimate_keys(#state{segments=Segments}, CurrentSegment, Keys, MaxKeys) when Keys >= MaxKeys ->
+    {ok, (Keys * Segments) div (CurrentSegment + 1)};
 
 estimate_keys(State, CurrentSegment, Keys, MaxKeys) ->
     [{_, KeyHashes2}] = key_hashes(State, CurrentSegment),
