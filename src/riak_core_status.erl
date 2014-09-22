@@ -23,7 +23,28 @@
 -export([ringready/0,
          all_active_transfers/0,
          transfers/0,
+	 transfer_limit/0,
+	 transfer_limit/1,
          ring_status/0]).
+
+%% Status writer API
+-export([parse/3]).
+
+-include("riak_core_status_types.hrl").
+
+-spec parse(status(), fun(), Acc0 :: term()) -> term().
+parse([], Fun, Acc) ->
+    Fun(done, Acc);
+%% Alert is currently the only non-leaf element
+parse([{alert, Elem} | T], Fun, Acc) ->
+    Acc1 = Fun(alert, Acc),
+    Acc2 = parse(Elem, Fun, Acc1),
+    Acc3 = Fun(alert_done, Acc2),
+    parse(T, Fun, Acc3);
+%% Leaf elements
+parse([Elem | T], Fun, Acc) ->
+    Acc1 = Fun(Elem, Acc),
+    parse(T, Fun, Acc1).
 
 -spec(ringready() -> {ok, [atom()]} | {error, any()}).
 ringready() ->
@@ -31,18 +52,46 @@ ringready() ->
         {[], Rings} ->
             {N1,R1}=hd(Rings),
             case rings_match(hash_ring(R1), tl(Rings)) of
-                true ->
-                    Nodes = [N || {N,_} <- Rings],
-                    {ok, Nodes};
-
+		true ->
+		    Nodes = [N || {N,_} <- Rings],
+		    {ok, Nodes};
                 {false, N2} ->
-                    {error, {different_owners, N1, N2}}
+		    {error, {different_owners, N1, N2}}
             end;
-
         {Down, _Rings} ->
-            {error, {nodes_down, Down}}
+	    {error, {nodes_down, Down}}
     end.
 
+-spec transfer_limit() -> status().
+transfer_limit() ->
+    {Limits, Down} =
+        riak_core_util:rpc_every_member_ann(riak_core_handoff_manager,
+                                            get_concurrency, [], 5000),
+    transfer_limit_status(Limits, Down).
+
+-spec transfer_limit(node()) -> status().
+transfer_limit(Node) ->
+    case riak_core_util:safe_rpc(Node, riak_core_handoff_manager,
+				 get_concurrency, [], 5000) of
+	{badrpc, rpc_process_down} ->
+	    transfer_limit_status([], [Node]);
+	Limit ->
+	    transfer_limit_status([{Node, Limit}], [])
+    end.
+
+-spec transfer_limit_status([{node(), non_neg_integer()}], [node()]) ->
+    status().
+transfer_limit_status(Limits, Down) ->
+    Schema = [node, limit],
+    Rows = [[Node, Limit] || {Node, Limit} <- Limits],
+    Table = {table, Schema, Rows},
+    case Down of 
+	[] ->
+	    [Table];
+	_ ->
+	    NodesDown = {alert, [{column, "(offline)", Down}]},
+	    [Table, NodesDown]
+    end.
 
 -spec(transfers() -> {[atom()], [{waiting_to_handoff, atom(), integer()} |
                                  {stopped, atom(), integer()}]}).

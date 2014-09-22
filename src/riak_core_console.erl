@@ -30,6 +30,29 @@
          print_groups/1, print_group/1, print_grants/1,
          security_enable/1, security_disable/1, security_status/1, ciphers/1]).
 
+%% New API to be used by riak-admin transfers <X>
+-export([transfers_limit/0, transfers_limit/1]).
+
+%% @doc The following functions in this section are new commands intended to be
+%% visible in riak-admin transfer X commands. They are detailed in this RFC:
+%% https://docs.google.com/a/basho.com/document/d/1Qjbj6p4cppAxBkwp5yAnChVnBt8-J7HQXDKF879QaLQ
+%% Eventually they will replace the current riak-admin transfers command, but
+%% for now they are only accessible from the erlang shell.
+%% ============================================================================ 
+transfers_limit() ->
+    Status = riak_core_status:transfer_limit(),
+    print_transfers_limit(Status).
+
+transfers_limit(Node) ->
+    Status = riak_core_status:transfer_limit(Node),
+    print_transfers_limit(Status).
+
+print_transfers_limit(Status) ->
+    Output = riak_core_console_writer:write(Status),
+    io:format("~s", [Output]),
+    ok.
+%% ============================================================================ 
+
 %% @doc Return for a given ring and node, percentage currently owned and
 %% anticipated after the transitions have been completed.
 pending_claim_percentage(Ring, Node) ->
