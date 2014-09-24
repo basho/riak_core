@@ -43,7 +43,7 @@ idx_to_id(CHashKey, Ring) when is_binary(CHashKey), is_tuple(Ring)->
 idx_to_id(CHashInt, Ring) when is_tuple(Ring) ->
     PartitionCount = riak_core_ring:num_partitions(Ring),
     idx_to_id(CHashInt, PartitionCount);
-idx_to_id(CHashInt, RingSize) when CHashInt rem RingSize =/= 0 ->
+idx_to_id(CHashInt, RingSize) when CHashInt < 0; CHashInt rem RingSize =/= 0 ->
     invalid_idx;
 idx_to_id(CHashInt, RingSize) ->
     CHashInt div chash:ring_increment(RingSize).
@@ -52,7 +52,7 @@ idx_to_id(CHashInt, RingSize) ->
                        chash:index_as_int() | 'invalid_id'.
 id_to_idx(Id, Ring) when is_tuple(Ring) ->
     id_to_idx(Id, riak_core_ring:num_partitions(Ring));
-id_to_idx(Id, RingSize) when Id >= RingSize ->
+id_to_idx(Id, RingSize) when Id < 0; Id >= RingSize ->
     invalid_id;
 id_to_idx(Id, RingSize) ->
     Id * chash:ring_increment(RingSize).
