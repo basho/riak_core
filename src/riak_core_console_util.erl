@@ -46,7 +46,7 @@ idx_to_id(CHashInt, Ring) when is_tuple(Ring) ->
 idx_to_id(CHashInt, RingSize) when CHashInt rem RingSize =/= 0 ->
     invalid_idx;
 idx_to_id(CHashInt, RingSize) ->
-    CHashInt div RingSize.
+    CHashInt div chash:ring_increment(RingSize).
 
 -spec id_to_idx(partition_id(), riak_core_ring:riak_core_ring() | pos_integer()) ->
                        chash:index_as_int() | 'invalid_id'.
