@@ -31,8 +31,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
-%% @type Integer representing a partition: [0, ring_size)
--type partition_id() :: non_neg_integer().
+-type partition_id() :: non_neg_integer(). %% Integer representing a partition: [0, ring_size)
 
 -spec idx_to_id(chash:index() | chash:index_as_int(),
                 riak_core_ring:riak_core_ring() | pos_integer()) ->
