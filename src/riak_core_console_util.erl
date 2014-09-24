@@ -35,35 +35,26 @@
 -type partition_id() :: non_neg_integer().
 
 -spec idx_to_id(chash:index() | chash:index_as_int(),
-                riak_core_ring:riak_core_ring()) ->
+                riak_core_ring:riak_core_ring() | pos_integer()) ->
                        partition_id() | 'invalid_idx'.
-idx_to_id(CHashKey, Ring) when is_binary(CHashKey) ->
+idx_to_id(CHashKey, Ring) when is_binary(CHashKey), is_tuple(Ring)->
     <<CHashInt:160/integer>> = CHashKey,
     idx_to_id(CHashInt, Ring);
-idx_to_id(CHashInt, Ring) ->
+idx_to_id(CHashInt, Ring) when is_tuple(Ring) ->
     PartitionCount = riak_core_ring:num_partitions(Ring),
-    idx_to_id_aux(CHashInt, PartitionCount).
-
-%% @private
-%% This is defined for human-readable output only. If we're given an
-%% index that doesn't map exactly to the first key in a partition,
-%% something has gone wrong, and return `invalid_idx'.
--spec idx_to_id_aux(chash:index_as_int(), pos_integer()) ->
-                           partition_id() | 'invalid_idx'.
-idx_to_id_aux(CHashInt, RingSize) when CHashInt rem RingSize =/= 0 ->
+    idx_to_id(CHashInt, PartitionCount);
+idx_to_id(CHashInt, RingSize) when CHashInt rem RingSize =/= 0 ->
     invalid_idx;
-idx_to_id_aux(CHashInt, RingSize) ->
+idx_to_id(CHashInt, RingSize) ->
     CHashInt div RingSize.
 
--spec id_to_idx(partition_id(), riak_core_ring:riak_core_ring()) ->
+-spec id_to_idx(partition_id(), riak_core_ring:riak_core_ring() | pos_integer()) ->
                        chash:index_as_int() | 'invalid_id'.
-id_to_idx(Id, Ring) ->
-    id_to_idx_aux(Id, riak_core_ring:num_partitions(Ring)).
-
-%% @private
-id_to_idx_aux(Id, RingSize) when Id >= RingSize ->
+id_to_idx(Id, Ring) when is_tuple(Ring) ->
+    id_to_idx(Id, riak_core_ring:num_partitions(Ring));
+id_to_idx(Id, RingSize) when Id >= RingSize ->
     invalid_id;
-id_to_idx_aux(Id, RingSize) ->
+id_to_idx(Id, RingSize) ->
     Id * chash:ring_increment(RingSize).
 
 %% ===================================================================
