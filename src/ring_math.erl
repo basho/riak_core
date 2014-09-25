@@ -40,7 +40,7 @@ hash_to_partition_id(CHashKey, Ring) when is_binary(CHashKey), is_tuple(Ring)->
 hash_to_partition_id(CHashInt, Ring) when is_tuple(Ring) ->
     PartitionCount = riak_core_ring:num_partitions(Ring),
     hash_to_partition_id(CHashInt, PartitionCount);
-hash_to_partition_id(CHashInt, RingSize) when CHashInt < 0 ->
+hash_to_partition_id(CHashInt, _RingSize) when CHashInt < 0 ->
     throw(invalid_hash);
 hash_to_partition_id(CHashInt, RingSize) ->
     CHashInt div chash:ring_increment(RingSize).
@@ -60,7 +60,7 @@ hash_is_partition_boundary(CHashKey, Ring) when is_binary(CHashKey), is_tuple(Ri
 hash_is_partition_boundary(CHashInt, Ring) when is_tuple(Ring) ->
     PartitionCount = riak_core_ring:num_partitions(Ring),
     hash_is_partition_boundary(CHashInt, PartitionCount);
-hash_is_partition_boundary(CHashInt, RingSize) when CHashInt < 0 ->
+hash_is_partition_boundary(CHashInt, _RingSize) when CHashInt < 0 ->
     throw(invalid_hash);
 hash_is_partition_boundary(CHashInt, RingSize) when CHashInt rem RingSize =/= 0 ->
     false;
