@@ -54,6 +54,10 @@ partition_id_to_hash(Id, RingSize) when Id < 0; Id >= RingSize ->
 partition_id_to_hash(Id, RingSize) ->
     Id * chash:ring_increment(RingSize).
 
+
+-spec hash_is_partition_boundary(chash:index() | chash:index_as_int(),
+                                 riak_core_ring:riak_core_ring() | pos_integer()) ->
+                                        boolean().
 hash_is_partition_boundary(CHashKey, Ring) when is_binary(CHashKey), is_tuple(Ring)->
     <<CHashInt:160/integer>> = CHashKey,
     hash_is_partition_boundary(CHashInt, Ring);
