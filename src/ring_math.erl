@@ -20,8 +20,6 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc riak_core_console_util provides helper functions for blah blah blah
-
 -module(ring_math).
 
 -export([hash_to_partition_id/2, partition_id_to_hash/2, hash_is_partition_boundary/2]).
