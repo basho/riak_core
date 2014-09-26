@@ -37,6 +37,9 @@
 hash_to_partition_id(CHashKey, Ring) when is_binary(CHashKey), is_tuple(Ring)->
     <<CHashInt:160/integer>> = CHashKey,
     hash_to_partition_id(CHashInt, Ring);
+hash_to_partition_id(CHashKey, RingSize) when is_binary(CHashKey), is_integer(RingSize)->
+    <<CHashInt:160/integer>> = CHashKey,
+    hash_to_partition_id(CHashInt, RingSize);
 hash_to_partition_id(CHashInt, Ring) when is_tuple(Ring) ->
     PartitionCount = riak_core_ring:num_partitions(Ring),
     hash_to_partition_id(CHashInt, PartitionCount);
@@ -76,5 +79,16 @@ hash_is_partition_boundary(_CHashInt, _RingSize) ->
 %% EUnit tests
 %% ===================================================================
 -ifdef(TEST).
+reverse_test() ->
+    IntIndex = ring_math:partition_id_to_hash(31, 32),
+    HashIndex = <<IntIndex:160>>,
+    ?assertEqual(31, ring_math:hash_to_partition_id(HashIndex, 32)),
+    ?assertEqual(0, ring_math:hash_to_partition_id(<<0:160>>, 32)).
+
+throw_test() ->
+    ?assertThrow(invalid_hash, ring_math:hash_to_partition_id(-1, 32)),
+    ?assertThrow(invalid_partition_id, ring_math:partition_id_to_hash(-1, 32)),
+    ?assertThrow(invalid_partition_id, ring_math:partition_id_to_hash(32, 32)),
+    ?assertThrow(invalid_hash, ring_math:hash_is_partition_boundary(-5, 32)).
 
 -endif.
