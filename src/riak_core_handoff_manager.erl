@@ -236,7 +236,7 @@ handle_call({reschedule, ModSrcTgt, Reason}, _From, State=#state{handoffs=HS}) -
         HO ->
             HO2 = HO#handoff_status{status={rescheduled, Reason}},
             HS2 = lists:keyreplace(ModSrcTgt, #handoff_status.mod_src_tgt, HS, HO2),
-            erlang:kill(HO#handoff_status.transport_pid, {shutdown, normal}),
+            erlang:exit(HO#handoff_status.transport_pid, {shutdown, normal}),
             {reply, ok, State#state{handoffs=HS2}}
     end.
 
