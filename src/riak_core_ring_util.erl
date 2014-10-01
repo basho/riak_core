@@ -126,36 +126,36 @@ hash_is_partition_boundary(_CHashInt, _RingSize) ->
 
 %% Partition boundaries are reversable.
 reverse_test() ->
-    IntIndex = ring_math:partition_id_to_hash(31, 32),
+    IntIndex = riak_core_ring_util:partition_id_to_hash(31, 32),
     HashIndex = <<IntIndex:160>>,
     Ring = riak_core_ring:fresh(32, test_dummy),
-    ?assertEqual(31, ring_math:hash_to_partition_id(HashIndex, 32)),
-    ?assertEqual(0, ring_math:hash_to_partition_id(<<0:160>>, 32)),
-    ?assertEqual(31, ring_math:hash_to_partition_id(HashIndex, Ring)),
-    ?assertEqual(0, ring_math:hash_to_partition_id(<<0:160>>, Ring)).
+    ?assertEqual(31, riak_core_ring_util:hash_to_partition_id(HashIndex, 32)),
+    ?assertEqual(0, riak_core_ring_util:hash_to_partition_id(<<0:160>>, 32)),
+    ?assertEqual(31, riak_core_ring_util:hash_to_partition_id(HashIndex, Ring)),
+    ?assertEqual(0, riak_core_ring_util:hash_to_partition_id(<<0:160>>, Ring)).
 
 %% Index values somewhere in the middle of a partition can be mapped
 %% to partition IDs.
 partition_test() ->
-    IntIndex = ring_math:partition_id_to_hash(20, 32) +
+    IntIndex = riak_core_ring_util:partition_id_to_hash(20, 32) +
         chash:ring_increment(32) div 3,
     HashIndex = <<IntIndex:160>>,
     Ring = riak_core_ring:fresh(32, test_dummy),
-    ?assertEqual(20, ring_math:hash_to_partition_id(IntIndex, 32)),
-    ?assertEqual(20, ring_math:hash_to_partition_id(HashIndex, 32)),
-    ?assertEqual(20, ring_math:hash_to_partition_id(IntIndex, Ring)),
-    ?assertEqual(20, ring_math:hash_to_partition_id(HashIndex, Ring)).
+    ?assertEqual(20, riak_core_ring_util:hash_to_partition_id(IntIndex, 32)),
+    ?assertEqual(20, riak_core_ring_util:hash_to_partition_id(HashIndex, 32)),
+    ?assertEqual(20, riak_core_ring_util:hash_to_partition_id(IntIndex, Ring)),
+    ?assertEqual(20, riak_core_ring_util:hash_to_partition_id(HashIndex, Ring)).
 
 %% Index integers outside [0, ring_size) result in exceptions
 throw_test() ->
     Ring = riak_core_ring:fresh(32, test_dummy),
-    ?assertThrow(invalid_hash, ring_math:hash_to_partition_id(-1, 32)),
-    ?assertThrow(invalid_partition_id, ring_math:partition_id_to_hash(-1, 32)),
-    ?assertThrow(invalid_partition_id, ring_math:partition_id_to_hash(32, 32)),
-    ?assertThrow(invalid_hash, ring_math:hash_is_partition_boundary(-5, 32)),
-    ?assertThrow(invalid_hash, ring_math:hash_to_partition_id(-1, Ring)),
-    ?assertThrow(invalid_partition_id, ring_math:partition_id_to_hash(-1, Ring)),
-    ?assertThrow(invalid_partition_id, ring_math:partition_id_to_hash(32, Ring)),
-    ?assertThrow(invalid_hash, ring_math:hash_is_partition_boundary(-5, Ring)).
+    ?assertThrow(invalid_hash, riak_core_ring_util:hash_to_partition_id(-1, 32)),
+    ?assertThrow(invalid_partition_id, riak_core_ring_util:partition_id_to_hash(-1, 32)),
+    ?assertThrow(invalid_partition_id, riak_core_ring_util:partition_id_to_hash(32, 32)),
+    ?assertThrow(invalid_hash, riak_core_ring_util:hash_is_partition_boundary(-5, 32)),
+    ?assertThrow(invalid_hash, riak_core_ring_util:hash_to_partition_id(-1, Ring)),
+    ?assertThrow(invalid_partition_id, riak_core_ring_util:partition_id_to_hash(-1, Ring)),
+    ?assertThrow(invalid_partition_id, riak_core_ring_util:partition_id_to_hash(32, Ring)),
+    ?assertThrow(invalid_hash, riak_core_ring_util:hash_is_partition_boundary(-5, Ring)).
 
 -endif.
