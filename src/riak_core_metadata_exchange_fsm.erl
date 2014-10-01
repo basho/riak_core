@@ -248,7 +248,7 @@ merge(Peer, PKey, LocalObj) ->
     riak_core_metadata_manager:merge(Peer, {PKey, undefined}, LocalObj).
 
 
-%% @privarte
+%% @private
 repair_iterator(local, _, Prefix) when is_atom(Prefix) orelse is_binary(Prefix) ->
     riak_core_metadata_manager:iterator(Prefix);
 repair_iterator(local, _, Prefix) when is_tuple(Prefix) ->
