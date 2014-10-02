@@ -108,15 +108,16 @@ partition_id_to_hash(Id, RingSize) ->
 hash_is_partition_boundary(CHashKey, Ring) when is_binary(CHashKey), is_tuple(Ring)->
     <<CHashInt:160/integer>> = CHashKey,
     hash_is_partition_boundary(CHashInt, Ring);
+hash_is_partition_boundary(CHashKey, RingSize) when is_binary(CHashKey) ->
+    <<CHashInt:160/integer>> = CHashKey,
+    hash_is_partition_boundary(CHashInt, RingSize);
 hash_is_partition_boundary(CHashInt, Ring) when is_tuple(Ring) ->
     PartitionCount = riak_core_ring:num_partitions(Ring),
     hash_is_partition_boundary(CHashInt, PartitionCount);
 hash_is_partition_boundary(CHashInt, _RingSize) when CHashInt < 0 ->
     throw(invalid_hash);
-hash_is_partition_boundary(CHashInt, RingSize) when CHashInt rem RingSize =/= 0 ->
-    false;
-hash_is_partition_boundary(_CHashInt, _RingSize) ->
-    true.
+hash_is_partition_boundary(CHashInt, RingSize) ->
+    CHashInt rem chash:ring_increment(RingSize) =:= 0.
 
 
 %% ===================================================================
@@ -145,6 +146,24 @@ partition_test() ->
     ?assertEqual(20, riak_core_ring_util:hash_to_partition_id(HashIndex, 32)),
     ?assertEqual(20, riak_core_ring_util:hash_to_partition_id(IntIndex, Ring)),
     ?assertEqual(20, riak_core_ring_util:hash_to_partition_id(HashIndex, Ring)).
+
+%% Index values divisible by partition size are boundary values, others are not
+boundary_test() ->
+    BoundaryIndex = riak_core_ring_util:partition_id_to_hash(15, 32),
+    Ring = riak_core_ring:fresh(32, test_dummy),
+    ?assert(riak_core_ring_util:hash_is_partition_boundary(BoundaryIndex, Ring)),
+    ?assert(riak_core_ring_util:hash_is_partition_boundary(<<BoundaryIndex:160>>, Ring)),
+    ?assert(riak_core_ring_util:hash_is_partition_boundary(BoundaryIndex, 32)),
+    ?assert(riak_core_ring_util:hash_is_partition_boundary(<<BoundaryIndex:160>>, 32)),
+    ?assertNot(riak_core_ring_util:hash_is_partition_boundary(BoundaryIndex + 32, Ring)),
+    ?assertNot(riak_core_ring_util:hash_is_partition_boundary(<<(BoundaryIndex + 32):160>>, Ring)),
+    ?assertNot(riak_core_ring_util:hash_is_partition_boundary(BoundaryIndex + 32, 32)),
+    ?assertNot(riak_core_ring_util:hash_is_partition_boundary(<<(BoundaryIndex + 32):160>>, 32)),
+    ?assertNot(riak_core_ring_util:hash_is_partition_boundary(<<(BoundaryIndex + 1):160>>, 32)),
+    ?assertNot(riak_core_ring_util:hash_is_partition_boundary(<<(BoundaryIndex - 1):160>>, 32)),
+    ?assertNot(riak_core_ring_util:hash_is_partition_boundary(<<(BoundaryIndex + 2):160>>, 32)),
+    ?assertNot(riak_core_ring_util:hash_is_partition_boundary(<<(BoundaryIndex + 10):160>>, 32)).
+
 
 %% Index integers outside [0, ring_size) result in exceptions
 throw_test() ->
