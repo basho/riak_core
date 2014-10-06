@@ -32,6 +32,10 @@
 -export_type([partition_id/0]).
 
 -ifdef(TEST).
+-ifdef(EQC).
+-export([prop_reverse/0, prop_boundaries/0]).
+-include_lib("eqc/include/eqc.hrl").
+-endif.
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
@@ -177,4 +181,23 @@ throw_test() ->
     ?assertThrow(invalid_partition_id, riak_core_ring_util:partition_id_to_hash(32, Ring)),
     ?assertThrow(invalid_hash, riak_core_ring_util:hash_is_partition_boundary(-5, Ring)).
 
--endif.
+-ifdef(EQC).
+
+-define(HASHMAX, 1 bsl 160 - 1).
+-define(RINGSIZEEXPMAX, 14).
+-define(RINGSIZE(X), 1 bsl X). %% We'll generate powers of 2 with choose() and convert that to a ring size with this macro
+
+%% Take a ring size, pick a partition ID, convert it to a hash and back to a partition ID and they should match
+prop_reverse() ->
+    ?FORALL(RingPower, choose(2, ?RINGSIZEEXPMAX),
+            ?FORALL(PartitionId, choose(0, ?RINGSIZE(RingPower) - 1),
+                    riak_core_ring_util:hash_to_partition_id(riak_core_ring_util:partition_id_to_hash(PartitionId, ?RINGSIZE(RingPower)), ?RINGSIZE(RingPower)) =:= PartitionId)).
+
+%% Take a ring size, pick a hash value, convert it to a partition id and back to a hash. Will probably be different from original hash value but must be a partition boundary
+prop_boundaries() ->
+    ?FORALL(RingPower, choose(2, ?RINGSIZEEXPMAX),
+            ?FORALL(HashValue, choose(0, ?HASHMAX),
+                    riak_core_ring_util:hash_is_partition_id(riak_core_ring_util:partition_id_to_hash(riak_core_ring_util:hash_to_partition_id(HashValue, ?RINGSIZE(RingPower)), ?RINGSIZE(RingPower)), ?RINGSIZE(RingPower)) =:= true)).
+
+-endif. % EQC
+-endif. % TEST
