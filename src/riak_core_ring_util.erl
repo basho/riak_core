@@ -33,7 +33,7 @@
 
 -ifdef(TEST).
 -ifdef(EQC).
--export([prop_reverse/0, prop_boundaries/0]).
+-export([prop_reverse/0, prop_boundaries/0, prop_monotonic/0]).
 -include_lib("eqc/include/eqc.hrl").
 -endif.
 -include_lib("eunit/include/eunit.hrl").
@@ -197,7 +197,17 @@ prop_reverse() ->
 prop_boundaries() ->
     ?FORALL(RingPower, choose(2, ?RINGSIZEEXPMAX),
             ?FORALL(HashValue, choose(0, ?HASHMAX),
-                    riak_core_ring_util:hash_is_partition_id(riak_core_ring_util:partition_id_to_hash(riak_core_ring_util:hash_to_partition_id(HashValue, ?RINGSIZE(RingPower)), ?RINGSIZE(RingPower)), ?RINGSIZE(RingPower)) =:= true)).
+                    riak_core_ring_util:hash_is_partition_boundary(
+                      riak_core_ring_util:partition_id_to_hash(
+                        riak_core_ring_util:hash_to_partition_id(HashValue, ?RINGSIZE(RingPower)), ?RINGSIZE(RingPower)), ?RINGSIZE(RingPower)) =:= true)).
+
+%% For any given hash value, any larger hash value maps to a partition ID of greater or equal value.
+prop_monotonic() ->
+    ?FORALL(RingPower, choose(2, ?RINGSIZEEXPMAX),
+            ?FORALL(HashValue, choose(0, ?HASHMAX - 1),
+                    ?FORALL(GreaterHash, choose(HashValue + 1, ?HASHMAX),
+                            riak_core_ring_util:hash_to_partition_id(HashValue, ?RINGSIZE(RingPower)) =< riak_core_ring_util:hash_to_partition_id(GreaterHash, ?RINGSIZE(RingPower))))).
+
 
 -endif. % EQC
 -endif. % TEST
