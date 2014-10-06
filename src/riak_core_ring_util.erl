@@ -183,9 +183,43 @@ throw_test() ->
 
 -ifdef(EQC).
 
+-define(QC_OUT(P),
+        eqc:on_output(fun(Str, Args) ->
+                              io:format(user, Str, Args) end, P)).
+-define(TEST_TIME_SECS, 10).
+
 -define(HASHMAX, 1 bsl 160 - 1).
 -define(RINGSIZEEXPMAX, 14).
 -define(RINGSIZE(X), 1 bsl X). %% We'll generate powers of 2 with choose() and convert that to a ring size with this macro
+
+reverse_test_() ->
+    {timeout, ?TEST_TIME_SECS+5, [?_assert(test_reverse() =:= true)]}.
+
+test_reverse() ->
+    test_reverse(?TEST_TIME_SECS).
+
+test_reverse(TestTimeSecs) ->
+        eqc:quickcheck(eqc:testing_time(TestTimeSecs, ?QC_OUT(prop_reverse()))).
+
+
+boundaries_test_() ->
+    {timeout, ?TEST_TIME_SECS+5, [?_assert(test_boundaries() =:= true)]}.
+
+test_boundaries() ->
+    test_boundaries(?TEST_TIME_SECS).
+
+test_boundaries(TestTimeSecs) ->
+        eqc:quickcheck(eqc:testing_time(TestTimeSecs, ?QC_OUT(prop_boundaries()))).
+
+
+monotonic_test_() ->
+    {timeout, ?TEST_TIME_SECS+5, [?_assert(test_monotonic() =:= true)]}.
+
+test_monotonic() ->
+    test_monotonic(?TEST_TIME_SECS).
+
+test_monotonic(TestTimeSecs) ->
+        eqc:quickcheck(eqc:testing_time(TestTimeSecs, ?QC_OUT(prop_monotonic()))).
 
 %% Take a ring size, pick a partition ID, convert it to a hash and back to a partition ID and they should match
 prop_reverse() ->
