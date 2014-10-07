@@ -231,7 +231,7 @@ handle_call(get_concurrency, _From, State) ->
 handle_call({reschedule, ModSrcTgt, Reason}, _From, State=#state{handoffs=HS}) ->
     case lists:keyfind(ModSrcTgt, #handoff_status.mod_src_tgt, HS) of
         false ->
-            lager:error("Tried mark a nonexistent handoff as rescheduled: ~p~n", [ModSrcTgt]),
+            lager:error("Tried to mark a nonexistent handoff as rescheduled: ~p~n", [ModSrcTgt]),
             {reply, not_found, State};
         HO ->
             HO2 = HO#handoff_status{status={rescheduled, Reason}},
