@@ -1155,7 +1155,7 @@ local_compare(T1, T2) ->
                      [{_, KeyHashes2}] = key_hashes(T2, Segment),
                      KeyHashes2
              end,
-    AccFun = fun(Keys, KeyAcc, _Segment) ->
+    AccFun = fun(Keys, KeyAcc) ->
                      Keys ++ KeyAcc
              end,
     compare2(T1, Remote, AccFun, []).
