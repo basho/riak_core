@@ -33,7 +33,8 @@
 
 -ifdef(TEST).
 -ifdef(EQC).
--export([prop_reverse/0, prop_boundaries/0, prop_monotonic/0]).
+-export([prop_ids_are_boundaries/0, prop_reverse/0, prop_discrete_partitions/0,
+         prop_monotonic/0, prop_only_boundaries/0]).
 -include_lib("eqc/include/eqc.hrl").
 -endif.
 -include_lib("eunit/include/eunit.hrl").
@@ -191,6 +192,16 @@ throw_test() ->
 -define(HASHMAX, 1 bsl 160 - 1).
 -define(RINGSIZEEXPMAX, 14).
 -define(RINGSIZE(X), 1 bsl X). %% We'll generate powers of 2 with choose() and convert that to a ring size with this macro
+-define(PARTITIONSIZE(X), (1 bsl 160) div X).
+
+ids_are_boundaries_test_() ->
+    {timeout, ?TEST_TIME_SECS+5, [?_assert(test_ids_are_boundaries() =:= true)]}.
+
+test_ids_are_boundaries() ->
+    test_ids_are_boundaries(?TEST_TIME_SECS).
+
+test_ids_are_boundaries(TestTimeSecs) ->
+        eqc:quickcheck(eqc:testing_time(TestTimeSecs, ?QC_OUT(prop_ids_are_boundaries()))).
 
 reverse_test_() ->
     {timeout, ?TEST_TIME_SECS+5, [?_assert(test_reverse() =:= true)]}.
@@ -202,14 +213,14 @@ test_reverse(TestTimeSecs) ->
         eqc:quickcheck(eqc:testing_time(TestTimeSecs, ?QC_OUT(prop_reverse()))).
 
 
-boundaries_test_() ->
-    {timeout, ?TEST_TIME_SECS+5, [?_assert(test_boundaries() =:= true)]}.
+discrete_partitions_test_() ->
+    {timeout, ?TEST_TIME_SECS+5, [?_assert(test_discrete_partitions() =:= true)]}.
 
-test_boundaries() ->
-    test_boundaries(?TEST_TIME_SECS).
+test_discrete_partitions() ->
+    test_discrete_partitions(?TEST_TIME_SECS).
 
-test_boundaries(TestTimeSecs) ->
-        eqc:quickcheck(eqc:testing_time(TestTimeSecs, ?QC_OUT(prop_boundaries()))).
+test_discrete_partitions(TestTimeSecs) ->
+        eqc:quickcheck(eqc:testing_time(TestTimeSecs, ?QC_OUT(prop_discrete_partitions()))).
 
 
 monotonic_test_() ->
@@ -221,27 +232,70 @@ test_monotonic() ->
 test_monotonic(TestTimeSecs) ->
         eqc:quickcheck(eqc:testing_time(TestTimeSecs, ?QC_OUT(prop_monotonic()))).
 
-%% Take a ring size, pick a partition ID, convert it to a hash and back to a partition ID and they should match
+
+only_boundaries_test_() ->
+    {timeout, ?TEST_TIME_SECS+5, [?_assert(test_only_boundaries() =:= true)]}.
+
+test_only_boundaries() ->
+    test_only_boundaries(?TEST_TIME_SECS).
+
+test_only_boundaries(TestTimeSecs) ->
+        eqc:quickcheck(eqc:testing_time(TestTimeSecs, ?QC_OUT(prop_only_boundaries()))).
+
+%% Partition IDs should map to hash values which are partition boundaries
+prop_ids_are_boundaries() ->
+    ?FORALL(RingPower, choose(2, ?RINGSIZEEXPMAX),
+            ?FORALL(PartitionId, choose(0, ?RINGSIZE(RingPower) - 1),
+                    riak_core_ring_util:hash_is_partition_boundary(
+                      riak_core_ring_util:partition_id_to_hash(PartitionId,
+                                                               ?RINGSIZE(RingPower)),
+                      ?RINGSIZE(RingPower)) =:= true)).
+
+%% Partition IDs should map to hash values which map back to the same partition IDs
 prop_reverse() ->
     ?FORALL(RingPower, choose(2, ?RINGSIZEEXPMAX),
             ?FORALL(PartitionId, choose(0, ?RINGSIZE(RingPower) - 1),
-                    riak_core_ring_util:hash_to_partition_id(riak_core_ring_util:partition_id_to_hash(PartitionId, ?RINGSIZE(RingPower)), ?RINGSIZE(RingPower)) =:= PartitionId)).
+                    riak_core_ring_util:hash_to_partition_id(
+                      riak_core_ring_util:partition_id_to_hash(PartitionId,
+                                                               ?RINGSIZE(RingPower)),
+                      ?RINGSIZE(RingPower)) =:= PartitionId)).
 
-%% Take a ring size, pick a hash value, convert it to a partition id and back to a hash. Will probably be different from original hash value but must be a partition boundary
-prop_boundaries() ->
+%% Hash values map to discrete partitions (this test is of dubious value)
+prop_discrete_partitions() ->
     ?FORALL(RingPower, choose(2, ?RINGSIZEEXPMAX),
             ?FORALL(HashValue, choose(0, ?HASHMAX),
                     riak_core_ring_util:hash_is_partition_boundary(
                       riak_core_ring_util:partition_id_to_hash(
-                        riak_core_ring_util:hash_to_partition_id(HashValue, ?RINGSIZE(RingPower)), ?RINGSIZE(RingPower)), ?RINGSIZE(RingPower)) =:= true)).
+                        riak_core_ring_util:hash_to_partition_id(HashValue,
+                                                                 ?RINGSIZE(RingPower)),
+                        ?RINGSIZE(RingPower)),
+                      ?RINGSIZE(RingPower)) =:= true)).
 
-%% For any given hash value, any larger hash value maps to a partition ID of greater or equal value.
+%% For any given hash value, any larger hash value maps to a partition
+%% ID of greater or equal value.
 prop_monotonic() ->
     ?FORALL(RingPower, choose(2, ?RINGSIZEEXPMAX),
             ?FORALL(HashValue, choose(0, ?HASHMAX - 1),
                     ?FORALL(GreaterHash, choose(HashValue + 1, ?HASHMAX),
-                            riak_core_ring_util:hash_to_partition_id(HashValue, ?RINGSIZE(RingPower)) =< riak_core_ring_util:hash_to_partition_id(GreaterHash, ?RINGSIZE(RingPower))))).
+                            riak_core_ring_util:hash_to_partition_id(HashValue,
+                                                                     ?RINGSIZE(RingPower))
+                            =< riak_core_ring_util:hash_to_partition_id(GreaterHash,
+                                                                        ?RINGSIZE(RingPower))))).
 
+
+%% Only hash values evenly divisible by partition size respond true to
+%% hash_is_partition_boundary/2.
+boundary_helper(Hash, PartitionSize) when Hash rem PartitionSize =:= 0 ->
+    true;
+boundary_helper(_Hash, _PartitionSize) ->
+    false.
+
+prop_only_boundaries() ->
+    ?FORALL(RingPower, choose(2, ?RINGSIZEEXPMAX),
+            ?FORALL(HashValue, choose(0, ?HASHMAX),
+                    boundary_helper(HashValue, ?PARTITIONSIZE(?RINGSIZE(RingPower))) =:=
+                        riak_core_ring_util:hash_is_partition_boundary(HashValue,
+                                                                       ?RINGSIZE(RingPower)))).
 
 -endif. % EQC
 -endif. % TEST
