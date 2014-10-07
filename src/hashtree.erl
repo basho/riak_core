@@ -165,7 +165,8 @@
 
 -type keydiff() :: {missing | remote_missing | different, binary()}.
 
--type remote_fun() :: fun((get_bucket | key_hashes | start_exchange_level | start_exchange_segments | init | final,
+-type remote_fun() :: fun((get_bucket | key_hashes | start_exchange_level |
+                           start_exchange_segments | init | final,
                            {integer(), integer()} | integer() | term()) -> any()).
 
 -type acc_fun(Acc) :: fun(([keydiff()], Acc) -> Acc).
@@ -431,6 +432,19 @@ read_meta(Key, State) when is_binary(Key) ->
             undefined
     end.
 
+%% @doc
+%% Estimate number of keys stored in the AAE tree. This is determined
+%% by sampling segments to to calculate an estimated keys-per-segment
+%% value, which is then multiplied by the number of segments. Segments
+%% are sampled until either 1% of segments have been visited or 1000
+%% keys have been observed.
+%%
+%% Note: this function must be called on a tree with a valid iterator,
+%%       such as the snapshotted tree returned from update_snapshot/1
+%%       or a recently updated tree returned from update_tree/1 (which
+%%       internally creates a snapshot). Using update_tree/1 is the best
+%%       choice since that ensures segments are updated giving a better
+%%       estimate.
 -spec estimate_keys(hashtree()) -> {ok, integer()}.
 estimate_keys(State) ->
     estimate_keys(State, 0, 0, ?NUM_KEYS_REQUIRED).
