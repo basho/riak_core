@@ -435,11 +435,9 @@ read_meta(Key, State) when is_binary(Key) ->
 estimate_keys(State) ->
     estimate_keys(State, 0, 0, ?NUM_KEYS_REQUIRED).
 
-estimate_keys(#state{segments=Segments}, CurrentSegment, Keys, _MaxKeys)
-  when (CurrentSegment * 100) >= Segments ->
-    {ok, Keys*(Segments div CurrentSegment)};
-
-estimate_keys(#state{segments=Segments}, CurrentSegment, Keys, MaxKeys) when Keys >= MaxKeys ->
+estimate_keys(#state{segments=Segments}, CurrentSegment, Keys, MaxKeys)
+  when (CurrentSegment * 100) >= Segments;
+       Keys >= MaxKeys ->
     {ok, (Keys * Segments) div (CurrentSegment + 1)};
 
 estimate_keys(State, CurrentSegment, Keys, MaxKeys) ->
