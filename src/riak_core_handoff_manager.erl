@@ -312,13 +312,6 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}, State=#state{handoffs=HS}) ->
                         none -> ok;
                         _ ->
                             case Status of
-                                {rescheduled, module_max_concurrency} ->
-                                    %% As of 2.0 this case only occurs when a
-                                    %% bg_manager lock can't be acquired, as
-                                    %% the first step of handoff (called by
-                                    %% the optional `handoff_started' on the
-                                    %% module handing off).
-                                    lager:info("An ~w handoff of partition ~w ~w was rescheduled because ~w failed to acquire a necessary resource (max_concurrency).~n", [Dir,M,I,M]);
                                 {rescheduled, remote_concurrency_exceeded} ->
                                     lager:info("An ~w handoff of partition ~w ~w was rescheduled because the destination node's concurrency limit was already reached.~n", [Dir,M,I]);
                                 {rescheduled, concurrency_limit_lowered} ->

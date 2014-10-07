@@ -263,9 +263,6 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                  end
          end
      catch
-         exit:{shutdown, module_max_concurrency} ->
-             riak_core_handoff_manager:reschedule({Module, SrcPartition, TargetPartition}, module_max_concurrency),
-             exit(normal);
          exit:{shutdown, remote_concurrency_exceeded} ->
              riak_core_handoff_manager:reschedule({Module, SrcPartition, TargetPartition}, remote_concurrency_exceeded),
              exit(normal);
@@ -600,6 +597,8 @@ maybe_call_handoff_started(Module, SrcPartition) ->
                 {error, max_concurrency} ->
                     %% Handoff of that partition is busy or can't proceed. Stopping with
                     %% max_concurrency will cause this partition to be retried again later.
+                    %% NB. this isn't handled higher up as of 2.0; the process will
+                    %%     die noisily at the sup and be retried.
                     exit({shutdown, module_max_concurrency});
                 {error, Error} ->
                     exit({shutdown, Error})
