@@ -290,9 +290,17 @@ boundary_helper(Hash, PartitionSize) when Hash rem PartitionSize =:= 0 ->
 boundary_helper(_Hash, _PartitionSize) ->
     false.
 
+find_near_boundaries(RingSize, PartitionSize) ->
+    ?LET({Id, Offset}, {choose(1, RingSize-1), choose(-RingSize, RingSize)},
+          Id * PartitionSize + Offset).
+
+
 prop_only_boundaries() ->
     ?FORALL(RingPower, choose(2, ?RINGSIZEEXPMAX),
-            ?FORALL(HashValue, choose(0, ?HASHMAX),
+            ?FORALL(HashValue, frequency([
+                                          {5, choose(0, ?HASHMAX)},
+                                          {2, find_near_boundaries(?RINGSIZE(RingPower),
+                                                                   ?PARTITIONSIZE(?RINGSIZE(RingPower)))}]),
                     boundary_helper(HashValue, ?PARTITIONSIZE(?RINGSIZE(RingPower))) =:=
                         riak_core_ring_util:hash_is_partition_boundary(HashValue,
                                                                        ?RINGSIZE(RingPower)))).
