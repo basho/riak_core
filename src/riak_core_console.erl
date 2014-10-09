@@ -29,7 +29,8 @@
          print_users/1, print_user/1, print_sources/1,
          print_groups/1, print_group/1, print_grants/1,
          security_enable/1, security_disable/1, security_status/1, ciphers/1,
-	 stat_show/1, stat_showall/1, stat_info/1, stat_enable/1, stat_disable/1]).
+	 stat_show/1, stat_showall/1, stat_info/1, stat_enable/1, stat_disable/1,
+	 stat_reporter/1, stat_subscribe/1, stat_unsubscribe/1]).
 
 %% @doc Return for a given ring and node, percentage currently owned and
 %% anticipated after the transitions have been completed.
@@ -1177,6 +1178,74 @@ stat_disable(Arg) ->
     [io:fwrite("~p: ~p~n", [N, change_status(N, disabled)])
      || {N, _, _} <- find_entries(Arg, enabled)].
 
+stat_reporter(Arg) ->
+    try stat_reporter_int(split_command(Arg))
+    catch
+	error:_ -> error
+    end.
+
+split_command(Arg) ->
+    re:split(Arg, "\\s", [{return,list}]).
+
+stat_reporter_int(["enable", R]) ->
+    exometer_report:enable_reporter(reporter_name(R));
+stat_reporter_int(["disable", R]) ->
+    exometer_report:disable_reporter(reporter_name(R)).
+
+stat_subscribe([R, Sub]) ->
+    try
+	case parse_sub(Sub) of
+	    {Entry, DP, Int, X} ->
+		exometer_report:subscribe(reporter_name(R), Entry, DP, Int, X);
+	    Error ->
+		Error
+	end
+    catch
+	error:_ ->
+	    error
+    end.
+
+stat_unsubscribe([R, Sub]) ->
+    case reporter_name(R) of
+	{ok, Reporter} ->
+	    case parse_unsub(Sub) of
+		{Entry, DP, Int, X} ->
+		    exometer_report:subscribe(Reporter, Entry, DP, Int, X);
+		Error1 ->
+		    Error1
+	    end;
+	{error, Error2} ->
+	    Error2
+    end.
+
+parse_sub(Sub) ->
+    case string:tokens(Sub, ":") of
+	[E, D, I] -> {p_e(E), p_d(D), p_i(I), []}
+    end.
+
+parse_unsub(UnSub) ->
+    case string:tokens(UnSub, ":") of
+	[E, D] -> {p_e(E), p_d(D)}
+    end.
+
+p_e(E) ->
+    parse_stat_entry(E, enabled).
+
+p_d(D) ->
+    list_to_existing_atom(D).
+
+p_i(I) ->
+    try list_to_integer(I)
+    catch
+	error:_ ->
+	    list_to_existing_atom(I)
+    end.
+
+reporter_name(R) ->
+    try {ok, list_to_existing_atom(R)}
+    catch error:_ -> {error, unknown_reporter}
+    end.
+
 change_status(N, St) ->
     case exometer:setopts(N, [{status, St}]) of
 	ok ->
@@ -1223,6 +1292,8 @@ split_arg([Str]) ->
 
 parse_stat_entry([], Status) ->
     {{[riak_core_stat:prefix() | '_'], '_', '_'}, [{'=:=','$status',Status}], ['$_']};
+parse_stat_entry("*", Status) ->
+    parse_stat_entry([], Status);
 parse_stat_entry("[" ++ _ = Expr, _Status) ->
     case erl_scan:string(ensure_trailing_dot(Expr)) of
 	{ok, Toks, _} ->
