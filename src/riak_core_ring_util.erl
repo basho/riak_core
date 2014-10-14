@@ -33,7 +33,7 @@
 
 -ifdef(TEST).
 -ifdef(EQC).
--export([prop_ids_are_boundaries/0, prop_reverse/0, prop_discrete_partitions/0,
+-export([prop_ids_are_boundaries/0, prop_reverse/0,
          prop_monotonic/0, prop_only_boundaries/0]).
 -include_lib("eqc/include/eqc.hrl").
 -endif.
@@ -141,16 +141,6 @@ test_reverse(TestTimeSecs) ->
         eqc:quickcheck(eqc:testing_time(TestTimeSecs, ?QC_OUT(prop_reverse()))).
 
 
-discrete_partitions_test_() ->
-    {timeout, ?TEST_TIME_SECS+5, [?_assert(test_discrete_partitions() =:= true)]}.
-
-test_discrete_partitions() ->
-    test_discrete_partitions(?TEST_TIME_SECS).
-
-test_discrete_partitions(TestTimeSecs) ->
-        eqc:quickcheck(eqc:testing_time(TestTimeSecs, ?QC_OUT(prop_discrete_partitions()))).
-
-
 monotonic_test_() ->
     {timeout, ?TEST_TIME_SECS+5, [?_assert(test_monotonic() =:= true)]}.
 
@@ -187,17 +177,6 @@ prop_reverse() ->
                       riak_core_ring_util:partition_id_to_hash(PartitionId,
                                                                ?RINGSIZE(RingPower)),
                       ?RINGSIZE(RingPower)) =:= {partition_id, PartitionId})).
-
-%% Hash values map to discrete partitions (this test is of dubious value)
-prop_discrete_partitions() ->
-    ?FORALL(RingPower, choose(2, ?RINGSIZEEXPMAX),
-            ?FORALL(HashValue, choose(0, ?HASHMAX),
-                    riak_core_ring_util:hash_is_partition_boundary(
-                      riak_core_ring_util:partition_id_to_hash(
-                        riak_core_ring_util:hash_to_partition_id(HashValue,
-                                                                 ?RINGSIZE(RingPower)),
-                        ?RINGSIZE(RingPower)),
-                      ?RINGSIZE(RingPower)) =:= true)).
 
 %% For any given hash value, any larger hash value maps to a partition
 %% ID of greater or equal value.
