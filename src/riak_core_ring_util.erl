@@ -110,35 +110,6 @@ hash_is_partition_boundary(CHashInt, RingSize) ->
 %% ===================================================================
 -ifdef(TEST).
 
-%% Partition boundaries are reversable.
-reverse_test() ->
-    IntIndex = riak_core_ring_util:partition_id_to_hash(31, 32),
-    HashIndex = <<IntIndex:160>>,
-    ?assertEqual({partition_id, 31}, riak_core_ring_util:hash_to_partition_id(HashIndex, 32)),
-    ?assertEqual({partition_id, 0}, riak_core_ring_util:hash_to_partition_id(<<0:160>>, 32)).
-
-%% Index values somewhere in the middle of a partition can be mapped
-%% to partition IDs.
-partition_test() ->
-    IntIndex = riak_core_ring_util:partition_id_to_hash(20, 32) +
-        chash:ring_increment(32) div 3,
-    HashIndex = <<IntIndex:160>>,
-    ?assertEqual({partition_id, 20}, riak_core_ring_util:hash_to_partition_id(IntIndex, 32)),
-    ?assertEqual({partition_id, 20}, riak_core_ring_util:hash_to_partition_id(HashIndex, 32)).
-
-%% Index values divisible by partition size are boundary values, others are not
-boundary_test() ->
-    BoundaryIndex = riak_core_ring_util:partition_id_to_hash(15, 32),
-    ?assert(riak_core_ring_util:hash_is_partition_boundary(BoundaryIndex, 32)),
-    ?assert(riak_core_ring_util:hash_is_partition_boundary(<<BoundaryIndex:160>>, 32)),
-    ?assertNot(riak_core_ring_util:hash_is_partition_boundary(BoundaryIndex + 32, 32)),
-    ?assertNot(riak_core_ring_util:hash_is_partition_boundary(<<(BoundaryIndex + 32):160>>, 32)),
-    ?assertNot(riak_core_ring_util:hash_is_partition_boundary(<<(BoundaryIndex + 1):160>>, 32)),
-    ?assertNot(riak_core_ring_util:hash_is_partition_boundary(<<(BoundaryIndex - 1):160>>, 32)),
-    ?assertNot(riak_core_ring_util:hash_is_partition_boundary(<<(BoundaryIndex + 2):160>>, 32)),
-    ?assertNot(riak_core_ring_util:hash_is_partition_boundary(<<(BoundaryIndex + 10):160>>, 32)).
-
-
 -ifdef(EQC).
 
 -define(QC_OUT(P),
