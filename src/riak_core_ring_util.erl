@@ -40,8 +40,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--type partition_id() :: {partition_id, non_neg_integer()}. %% Integer represents
-%% a value [0, ring_size)
+-type partition_id() :: {partition_id, non_neg_integer()}.
+%% Integer represents a value [0, ring_size)
 
 %% @doc Forcibly assign a partition to a specific node
 assign(Partition, ToNode) ->
