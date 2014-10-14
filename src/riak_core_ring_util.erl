@@ -196,12 +196,18 @@ prop_monotonic() ->
                            ))).
 
 
-%% Only hash values evenly divisible by partition size respond true to
-%% hash_is_partition_boundary/2.
-boundary_helper(Hash, PartitionSize) when Hash rem PartitionSize =:= 0 ->
+%% Hash values which are listed in the ring structure are boundary
+%% values
+boundary_helper(_Hash, []) ->
+    false;
+boundary_helper(Hash, [{Hash, dummy}|_T]) ->
     true;
-boundary_helper(_Hash, _PartitionSize) ->
-    false.
+boundary_helper(Hash, [{BiggerHash, dummy}|_T]) when BiggerHash > Hash ->
+    false;
+boundary_helper(Hash, [_H|T]) ->
+    boundary_helper(Hash, T).
+
+
 
 find_near_boundaries(RingSize, PartitionSize) ->
     ?LET({Id, Offset}, {choose(1, RingSize-1), choose(-RingSize, RingSize)},
@@ -210,11 +216,13 @@ find_near_boundaries(RingSize, PartitionSize) ->
 
 prop_only_boundaries() ->
     ?FORALL(RingPower, choose(2, ?RINGSIZEEXPMAX),
-            ?FORALL(HashValue, frequency([
-                                          {5, choose(0, ?HASHMAX)},
-                                          {2, find_near_boundaries(?RINGSIZE(RingPower),
-                                                                   ?PARTITIONSIZE(?RINGSIZE(RingPower)))}]),
-                    boundary_helper(HashValue, ?PARTITIONSIZE(?RINGSIZE(RingPower))) =:=
+            ?FORALL({HashValue, {_RingSize, RingList}},
+                    {frequency([
+                               {5, choose(0, ?HASHMAX)},
+                               {2, find_near_boundaries(?RINGSIZE(RingPower),
+                                                        ?PARTITIONSIZE(?RINGSIZE(RingPower)))}]),
+                     chash:fresh(?RINGSIZE(RingPower), dummy)},
+                    boundary_helper(HashValue, RingList) =:=
                         riak_core_ring_util:hash_is_partition_boundary(HashValue,
                                                                        ?RINGSIZE(RingPower)))).
 
