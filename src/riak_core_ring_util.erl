@@ -41,8 +41,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--type partition_id() :: {partition_id, non_neg_integer()}.
-%% Integer represents a value [0, ring_size)
+-type partition_id() :: non_neg_integer().
+%% This integer represents a value in the range [0, ring_size)
 
 %% @doc Forcibly assign a partition to a specific node
 assign(Partition, ToNode) ->
@@ -83,13 +83,10 @@ hash_to_partition_id(CHashKey, RingSize) when is_binary(CHashKey) ->
     <<CHashInt:160/integer>> = CHashKey,
     hash_to_partition_id(CHashInt, RingSize);
 hash_to_partition_id(CHashInt, RingSize) ->
-    {partition_id, CHashInt div chash:ring_increment(RingSize)}.
+    CHashInt div chash:ring_increment(RingSize).
 
--spec partition_id_to_hash(pos_integer() | partition_id(), pos_integer()) ->
-                                  chash:index_as_int().
+-spec partition_id_to_hash(partition_id(), pos_integer()) -> chash:index_as_int().
 %% @doc Identify the first key hash (integer form) in a partition ID [0, ring_size)
-partition_id_to_hash({partition_id, Id}, RingSize) ->
-    partition_id_to_hash(Id, RingSize);
 partition_id_to_hash(Id, RingSize) ->
     Id * chash:ring_increment(RingSize).
 
@@ -119,8 +116,8 @@ hash_is_partition_boundary(CHashInt, RingSize) ->
 reverse_test() ->
     IntIndex = riak_core_ring_util:partition_id_to_hash(31, 32),
     HashIndex = <<IntIndex:160>>,
-    ?assertEqual({partition_id, 31}, riak_core_ring_util:hash_to_partition_id(HashIndex, 32)),
-    ?assertEqual({partition_id, 0}, riak_core_ring_util:hash_to_partition_id(<<0:160>>, 32)).
+    ?assertEqual(31, riak_core_ring_util:hash_to_partition_id(HashIndex, 32)),
+    ?assertEqual(0, riak_core_ring_util:hash_to_partition_id(<<0:160>>, 32)).
 
 %% Index values somewhere in the middle of a partition can be mapped
 %% to partition IDs.
@@ -128,7 +125,7 @@ partition_test() ->
     IntIndex = riak_core_ring_util:partition_id_to_hash(20, 32) +
         chash:ring_increment(32) div 3,
     HashIndex = <<IntIndex:160>>,
-    ?assertEqual({partition_id, 20}, riak_core_ring_util:hash_to_partition_id(HashIndex, 32)).
+    ?assertEqual(20, riak_core_ring_util:hash_to_partition_id(HashIndex, 32)).
 
 %% Index values divisible by partition size are boundary values, others are not
 boundary_test() ->
@@ -207,7 +204,7 @@ prop_reverse() ->
                     riak_core_ring_util:hash_to_partition_id(
                       riak_core_ring_util:partition_id_to_hash(PartitionId,
                                                                ?RINGSIZE(RingPower)),
-                      ?RINGSIZE(RingPower)) =:= {partition_id, PartitionId})).
+                      ?RINGSIZE(RingPower)) =:= PartitionId)).
 
 %% For any given hash value, any larger hash value maps to a partition
 %% ID of greater or equal value.
@@ -216,10 +213,10 @@ prop_monotonic() ->
             ?FORALL(HashValue, choose(0, ?HASHMAX - 1),
                     ?FORALL(GreaterHash, choose(HashValue + 1, ?HASHMAX),
                             begin
-                                {partition_id, LowerPartition} =
+                                LowerPartition =
                                     riak_core_ring_util:hash_to_partition_id(HashValue,
                                                                              ?RINGSIZE(RingPower)),
-                                {partition_id, GreaterPartition} =
+                                GreaterPartition =
                                     riak_core_ring_util:hash_to_partition_id(GreaterHash,
                                                                              ?RINGSIZE(RingPower)),
                                 LowerPartition =< GreaterPartition
