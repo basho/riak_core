@@ -43,6 +43,8 @@
          status_update/2,
          set_concurrency/1,
          get_concurrency/0,
+	 get_concurrency/1,
+	 get_all_concurrency/0,
          set_recv_data/2,
          kill_handoffs/0
         ]).
@@ -63,6 +65,7 @@
 -define(HO_EQ(HOA, HOB),
         HOA#handoff_status.mod_src_tgt == HOB#handoff_status.mod_src_tgt
         andalso HOA#handoff_status.timestamp == HOB#handoff_status.timestamp).
+-define(LIMIT_PREFIX, {handoff, concurrency_limit}).
 
 %%%===================================================================
 %%% API
@@ -72,6 +75,10 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 init([]) ->
+    %% On startup we use the config value and override anything already in
+    %% cluster metadata.
+    Limit = get_configured_concurrency(),
+    {ok, _} = timer:apply_after(1, ?MODULE, set_concurrency, [Limit]),
     {ok, #state{excl=sets:new(), handoffs=[]}}.
 
 add_outbound(HOType,Module,Idx,Node,VnodePid,Opts) ->
@@ -126,8 +133,18 @@ status_update(ModSrcTgt, Stats) ->
 set_concurrency(Limit) ->
     gen_server:call(?MODULE,{set_concurrency,Limit}, infinity).
 
+get_configured_concurrency() ->
+     app_helper:get_env(riak_core, handoff_concurrency, ?HANDOFF_CONCURRENCY).
+
 get_concurrency() ->
-    gen_server:call(?MODULE, get_concurrency, infinity).
+    get_concurrency(node()).
+
+get_concurrency(Node) ->
+    Default = get_configured_concurrency(),
+    riak_core_metadata:get(?LIMIT_PREFIX, Node, [{default, Default}]).
+
+get_all_concurrency() ->
+    riak_core_metadata:to_list(?LIMIT_PREFIX).
 
 %% @doc Kill the transfer of `ModSrcTarget' with `Reason'.
 -spec kill_xfer(node(), tuple(), any()) -> ok.
@@ -200,7 +217,7 @@ handle_call({status, Filter}, _From, State=#state{handoffs=HS}) ->
     {reply, Status, State};
 
 handle_call({set_concurrency,Limit},_From,State=#state{handoffs=HS}) ->
-    application:set_env(riak_core,handoff_concurrency,Limit),
+    ok = riak_core_metadata:put(?LIMIT_PREFIX, node(), Limit),
     case Limit < erlang:length(HS) of
         true ->
             %% Note: we don't update the state with the handoffs that we're
@@ -213,11 +230,7 @@ handle_call({set_concurrency,Limit},_From,State=#state{handoffs=HS}) ->
             {reply, ok, State};
         false ->
             {reply, ok, State}
-    end;
-
-handle_call(get_concurrency, _From, State) ->
-    Concurrency = get_concurrency_limit(),
-    {reply, Concurrency, State}.
+    end.
 
 handle_cast({del_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
     Excl2 = sets:del_element({Mod, Idx}, Excl),
@@ -436,8 +449,6 @@ record_seen_index(Ring, Shrinking, NValMap, DefaultN, Mod, Src, Key, Seen) ->
         FutureIndex -> ordsets:add_element(FutureIndex, Seen)
     end.
 
-get_concurrency_limit () ->
-    app_helper:get_env(riak_core,handoff_concurrency,?HANDOFF_CONCURRENCY).
 
 %% true if handoff_concurrency (inbound + outbound) hasn't yet been reached
 handoff_concurrency_limit_reached () ->
@@ -445,7 +456,7 @@ handoff_concurrency_limit_reached () ->
     Senders=supervisor:count_children(riak_core_handoff_sender_sup),
     ActiveReceivers=proplists:get_value(active,Receivers),
     ActiveSenders=proplists:get_value(active,Senders),
-    get_concurrency_limit() =< (ActiveReceivers + ActiveSenders).
+    get_concurrency() =< (ActiveReceivers + ActiveSenders).
 
 send_handoff(HOType, ModSrcTarget, Node, Pid, HS,Opts) ->
     send_handoff(HOType, ModSrcTarget, Node, Pid, HS, {none, none}, none, Opts).

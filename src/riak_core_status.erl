@@ -64,34 +64,21 @@ ringready() ->
 
 -spec transfer_limit() -> status().
 transfer_limit() ->
-    {Limits, Down} =
-    riak_core_util:rpc_every_member_ann(riak_core_handoff_manager,
-                                        get_concurrency, [], 5000),
-    transfer_limit_status(Limits, Down).
+    Limits0 = riak_core_handoff_manager:get_all_concurrency(),
+    Limits = [{Node, Limit} || {Node, [Limit]} <- Limits0],
+    transfer_limit_status(Limits).
 
 -spec transfer_limit(node()) -> status().
 transfer_limit(Node) ->
-    case riak_core_util:safe_rpc(Node, riak_core_handoff_manager,
-                                 get_concurrency, [], 5000) of
-        {badrpc, rpc_process_down} ->
-            transfer_limit_status([], [Node]);
-        Limit ->
-            transfer_limit_status([{Node, Limit}], [])
-    end.
+    Limit = riak_core_handoff_manager:get_concurrency(Node),
+    transfer_limit_status([{Node, Limit}]).
 
--spec transfer_limit_status([{node(), non_neg_integer()}], [node()]) ->
-    status().
-transfer_limit_status(Limits, Down) ->
+-spec transfer_limit_status([{node(), non_neg_integer()}]) -> status().
+transfer_limit_status(Limits0) ->
     Schema = [node, limit],
+    Limits = lists:keysort(1, Limits0),
     Rows = [[Node, Limit] || {Node, Limit} <- Limits],
-    Table = {table, Schema, Rows},
-    case Down of
-        [] ->
-            [Table];
-        _ ->
-            NodesDown = {alert, [{column, "(offline)", Down}]},
-            [Table, NodesDown]
-    end.
+    [{table, Schema, Rows}].
 
 -spec(transfers() -> {[atom()], [{waiting_to_handoff, atom(), integer()} |
     {stopped, atom(), integer()}]}).
