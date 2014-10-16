@@ -35,6 +35,7 @@
 -ifdef(EQC).
 -export([prop_ids_are_boundaries/0, prop_reverse/0,
          prop_monotonic/0, prop_only_boundaries/0]).
+
 -include_lib("eqc/include/eqc.hrl").
 -endif.
 -include_lib("eunit/include/eunit.hrl").
@@ -118,7 +119,7 @@ hash_is_partition_boundary(CHashInt, RingSize) ->
 -define(TEST_TIME_SECS, 5).
 
 -define(HASHMAX, 1 bsl 160 - 1).
--define(RINGSIZEEXPMAX, 14).
+-define(RINGSIZEEXPMAX, 11).
 -define(RINGSIZE(X), (1 bsl X)). %% We'll generate powers of 2 with choose() and convert that to a ring size with this macro
 -define(PARTITIONSIZE(X), ((1 bsl 160) div (X))).
 
@@ -152,13 +153,13 @@ test_monotonic(TestTimeSecs) ->
 
 
 only_boundaries_test_() ->
-    {timeout, ?TEST_TIME_SECS*5000, [?_assert(test_only_boundaries() =:= true)]}.
+    {timeout, ?TEST_TIME_SECS+5, [?_assert(test_only_boundaries() =:= true)]}.
 
 test_only_boundaries() ->
     test_only_boundaries(?TEST_TIME_SECS).
 
-test_only_boundaries(_TestTimeSecs) ->
-        eqc:quickcheck(eqc:numtests(1000, ?QC_OUT(prop_only_boundaries()))). %% XXX: need way more than 10, performance problems
+test_only_boundaries(TestTimeSecs) ->
+        eqc:quickcheck(eqc:testing_time(TestTimeSecs, ?QC_OUT(prop_only_boundaries()))).
 
 %% Partition IDs should map to hash values which are partition boundaries
 prop_ids_are_boundaries() ->
@@ -195,22 +196,25 @@ prop_monotonic() ->
                             end
                            ))).
 
+%% Using a dictionary lookup to identify partition boundaries is quite
+%% slow, especially given the large hash space we'd like to test.
+%%
+%% Replacing the use of `dict' with something based on `chashbin' may
+%% help significantly, but it's not vital.
 
 %% Hash values which are listed in the ring structure are boundary
 %% values
 boundary_helper(Hash, RingDict) ->
-    dict:is_key(term_to_binary(Hash), RingDict).
+    dict:is_key(Hash, RingDict).
+
+ring_to_dict({_RingSize, PropList}) ->
+    dict:from_list(lists:map(fun({Hash, dummy}) -> {Hash, dummy} end, PropList)).
 
 find_near_boundaries(RingSize, PartitionSize) ->
-    ?LET({Id, Offset}, {choose(1, RingSize-1), choose(-RingSize, RingSize)},
+    ?LET({Id, Offset}, {choose(1, RingSize-1), choose(-(RingSize*2), (RingSize*2))},
          Id * PartitionSize + Offset).
 
-
-%% dict gives faster lookups than proplist but probably need chashbin
-ring_to_dict({_RingSize, PropList}) ->
-    dict:from_list(lists:map(fun({Hash, dummy}) -> {term_to_binary(Hash), dummy} end, PropList)).
-
-prop_only_boundaries_slow() ->
+prop_only_boundaries() ->
     ?FORALL(RingPower, choose(2, ?RINGSIZEEXPMAX),
             ?FORALL({HashValue, RingDict},
                     {frequency([
@@ -221,6 +225,7 @@ prop_only_boundaries_slow() ->
                     boundary_helper(HashValue, RingDict) =:=
                         riak_core_ring_util:hash_is_partition_boundary(HashValue,
                                                                        ?RINGSIZE(RingPower)))).
+
 
 -endif. % EQC
 -endif. % TEST
