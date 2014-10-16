@@ -25,6 +25,8 @@
          transfers/0,
          transfer_limit/0,
          transfer_limit/1,
+         rpc_transfer_limit/0,
+         rpc_transfer_limit/1,
          ring_status/0]).
 
 %% Status writer API
@@ -80,27 +82,58 @@ transfer_limit_status(Limits0) ->
     Rows = [[Node, Limit] || {Node, Limit} <- Limits],
     [{table, Schema, Rows}].
 
+-spec rpc_transfer_limit() -> status().
+rpc_transfer_limit() ->
+    {Limits, Down} =
+        riak_core_util:rpc_every_member_ann(riak_core_handoff_manager,
+                                            get_concurrency, [], 5000),
+    rpc_transfer_limit_status(Limits, Down).
+
+-spec rpc_transfer_limit(node()) -> status().
+rpc_transfer_limit(Node) ->
+    case riak_core_util:safe_rpc(Node, riak_core_handoff_manager,
+                                 get_concurrency, [], 5000) of
+        {badrpc, rpc_process_down} ->
+            rpc_transfer_limit_status([], [Node]);
+        Limit ->
+            rpc_transfer_limit_status([{Node, Limit}], [])
+    end.
+
+-spec rpc_transfer_limit_status([{node(), non_neg_integer()}], [node()]) ->
+                                       status().
+rpc_transfer_limit_status(Limits, Down) ->
+    Schema = [node, limit],
+    Rows = [[Node, Limit] || {Node, Limit} <- Limits],
+    Table = {table, Schema, Rows},
+    case Down of
+        [] ->
+            [Table];
+        _ ->
+            NodesDown = {alert, [{column, "(offline)", Down}]},
+            [Table, NodesDown]
+    end.
+
 -spec(transfers() -> {[atom()], [{waiting_to_handoff, atom(), integer()} |
-    {stopped, atom(), integer()}]}).
+                                 {stopped, atom(), integer()}]}).
 transfers() ->
     {Down, Rings} = get_rings(),
 
     %% Work out which vnodes are running and which partitions they claim
     F = fun({N, R}, Acc) ->
-        {_Pri, Sec, Stopped} = partitions(N, R),
-        Acc1 = case Sec of
-                   [] ->
-                       [];
-                   _ ->
-                       [{waiting_to_handoff, N, length(Sec)}]
-               end,
-        case Stopped of
-            [] ->
-                Acc1 ++ Acc;
-            _ ->
-                Acc1 ++ [{stopped, N, length(Stopped)} | Acc]
-        end
-    end,
+                {_Pri, Sec, Stopped} = partitions(N, R),
+                Acc1 = case Sec of
+                           [] ->
+                               [];
+                           _ ->
+                               [{waiting_to_handoff, N, length(Sec)}]
+                       end,
+                case Stopped of
+                    [] ->
+                        Acc1 ++ Acc;
+                    _ ->
+                        Acc1 ++ [{stopped, N, length(Stopped)} | Acc]
+                end
+        end,
     {Down, lists:foldl(F, [], Rings)}.
 
 %% @doc Produce status for all active transfers in the cluster.
@@ -135,28 +168,28 @@ ring_status() ->
     Changes = riak_core_ring:pending_changes(Ring),
     %% Group pending changes by (Owner, NextOwner)
     Merged = lists:foldl(
-        fun({Idx, Owner, NextOwner, Mods, Status}, Acc) ->
-            orddict:append({Owner, NextOwner},
-                           {Idx, Mods, Status},
-                           Acc)
-        end, [], Changes),
+               fun({Idx, Owner, NextOwner, Mods, Status}, Acc) ->
+                       orddict:append({Owner, NextOwner},
+                                      {Idx, Mods, Status},
+                                      Acc)
+               end, [], Changes),
 
     %% For each pending transfer, determine which vnode modules have completed
     %% handoff and which we are still waiting on.
     %% Final result is of the form:
     %%   [{Owner, NextOwner}, [{Index, WaitingMods, CompletedMods, Status}]]
     TransferStatus = orddict:map(
-        fun({Owner, _}, Transfers) ->
-            case orddict:find(Owner, AllMods) of
-                error ->
-                    [{Idx, down, Mods, Status}
-                     || {Idx, Mods, Status} <- Transfers];
-                {ok, OwnerMods} ->
-                    NodeMods = [Mod || {_App, Mod} <- OwnerMods],
-                    [{Idx, NodeMods -- Mods, Mods, Status}
-                     || {Idx, Mods, Status} <- Transfers]
-            end
-        end, Merged),
+                       fun({Owner, _}, Transfers) ->
+                               case orddict:find(Owner, AllMods) of
+                                   error ->
+                                       [{Idx, down, Mods, Status}
+                                        || {Idx, Mods, Status} <- Transfers];
+                                   {ok, OwnerMods} ->
+                                       NodeMods = [Mod || {_App, Mod} <- OwnerMods],
+                                       [{Idx, NodeMods -- Mods, Mods, Status}
+                                        || {Idx, Mods, Status} <- Transfers]
+                               end
+                       end, Merged),
 
     MarkedDown = riak_core_ring:down_members(Ring),
     {Claimant, RingReady, Down2, MarkedDown, TransferStatus}.
@@ -168,7 +201,7 @@ ring_status() ->
 %% Retrieve the rings for all other nodes by RPC
 get_rings() ->
     {RawRings, Down} = riak_core_util:rpc_every_member(
-        riak_core_ring_manager, get_my_ring, [], 30000),
+                         riak_core_ring_manager, get_my_ring, [], 30000),
     RawRings2 = [riak_core_ring:upgrade(R) || {ok, R} <- RawRings],
     Rings = orddict:from_list([{riak_core_ring:owner_node(R), R} || R <- RawRings2]),
     {lists:sort(Down), Rings}.
@@ -192,7 +225,7 @@ rings_match(R1hash, [{N2, R2} | Rest]) ->
 active_partitions(Node) ->
     VNodes = gen_server:call({riak_core_vnode_manager, Node}, all_vnodes, 30000),
     lists:foldl(fun({_, P, _}, Ps) ->
-        ordsets:add_element(P, Ps)
+                        ordsets:add_element(P, Ps)
                 end, [], VNodes).
 
 %% Return a list of active primary partitions, active secondary partitions (to be handed off)

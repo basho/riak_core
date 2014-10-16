@@ -43,8 +43,8 @@
          status_update/2,
          set_concurrency/1,
          get_concurrency/0,
-	 get_concurrency/1,
-	 get_all_concurrency/0,
+         get_concurrency/1,
+         get_all_concurrency/0,
          set_recv_data/2,
          kill_handoffs/0
         ]).
@@ -134,7 +134,7 @@ set_concurrency(Limit) ->
     gen_server:call(?MODULE,{set_concurrency,Limit}, infinity).
 
 get_configured_concurrency() ->
-     app_helper:get_env(riak_core, handoff_concurrency, ?HANDOFF_CONCURRENCY).
+    app_helper:get_env(riak_core, handoff_concurrency, ?HANDOFF_CONCURRENCY).
 
 get_concurrency() ->
     get_concurrency(node()).
@@ -226,7 +226,7 @@ handle_call({set_concurrency,Limit},_From,State=#state{handoffs=HS}) ->
             %% something with that if necessary.
             {_Keep,Discard}=lists:split(Limit,HS),
             _ = [erlang:exit(Pid,max_concurrency) ||
-                #handoff_status{transport_pid=Pid} <- Discard],
+                    #handoff_status{transport_pid=Pid} <- Discard],
             {reply, ok, State};
         false ->
             {reply, ok, State}
@@ -580,8 +580,8 @@ update_stats(StatsUpdate, Stats) ->
     dict:store(last_update, LU, Stats3).
 
 validate_size(Size={N, U}) when is_number(N) andalso
-                           N > 0 andalso
-                           (U =:= bytes orelse U =:= objects) ->
+                                N > 0 andalso
+                                (U =:= bytes orelse U =:= objects) ->
     Size;
 validate_size(Size={F, dynamic}) when is_function(F) ->
     Size;
