@@ -13,13 +13,29 @@
 
 -compile(export_all).
 
--record(state,{handoffs=[],max_concurrency=0}).
+-define(QC_OUT(P),
+        eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
+
+%% How many times we should sleep before giving up on handoff
+%% processes that we expected to terminate
+-define(MAX_EXIT_WAITS, 5).
+
+%% How many milliseconds we should sleep waiting on processes to die
+-define(EXIT_WAIT, 50).
+
+-record(state,{handoffs=[],max_concurrency=2,inbound_count=0}).
+
+
+check() ->
+    eqc:check(eqc_statem:show_states(?QC_OUT(prop_handoff_manager()))).
+
+
 
 %% @doc Returns the state in which each test case starts. (Unless a different
 %%      initial state is supplied explicitly to, e.g. commands/2.)
 -spec initial_state() -> eqc_statem:symbolic_state().
 initial_state() ->
-    #state{handoffs=[],max_concurrency=2}.
+    #state{}.
 
 %% ------ Common pre-/post-conditions
 %% @doc General command filter, checked before a command is generated.
@@ -44,73 +60,44 @@ postcondition_common(_S, _Call, _Res) ->
 %% @doc add_inbound_command - Command generator
 %% We can send an empty list as the `SSLOpts' argument to
 %% `add_inbound/1` since we mock `handoff_receiver'
--spec add_inbound_command(S :: eqc_statem:symbolic_state()) ->
-        eqc_gen:gen(eqc_statem:call()).
-add_inbound_command(_S) ->
-    {call, riak_core_handoff_manager, add_inbound, [[]]}.
+add_inbound(SSLOpts) ->
+    riak_core_handoff_manager:add_inbound(SSLOpts).
 
-%% @doc add_inbound_pre - Precondition for generation
--spec add_inbound_pre(S :: eqc_statem:symbolic_state()) -> boolean().
-add_inbound_pre(_S) ->
-    true. %% Condition for S
-
-%% @doc add_inbound_pre - Precondition for add_inbound
--spec add_inbound_pre(S :: eqc_statem:symbolic_state(),
-                      Args :: [term()]) -> boolean().
-add_inbound_pre(_S, _Args) ->
-    true. %% Condition for S + Args
+-spec add_inbound_args(S :: eqc_statem:symbolic_state()) ->
+                                 list().
+add_inbound_args(_S) ->
+    [[]].
 
 %% @doc add_inbound_next - Next state function
 -spec add_inbound_next(S :: eqc_statem:symbolic_state(),
                        V :: eqc_statem:var(),
                        Args :: [term()]) -> eqc_statem:symbolic_state().
-add_inbound_next(S, _Value, _Args) ->
-    S.
+add_inbound_next(S=#state{handoffs=Handoffs,max_concurrency=MaxConcurrency}, _Value, _Args) when length(Handoffs) >= MaxConcurrency ->
+    S;
+add_inbound_next(S=#state{handoffs=Handoffs,inbound_count=IC}, Value, _Args) ->
+    S#state{handoffs=Handoffs++[{{inbound, IC}, Value}],
+            inbound_count=IC+1}.
+
 
 %% @doc add_inbound_post - Postcondition for add_inbound
 -spec add_inbound_post(S :: eqc_statem:dynamic_state(),
                        Args :: [term()], R :: term()) -> true | term().
-add_inbound_post(_S, _Args, _Res) ->
-    true.
-
-%% @doc add_inbound_blocking - Is the operation blocking in this State
-%% -spec add_inbound_blocking(S :: eqc_statem:symbolic_state(),
-%%         Args :: [term()]) -> boolean().
-%% add_inbound_blocking(_S, _Args) ->
-%%   false.
-
-%% @doc add_inbound_adapt - How to adapt a call in this State
-%% -spec add_inbound_adapt(S :: eqc_statem:symbolic_state(),
-%%     Args :: [term()]) -> boolean().
-%% add_inbound_adapt(_S, _Args) ->
-%%   exit(adapt_not_possible).
-
-%% @doc add_inbound_dynamicpre - Dynamic precondition for add_inbound
-%% -spec add_inbound_dynamicpre(S :: eqc_statem:dynamic_state(),
-%%         Args :: [term()]) -> boolean().
-%% add_inbound_dynamicpre(_S, _Args) ->
-%%   true.
-
+add_inbound_post(#state{handoffs=Handoffs}, _Args, {ok, _Pid}) ->
+    eq(current_concurrency(inbound), length(valid_handoffs(Handoffs, inbound)) + 1);
+add_inbound_post(#state{handoffs=Handoffs}, _Args, {error,max_concurrency}) ->
+    eq(current_concurrency(inbound), length(valid_handoffs(Handoffs, inbound))).
 
 %% ------ Grouped operator: kill_handoffs
 %% kill_handoffs is a function of limited utility, only invoked by the
 %% object version upgrade/downgrade via riak_kv_reformat:run/2.
 %% @doc kill_handoffs_command - Command generator
--spec kill_handoffs_command(S :: eqc_statem:symbolic_state()) ->
-        eqc_gen:gen(eqc_statem:call()).
-kill_handoffs_command(_S) ->
-    {call, riak_core_handoff_manager, kill_handoffs, []}.
+kill_handoffs() ->
+    riak_core_handoff_manager:kill_handoffs().
 
-%% @doc kill_handoffs_pre - Precondition for generation
--spec kill_handoffs_pre(S :: eqc_statem:symbolic_state()) -> boolean().
-kill_handoffs_pre(_S) ->
-    true. %% Condition for S
-
-%% @doc kill_handoffs_pre - Precondition for kill_handoffs
--spec kill_handoffs_pre(S :: eqc_statem:symbolic_state(),
-                        Args :: [term()]) -> boolean().
-kill_handoffs_pre(_S, _Args) ->
-    true. %% Condition for S + Args
+-spec kill_handoffs_args(S :: eqc_statem:symbolic_state()) ->
+                                 list().
+kill_handoffs_args(_S) ->
+    [].
 
 %% @doc kill_handoffs_next - Next state function
 -spec kill_handoffs_next(S :: eqc_statem:symbolic_state(),
@@ -122,26 +109,53 @@ kill_handoffs_next(S, _Value, _Args) ->
 %% @doc kill_handoffs_post - Postcondition for kill_handoffs
 -spec kill_handoffs_post(S :: eqc_statem:dynamic_state(),
                          Args :: [term()], R :: term()) -> true | term().
-kill_handoffs_post(_S, _Args, _Res) ->
-    true.
+kill_handoffs_post(_S, _Args, ok) ->
+    try_wait(current_concurrency() =< 0, 0, ?MAX_EXIT_WAITS).
 
-%% @doc kill_handoffs_blocking - Is the operation blocking in this State
-%% -spec kill_handoffs_blocking(S :: eqc_statem:symbolic_state(),
-%%         Args :: [term()]) -> boolean().
-%% kill_handoffs_blocking(_S, _Args) ->
-%%   false.
 
-%% @doc kill_handoffs_adapt - How to adapt a call in this State
-%% -spec kill_handoffs_adapt(S :: eqc_statem:symbolic_state(),
-%%     Args :: [term()]) -> boolean().
-%% kill_handoffs_adapt(_S, _Args) ->
-%%   exit(adapt_not_possible).
+%% ------ Grouped operator: set_concurrency
+%% @doc set_concurrency_command - Command generator
+set_concurrency(Limit) ->
+    riak_core_handoff_manager:set_concurrency(Limit).
 
-%% @doc kill_handoffs_dynamicpre - Dynamic precondition for kill_handoffs
-%% -spec kill_handoffs_dynamicpre(S :: eqc_statem:dynamic_state(),
-%%         Args :: [term()]) -> boolean().
-%% kill_handoffs_dynamicpre(_S, _Args) ->
-%%   true.
+-spec set_concurrency_args(S :: eqc_statem:symbolic_state()) ->
+                                 list(integer()).
+set_concurrency_args(_S) ->
+     [max_concurrency()].
+
+%% @doc set_concurrency_next - Next state function
+-spec set_concurrency_next(S :: eqc_statem:symbolic_state(),
+                           V :: eqc_statem:var(),
+                           Args :: [term()]) -> eqc_statem:symbolic_state().
+set_concurrency_next(S=#state{handoffs=HS}, _Value,
+                     [Limit]) ->
+    ValidHandoffs = valid_handoffs(HS),
+    case (length(ValidHandoffs) > Limit) of
+        true ->
+            {Kept, _Discarded} = lists:split(Limit, ValidHandoffs),
+            S#state{max_concurrency=Limit,handoffs=Kept};
+        false ->
+            S#state{max_concurrency=Limit}
+    end.
+
+%% @doc set_concurrency_post - Postcondition for set_concurrency
+%% Must account for possibility that exiting handoff processes will still be around when this is invoked.
+-spec set_concurrency_post(S :: eqc_statem:dynamic_state(),
+                           Args :: [term()], R :: term()) -> true | term().
+set_concurrency_post(_S,
+                     [MaxConcurrency],
+                     ok) ->
+    %% Dumb method to wait for handoff workers to exit
+    try_wait(current_concurrency() =< MaxConcurrency, MaxConcurrency, ?MAX_EXIT_WAITS).
+
+try_wait(true, _MaxConcurrency, _Attempt) ->
+    true;
+try_wait(false, _MaxConcurrency, Attempt) when Attempt =< 0 ->
+    false;
+try_wait(false, MaxConcurrency, Attempt) ->
+    timer:sleep(?EXIT_WAIT),
+    try_wait(current_concurrency() =< MaxConcurrency, MaxConcurrency, Attempt - 1).
+
 
 %% ------ ... more operations
 
@@ -164,8 +178,9 @@ prop_handoff_manager() ->
                 setup(),
                 {H, S, Res} = run_commands(?MODULE,Cmds),
                 teardown(),
-                pretty_commands(?MODULE, Cmds, {H, S, Res},
-                                Res == ok)
+                aggregate(command_names(Cmds),
+                          pretty_commands(?MODULE, Cmds, {H, S, Res},
+                                Res == ok))
             end).
 
 %% Stolen from Jordan's earlier work
@@ -250,3 +265,40 @@ current_concurrency() ->
     ActiveReceivers=proplists:get_value(active,Receivers),
     ActiveSenders=proplists:get_value(active,Senders),
     (ActiveReceivers+ActiveSenders).
+
+current_concurrency(inbound) ->
+    Receivers=supervisor:count_children(riak_core_handoff_receiver_sup),
+    ActiveReceivers=proplists:get_value(active,Receivers),
+    ActiveReceivers;
+current_concurrency(outbound) ->
+    Senders=supervisor:count_children(riak_core_handoff_sender_sup),
+    ActiveSenders=proplists:get_value(active,Senders),
+    ActiveSenders.
+
+max_concurrency() ->
+    choose(0, 10).
+
+valid_handoffs(HS, Direction) ->
+    lists:filter(
+      fun({{HandoffDirection, _}, _}) when HandoffDirection =:= Direction ->
+              true;
+         (_) ->
+              false
+      end,
+      valid_handoffs(HS)).
+
+valid_handoffs(HS) ->
+    lists:filter(
+      fun({{inbound, _Idx}, {ok, _}}) ->
+              true;
+         ({{inbound, _Idx}, _Error}) ->
+              false;
+         ({{outbound, _Idx}, ReturnVals}) ->
+              has_outbound(ReturnVals)
+      end,
+      HS).
+
+%% check if return values from add_outbound/4 contain
+%% a {ok, SenderPid}
+has_outbound(ReturnVals) ->
+    lists:keymember(ok, 1, ReturnVals).
