@@ -179,11 +179,14 @@ test_monotonic(TestTimeSecs) ->
         eqc:quickcheck(eqc:testing_time(TestTimeSecs, ?QC_OUT(prop_monotonic()))).
 
 
+%% `prop_only_boundaries' should run a little longer: not quite as
+%% fast, need to scan a larger portion of hash space to establish
+%% correctness
 only_boundaries_test_() ->
-    {timeout, ?TEST_TIME_SECS+5, [?_assert(test_only_boundaries() =:= true)]}.
+    {timeout, ?TEST_TIME_SECS+15, [?_assert(test_only_boundaries() =:= true)]}.
 
 test_only_boundaries() ->
-    test_only_boundaries(?TEST_TIME_SECS).
+    test_only_boundaries(?TEST_TIME_SECS+10).
 
 test_only_boundaries(TestTimeSecs) ->
         eqc:quickcheck(eqc:testing_time(TestTimeSecs, ?QC_OUT(prop_only_boundaries()))).
@@ -223,19 +226,10 @@ prop_monotonic() ->
                             end
                            ))).
 
-%% Using a dictionary lookup to identify partition boundaries is quite
-%% slow, especially given the large hash space we'd like to test.
-%%
-%% Replacing the use of `dict' with something based on `chashbin' may
-%% help significantly, but it's not vital.
-
 %% Hash values which are listed in the ring structure are boundary
 %% values
-boundary_helper(Hash, RingDict) ->
-    dict:is_key(Hash, RingDict).
-
-ring_to_dict({_RingSize, PropList}) ->
-    dict:from_list(lists:map(fun({Hash, dummy}) -> {Hash, dummy} end, PropList)).
+ring_to_set({_RingSize, PropList}) ->
+    ordsets:from_list(lists:map(fun({Hash, dummy}) -> Hash end, PropList)).
 
 find_near_boundaries(RingSize, PartitionSize) ->
     ?LET({Id, Offset}, {choose(1, RingSize-1), choose(-(RingSize*2), (RingSize*2))},
@@ -243,13 +237,13 @@ find_near_boundaries(RingSize, PartitionSize) ->
 
 prop_only_boundaries() ->
     ?FORALL(RingPower, choose(2, ?RINGSIZEEXPMAX),
-            ?FORALL({HashValue, RingDict},
+            ?FORALL({HashValue, BoundarySet},
                     {frequency([
                                {5, choose(0, ?HASHMAX)},
                                {2, find_near_boundaries(?RINGSIZE(RingPower),
                                                         ?PARTITIONSIZE(?RINGSIZE(RingPower)))}]),
-                     ring_to_dict(chash:fresh(?RINGSIZE(RingPower), dummy))},
-                    boundary_helper(HashValue, RingDict) =:=
+                     ring_to_set(chash:fresh(?RINGSIZE(RingPower), dummy))},
+                    ordsets:is_element(HashValue, BoundarySet) =:=
                         riak_core_ring_util:hash_is_partition_boundary(HashValue,
                                                                        ?RINGSIZE(RingPower)))).
 
