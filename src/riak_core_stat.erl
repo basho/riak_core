@@ -139,10 +139,10 @@ terminate(_Reason, _State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-update_value(converge_timer_begin) -> timer_begin;
-update_value(rebalance_timer_begin) -> timer_begin;
-update_value(converge_timer_end) -> timer_begin;
-update_value(rebalance_timer_end) -> timer_begin;
+update_value(converge_timer_begin) -> timer_start;
+update_value(rebalance_timer_begin) -> timer_start;
+update_value(converge_timer_end) -> timer_end;
+update_value(rebalance_timer_end) -> timer_end;
 update_value(_) -> 1.
 
 %% private
