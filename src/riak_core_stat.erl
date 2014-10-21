@@ -124,8 +124,7 @@ handle_call(_Req, _From, State) ->
     {reply, ok, State}.
 
 handle_cast({update, Arg}, State) ->
-    exometer:update([prefix(), ?APP, Arg], update_value(Arg)),
-    %% update1(Arg),
+    exometer:update([prefix(), ?APP, update_metric(Arg)], update_value(Arg)),
     {noreply, State};
 handle_cast(_Req, State) ->
     {noreply, State}.
@@ -139,10 +138,17 @@ terminate(_Reason, _State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-update_value(converge_timer_begin) -> timer_start;
+update_metric(converge_timer_begin ) -> converge_delay;
+update_metric(converge_timer_end   ) -> converge_delay;
+update_metric(rebalance_timer_begin) -> rebalance_delay;
+update_metric(rebalance_timer_end  ) -> rebalance_delay;
+update_metric(Arg) -> Arg.
+
+
+update_value(converge_timer_begin ) -> timer_start;
 update_value(rebalance_timer_begin) -> timer_start;
-update_value(converge_timer_end) -> timer_end;
-update_value(rebalance_timer_end) -> timer_end;
+update_value(converge_timer_end   ) -> timer_end;
+update_value(rebalance_timer_end  ) -> timer_end;
 update_value(_) -> 1.
 
 %% private
