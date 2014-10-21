@@ -23,9 +23,7 @@
 %%      A `Path' is a list of atoms | binaries. The module creates a set
 %%      of `ets:select/1' guards, one for each element in `Path'
 %%      For each stat that has a key that matches `Path' we calculate the
-%%      current value and return it. This module makes use of
-%%     `riak_core_stat_calc_proc'
-%%      to cache and limit stat calculations.
+%%      current value and return it.
 
 -module(riak_core_stat_q).
 
@@ -37,7 +35,7 @@
 -type path() :: [] | [atom()|binary()].
 -type stats() :: [stat()].
 -type stat() :: {stat_name(), stat_value()}.
--type stat_name() :: tuple().
+-type stat_name() :: list().
 -type stat_value() :: integer() | [tuple()].
 
 %% @doc To allow for namespacing, and adding richer dimensions, stats
@@ -53,80 +51,37 @@
 %% in `Path' as a wild card.
 -spec get_stats(path()) -> stats().
 get_stats(Path) ->
-    %% get all the stats that are at Path
-    NamesNTypes = names_and_types(Path),
-    calculate_stats(NamesNTypes).
-
-%% @doc queries folsom's metrics table for stats that match our path
-names_and_types(Path) ->
-    Guards = guards_from_path(Path),
-    ets:select(folsom, [{{'$1','$2'}, Guards,['$_']}]).
-
-guards_from_path(Path) ->
-    SizeGuard = size_guard(length(Path)),
-    %% Going to reverse it is why this way around
-    Guards = [SizeGuard, {is_tuple, '$1'}],
-    add_guards(Path, Guards, 1).
-
-add_guards([], Guards, _Cnt) ->
-    lists:reverse(Guards);
-add_guards(['_'|Path], Guards, Cnt) ->
-    add_guards(Path, Guards, Cnt+1);
-add_guards([Elem|Path], Guards, Cnt) ->
-   add_guards(Path, [guard(Elem, Cnt) | Guards], Cnt+1).
-
-guard(Elem, Cnt) when Cnt > 0 ->
-    {'==', {element, Cnt, '$1'}, Elem}.
-
--spec size_guard(pos_integer()) -> tuple().
-size_guard(N) ->
-    {'>=', {size, '$1'}, N}.
+    exometer:get_values(Path).
+    %% %% get all the stats that are at Path
+    %% calculate_stats(exometer:select(
+    %%                     [{ {Path ++ '_','_',enabled}, [], ['$_'] }])).
 
 calculate_stats(NamesAndTypes) ->
-    [{Name, get_stat({Name, Type})} || {Name, {metric, _, Type, _}} <- NamesAndTypes].
+    [{Name, get_stat(Name)} || {Name, _, _} <- NamesAndTypes].
 
 %% Create/lookup a cache/calculation process
 get_stat(Stat) ->
-    Pid = riak_core_stat_calc_sup:calc_proc(Stat),
-    riak_core_stat_calc_proc:value(Pid).
+    exometer:get_value(Stat).
 
-throw_folsom_error({error, _, _} = Err) ->
-    throw(Err);
-throw_folsom_error(Other) -> Other.
-
-%% Encapsulate getting a stat value from folsom.
+%% Encapsulate getting a stat value from exometer.
 %%
 %% If for any reason we can't get a stats value
 %% return 'unavailable'.
 %% @TODO experience shows that once a stat is
 %% broken it stays that way. Should we delete
 %% stats that are broken?
-calc_stat({Name, gauge}) ->
-    try
-        GaugeVal = throw_folsom_error(folsom_metrics:get_metric_value(Name)),
-        calc_gauge(GaugeVal)
-    catch ErrClass:ErrReason ->
-            log_error(Name, ErrClass, ErrReason),
-            unavailable
-    end;
-calc_stat({Name, histogram}) ->
-    try
-        throw_folsom_error(folsom_metrics:get_histogram_statistics(Name))
-    catch ErrClass:ErrReason ->
-            log_error(Name, ErrClass, ErrReason),
-            unavailable
-    end;
-calc_stat({Name, _Type}) ->
-    try throw_folsom_error(folsom_metrics:get_metric_value(Name))
-    catch ErrClass:ErrReason ->
-            log_error(Name, ErrClass, ErrReason),
-            unavailable
-    end.
+calc_stat({Name, _Type}) when is_tuple(Name) ->
+    stat_return(exometer:get_value([riak_core_stat:prefix()|tuple_to_list(Name)]));
+calc_stat({[_|_] = Name, _Type}) ->
+    stat_return(exometer:get_value([riak_core_stat:prefix()|Name])).
+
+stat_return({error,not_found}) -> unavailable;
+stat_return({ok, Value}) -> Value.
 
 log_error(StatName, ErrClass, ErrReason) ->
     lager:warning("Failed to calculate stat ~p with ~p:~p", [StatName, ErrClass, ErrReason]).
 
-%% some crazy people put funs in folsom gauges
+%% some crazy people put funs in gauges (exometer has a 'function' metric)
 %% so that they can have a consistent interface
 %% to access stats from disperate sources
 calc_gauge({function, Mod, Fun}) ->

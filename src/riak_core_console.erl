@@ -28,7 +28,9 @@
          add_source/1, del_source/1, grant/1, revoke/1,
          print_users/1, print_user/1, print_sources/1,
          print_groups/1, print_group/1, print_grants/1,
-         security_enable/1, security_disable/1, security_status/1, ciphers/1]).
+         security_enable/1, security_disable/1, security_status/1, ciphers/1,
+	 stat_show/1, stat_showall/1, stat_info/1, stat_enable/1, stat_disable/1,
+	 stat_reporter/1, stat_subscribe/1, stat_unsubscribe/1]).
 
 %% @doc Return for a given ring and node, percentage currently owned and
 %% anticipated after the transitions have been completed.
@@ -1141,3 +1143,222 @@ parse_cidr(CIDR) ->
     [IP, Mask] = string:tokens(CIDR, "/"),
     {ok, Addr} = inet_parse:address(IP),
     {Addr, list_to_integer(Mask)}.
+
+
+stat_show(Arg) ->
+    print_stats(find_entries(Arg)).
+
+stat_showall(Arg) ->
+    print_stats(find_entries(Arg, '_')).
+
+find_entries(Arg) ->
+    find_entries(Arg, enabled).
+
+find_entries(Arg, Status) ->
+    Patterns = lists:flatten([parse_stat_entry(S, Status) || S <- Arg]),
+    exometer:select(Patterns).
+
+print_stats(Entries) ->
+    io:fwrite(
+      [io_lib:fwrite("~p: ~p~n", [E, get_value(E, Status)]) || {E, _T, Status} <- Entries]).
+
+get_value(_, disabled) ->
+    disabled;
+get_value(E, _Status) ->
+    case exometer:get_value(E) of
+	{ok, V} -> V;
+	{error,_} -> unavailable
+    end.
+
+stat_enable(Arg) ->
+    [io:fwrite("~p: ~p~n", [N, change_status(N, enabled)])
+     || {N, _, _} <- find_entries(Arg, disabled)].
+
+stat_disable(Arg) ->
+    [io:fwrite("~p: ~p~n", [N, change_status(N, disabled)])
+     || {N, _, _} <- find_entries(Arg, enabled)].
+
+stat_reporter(Arg) ->
+    try stat_reporter_int(split_command(Arg))
+    catch
+	error:_ -> error
+    end.
+
+split_command(Arg) ->
+    re:split(Arg, "\\s", [{return,list}]).
+
+stat_reporter_int(["enable", R]) ->
+    exometer_report:enable_reporter(reporter_name(R));
+stat_reporter_int(["disable", R]) ->
+    exometer_report:disable_reporter(reporter_name(R)).
+
+stat_subscribe([R, Sub]) ->
+    try
+	case parse_sub(Sub) of
+	    {Entry, DP, Int, X} ->
+		exometer_report:subscribe(reporter_name(R), Entry, DP, Int, X);
+	    Error ->
+		Error
+	end
+    catch
+	error:_ ->
+	    error
+    end.
+
+stat_unsubscribe([R, Sub]) ->
+    case reporter_name(R) of
+	{ok, Reporter} ->
+	    case parse_unsub(Sub) of
+		{Entry, DP, Int, X} ->
+		    exometer_report:subscribe(Reporter, Entry, DP, Int, X);
+		Error1 ->
+		    Error1
+	    end;
+	{error, Error2} ->
+	    Error2
+    end.
+
+parse_sub(Sub) ->
+    case string:tokens(Sub, ":") of
+	[E, D, I] -> {p_e(E), p_d(D), p_i(I), []}
+    end.
+
+parse_unsub(UnSub) ->
+    case string:tokens(UnSub, ":") of
+	[E, D] -> {p_e(E), p_d(D)}
+    end.
+
+p_e(E) ->
+    parse_stat_entry(E, enabled).
+
+p_d(D) ->
+    list_to_existing_atom(D).
+
+p_i(I) ->
+    try list_to_integer(I)
+    catch
+	error:_ ->
+	    list_to_existing_atom(I)
+    end.
+
+reporter_name(R) ->
+    try {ok, list_to_existing_atom(R)}
+    catch error:_ -> {error, unknown_reporter}
+    end.
+
+change_status(N, St) ->
+    case exometer:setopts(N, [{status, St}]) of
+	ok ->
+	    St;
+	Error ->
+	    Error
+    end.
+
+stat_info(Arg) ->
+    {Attrs, RestArg} = pick_info_attrs(split_arg(Arg)),
+    [print_info(E, Attrs) || E <- find_entries(RestArg, '_')].
+
+pick_info_attrs(Arg) ->
+    case lists:foldr(
+           fun("-name"     , {As, Ps}) -> {[name     |As], Ps};
+              ("-type"     , {As, Ps}) -> {[type     |As], Ps};
+              ("-module"   , {As, Ps}) -> {[module   |As], Ps};
+              ("-value"    , {As, Ps}) -> {[value    |As], Ps};
+              ("-cache"    , {As, Ps}) -> {[cache    |As], Ps};
+              ("-status"   , {As, Ps}) -> {[status   |As], Ps};
+              ("-timestamp", {As, Ps}) -> {[timestamp|As], Ps};
+              ("-options"  , {As, Ps}) -> {[options  |As], Ps};
+              (P, {As, Ps}) -> {As, [P|Ps]}
+           end, {[], []}, Arg) of
+        {[], Rest} ->
+            {[name, type, module, value, cache, status, timestamp, options], Rest};
+        Other ->
+            Other
+    end.
+
+print_info({N, _Type, _Status}, [A|Attrs]) ->
+    Hdr = lists:flatten(io_lib:fwrite("~p: ", [N])),
+    Pad = lists:duplicate(length(Hdr), $\s),
+    Info = exometer:info(N),
+    Body = [io_lib:fwrite("~w = ~p~n", [A, proplists:get_value(A, Info)])
+	    | lists:map(fun(Ax) ->
+				io_lib:fwrite(Pad ++ "~w = ~p~n",
+					      [Ax, proplists:get_value(Ax, Info)])
+			end, Attrs)],
+    io:put_chars([Hdr, Body]).
+
+split_arg([Str]) ->
+    re:split(Str, "\\s", [{return,list}]).
+
+parse_stat_entry([], Status) ->
+    {{[riak_core_stat:prefix() | '_'], '_', '_'}, [{'=:=','$status',Status}], ['$_']};
+parse_stat_entry("*", Status) ->
+    parse_stat_entry([], Status);
+parse_stat_entry("[" ++ _ = Expr, _Status) ->
+    case erl_scan:string(ensure_trailing_dot(Expr)) of
+	{ok, Toks, _} ->
+	    case erl_parse:parse_exprs(Toks) of
+		{ok, [Abst]} ->
+		    partial_eval(Abst);
+		Error ->
+		    io:fwrite("(Parse error for ~p: ~p~n", [Expr, Error]),
+		    []
+	    end;
+	ScanErr ->
+	    io:fwrite("(Scan error for ~p: ~p~n", [Expr, ScanErr]),
+	    []
+    end;
+parse_stat_entry(Str, Status) when Status==enabled; Status==disabled ->
+    Parts = re:split(Str, "\\.", [{return,list}]),
+    {{replace_parts(Parts),'_',Status}, [], ['$_']};
+parse_stat_entry(Str, '_') ->
+    Parts = re:split(Str, "\\.", [{return,list}]),
+    {{replace_parts(Parts),'_','_'}, [], ['$_']};
+parse_stat_entry(_, Status) ->
+    io:fwrite("(Illegal status: ~p~n", [Status]).
+
+
+ensure_trailing_dot(Str) ->
+    case lists:reverse(Str) of
+	"." ++ _ ->
+	    Str;
+	_ ->
+	    Str ++ "."
+    end.
+
+partial_eval({cons,_,H,T}) ->
+    [partial_eval(H) | partial_eval(T)];
+%% partial_eval({nil,_}) ->
+%%     [];
+partial_eval({tuple,_,Elems}) ->
+    list_to_tuple([partial_eval(E) || E <- Elems]);
+%% partial_eval({T,_,X}) when T==atom; T==integer; T==float ->
+%%     X;
+partial_eval({op,_,'++',L1,L2}) ->
+    partial_eval(L1) ++ partial_eval(L2);
+partial_eval(X) ->
+    erl_parse:normalise(X).
+
+replace_parts([H|T]) ->
+    R = case H of
+	    "*" -> '_';
+	    "'" ++ _ ->
+		case erl_scan:string(H) of
+		    {ok, [{atom, _, A}], _} ->
+			A;
+		    Error ->
+			error(Error)
+		end;
+	    [C|_] when C >= $0, C =< $9 ->
+		try list_to_integer(H)
+		catch
+		    error:_ -> list_to_atom(H)
+		end;
+	    _ -> list_to_atom(H)
+	end,
+    case T of
+	["**"] -> [R] ++ '_';
+	_ -> [R|replace_parts(T)]
+    end;
+replace_parts([]) ->
+    [].
