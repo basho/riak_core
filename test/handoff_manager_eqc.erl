@@ -156,6 +156,30 @@ try_wait(false, MaxConcurrency, Attempt) ->
     timer:sleep(?EXIT_WAIT),
     try_wait(current_concurrency() =< MaxConcurrency, MaxConcurrency, Attempt - 1).
 
+%% ------ Grouped operator: get_concurrency
+%% @doc get_concurrency_command - Command generator
+get_concurrency() ->
+    riak_core_handoff_manager:get_concurrency().
+
+-spec get_concurrency_args(S :: eqc_statem:symbolic_state()) ->
+                                  list().
+get_concurrency_args(_S) ->
+    [].
+
+%% @doc get_concurrency_next - Next state function
+-spec get_concurrency_next(S :: eqc_statem:symbolic_state(),
+                           V :: eqc_statem:var(),
+                           Args :: [term()]) -> eqc_statem:symbolic_state().
+get_concurrency_next(S, _Value, _Args) ->
+    S.
+
+%% @doc get_concurrency_post - Postcondition for get_concurrency
+-spec get_concurrency_post(S :: eqc_statem:dynamic_state(),
+                           Args :: [term()], R :: term()) -> true | term().
+get_concurrency_post(#state{max_concurrency=ExpectedConcurrency}, [],
+                     MaxConcurrency) ->
+    ExpectedConcurrency =:= MaxConcurrency andalso
+        current_concurrency() =< MaxConcurrency.
 
 %% ------ ... more operations
 
