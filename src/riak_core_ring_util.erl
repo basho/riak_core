@@ -195,19 +195,29 @@ test_only_boundaries(TestTimeSecs) ->
 prop_ids_are_boundaries() ->
     ?FORALL(RingPower, choose(2, ?RINGSIZEEXPMAX),
             ?FORALL(PartitionId, choose(0, ?RINGSIZE(RingPower) - 1),
-                    riak_core_ring_util:hash_is_partition_boundary(
-                      riak_core_ring_util:partition_id_to_hash(PartitionId,
-                                                               ?RINGSIZE(RingPower)),
-                      ?RINGSIZE(RingPower)) =:= true)).
+                    begin
+                        RingSize = ?RINGSIZE(RingPower),
+                        BoundaryHash =
+                            riak_core_ring_util:partition_id_to_hash(PartitionId,
+                                                                     RingSize),
+                        true =:= riak_core_ring_util:hash_is_partition_boundary(BoundaryHash,
+                                                                                RingSize)
+                    end
+                   )).
 
 %% Partition IDs should map to hash values which map back to the same partition IDs
 prop_reverse() ->
     ?FORALL(RingPower, choose(2, ?RINGSIZEEXPMAX),
             ?FORALL(PartitionId, choose(0, ?RINGSIZE(RingPower) - 1),
-                    riak_core_ring_util:hash_to_partition_id(
-                      riak_core_ring_util:partition_id_to_hash(PartitionId,
-                                                               ?RINGSIZE(RingPower)),
-                      ?RINGSIZE(RingPower)) =:= PartitionId)).
+                    begin
+                        RingSize = ?RINGSIZE(RingPower),
+                        BoundaryHash =
+                            riak_core_ring_util:partition_id_to_hash(PartitionId,
+                                                                     RingSize),
+                        PartitionId =:= riak_core_ring_util:hash_to_partition_id(
+                                          BoundaryHash, RingSize)
+                    end
+                   )).
 
 %% For any given hash value, any larger hash value maps to a partition
 %% ID of greater or equal value.
@@ -216,12 +226,13 @@ prop_monotonic() ->
             ?FORALL(HashValue, choose(0, ?HASHMAX - 1),
                     ?FORALL(GreaterHash, choose(HashValue + 1, ?HASHMAX),
                             begin
+                                RingSize = ?RINGSIZE(RingPower),
                                 LowerPartition =
                                     riak_core_ring_util:hash_to_partition_id(HashValue,
-                                                                             ?RINGSIZE(RingPower)),
+                                                                             RingSize),
                                 GreaterPartition =
                                     riak_core_ring_util:hash_to_partition_id(GreaterHash,
-                                                                             ?RINGSIZE(RingPower)),
+                                                                             RingSize),
                                 LowerPartition =< GreaterPartition
                             end
                            ))).
@@ -243,10 +254,15 @@ prop_only_boundaries() ->
                                {2, find_near_boundaries(?RINGSIZE(RingPower),
                                                         ?PARTITIONSIZE(?RINGSIZE(RingPower)))}]),
                      ring_to_set(chash:fresh(?RINGSIZE(RingPower), dummy))},
-                    ordsets:is_element(HashValue, BoundarySet) =:=
-                        riak_core_ring_util:hash_is_partition_boundary(HashValue,
-                                                                       ?RINGSIZE(RingPower)))).
-
+                     begin
+                         RingSize = ?RINGSIZE(RingPower),
+                         HashIsInRing = ordsets:is_element(HashValue, BoundarySet),
+                         HashIsPartitionBoundary =
+                             riak_core_ring_util:hash_is_partition_boundary(HashValue,
+                                                                            RingSize),
+                         HashIsPartitionBoundary =:= HashIsInRing
+                     end
+                   )).
 
 -endif. % EQC
 -endif. % TEST
