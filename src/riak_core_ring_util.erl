@@ -200,8 +200,9 @@ prop_ids_are_boundaries() ->
                         BoundaryHash =
                             riak_core_ring_util:partition_id_to_hash(PartitionId,
                                                                      RingSize),
-                        true =:= riak_core_ring_util:hash_is_partition_boundary(BoundaryHash,
-                                                                                RingSize)
+                        equals(true,
+                               riak_core_ring_util:hash_is_partition_boundary(BoundaryHash,
+                                                                              RingSize))
                     end
                    )).
 
@@ -214,8 +215,9 @@ prop_reverse() ->
                         BoundaryHash =
                             riak_core_ring_util:partition_id_to_hash(PartitionId,
                                                                      RingSize),
-                        PartitionId =:= riak_core_ring_util:hash_to_partition_id(
-                                          BoundaryHash, RingSize)
+                        equals(PartitionId,
+                               riak_core_ring_util:hash_to_partition_id(
+                                 BoundaryHash, RingSize))
                     end
                    )).
 
@@ -260,7 +262,7 @@ prop_only_boundaries() ->
                          HashIsPartitionBoundary =
                              riak_core_ring_util:hash_is_partition_boundary(HashValue,
                                                                             RingSize),
-                         HashIsPartitionBoundary =:= HashIsInRing
+                         equals(HashIsPartitionBoundary, HashIsInRing)
                      end
                    )).
 
