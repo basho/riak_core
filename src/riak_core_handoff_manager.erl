@@ -137,11 +137,11 @@ get_configured_concurrency() ->
     app_helper:get_env(riak_core, handoff_concurrency, ?HANDOFF_CONCURRENCY).
 
 get_concurrency() ->
-    get_concurrency(node()).
+    Default = get_configured_concurrency(),
+    riak_core_metadata:get(?LIMIT_PREFIX, node(), [{default, Default}]).
 
 get_concurrency(Node) ->
-    Default = get_configured_concurrency(),
-    riak_core_metadata:get(?LIMIT_PREFIX, Node, [{default, Default}]).
+    riak_core_metadata:get(?LIMIT_PREFIX, Node).
 
 get_all_concurrency() ->
     riak_core_metadata:to_list(?LIMIT_PREFIX).

@@ -72,8 +72,12 @@ transfer_limit() ->
 
 -spec transfer_limit(node()) -> status().
 transfer_limit(Node) ->
-    Limit = riak_core_handoff_manager:get_concurrency(Node),
-    transfer_limit_status([{Node, Limit}]).
+    case riak_core_handoff_manager:get_concurrency(Node) of
+        undefined ->
+            [{alert, [{text, io_lib:format("Invalid/unknown node '~s'.", [Node])}]}];
+        Limit ->
+            transfer_limit_status([{Node, Limit}])
+    end.
 
 -spec transfer_limit_status([{node(), non_neg_integer()}]) -> status().
 transfer_limit_status(Limits0) ->
@@ -93,7 +97,7 @@ rpc_transfer_limit() ->
 rpc_transfer_limit(Node) ->
     case riak_core_util:safe_rpc(Node, riak_core_handoff_manager,
                                  get_concurrency, [], 5000) of
-        {badrpc, rpc_process_down} ->
+        {badrpc, _} ->
             rpc_transfer_limit_status([], [Node]);
         Limit ->
             rpc_transfer_limit_status([{Node, Limit}], [])
