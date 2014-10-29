@@ -492,7 +492,7 @@ send_handoff(HOType, {Mod, Src, Target}, Node, Vnode, HS, {Filter, FilterModFun}
                             HOFilter = Filter,
                             HOAcc0 = undefined,
                             HONotSentFun = undefined;
-                        resize_transfer ->
+                        resize ->
                             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
                             HOFilter = resize_transfer_filter(Ring, Mod, Src, Target),
                             HOAcc0 = ordsets:new(),
@@ -630,7 +630,7 @@ simple_handoff () ->
     %% clear handoff_concurrency and make sure a handoff fails
     ?assertEqual(ok,set_concurrency(0)),
     ?assertEqual({error,max_concurrency},add_inbound([])),
-    ?assertEqual({error,max_concurrency},add_outbound(ownership_transfer,riak_kv_vnode,
+    ?assertEqual({error,max_concurrency},add_outbound(ownership,riak_kv_vnode,
                                                       0,node(),self(),[])),
 
     %% allow for a single handoff

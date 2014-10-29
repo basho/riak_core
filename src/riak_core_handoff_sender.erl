@@ -251,7 +251,7 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                              riak_core_format:human_size_fmt("~.2f", ThroughputBytes)]),
                  case Type of
                      repair -> ok;
-                     resize_transfer -> gen_fsm:send_event(ParentPid, {resize_transfer_complete,
+                     resize -> gen_fsm:send_event(ParentPid, {resize_transfer_complete,
                                                                        NotSentAcc});
                      _ -> gen_fsm:send_event(ParentPid, handoff_complete)
                  end;
