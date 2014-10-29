@@ -155,7 +155,7 @@
           forward :: node() | [{integer(), node()}],
           handoff_target=none :: none | {integer(), node()},
           handoff_pid :: pid(),
-          handoff_type :: hinted_handoff | ownership_transfer | resize_transfer,
+          handoff_type :: riak_core_handoff:ho_type(),
           pool_pid :: pid() | undefined,
           pool_config :: tuple() | undefined,
           manager_event_timer :: reference(),
@@ -419,7 +419,7 @@ vnode_handoff_command(Sender, Request, ForwardTo,
         {forward, NewModState} ->
             case HOType of
                 %% resize op and transfer ongoing
-                resize_transfer -> vnode_forward(resize, ForwardTo, Sender,
+                resize -> vnode_forward(resize, ForwardTo, Sender,
                                                  {resize_forward, Request}, State);
                 %% resize op ongoing, no resize transfer ongoing, arrive here
                 %% via forward_or_vnode_command
@@ -468,7 +468,7 @@ active(?VNODE_REQ{sender=Sender, request=Request},
        State=#state{handoff_target=HT}) when HT =:= none ->
     forward_or_vnode_command(Sender, Request, State);
 active(?VNODE_REQ{sender=Sender, request=Request},
-                  State=#state{handoff_type=resize_transfer,
+                  State=#state{handoff_type=resize,
                                handoff_target={HOIdx,HONode},
                                index=Index,
                                forward=Forward,
@@ -546,7 +546,7 @@ active(_Event, _From, State) ->
 %% manager. Blocking the manager can impact all vnodes. This code is safe
 %% to execute on multiple parallel vnodes because of the synchronization
 %% afforded by having all ring changes go through the single ring manager.
-mark_handoff_complete(SrcIdx, Target, SeenIdxs, Mod, resize_transfer) ->
+mark_handoff_complete(SrcIdx, Target, SeenIdxs, Mod, resize) ->
     Prev = node(),
     Source = {SrcIdx, Prev},
     Result = riak_core_ring_manager:ring_trans(
@@ -930,9 +930,9 @@ maybe_handoff(TargetIdx, TargetNode,
             Resizing = riak_core_ring:is_resizing(R),
             Primary = riak_core_ring:is_primary(R, {Idx, node()}),
             HOType = case {Resizing, Primary} of
-                         {true, _} -> resize_transfer;
-                         {_, true} -> ownership_transfer;
-                         {_, false} -> hinted_handoff
+                         {true, _} -> resize;
+                         {_, true} -> ownership;
+                         {_, false} -> hinted
                      end,
             case Mod:handoff_starting({HOType, Target}, ModState) of
                 {true, NewModState} ->
