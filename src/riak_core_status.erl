@@ -94,7 +94,7 @@ transfer_limit_status(Limits, Down) ->
     end.
 
 -spec(transfers() -> {[atom()], [{waiting_to_handoff, atom(), integer()} |
-{stopped, atom(), integer()}]}).
+    {stopped, atom(), integer()}]}).
 transfers() ->
     {Down, Rings} = get_rings(),
 
@@ -120,10 +120,10 @@ transfers() ->
 -spec all_active_transfers() -> {Xfers :: list(), Down :: list()}.
 all_active_transfers() ->
     {Xfers, Down} =
-    riak_core_util:rpc_every_member(riak_core_handoff_manager,
-                                    status,
-                                    [{direction, outbound}],
-                                    5000),
+        riak_core_util:rpc_every_member(riak_core_handoff_manager,
+                                        status,
+                                        [{direction, outbound}],
+                                        5000),
     {Xfers, Down}.
 
 ring_status() ->
@@ -131,7 +131,7 @@ ring_status() ->
     %% are running on each node.
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
     {AllMods, Down} =
-    riak_core_util:rpc_every_member_ann(riak_core, vnode_modules, [], 1000),
+        riak_core_util:rpc_every_member_ann(riak_core, vnode_modules, [], 1000),
 
     %% Check if the claimant is running and if it believes the ring is ready
     Claimant = riak_core_ring:claimant(Ring),
