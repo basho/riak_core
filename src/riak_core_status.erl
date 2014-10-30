@@ -117,7 +117,7 @@ transfers() ->
     {Down, lists:foldl(F, [], Rings)}.
 
 %% @doc Produce status for all active transfers in the cluster.
--spec all_active_transfers() -> {Xfers :: list(), Down :: list()}.
+-spec all_active_transfers() -> {Xfers :: list(tuple()), Down :: list(node())}.
 all_active_transfers() ->
     {Xfers, Down} =
         riak_core_util:rpc_every_member(riak_core_handoff_manager,
