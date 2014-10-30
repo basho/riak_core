@@ -50,20 +50,19 @@ print(Header, Spec, Rows) ->
 autosize_create_table(Schema, Rows) ->
     BorderSize = 1 + length(hd(Rows)),
     MaxLineLen = case io:columns() of
-	             %% Leaving an extra space seems to work better
-	             {ok, N} -> N - 1; 
-		     {error, enotsup} -> ?MAX_LINE_LEN
-		 end,
+                     {ok, N} -> N - 1; % Leaving an extra space looks better
+                     {error, enotsup} -> ?MAX_LINE_LEN
+                 end,
     Sizes = get_field_widths(MaxLineLen - BorderSize, [Schema | Rows]),
     Spec = lists:zip(Schema, Sizes),
     create_table(Spec, Rows, MaxLineLen, []).
-	            
+
 -spec create_table(list(), list()) -> iolist().
 create_table(Spec, Rows) ->
     Lengths = get_row_length(Spec, Rows),
-    Length = lists:sum(Lengths)+2,
+    Length = lists:sum(Lengths) + 2,
     AdjustedSpec = [{Field, NewLength} || {{Field, _DefaultLength}, NewLength}
-                                          <- lists:zip(Spec, Lengths)],
+        <- lists:zip(Spec, Lengths)],
     create_table(AdjustedSpec, Rows, Length, []).
 
 -spec create_table(list(), list(), non_neg_integer(), iolist()) -> iolist().
@@ -81,7 +80,7 @@ create_table(Spec, [], _Length, IoList) ->
 create_table(Spec, [Row | Rows], Length, IoList) ->
     create_table(Spec, Rows, Length, [row(Spec, Row) | IoList]).
 
--spec get_field_widths(pos_integer(), [term()]) ->  [pos_integer()].
+-spec get_field_widths(pos_integer(), [term()]) -> [pos_integer()].
 get_field_widths(MaxLineLen, Rows) ->
     Widths = max_widths(Rows),
     resize_row(MaxLineLen, Widths).
@@ -90,10 +89,10 @@ get_field_widths(MaxLineLen, Rows) ->
 resize_row(MaxLength, Widths) ->
     Sum = lists:sum(Widths),
     case Sum > MaxLength of
-	true ->
-	    resize_items(Sum, MaxLength, Widths);
-	false ->
-	    Widths
+        true ->
+            resize_items(Sum, MaxLength, Widths);
+        false ->
+            Widths
     end.
 
 -spec resize_items(pos_integer(), pos_integer(), [pos_integer()]) ->
@@ -102,44 +101,44 @@ resize_items(Sum, MaxLength, Widths) ->
     Diff = Sum - MaxLength,
     NumColumns = length(Widths),
     case NumColumns > Diff of
-	true ->
-	    Remaining = NumColumns - Diff ,
-	    reduce_widths(1, Remaining, Widths);
-	false ->
-	    PerColumn = Diff div NumColumns + 1,
-	    Remaining = Diff - NumColumns,
-	    reduce_widths(PerColumn, Remaining, Widths)
+        true ->
+            Remaining = NumColumns - Diff,
+            reduce_widths(1, Remaining, Widths);
+        false ->
+            PerColumn = Diff div NumColumns + 1,
+            Remaining = Diff - NumColumns,
+            reduce_widths(PerColumn, Remaining, Widths)
     end.
 -spec reduce_widths(pos_integer(), pos_integer(), [pos_integer()]) ->
     [pos_integer()].
 reduce_widths(PerColumn, Total, Widths) ->
     %% Just subtract one character from each column until we run out.
-    {_, NewWidths} = 
-        lists:foldl(fun(Width, {Remaining, NewWidths}) ->
-		        case Remaining of
-			    0 ->
-				{0, [Width | NewWidths]};
-			    _ ->
-				Rem = Remaining - PerColumn,
-				{Rem, [Width - PerColumn | NewWidths]}
-			end
-		    end, {Total, []}, Widths),
+    {_, NewWidths} =
+    lists:foldl(fun(Width, {Remaining, NewWidths}) ->
+        case Remaining of
+            0 ->
+                {0, [Width | NewWidths]};
+            _ ->
+                Rem = Remaining - PerColumn,
+                {Rem, [Width - PerColumn | NewWidths]}
+        end
+                end, {Total, []}, Widths),
     NewWidths.
 
 get_row_length(Spec, Rows) ->
     Res = lists:foldl(fun({_Name, MinSize}, Total) ->
-			Longest = find_longest_field(Rows, length(Total)+1),
-                        Size = erlang:max(MinSize, Longest),
-                        [Size | Total]
-                end, [], Spec),
+        Longest = find_longest_field(Rows, length(Total) + 1),
+        Size = erlang:max(MinSize, Longest),
+        [Size | Total]
+                      end, [], Spec),
     lists:reverse(Res).
 
 -spec find_longest_field(list(), pos_integer()) -> non_neg_integer().
 find_longest_field(Rows, ColumnNo) ->
-        lists:foldl(fun(Row, Longest) ->
-		        erlang:max(Longest,
-			          field_length(lists:nth(ColumnNo,Row)))
-		    end, 0, Rows).
+    lists:foldl(fun(Row, Longest) ->
+        erlang:max(Longest,
+                   field_length(lists:nth(ColumnNo, Row)))
+                end, 0, Rows).
 
 -spec max_widths([term()]) -> list(pos_integer()).
 max_widths([Row]) ->
@@ -147,28 +146,28 @@ max_widths([Row]) ->
 max_widths([Row1 | Rest]) ->
     Row1Lengths = field_lengths(Row1),
     lists:foldl(fun(Row, Acc) ->
-		    Lengths = field_lengths(Row),
-		    [max(A, B) || {A, B} <- lists:zip(Lengths, Acc)]
-		end, Row1Lengths, Rest).
+        Lengths = field_lengths(Row),
+        [max(A, B) || {A, B} <- lists:zip(Lengths, Acc)]
+                end, Row1Lengths, Rest).
 
 -spec row(list(), list(string())) -> iolist().
 row(Spec, Row0) ->
     %% handle multiline fields
     Rows = expand_row(Row0),
     [
-     [ $| | lists:reverse(
-              ["\n" | lists:foldl(fun({{_, Size}, Str}, Acc) ->
-                                          [align(Str, Size) | Acc]
-                                  end, [], lists:zip(Spec, Row))])] || Row <- Rows].
+        [$| | lists:reverse(
+            ["\n" | lists:foldl(fun({{_, Size}, Str}, Acc) ->
+                [align(Str, Size) | Acc]
+                                end, [], lists:zip(Spec, Row))])] || Row <- Rows].
 
 -spec titles(list()) -> iolist().
 titles(Spec) ->
-    [ $| | lists:reverse(
+    [$| | lists:reverse(
         ["\n" | lists:foldl(fun({Title, Size}, TitleRow) ->
-                               [align(Title, Size) | TitleRow]
+            [align(Title, Size) | TitleRow]
                             end, [], Spec)])].
 
--spec align(string(), non_neg_integer()) -> iolist().
+-spec align(term(), non_neg_integer()) -> iolist().
 align(undefined, Size) ->
     align("", Size);
 align(Str, Size) when is_integer(Str) ->
@@ -188,8 +187,8 @@ align(Term, Size) ->
 
 -spec vertical_border(list(tuple())) -> string().
 vertical_border(Spec) ->
-    lists:reverse([$\n, [[char_seq(Length, $-), $+] ||
-                             {_Name, Length} <- Spec], $+]).
+    lists:reverse([               $\n, [[char_seq(Length, $-), $+] ||
+        {_Name, Length} <- Spec], $+]).
 
 -spec char_seq(non_neg_integer(), char()) -> string().
 char_seq(Length, Char) ->
@@ -205,8 +204,8 @@ field_length(Field) when is_binary(Field) ->
 field_length(Field) when is_list(Field) ->
     Lines = string:tokens(lists:flatten(Field), "\n"),
     lists:foldl(fun(Line, Longest) ->
-                        erlang:max(Longest,
-                                   length(Line))
+        erlang:max(Longest,
+                   length(Line))
                 end, 0, Lines);
 field_length(Field) ->
     field_length(io_lib:format("~p", [Field])).
@@ -222,12 +221,12 @@ expand_field(Field) ->
 
 expand_row(Row) ->
     {ExpandedRow, MaxHeight} = lists:foldl(fun(Field, {Fields, Max}) ->
-                                                    EF = expand_field(Field),
-                                                    {[EF|Fields], erlang:max(Max, length(EF))}
-                                            end, {[], 0}, lists:reverse(Row)),
+        EF = expand_field(Field),
+        {[EF | Fields], erlang:max(Max, length(EF))}
+                                           end, {[], 0}, lists:reverse(Row)),
     PaddedRow = [pad_field(Field, MaxHeight) || Field <- ExpandedRow],
-    [ [ lists:nth(N, Field) || Field <- PaddedRow]
-      || N <- lists:seq(1, MaxHeight)].
+    [[lists:nth(N, Field) || Field <- PaddedRow]
+     || N <- lists:seq(1, MaxHeight)].
 
 pad_field(Field, MaxHeight) when length(Field) < MaxHeight ->
     Field ++ ["" || _ <- lists:seq(1, MaxHeight - length(Field))];

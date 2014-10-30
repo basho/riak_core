@@ -6,7 +6,7 @@
 -type value() :: {value, term()}.
 -type text() :: {text, iolist()}.
 -type schema() :: [any()].
-%% A row where the type of each element matches it's place in the schema. A row
+%% A row where the type of each element matches its place in the schema. A row
 %% is unlabeled data and is only contained inside a table.
 -type row() :: [any()].
 -type rows() :: [row()].
@@ -15,5 +15,5 @@
 -type table() :: {table, schema(), rows()} | {table, [column()]}.
 -type alert() :: {alert, [column() | table() | text()]}.
 -type ratio() :: {ratio, integer(), pos_integer() | neg_integer()}.
--type elem() :: text() | schema() | row() | column() | table() | alert() | ratio() | value.
+-type elem() :: text() | schema() | row() | column() | table() | alert() | ratio() | value().
 -type status() :: [elem()].
