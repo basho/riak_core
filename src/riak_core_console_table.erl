@@ -49,13 +49,16 @@ print(Header, Spec, Rows) ->
 -spec autosize_create_table([any()], [[any()]]) -> iolist().
 autosize_create_table(Schema, Rows) ->
     BorderSize = 1 + length(hd(Rows)),
-    MaxLineLen = case io:columns() of
-                     {ok, N} -> N - 1; % Leaving an extra space looks better
-                     {error, enotsup} -> ?MAX_LINE_LEN
-                 end,
+    MaxLineLen = determine_max_line_length(),
     Sizes = get_field_widths(MaxLineLen - BorderSize, [Schema | Rows]),
     Spec = lists:zip(Schema, Sizes),
     create_table(Spec, Rows, MaxLineLen, []).
+
+determine_max_line_length() ->
+    case io:columns() of
+        {ok, N} -> N - 1; % Leaving an extra space looks better
+        {error, enotsup} -> ?MAX_LINE_LEN
+    end.
 
 -spec create_table(list(), list()) -> iolist().
 create_table(Spec, Rows) ->
