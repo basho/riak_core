@@ -38,6 +38,8 @@ write_status(done, Ctx) ->
     Ctx.
 
 -spec write_table([any()], [[any()]]) -> iolist().
+write_table(_Schema, []) ->
+    "";
 write_table(Schema, Rows) ->
     Table = riak_core_console_table:autosize_create_table(Schema, Rows),
     io_lib:format("~ts~n", [Table]).
@@ -58,6 +60,5 @@ write_column(Title, Items) when is_atom(hd(Items)) ->
 write_column(Title, Items) ->
     %% Todo: add bold/color for Title when supported
     lists:foldl(fun(Item, Acc) ->
-                    Acc++" "++Item
+                        Acc++" "++Item
                 end, Title++":", Items) ++ "\n".
-
