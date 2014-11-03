@@ -120,7 +120,7 @@ find_flag(Flag, Args) ->
     end.
 
 set_handoff_limits(Script, Args) ->
-                                                % We already check for 'value' in handoff_limit/2 so we know it's here
+    %% We already check for 'value' in handoff_limit/2 so we know it's here
     Limit = find_flag(value, Args),
     check_and_set_handoff_limit(Script, Args, Limit).
 
