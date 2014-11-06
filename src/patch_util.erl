@@ -235,7 +235,7 @@ parse_obsoleted_file(File) when is_list(File) ->
             [];
         {ok, Fh} ->
             Names = parse_obsoleted_file(Fh),
-            file:close(Fh),
+            _ = file:close(Fh),
             Names
     end;
 parse_obsoleted_file(Fh) ->
