@@ -139,6 +139,8 @@ process_message(?PT_MSG_OBJ, MsgData, State=#state{vnode=VNode, count=Count,
         {'EXIT', {timeout, _}} ->
             exit({error, {vnode_timeout, VNodeTimeout, size(MsgData),
                           binary:part(MsgData, {0,min(size(MsgData),128)})}});
+        {'EXIT', E} -> % make sure we still do all the old exits
+            exit(E);
         E={error, _} ->
             exit(E)
     end;
