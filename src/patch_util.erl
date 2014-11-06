@@ -19,7 +19,6 @@
          dir_taints/2, path_taint/2]).
 
 -export([incompatible_otp/1,
-         incompatible_apps/1,
          obsolete_patches/2]).
 
 %% To avoid blowing out the atom table, put a cap on the number of
@@ -62,44 +61,6 @@
 
 %%   otp_target    An OTP release identifier appropriate to this patch
 
-%%   app_target    A list of module and version tuples this patch should
-%%                 work with
-
-%% The version/release identifiers can either be a string or a list of
-%% strings.
-%%
-%% Versions are matched purely by string comparison.
-%%
-%% For example, if a patch indicates it applies to {riak_core, "2."},
-%% if riak_core is at version 2.anything, the patch will be considered
-%% compatible. If the patch should apply to riak_core 2.0.x and 2.1.x
-%% but not 2.2, {riak_core, ["2.0", "2.1"]} can be used.
-%%
-%% The otp_target and app_target fields imply some amount of
-%% foreknowledge as to the length of time a patch will be
-%% necessary.
-%%
-%% A patch which lacks version compatibility specifications will not
-%% be reported by the incompatible_* functions.
-
-%% Desirable enhancement: identification of patches in a specified
-%% folder that lack these attributes.
-
-%%%%
-%% Example invocation from a 2.0 (thus R16) environment:
-%%
-%% (dev1@127.0.0.1)36> patch_checker:incompatible_otp(patch_checker:loaded_taints(basho_patches)).
-%% [{dummy,[{name, basho_dummy_patch},
-%%          {version, 1},
-%%          {description,"Dummy module"},
-%%          {tickets,["basho/riak_ee#123","JIRA-1234"]},
-%%          {otp_target,"R15"},
-%%          {app_target,[{riak_core,"2.0"},{yokozuna,["4","3.0"]}]}],
-%%         "/Users/John/rt/current/dev/dev1/bin/../lib/basho-patches/dummy.beam"}]
-%%
-%% This module would also be returned by incompatible_apps since
-%% Yokozuna is currently on version 2.0.x.
-
 
 %%%%
 %% For documentation purposes, if we were to turn the proplist of
@@ -111,7 +72,6 @@
 %%           description :: string(),
 %%           tickets :: list(string()),
 %%           otp_target :: string() | list(string()),
-%%           app_target :: module_version() | list(module_version())
 %%         }).
 
 -type fspath() :: file:filename().
@@ -178,29 +138,6 @@ incompatible_otp(Patches) ->
     lists:filter(fun({_Module, PatchMetadata, _Path}) ->
                          version_incompatible(proplists:get_value(otp_target, PatchMetadata, ""), OTPVsn) end,
                  Patches).
-
-app_vsn(Module) ->
-    {Module, _Label, Version} = lists:keyfind(Module,1,application:loaded_applications()),
-    Version.
-
-%% @doc Given a list of patches, return those that are (per the
-%% compiled-in metadata) incompatible with the applications running in
-%% the environment.
--spec incompatible_apps(list(patch_data())) -> list(patch_data()).
-incompatible_apps(Patches) ->
-    lists:filter(fun({_Module, PatchMetadata, _Path}) ->
-                         case proplists:get_value(app_target, PatchMetadata, []) of
-                             [] ->
-                                 false;
-                             {Module, Version} ->
-                                 version_incompatible(Version, app_vsn(Module));
-                             List ->
-                                 lists:filter(fun({Module, Version}) ->
-                                                      version_incompatible(Version, app_vsn(Module)) end,
-                                              List) =/= []
-                         end end,
-                         Patches).
-
 
 version_incompatible([], _Found) ->
     false;
