@@ -13,6 +13,7 @@
              riak_core_gen_server,
              json_pp,
              merkerl,
+             patch_util,
              riak_core_priority_queue,
              process_proxy,
              riak_core_gossip_legacy,
