@@ -53,6 +53,9 @@ simple_test_() ->
      fun setup_simple/0,
      fun(OldVars) ->
              riak_core_ring_manager:stop(),
+	     application:stop(exometer),
+	     application:stop(lager),
+	     application:stop(goldrush),
              [ok = application:set_env(riak_core, K, V) || {K,V} <- OldVars],
              ok
      end,
@@ -75,6 +78,7 @@ setup_simple() ->
                    ok = application:set_env(riak_core, AppKey, Val),
                    {AppKey, Old}
                end || {AppKey, Val} <- Vars],
+    exometer:start(),
     riak_core_ring_events:start_link(),
     riak_core_ring_manager:start_link(test),
     riak_core_vnode_proxy_sup:start_link(),

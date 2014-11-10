@@ -13,8 +13,10 @@ bg_mgr_test_() ->
     {timeout, 60000,  %% Seconds to finish all of the tests
      {setup, fun() ->
                      start_bg_mgr()      %% uses non-linking start.
-             end, 
-      fun(_) -> ok end,                           %% cleanup
+             end,
+      fun(_) ->
+	      kill_bg_mgr(),
+	      ok end,                           %% cleanup
       fun(_) ->
               [ %% Tests
                 { "set/get token rates + verify rates",
