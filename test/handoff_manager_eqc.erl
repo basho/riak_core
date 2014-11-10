@@ -8,6 +8,16 @@
 -module(handoff_manager_eqc).
 
 
+%%%% YET TO DO XXX
+
+%% More intensive comparison of handoff manager state in invariant
+%% Environment variables for handoff disable
+%% Termination/errors during transfers
+
+%% %% Next generation
+%% Resize transfer
+%% Errors during transfer start
+
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
 
@@ -56,6 +66,94 @@ precondition_common(_S, _Call) ->
 postcondition_common(_S, _Call, _Res) ->
     true.
 
+%% ------ Grouped operator: add_outbound
+%% @doc add_outbound_command - Command generator
+add_outbound(HOType,Module,Idx,Node,VnodePid,Opts) ->
+    riak_core_handoff_manager:add_outbound(HOType,Module,Idx,Idx,Node,VnodePid,Opts).
+
+get_vnode_pid(HashId, Module) ->
+    {ok, Pid} =
+        riak_core_vnode_master:get_vnode_pid(HashId, Module),
+    Pid.
+
+-spec add_outbound_args(S :: eqc_statem:symbolic_state()) ->
+                               list().
+add_outbound_args(_S) ->
+    ?LET({HandoffType, PartID, Node, Size, SizeType},
+         {eqc_gen:oneof([ownership_handoff, hinted_handoff, repair]),
+          eqc_gen:oneof([0, 1, 2, 3, 4, 5, 6, 7]),
+          node(),
+          eqc_gen:nat(), eqc_gen:oneof([bytes, objects])},
+         [ HandoffType,
+           mock_vnode,
+           PartID * chash:ring_increment(8),
+           Node,
+           {call,?MODULE,get_vnode_pid,
+            [PartID * chash:ring_increment(8), mock_vnode]},
+           [{size, {Size, SizeType}}]
+         ]).
+
+%% @doc add_outbound_next - Next state function
+
+-spec add_outbound_next(S :: eqc_statem:symbolic_state(),
+                        V :: eqc_statem:var(),
+                        Args :: [term()]) -> eqc_statem:symbolic_state().
+add_outbound_next(#state{handoffs=Handoffs,max_concurrency=MaxConcurrency}=S, Result, Args) ->
+    Idx = lists:nth(3, Args),
+    PreviousResults = proplists:get_value({outbound, Idx}, Handoffs, []),
+    PreviousOk = has_outbound(PreviousResults),
+    add_outbound_if(S, PreviousResults, PreviousOk,
+                    length(valid_handoffs(Handoffs)) >= MaxConcurrency, Result,
+                    Idx).
+
+%% No existing (or no successful existing), max concurrency reached
+add_outbound_if(S, _ListOfResults, false, true, _Result, _Idx) ->
+    S;
+%% Existing, has been started successfully
+add_outbound_if(S, _ListOfResults, true, _Max, _Result, _Idx) ->
+    S;
+%% No match
+add_outbound_if(#state{handoffs=Handoffs}=S, ListOfResults, false, false, Result, Idx) ->
+    S#state{handoffs=lists:keystore({outbound, Idx}, 1,
+                                    Handoffs, {{outbound, Idx}, [Result] ++ ListOfResults})}.
+
+
+
+
+%% @doc add_outbound_post - Postcondition for add_outbound
+-spec add_outbound_post(S :: eqc_statem:dynamic_state(),
+                        Args :: [term()], R :: term()) -> true | term().
+add_outbound_post(#state{handoffs=Handoffs,max_concurrency=MaxConcurrency}, _Args, {error, max_concurrency}) ->
+    length(valid_handoffs(Handoffs)) >= MaxConcurrency;
+add_outbound_post(_S, _Args, {ok, _Pid}) ->
+    true;
+add_outbound_post(_S, _Args, _Failure) ->
+    false.
+
+
+%% ------ grouped operator: add_resize_outbound
+%% @doc add_resize_outbound_command - Command generator
+
+%% This arity of add_outbound is exclusively for resizing
+add_outbound(HOType,Module,SrcIdx,TargetIdx,Node,VnodePid,Opts) ->
+    riak_core_handoff_manager:add_outbound(HOType,Module,SrcIdx,TargetIdx,Node,VnodePid,Opts).
+
+%% XXX: add testing for resize_transfer
+
+%% @doc add_resize_outbound_next - Next state function
+-spec add_resize_outbound_next(S :: eqc_statem:symbolic_state(),
+                               V :: eqc_statem:var(),
+                               Args :: [term()]) -> eqc_statem:symbolic_state().
+add_resize_outbound_next(S, _Value, _Args) ->
+    S.
+
+%% @doc add_resize_outbound_post - Postcondition for add_resize_outbound
+-spec add_resize_outbound_post(S :: eqc_statem:dynamic_state(),
+                               Args :: [term()], R :: term()) -> true | term().
+add_resize_outbound_post(_S, _Args, _Res) ->
+    true.
+
+
 %% ------ Grouped operator: add_inbound
 %% @doc add_inbound_command - Command generator
 %% We can send an empty list as the `SSLOpts' argument to
@@ -72,11 +170,15 @@ add_inbound_args(_S) ->
 -spec add_inbound_next(S :: eqc_statem:symbolic_state(),
                        V :: eqc_statem:var(),
                        Args :: [term()]) -> eqc_statem:symbolic_state().
-add_inbound_next(S=#state{handoffs=Handoffs,max_concurrency=MaxConcurrency}, _Value, _Args) when length(Handoffs) >= MaxConcurrency ->
-    S;
-add_inbound_next(S=#state{handoffs=Handoffs,inbound_count=IC}, Value, _Args) ->
-    S#state{handoffs=Handoffs++[{{inbound, IC}, Value}],
-            inbound_count=IC+1}.
+
+add_inbound_next(S=#state{handoffs=Handoffs,max_concurrency=MaxConcurrency,inbound_count=IC}, Value, _Args) ->
+    case length(valid_handoffs(Handoffs)) >= MaxConcurrency of
+        true ->
+            S;
+        false ->
+            S#state{handoffs=Handoffs++[{{inbound, IC}, Value}],
+                    inbound_count=IC+1}
+    end.
 
 
 %% @doc add_inbound_post - Postcondition for add_inbound
@@ -185,9 +287,9 @@ get_concurrency_post(#state{max_concurrency=ExpectedConcurrency}, [],
 
 %% @doc <i>Optional callback</i>, Invariant, checked for each visited state
 %%      during test execution.
-%% -spec invariant(S :: eqc_statem:dynamic_state()) -> boolean().
-%% invariant(_S) ->
-%%   true.
+-spec invariant(S :: eqc_statem:dynamic_state()) -> boolean().
+invariant(#state{handoffs=Handoffs, max_concurrency=Concurrency}) ->
+    Concurrency >= length(valid_handoffs(Handoffs)).
 
 %% @doc weight/2 - Distribution of calls
 -spec weight(S :: eqc_statem:symbolic_state(), Command :: atom()) -> integer().
@@ -206,6 +308,7 @@ prop_handoff_manager() ->
                           pretty_commands(?MODULE, Cmds, {H, S, Res},
                                 Res == ok))
             end).
+
 
 %% Stolen from Jordan's earlier work
 setup() ->
@@ -228,7 +331,9 @@ setup() ->
     application:set_env(riak_core, core_vnode_eqc_pool_size, 0),
     riak_core_ring_events:start_link(), %% TODO: do we reaLly need ring events
     riak_core_ring_manager:start_link(test),
+    riak_core_eventhandler_sup:start_link(),
     riak_core_vnode_sup:start_link(),
+    riak_core_eventhandler_sup:start_link(),
     riak_core_vnode_proxy_sup:start_link(),
     riak_core_vnode_manager:start_link(),
     riak_core_handoff_manager:start_link(),
