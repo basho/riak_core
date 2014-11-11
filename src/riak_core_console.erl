@@ -33,7 +33,6 @@
          security_enable/1, security_disable/1, security_status/1, ciphers/1,
 	 stat_show/1, stat_info/1, stat_enable/1, stat_disable/1, stat_reset/1]).
 
-
 %% New CLI API
 -export([command/1]).
 

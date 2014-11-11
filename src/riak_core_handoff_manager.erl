@@ -51,6 +51,8 @@
 
 -include("riak_core_handoff.hrl").
 
+-export_type([ho_type/0]).
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.

@@ -243,9 +243,9 @@ isn't implicitly enlarged during the transition, it is not used during expansion
 One other minor change made to the vnode interface, regardless of
 whether or not resizing is being used, is the first argument
 of `handoff_starting/2` is now passed as `{HOType, {Idx, Node}}`.
-`HOType` is one of `ownership_transfer`, `hinted_handoff` or
-`resize_transfer`. The `Idx` being transferred to is always the index
-of the current partition, except in the case of `resize_transfer`.
+`HOType` is one of `ownership`, `hinted`, `resize`, or `repair`.
+The `Idx` being transferred to is always the index
+of the current partition, except in the case of `resize`.
 `Node` is the node being transferred to (this used to be the argument
 passed into `handoff_starting/2`).
 
