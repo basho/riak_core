@@ -10,7 +10,6 @@
 
 %%%% YET TO DO XXX
 
-%% More intensive comparison of handoff manager state in invariant
 %% Termination/errors during transfers
 
 %% %% Next generation
@@ -375,9 +374,28 @@ invariant(#state{handoffs=Handoffs, max_concurrency=Concurrency,
                  outbound_disabled=OutboundDisabled,
                  inbound_disabled=InboundDisabled
                 }) ->
-    length(valid_handoffs(Handoffs)) =< Concurrency andalso
+    length(valid_handoffs(Handoffs)) =< Concurrency
         andalso eq(outbound_disabled(), OutboundDisabled)
-        andalso eq(inbound_disabled(), InboundDisabled).
+        andalso eq(inbound_disabled(), InboundDisabled)
+        andalso same_handoffs(valid_handoffs(Handoffs),
+                              riak_core_handoff_manager:status()).
+
+same_handoffs(Model, Real) ->
+    eq(
+      lists:sort(
+        lists:map(fun({{inbound, _},{ok, Pid}}) ->
+                          {inbound, Pid};
+                     ({{outbound, _},Results}) ->
+                          {outbound,
+                           proplists:get_value(ok, Results)}
+                  end,
+                  Model)),
+      lists:sort(
+        lists:map(fun({status_v2, Props}) ->
+                          {proplists:get_value(direction, Props),
+                           proplists:get_value(sender_pid, Props)} end,
+                  Real))
+     ).
 
 %% @doc weight/2 - Distribution of calls
 -spec weight(S :: eqc_statem:symbolic_state(), Command :: atom()) -> integer().
