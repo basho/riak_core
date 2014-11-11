@@ -125,7 +125,7 @@ add_outbound_if(#state{handoffs=Handoffs}=S, ListOfResults, false, false, Result
                         Args :: [term()], R :: term()) -> true | term().
 add_outbound_post(#state{handoffs=Handoffs,max_concurrency=MaxConcurrency}, _Args, {error, max_concurrency}) ->
     outbound_disabled() orelse
-        eq(0, max(0, MaxConcurrency - length(valid_handoffs(Handoffs))));
+        length(valid_handoffs(Handoffs)) >= MaxConcurrency;
 add_outbound_post(_S, _Args, {ok, _Pid}) ->
     true;
 add_outbound_post(_S, _Args, _Failure) ->
@@ -164,10 +164,10 @@ add_inbound_next(S=#state{handoffs=Handoffs,max_concurrency=MaxConcurrency,inbou
                        Args :: [term()], R :: term()) -> true | term().
 add_inbound_post(#state{handoffs=Handoffs}, _Args, {ok, _Pid}) ->
     eq(current_concurrency(inbound), length(valid_handoffs(Handoffs, inbound)) + 1);
-add_inbound_post(#state{handoffs=Handoffs}, _Args, {error,max_concurrency}) ->
+add_inbound_post(#state{handoffs=Handoffs,max_concurrency=MaxConcurrency}, _Args, {error,max_concurrency}) ->
     inbound_disabled() orelse
-        eq(current_concurrency(inbound),
-           length(valid_handoffs(Handoffs, inbound))).
+        length(valid_handoffs(Handoffs)) >= MaxConcurrency.
+
 
 %% ------ Grouped operator: kill_handoffs
 %% kill_handoffs is a function of limited utility, only invoked by the
@@ -375,7 +375,7 @@ invariant(#state{handoffs=Handoffs, max_concurrency=Concurrency,
                  outbound_disabled=OutboundDisabled,
                  inbound_disabled=InboundDisabled
                 }) ->
-    eq(0, max(length(valid_handoffs(Handoffs)) - Concurrency, 0))
+    length(valid_handoffs(Handoffs)) =< Concurrency andalso
         andalso eq(outbound_disabled(), OutboundDisabled)
         andalso eq(inbound_disabled(), InboundDisabled).
 
