@@ -126,8 +126,11 @@ make_tmp_dir() ->
             TempDir
     end.
 
+%% @doc Atomically/safely (to some reasonable level of durablity)
+%% replace file `FN' with `Data'. NOTE: since 2.0.3 semantic changed
+%% slightly: If `FN' cannot be opened, will not error with a
+%% `badmatch', as before, but will instead return `{error, Reason}'
 -spec replace_file(string(), iodata()) -> ok | {error, term()}.
-
 replace_file(FN, Data) ->
     TmpFN = FN ++ ".tmp",
     case file:open(TmpFN, [write, raw]) of
