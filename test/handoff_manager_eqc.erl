@@ -11,7 +11,6 @@
 %%%% YET TO DO XXX
 
 %% More intensive comparison of handoff manager state in invariant
-%% Environment variables for handoff disable
 %% Termination/errors during transfers
 
 %% %% Next generation
@@ -33,7 +32,8 @@
 %% How many milliseconds we should sleep waiting on processes to die
 -define(EXIT_WAIT, 50).
 
--record(state,{handoffs=[],max_concurrency=2,inbound_count=0}).
+-record(state,{handoffs=[],max_concurrency=2,inbound_count=0,
+               outbound_disabled=false, inbound_disabled=false}).
 
 
 check() ->
@@ -124,34 +124,12 @@ add_outbound_if(#state{handoffs=Handoffs}=S, ListOfResults, false, false, Result
 -spec add_outbound_post(S :: eqc_statem:dynamic_state(),
                         Args :: [term()], R :: term()) -> true | term().
 add_outbound_post(#state{handoffs=Handoffs,max_concurrency=MaxConcurrency}, _Args, {error, max_concurrency}) ->
-    length(valid_handoffs(Handoffs)) >= MaxConcurrency;
+    outbound_disabled() orelse
+        eq(0, max(0, MaxConcurrency - length(valid_handoffs(Handoffs))));
 add_outbound_post(_S, _Args, {ok, _Pid}) ->
     true;
 add_outbound_post(_S, _Args, _Failure) ->
     false.
-
-
-%% ------ grouped operator: add_resize_outbound
-%% @doc add_resize_outbound_command - Command generator
-
-%% This arity of add_outbound is exclusively for resizing
-add_outbound(HOType,Module,SrcIdx,TargetIdx,Node,VnodePid,Opts) ->
-    riak_core_handoff_manager:add_outbound(HOType,Module,SrcIdx,TargetIdx,Node,VnodePid,Opts).
-
-%% XXX: add testing for resize_transfer
-
-%% @doc add_resize_outbound_next - Next state function
--spec add_resize_outbound_next(S :: eqc_statem:symbolic_state(),
-                               V :: eqc_statem:var(),
-                               Args :: [term()]) -> eqc_statem:symbolic_state().
-add_resize_outbound_next(S, _Value, _Args) ->
-    S.
-
-%% @doc add_resize_outbound_post - Postcondition for add_resize_outbound
--spec add_resize_outbound_post(S :: eqc_statem:dynamic_state(),
-                               Args :: [term()], R :: term()) -> true | term().
-add_resize_outbound_post(_S, _Args, _Res) ->
-    true.
 
 
 %% ------ Grouped operator: add_inbound
@@ -187,7 +165,9 @@ add_inbound_next(S=#state{handoffs=Handoffs,max_concurrency=MaxConcurrency,inbou
 add_inbound_post(#state{handoffs=Handoffs}, _Args, {ok, _Pid}) ->
     eq(current_concurrency(inbound), length(valid_handoffs(Handoffs, inbound)) + 1);
 add_inbound_post(#state{handoffs=Handoffs}, _Args, {error,max_concurrency}) ->
-    eq(current_concurrency(inbound), length(valid_handoffs(Handoffs, inbound))).
+    inbound_disabled() orelse
+        eq(current_concurrency(inbound),
+           length(valid_handoffs(Handoffs, inbound))).
 
 %% ------ Grouped operator: kill_handoffs
 %% kill_handoffs is a function of limited utility, only invoked by the
@@ -283,13 +263,121 @@ get_concurrency_post(#state{max_concurrency=ExpectedConcurrency}, [],
     ExpectedConcurrency =:= MaxConcurrency andalso
         current_concurrency() =< MaxConcurrency.
 
+%% ------ Grouped operator: enable_outbound
+%% @doc enable_outbound_command - Command generator
+
+enable_outbound() ->
+    application:set_env(riak_core, disable_outbound_handoff, false).
+
+-spec enable_outbound_args(S :: eqc_statem:symbolic_state()) ->
+                                  list().
+enable_outbound_args(_S) ->
+    [].
+
+%% @doc enable_outbound_next - Next state function
+-spec enable_outbound_next(S :: eqc_statem:symbolic_state(),
+                           V :: eqc_statem:var(),
+                           Args :: [term()]) -> eqc_statem:symbolic_state().
+enable_outbound_next(S, _Value, _Args) ->
+    S#state{outbound_disabled=false}.
+
+%% @doc enable_outbound_post - Postcondition for enable_outbound
+-spec enable_outbound_post(S :: eqc_statem:dynamic_state(),
+                           Args :: [term()], R :: term()) -> true | term().
+enable_outbound_post(_S, _Args, ok) ->
+    not outbound_disabled().
+
+
+%% ------ Grouped operator: disable_outbound
+%% @doc disable_outbound_command - Command generator
+
+disable_outbound() ->
+    application:set_env(riak_core, disable_outbound_handoff, true).
+
+-spec disable_outbound_args(S :: eqc_statem:symbolic_state()) ->
+                                  list().
+disable_outbound_args(_S) ->
+    [].
+
+%% @doc disable_outbound_next - Next state function
+-spec disable_outbound_next(S :: eqc_statem:symbolic_state(),
+                           V :: eqc_statem:var(),
+                           Args :: [term()]) -> eqc_statem:symbolic_state().
+disable_outbound_next(S, _Value, _Args) ->
+    S#state{outbound_disabled=true}.
+
+%% @doc disable_outbound_post - Postcondition for disable_outbound
+-spec disable_outbound_post(S :: eqc_statem:dynamic_state(),
+                           Args :: [term()], R :: term()) -> true | term().
+disable_outbound_post(_S, _Args, ok) ->
+    outbound_disabled().
+
+
+
+%% ------ Grouped operator: enable_inbound
+%% @doc enable_inbound_command - Command generator
+
+enable_inbound() ->
+    application:set_env(riak_core, disable_inbound_handoff, false).
+
+-spec enable_inbound_args(S :: eqc_statem:symbolic_state()) ->
+                                  list().
+enable_inbound_args(_S) ->
+    [].
+
+%% @doc enable_inbound_next - Next state function
+-spec enable_inbound_next(S :: eqc_statem:symbolic_state(),
+                           V :: eqc_statem:var(),
+                           Args :: [term()]) -> eqc_statem:symbolic_state().
+enable_inbound_next(S, _Value, _Args) ->
+    S#state{inbound_disabled=false}.
+
+%% @doc enable_inbound_post - Postcondition for enable_inbound
+-spec enable_inbound_post(S :: eqc_statem:dynamic_state(),
+                           Args :: [term()], R :: term()) -> true | term().
+enable_inbound_post(_S, _Args, ok) ->
+    not inbound_disabled().
+
+
+%% ------ Grouped operator: disable_inbound
+%% @doc disable_inbound_command - Command generator
+
+disable_inbound() ->
+    application:set_env(riak_core, disable_inbound_handoff, true).
+
+-spec disable_inbound_args(S :: eqc_statem:symbolic_state()) ->
+                                  list().
+disable_inbound_args(_S) ->
+    [].
+
+%% @doc disable_inbound_next - Next state function
+-spec disable_inbound_next(S :: eqc_statem:symbolic_state(),
+                           V :: eqc_statem:var(),
+                           Args :: [term()]) -> eqc_statem:symbolic_state().
+disable_inbound_next(S, _Value, _Args) ->
+    S#state{inbound_disabled=true}.
+
+%% @doc disable_inbound_post - Postcondition for disable_inbound
+-spec disable_inbound_post(S :: eqc_statem:dynamic_state(),
+                           Args :: [term()], R :: term()) -> true | term().
+disable_inbound_post(_S, _Args, ok) ->
+    inbound_disabled().
+
+
+
+
 %% ------ ... more operations
 
 %% @doc <i>Optional callback</i>, Invariant, checked for each visited state
 %%      during test execution.
 -spec invariant(S :: eqc_statem:dynamic_state()) -> boolean().
-invariant(#state{handoffs=Handoffs, max_concurrency=Concurrency}) ->
-    Concurrency >= length(valid_handoffs(Handoffs)).
+invariant(#state{handoffs=Handoffs, max_concurrency=Concurrency,
+                 outbound_disabled=OutboundDisabled,
+                 inbound_disabled=InboundDisabled
+                }) ->
+    eq(0, max(length(valid_handoffs(Handoffs)) - Concurrency, 0))
+        andalso eq(outbound_disabled(), OutboundDisabled)
+        andalso eq(inbound_disabled(), InboundDisabled).
 
 %% @doc weight/2 - Distribution of calls
 -spec weight(S :: eqc_statem:symbolic_state(), Command :: atom()) -> integer().
@@ -431,3 +519,11 @@ valid_handoffs(HS) ->
 %% a {ok, SenderPid}
 has_outbound(ReturnVals) ->
     lists:keymember(ok, 1, ReturnVals).
+
+inbound_disabled() ->
+    {ok, Bool} = application:get_env(riak_core, disable_inbound_handoff),
+    Bool.
+
+outbound_disabled() ->
+    {ok, Bool} = application:get_env(riak_core, disable_outbound_handoff),
+    Bool.
