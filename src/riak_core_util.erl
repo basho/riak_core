@@ -130,17 +130,21 @@ make_tmp_dir() ->
 
 replace_file(FN, Data) ->
     TmpFN = FN ++ ".tmp",
-    {ok, FH} = file:open(TmpFN, [write, raw]),
-    try
-        ok = file:write(FH, Data),
-        ok = file:sync(FH),
-        ok = file:close(FH),
-        ok = file:rename(TmpFN, FN),
-        {ok, Contents} = read_file(FN),
-        true = (Contents == iolist_to_binary(Data)),
-        ok
-    catch _:Err ->
-            {error, Err}
+    case file:open(TmpFN, [write, raw]) of
+        {ok, FH} ->
+            try
+                ok = file:write(FH, Data),
+                ok = file:sync(FH),
+                ok = file:close(FH),
+                ok = file:rename(TmpFN, FN),
+                {ok, Contents} = read_file(FN),
+                true = (Contents == iolist_to_binary(Data)),
+                ok
+            catch _:Err ->
+                    {error, Err}
+            end;
+        Err ->
+            Err
     end.
 
 %% @doc Similar to {@link file:read_file} but uses raw file I/O
