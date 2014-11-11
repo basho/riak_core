@@ -126,21 +126,28 @@ make_tmp_dir() ->
             TempDir
     end.
 
+%% @doc Atomically/safely (to some reasonable level of durablity)
+%% replace file `FN' with `Data'. NOTE: since 2.0.3 semantic changed
+%% slightly: If `FN' cannot be opened, will not error with a
+%% `badmatch', as before, but will instead return `{error, Reason}'
 -spec replace_file(string(), iodata()) -> ok | {error, term()}.
-
 replace_file(FN, Data) ->
     TmpFN = FN ++ ".tmp",
-    {ok, FH} = file:open(TmpFN, [write, raw]),
-    try
-        ok = file:write(FH, Data),
-        ok = file:sync(FH),
-        ok = file:close(FH),
-        ok = file:rename(TmpFN, FN),
-        {ok, Contents} = read_file(FN),
-        true = (Contents == iolist_to_binary(Data)),
-        ok
-    catch _:Err ->
-            {error, Err}
+    case file:open(TmpFN, [write, raw]) of
+        {ok, FH} ->
+            try
+                ok = file:write(FH, Data),
+                ok = file:sync(FH),
+                ok = file:close(FH),
+                ok = file:rename(TmpFN, FN),
+                {ok, Contents} = read_file(FN),
+                true = (Contents == iolist_to_binary(Data)),
+                ok
+            catch _:Err ->
+                    {error, Err}
+            end;
+        Err ->
+            Err
     end.
 
 %% @doc Similar to {@link file:read_file} but uses raw file I/O
