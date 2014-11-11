@@ -5,16 +5,13 @@
 %%% @end
 %%% Created : 10 Oct 2014 by John Daily <jd@epep.us>
 
+%%% TODO
+%% Transfer lifecycle testing (part of PR#630)
+%% More sophisticated handoff enable/disable
+%%     (branch feature/atb/handoff-enable-disable)
+%% Resize transfers
+
 -module(handoff_manager_eqc).
-
-
-%%%% YET TO DO XXX
-
-%% Termination/errors during transfers
-
-%% %% Next generation
-%% Resize transfer
-%% Errors during transfer start
 
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
