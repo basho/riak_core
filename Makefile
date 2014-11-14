@@ -2,6 +2,9 @@ DIALYZER_APPS = kernel stdlib sasl erts ssl tools os_mon runtime_tools crypto in
 	public_key mnesia syntax_tools compiler
 PULSE_TESTS = worker_pool_pulse
 
+EXOMETER_PACKAGES = "(basic), +afunix"
+export EXOMETER_PACKAGES
+
 .PHONY: deps test
 
 all: deps compile
