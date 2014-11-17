@@ -995,10 +995,10 @@ current_state(Pid) ->
     gen_fsm:sync_send_all_state_event(Pid, current_state).
 
 pool_death_test() ->
-    meck:new(test_vnode),
+    meck:new(test_vnode, [non_strict]),
     meck:expect(test_vnode, init, fun(_) -> {ok, [], [{pool, test_pool_mod, 1, []}]} end),
     meck:expect(test_vnode, terminate, fun(_, _) -> normal end),
-    meck:new(test_pool_mod),
+    meck:new(test_pool_mod, [non_strict]),
     meck:expect(test_pool_mod, init_worker, fun(_, _, _) -> {ok, []} end),
 
     {ok, Pid} = ?MODULE:test_link(test_vnode, 0),
