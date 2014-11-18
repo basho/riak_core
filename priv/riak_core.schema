@@ -76,16 +76,18 @@
 {mapping, "handoff.ip", "riak_core.handoff_ip", [
   {default, "{{handoff_ip}}" },
   {datatype, string},
-  {validators, ["not_loopback_address"]},
+  {validators, ["valid_ipaddr"]},
   hidden
 ]}.
 
 {validator,
-  "not_loopback_address",
-  "must not be a loopback interface",
-  fun(Address) -> Address /= "127.0.0.1"
-          andalso Address /= "0:0:0:0:0:0:0:1"
-          andalso Address /= "::1"
+  "valid_ipaddr",
+  "must be a valid IP address",
+  fun(AddrString) -> 
+    case inet_parse:address(AddrString) of
+      {ok, _} -> true;
+      {error, _} -> false
+    end
   end}.
 
 %% @doc handoff.port is the TCP port that Riak uses for

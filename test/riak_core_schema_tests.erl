@@ -36,7 +36,7 @@ basic_schema_test() ->
 %% in the schema are, in fact, reported as invalid.
 invalid_states_test() ->
     Conf = [
-        {["handoff", "ip"], "127.0.0.1"}
+        {["handoff", "ip"], "0.0.0.0.0"}
     ],
 
     Config = cuttlefish_unit:generate_templated_config("../priv/riak_core.schema", Conf, context()),
@@ -44,7 +44,7 @@ invalid_states_test() ->
     %% Confirm that we made it to validation and test that each expected failure
     %% message is present.
     cuttlefish_unit:assert_error_in_phase(Config, validation),
-    cuttlefish_unit:assert_error_message(Config, "handoff.ip invalid, must not be a loopback interface"),
+    cuttlefish_unit:assert_error_message(Config, "handoff.ip invalid, must be a valid IP address"),
     ok.
 
 
