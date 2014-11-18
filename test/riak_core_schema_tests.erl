@@ -32,6 +32,22 @@ basic_schema_test() ->
     cuttlefish_unit:assert_config(Config, "riak_core.vnode_management_timer", 10000),
     ok.
 
+%% Tests that configurations which should be prohibited by validators defined
+%% in the schema are, in fact, reported as invalid.
+invalid_states_test() ->
+    Conf = [
+        {["handoff", "ip"], "127.0.0.1"}
+    ],
+
+    Config = cuttlefish_unit:generate_templated_config("../priv/riak_core.schema", Conf, context()),
+
+    %% Confirm that we made it to validation and test that each expected failure
+    %% message is present.
+    cuttlefish_unit:assert_error_in_phase(Config, validation),
+    cuttlefish_unit:assert_error_message(Config, "handoff.ip invalid, must not be a loopback interface"),
+    ok.
+
+
 default_bucket_properties_test() ->
     Conf = [
         {["buckets", "default", "n_val"], 5}

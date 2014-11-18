@@ -82,7 +82,7 @@
 
 {validator,
   "not_loopback_address",
-  "IP address must not be a loopback interface",
+  "must not be a loopback interface",
   fun(Address) -> Address /= "127.0.0.1"
           andalso Address /= "0:0:0:0:0:0:0:1"
           andalso Address /= "::1"
