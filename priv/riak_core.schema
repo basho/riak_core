@@ -71,6 +71,23 @@
   {commented, "$(platform_etc_dir)/cacertfile.pem"}
 ]}.
 
+%% @doc handoff.ip is the network address that Riak binds to for
+%% intra-cluster data handoff.
+{mapping, "handoff.ip", "riak_core.handoff_ip", [
+  {default, "{{handoff_ip}}" },
+  {datatype, string},
+  {validators, ["not_loopback_address"]},
+  hidden
+]}.
+
+{validator,
+  "not_loopback_address",
+  "IP address must not be a loopback interface",
+  fun(Address) -> Address /= "127.0.0.1"
+          andalso Address /= "0:0:0:0:0:0:0:1"
+          andalso Address /= "::1"
+  end}.
+
 %% @doc handoff.port is the TCP port that Riak uses for
 %% intra-cluster data handoff.
 {mapping, "handoff.port", "riak_core.handoff_port", [
