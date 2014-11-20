@@ -352,6 +352,8 @@ legacy_stat_map() ->
                                             {max   , node_get_fsm_counter_objsize_100}]},
      {[riak_kv,node,gets,read_repairs], [{one, read_repairs},
                                          {count, read_repairs_total}]},
+     {[riak_kv,node,gets,skipped_read_repairs], [{one, skipped_read_repairs},
+						 {count, skipped_read_repairs_total}]},
      {[riak_kv,node,gets,counter], [{one  , node_gets_counter},
                                     {count, node_gets_counter_total}]},
      {[riak_kv,node,gets,counter,siblings], [{mean  , node_get_fsm_counter_siblings_mean},
