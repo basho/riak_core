@@ -1216,11 +1216,6 @@ legacy_search(S, Type, Status) ->
 	{match,_} ->
 	    false;
 	nomatch ->
-	    _ = riak_core_stat:legacy_stat_map(),  % ensure module loaded
-	    %% Re0 = re:replace(
-	    %% 	    re:replace(S, <<"\\*\\*">>, <<"\\.\\*">>,
-	    %% 		       [{return, binary}]),
-	    %% 	    <<"\\*">>, <<"\\[\\^_\\]\\*">>, [{return,binary}]),
 	    Re = <<"^", (make_re(S))/binary, "$">>,
 	    [{S, legacy_search_1(Re, Type, Status)}]
     end.
@@ -1255,31 +1250,27 @@ split_pattern(B, Acc) ->
     end.
 
 legacy_search_1(N, Type, Status) ->
-    P = riak_core_stat:prefix(),
+    Found = exometer_alias:regexp_foldr(N, fun(Alias, Entry, DP, Acc) ->
+                                                   orddict:append(Entry, {DP,Alias}, Acc)
+                                           end, orddict:new()),
     lists:foldr(
       fun({Entry, DPs}, Acc) ->
-	      case match_dps(DPs, N) of
-		  [] -> Acc;
-		  [_|_] = DPs1 ->
-		      DPnames = [D || {D,_} <- DPs1],
-		      Fullname = [P|Entry],
-		      case match_type(Fullname, Type) of
-			  true ->
-			      case exometer:get_value(Fullname, DPnames) of
-				  {ok, Values} when is_list(Values) ->
-				      [{Fullname, zip_values(Values, DPs1)}
-				       | Acc];
-				  {ok, disabled} when Status=='_';
-						      Status==disabled ->
-				      [{Fullname, zip_disabled(DPs1)} | Acc];
-				  _ ->
-				      Acc
-			      end;
-			  false ->
-			      Acc
-		      end
-	      end
-      end, [], riak_core_stat:legacy_stat_map()).
+              case match_type(Entry, Type) of
+                  true ->
+                      DPnames = [D || {D,_} <- DPs],
+                      case exometer:get_value(Entry, DPnames) of
+                          {ok, Values} when is_list(Values) ->
+                              [{Entry, zip_values(Values, DPs)} | Acc];
+                          {ok, disabled} when Status=='_';
+                                              Status==disabled ->
+                              [{Entry, zip_disabled(DPs)} | Acc];
+                          _ ->
+                              [{Entry, [{D,undefined} || D <- DPnames]}|Acc]
+                      end;
+                  false ->
+                      Acc
+              end
+      end, [], orddict:to_list(Found)).
 
 match_type(_, '_') ->
     true;
@@ -1294,18 +1285,6 @@ zip_values([], _) ->
 
 zip_disabled(DPs) ->
     [{D,disabled,N} || {D,N} <- DPs].
-
-match_dps(DPs, Pat) when is_binary(Pat) ->
-    [{D, N} || {D, N} <- DPs,
-	       match_dp(N, Pat)].
-
-match_dp(DP, Re) ->
-    case re:run(atom_to_binary(DP,latin1), Re) of
-	{match, _} ->
-	    true;
-	nomatch ->
-	    false
-    end.
 
 print_stats([]) ->
     io:fwrite("No matching stats~n", []);
