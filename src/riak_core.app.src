@@ -19,7 +19,8 @@
                   eleveldb,
                   pbkdf2,
                   poolboy,
-                  exometer
+                  exometer,
+                  riak_cli
                  ]},
   {mod, {riak_core_app, []}},
   {env, [
