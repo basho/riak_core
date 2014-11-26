@@ -19,6 +19,8 @@
 %% -------------------------------------------------------------------
 
 -module(riak_core_console).
+%% Legacy exports - unless needed by other modules, only expose
+%% functionality via command/1
 -export([member_status/1, ring_status/1, print_member_status/2,
          stage_leave/1, stage_remove/1, stage_replace/1, stage_resize_ring/1,
          stage_force_replace/1, print_staged/1, commit_staged/1,
@@ -30,6 +32,14 @@
          print_groups/1, print_group/1, print_grants/1,
          security_enable/1, security_disable/1, security_status/1, ciphers/1,
 	 stat_show/1, stat_info/1, stat_enable/1, stat_disable/1, stat_reset/1]).
+
+
+%% New CLI API
+-export([command/1]).
+
+-spec command([string()]) -> ok.
+command(Cmd) ->
+    riak_cli_manager:run(Cmd).
 
 %% @doc Return for a given ring and node, percentage currently owned and
 %% anticipated after the transitions have been completed.
