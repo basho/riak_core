@@ -23,7 +23,8 @@
 -export([ringready/0,
          all_active_transfers/0,
          transfers/0,
-         ring_status/0]).
+         ring_status/0, 
+         partitions/2]).
 
 -spec(ringready() -> {ok, [atom()]} | {error, any()}).
 ringready() ->
