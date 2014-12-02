@@ -21,11 +21,23 @@
 
 -module(riak_core_cli_registry).
 
--define(CLI_MODULES, [riak_core_cluster_cli]).
+-define(CLI_MODULES, [
+                      riak_core_cluster_cli,
+                      riak_core_handoff_cli
+                     ]).
 
 -export([
+         register_node_finder/0,
          register_cli/0
 ]).
+
+-spec register_node_finder() -> true.
+register_node_finder() ->
+    F = fun() ->
+                {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
+                riak_core_ring:all_members(MyRing)
+        end,
+    riak_cli:register_node_finder(F).
 
 -spec register_cli() -> ok.
 register_cli() ->
