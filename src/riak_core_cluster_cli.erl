@@ -102,9 +102,9 @@ status([], []) ->
     Table = [riak_cli_status:table(Rows)],
 
     io:format("---- Cluster Status ----~n~n", []),
-    io:format("Ring ready: ~p", [element(2, RingStatus)]),
+    io:format("Ring ready: ~p~n~n", [element(2, RingStatus)]),
     riak_cli:print(Table),
-    io:format("~nKey: (C) = Claimant; availability marked with '!' is unexpected~n~n", []).
+    io:format("Key: (C) = Claimant; availability marked with '!' is unexpected~n~n", []).
 
 format_status(Node, Status, Ring, RingStatus) ->
     {Claimant, _RingReady, Down, MarkedDown, Changes} = RingStatus,
@@ -157,7 +157,7 @@ partition_count([], [{$n, Node}]) ->
 partition_count([], [{node, Node}]) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Indices = riak_core_ring:indices(Ring, Node),
-    Row = [{node, Node}, {partitions, Indices}, {pct, claim_percent(Ring, Node)}],
+    Row = [[{node, Node}, {partitions, length(Indices)}, {pct, claim_percent(Ring, Node)}]],
     Table = [riak_cli_status:table(Row)],
     riak_cli:print(Table);
 partition_count([], []) ->
@@ -201,21 +201,19 @@ partitions_output(Node) ->
     RingSize = riak_core_ring:num_partitions(Ring),
     {Primary, Secondary, Stopped} = riak_core_status:partitions(Node, Ring),
     io:format("Partitions owned by ~p:~n", [Node]),
-    Rows = [
-            generate_rows(RingSize, primary, Primary),
-            generate_rows(RingSize, secondary, Secondary),
-            generate_rows(RingSize, stopped, Stopped)
-           ],
+    Rows = generate_rows(RingSize, primary, Primary) 
+           ++ generate_rows(RingSize, secondary, Secondary)
+           ++ generate_rows(RingSize, stopped, Stopped),
     Table = [riak_cli_status:table(Rows)],
     riak_cli:print(Table).
 
-generate_rows(_RingSize, _Type, []) ->
-    []; % Return empty list if no partitions of type T
+generate_rows(_RingSize, Type, []) ->
+    [[{type, Type}, {index, "--"}, {id, "--"}]];
 generate_rows(RingSize, Type, Ids) ->
     %% Build a list of proplists, one for each partition id
     [ 
-      [ {type, Type}, {id, I}, 
-        {index, hash_to_partition_id(I, RingSize)} ]
+      [ {type, Type}, {index, I}, 
+        {id, hash_to_partition_id(I, RingSize)} ]
     || I <- Ids ].
 
 %%% 
@@ -237,7 +235,7 @@ partition_register() ->
 partition_usage() ->
     Text = [
             "riak-admin cluster partition id=0\n",
-            "riak-admin cluster partition index=576460752303423500\n\n",
+            "riak-admin cluster partition index=22835963083295358096932575511191922182123945984\n\n",
             "Returns the id or index for the specified index or id.\n"
     ],
     [
@@ -245,22 +243,33 @@ partition_usage() ->
      Text
     ].
 
-partition({id, Id}, []) ->
-    out(id, Id);
-partition({index, Index}, []) ->
-    out(index, Index).
+partition([{index, Index}], []) when Index >= 0 ->
+    id_out(index, Index);
+partition([{id, Id}], []) when Id >= 0 ->
+    id_out(id, Id);
+partition([{Op, Value}], []) ->
+    {error, ["The given value ", integer_to_list(Value), 
+             " for ", atom_to_list(Op), " is invalid\n"]}.
 
-out(InputType, Number) ->
+id_out(InputType, Number) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     RingSize = riak_core_ring:num_partitions(Ring),
-    out1(InputType, Number, RingSize).
+    id_out1(InputType, Number, Ring, RingSize).
 
-out1(index, Index, RingSize) ->
-    io:format("Partition index: ~p -> id: ~p~n~n", 
-              [Index, partition_id_to_hash(Index, RingSize)]);
-out1(id, Id, RingSize) ->
-    io:format("Partition id: ~p -> index: ~p~n~n", 
-              [Id, hash_to_partition_id(Id, RingSize)]).
+%% XXX FIXME: Validation of id - test for boundary condition and that it's lower
+%% than the ringsize - 1 partition id
+id_out1(index, Index, Ring, RingSize) ->
+    Owner = riak_core_ring:index_owner(Ring, Index),
+    io:format("Partition index: ~p -> id: ~p~n\t(owner: ~p)~n", 
+              [Index, hash_to_partition_id(Index, RingSize), Owner]);
+
+id_out1(id, Id, Ring, RingSize) when Id < RingSize ->
+    Idx = partition_id_to_hash(Id, RingSize),
+    Owner = riak_core_ring:index_owner(Ring, Idx),
+    io:format("Partition id: ~p -> index: ~p~n\t(owner: ~p)~n", 
+              [Id, partition_id_to_hash(Id, RingSize), Owner]);
+id_out1(id, Id, _Ring, _RingSize) ->
+    {error, ["Id ", Id, " is invalid."]}.
 
 %%%
 %% cluster members
