@@ -39,7 +39,7 @@
 
 -spec command([string()]) -> ok.
 command(Cmd) ->
-    riak_cli_manager:run(Cmd).
+    riak_cli:run(Cmd).
 
 %% @doc Return for a given ring and node, percentage currently owned and
 %% anticipated after the transitions have been completed.
