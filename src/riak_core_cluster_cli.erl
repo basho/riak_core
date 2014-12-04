@@ -152,8 +152,6 @@ partition_count_usage() ->
      Text
     ].
 
-partition_count([], [{$n, Node}]) ->
-    partition_count([], [{node, Node}]);
 partition_count([], [{node, Node}]) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Indices = riak_core_ring:indices(Ring, Node),
@@ -189,8 +187,6 @@ partitions_usage() ->
      Text
     ].
 
-partitions([], [{$n, Node}]) ->
-    partitions_output(Node);
 partitions([], [{node, Node}]) ->
     partitions_output(Node);
 partitions([], []) ->
@@ -296,8 +292,6 @@ members_usage() ->
      Text
     ].
 
-members([], [{$a, Value}]) ->
-    members([], [{all, Value}]);
 members([], [{all, _Value}]) ->
     member_output(get_status());
 members([], []) ->
