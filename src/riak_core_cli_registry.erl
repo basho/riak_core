@@ -21,8 +21,7 @@
 
 -module(riak_core_cli_registry).
 
--define(CLI_MODULES, [
-                     ]).
+-define(CLI_MODULES, []).
 
 -export([
          register_cli/0
@@ -30,4 +29,4 @@
 
 -spec register_cli() -> ok.
 register_cli() ->
-   lists:foreach(fun(M) -> apply(M, register_cli, []) end, ?CLI_MODULES).
+   riak_cli:register(?CLI_MODULES).
