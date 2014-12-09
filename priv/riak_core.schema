@@ -71,6 +71,25 @@
   {commented, "$(platform_etc_dir)/cacertfile.pem"}
 ]}.
 
+%% @doc handoff.ip is the network address that Riak binds to for
+%% intra-cluster data handoff.
+{mapping, "handoff.ip", "riak_core.handoff_ip", [
+  {default, "{{handoff_ip}}" },
+  {datatype, string},
+  {validators, ["valid_ipaddr"]},
+  hidden
+]}.
+
+{validator,
+  "valid_ipaddr",
+  "must be a valid IP address",
+  fun(AddrString) -> 
+    case inet_parse:address(AddrString) of
+      {ok, _} -> true;
+      {error, _} -> false
+    end
+  end}.
+
 %% @doc handoff.port is the TCP port that Riak uses for
 %% intra-cluster data handoff.
 {mapping, "handoff.port", "riak_core.handoff_port", [
