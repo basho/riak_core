@@ -24,11 +24,10 @@
 
 %% API
 -export([start_link/0, get_stats/0, get_stats/1, update/1,
-         register_stats/0, produce_stats/0, vnodeq_stats/0,
+         register_stats/0, vnodeq_stats/0,
 	 register_stats/2,
 	 register_vnode_stats/3, unregister_vnode_stats/2,
 	 vnodeq_stats/1,
-	 legacy_stat_map/0,
 	 prefix/0]).
 
 %% gen_server callbacks
@@ -61,21 +60,32 @@ register_stats(App, Stats) ->
 		  end, Stats).
 
 register_stat(P, App, Stat) ->
-    {Name, Type, Opts} = case Stat of
-			     {N, T}     -> {N, T, []};
-			     {N, T, Os} -> {N, T, Os}
-			 end,
-    exometer:re_register(stat_name(P,App,Name), Type, Opts).
+    {Name, Type, Opts, Aliases} =
+        case Stat of
+            {N, T}         -> {N, T, [], []};
+            {N, T, Os}     -> {N, T, Os, []};
+            {N, T, Os, As} -> {N, T, Os, As}
+        end,
+    StatName = stat_name(P, App, Name),
+    exometer:re_register(StatName, Type, Opts),
+    lists:foreach(
+      fun({DP, Alias}) ->
+              exometer_alias:new(Alias, StatName, DP)
+      end, Aliases).
 
 register_vnode_stats(Module, Index, Pid) ->
     P = prefix(),
     exometer:ensure([P, ?APP, vnodes_running, Module],
 		    { function, exometer, select_count,
 		      [[{ {[P, ?APP, vnodeq, Module, '_'], '_', '_'},
-			  [], [true] }]], value, [value] }, []),
+			  [], [true] }]], match, value },
+                    [{aliases, [{value, vnodeq_atom(Module, <<"s_running">>)}]}]),
     exometer:ensure([P, ?APP, vnodeq, Module],
 		    {function, riak_core_stat, vnodeq_stats, [Module],
-		     histogram, default}, []),
+		     histogram, [min,max,total]},
+                    [{aliases, [{min, vnodeq_atom(Module, <<"q_min">>)},
+                                {max, vnodeq_atom(Module, <<"q_max">>)},
+                                {total, vnodeq_atom(Module, <<"q_total">>)}]}]),
     exometer:re_register(
       [P, ?APP, vnodeq, Module, Index],
       function, [{ arg, {erlang, process_info, [Pid, message_queue_len],
@@ -104,13 +114,6 @@ get_stats(App) ->
 
 update(Arg) ->
     gen_server:cast(?SERVER, {update, Arg}).
-
-%% @spec produce_stats() -> proplist()
-%% @doc Produce a proplist-formatted view of the current aggregation
-%%      of stats.
-produce_stats() ->
-    lists:append([gossip_stats(),
-                  vnodeq_stats()]).
 
 prefix() ->
     app_helper:get_env(riak_core, stat_prefix, riak).
@@ -159,52 +162,47 @@ update_value(_) -> 1.
 
 %% private
 stats() ->
-    [{ignored_gossip_total, counter},
-     {rings_reconciled, spiral},
+    [{ignored_gossip_total, counter, [], [{value, ignored_gossip_total}]},
+     {rings_reconciled, spiral, [], [{count, rings_reconciled_total},
+                                     {one, rings_reconciled}]},
      {ring_creation_size,
       {function, app_helper, get_env, [riak_core, ring_creation_size],
-       match, value}},
-     {gossip_received, spiral},
-     {rejected_handoffs, counter},
-     {handoff_timeouts, counter},
-     {dropped_vnode_requests_total, counter},
-     {converge_delay, duration},
-     {rebalance_delay, duration}].
+       match, value}, [], [{value, ring_creation_size}]},
+     {gossip_received, spiral, [], [{one, gossip_received}]},
+     {rejected_handoffs, counter, [], [{value, rejected_handoffs}]},
+     {handoff_timeouts, counter, [], [{value, handoff_timeouts}]},
+     {dropped_vnode_requests_total, counter, [], [{value,dropped_vnode_requests_total}]},
+     {converge_delay, duration, [], [{mean, converge_delay_mean},
+                                     {min, converge_delay_min},
+                                     {max, converge_delay_max},
+                                     {last, converge_delay_last}]},
+     {rebalance_delay, duration, [], [{min, rebalance_delay_min},
+                                      {max, rebalance_delay_max},
+                                      {mean, rebalance_delay_mean},
+                                      {last, rebalance_delay_last}]}].
 
 system_stats() ->
-    [{cpu_stats, cpu, [{sample_interval, 5000}]}].
-
-
-gossip_stats() ->
-    lists:flatten([backwards_compat(Stat, Type, riak_core_stat_q:calc_stat({{?APP, Stat}, Type})) ||
-                      {Stat, Type} <- stats(), Stat /= riak_core_rejected_handoffs]).
-
-backwards_compat(Name, Type, unavailable) when Type =/= counter ->
-    backwards_compat(Name, Type, []);
-backwards_compat(Name, Type, {error,not_found}) when Type =/= counter ->
-    backwards_compat(Name, Type, []);
-backwards_compat(rings_reconciled, spiral, Stats) ->
-    [{rings_reconciled_total, proplists:get_value(count, Stats, unavailable)},
-    {rings_reconciled, safe_trunc(proplists:get_value(one, Stats, unavailable))}];
-backwards_compat(gossip_received, spiral, Stats) ->
-    {gossip_received, safe_trunc(proplists:get_value(one, Stats, unavailable))};
-backwards_compat(Name, counter, Stats) ->
-    {Name, proplists:get_value(value, Stats)};
-backwards_compat(Name, duration, Stats) ->
-    [{join(Name, min), safe_trunc(proplists:get_value(min, Stats, unavailable))},
-     {join(Name, max), safe_trunc(proplists:get_value(max, Stats, unavailable))},
-     {join(Name, mean), safe_trunc(proplists:get_value(arithmetic_mean, Stats, unavailable))},
-     {join(Name, last), proplists:get_value(last, Stats, unavailable)}].
-
-join(Atom1, Atom2) ->
-    Bin1 = atom_to_binary(Atom1, latin1),
-    Bin2 = atom_to_binary(Atom2, latin1),
-    binary_to_atom(<<Bin1/binary, $_, Bin2/binary>>, latin1).
-
-safe_trunc(N) when is_number(N) ->
-    trunc(N);
-safe_trunc(X) ->
-    X.
+    [
+     {cpu_stats, cpu, [{sample_interval, 5000}], [{nprocs, cpu_nprocs},
+                                                  {avg1  , cpu_avg1},
+                                                  {avg5  , cpu_avg5},
+                                                  {avg15 , cpu_avg15}]},
+     {mem_stats, {function, memsup, get_memory_data, [], match, {total, allocated, '_'}},
+      [], [{total, mem_total},
+           {allocated, mem_allocated}]},
+     {memory_stats, {function, erlang, memory, [], proplist, [total, processes, processes_used,
+                                                              system, atom, atom_used, binary,
+                                                              code, ets]},
+      [], [{total         , memory_total},
+           {processes     , memory_processes},
+           {processes_used, memory_processes_used},
+           {system        , memory_system},
+           {atom          , memory_atom},
+           {atom_used     , memory_atom_used},
+           {binary        , memory_binary},
+           {code          , memory_code},
+           {ets           , memory_ets}]}
+    ].
 
 %% Provide aggregate stats for vnode queues.  Compute instantaneously for now,
 %% may need to cache if stats are called heavily (multiple times per seconds)
@@ -249,290 +247,6 @@ vnodeq_aggregate(Service, MQLs0) ->
 vnodeq_atom(Service, Desc) ->
     binary_to_atom(<<(atom_to_binary(Service, latin1))/binary, Desc/binary>>, latin1).
 
-
-legacy_stat_map() ->
-    [
-     {[riak_kv,object,merge], [{one  , object_merge},
-                               {count, object_merge_total}]},
-     {[riak_kv,object,map,merge], [{one  , object_map_merge},
-                                   {count, object_map_merge_total}]},
-     {[riak_kv,object,merge,time], [{mean  , object_merge_time_mean},
-                                    {median, object_merge_time_median},
-                                    {95    , object_merge_time_95},
-                                    {99    , object_merge_time_99},
-                                    {max   , object_merge_time_100}]},
-     {[riak_kv,vnode,map,update,time], [{mean  , vnode_map_update_time_mean},
-                                        {median, vnode_map_update_time_median},
-                                        {95    , vnode_map_update_time_95},
-                                        {99    , vnode_map_update_time_99},
-                                        {max   , vnode_map_update_time_100}]},
-     {[riak_kv,vnode,gets], [{one  , vnode_gets},
-                             {count, vnode_gets_total}]},
-     {[riak_kv,vnode,puts], [{one  , vnode_puts},
-                             {count, vnode_puts_total}]},
-     {[riak_kv,vnode,index,reads], [{one  , vnode_index_reads},
-                                    {count, vnode_index_reads_total}]},
-     {[riak_kv,vnode,index,refreshes], [{one  ,vnode_index_refreshes},
-                                        {count, vnode_index_refreshes_total}]},
-     {[riak_kv,vnode,index,writes], [{one  , vnode_index_writes},
-                                     {count, vnode_index_writes_total}]},
-     {[riak_kv,vnode,index,writes,postings], [{one  , vnode_index_writes_postings},
-                                              {count, vnode_index_writes_postings_total}]},
-     {[riak_kv,vnode,index,deletes], [{one  , vnode_index_deletes},
-                                      {count, vnode_index_deletes_total}]},
-     {[riak_kv,vnode,index,deletes,postings], [{one  , vnode_index_deletes_postings},
-                                               {count, vnode_index_deletes_postings_total}]},
-     {[riak_kv,vnode,backend,leveldb,read_block_error],
-      [{value, leveldb_read_block_error}]},
-     {[riak_kv,object,map,merge,time], [{mean  , object_map_merge_time_mean},
-                                        {median, object_map_merge_time_median},
-                                        {95    , object_map_merge_time_95},
-                                        {99    , object_map_merge_time_99},
-                                        {max   , object_map_merge_time_100}]},
-     {[riak_kv,node,gets], [{one  , node_gets},
-                            {count, node_gets_total}]},
-     {[riak_kv,node,gets,siblings], [{mean  , node_get_fsm_siblings_mean},
-                                     {median, node_get_fsm_siblings_median},
-                                     {95    , node_get_fsm_siblings_95},
-                                     {99    , node_get_fsm_siblings_99},
-                                     {max   , node_get_fsm_siblings_100}]},
-     {[riak_kv,node,gets,set,siblings], [{mean  , node_get_fsm_set_siblings_mean},
-                                         {median, node_get_fsm_set_siblings_median},
-                                         {95    , node_get_fsm_set_siblings_95},
-                                         {99    , node_get_fsm_set_siblings_99},
-                                         {max   , node_get_fsm_set_siblings_100}]},
-     {[riak_kv,node,gets,objsize], [{mean  , node_get_fsm_objsize_mean},
-                                    {median, node_get_fsm_objsize_median},
-                                    {95    , node_get_fsm_objsize_95},
-                                    {99    , node_get_fsm_objsize_99},
-                                    {max   , node_get_fsm_objsize_100}]},
-     {[riak_kv,node,gets,set,objsize], [{mean  , node_get_fsm_set_objsize_mean},
-                                        {median, node_get_fsm_set_objsize_median},
-                                        {95    , node_get_fsm_set_objsize_95},
-                                        {99    , node_get_fsm_set_objsize_99},
-                                        {max   , node_get_fsm_set_objsize_100}]},
-     {[riak_kv,node,gets,time], [{mean  , node_get_fsm_time_mean},
-                                 {median, node_get_fsm_time_median},
-                                 {95    , node_get_fsm_time_95},
-                                 {99    , node_get_fsm_time_99},
-                                 {max   , node_get_fsm_time_100}]},
-     {[riak_kv,node,gets,map,siblings], [{mean  , node_get_fsm_map_siblings_mean},
-                                         {median, node_get_fsm_map_siblings_median},
-                                         {95    , node_get_fsm_map_siblings_95},
-                                         {99    , node_get_fsm_map_siblings_99},
-                                         {max   , node_get_fsm_map_siblings_100}]},
-     {[riak_kv,node,gets,map,objsize], [{mean  , node_get_fsm_map_objsize_mean},
-                                        {median, node_get_fsm_map_objsize_median},
-                                        {95    , node_get_fsm_map_objsize_95},
-                                        {99    , node_get_fsm_map_objsize_99},
-                                        {max   , node_get_fsm_map_objsize_100}]},
-     {[riak_kv,node,gets,map,time], [{mean  , node_get_fsm_map_time_mean},
-                                     {median, node_get_fsm_map_time_median},
-                                     {95    , node_get_fsm_map_time_95},
-                                     {99    , node_get_fsm_map_time_99},
-                                     {max   , node_get_fsm_map_time_100}]},
-     {[riak_kv,node,gets,set,time], [{mean  , node_get_fsm_set_time_mean},
-                                     {median, node_get_fsm_set_time_median},
-                                     {95    , node_get_fsm_set_time_95},
-                                     {99    , node_get_fsm_set_time_99},
-                                     {max   , node_get_fsm_set_time_100}]},
-     {[riak_kv,node,gets,set], [{one  , node_gets_set},
-                                {count, node_gets_set_total}]},
-     {[riak_kv,node,puts], [{one, node_puts},
-                            {count, node_puts_total}]},
-     {[riak_kv,node,puts,time], [{mean  , node_put_fsm_time_mean},
-                                 {median, node_put_fsm_time_median},
-                                 {95    , node_put_fsm_time_95},
-                                 {99    , node_put_fsm_time_99},
-                                 {max   , node_put_fsm_time_100}]},
-     {[riak_kv,node,gets,counter,objsize], [{mean  , node_get_fsm_counter_objsize_mean},
-                                            {median, node_get_fsm_counter_objsize_median},
-                                            {95    , node_get_fsm_counter_objsize_95},
-                                            {99    , node_get_fsm_counter_objsize_99},
-                                            {max   , node_get_fsm_counter_objsize_100}]},
-     {[riak_kv,node,gets,read_repairs], [{one, read_repairs},
-                                         {count, read_repairs_total}]},
-     {[riak_kv,node,gets,skipped_read_repairs], [{one, skipped_read_repairs},
-						 {count, skipped_read_repairs_total}]},
-     {[riak_kv,node,gets,counter], [{one  , node_gets_counter},
-                                    {count, node_gets_counter_total}]},
-     {[riak_kv,node,gets,counter,siblings], [{mean  , node_get_fsm_counter_siblings_mean},
-                                             {median, node_get_fsm_counter_siblings_median},
-                                             {95    , node_get_fsm_counter_siblings_95},
-                                             {99    , node_get_fsm_counter_siblings_99},
-                                             {max   , node_get_fsm_counter_siblings_100}]},
-     {[riak_kv,node,gets,counter,time], [{mean  , node_get_fsm_counter_time_mean},
-                                         {median, node_get_fsm_counter_time_median},
-                                         {95    , node_get_fsm_counter_time_95},
-                                         {99    , node_get_fsm_counter_time_99},
-                                         {max   , node_get_fsm_counter_time_100}]},
-     {[riak_kv,node,puts,coord_redirs], [{value,coord_redirs_total}]},
-     {[riak_kv,mapper_count], [{value, executing_mappers}]},
-     {[riak_kv,object,counter,merge], [{one, object_counter_merge},
-                                       {count, object_counter_merge_total}]},
-     {[riak_kv,object,counter,merge,time], [{mean  , object_counter_merge_time_mean},
-                                            {median, object_counter_merge_time_median},
-                                            {95    , object_counter_merge_time_95},
-                                            {99    , object_counter_merge_time_99},
-                                            {max   , object_counter_merge_time_100}]},
-     {[riak_kv,object,set,merge], [{one  , object_set_merge},
-                                   {count, object_set_merge_total}]},
-     {[riak_kv,object,set,merge,time], [{mean  , object_set_merge_time_mean},
-                                        {median, object_set_merge_time_median},
-                                        {95    , object_set_merge_time_95},
-                                        {99    , object_set_merge_time_99},
-                                        {max   , object_set_merge_time_100}]},
-     {[riak_kv,precommit_fail], [{value, precommit_fail}]},
-     {[riak_kv,postcommit_fail], [{value, postcommit_fail}]},
-     {[riak_kv,index,fsm,create], [{one, index_fsm_create}]},
-     {[riak_kv,index,fsm,create,error], [{one, index_fsm_create_error}]},
-     {[riak_kv,index,fsm,active], [{value, index_fsm_active}]},
-     {[riak_kv,list,fsm,active], [{value, list_fsm_active}]},
-     {[riak_kv,consistent,gets], [{one, consistent_gets},
-                                  {count, consistent_gets_total}]},
-     {[riak_kv,consistent,gets,objsize], [{mean  , consistent_get_objsize_mean},
-                                          {median, consistent_get_objsize_median},
-                                          {95    , consistent_get_objsize_95},
-                                          {99    , consistent_get_objsize_99},
-                                          {max   , consistent_get_objsize_100}]},
-     {[riak_kv,consistent,gets,time], [{mean  , consistent_get_time_mean},
-                                       {median, consistent_get_time_median},
-                                       {95    , consistent_get_time_95},
-                                       {99    , consistent_get_time_99},
-                                       {max   , consistent_get_time_100}]},
-     {[riak_kv,consistent,puts], [{one, consistent_puts},
-                                  {count, consistent_puts_total}]},
-     {[riak_kv,consistent,puts,objsize], [{mean  , consistent_put_objsize_mean},
-                                          {median, consistent_put_objsize_median},
-                                          {95    , consistent_put_objsize_95},
-                                          {99    , consistent_put_objsize_99},
-                                          {max   , consistent_put_objsize_100}]},
-     {[riak_kv,consistent,puts,time], [{mean  , consistent_put_time_mean},
-                                       {median, consistent_put_time_median},
-                                       {95    , consistent_put_time_95},
-                                       {99    , consistent_put_time_99},
-                                       {max   , consistent_put_time_100}]},
-     {[riak_api,pbc_connects,active], [{value, pbc_active}]},
-     {[riak_api,pbc_connects], [{one, pbc_connects},
-                                {count, pbc_connects_total}]},
-     {[riak_kv,get_fsm,sidejob], [{usage, node_get_fsm_active},
-                                  {usage_60s, node_get_fsm_active_60s},
-                                  {in_rate, node_get_fsm_in_rate},
-                                  {out_rate, node_get_fsm_out_rate},
-                                  {rejected, node_get_fsm_rejected},
-                                  {rejected_60s, node_get_fsm_rejected_60s},
-                                  {rejected_total, node_get_fsm_rejected_total}]},
-     {[riak_kv,put_fsm,sidejob], [{usage, node_put_fsm_active},
-                                  {usage_60s, node_put_fsm_active_60s},
-                                  {in_rate, node_put_fsm_in_rate},
-                                  {out_rate, node_put_fsm_out_rate},
-                                  {rejected, node_put_fsm_rejected},
-                                  {rejected_60s, node_put_fsm_rejected_60s},
-                                  {rejected_total, node_put_fsm_rejected_total}]},
-     {[riak_kv,node,puts,counter,time], [{mean  , node_put_fsm_counter_time_mean},
-					 {median, node_put_fsm_counter_time_median},
-					 {95    , node_put_fsm_counter_time_95},
-					 {99    , node_put_fsm_counter_time_99},
-					 {max   , node_put_fsm_counter_time_100}]},
-     {[riak_kv,node,puts,set,time], [{mean  , node_put_fsm_set_time_mean},
-				     {median, node_put_fsm_set_time_median},
-				     {95    , node_put_fsm_set_time_95},
-				     {99    , node_put_fsm_set_time_99},
-				     {max   , node_put_fsm_set_time_100}]},
-     {[riak_kv,node,puts,counter], [{one  , node_puts_counter},
-                                    {count, node_puts_counter_total}]},
-     {[riak_kv,node,puts,set], [{one  , node_puts_set},
-                                {count, node_puts_set_total}]},
-     {[riak_kv,node,gets,map], [{one  , node_gets_map},
-                                {count, node_gets_map_total}]},
-     {[riak_kv,node,gets,counter,read_repairs], [{one  , read_repairs_counter},
-                                                 {count, read_repairs_counter_total}]},
-     {[riak_kv,node,puts,map], [{one  , node_puts_map},
-                                {count, node_puts_map_total}]},
-     {[riak_kv,node,puts,map,time], [{mean  , node_put_fsm_map_time_mean},
-                                     {median, node_put_fsm_map_time_median},
-                                     {95    , node_put_fsm_map_time_95},
-                                     {99    , node_put_fsm_map_time_99},
-                                     {max   , node_put_fsm_map_time_100}]},
-     {[riak_kv,node,gets,set,read_repairs], [{one  , read_repairs_set},
-                                             {count, read_repairs_set_total}]},
-     {[riak_kv,node,gets,map,read_repairs,map], [{one  , read_repairs_map},
-                                                 {count, read_repairs_map_total}]},
-     {[riak_kv,node,gets,read_repairs,primary,notfound],
-      [{one  , read_repairs_primary_notfound_one},
-       {count, read_repairs_primary_notfound_count}]},
-     {[riak_kv,node,gets,read_repairs,primary,outofdate],
-      [{one  , read_repairs_primary_outofdate_one},
-       {count, read_repairs_primary_outofdate_count}]},
-     {[riak_kv,list,fsm,create], [{one  , list_fsm_create},
-                                  {count, list_fsm_create_total}]},
-     {[riak_kv,list,fsm,create,error], [{one  , list_fsm_create_error},
-                                        {count, list_fsm_create_error_total}]},
-     {[riak_kv,counter,actor_count], [{mean  , counter_actor_counts_mean},
-                                      {median, counter_actor_counts_median},
-                                      {95    , counter_actor_counts_95},
-                                      {99    , counter_actor_counts_99},
-                                      {max   , counter_actor_counts_100}]},
-     {[riak_kv,set,actor_count], [{mean  , set_actor_counts_mean},
-                                  {median, set_actor_counts_median},
-                                  {95    , set_actor_counts_95},
-                                  {99    , set_actor_counts_99},
-                                  {max   , set_actor_counts_100}]},
-     {[riak_kv,map,actor_count], [{mean  , map_actor_counts_mean},
-                                  {median, map_actor_counts_median},
-                                  {95    , map_actor_counts_95},
-                                  {99    , map_actor_counts_99},
-                                  {max   , map_actor_counts_100}]},
-     {[riak_kv,late_put_fsm_coordinator_ack], [{value, late_put_fsm_coordinator_ack}]},
-     {[riak_kv,vnode,counter,update], [{one  , vnode_counter_update},
-                                       {count, vnode_counter_update_total}]},
-     {[riak_kv,vnode,counter,update,time], [{mean  , vnode_counter_update_time_mean},
-                                            {median, vnode_counter_update_time_median},
-                                            {95    , vnode_counter_update_time_95},
-                                            {99    , vnode_counter_update_time_99},
-                                            {max   , vnode_counter_update_time_100}]},
-     {[riak_kv,vnode,map,update],  [{one  , vnode_map_update},
-                                    {count, vnode_map_update_total}]},
-     {[riak_kv,vnode,set,update], [{one  , vnode_set_update},
-                                   {count, vnode_set_update_total}]},
-     {[riak_kv,vnode,set,update,time], [{mean  , vnode_set_update_time_mean},
-                                        {median, vnode_set_update_time_median},
-                                        {95    , vnode_set_update_time_95},
-                                        {99    , vnode_set_update_time_99},
-                                        {max   , vnode_set_update_time_100}]},
-     {[riak_kv,ring_stats], [{ring_members       , ring_members},
-                             {ring_num_partitions, ring_num_partitions},
-                             {ring_ownership     , ring_ownership}]},
-     {[riak_core,ring_creation_size], [{value, ring_creation_size}]},
-     {[riak_kv,storage_backend], [{value, storage_backend}]},
-     {[common,cpu_stats], [{nprocs, cpu_nprocs},
-                           {avg1  , cpu_avg1},
-                           {avg5  , cpu_avg5},
-                           {avg15 , cpu_avg15}]},
-     {[riak_core_stat_ts], [{value, riak_core_stat_ts}]},
-     {[riak_kv_stat_ts]  , [{value, riak_kv_stat_ts}]},
-     {[riak_pipe_stat_ts], [{value, riak_pipe_stat_ts}]},
-     {[yokozuna,index,fail], [{count,search_index_fail_count},
-                              {one  ,search_index_fail_one}]},
-     {[yokozuna,index,latency], [{95    , search_index_latency_95},
-                                 {99    , search_index_latency_99},
-                                 {999   , search_index_latency_999},
-                                 {max   , search_index_latency_max},
-                                 {median, search_index_latency_median},
-                                 {min   , search_index_latency_min}]},
-     {[yokozuna,index,throughput], [{count, search_index_throughput_count},
-                                    {one  , search_index_throughtput_one}]},
-     {[yokozuna,'query',fail], [{count, search_search_query_fail_count},
-                                {one  , search_query_fail_one}]},
-     {[yokozuna,'query',latency], [{95    , search_query_latency_95},
-                                   {99    , search_query_latency_99},
-                                   {999   , search_query_latency_999},
-                                   {max   , search_query_latency_max},
-                                   {median, search_query_latency_median},
-                                   {min   , search_query_latency_min}]},
-     {[yokozuna,'query',throughput], [{count,search_query_throughput_count},
-                                      {one  ,search_query_throughput_one}]}
-    ].
 
 -ifdef(TEST).
 
