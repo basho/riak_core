@@ -94,7 +94,7 @@ maybe_create_hashtrees(Service, Index, VNode,  Last) ->
 -spec maybe_create_hashtrees(boolean(), atom(), integer(), atom(), pid()|undefined) ->
                                     pid()|undefined.
 maybe_create_hashtrees(false, _Service, _Index, _VNode, Last) ->
-    lager:info("Hashtree not enabled."),
+    lager:debug("Hashtree not enabled."),
     Last;
 
 maybe_create_hashtrees(true, Service, Index, VNode, Last) ->
