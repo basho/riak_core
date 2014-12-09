@@ -386,7 +386,7 @@ commit_staged(State=#state{next_ring=undefined}) ->
 commit_staged(State) ->
     case maybe_commit_staged(State) of
         {ok, _} ->
-            riak_core_ring:update_cluster_metadata(State#state{next_ring}),
+            riak_core_ring:update_cluster_metadata(State#state.next_ring),
             State2 = State#state{next_ring=undefined,
                                  changes=[],
                                  seed=erlang:now()},
