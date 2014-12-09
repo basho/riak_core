@@ -101,7 +101,7 @@ status([], []) ->
     T1 = riak_cli_status:text(io_lib:format("Ring ready: ~p~n", [element(2, RingStatus)])),
     T2 = riak_cli_status:text(
            "Key: (C) = Claimant; availability marked with '!' is unexpected"),
-    [riak_cli_status:alert([T0,T1,Table,T2])].
+    [T0,T1,Table,T2].
 
 format_status(Node, Status, Ring, RingStatus) ->
     {Claimant, _RingReady, Down, MarkedDown, Changes} = RingStatus,
@@ -109,13 +109,12 @@ format_status(Node, Status, Ring, RingStatus) ->
      {status, Status},
      {avail, node_availability(Node, Down, MarkedDown)},
      {ring, claim_percent(Ring, Node)},
-     {pending, future_claim_percentage(Changes, Ring, Node)}
-    ].
+     {pending, future_claim_percentage(Changes, Ring, Node)}].
 
 is_claimant(Node, Node) ->
     " (C) " ++ atom_to_list(Node) ++ " ";
 is_claimant(Node, _Other) ->
-    " " ++ atom_to_list(Node) ++ " ".
+    "     " ++ atom_to_list(Node) ++ " ".
 
 node_availability(Node, Down, MarkedDown) ->
     case {lists:member(Node, Down), lists:member(Node, MarkedDown)} of
@@ -187,7 +186,7 @@ partitions_output(Node) ->
            ++ generate_rows(RingSize, secondary, Secondary)
            ++ generate_rows(RingSize, stopped, Stopped),
     Table = riak_cli_status:table(Rows),
-    [riak_cli_status:alert([T0, Table])].
+    [T0, Table].
 
 generate_rows(_RingSize, Type, []) ->
     [[{type, Type}, {index, "--"}, {id, "--"}]];
