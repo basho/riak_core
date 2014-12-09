@@ -118,10 +118,10 @@ is_claimant(Node, _Other) ->
 
 node_availability(Node, Down, MarkedDown) ->
     case {lists:member(Node, Down), lists:member(Node, MarkedDown)} of
-        {false, false} -> "  up   "; % put common case at the top
-          {true, true} -> " down  ";
-         {true, false} -> " down! ";
-         {false, true} -> "  up!  "
+         {false, false} -> "  up   "; 
+         {true,  true } -> " down  ";
+         {true,  false} -> " down! ";
+         {false, true } -> "  up!  "
     end.
 
 %%%
@@ -129,13 +129,12 @@ node_availability(Node, Down, MarkedDown) ->
 %%%
 
 partition_count_register() ->
-    [
-     ["riak-admin", "cluster", "partition-count"], % Cmd
+    [["riak-admin", "cluster", "partition-count"], % Cmd
      [],                                           % KeySpecs
      [{node, [{shortname, "n"}, {longname, "node"}, 
-              {typecast, fun list_to_atom/1}]}],   % FlagSpecs
-     fun partition_count/2                         % Implementation callback
-    ].
+              {typecast, 
+               fun riak_cli_typecast:to_node/1}]}],% FlagSpecs
+     fun partition_count/2].                       % Implementation callback
 
 partition_count_usage() ->
    Text = ["riak-admin cluster partition-count [--node node]\n\n",
@@ -162,7 +161,8 @@ partitions_register() ->
     [["riak-admin", "cluster", "partitions"],      % Cmd
      [],                                           % KeySpecs
      [{node, [{shortname, "n"}, {longname, "node"},
-              {typecast, fun list_to_atom/1}]}],   % FlagSpecs
+              {typecast, 
+               fun riak_cli_typecast:to_node/1}]}],% FlagSpecs
      fun partitions/2].                            % Implementation callback
 
 
@@ -220,8 +220,8 @@ partition([{index, Index}], []) when Index >= 0 ->
 partition([{id, Id}], []) when Id >= 0 ->
     id_out(id, Id);
 partition([{Op, Value}], []) ->
-    [riak_cli_status:text(["ERROR: The given value ", integer_to_list(Value), 
-             " for ", atom_to_list(Op), " is invalid.\n"])].
+    [make_alert(["ERROR: The given value ", integer_to_list(Value), 
+                " for ", atom_to_list(Op), " is invalid."])].
 
 id_out(InputType, Number) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -233,16 +233,16 @@ id_out(InputType, Number) ->
 id_out1(index, Index, Ring, RingSize) ->
     Owner = riak_core_ring:index_owner(Ring, Index),
     riak_cli_status:text(
-          io_lib:format("Partition index: ~p -> id: ~p~n\t(owner: ~p)", 
+          io_lib:format("Partition index: ~p -> id: ~p~n(owner: ~p)", 
               [Index, hash_to_partition_id(Index, RingSize), Owner]));
 id_out1(id, Id, Ring, RingSize) when Id < RingSize ->
     Idx = partition_id_to_hash(Id, RingSize),
     Owner = riak_core_ring:index_owner(Ring, Idx),
     riak_cli_status:text(
-          io_lib:format("Partition id: ~p -> index: ~p~n\t(owner: ~p)~n", 
+          io_lib:format("Partition id: ~p -> index: ~p~n(owner: ~p)~n", 
               [Id, partition_id_to_hash(Id, RingSize), Owner]));
 id_out1(id, Id, _Ring, _RingSize) ->
-    riak_cli_status:text(["ERROR: Id ", integer_to_list(Id), " is invalid."]).
+    make_alert(["ERROR: Id ", integer_to_list(Id), " is invalid."]).
 
 %%%
 %% cluster members
@@ -275,6 +275,14 @@ member_output(L) ->
 get_status() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     lists:keysort(2, riak_core_ring:all_member_status(Ring)).
+
+%%% 
+%% Internal
+%%%
+
+make_alert(Iolist) -> 
+    Text = [riak_cli_status:text(Iolist)],
+    riak_cli_status:alert(Text).
 
 %%% FIXME! -> REMOVE AFTER MERGE
 %%% Code depends on commit 0b8a86 for riak_core_ring_util.erl
