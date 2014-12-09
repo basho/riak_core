@@ -52,7 +52,8 @@
          responsible_index/2,
          transfer_node/3,
          update_meta/3,
-         remove_meta/2]).
+         remove_meta/2,
+         update_cluster_metadata/1]).
 
 -export([cluster_name/1,
          legacy_ring/1,
@@ -186,6 +187,9 @@
                         | {undefined, undefined, undefined}.
 
 -type resize_transfer() :: {{integer(),term()}, ordsets:ordset(node()), awaiting | complete}.
+
+%% For ring transitions stored in cluster metadata
+-define(MDPREFIX, {ring, latest_transition}).
 
 %% ===================================================================
 %% Public API
@@ -828,6 +832,15 @@ future_indices(State, Node) ->
 all_next_owners(CState) ->
     Next = riak_core_ring:pending_changes(CState),
     [{Idx, NextOwner} || {Idx, _, NextOwner, _, _} <- Next].
+
+%% @doc Add information about ring changes to cluster metadata
+-spec update_cluster_metadata(chstate()) -> ok.
+update_cluster_metadata(NextRing) ->
+    riak_core_metadata:put(?MDPREFIX, ring_version,
+                           ring_version(NextRing)),
+    riak_core_metadata:put(?MDPREFIX, transfer_count,
+                           length(pending_changes(NextRing))).
+
 
 %% @private
 change_owners(CState, Reassign) ->
