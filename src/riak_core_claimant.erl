@@ -1308,7 +1308,7 @@ update_ring(CNode, CState, Replacing, Seed, Log, false) ->
                [length(riak_core_ring:pending_changes(CState4))]}),
 
     %% Remove transfers to/from down nodes
-    Next4 = handle_down_nodes(CState4, Next3),
+    Next4 = handle_down_nodes(CState4, Next3, Seed),
 
     NextChanged = (Next0 /= Next4),
     Changed = (NextChanged or RingChanged1 or RingChanged2),
@@ -1416,7 +1416,7 @@ rebalance_ring(_CNode, Next, _CState) ->
     Next.
 
 %% @private
-handle_down_nodes(CState, Next) ->
+handle_down_nodes(CState, Next, Seed) ->
     LeavingMembers = riak_core_ring:members(CState, [leaving, invalid]),
     DownMembers = riak_core_ring:members(CState, [down]),
     Next2 = [begin
@@ -1425,8 +1425,9 @@ handle_down_nodes(CState, Next) ->
                  case (OwnerLeaving and NextDown) of
                      true ->
                          Active = riak_core_ring:active_members(CState) -- [O],
-                         RNode = lists:nth(random:uniform(length(Active)),
-                                           Active),
+                         {Random, _NewSeed} =
+                             random:uniform_s(length(Active), Seed),
+                         RNode = lists:nth(Random, Active),
                          {Idx, O, RNode, Mods, Status};
                      _ ->
                          T
