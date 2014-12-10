@@ -44,7 +44,8 @@
          set_concurrency/1,
          get_concurrency/0,
          set_recv_data/2,
-         kill_handoffs/0
+         kill_handoffs/0,
+         reschedule/2
         ]).
 
 -include("riak_core_handoff.hrl").
@@ -122,6 +123,13 @@ status(Filter) ->
 -spec status_update(mod_src_tgt(), ho_stats()) -> ok.
 status_update(ModSrcTgt, Stats) ->
     gen_server:cast(?MODULE, {status_update, ModSrcTgt, Stats}).
+
+%% @doc Permit the handoff identified by `ModSrcTgt' to be rescheduled
+%%      (assume it was unsuccessful on completion), and store the reason
+%%      why retrying is necessary.
+-spec reschedule(mod_src_tgt(), any()) -> ok.
+reschedule(ModSrcTgt, Reason) ->
+    gen_server:call(?MODULE, {reschedule, ModSrcTgt, Reason}, infinity).
 
 set_concurrency(Limit) ->
     gen_server:call(?MODULE,{set_concurrency,Limit}, infinity).
@@ -203,21 +211,34 @@ handle_call({set_concurrency,Limit},_From,State=#state{handoffs=HS}) ->
     application:set_env(riak_core,handoff_concurrency,Limit),
     case Limit < erlang:length(HS) of
         true ->
-            %% Note: we don't update the state with the handoffs that we're
-            %% keeping because we'll still get the 'DOWN' messages with
-            %% a reason of 'max_concurrency' and we want to be able to do
-            %% something with that if necessary.
-            {_Keep,Discard}=lists:split(Limit,HS),
-            _ = [erlang:exit(Pid,max_concurrency) ||
-                #handoff_status{transport_pid=Pid} <- Discard],
-            {reply, ok, State};
+            %% When the limit is lowered we have to kill enough currently in-
+            %% flight handoffs to get below the new cap (they won't be checked
+            %% against the limit again otherwise, once they've started).
+            {Keep, ToCancel}=lists:split(Limit,HS),
+            Canceled = lists:map(fun(Handoff) ->
+                erlang:exit(Handoff#handoff_status.transport_pid, {shutdown, normal}),
+                Handoff#handoff_status{status={rescheduled, concurrency_limit_lowered}}
+            end, ToCancel),
+            {reply, ok, State#state{handoffs=lists:append(Keep,Canceled)}};
         false ->
             {reply, ok, State}
     end;
 
 handle_call(get_concurrency, _From, State) ->
     Concurrency = get_concurrency_limit(),
-    {reply, Concurrency, State}.
+    {reply, Concurrency, State};
+
+handle_call({reschedule, ModSrcTgt, Reason}, _From, State=#state{handoffs=HS}) ->
+    case lists:keyfind(ModSrcTgt, #handoff_status.mod_src_tgt, HS) of
+        false ->
+            lager:error("Tried to mark a nonexistent handoff as rescheduled: ~p~n", [ModSrcTgt]),
+            {reply, not_found, State};
+        HO ->
+            HO2 = HO#handoff_status{status={rescheduled, Reason}},
+            HS2 = lists:keyreplace(ModSrcTgt, #handoff_status.mod_src_tgt, HS, HO2),
+            erlang:exit(HO#handoff_status.transport_pid, {shutdown, normal}),
+            {reply, ok, State#state{handoffs=HS2}}
+    end.
 
 handle_cast({del_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
     Excl2 = sets:del_element({Mod, Idx}, Excl),
@@ -267,7 +288,7 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}, State=#state{handoffs=HS}) ->
     case lists:keytake(Ref, #handoff_status.transport_mon, HS) of
         {value,
          #handoff_status{mod_src_tgt={M, S, I}, direction=Dir, vnode_pid=Vnode,
-                         vnode_mon=VnodeM, req_origin=Origin},
+                         vnode_mon=VnodeM, req_origin=Origin, status=Status},
          NewHS
         } ->
             WarnVnode =
@@ -276,11 +297,6 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}, State=#state{handoffs=HS}) ->
                     %% than 'normal' we should log the reason why as an error
                     normal ->
                         false;
-                    X when X == max_concurrency orelse
-                           (element(1, X) == shutdown andalso
-                            element(2, X) == max_concurrency) ->
-                        lager:info("An ~w handoff of partition ~w ~w was terminated for reason: ~w~n", [Dir,M,I,Reason]),
-                        true;
                     _ ->
                         lager:error("An ~w handoff of partition ~w ~w was terminated for reason: ~w~n", [Dir,M,I,Reason]),
                         true
@@ -295,13 +311,21 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}, State=#state{handoffs=HS}) ->
                     case Origin of
                         none -> ok;
                         _ ->
-                            %% Use proplist instead so it's more
-                            %% flexible in future, or does
-                            %% capabilities nullify that?
-                            Msg = {M, S, I},
-                            riak_core_vnode_manager:xfer_complete(Origin, Msg)
-                    end,
-                    ok
+                            case Status of
+                                {rescheduled, remote_concurrency_exceeded} ->
+                                    lager:info("An ~w handoff of partition ~w ~w was rescheduled because the destination node's concurrency limit was already reached.~n", [Dir,M,I]);
+                                {rescheduled, concurrency_limit_lowered} ->
+                                    lager:info("An ~w handoff of partition ~w ~w was rescheduled because the handoff concurrency limit was lowered.~n", [Dir,M,I]);
+                                {rescheduled, RetryReason} ->
+                                    lager:debug("An ~w handoff of partition ~w ~w was rescheduled. Reason: ~w.~n", [Dir,M,I,RetryReason]);
+                                _ ->
+                                    %% Use proplist instead so it's more
+                                    %% flexible in future, or does
+                                    %% capabilities nullify that?
+                                    Msg = {M, S, I},
+                                    riak_core_vnode_manager:xfer_complete(Origin, Msg)
+                            end
+                    end
             end,
 
             %% No monitor on vnode for receiver

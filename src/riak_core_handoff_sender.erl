@@ -144,7 +144,10 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
          case TcpMod:recv(Socket, 0, RecvTimeout) of
              {ok,[?PT_MSG_OLDSYNC|<<"sync">>]} -> ok;
              {error, timeout} -> exit({shutdown, timeout});
-             {error, closed} -> exit({shutdown, max_concurrency})
+             {error, closed} -> 
+                lager:debug("Handoff of ~p from ~p terminating because the destination, ~p, has reached its concurrency limit (inferred from socket closure).",
+                           [SrcPartition, SrcNode, TargetNode]),
+                exit({shutdown, remote_concurrency_exceeded})
          end,
 
          RemoteSupportsBatching = remote_supports_batching(TargetNode),
@@ -260,9 +263,9 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                  end
          end
      catch
-         exit:{shutdown,max_concurrency} ->
-             %% Need to fwd the error so the handoff mgr knows
-             exit({shutdown, max_concurrency});
+         exit:{shutdown, remote_concurrency_exceeded} ->
+             riak_core_handoff_manager:reschedule({Module, SrcPartition, TargetPartition}, remote_concurrency_exceeded),
+             exit(normal);
          exit:{shutdown, timeout} ->
              %% A receive timeout during handoff
              riak_core_stat:update(handoff_timeouts),
@@ -594,7 +597,9 @@ maybe_call_handoff_started(Module, SrcPartition) ->
                 {error, max_concurrency} ->
                     %% Handoff of that partition is busy or can't proceed. Stopping with
                     %% max_concurrency will cause this partition to be retried again later.
-                    exit({shutdown, max_concurrency});
+                    %% NB. this isn't handled higher up as of 2.0; the process will
+                    %%     die noisily at the sup and be retried.
+                    exit({shutdown, module_max_concurrency});
                 {error, Error} ->
                     exit({shutdown, Error})
             end;
