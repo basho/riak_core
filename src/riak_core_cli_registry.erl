@@ -21,7 +21,7 @@
 
 -module(riak_core_cli_registry).
 
--define(CLI_MODULES, []).
+-define(CLI_MODULES, [riak_core_cluster_cli]).
 
 -export([
          register_cli/0
