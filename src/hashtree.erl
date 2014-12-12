@@ -452,7 +452,7 @@ estimate_keys(State) ->
 estimate_keys(#state{segments=Segments}, CurrentSegment, Keys, MaxKeys)
   when (CurrentSegment * 100) >= Segments;
        Keys >= MaxKeys ->
-    {ok, (Keys * Segments) div (CurrentSegment + 1)};
+    {ok, (Keys * Segments) div CurrentSegment};
 
 estimate_keys(State, CurrentSegment, Keys, MaxKeys) ->
     [{_, KeyHashes2}] = key_hashes(State, CurrentSegment),
