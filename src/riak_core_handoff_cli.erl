@@ -40,7 +40,8 @@ register_cli_cmds() ->
 register_cli_cfg() ->
     lists:foreach(fun(K) ->
                           riak_cli:register_config(K, fun handoff_cfg_change_callback/3)
-                  end, [["handoff", "disable_inbound"], ["handoff", "disable_outbound"]]).
+                  end, [["handoff", "disable_inbound"], ["handoff", "disable_outbound"]]),
+    riak_cli:register_config(["transfer_limit"], fun set_transfer_limit/3).
 
 register_cli_usage() ->
     riak_cli:register_usage(["riak-admin", "handoff"], handoff_usage()),
@@ -127,3 +128,38 @@ handoff_cfg_change_callback(["handoff", Cmd], "off", _Flags) ->
 handoff_cfg_change_callback(_, _, _) ->
     ok.
 
+set_transfer_limit(["transfer_limit"], LimitStr, Flags) ->
+    Limit = list_to_integer(LimitStr),
+    F = fun lists:keyfind/3,
+    case {F(node, 1, Flags), F(all, 1, Flags)} of
+        {false, false} ->
+            riak_core_handoff_manager:set_concurrency(Limit),
+            io:format("Set transfer limit for ~p to ~b~n", [node(), Limit]);
+        _ ->
+            set_transfer_limit(Limit, Flags)
+    end.
+
+set_transfer_limit(Limit, Flags) ->
+    case lists:keyfind(node, 1, Flags) of
+        {node, Node} ->
+            set_node_transfer_limit(Node, Limit);
+        false->
+            set_transfer_limit(Limit)
+    end.
+
+set_transfer_limit(Limit) ->
+    {_, _Down} = riak_core_util:rpc_every_member_ann(riak_core_handoff_manager,
+                                                     set_concurrency,
+                                                     [Limit],
+                                                     10000),
+    ok.
+
+set_node_transfer_limit(Node, Limit) ->
+    case riak_core_util:safe_rpc(Node, riak_core_handoff_manager, set_concurrency, [Limit]) of
+        {badrpc, _} ->
+            %% Errors are automatically reported by riak_cli
+            ok;
+        _ ->
+            io:format("Set transfer limit for ~p to ~b~n", [Node, Limit])
+    end,
+    ok.
