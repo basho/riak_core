@@ -23,87 +23,12 @@
 
 -export([handoff_summary/2,
          handoff_details/2,
-         register_cli/0,
          collect_node_transfer_data/0]).
 
 -define(ORDERED_TRANSFERS_FOR_DISPLAY,
         [{ownership, "Ownership"}, {resize, "Resize"}, {hinted, "Hinted"}, {repair, "Repair"}]).
 
-%%%%%%
-%% riak_cli registration
-
-register_cli() ->
-    register_all_commands(),
-    register_all_usage().
-
-register_all_commands() ->
-    lists:foreach(fun(Args) -> apply(riak_cli, register_command, Args) end,
-                  [register_summary_command(), register_details_command()]).
-
-register_summary_command() ->
-    [
-     ["riak-admin", "handoff", "summary"], %% Cmd
-     [],                                   %% KeySpecs
-     [],                                   %% Flags
-     fun handoff_summary/2
-    ].
-
-register_details_command() ->
-    [
-     ["riak-admin", "handoff", "details"],                %% Cmd
-     [],                                                  %% KeySpecs
-     [
-      {node, [{shortname, "n"}, {longname, "node"},       %% Flags
-              {typecast, fun riak_cli_typecast:to_node/1}]},
-      {all, [{shortname, "a"}, {longname, "all"}]}
-     ],
-     fun handoff_details/2
-    ].
-
-register_all_usage() ->
-    lists:foreach(fun(Args) -> apply(riak_cli, register_usage, Args) end,
-                  [register_summary_usage(),
-                   register_details_usage(),
-                   register_handoff_usage()]).
-
-register_handoff_usage() ->
-    [
-     ["riak-admin", "handoff"],
-     [
-      "riak-admin handoff <sub-command>\n\n",
-      "  View handoff related status\n\n",
-      "  Sub-commands:\n",
-      "    summary    Show cluster-wide handoff summary\n",
-      "    details    Show details of all active transfers (per-node or cluster wide)."
-     ]
-    ].
-
-
-register_summary_usage() ->
-    [
-     ["riak-admin", "handoff", "summary"],
-     [
-      "riak-admin handoff summary\n\n",
-      "Displays a summarized view of handoffs occuring on the \n",
-      "current node (no flags), another node (using --node), or \n",
-      "the entire cluster (using --all)\n"
-     ]
-    ].
-
-register_details_usage() ->
-    [
-     ["riak-admin", "handoff", "details"],
-     [
-      "riak-admin handoff details [--node node] [--all]\n\n",
-      "Displays a summarized view of handoffs occuring on the \n",
-      "current node (no flags), another node (using --node), or \n",
-      "the entire cluster (using --all)\n"
-     ]
-    ].
-
-%% end riak_cli registration
-%%%%%%
-
+%% This module's CLI callbacks and usage are registered with riak_core_handoff_cli
 %%%%%%
 %% riak_cli callbacks
 
@@ -303,25 +228,26 @@ replace_known_with_ring_transfers(Known, RingTransfers) ->
                           Known),
     coalesce_known_transfers(Known1, RingTransfers).
 
-%% Transform a single tuple with a list of modules (from ring.next) to
-%% a list of tuples with one module each
-explode_ring_modules(Index, Type, Direction, Source, Dest, Modules) ->
-    lists:map(fun(M) -> [{Source, {{M, Index}, {Type, Direction, Dest}}}] end,
-              Modules).
-
 parse_ring_into_known(Ring) ->
-    OwnershipChanges = riak_core_ring:pending_changes(Ring),
+    Transitions = riak_core_ring:pending_changes(Ring),
+    [
+     transform_ring_transition(T) ||
+        {_,_,_,_,State } = T <- Transitions, (State =:= awaiting)
+    ].
 
-    lists:foldl(fun({Idx, Source, '$resize', Modules, awaiting}, Acc) ->
-                        explode_ring_modules(Idx, resize, outbound,
-                                             Source, '$resize', Modules) ++ Acc;
-                   ({Idx, Source, Dest, Modules, awaiting}, Acc) ->
-                        explode_ring_modules(Idx, ownership, outbound,
-                                             Source, Dest, Modules) ++ Acc;
-                   (_, Acc) ->
-                        Acc
-                end, [], OwnershipChanges).
+%% Transform a single tuple with a list of modules (from ring.next) to
+%% a list of tuples with one module each.
+%% Special case to also transform '$resize' to resize
+%% {_Idx, _Source,_Destination,_Modules, awaiting}
+transform_ring_transition({_Index, _Source, '$resize', _Modules, _state} = T) ->
+    explode_ring_modules(resize, T);
+transform_ring_transition({_Index, _Source, _Dest, _Modules, _state} = T) ->
+    explode_ring_modules(ownership, T);
+transform_ring_transition(T) ->
+    io:format("Got a transition like ~p", [T]).
 
+explode_ring_modules(Type, {Index, Source, Dest, Modules, _state}) ->
+    [{Source, {{M, Index}, {Type, outbound, Dest}}} || M <- Modules].
 
 %% The ring has global visibility into incomplete ownership/resize
 %% transfers, so we'll filter those out of what
