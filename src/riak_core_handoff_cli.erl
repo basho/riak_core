@@ -31,9 +31,16 @@ register_cli() ->
     register_cli_cmds().
 
 register_cli_cmds() ->
+    register_enable_disable_commands(),
+    register_status_commands().
+
+register_status_commands() ->
+    lists:foreach(fun(Args) -> apply(riak_cli, register_command, Args) end,
+        [summary_command_spec(), details_command_spec()]).
+register_enable_disable_commands() ->
     CmdList = [handoff_cmd_spec(EnOrDis, Dir) ||
-               EnOrDis <- [enable, disable],
-               Dir     <- [inbound, outbound, both]],
+                  EnOrDis <- [enable, disable],
+                  Dir <- [inbound, outbound, both]],
     lists:foreach(fun(Args) -> apply(riak_cli, register_command, Args) end,
                   CmdList).
 
@@ -45,13 +52,22 @@ register_cli_cfg() ->
 register_cli_usage() ->
     riak_cli:register_usage(["riak-admin", "handoff"], handoff_usage()),
     riak_cli:register_usage(["riak-admin", "handoff", "enable"], handoff_enable_disable_usage()),
-    riak_cli:register_usage(["riak-admin", "handoff", "disable"], handoff_enable_disable_usage()).
+    riak_cli:register_usage(["riak-admin", "handoff", "disable"], handoff_enable_disable_usage()),
+    riak_cli:register_usage(["riak-admin", "handoff", "summary"], summary_usage()),
+    riak_cli:register_usage(["riak-admin", "handoff", "details"], details_usage()).
 
 handoff_usage() ->
-    ["riak-admin handoff <subcommand> [args]\n\n",
-     "Currently implemented handoff commands are:\n",
-     "  enable   Enable handoffs for the specified node(s)\n",
-     "  disable  Disable handoffs for the specified node(s)\n"
+    [
+     ["riak-admin", "handoff"],
+     [
+      "riak-admin handoff <sub-command>\n\n",
+      "  View handoff related status and settings.\n\n",
+      "  Sub-commands:\n",
+      "    enable   Enable handoffs for the specified node(s)\n",
+      "    disable  Disable handoffs for the specified node(s)\n"
+      "    summary    Show cluster-wide handoff summary\n",
+      "    details    Show details of all active transfers (per-node or cluster wide)."
+     ]
     ].
 
 handoff_enable_disable_usage() ->
@@ -81,6 +97,40 @@ handoff_cmd_spec(EnOrDis, Direction) ->
               {longname, "node"}]}], % FlagSpecs
      Callback
     ].
+
+summary_command_spec() ->
+    [["riak-admin", "handoff", "summary"], %% Cmd
+     [],                                   %% KeySpecs
+     [],                                   %% Flags
+     fun riak_core_handoff_status:handoff_summary/2
+    ].
+
+details_command_spec() ->
+    [["riak-admin", "handoff", "details"],                %% Cmd
+     [],                                                  %% KeySpecs
+     [
+      {node, [{shortname, "n"}, {longname, "node"},       %% Flags
+              {typecast, fun riak_cli_typecast:to_node/1}]},
+      {all, [{shortname, "a"}, {longname, "all"}]}
+     ],
+     fun riak_core_handoff_status:handoff_details/2
+    ].
+
+
+summary_usage() ->
+    [
+     "riak-admin handoff summary\n\n",
+     "Displays a summarized view of handoffs.\n"
+    ].
+
+details_usage() ->
+    [
+     "riak-admin handoff details [--node node] [--all]\n\n",
+     "Displays a detailed list of handoffs occuring on the \n",
+     "current node (no flags), another node (using --node), or \n",
+     "the entire cluster (using --all)\n"
+    ].
+
 
 handoff_change_enabled_setting(_EnOrDis, _Direction, Flags) when length(Flags) > 1 ->
     [riak_cli_status:text("Can't specify both --all and --node flags")];
@@ -126,4 +176,3 @@ handoff_cfg_change_callback(["handoff", Cmd], "off", _Flags) ->
     end;
 handoff_cfg_change_callback(_, _, _) ->
     ok.
-

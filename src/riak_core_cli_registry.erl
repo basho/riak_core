@@ -29,7 +29,7 @@
 -export([
          register_node_finder/0,
          register_cli/0
-]).
+        ]).
 
 -spec register_node_finder() -> true.
 register_node_finder() ->
@@ -41,4 +41,4 @@ register_node_finder() ->
 
 -spec register_cli() -> ok.
 register_cli() ->
-   riak_cli:register(?CLI_MODULES).
+    riak_cli:register(?CLI_MODULES).
