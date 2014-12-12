@@ -1322,6 +1322,24 @@ update_ring(CNode, CState, Replacing, Seed, Log, false) ->
             ?ROUT("Updating ring :: next3 : ~p~n", [Next4]),
             CState5 = riak_core_ring:set_pending_changes(CState4, Next4),
             CState6 = riak_core_ring:increment_ring_version(CNode, CState5),
+
+            %% If a cluster change bypasses the staging/commit process
+            %% (such as the deprecated `riak-admin leave -f' command)
+            %% the initial list of transfers (Next0) will be an empty
+            %% list and Next4 will be a non-empty list.
+            %%
+            %% Update the cluster metadata with the new ring data.
+            %%
+            %% I am unhappy with this implementation and the
+            %% bifurcation between this and the stage/commit code
+            %% path, but I haven't determined a better way to do it. -jrd
+            case {Next0, Next4} of
+                {[], [_H|_T]} ->
+                    riak_core_ring:update_cluster_metadata(CState6);
+                _ ->
+                    ok
+            end,
+
             {true, CState6};
         false ->
             {false, CState}
