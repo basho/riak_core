@@ -23,8 +23,7 @@
 
 -define(CLI_MODULES, [
                       riak_core_cluster_cli,
-                      riak_core_handoff_cli,
-                      riak_core_handoff_status
+                      riak_core_handoff_cli
                      ]).
 
 -export([
@@ -42,4 +41,4 @@ register_node_finder() ->
 
 -spec register_cli() -> ok.
 register_cli() ->
-   riak_cli:register(?CLI_MODULES).
+    riak_cli:register(?CLI_MODULES).
