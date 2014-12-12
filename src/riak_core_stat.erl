@@ -82,10 +82,13 @@ register_vnode_stats(Module, Index, Pid) ->
                     [{aliases, [{value, vnodeq_atom(Module, <<"s_running">>)}]}]),
     exometer:ensure([P, ?APP, vnodeq, Module],
 		    {function, riak_core_stat, vnodeq_stats, [Module],
-		     histogram, [min,max,total]},
-                    [{aliases, [{min, vnodeq_atom(Module, <<"q_min">>)},
-                                {max, vnodeq_atom(Module, <<"q_max">>)},
-                                {total, vnodeq_atom(Module, <<"q_total">>)}]}]),
+		     histogram, [mean,median,min,max,total]},
+                    [{aliases, [{mean  , vnodeq_atom(Module, <<"q_mean">>)},
+				{median, vnodeq_atom(Module, <<"q_median">>)},
+				{min   , vnodeq_atom(Module, <<"q_min">>)},
+				{max   , vnodeq_atom(Module, <<"q_max">>)},
+				{total , vnodeq_atom(Module, <<"q_total">>)}]}
+		    ]),
     exometer:re_register(
       [P, ?APP, vnodeq, Module, Index],
       function, [{ arg, {erlang, process_info, [Pid, message_queue_len],
