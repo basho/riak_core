@@ -242,9 +242,7 @@ parse_ring_into_known(Ring) ->
 transform_ring_transition({_Index, _Source, '$resize', _Modules, _state} = T) ->
     explode_ring_modules(resize, T);
 transform_ring_transition({_Index, _Source, _Dest, _Modules, _state} = T) ->
-    explode_ring_modules(ownership, T);
-transform_ring_transition(T) ->
-    io:format("Got a transition like ~p", [T]).
+    explode_ring_modules(ownership, T).
 
 explode_ring_modules(Type, {Index, Source, Dest, Modules, _state}) ->
     [{Source, {{M, Index}, {Type, outbound, Dest}}} || M <- Modules].
