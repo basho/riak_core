@@ -17,7 +17,7 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
-%% @doc This module tracks registrations for riak_cli integrations.
+%% @doc This module tracks registrations for clique integrations.
 
 -module(riak_core_cli_registry).
 
@@ -37,8 +37,8 @@ register_node_finder() ->
                 {ok, MyRing} = riak_core_ring_manager:get_my_ring(),
                 riak_core_ring:all_members(MyRing)
         end,
-    riak_cli:register_node_finder(F).
+    clique:register_node_finder(F).
 
 -spec register_cli() -> ok.
 register_cli() ->
-    riak_cli:register(?CLI_MODULES).
+    clique:register(?CLI_MODULES).

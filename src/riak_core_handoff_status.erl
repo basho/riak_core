@@ -30,13 +30,13 @@
 
 %% This module's CLI callbacks and usage are registered with riak_core_handoff_cli
 %%%%%%
-%% riak_cli callbacks
+%% clique callbacks
 
--spec handoff_summary([tuple()], [tuple()]) -> riak_cli_status:status().
+-spec handoff_summary([tuple()], [tuple()]) -> clique_status:status().
 handoff_summary([], []) ->
     node_summary().
 
--spec handoff_details([tuple()], [tuple()]) -> riak_cli_status:status().
+-spec handoff_details([tuple()], [tuple()]) -> clique_status:status().
 handoff_details([], []) ->
     build_handoff_details(node());
 handoff_details([], [{node, Node}]) ->
@@ -44,9 +44,9 @@ handoff_details([], [{node, Node}]) ->
 handoff_details([], [{all, _Value}]) ->
     build_handoff_details(all);
 handoff_details([], _) ->
-    [riak_cli_status:alert([riak_cli_status:text("Cannot use both --all and --node flags at the same time.")])].
+    [clique_status:alert([clique_status:text("Cannot use both --all and --node flags at the same time.")])].
 
-%% end of riak_cli callbacks
+%% end of clique callbacks
 %%%%%%
 
 %%%%%%
@@ -61,7 +61,7 @@ collect_node_transfer_data() ->
 
 %%%%%%
 %% Details View
--spec build_handoff_details(node()|all) -> riak_cli_status:status().
+-spec build_handoff_details(node()|all) -> clique_status:status().
 build_handoff_details(NodeOrAll) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     {Active0, DownNodes} = collect_from_all({riak_core_handoff_manager, status, [{direction, outbound}]}, 5000),
@@ -79,17 +79,17 @@ build_handoff_details(NodeOrAll) ->
                      Active),
 
     case length(FilteredTransfers) of
-        0 -> [riak_cli_status:text("No ongoing transfers.")];
+        0 -> [clique_status:text("No ongoing transfers.")];
         _ ->
-            Header = riak_cli_status:text("Type Key: O = Ownership, H = Hinted, Rz = Resize, Rp = Repair"),
+            Header = clique_status:text("Type Key: O = Ownership, H = Hinted, Rz = Resize, Rp = Repair"),
             RingSize = riak_core_ring:num_partitions(Ring),
-            Table = riak_cli_status:table(
+            Table = clique_status:table(
                       [ row_details(Transfer, RingSize) || Transfer <- FilteredTransfers]),
             case DownNodes of
                 [] ->
                     [Header, Table];
                 _ ->
-                    NodesDown = riak_cli_status:alert([riak_cli_status:column("(unreachable)", DownNodes)]),
+                    NodesDown = clique_status:alert([clique_status:column("(unreachable)", DownNodes)]),
                     [Header, Table, NodesDown]
             end
     end.
@@ -154,7 +154,7 @@ format_percent(_) ->
 
 %%%%%%
 %% Summary View
--spec node_summary() -> riak_cli_status:status().
+-spec node_summary() -> clique_status:status().
 node_summary() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
 
@@ -176,18 +176,18 @@ node_summary() ->
     %% are integers. Also ActiveStats will have a `nodes' key with a
     %% ordset of nodes.
 
-    Header = riak_cli_status:text(["Each cell indicates active transfers and, in parenthesis, the number of all known transfers.\n",
+    Header = clique_status:text(["Each cell indicates active transfers and, in parenthesis, the number of all known transfers.\n",
                                    "The 'Total' column is the sum of the active transfers."]),
     AllNodes = riak_core_ring:all_members(Ring),
     Nodes = AllNodes -- DownNodes,
-    Table = riak_cli_status:table(
+    Table = clique_status:table(
               [ [ format_node_name(Node) | row_summary(Node, KnownStats, ActiveStats) ] ||
                   Node <- Nodes]),
     case DownNodes of
         [] ->
             [Header, Table];
         _ ->
-            NodesDown = riak_cli_status:alert([riak_cli_status:column("(unreachable)", DownNodes)]),
+            NodesDown = clique_status:alert([clique_status:column("(unreachable)", DownNodes)]),
             [Header, Table, NodesDown]
     end.
 

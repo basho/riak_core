@@ -30,7 +30,7 @@
 
 -module(riak_core_cluster_cli).
 
--behaviour(riak_cli_handler).
+-behaviour(clique_handler).
 
 -export([
     register_cli/0,
@@ -46,13 +46,13 @@ register_cli() ->
     register_all_commands().
 
 register_all_commands() ->
-    lists:foreach(fun(Args) -> apply(riak_cli, register_command, Args) end,
+    lists:foreach(fun(Args) -> apply(clique, register_command, Args) end,
                   [status_register(), partition_count_register(),
                    partitions_register(), partition_register(),
                    members_register()]).
 
 register_all_usage() ->
-    lists:foreach(fun(Args) -> apply(riak_cli, register_usage, Args) end,
+    lists:foreach(fun(Args) -> apply(clique, register_usage, Args) end,
                   [status_usage(), partition_count_usage(),
                    partitions_usage(), partition_usage(),
                    members_usage()]).
@@ -95,11 +95,11 @@ status([], []) ->
     Rows = [ format_status(Node, Status, Ring, RingStatus) ||
       {Node, Status} <- AllStatus ],
 
-    Table = riak_cli_status:table(Rows),
+    Table = clique_status:table(Rows),
 
-    T0 = riak_cli_status:text("---- Cluster Status ----"),
-    T1 = riak_cli_status:text(io_lib:format("Ring ready: ~p~n", [element(2, RingStatus)])),
-    T2 = riak_cli_status:text(
+    T0 = clique_status:text("---- Cluster Status ----"),
+    T1 = clique_status:text(io_lib:format("Ring ready: ~p~n", [element(2, RingStatus)])),
+    T2 = clique_status:text(
            "Key: (C) = Claimant; availability marked with '!' is unexpected"),
     [T0,T1,Table,T2].
 
@@ -133,7 +133,7 @@ partition_count_register() ->
      [],                                           % KeySpecs
      [{node, [{shortname, "n"}, {longname, "node"}, 
               {typecast, 
-               fun riak_cli_typecast:to_node/1}]}],% FlagSpecs
+               fun clique_typecast:to_node/1}]}],% FlagSpecs
      fun partition_count/2].                       % Implementation callback
 
 partition_count_usage() ->
@@ -146,10 +146,10 @@ partition_count([], [{node, Node}]) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Indices = riak_core_ring:indices(Ring, Node),
     Row = [[{node, Node}, {partitions, length(Indices)}, {pct, claim_percent(Ring, Node)}]],
-    [riak_cli_status:table(Row)];
+    [clique_status:table(Row)];
 partition_count([], []) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    [riak_cli_status:text(
+    [clique_status:text(
          io_lib:format("Cluster-wide partition-count: ~p", 
                        [riak_core_ring:num_partitions(Ring)]))].
 
@@ -162,7 +162,7 @@ partitions_register() ->
      [],                                           % KeySpecs
      [{node, [{shortname, "n"}, {longname, "node"},
               {typecast, 
-               fun riak_cli_typecast:to_node/1}]}],% FlagSpecs
+               fun clique_typecast:to_node/1}]}],% FlagSpecs
      fun partitions/2].                            % Implementation callback
 
 
@@ -181,11 +181,11 @@ partitions_output(Node) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     RingSize = riak_core_ring:num_partitions(Ring),
     {Primary, Secondary, Stopped} = riak_core_status:partitions(Node, Ring),
-    T0 = riak_cli_status:text(io_lib:format("Partitions owned by ~p:", [Node])),
+    T0 = clique_status:text(io_lib:format("Partitions owned by ~p:", [Node])),
     Rows = generate_rows(RingSize, primary, Primary) 
            ++ generate_rows(RingSize, secondary, Secondary)
            ++ generate_rows(RingSize, stopped, Stopped),
-    Table = riak_cli_status:table(Rows),
+    Table = clique_status:table(Rows),
     [T0, Table].
 
 generate_rows(_RingSize, Type, []) ->
@@ -232,13 +232,13 @@ id_out(InputType, Number) ->
 %% than the ringsize - 1 partition id
 id_out1(index, Index, Ring, RingSize) ->
     Owner = riak_core_ring:index_owner(Ring, Index),
-    riak_cli_status:text(
+    clique_status:text(
           io_lib:format("Partition index: ~p -> id: ~p~n(owner: ~p)", 
               [Index, hash_to_partition_id(Index, RingSize), Owner]));
 id_out1(id, Id, Ring, RingSize) when Id < RingSize ->
     Idx = partition_id_to_hash(Id, RingSize),
     Owner = riak_core_ring:index_owner(Ring, Idx),
-    riak_cli_status:text(
+    clique_status:text(
           io_lib:format("Partition id: ~p -> index: ~p~n(owner: ~p)~n", 
               [Id, partition_id_to_hash(Id, RingSize), Owner]));
 id_out1(id, Id, _Ring, _RingSize) ->
@@ -270,7 +270,7 @@ members([], []) ->
     ).
 
 member_output(L) ->
-    [ riak_cli_status:text(atom_to_list(N)) || {N, _S} <- L ].
+    [ clique_status:text(atom_to_list(N)) || {N, _S} <- L ].
 
 get_status() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -281,8 +281,8 @@ get_status() ->
 %%%
 
 make_alert(Iolist) -> 
-    Text = [riak_cli_status:text(Iolist)],
-    riak_cli_status:alert(Text).
+    Text = [clique_status:text(Iolist)],
+    clique_status:alert(Text).
 
 %%% FIXME! -> REMOVE AFTER MERGE
 %%% Code depends on commit 0b8a86 for riak_core_ring_util.erl
