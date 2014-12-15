@@ -20,7 +20,7 @@
 
 -module(riak_core_handoff_cli).
 
--behavior(riak_cli_handler).
+-behavior(clique_handler).
 
 -export([register_cli/0]).
 
@@ -34,19 +34,19 @@ register_cli_cmds() ->
     CmdList = [handoff_cmd_spec(EnOrDis, Dir) ||
                EnOrDis <- [enable, disable],
                Dir     <- [inbound, outbound, both]],
-    lists:foreach(fun(Args) -> apply(riak_cli, register_command, Args) end,
+    lists:foreach(fun(Args) -> apply(clique, register_command, Args) end,
                   CmdList).
 
 register_cli_cfg() ->
     lists:foreach(fun(K) ->
-                          riak_cli:register_config(K, fun handoff_cfg_change_callback/3)
+                          clique:register_config(K, fun handoff_cfg_change_callback/3)
                   end, [["handoff", "disable_inbound"], ["handoff", "disable_outbound"]]),
-    riak_cli:register_config(["transfer_limit"], fun set_transfer_limit/3).
+    clique:register_config(["transfer_limit"], fun set_transfer_limit/3).
 
 register_cli_usage() ->
-    riak_cli:register_usage(["riak-admin", "handoff"], handoff_usage()),
-    riak_cli:register_usage(["riak-admin", "handoff", "enable"], handoff_enable_disable_usage()),
-    riak_cli:register_usage(["riak-admin", "handoff", "disable"], handoff_enable_disable_usage()).
+    clique:register_usage(["riak-admin", "handoff"], handoff_usage()),
+    clique:register_usage(["riak-admin", "handoff", "enable"], handoff_enable_disable_usage()),
+    clique:register_usage(["riak-admin", "handoff", "disable"], handoff_enable_disable_usage()).
 
 handoff_usage() ->
     ["riak-admin handoff <subcommand> [args]\n\n",
@@ -84,9 +84,9 @@ handoff_cmd_spec(EnOrDis, Direction) ->
     ].
 
 handoff_change_enabled_setting(_EnOrDis, _Direction, Flags) when length(Flags) > 1 ->
-    [riak_cli_status:text("Can't specify both --all and --node flags")];
+    [clique_status:text("Can't specify both --all and --node flags")];
 handoff_change_enabled_setting(EnOrDis, Direction, [{all, _}]) ->
-    Nodes = riak_cli_nodes:nodes(),
+    Nodes = clique_nodes:nodes(),
     {_, Down} = rpc:multicall(Nodes,
                               riak_core_handoff_manager,
                               handoff_change_enabled_setting,
@@ -95,28 +95,28 @@ handoff_change_enabled_setting(EnOrDis, Direction, [{all, _}]) ->
 
     case Down of
         [] ->
-            [riak_cli_status:text("All nodes successfully updated")];
+            [clique_status:text("All nodes successfully updated")];
         _ ->
             Output = io_lib:format("Handoff ~s failed on nodes: ~p", [EnOrDis, Down]),
-            [riak_cli_status:alert([riak_cli_status:text(Output)])]
+            [clique_status:alert([clique_status:text(Output)])]
     end;
 handoff_change_enabled_setting(EnOrDis, Direction, [{node, NodeStr}]) ->
-    Node = riak_cli_typecast:to_node(NodeStr),
-    Result = riak_cli_nodes:safe_rpc(Node,
+    Node = clique_typecast:to_node(NodeStr),
+    Result = clique_nodes:safe_rpc(Node,
                                      riak_core_handoff_manager, handoff_change_enabled_setting,
                                      [EnOrDis, Direction]),
     case Result of
         {badrpc, Reason} ->
             Output = io_lib:format("Failed to update handoff settings on node ~p. Reason: ~p",
                                    [Node, Reason]),
-            [riak_cli_status:alert([riak_cli_status:text(Output)])];
+            [clique_status:alert([clique_status:text(Output)])];
         _ ->
-            [riak_cli_status:text("Handoff setting successfully updated")]
+            [clique_status:text("Handoff setting successfully updated")]
     end;
 
 handoff_change_enabled_setting(EnOrDis, Direction, []) ->
     riak_core_handoff_manager:handoff_change_enabled_setting(EnOrDis, Direction),
-    [riak_cli_status:text("Handoff setting successfully updated")].
+    [clique_status:text("Handoff setting successfully updated")].
 
 handoff_cfg_change_callback(["handoff", Cmd], "off", _Flags) ->
     case Cmd of
@@ -157,7 +157,7 @@ set_transfer_limit(Limit) ->
 set_node_transfer_limit(Node, Limit) ->
     case riak_core_util:safe_rpc(Node, riak_core_handoff_manager, set_concurrency, [Limit]) of
         {badrpc, _} ->
-            %% Errors are automatically reported by riak_cli
+            %% Errors are automatically reported by clique
             ok;
         _ ->
             io:format("Set transfer limit for ~p to ~b~n", [Node, Limit])
