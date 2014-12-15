@@ -20,7 +20,7 @@
                   pbkdf2,
                   poolboy,
                   exometer_core,
-                  riak_cli
+                  clique
                  ]},
   {mod, {riak_core_app, []}},
   {env, [
