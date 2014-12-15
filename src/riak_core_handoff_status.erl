@@ -89,7 +89,7 @@ build_handoff_details(NodeOrAll) ->
                 [] ->
                     [Header, Table];
                 _ ->
-                    NodesDown = clique_status:alert([clique_status:column("(unreachable)", DownNodes)]),
+                    NodesDown = clique_status:alert([clique_status:list("(unreachable)", DownNodes)]),
                     [Header, Table, NodesDown]
             end
     end.
@@ -187,7 +187,7 @@ node_summary() ->
         [] ->
             [Header, Table];
         _ ->
-            NodesDown = clique_status:alert([clique_status:column("(unreachable)", DownNodes)]),
+            NodesDown = clique_status:alert([clique_status:list("(unreachable)", DownNodes)]),
             [Header, Table, NodesDown]
     end.
 
