@@ -417,23 +417,29 @@ vnode_handoff_command(Sender, Request, ForwardTo,
             riak_core_vnode_worker_pool:handle_work(Pool, Work, From),
             continue(State, NewModState);
         {forward, NewModState} ->
-            case HOType of
-                %% resize op and transfer ongoing
-                resize_transfer -> vnode_forward(resize, ForwardTo, Sender,
-                                                 {resize_forward, Request}, State);
-                %% resize op ongoing, no resize transfer ongoing, arrive here
-                %% via forward_or_vnode_command
-                undefined -> vnode_forward(resize, ForwardTo, Sender,
-                                           {resize_forward, Request}, State);
-                %% normal explicit forwarding during ownership transfer
-                _ -> vnode_forward(explicit, HOTarget, Sender, Request, State)
-            end,
+            forward_request(HOType, Request, HOTarget, ForwardTo, Sender, State),
             continue(State, NewModState);
+ 	{forward, NewReq, NewModState} ->
+            forward_request(HOType, NewReq, HOTarget, ForwardTo, Sender, State),
+            continue(State, NewModState);	    
         {drop, NewModState} ->
             continue(State, NewModState);
         {stop, Reason, NewModState} ->
             {stop, Reason, State#state{modstate=NewModState}}
     end.
+
+%% @private wrap the request for resize forwards, and use the resize
+%% target.
+forward_request(resize_transfer, Request, _HOTarget, ResizeTarget, Sender, State) ->
+    %% resize op and transfer ongoing
+    vnode_forward(resize, ResizeTarget, Sender, {resize_forward, Request}, State);
+forward_request(undefined, Request, _HOTarget, ResizeTarget, Sender, State) ->
+    %% resize op ongoing, no resize transfer ongoing, arrive here
+    %% via forward_or_vnode_command
+    vnode_forward(resize, ResizeTarget, Sender, {resize_forward, Request}, State);
+forward_request(_, Request, HOTarget, _ResizeTarget, Sender, State) ->
+    %% normal explicit forwarding during owhership transfer
+    vnode_forward(explicit, HOTarget, Sender, Request, State).
 
 vnode_forward(Type, ForwardTo, Sender, Request, State) ->
     lager:debug("Forwarding (~p) {~p,~p} -> ~p~n",
