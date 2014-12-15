@@ -155,7 +155,7 @@
           forward :: node() | [{integer(), node()}],
           handoff_target=none :: none | {integer(), node()},
           handoff_pid :: pid(),
-          handoff_type :: riak_core_handoff:ho_type(),
+          handoff_type :: riak_core_handoff_manager:ho_type(),
           pool_pid :: pid() | undefined,
           pool_config :: tuple() | undefined,
           manager_event_timer :: reference(),
@@ -312,11 +312,11 @@ forward_or_vnode_command(Sender, Request, State=#state{forward=Forward,
                                                        mod=Mod,
                                                        index=Index}) ->
     Resizing = is_list(Forward),
-    case Resizing of
+    RequestHash = case Resizing of
         true ->
-            RequestHash = Mod:request_hash(Request);
+            Mod:request_hash(Request);
         false ->
-            RequestHash = undefined
+            undefined
     end,
     Forwardable = is_request_forwardable(Request),
     case {Forwardable, Forward, RequestHash} of
@@ -324,7 +324,7 @@ forward_or_vnode_command(Sender, Request, State=#state{forward=Forward,
         {false, _, _} -> vnode_command(Sender, Request, State);
         %% typical vnode operation, no forwarding set, handle request locally
         {_, undefined, _} -> vnode_command(Sender, Request, State);
-        %% implicit forwarding after ownership_transfer/hinted_handoff
+        %% implicit forwarding after ownership transfer/hinted handoff
         {_, F, _} when not is_list(F) ->
             vnode_forward(implicit, {Index, Forward}, Sender, Request, State),
             continue(State);
