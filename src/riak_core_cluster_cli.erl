@@ -21,12 +21,9 @@
 %% "new" cluster commands:
 %%
 %% status, partition-count, partitions, partition-id, partition-index
-%% members
 %%
 %% The "old" command implementations for join, leave, plan, commit,
 %% etc are in `riak_core_console.erl'
-%%
-%% @TODO: Move implementation of old commands here?
 
 -module(riak_core_cluster_cli).
 
@@ -37,8 +34,7 @@
     status/2,
     partition_count/2,
     partitions/2,
-    partition/2,
-    members/2
+    partition/2
 ]).
 
 register_cli() ->
@@ -50,14 +46,12 @@ register_all_usage() ->
     clique:register_usage(["riak-admin", "cluster", "status"], status_usage()),
     clique:register_usage(["riak-admin", "cluster", "partition"], partition_usage()),
     clique:register_usage(["riak-admin", "cluster", "partitions"], partitions_usage()),
-    clique:register_usage(["riak-admin", "cluster", "partition_count"], partition_count_usage()),
-    clique:register_usage(["riak-admin", "cluster", "members"], members_usage()).
+    clique:register_usage(["riak-admin", "cluster", "partition_count"], partition_count_usage()).
 
 register_all_commands() ->
     lists:foreach(fun(Args) -> apply(clique, register_command, Args) end,
                   [status_register(), partition_count_register(),
-                   partitions_register(), partition_register(),
-                   members_register()]).
+                   partitions_register(), partition_register()]).
 
 %%%
 %% Cluster status
@@ -250,52 +244,24 @@ id_out(InputType, Number) ->
     RingSize = riak_core_ring:num_partitions(Ring),
     [id_out1(InputType, Number, Ring, RingSize)].
 
-%% XXX FIXME: Validation of id - test for boundary condition and that it's lower
-%% than the ringsize - 1 partition id
 id_out1(index, Index, Ring, RingSize) ->
-    Owner = riak_core_ring:index_owner(Ring, Index),
-    clique_status:text(
-          io_lib:format("Partition index: ~p -> id: ~p~n(owner: ~p)",
-              [Index, hash_to_partition_id(Index, RingSize), Owner]));
+    case riak_core_ring_util:hash_is_partition_boundary(Index, RingSize) of
+        true ->
+            Owner = riak_core_ring:index_owner(Ring, Index),
+            clique_status:table([
+                [{index, Index}, 
+                 {id, hash_to_partition_id(Index, RingSize)},
+                 {node, Owner}]]);
+        false ->
+            make_alert(["ERROR: Index ", integer_to_list(Index),
+                        " isn't a partition boundary value."])
+    end;
 id_out1(id, Id, Ring, RingSize) when Id < RingSize ->
     Idx = partition_id_to_hash(Id, RingSize),
     Owner = riak_core_ring:index_owner(Ring, Idx),
-    clique_status:text(
-          io_lib:format("Partition id: ~p -> index: ~p~n(owner: ~p)~n",
-              [Id, partition_id_to_hash(Id, RingSize), Owner]));
+    clique_status:table([[{index, Idx}, {id, Id}, {node, Owner}]]);
 id_out1(id, Id, _Ring, _RingSize) ->
     make_alert(["ERROR: Id ", integer_to_list(Id), " is invalid."]).
-
-%%%
-%% cluster members
-%%%
-
-members_register() ->
-    [["riak-admin", "cluster", "members"],       % Cmd
-     [],                                         % KeySpecs
-     [{all, [{shortname, "a"},
-             {longname, "all"}]}],               % FlagSpecs
-     fun members/2].                             % Implementation callback
-
-members_usage() ->
-    ["riak-admin cluster members [--all]\n\n",
-     "Returns node names for all valid members in the cluster.\n",
-     "If you want *all* members regardless of status, give the\n",
-     "'--all' flag.\n"].
-
-members([], [{all, _Value}]) ->
-    member_output(get_status());
-members([], []) ->
-    member_output(
-      [ {Node, Status} || {Node, Status} <- get_status(), Status =:= valid ]
-    ).
-
-member_output(L) ->
-    [ clique_status:text(atom_to_list(N)) || {N, _S} <- L ].
-
-get_status() ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    lists:keysort(2, riak_core_ring:all_member_status(Ring)).
 
 %%%
 %% Internal
@@ -305,13 +271,9 @@ make_alert(Iolist) ->
     Text = [clique_status:text(Iolist)],
     clique_status:alert(Text).
 
-%%% FIXME! -> REMOVE AFTER MERGE
-%%% Code depends on commit 0b8a86 for riak_core_ring_util.erl
-hash_to_partition_id(CHashKey, RingSize) when is_binary(CHashKey) ->
-    <<CHashInt:160/integer>> = CHashKey,
-    hash_to_partition_id(CHashInt, RingSize);
-hash_to_partition_id(CHashInt, RingSize) ->
-    CHashInt div chash:ring_increment(RingSize).
+hash_to_partition_id(Hash, RingSize) ->
+    riak_core_ring_util:hash_to_partition_id(Hash, RingSize).
 
 partition_id_to_hash(Id, RingSize) ->
-    Id * chash:ring_increment(RingSize).
+    riak_core_ring_util:partition_id_to_hash(Id, RingSize).
+    
