@@ -241,7 +241,9 @@ partition([{id, Id}], []) when Id >= 0 ->
     id_out(id, Id);
 partition([{Op, Value}], []) ->
     [make_alert(["ERROR: The given value ", integer_to_list(Value),
-                " for ", atom_to_list(Op), " is invalid."])].
+                " for ", atom_to_list(Op), " is invalid."])];
+partition([], []) ->
+    clique_status:usage().
 
 id_out(InputType, Number) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
