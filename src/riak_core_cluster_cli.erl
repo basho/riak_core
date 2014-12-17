@@ -18,12 +18,12 @@
 %%
 %% -------------------------------------------------------------------
 %% @doc This module encapsulates the command line interface for the
-%% "new" cluster commands: 
+%% "new" cluster commands:
 %%
 %% status, partition-count, partitions, partition-id, partition-index
 %% members
 %%
-%% The "old" command implementations for join, leave, plan, commit, 
+%% The "old" command implementations for join, leave, plan, commit,
 %% etc are in `riak_core_console.erl'
 %%
 %% @TODO: Move implementation of old commands here?
@@ -45,17 +45,19 @@ register_cli() ->
     register_all_usage(),
     register_all_commands().
 
+register_all_usage() ->
+    clique:register_usage(["riak-admin", "cluster"], cluster_usage()),
+    clique:register_usage(["riak-admin", "cluster", "status"], status_usage()),
+    clique:register_usage(["riak-admin", "cluster", "partition"], partition_usage()),
+    clique:register_usage(["riak-admin", "cluster", "partitions"], partitions_usage()),
+    clique:register_usage(["riak-admin", "cluster", "partition_count"], partition_count_usage()),
+    clique:register_usage(["riak-admin", "cluster", "members"], members_usage()).
+
 register_all_commands() ->
     lists:foreach(fun(Args) -> apply(clique, register_command, Args) end,
                   [status_register(), partition_count_register(),
                    partitions_register(), partition_register(),
                    members_register()]).
-
-register_all_usage() ->
-    lists:foreach(fun(Args) -> apply(clique, register_usage, Args) end,
-                  [status_usage(), partition_count_usage(),
-                   partitions_usage(), partition_usage(),
-                   members_usage()]).
 
 %%%
 %% Cluster status
@@ -67,10 +69,21 @@ status_register() ->
      [],                                  % FlagSpecs
      fun status/2].                       % Implementation callback.
 
+cluster_usage() ->
+    [
+     "riak-admin cluster <sub-command>\n\n",
+     "  Display cluster-related status and settings.\n\n",
+     "  Sub-commands:\n",
+     "    status           Display a summary of cluster status\n",
+     "    partition        Map partition IDs to indexes\n",
+     "    partitions       Display partitions on a node\n",
+     "    partition-count  Display ring size or node partition count\n\n",
+     "  Use --help after a sub-command for more details.\n"
+    ].
+
 status_usage() ->
-    Text = ["riak-admin cluster status\n\n",
-            "Present a summary of cluster status information."],
-    [["riak-admin", "cluster", "status"], Text].
+    ["riak-admin cluster status\n\n",
+     "  Display a summary of cluster status information.\n"].
 
 future_claim_percentage([], _Ring, _Node) ->
     "--";
@@ -118,7 +131,7 @@ is_claimant(Node, _Other) ->
 
 node_availability(Node, Down, MarkedDown) ->
     case {lists:member(Node, Down), lists:member(Node, MarkedDown)} of
-         {false, false} -> "  up   "; 
+         {false, false} -> "  up   ";
          {true,  true } -> " down  ";
          {true,  false} -> " down! ";
          {false, true } -> "  up!  "
@@ -131,16 +144,20 @@ node_availability(Node, Down, MarkedDown) ->
 partition_count_register() ->
     [["riak-admin", "cluster", "partition-count"], % Cmd
      [],                                           % KeySpecs
-     [{node, [{shortname, "n"}, {longname, "node"}, 
-              {typecast, 
+     [{node, [{shortname, "n"}, {longname, "node"},
+              {typecast,
                fun clique_typecast:to_node/1}]}],% FlagSpecs
      fun partition_count/2].                       % Implementation callback
 
 partition_count_usage() ->
-   Text = ["riak-admin cluster partition-count [--node node]\n\n",
-            "Returns the number of partitions (ring-size) for the entire\n",
-            "cluster or the number of partitions on a specific node."],
-    [["riak-admin", "cluster", "partition-count"], Text].
+    ["riak-admin cluster partition-count [--node node]\n\n",
+     "  Display the number of partitions (ring-size) for the entire\n",
+     "  cluster or the number of partitions on a specific node.\n\n",
+     "Options\n",
+     "  -n <node>, --node <node>\n",
+     "      Display the handoffs on the specified node.\n",
+     "      This flag can currently take only one node and be used once\n"
+    ].
 
 partition_count([], [{node, Node}]) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
@@ -150,7 +167,7 @@ partition_count([], [{node, Node}]) ->
 partition_count([], []) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     [clique_status:text(
-         io_lib:format("Cluster-wide partition-count: ~p", 
+         io_lib:format("Cluster-wide partition-count: ~p",
                        [riak_core_ring:num_partitions(Ring)]))].
 
 %%%
@@ -161,16 +178,19 @@ partitions_register() ->
     [["riak-admin", "cluster", "partitions"],      % Cmd
      [],                                           % KeySpecs
      [{node, [{shortname, "n"}, {longname, "node"},
-              {typecast, 
+              {typecast,
                fun clique_typecast:to_node/1}]}],% FlagSpecs
      fun partitions/2].                            % Implementation callback
 
 
 partitions_usage() ->
-   Text = ["riak-admin cluster partitions [--node node]\n\n",
-           "Returns the partitions which belong to the current node,\n",
-           "or to a specific node."],
-    [["riak-admin", "cluster", "partitions"], Text].
+    ["riak-admin cluster partitions [--node node]\n\n",
+     "  Display the partitions on a node. Defaults to local node.\n\n",
+     "Options\n",
+     "  -n <node>, --node <node>\n",
+     "      Display the handoffs on the specified node.\n",
+     "      This flag can currently take only one node and be used once\n"
+    ].
 
 partitions([], [{node, Node}]) ->
     partitions_output(Node);
@@ -182,7 +202,7 @@ partitions_output(Node) ->
     RingSize = riak_core_ring:num_partitions(Ring),
     {Primary, Secondary, Stopped} = riak_core_status:partitions(Node, Ring),
     T0 = clique_status:text(io_lib:format("Partitions owned by ~p:", [Node])),
-    Rows = generate_rows(RingSize, primary, Primary) 
+    Rows = generate_rows(RingSize, primary, Primary)
            ++ generate_rows(RingSize, secondary, Secondary)
            ++ generate_rows(RingSize, stopped, Stopped),
     Table = clique_status:table(Rows),
@@ -192,12 +212,12 @@ generate_rows(_RingSize, Type, []) ->
     [[{type, Type}, {index, "--"}, {id, "--"}]];
 generate_rows(RingSize, Type, Ids) ->
     %% Build a list of proplists, one for each partition id
-    [ 
-      [ {type, Type}, {index, I}, 
+    [
+      [ {type, Type}, {index, I},
         {id, hash_to_partition_id(I, RingSize)} ]
     || I <- Ids ].
 
-%%% 
+%%%
 %% cluster partition id=0
 %% cluster partition index=576460752303423500
 %%%
@@ -210,17 +230,17 @@ partition_register() ->
      fun partition/2].                               % Implementation callback
 
 partition_usage() ->
-    Text = ["riak-admin cluster partition id=0\n",
-            "riak-admin cluster partition index=22835963083295358096932575511191922182123945984\n\n",
-            "Returns the id or index for the specified index or id.\n"],
-    [["riak-admin", "cluster", "partition"], Text].
+    ["riak-admin cluster partition id=0\n",
+     "riak-admin cluster partition index=228359630832953580969325755111919221821\n\n",
+     "  Display the id for the provided index, or index for the ",
+     "specified id.\n"].
 
 partition([{index, Index}], []) when Index >= 0 ->
     id_out(index, Index);
 partition([{id, Id}], []) when Id >= 0 ->
     id_out(id, Id);
 partition([{Op, Value}], []) ->
-    [make_alert(["ERROR: The given value ", integer_to_list(Value), 
+    [make_alert(["ERROR: The given value ", integer_to_list(Value),
                 " for ", atom_to_list(Op), " is invalid."])].
 
 id_out(InputType, Number) ->
@@ -233,13 +253,13 @@ id_out(InputType, Number) ->
 id_out1(index, Index, Ring, RingSize) ->
     Owner = riak_core_ring:index_owner(Ring, Index),
     clique_status:text(
-          io_lib:format("Partition index: ~p -> id: ~p~n(owner: ~p)", 
+          io_lib:format("Partition index: ~p -> id: ~p~n(owner: ~p)",
               [Index, hash_to_partition_id(Index, RingSize), Owner]));
 id_out1(id, Id, Ring, RingSize) when Id < RingSize ->
     Idx = partition_id_to_hash(Id, RingSize),
     Owner = riak_core_ring:index_owner(Ring, Idx),
     clique_status:text(
-          io_lib:format("Partition id: ~p -> index: ~p~n(owner: ~p)~n", 
+          io_lib:format("Partition id: ~p -> index: ~p~n(owner: ~p)~n",
               [Id, partition_id_to_hash(Id, RingSize), Owner]));
 id_out1(id, Id, _Ring, _RingSize) ->
     make_alert(["ERROR: Id ", integer_to_list(Id), " is invalid."]).
@@ -251,16 +271,15 @@ id_out1(id, Id, _Ring, _RingSize) ->
 members_register() ->
     [["riak-admin", "cluster", "members"],       % Cmd
      [],                                         % KeySpecs
-     [{all, [{shortname, "a"}, 
+     [{all, [{shortname, "a"},
              {longname, "all"}]}],               % FlagSpecs
      fun members/2].                             % Implementation callback
 
 members_usage() ->
-    Text = ["riak-admin cluster members [--all]\n\n",
-            "Returns node names for all valid members in the cluster.\n",
-            "If you want *all* members regardless of status, give the\n",
-            "'--all' flag.\n"],
-    [["riak-admin", "cluster", "members"], Text].
+    ["riak-admin cluster members [--all]\n\n",
+     "Returns node names for all valid members in the cluster.\n",
+     "If you want *all* members regardless of status, give the\n",
+     "'--all' flag.\n"].
 
 members([], [{all, _Value}]) ->
     member_output(get_status());
@@ -276,11 +295,11 @@ get_status() ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     lists:keysort(2, riak_core_ring:all_member_status(Ring)).
 
-%%% 
+%%%
 %% Internal
 %%%
 
-make_alert(Iolist) -> 
+make_alert(Iolist) ->
     Text = [clique_status:text(Iolist)],
     clique_status:alert(Text).
 
