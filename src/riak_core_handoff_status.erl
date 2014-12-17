@@ -78,21 +78,16 @@ build_handoff_details(NodeOrAll) ->
                      end,
                      Active),
 
-    case length(FilteredTransfers) of
+    Details = case length(FilteredTransfers) of
         0 -> [clique_status:text("No ongoing transfers.")];
         _ ->
             Header = clique_status:text("Type Key: O = Ownership, H = Hinted, Rz = Resize, Rp = Repair"),
             RingSize = riak_core_ring:num_partitions(Ring),
             Table = clique_status:table(
                       [ row_details(Transfer, RingSize) || Transfer <- FilteredTransfers]),
-            case DownNodes of
-                [] ->
-                    [Header, Table];
-                _ ->
-                    NodesDown = clique_status:alert([clique_status:list("(unreachable)", DownNodes)]),
-                    [Header, Table, NodesDown]
-            end
-    end.
+            [Header, Table]
+    end,
+    maybe_add_down_nodes(DownNodes, Details).
 
 row_details(T, RingSize) ->
     SourceNode = transfer_info(T, src_node),
@@ -183,13 +178,8 @@ node_summary() ->
     Table = clique_status:table(
               [ [ format_node_name(Node) | row_summary(Node, KnownStats, ActiveStats) ] ||
                   Node <- Nodes]),
-    case DownNodes of
-        [] ->
-            [Header, Table];
-        _ ->
-            NodesDown = clique_status:alert([clique_status:list("(unreachable)", DownNodes)]),
-            [Header, Table, NodesDown]
-    end.
+    Summary = [Header, Table],
+    maybe_add_down_nodes(DownNodes, Summary).
 
 collect_transfer_data() ->
     collect_from_all({riak_core_handoff_status, collect_node_transfer_data, []}, 5000).
@@ -390,3 +380,12 @@ collect_from_all({M, F, A}, Timeout) ->
                                      (_) -> true end, Results),
     BadNodes = lists:map(fun({Node, _}) -> Node end, Bad),
     {Good, DownNodes ++ BadNodes}.
+
+maybe_add_down_nodes(DownNodes, Output) ->
+    case DownNodes of
+        [] ->
+            Output;
+        _ ->
+            NodesDown = clique_status:alert([clique_status:list("(unreachable)", DownNodes)]),
+            Output ++ [NodesDown]
+    end.
