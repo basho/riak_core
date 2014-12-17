@@ -59,27 +59,26 @@ register_cli_usage() ->
 
 handoff_usage() ->
     [
-     ["riak-admin", "handoff"],
-     [
       "riak-admin handoff <sub-command>\n\n",
-      "  View handoff related status and settings.\n\n",
+      "  Display handoff-related status and settings.\n\n",
       "  Sub-commands:\n",
-      "    enable   Enable handoffs for the specified node(s)\n",
-      "    disable  Disable handoffs for the specified node(s)\n"
+      "    enable     Enable handoffs for the specified node(s)\n",
+      "    disable    Disable handoffs for the specified node(s)\n"
       "    summary    Show cluster-wide handoff summary\n",
-      "    details    Show details of all active transfers (per-node or cluster wide)."
-     ]
+      "    details    Show details of all active transfers (per-node or cluster wide)\n\n",
+      "  Use --help after a sub-command for more details.\n"
     ].
 
 handoff_enable_disable_usage() ->
-    ["riak-admin handoff <enable | disable> <inbound | outbound | both> ",
-     "[[--node | -n] <Node>] [--all]\n\n",
-     "  Enable or disable handoffs on the specified node(s).\n",
+    ["riak-admin handoff <enable|disable> <inbound|outbound|both> ",
+     "[-n <node>|--all]\n\n",
+     "  Enable or disable handoffs on the local or specified node(s).\n",
      "  If handoffs are disabled in a direction, any currently\n",
      "  running handoffs in that direction will be terminated.\n\n"
      "Options\n",
-     "  -n <Node>, --node <Node>\n",
-     "      Modify the setting on the specified node (default: local node only)\n",
+     "  -n <node>, --node <node>\n",
+     "      Modify the setting on the specified node.\n",
+     "      This flag can currently take only one node and be used once\n"
      "  -a, --all\n",
      "      Modify the setting on every node in the cluster\n"
     ].
@@ -121,15 +120,19 @@ details_command_spec() ->
 summary_usage() ->
     [
      "riak-admin handoff summary\n\n",
-     "Displays a summarized view of handoffs.\n"
+     "  Display a summarized view of handoffs.\n"
     ].
 
 details_usage() ->
     [
-     "riak-admin handoff details [--node node] [--all]\n\n",
-     "Displays a detailed list of handoffs occuring on the \n",
-     "current node (no flags), another node (using --node), or \n",
-     "the entire cluster (using --all)\n"
+     "riak-admin handoff details [--node <node>|--all]\n\n",
+     "  Display a detailed list of handoffs. Defaults to local node.\n\n"
+     "Options\n",
+     "  -n <node>, --node <node>\n",
+     "      Display the handoffs on the specified node.\n",
+     "      This flag can currently take only one node and be used once\n"
+     "  -a, --all\n",
+     "      Display the handoffs on every node in the cluster\n"
     ].
 
 
