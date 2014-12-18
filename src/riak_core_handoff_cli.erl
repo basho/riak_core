@@ -56,7 +56,7 @@ register_enable_disable_commands() ->
 register_cli_cfg() ->
     lists:foreach(fun(K) ->
                           clique:register_config(K, fun handoff_cfg_change_callback/3)
-                  end, [["handoff", "disable_inbound"], ["handoff", "disable_outbound"]]),
+                  end, [["handoff", "inbound"], ["handoff", "outbound"]]),
     clique:register_config(["transfer_limit"], fun set_transfer_limit/3).
 
 register_config_whitelist() ->
@@ -192,9 +192,9 @@ handoff_change_enabled_setting(EnOrDis, Direction, []) ->
 
 handoff_cfg_change_callback(["handoff", Cmd], "off", _Flags) ->
     case Cmd of
-        "disable_inbound" ->
+        "inbound" ->
             riak_core_handoff_manager:kill_handoffs_in_direction(inbound);
-        "disable_outbound" ->
+        "outbound" ->
             riak_core_handoff_manager:kill_handoffs_in_direction(outbound)
     end;
 handoff_cfg_change_callback(_, _, _) ->
