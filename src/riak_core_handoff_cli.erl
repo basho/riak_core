@@ -28,15 +28,23 @@
 register_cli() ->
     register_cli_usage(),
     register_cli_cfg(),
-    register_cli_cmds().
+    register_cli_cmds(),
+    ok.
 
 register_cli_cmds() ->
     register_enable_disable_commands(),
-    register_status_commands().
+    clique:register_command(["riak-admin", "handoff", "summary"], [], [],
+                             fun riak_core_handoff_status:handoff_summary/2),
+    clique:register_command(["riak-admin", "handoff", "details"], [],
+                             node_and_all_flags(), fun riak_core_handoff_status:handoff_details/2),
+    clique:register_command(["riak-admin", "handoff", "config"], [],
+                              node_and_all_flags(), fun handoff_config/2).
 
-register_status_commands() ->
-    lists:foreach(fun(Args) -> apply(clique, register_command, Args) end,
-        [summary_command_spec(), details_command_spec()]).
+node_and_all_flags() ->
+    [{node, [{shortname, "n"}, {longname, "node"},
+             {typecast, fun clique_typecast:to_node/1}]},
+     {all, [{shortname, "a"}, {longname, "all"}]}].
+
 register_enable_disable_commands() ->
     CmdList = [handoff_cmd_spec(EnOrDis, Dir) ||
                   EnOrDis <- [enable, disable],
@@ -55,7 +63,8 @@ register_cli_usage() ->
     clique:register_usage(["riak-admin", "handoff", "enable"], handoff_enable_disable_usage()),
     clique:register_usage(["riak-admin", "handoff", "disable"], handoff_enable_disable_usage()),
     clique:register_usage(["riak-admin", "handoff", "summary"], summary_usage()),
-    clique:register_usage(["riak-admin", "handoff", "details"], details_usage()).
+    clique:register_usage(["riak-admin", "handoff", "details"], details_usage()),
+    clique:register_usage(["riak-admin", "handoff", "config"], config_usage()).
 
 handoff_usage() ->
     [
@@ -65,8 +74,20 @@ handoff_usage() ->
       "    enable     Enable handoffs for the specified node(s)\n",
       "    disable    Disable handoffs for the specified node(s)\n"
       "    summary    Show cluster-wide handoff summary\n",
-      "    details    Show details of all active transfers (per-node or cluster wide)\n\n",
+      "    details    Show details of all active transfers (per-node or cluster wide)\n",
+      "    config     Show all configuration for handoff subsystem\n\n",
       "  Use --help after a sub-command for more details.\n"
+    ].
+
+config_usage() ->
+    ["riak-admin handoff config\n\n",
+     "  Display handoff related configuration variables\n\n",
+     "Options\n",
+     "  -n <node>, --node <node>\n",
+     "      Show the settings on the specified node.\n",
+     "      This flag can currently take only one node and be used once\n"
+     "  -a, --all\n",
+     "      Show the settings on every node in the cluster\n"
     ].
 
 handoff_enable_disable_usage() ->
@@ -98,25 +119,6 @@ handoff_cmd_spec(EnOrDis, Direction) ->
      Callback
     ].
 
-summary_command_spec() ->
-    [["riak-admin", "handoff", "summary"], %% Cmd
-     [],                                   %% KeySpecs
-     [],                                   %% Flags
-     fun riak_core_handoff_status:handoff_summary/2
-    ].
-
-details_command_spec() ->
-    [["riak-admin", "handoff", "details"],                %% Cmd
-     [],                                                  %% KeySpecs
-     [
-      {node, [{shortname, "n"}, {longname, "node"},       %% Flags
-              {typecast, fun clique_typecast:to_node/1}]},
-      {all, [{shortname, "a"}, {longname, "all"}]}
-     ],
-     fun riak_core_handoff_status:handoff_details/2
-    ].
-
-
 summary_usage() ->
     [
      "riak-admin handoff summary\n\n",
@@ -135,6 +137,17 @@ details_usage() ->
      "      Display the handoffs on every node in the cluster\n"
     ].
 
+handoff_config(_Args, Flags) when length(Flags) > 1 ->
+    [clique_status:text("Can't specify both --all and --node flags")];
+handoff_config(_Args, []) ->
+    clique_config:show(config_vars());
+handoff_config(_Args, [{all, _}]) ->
+    clique_config:show(config_vars() ++ ["-a"]);
+handoff_config(_Args, [{node, Node}]) ->
+    clique_config:show(config_vars() ++ ["--node="++atom_to_list(Node)]).
+
+config_vars() ->
+    ["transfer_limit", "handoff.disable_outbound", "handoff.disable_inbound", "handoff.port"].
 
 handoff_change_enabled_setting(_EnOrDis, _Direction, Flags) when length(Flags) > 1 ->
     [clique_status:text("Can't specify both --all and --node flags")];
