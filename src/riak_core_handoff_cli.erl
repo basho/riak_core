@@ -29,6 +29,7 @@ register_cli() ->
     register_cli_usage(),
     register_cli_cfg(),
     register_cli_cmds(),
+    register_config_whitelist(),
     ok.
 
 register_cli_cmds() ->
@@ -57,6 +58,10 @@ register_cli_cfg() ->
                           clique:register_config(K, fun handoff_cfg_change_callback/3)
                   end, [["handoff", "disable_inbound"], ["handoff", "disable_outbound"]]),
     clique:register_config(["transfer_limit"], fun set_transfer_limit/3).
+
+register_config_whitelist() ->
+    clique:register_config_whitelist(["transfer_limit", "handoff.outbound",
+            "handoff.inbound"]).
 
 register_cli_usage() ->
     clique:register_usage(["riak-admin", "handoff"], handoff_usage()),
