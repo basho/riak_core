@@ -715,7 +715,7 @@ update_handoff(AllVNodes, Ring, CHBin, State) ->
                                        false ->
                                            [];
                                        {true, primary, TargetNode} ->
-                                           [{{Mod, Idx}, {ownership_handoff, outbound, TargetNode}}];
+                                           [{{Mod, Idx}, {ownership, outbound, TargetNode}}];
                                        {true, {fallback, _Node}, TargetNode} ->
                                            [{{Mod, Idx}, {hinted, outbound, TargetNode}}];
                                        {true, '$resize'=Action} ->
