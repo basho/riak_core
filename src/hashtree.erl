@@ -106,6 +106,7 @@
          new/3,
          insert/3,
          insert/4,
+         estimate_keys/1,
          delete/2,
          update_tree/1,
          update_snapshot/1,
@@ -151,6 +152,8 @@
 -define(WIDTH, 1024).
 -define(MEM_LEVELS, 0).
 
+-define(NUM_KEYS_REQUIRED, 1000).
+
 -type tree_id_bin() :: <<_:176>>.
 -type segment_bin() :: <<_:256, _:_*8>>.
 -type bucket_bin()  :: <<_:320>>.
@@ -162,7 +165,8 @@
 
 -type keydiff() :: {missing | remote_missing | different, binary()}.
 
--type remote_fun() :: fun((get_bucket | key_hashes | init | final,
+-type remote_fun() :: fun((get_bucket | key_hashes | start_exchange_level |
+                           start_exchange_segments | init | final,
                            {integer(), integer()} | integer() | term()) -> any()).
 
 -type acc_fun(Acc) :: fun(([keydiff()], Acc) -> Acc).
@@ -427,6 +431,32 @@ read_meta(Key, State) when is_binary(Key) ->
         _ ->
             undefined
     end.
+
+%% @doc
+%% Estimate number of keys stored in the AAE tree. This is determined
+%% by sampling segments to to calculate an estimated keys-per-segment
+%% value, which is then multiplied by the number of segments. Segments
+%% are sampled until either 1% of segments have been visited or 1000
+%% keys have been observed.
+%%
+%% Note: this function must be called on a tree with a valid iterator,
+%%       such as the snapshotted tree returned from update_snapshot/1
+%%       or a recently updated tree returned from update_tree/1 (which
+%%       internally creates a snapshot). Using update_tree/1 is the best
+%%       choice since that ensures segments are updated giving a better
+%%       estimate.
+-spec estimate_keys(hashtree()) -> {ok, integer()}.
+estimate_keys(State) ->
+    estimate_keys(State, 0, 0, ?NUM_KEYS_REQUIRED).
+
+estimate_keys(#state{segments=Segments}, CurrentSegment, Keys, MaxKeys)
+  when (CurrentSegment * 100) >= Segments;
+       Keys >= MaxKeys ->
+    {ok, (Keys * Segments) div CurrentSegment};
+
+estimate_keys(State, CurrentSegment, Keys, MaxKeys) ->
+    [{_, KeyHashes2}] = key_hashes(State, CurrentSegment),
+    estimate_keys(State, CurrentSegment + 1, Keys + length(KeyHashes2), MaxKeys).
 
 -spec key_hashes(hashtree(), integer()) -> [{integer(), orddict()}].
 key_hashes(State, Segment) ->
@@ -1296,5 +1326,25 @@ prop_correct() ->
                         destroy(B0),
                         true
                     end)).
+
+est_prop() ->
+    %% It's hard to estimate under 10000 keys
+    ?FORALL(N, choose(10000, 500000),
+            begin
+                {ok, EstKeys} = estimate_keys(update_tree(insert_many(N, new()))),
+                Diff = abs(N - EstKeys),
+                MaxDiff = N div 5,
+                ?debugVal(Diff), ?debugVal(EstKeys),?debugVal(MaxDiff),
+                ?assertEqual(true, MaxDiff > Diff),
+                true
+            end).
+
+est_test_() ->
+    {spawn,
+     {timeout, 240,
+      fun() ->
+              ?assert(eqc:quickcheck(eqc:testing_time(10, est_prop())))
+      end
+     }}.
 
 -endif.
