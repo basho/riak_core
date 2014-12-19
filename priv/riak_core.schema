@@ -95,6 +95,24 @@
   hidden
 ]}.
 
+%% @doc Enables/disables outbound handoff transfers for this node. If you
+%% turn this setting off at runtime with riak-admin, it will kill any
+%% outbound handoffs currently running.
+{mapping, "handoff.outbound", "riak_core.disable_outbound_handoff", [
+  {default, on},
+  {datatype, {flag, off, on}},
+  hidden
+]}.
+
+%% @doc Enables/disables inbound handoff transfers for this node. If you
+%% turn this setting off at runtime with riak-admin, it will kill any
+%% inbound handoffs currently running.
+{mapping, "handoff.inbound", "riak_core.disable_inbound_handoff", [
+  {default, on},
+  {datatype, {flag, off, on}},
+  hidden
+]}.
+
 %% @doc DTrace support Do not enable 'dtrace' unless your Erlang/OTP
 %% runtime is compiled to support DTrace.  DTrace is available in
 %% R15B01 (supported by the Erlang/OTP official source package) and in

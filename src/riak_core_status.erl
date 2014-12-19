@@ -23,6 +23,7 @@
 -export([ringready/0,
          all_active_transfers/0,
          transfers/0,
+         partitions/2,
          ring_status/0]).
 
 -spec(ringready() -> {ok, [atom()]} | {error, any()}).
@@ -154,18 +155,22 @@ rings_match(R1hash, [{N2, R2} | Rest]) ->
     end.
 
 %% Get a list of active partition numbers - regardless of vnode type
+-spec active_partitions(node()) -> ordsets:ordset(non_neg_integer()).
 active_partitions(Node) ->
-    VNodes = gen_server:call({riak_core_vnode_manager, Node}, all_vnodes, 30000),
-    lists:foldl(fun({_, P, _}, Ps) ->
-                        ordsets:add_element(P, Ps)
-                end, [], VNodes).
+    case riak_core_util:safe_rpc(Node, riak_core_vnode_manager, all_vnodes, [],  30000) of
+        {badrpc, _} -> ordsets:new();
+        VNodes ->
+            lists:foldl(fun({_, P, _}, Ps) ->
+                                ordsets:add_element(P, Ps)
+                        end, ordsets:new(), VNodes)
+    end.
 
 %% Return a list of active primary partitions, active secondary partitions (to be handed off)
 %% and stopped partitions that should be started
 partitions(Node, Ring) ->
     Owners = riak_core_ring:all_owners(Ring),
     Owned = ordsets:from_list(owned_partitions(Owners, Node)),
-    Active = ordsets:from_list(active_partitions(Node)),
+    Active = active_partitions(Node),
     Stopped = ordsets:subtract(Owned, Active),
     Secondary = ordsets:subtract(Active, Owned),
     Primary = ordsets:subtract(Active, Secondary),

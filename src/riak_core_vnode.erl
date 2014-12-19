@@ -155,7 +155,7 @@
           forward :: node() | [{integer(), node()}],
           handoff_target=none :: none | {integer(), node()},
           handoff_pid :: pid(),
-          handoff_type :: hinted_handoff | ownership_transfer | resize_transfer,
+          handoff_type :: riak_core_handoff_manager:ho_type(),
           pool_pid :: pid() | undefined,
           pool_config :: tuple() | undefined,
           manager_event_timer :: reference(),
@@ -312,11 +312,11 @@ forward_or_vnode_command(Sender, Request, State=#state{forward=Forward,
                                                        mod=Mod,
                                                        index=Index}) ->
     Resizing = is_list(Forward),
-    case Resizing of
+    RequestHash = case Resizing of
         true ->
-            RequestHash = Mod:request_hash(Request);
+            Mod:request_hash(Request);
         false ->
-            RequestHash = undefined
+            undefined
     end,
     Forwardable = is_request_forwardable(Request),
     case {Forwardable, Forward, RequestHash} of
@@ -324,7 +324,7 @@ forward_or_vnode_command(Sender, Request, State=#state{forward=Forward,
         {false, _, _} -> vnode_command(Sender, Request, State);
         %% typical vnode operation, no forwarding set, handle request locally
         {_, undefined, _} -> vnode_command(Sender, Request, State);
-        %% implicit forwarding after ownership_transfer/hinted_handoff
+        %% implicit forwarding after ownership transfer/hinted handoff
         {_, F, _} when not is_list(F) ->
             vnode_forward(implicit, {Index, Forward}, Sender, Request, State),
             continue(State);
@@ -430,7 +430,7 @@ vnode_handoff_command(Sender, Request, ForwardTo,
 
 %% @private wrap the request for resize forwards, and use the resize
 %% target.
-forward_request(resize_transfer, Request, _HOTarget, ResizeTarget, Sender, State) ->
+forward_request(resize, Request, _HOTarget, ResizeTarget, Sender, State) ->
     %% resize op and transfer ongoing
     vnode_forward(resize, ResizeTarget, Sender, {resize_forward, Request}, State);
 forward_request(undefined, Request, _HOTarget, ResizeTarget, Sender, State) ->
@@ -474,7 +474,7 @@ active(?VNODE_REQ{sender=Sender, request=Request},
        State=#state{handoff_target=HT}) when HT =:= none ->
     forward_or_vnode_command(Sender, Request, State);
 active(?VNODE_REQ{sender=Sender, request=Request},
-                  State=#state{handoff_type=resize_transfer,
+                  State=#state{handoff_type=resize,
                                handoff_target={HOIdx,HONode},
                                index=Index,
                                forward=Forward,
@@ -552,7 +552,7 @@ active(_Event, _From, State) ->
 %% manager. Blocking the manager can impact all vnodes. This code is safe
 %% to execute on multiple parallel vnodes because of the synchronization
 %% afforded by having all ring changes go through the single ring manager.
-mark_handoff_complete(SrcIdx, Target, SeenIdxs, Mod, resize_transfer) ->
+mark_handoff_complete(SrcIdx, Target, SeenIdxs, Mod, resize) ->
     Prev = node(),
     Source = {SrcIdx, Prev},
     Result = riak_core_ring_manager:ring_trans(
@@ -936,9 +936,9 @@ maybe_handoff(TargetIdx, TargetNode,
             Resizing = riak_core_ring:is_resizing(R),
             Primary = riak_core_ring:is_primary(R, {Idx, node()}),
             HOType = case {Resizing, Primary} of
-                         {true, _} -> resize_transfer;
-                         {_, true} -> ownership_transfer;
-                         {_, false} -> hinted_handoff
+                         {true, _} -> resize;
+                         {_, true} -> ownership;
+                         {_, false} -> hinted
                      end,
             case Mod:handoff_starting({HOType, Target}, ModState) of
                 {true, NewModState} ->
