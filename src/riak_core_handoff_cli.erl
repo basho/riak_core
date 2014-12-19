@@ -153,7 +153,7 @@ handoff_config(_Args, [{node, Node}]) ->
     clique_config:show(config_vars() ++ ["--node="++atom_to_list(Node)]).
 
 config_vars() ->
-    ["transfer_limit", "handoff.disable_outbound", "handoff.disable_inbound", "handoff.port"].
+    ["transfer_limit", "handoff.outbound", "handoff.inbound", "handoff.port"].
 
 handoff_change_enabled_setting(_EnOrDis, _Direction, Flags) when length(Flags) > 1 ->
     [clique_status:text("Can't specify both --all and --node flags")];
