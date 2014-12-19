@@ -95,21 +95,21 @@
   hidden
 ]}.
 
-%% @doc Disables outbound handoff transfers for this node. If you
-%% turn this setting on at runtime with riak-admin, it will kill any
+%% @doc Enables/disables outbound handoff transfers for this node. If you
+%% turn this setting off at runtime with riak-admin, it will kill any
 %% outbound handoffs currently running.
-{mapping, "handoff.disable_outbound", "riak_core.disable_outbound_handoff", [
-  {default, off},
-  {datatype, flag},
+{mapping, "handoff.outbound", "riak_core.disable_outbound_handoff", [
+  {default, on},
+  {datatype, {flag, off, on}},
   hidden
 ]}.
 
-%% @doc Disables inbound handoff transfers for this node. If you
-%% turn this setting on at runtime with riak-admin, it will kill any
+%% @doc Enables/disables inbound handoff transfers for this node. If you
+%% turn this setting off at runtime with riak-admin, it will kill any
 %% inbound handoffs currently running.
-{mapping, "handoff.disable_inbound", "riak_core.disable_inbound_handoff", [
-  {default, off},
-  {datatype, flag},
+{mapping, "handoff.inbound", "riak_core.disable_inbound_handoff", [
+  {default, on},
+  {datatype, {flag, off, on}},
   hidden
 ]}.
 
