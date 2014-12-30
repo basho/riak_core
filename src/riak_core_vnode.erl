@@ -421,7 +421,7 @@ vnode_handoff_command(Sender, Request, ForwardTo,
             continue(State, NewModState);
  	{forward, NewReq, NewModState} ->
             forward_request(HOType, NewReq, HOTarget, ForwardTo, Sender, State),
-            continue(State, NewModState);	    
+            continue(State, NewModState);
         {drop, NewModState} ->
             continue(State, NewModState);
         {stop, Reason, NewModState} ->
@@ -1044,6 +1044,8 @@ is_request_forwardable(_) ->
     %%          v4 and v27 as well as any other vnode request type.
     true.
 
+mod_set_forwarding(_Forward, State=#state{modstate={deleted,_}}) ->
+    State;
 mod_set_forwarding(Forward, State=#state{mod=Mod, modstate=ModState}) ->
     case lists:member({set_vnode_forwarding, 2}, Mod:module_info(exports)) of
         true ->
