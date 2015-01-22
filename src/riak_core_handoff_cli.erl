@@ -146,11 +146,11 @@ details_usage() ->
 handoff_config(_Args, Flags) when length(Flags) > 1 ->
     [clique_status:text("Can't specify both --all and --node flags")];
 handoff_config(_Args, []) ->
-    clique_config:show(config_vars());
-handoff_config(_Args, [{all, _}]) ->
-    clique_config:show(config_vars() ++ ["-a"]);
+    clique_config:show(config_vars(), []);
+handoff_config(_Args, [{all, Val}]) ->
+    clique_config:show(config_vars(), [{all, Val}]);
 handoff_config(_Args, [{node, Node}]) ->
-    clique_config:show(config_vars() ++ ["--node="++atom_to_list(Node)]).
+    clique_config:show(config_vars(), [{node, Node}]).
 
 config_vars() ->
     ["transfer_limit", "handoff.outbound", "handoff.inbound", "handoff.port"].
