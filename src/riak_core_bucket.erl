@@ -38,11 +38,15 @@
          name/1,
          n_val/1]).
 
+-export_type([bucket/0]).
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
 -define(METADATA_PREFIX, {core, buckets}).
+
+-type bucket() :: binary() | {riak_core_bucket_type:bucket_type(), binary()}.
 
 %% @doc Add a list of defaults to global list of defaults for new
 %%      buckets.  If any item is in Items is already set in the
@@ -55,7 +59,7 @@ append_bucket_defaults(Items) when is_list(Items) ->
 
 %% @doc Set the given BucketProps in Bucket or {BucketType, Bucket}. If BucketType does not
 %% exist, or is not active, {error, no_type} is returned.
--spec set_bucket(binary() | {riak_core_bucket_type:bucket_type(), binary()}, [{atom(), any()}]) ->
+-spec set_bucket(bucket(), [{atom(), any()}]) ->
                         ok | {error, no_type | [{atom(), atom()}]}.
 set_bucket({<<"default">>, Name}, BucketProps) ->
     set_bucket(Name, BucketProps);

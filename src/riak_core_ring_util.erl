@@ -29,8 +29,6 @@
          partition_id_to_hash/2,
          hash_is_partition_boundary/2]).
 
--export_type([partition_id/0]).
-
 -ifdef(TEST).
 -ifdef(EQC).
 -export([prop_ids_are_boundaries/0, prop_reverse/0,
@@ -40,9 +38,6 @@
 -endif.
 -include_lib("eunit/include/eunit.hrl").
 -endif.
-
--type partition_id() :: non_neg_integer().
-%% This integer represents a value in the range [0, ring_size)
 
 %% @doc Forcibly assign a partition to a specific node
 assign(Partition, ToNode) ->
@@ -76,8 +71,8 @@ check_ring(Ring, Nval) ->
                 end, [], Preflists).
 
 -spec hash_to_partition_id(chash:index() | chash:index_as_int(),
-                           pos_integer()) ->
-                                  partition_id().
+                           riak_core_ring:ring_size()) ->
+                                  riak_core_ring:partition_id().
 %% @doc Map a key hash (as binary or integer) to a partition ID [0, ring_size)
 hash_to_partition_id(CHashKey, RingSize) when is_binary(CHashKey) ->
     <<CHashInt:160/integer>> = CHashKey,
@@ -85,7 +80,8 @@ hash_to_partition_id(CHashKey, RingSize) when is_binary(CHashKey) ->
 hash_to_partition_id(CHashInt, RingSize) ->
     CHashInt div chash:ring_increment(RingSize).
 
--spec partition_id_to_hash(partition_id(), pos_integer()) -> chash:index_as_int().
+-spec partition_id_to_hash(riak_core_ring:partition_id(), pos_integer()) ->
+                                  chash:index_as_int().
 %% @doc Identify the first key hash (integer form) in a partition ID [0, ring_size)
 partition_id_to_hash(Id, RingSize) ->
     Id * chash:ring_increment(RingSize).
