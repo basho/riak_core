@@ -24,13 +24,16 @@
 %% -------------------------------------------------------------------
 -module(riak_core_apl).
 -export([active_owners/1, active_owners/2,
-         get_apl/3, get_apl/4, get_apl_ann/3, get_apl_ann/4,
+         get_apl/3, get_apl/4,
+         get_apl_ann/2, get_apl_ann/3, get_apl_ann/4,
+         get_apl_ann_with_pnum/1,
          get_primary_apl/3, get_primary_apl/4,
          get_primary_apl_chbin/4,
          first_up/2, offline_owners/1, offline_owners/2
         ]).
 
 -export_type([preflist/0, preflist_ann/0]).
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -40,9 +43,12 @@
 -type ring() :: riak_core_ring:riak_core_ring().
 -type preflist() :: [{index(), node()}].
 -type preflist_ann() :: [{{index(), node()}, primary|fallback}].
+-type preflist_with_number_ann() :: [{{partition_id(), node()}, primary|fallback}].
 -type iterator() :: term().
 -type chashbin() :: term().
 -type docidx() :: chash:index().
+-type partition_id() :: non_neg_integer().
+-type ring_size() :: non_neg_integer().
 
 %% Return preflist of all active primary nodes (with no
 %% substituion of fallbacks).  Used to simulate a
@@ -76,14 +82,45 @@ get_apl_chbin(DocIdx, N, CHBin, UpNodes) ->
 %% for a given ring/upnodes list
 -spec get_apl(docidx(), n_val(), ring(), [node()]) -> preflist().
 get_apl(DocIdx, N, Ring, UpNodes) ->
-    [{Partition, Node} || {{Partition, Node}, _Type} <- 
+    [{Partition, Node} || {{Partition, Node}, _Type} <-
                               get_apl_ann(DocIdx, N, Ring, UpNodes)].
 
-%% Get the active preflist taking account of which nodes are up
-%% and annotate each node with type of primary/fallback
+%% Get the active preflist taking account of which nodes are up and
+%% annotate each node with type of primary/fallback
 get_apl_ann(DocIdx, N, UpNodes) ->
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
     get_apl_ann_chbin(DocIdx, N, CHBin, UpNodes).
+
+%% Get the active preflist taking account of which nodes are up
+%% for a given ring/upnodes list and annotate each node with type of
+%% primary/fallback
+-spec get_apl_ann(binary(), n_val(), ring(), [node()]) -> preflist_ann().
+get_apl_ann(DocIdx, N, Ring, UpNodes) ->
+    UpNodes1 = UpNodes,
+    Preflist = riak_core_ring:preflist(DocIdx, Ring),
+    {Primaries, Fallbacks} = lists:split(N, Preflist),
+    {Up, Pangs} = check_up(Primaries, UpNodes1, [], []),
+    Up ++ find_fallbacks(Pangs, Fallbacks, UpNodes1, []).
+
+%% @doc Get the active preflist for a given {bucket, key} and list of nodes
+%%      and annotate each node with type of primary/fallback
+-spec get_apl_ann({binary(), binary()}, [node()]) -> preflist_ann().
+get_apl_ann({Bucket, Key}, UpNodes) ->
+    BucketProps = riak_core_bucket:get_bucket(Bucket),
+    NVal = proplists:get_value(n_val, BucketProps),
+    DocIdx = riak_core_util:chash_key({Bucket, Key}),
+    get_apl_ann(DocIdx, NVal, UpNodes).
+
+%% @doc Get the active preflist taking account of which nodes are up
+%%      for a given {bucket, key} and annotate each node with type of
+%%      primary/fallback
+-spec get_apl_ann_with_pnum({binary(), binary()}) -> preflist_with_number_ann().
+get_apl_ann_with_pnum(BKey) ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    UpNodes = riak_core_ring:all_members(Ring),
+    Apl = get_apl_ann(BKey, UpNodes),
+    Size = riak_core_ring:num_partitions(Ring),
+    apl_with_partition_nums(Apl, Size).
 
 %% Get the active preflist taking account of which nodes are up
 %% for a given chash/upnodes list and annotate each node with type of
@@ -95,18 +132,6 @@ get_apl_ann_chbin(DocIdx, N, CHBin, UpNodes) ->
     {Primaries, Itr2} = chashbin:itr_pop(N, Itr),
     {Up, Pangs} = check_up(Primaries, UpNodes1, [], []),
     Up ++ find_fallbacks_chbin(Pangs, Itr2, UpNodes1, []).
-
-%% Get the active preflist taking account of which nodes are up
-%% for a given ring/upnodes list and annotate each node with type of
-%% primary/fallback
--spec get_apl_ann(binary(), n_val(), ring(), [node()]) -> preflist_ann().
-get_apl_ann(DocIdx, N, Ring, UpNodes) ->
-    UpNodes1 = UpNodes,
-    Preflist = riak_core_ring:preflist(DocIdx, Ring),
-
-    {Primaries, Fallbacks} = lists:split(N, Preflist),
-    {Up, Pangs} = check_up(Primaries, UpNodes1, [], []),
-    Up ++ find_fallbacks(Pangs, Fallbacks, UpNodes1, []).
 
 %% Same as get_apl, but returns only the primaries.
 -spec get_primary_apl(binary(), n_val(), atom()) -> preflist_ann().
@@ -202,6 +227,12 @@ find_fallbacks_chbin([{Partition, _Node}|Rest]=Pangs, Itr, UpNodes, Secondaries)
 is_up(Node, UpNodes) ->
     lists:member(Node, UpNodes).
 
+-spec apl_with_partition_nums(preflist_ann(), ring_size()) ->
+                                     preflist_with_number_ann().
+apl_with_partition_nums(Apl, Size) ->
+    [{{riak_core_ring_util:hash_to_partition_id(Hash, Size), Node}, Ann} ||
+        {{Hash, Node}, Ann} <- Apl].
+
 -ifdef(TEST).
 
 smallest_test() ->
@@ -213,12 +244,12 @@ four_node_test() ->
     Ring = perfect_ring(8, Nodes),
     ?assertEqual([{0,nodea},
                   {182687704666362864775460604089535377456991567872,nodeb},
-                  {365375409332725729550921208179070754913983135744,nodec}], 
+                  {365375409332725729550921208179070754913983135744,nodec}],
                  get_apl(last_in_ring(), 3, Ring, Nodes)),
     %% With a node down
     ?assertEqual([{182687704666362864775460604089535377456991567872,nodeb},
                   {365375409332725729550921208179070754913983135744,nodec},
-                  {0,noded}], 
+                  {0,noded}],
                  get_apl(last_in_ring(), 3, Ring, [nodeb, nodec, noded])),
     %% With two nodes down
     ?assertEqual([{365375409332725729550921208179070754913983135744,nodec},
@@ -231,7 +262,6 @@ four_node_test() ->
                   {365375409332725729550921208179070754913983135744,nodea}],
                  get_apl(last_in_ring(), 3, Ring,  [nodea, nodeb])).
 
-    
 %% Create a perfect ring - RingSize must be a multiple of nodes
 perfect_ring(RingSize, Nodes) when RingSize rem length(Nodes) =:= 0 ->
     Ring = riak_core_ring:fresh(RingSize,node()),
@@ -324,6 +354,116 @@ six_node_test() ->
                   {456719261665907161938651510223838443642478919680, 'dev5@127.0.0.1'}],
               get_apl(DocIdx, 3, Ring, Nodes -- ['dev3@127.0.0.1'])),
 
+    ok.
+
+six_node_bucket_key_ann_test() ->
+    {ok, [Ring0]} = file:consult("../test/my_ring"),
+    Nodes = ['dev1@127.0.0.1', 'dev2@127.0.0.1', 'dev3@127.0.0.1',
+        'dev4@127.0.0.1', 'dev5@127.0.0.1', 'dev6@127.0.0.1'],
+    Ring = riak_core_ring:upgrade(Ring0),
+    Bucket = <<"favorite">>,
+    Key = <<"jethrotull">>,
+    application:set_env(riak_core, default_bucket_props,
+                        [{n_val, 3},
+                         {chash_keyfun,{riak_core_util,chash_std_keyfun}}]),
+    riak_core_ring_manager:setup_ets(test),
+    riak_core_ring_manager:set_ring_global(Ring),
+    Size = riak_core_ring:num_partitions(Ring),
+    ?assertEqual([{{34,
+                    'dev5@127.0.0.1'},
+                  primary},
+                  {{35,
+                    'dev6@127.0.0.1'},
+                  primary},
+                  {{36,
+                    'dev1@127.0.0.1'},
+                  primary}],
+                 apl_with_partition_nums(
+                   get_apl_ann({Bucket, Key}, Nodes), Size)),
+    ?assertEqual([{{35,
+                    'dev6@127.0.0.1'},
+                  primary},
+                  {{36,
+                    'dev1@127.0.0.1'},
+                   primary},
+                  {{34,
+                    'dev2@127.0.0.1'},
+                  fallback}],
+                 apl_with_partition_nums(
+                   get_apl_ann({Bucket, Key}, Nodes --
+                                   ['dev5@127.0.0.1']), Size)),
+    ?assertEqual([{{36,
+                    'dev1@127.0.0.1'},
+                   primary},
+                 {{34,
+                   'dev2@127.0.0.1'},
+                  fallback},
+                 {{35,
+                   'dev3@127.0.0.1'},
+                  fallback}],
+                 apl_with_partition_nums(
+                   get_apl_ann({Bucket, Key}, Nodes --
+                                   ['dev5@127.0.0.1',
+                                    'dev6@127.0.0.1']), Size)),
+    ?assertEqual([{{34,
+                    'dev2@127.0.0.1'},
+                  fallback},
+                  {{35,
+                    'dev3@127.0.0.1'},
+                  fallback},
+                  {{36,
+                    'dev4@127.0.0.1'},
+                   fallback}],
+                 apl_with_partition_nums(
+                   get_apl_ann({Bucket, Key}, Nodes --
+                                   ['dev5@127.0.0.1',
+                                    'dev6@127.0.0.1',
+                                    'dev1@127.0.0.1']), Size)),
+    ?assertEqual([{{34,
+                    'dev3@127.0.0.1'},
+                   fallback},
+                  {{35,
+                    'dev4@127.0.0.1'},
+                   fallback},
+                  {{36,
+                    'dev3@127.0.0.1'},
+                   fallback}],
+                 apl_with_partition_nums(
+                   get_apl_ann({Bucket, Key}, Nodes --
+                                   ['dev5@127.0.0.1',
+                                    'dev6@127.0.0.1',
+                                    'dev1@127.0.0.1',
+                                    'dev2@127.0.0.1']), Size)),
+    ?assertEqual([{{34,
+                    'dev4@127.0.0.1'},
+                   fallback},
+                  {{35,
+                    'dev4@127.0.0.1'},
+                   fallback},
+                  {{36,
+                    'dev4@127.0.0.1'},
+                   fallback}],
+                 apl_with_partition_nums(
+                   get_apl_ann({Bucket, Key}, Nodes --
+                                   ['dev5@127.0.0.1',
+                                    'dev6@127.0.0.1',
+                                    'dev1@127.0.0.1',
+                                    'dev2@127.0.0.1',
+                                    'dev3@127.0.0.1']), Size)),
+    ?assertEqual([{{34,
+                    'dev5@127.0.0.1'},
+                  primary},
+                  {{35,
+                    'dev6@127.0.0.1'},
+                  primary},
+                  {{36,
+                    'dev3@127.0.0.1'},
+                   fallback}],
+                 apl_with_partition_nums(
+                   get_apl_ann({Bucket, Key}, Nodes --
+                                   ['dev1@127.0.0.1',
+                                    'dev2@127.0.0.1']), Size)),
+    riak_core_ring_manager:cleanup_ets(test),
     ok.
 
 chbin_test_() ->
