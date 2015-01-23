@@ -133,16 +133,15 @@ process_message(?PT_MSG_BATCH, MsgData, State) ->
 process_message(?PT_MSG_OBJ, MsgData, State=#state{vnode=VNode, count=Count,
                                                    vnode_timeout_len=VNodeTimeout}) ->
     Msg = {handoff_data, MsgData},
-    case catch gen_fsm:sync_send_all_state_event(VNode, Msg, VNodeTimeout) of
+    try gen_fsm:sync_send_all_state_event(VNode, Msg, VNodeTimeout) of
         ok ->
             State#state{count=Count+1};
-        {'EXIT', {timeout, _}} ->
-            exit({error, {vnode_timeout, VNodeTimeout, size(MsgData),
-                          binary:part(MsgData, {0,min(size(MsgData),128)})}});
-        {'EXIT', E} -> % make sure we still do all the old exits
-            exit(E);
         E={error, _} ->
             exit(E)
+    catch
+        exit:{timeout, _} ->
+            exit({error, {vnode_timeout, VNodeTimeout, size(MsgData),
+                          binary:part(MsgData, {0,min(size(MsgData),128)})}})
     end;
 process_message(?PT_MSG_OLDSYNC, MsgData, State=#state{sock=Socket,
                                                        tcp_mod=TcpMod}) ->
