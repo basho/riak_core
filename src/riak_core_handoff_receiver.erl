@@ -34,14 +34,17 @@
                 peer :: term(),
                 ssl_opts :: [] | list(),
                 tcp_mod :: atom(),
-                timeout_len :: non_neg_integer(),
+                recv_timeout_len :: non_neg_integer(),
+                vnode_timeout_len :: non_neg_integer(),
                 partition :: non_neg_integer(),
                 vnode_mod = riak_kv_vnode:: module(),
                 vnode :: pid(),
                 count = 0 :: non_neg_integer()}).
 
-%% set the timeout to five minutes to be conservative.
+%% set the TCP receive timeout to five minutes to be conservative.
 -define(RECV_TIMEOUT, 300000).
+%% set the timeout for the vnode to process the handoff_data msg to 60s
+-define(VNODE_TIMEOUT, 60000).
 
 start_link() ->
     start_link([]).
@@ -60,7 +63,8 @@ init([SslOpts]) ->
                 tcp_mod  = if SslOpts /= [] -> ssl;
                               true          -> gen_tcp
                            end,
-                timeout_len = app_helper:get_env(riak_core, handoff_receive_timeout, ?RECV_TIMEOUT)}}.
+                recv_timeout_len = app_helper:get_env(riak_core, handoff_receive_timeout, ?RECV_TIMEOUT),
+                vnode_timeout_len = app_helper:get_env(riak_core, handoff_receive_vnode_timeout, ?VNODE_TIMEOUT)}}.
 
 handle_call({set_socket, Socket0}, _From, State = #state{ssl_opts = SslOpts}) ->
     SockOpts = [{active, once}, {packet, 4}, {header, 1}],
@@ -81,10 +85,10 @@ handle_info({tcp_closed,_Socket},State=#state{partition=Partition,count=Count,
     lager:info("Handoff receiver for partition ~p exited after processing ~p"
                           " objects from ~p", [Partition, Count, Peer]),
     {stop, normal, State};
-handle_info({tcp_error, _Socket, _Reason}, State=#state{partition=Partition,count=Count,
-                                                        peer=Peer}) ->
+handle_info({tcp_error, _Socket, Reason}, State=#state{partition=Partition,count=Count,
+                                                       peer=Peer}) ->
     lager:info("Handoff receiver for partition ~p exited after processing ~p"
-                          " objects from ~p", [Partition, Count, Peer]),
+                          " objects from ~p: TCP error ~p", [Partition, Count, Peer, Reason]),
     {stop, normal, State};
 handle_info({tcp, Socket, Data}, State) ->
     [MsgType|MsgData] = Data,
@@ -98,7 +102,7 @@ handle_info({tcp, Socket, Data}, State) ->
                          true                          -> inet
                       end,
             InetMod:setopts(Socket, [{active, once}]),
-            {noreply, NewState, State#state.timeout_len}
+            {noreply, NewState, State#state.recv_timeout_len}
     end;
 handle_info({ssl_closed, Socket}, State) ->
     handle_info({tcp_closed, Socket}, State);
@@ -122,17 +126,22 @@ process_message(?PT_MSG_INIT, MsgData, State=#state{vnode_mod=VNodeMod,
     State#state{partition=Partition, vnode=VNode};
 
 process_message(?PT_MSG_BATCH, MsgData, State) ->
-    lists:foldl(fun(Obj, StateAcc) -> process_message(?PT_MSG_OBJ, Obj, StateAcc) end, 
+    lists:foldl(fun(Obj, StateAcc) -> process_message(?PT_MSG_OBJ, Obj, StateAcc) end,
                 State,
                 binary_to_term(MsgData));
 
-process_message(?PT_MSG_OBJ, MsgData, State=#state{vnode=VNode, count=Count}) ->
+process_message(?PT_MSG_OBJ, MsgData, State=#state{vnode=VNode, count=Count,
+                                                   vnode_timeout_len=VNodeTimeout}) ->
     Msg = {handoff_data, MsgData},
-    case gen_fsm:sync_send_all_state_event(VNode, Msg, 60000) of
+    try gen_fsm:sync_send_all_state_event(VNode, Msg, VNodeTimeout) of
         ok ->
             State#state{count=Count+1};
         E={error, _} ->
             exit(E)
+    catch
+        exit:{timeout, _} ->
+            exit({error, {vnode_timeout, VNodeTimeout, size(MsgData),
+                          binary:part(MsgData, {0,min(size(MsgData),128)})}})
     end;
 process_message(?PT_MSG_OLDSYNC, MsgData, State=#state{sock=Socket,
                                                        tcp_mod=TcpMod}) ->
