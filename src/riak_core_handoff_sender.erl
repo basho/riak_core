@@ -43,7 +43,7 @@
 %% Accumulator for the visit item HOF
 -record(ho_acc,
         {
-          ack                  :: non_neg_integer(),  
+          ack                  :: non_neg_integer(),
           error                :: ok | {error, any()},
           filter               :: function(),
           module               :: module(),
@@ -63,6 +63,7 @@
           item_queue_byte_size :: non_neg_integer(),
 
           acksync_threshold    :: non_neg_integer(),
+          acksync_timer        :: timer:tref(),
 
           type                 :: ho_type(),
 
@@ -169,20 +170,20 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                                      parent=ParentPid,
                                      socket=Socket,
                                      src_target={SrcPartition, TargetPartition},
-                                     stats=Stats,                                
+                                     stats=Stats,
                                      tcp_mod=TcpMod,
-                                     
+
                                      total_bytes=0,
                                      total_objects=0,
-                                     
+
                                      use_batching=RemoteSupportsBatching,
-                                     
+
                                      item_queue=[],
                                      item_queue_length=0,
                                      item_queue_byte_size=0,
-                                     
+
                                      acksync_threshold=AckSyncThreshold,
-                                     
+
                                      type=Type,
                                      notsent_acc=UnsentAcc0,
                                      notsent_fun=UnsentFun},
@@ -200,7 +201,7 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                                                           VMaster, infinity),
 
          %% Send any straggler entries remaining in the buffer:
-        AccRecord = send_objects(AccRecord0#ho_acc.item_queue, AccRecord0),
+         AccRecord = send_objects(AccRecord0#ho_acc.item_queue, AccRecord0),
 
          if AccRecord == {error, vnode_shutdown} ->
                  ?log_info("because the local vnode was shutdown", []),
@@ -216,8 +217,10 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
            total_objects=TotalObjects,
            total_bytes=TotalBytes,
            stats=FinalStats,
+           acksync_timer=TRef,
            notsent_acc=NotSentAcc} = AccRecord,
 
+         _ = timer:cancel(TRef),
          case ErrStatus of
              ok ->
                  %% One last sync to make sure the message has been received.
@@ -242,13 +245,13 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                  ok = lager:info("~p transfer of ~p from ~p ~p to ~p ~p"
                             " completed: sent ~s bytes in ~p of ~p objects"
                             " in ~.2f seconds (~s/second)",
-                            [Type, Module, SrcNode, SrcPartition, TargetNode, TargetPartition, 
+                            [Type, Module, SrcNode, SrcPartition, TargetNode, TargetPartition,
                             riak_core_format:human_size_fmt("~.2f", TotalBytes),
                              FinalStats#ho_stats.objs, TotalObjects, FoldTimeDiff,
                              riak_core_format:human_size_fmt("~.2f", ThroughputBytes)]),
                  case Type of
                      repair -> ok;
-                     resize_transfer -> gen_fsm:send_event(ParentPid, {resize_transfer_complete,
+                     resize -> gen_fsm:send_event(ParentPid, {resize_transfer_complete,
                                                                        NotSentAcc});
                      _ -> gen_fsm:send_event(ParentPid, handoff_complete)
                  end;
@@ -281,11 +284,41 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
              gen_fsm:send_event(ParentPid, {handoff_error, Err, Reason})
      end.
 
+start_visit_item_timer() ->
+    Ival = case app_helper:get_env(riak_core, handoff_receive_timeout) of
+               TO when is_integer(TO) ->
+                   erlang:max(1000, TO div 3);
+               _ ->
+                   60*1000
+           end,
+    timer:send_interval(Ival, tick_send_sync).
+
+visit_item(K, V, Acc0 = #ho_acc{acksync_threshold = AccSyncThreshold}) ->
+    %% Eventually, a vnode worker proc will be doing this fold, but we don't
+    %% know the pid of that proc ahead of time.  So we have to start the
+    %% timer some time after the fold has started execution on that proc
+    %% ... like now, perhaps.
+    Acc = case get(is_visit_item_timer_set) of
+              undefined ->
+                  put(is_visit_item_timer_set, true),
+                  {ok, TRef} = start_visit_item_timer(),
+                  Acc0#ho_acc{acksync_timer = TRef};
+              _ ->
+                  Acc0
+          end,
+    receive
+        tick_send_sync ->
+            visit_item2(K, V, Acc#ho_acc{ack = AccSyncThreshold})
+    after 0 ->
+            visit_item2(K, V, Acc)
+    end.
+
 %% When a tcp error occurs, the ErrStatus argument is set to {error, Reason}.
 %% Since we can't abort the fold, this clause is just a no-op.
-visit_item(_K, _V, Acc=#ho_acc{error={error, _Reason}}) ->
-    Acc;
-visit_item(K, V, Acc = #ho_acc{ack = _AccSyncThreshold, acksync_threshold = _AccSyncThreshold}) ->
+visit_item2(_K, _V, Acc=#ho_acc{error={error, _Reason}}) ->
+    %% When a TCP/SSL error occurs, #ho_acc.error is set to {error, Reason}.
+    throw(Acc);
+visit_item2(K, V, Acc = #ho_acc{ack = _AccSyncThreshold, acksync_threshold = _AccSyncThreshold}) ->
     #ho_acc{module=Module,
             socket=Sock,
             src_target={SrcPartition, TargetPartition},
@@ -305,14 +338,14 @@ visit_item(K, V, Acc = #ho_acc{ack = _AccSyncThreshold, acksync_threshold = _Acc
             case TcpMod:recv(Sock, 0, RecvTimeout) of
                 {ok,[?PT_MSG_OLDSYNC|<<"sync">>]} ->
                     Acc2 = Acc#ho_acc{ack=0, error=ok, stats=Stats3},
-                    visit_item(K, V, Acc2);
+                    visit_item2(K, V, Acc2);
                 {error, Reason} ->
                     Acc#ho_acc{ack=0, error={error, Reason}, stats=Stats3}
             end;
         {error, Reason} ->
             Acc#ho_acc{ack=0, error={error, Reason}, stats=Stats3}
     end;
-visit_item(K, V, Acc) ->
+visit_item2(K, V, Acc) ->
     #ho_acc{filter=Filter,
             module=Module,
             total_objects=TotalObjects,
@@ -337,13 +370,13 @@ visit_item(K, V, Acc) ->
                             ItemQueue2 = [BinObj | ItemQueue],
                             ItemQueueLength2 = ItemQueueLength + 1,
                             ItemQueueByteSize2 = ItemQueueByteSize + byte_size(BinObj),
-                            
+
                             Acc2 = Acc#ho_acc{item_queue_length=ItemQueueLength2,
                                               item_queue_byte_size=ItemQueueByteSize2},
-                            
+
                             %% Unit size is bytes:
-                            HandoffBatchThreshold = app_helper:get_env(riak_core, 
-                                                                       handoff_batch_threshold, 
+                            HandoffBatchThreshold = app_helper:get_env(riak_core,
+                                                                       handoff_batch_threshold,
                                                                        1024*1024),
 
                             case ItemQueueByteSize2 =< HandoffBatchThreshold of
@@ -360,16 +393,16 @@ visit_item(K, V, Acc) ->
                                     total_bytes=TotalBytes} = Acc,
                             M = <<?PT_MSG_OBJ:8,BinObj/binary>>,
                             NumBytes = byte_size(M),
-                            
+
                             Stats2 = incr_bytes(incr_objs(Stats), NumBytes),
-                            Stats3 = maybe_send_status({Module, SrcPartition, 
+                            Stats3 = maybe_send_status({Module, SrcPartition,
                                                         TargetPartition}, Stats2),
-                            
+
                             case TcpMod:send(Sock, M) of
                                 ok ->
-                                    Acc#ho_acc{ack=Ack+1, 
-                                               error=ok, 
-                                               stats=Stats3, 
+                                    Acc#ho_acc{ack=Ack+1,
+                                               error=ok,
+                                               stats=Stats3,
                                                total_bytes=TotalBytes+NumBytes,
                                                total_objects=TotalObjects+1};
                                 {error, Reason} ->
@@ -410,15 +443,15 @@ send_objects(ItemsReverseList, Acc) ->
     ObjectList = term_to_binary(Items),
 
     M = <<?PT_MSG_BATCH:8, ObjectList/binary>>,
-    
+
     NumBytes = byte_size(M),
-    
+
     Stats2 = incr_bytes(incr_objs(Stats, NObjects), NumBytes),
     Stats3 = maybe_send_status({Module, SrcPartition, TargetPartition}, Stats2),
-    
+
     case TcpMod:send(Sock, M) of
         ok ->
-            Acc#ho_acc{ack=Ack+1, error=ok, stats=Stats3, 
+            Acc#ho_acc{ack=Ack+1, error=ok, stats=Stats3,
                        total_objects=TotalObjects+NObjects,
                        total_bytes=TotalBytes+NumBytes,
                        item_queue=[],
@@ -556,14 +589,14 @@ get_filter(Opts) ->
         Filter -> Filter
     end.
 
-%% @private 
+%% @private
 %%
 %% @doc check if the handoff reciever will accept batching messages
 %%      otherwise fall back to the slower, object-at-a-time path
 
 remote_supports_batching(Node) ->
 
-    case catch rpc:call(Node, riak_core_handoff_receiver, 
+    case catch rpc:call(Node, riak_core_handoff_receiver,
                   supports_batching, []) of
         true ->
             lager:debug("remote node supports batching, enabling"),

@@ -101,6 +101,10 @@ start(_StartType, _StartArgs) ->
                                           [true, false],
                                           false),
 
+            riak_core_cli_registry:load_schema(),
+            riak_core_cli_registry:register_node_finder(),
+            riak_core_cli_registry:register_cli(),
+
             {ok, Pid};
         {error, Reason} ->
             {error, Reason}

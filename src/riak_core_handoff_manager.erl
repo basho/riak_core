@@ -44,10 +44,14 @@
          set_concurrency/1,
          get_concurrency/0,
          set_recv_data/2,
-         kill_handoffs/0
+         kill_handoffs/0,
+         kill_handoffs_in_direction/1,
+         handoff_change_enabled_setting/2
         ]).
 
 -include("riak_core_handoff.hrl").
+
+-export_type([ho_type/0]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -137,6 +141,10 @@ kill_xfer(SrcNode, ModSrcTarget, Reason) ->
 kill_handoffs() ->
     set_concurrency(0).
 
+-spec kill_handoffs_in_direction(inbound | outbound) -> ok.
+kill_handoffs_in_direction(Direction) ->
+    gen_server:call(?MODULE, {kill_in_direction, Direction}, infinity).
+
 add_exclusion(Module, Index) ->
     gen_server:cast(?MODULE, {add_exclusion, {Module, Index}}).
 
@@ -217,7 +225,17 @@ handle_call({set_concurrency,Limit},_From,State=#state{handoffs=HS}) ->
 
 handle_call(get_concurrency, _From, State) ->
     Concurrency = get_concurrency_limit(),
-    {reply, Concurrency, State}.
+    {reply, Concurrency, State};
+
+handle_call({kill_in_direction, Direction}, _From, State=#state{handoffs=HS}) ->
+    %% TODO (atb): Refactor this to comply with max_concurrency logspam PR's exit codes
+    %% NB. As-is this handles worker termination the same way as set_concurrency;
+    %%     no state update is performed here, we let the worker DOWNs mark them
+    %%     as dead rather than trimming here.
+    Kill = [H || H=#handoff_status{direction=D} <- HS, D =:= Direction],
+    _ = [erlang:exit(Pid, max_concurrency) ||
+         #handoff_status{transport_pid=Pid} <- Kill],
+    {reply, ok, State}.
 
 handle_cast({del_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
     Excl2 = sets:del_element({Mod, Idx}, Excl),
@@ -492,7 +510,7 @@ send_handoff(HOType, {Mod, Src, Target}, Node, Vnode, HS, {Filter, FilterModFun}
                             HOFilter = Filter,
                             HOAcc0 = undefined,
                             HONotSentFun = undefined;
-                        resize_transfer ->
+                        resize ->
                             {ok, Ring} = riak_core_ring_manager:get_my_ring(),
                             HOFilter = resize_transfer_filter(Ring, Mod, Src, Target),
                             HOAcc0 = ordsets:new(),
@@ -606,22 +624,55 @@ kill_xfer_i(ModSrcTarget, Reason, HS) ->
             kill_xfer_i(ModSrcTarget, Reason, HS2)
     end.
 
+handoff_change_enabled_setting(EnOrDis, Direction) ->
+    SetFun = case EnOrDis of
+                 enable  -> fun handoff_enable/1;
+                 disable -> fun handoff_disable/1
+             end,
+    case Direction of
+        inbound ->
+            SetFun(inbound);
+        outbound ->
+            SetFun(outbound);
+        both ->
+            SetFun(inbound),
+            SetFun(outbound)
+    end.
+
+handoff_enable(inbound) ->
+    application:set_env(riak_core, disable_inbound_handoff, false);
+handoff_enable(outbound) ->
+    application:set_env(riak_core, disable_outbound_handoff, false).
+
+handoff_disable(inbound) ->
+    application:set_env(riak_core, disable_inbound_handoff, true),
+    kill_handoffs_in_direction(inbound);
+handoff_disable(outbound) ->
+    application:set_env(riak_core, disable_outbound_handoff, true),
+    kill_handoffs_in_direction(outbound).
+
 %%%===================================================================
 %%% Tests
 %%%===================================================================
 
--ifdef (TEST_BROKEN_AZ_TICKET_1042).
+-ifdef (TEST).
 
 handoff_test_ () ->
     {spawn,
      {setup,
 
       %% called when the tests start and complete...
-      fun () -> {ok,Pid}=start_link(), Pid end,
-      fun (Pid) -> exit(Pid,kill) end,
+      fun () ->
+              {ok, ManPid} = start_link(),
+              {ok, RSupPid} = riak_core_handoff_receiver_sup:start_link(),
+              {ok, SSupPid} = riak_core_handoff_sender_sup:start_link(),
+              [ManPid, RSupPid, SSupPid]
+      end,
+      fun (PidList) -> lists:foreach(fun(Pid) -> exit(Pid, kill) end, PidList) end,
 
       %% actual list of test
-      [?_test(simple_handoff())
+      [?_test(simple_handoff()),
+       ?_test(config_disable())
       ]}}.
 
 simple_handoff () ->
@@ -630,7 +681,7 @@ simple_handoff () ->
     %% clear handoff_concurrency and make sure a handoff fails
     ?assertEqual(ok,set_concurrency(0)),
     ?assertEqual({error,max_concurrency},add_inbound([])),
-    ?assertEqual({error,max_concurrency},add_outbound(ownership_transfer,riak_kv_vnode,
+    ?assertEqual({error,max_concurrency},add_outbound(ownership,riak_kv_vnode,
                                                       0,node(),self(),[])),
 
     %% allow for a single handoff
@@ -638,5 +689,63 @@ simple_handoff () ->
 
     %% done
     ok.
+
+config_disable () ->
+    ?assertEqual(ok, handoff_enable(inbound)),
+    ?assertEqual(ok, handoff_enable(outbound)),
+    ?assertEqual(ok, set_concurrency(2)),
+
+    ?assertEqual([], status()),
+
+    Res = add_inbound([]),
+    ?assertMatch({ok, _}, Res),
+    {ok, Pid} = Res,
+
+    ?assertEqual(1, length(status())),
+
+    Ref = monitor(process, Pid),
+
+    CatchDownFun = fun() ->
+                           receive
+                               {'DOWN', Ref, process, Pid, max_concurrency} ->
+                                   ok;
+                               Other ->
+                                   {error, unexpected_message, Other}
+                           after
+                               1000 ->
+                                   {error, timeout_waiting_for_down_msg}
+                           end
+                   end,
+
+    ?assertEqual(ok, handoff_disable(inbound)),
+    ?assertEqual(ok, CatchDownFun()),
+    %% We use wait_until because it's possible that the handoff manager process
+    %% could get our call to status/0 before it receives the 'DOWN' message,
+    %% so we periodically retry the call for a while until we get the answer we
+    %% expect, or until we time out.
+    Status0 = fun() -> length(status()) =:= 0 end,
+    ?assertEqual(ok, wait_until(Status0, 500, 1)),
+
+    ?assertEqual({error, max_concurrency}, add_inbound([])),
+
+    ?assertEqual(ok, handoff_enable(inbound)),
+    ?assertEqual(ok, handoff_enable(outbound)),
+    ?assertEqual(0, length(status())),
+
+    ?assertMatch({ok, _}, add_inbound([])),
+    ?assertEqual(1, length(status())).
+
+%% Copied from riak_test's rt.erl:
+wait_until(Fun, Retry, Delay) when Retry > 0 ->
+    Res = Fun(),
+    case Res of
+        true ->
+            ok;
+        _ when Retry == 1 ->
+            {fail, Res};
+        _ ->
+            timer:sleep(Delay),
+            wait_until(Fun, Retry-1, Delay)
+    end.
 
 -endif.

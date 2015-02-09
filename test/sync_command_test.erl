@@ -26,7 +26,7 @@ sync_test_() ->
     {foreach,
      fun setup_simple/0,
      fun stop_servers/1,
-     [ {<<"Assert ok throw">>, 
+     [ {<<"Assert ok throw">>,
         fun() ->
             ?assertEqual(ok, mock_vnode:sync_error({0, node()}, goodthrow))
         end},
@@ -68,6 +68,7 @@ setup_simple() ->
         ok = application:set_env(riak_core, AppKey, Val),
         {AppKey, Old}
      end || {AppKey, Val} <- Vars],
+    exometer:start(),
     riak_core_ring_events:start_link(),
     riak_core_ring_manager:start_link(test),
     riak_core_vnode_proxy_sup:start_link(),
@@ -92,7 +93,10 @@ stop_servers(_Pid) ->
     stop_pid(whereis(mock_vnode_master)),
     stop_pid(whereis(riak_core_vnode_manager)),
     stop_pid(whereis(riak_core_vnode_events)),
-    stop_pid(whereis(riak_core_vnode_sup)).
+    stop_pid(whereis(riak_core_vnode_sup)),
+    application:stop(exometer),
+    application:stop(lager),
+    application:stop(goldrush).
 
 stop_pid(undefined) ->
     ok;

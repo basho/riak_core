@@ -106,6 +106,7 @@
          new/3,
          insert/3,
          insert/4,
+         estimate_keys/1,
          delete/2,
          update_tree/1,
          update_snapshot/1,
@@ -124,6 +125,7 @@
          segments/1,
          width/1,
          mem_levels/1]).
+-export([compare2/4]).
 
 -ifdef(TEST).
 -export([local_compare/2]).
@@ -150,6 +152,8 @@
 -define(WIDTH, 1024).
 -define(MEM_LEVELS, 0).
 
+-define(NUM_KEYS_REQUIRED, 1000).
+
 -type tree_id_bin() :: <<_:176>>.
 -type segment_bin() :: <<_:256, _:_*8>>.
 -type bucket_bin()  :: <<_:320>>.
@@ -161,7 +165,8 @@
 
 -type keydiff() :: {missing | remote_missing | different, binary()}.
 
--type remote_fun() :: fun((get_bucket | key_hashes | init | final,
+-type remote_fun() :: fun((get_bucket | key_hashes | start_exchange_level |
+                           start_exchange_segments | init | final,
                            {integer(), integer()} | integer() | term()) -> any()).
 
 -type acc_fun(Acc) :: fun(([keydiff()], Acc) -> Acc).
@@ -426,6 +431,32 @@ read_meta(Key, State) when is_binary(Key) ->
         _ ->
             undefined
     end.
+
+%% @doc
+%% Estimate number of keys stored in the AAE tree. This is determined
+%% by sampling segments to to calculate an estimated keys-per-segment
+%% value, which is then multiplied by the number of segments. Segments
+%% are sampled until either 1% of segments have been visited or 1000
+%% keys have been observed.
+%%
+%% Note: this function must be called on a tree with a valid iterator,
+%%       such as the snapshotted tree returned from update_snapshot/1
+%%       or a recently updated tree returned from update_tree/1 (which
+%%       internally creates a snapshot). Using update_tree/1 is the best
+%%       choice since that ensures segments are updated giving a better
+%%       estimate.
+-spec estimate_keys(hashtree()) -> {ok, integer()}.
+estimate_keys(State) ->
+    estimate_keys(State, 0, 0, ?NUM_KEYS_REQUIRED).
+
+estimate_keys(#state{segments=Segments}, CurrentSegment, Keys, MaxKeys)
+  when (CurrentSegment * 100) >= Segments;
+       Keys >= MaxKeys ->
+    {ok, (Keys * Segments) div CurrentSegment};
+
+estimate_keys(State, CurrentSegment, Keys, MaxKeys) ->
+    [{_, KeyHashes2}] = key_hashes(State, CurrentSegment),
+    estimate_keys(State, CurrentSegment + 1, Keys + length(KeyHashes2), MaxKeys).
 
 -spec key_hashes(hashtree(), integer()) -> [{integer(), orddict()}].
 key_hashes(State, Segment) ->
@@ -805,6 +836,59 @@ iterate({ok, K, V}, IS=#itr_state{itr=Itr,
             IS
     end.
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% level-by-level exchange (BFS instead of DFS)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+compare2(Tree, Remote, AccFun, Acc) ->
+    Final = Tree#state.levels + 1,
+    Local = fun(get_bucket, {L, B}) ->
+                    get_bucket(L, B, Tree);
+               (key_hashes, Segment) ->
+                    [{_, KeyHashes2}] = key_hashes(Tree, Segment),
+                    KeyHashes2
+            end,
+    Opts = [],
+    exchange(1, [0], Final, Local, Remote, AccFun, Acc, Opts).
+
+exchange(_Level, [], _Final, _Local, _Remote, _AccFun, Acc, _Opts) ->
+    Acc;
+exchange(Level, Diff, Final, Local, Remote, AccFun, Acc, Opts) ->
+    if Level =:= Final ->
+            exchange_final(Level, Diff, Local, Remote, AccFun, Acc, Opts);
+       true ->
+            Diff2 = exchange_level(Level, Diff, Local, Remote, Opts),
+            exchange(Level+1, Diff2, Final, Local, Remote, AccFun, Acc, Opts)
+    end.
+
+exchange_level(Level, Buckets, Local, Remote, _Opts) ->
+    Remote(start_exchange_level, {Level, Buckets}),
+    lists:flatmap(fun(Bucket) ->
+                          A = Local(get_bucket, {Level, Bucket}),
+                          B = Remote(get_bucket, {Level, Bucket}),
+                          Delta = riak_ensemble_util:orddict_delta(lists:keysort(1, A),
+                                                                   lists:keysort(1, B)),
+                          Diffs = Delta,
+                          [BK || {BK, _} <- Diffs]
+                  end, Buckets).
+
+exchange_final(_Level, Segments, Local, Remote, AccFun, Acc0, _Opts) ->
+    Remote(start_exchange_segments, Segments),
+    lists:foldl(fun(Segment, Acc) ->
+                        A = Local(key_hashes, Segment),
+                        B = Remote(key_hashes, Segment),
+                        Delta = riak_ensemble_util:orddict_delta(lists:keysort(1, A),
+                                                                 lists:keysort(1, B)),
+                        Keys = [begin
+                                    {_Id, Segment, Key} = decode(KBin),
+                                    Type = key_diff_type(Diff),
+                                    {Type, Key}
+                                end || {KBin, Diff} <- Delta],
+                        AccFun(Keys, Acc)
+                end, Acc0, Segments).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 -spec compare(integer(), integer(), hashtree(), remote_fun(), acc_fun(X), X) -> X.
 compare(Level, Bucket, Tree, Remote, AccFun, KeyAcc) when Level == Tree#state.levels+1 ->
     Keys = compare_segments(Bucket, Tree, Remote),
@@ -1010,6 +1094,10 @@ do_remote(N) ->
     Remote = fun(get_bucket, {L, B}) ->
                      Other ! {get_bucket, self(), L, B},
                      receive {remote, X} -> X end;
+                (start_exchange_level, {_Level, _Buckets}) ->
+                     ok;
+                (start_exchange_segments, _Segments) ->
+                     ok;
                 (key_hashes, Segment) ->
                      Other ! {key_hashes, self(), Segment},
                      receive {remote, X} -> X end
@@ -1071,11 +1159,18 @@ peval(L) ->
 local_compare(T1, T2) ->
     Remote = fun(get_bucket, {L, B}) ->
                      get_bucket(L, B, T2);
+                (start_exchange_level, {_Level, _Buckets}) ->
+                     ok;
+                (start_exchange_segments, _Segments) ->
+                     ok;
                 (key_hashes, Segment) ->
                      [{_, KeyHashes2}] = key_hashes(T2, Segment),
                      KeyHashes2
              end,
-    compare(T1, Remote).
+    AccFun = fun(Keys, KeyAcc) ->
+                     Keys ++ KeyAcc
+             end,
+    compare2(T1, Remote, AccFun, []).
 
 -spec compare(hashtree(), remote_fun()) -> [keydiff()].
 compare(Tree, Remote) ->
@@ -1231,5 +1326,25 @@ prop_correct() ->
                         destroy(B0),
                         true
                     end)).
+
+est_prop() ->
+    %% It's hard to estimate under 10000 keys
+    ?FORALL(N, choose(10000, 500000),
+            begin
+                {ok, EstKeys} = estimate_keys(update_tree(insert_many(N, new()))),
+                Diff = abs(N - EstKeys),
+                MaxDiff = N div 5,
+                ?debugVal(Diff), ?debugVal(EstKeys),?debugVal(MaxDiff),
+                ?assertEqual(true, MaxDiff > Diff),
+                true
+            end).
+
+est_test_() ->
+    {spawn,
+     {timeout, 240,
+      fun() ->
+              ?assert(eqc:quickcheck(eqc:testing_time(10, est_prop())))
+      end
+     }}.
 
 -endif.

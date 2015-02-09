@@ -18,7 +18,9 @@
                   basho_stats,
                   eleveldb,
                   pbkdf2,
-                  poolboy
+                  poolboy,
+                  exometer_core,
+                  clique
                  ]},
   {mod, {riak_core_app, []}},
   {env, [
@@ -55,14 +57,23 @@
          %% Handoff IP/port
          {handoff_port, 8099},
          {handoff_ip, "0.0.0.0"},
-         
+
          %% Disterl buffer sizes in bytes.
          %% These sizes (3*128*1024 & 6*128*1024) were
-         %% derived from a limited amount of testing in a 
-         %% 10GE environment, and may need tuning for your 
+         %% derived from a limited amount of testing in a
+         %% 10GE environment, and may need tuning for your
          %% network and workload. In particular they're likely
          %% too small to be optimal for larger object sizes.
          {dist_send_buf_size, 393216},
-         {dist_recv_buf_size, 786432}
+         {dist_recv_buf_size, 786432},
+
+	 %% Exometer defaults
+	 {exometer_defaults,
+	  [
+	   {['_'], histogram, [{options,
+				[{histogram_module, exometer_slot_slide},
+				 {keep_high, 500}]}
+			    ]}
+	  ]}
         ]}
  ]}.
