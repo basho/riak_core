@@ -850,6 +850,12 @@ security_error_xlate({error, unknown_user}) ->
     "User not recognized";
 security_error_xlate({error, unknown_group}) ->
     "Group not recognized";
+security_error_xlate({error, {cidr_invalid, CIDR}}) ->
+    io_lib:format("Address must be in CIDR format: ~ts", [CIDR]);
+security_error_xlate({error, {ip_invalid, Addr}}) ->
+    io_lib:format("Must be a valid IP address: ~ts", [Addr]);
+security_error_xlate({error, {mask_invalid, Mask}}) ->
+    io_lib:format("IP mask must be a non-negative integer: ~ts", [Mask]);
 security_error_xlate({error, {unknown_permission, Name}}) ->
     io_lib:format("Permission not recognized: ~ts", [Name]);
 security_error_xlate({error, {unknown_role, Name}}) ->
@@ -1148,9 +1154,26 @@ parse_options([H|T], Acc) ->
 
 -spec parse_cidr(string()) -> {inet:ip_address(), non_neg_integer()}.
 parse_cidr(CIDR) ->
-    [IP, Mask] = string:tokens(CIDR, "/"),
-    {ok, Addr} = inet_parse:address(IP),
-    {Addr, list_to_integer(Mask)}.
+    cidr_tokens(CIDR, string:tokens(CIDR, "/")).
+
+cidr_tokens(CIDR, Tokens) when length(Tokens) =/= 2 ->
+    {error, {cidr_invalid, CIDR}};
+cidr_tokens(_CIDR, [IP, Mask]) ->
+    ip_parsed(IP, Mask, inet_parse:address(IP)).
+
+ip_parsed(IP, _Mask, {error, einval}) ->
+    {error, {ip_invalid, IP}};
+ip_parsed(_IP, Mask, {ok, Addr}) ->
+    mask_parsed(Addr, Mask, catch(list_to_integer(Mask))).
+
+mask_parsed(_Addr, Mask, {'EXIT', _}) ->
+    {error, {mask_invalid, Mask}};
+%% Considered setting an upper bound on the mask, but IPv6 makes that
+%% problematic
+mask_parsed(_Addr, Mask, MaskAsInt) when MaskAsInt < 0 ->
+    {error, {mask_invalid, Mask}};
+mask_parsed(Addr, _Mask, MaskAsInt) ->
+    {Addr, MaskAsInt}.
 
 
 stat_show(Arg) ->
