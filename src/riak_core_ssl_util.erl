@@ -172,6 +172,12 @@ load_cert(Cert) ->
                     Type == 'Certificate', Cipher == 'not_encrypted']
     end.
 
+%% Reject another node whose common name is the same as ours unless it's a wildcard
+invalid_cn_pair([$* | _], _) ->
+    false;
+invalid_cn_pair(LeftCN, RightCN) ->
+    string:to_lower(LeftCN) == string:to_lower(RightCN).
+
 %% Custom SSL verification function for checking common names against the
 %% whitelist.
 verify_ssl(_, {bad_cert, _} = Reason, _) ->
@@ -186,7 +192,7 @@ verify_ssl(_, valid_peer, undefined) ->
     {fail, bad_local_common_name};
 verify_ssl(Cert, valid_peer, {App, MyCommonName}) ->
     CommonName = get_common_name(Cert),
-    case string:to_lower(CommonName) == string:to_lower(MyCommonName) of
+    case invalid_cn_pair(CommonName, MyCommonName) of
         true ->
             lager:error("Peer certificate's common name matches local "
                 "certificate's common name: ~p", [CommonName]),
