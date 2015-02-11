@@ -990,7 +990,10 @@ add_source([Users, CIDR, Source | Options]) ->
                       [Option]);
         error:badarg ->
             io:format("Invalid source ~ts, must be latin1, sorry~n",
-                      [Source])
+                      [Source]);
+        throw:{error, Error} ->
+            io:format(security_error_xlate({error, Error})),
+            io:format("~n")
     end.
 
 del_source([Users, CIDR]) ->
@@ -1157,21 +1160,21 @@ parse_cidr(CIDR) ->
     cidr_tokens(CIDR, string:tokens(CIDR, "/")).
 
 cidr_tokens(CIDR, Tokens) when length(Tokens) =/= 2 ->
-    {error, {cidr_invalid, CIDR}};
+    throw({error, {cidr_invalid, CIDR}});
 cidr_tokens(_CIDR, [IP, Mask]) ->
     ip_parsed(IP, Mask, inet_parse:address(IP)).
 
 ip_parsed(IP, _Mask, {error, einval}) ->
-    {error, {ip_invalid, IP}};
+    throw({error, {ip_invalid, IP}});
 ip_parsed(_IP, Mask, {ok, Addr}) ->
     mask_parsed(Addr, Mask, catch(list_to_integer(Mask))).
 
 mask_parsed(_Addr, Mask, {'EXIT', _}) ->
-    {error, {mask_invalid, Mask}};
+    throw({error, {mask_invalid, Mask}});
 %% Considered setting an upper bound on the mask, but IPv6 makes that
 %% problematic
 mask_parsed(_Addr, Mask, MaskAsInt) when MaskAsInt < 0 ->
-    {error, {mask_invalid, Mask}};
+    throw({error, {mask_invalid, Mask}});
 mask_parsed(Addr, _Mask, MaskAsInt) ->
     {Addr, MaskAsInt}.
 
