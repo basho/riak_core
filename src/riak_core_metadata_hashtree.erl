@@ -108,13 +108,15 @@ key_hashes(Node, Prefixes, Segment) ->
     gen_server:call({?SERVER, Node}, {key_hashes, Prefixes, Segment}, infinity).
 
 %% @doc Locks the tree on this node for updating on behalf of the
-%% calling process. {@see lock/2}
+%% calling process.
+%% @see lock/2
 -spec lock() -> ok | not_built | locked.
 lock() ->
     lock(node()).
 
 %% @doc Locks the tree on `Node' for updating on behalf of the calling
-%% process. {@see lock/2}.
+%% process.
+%% @see lock/2
 -spec lock(node()) -> ok | not_built | locked.
 lock(Node) ->
     lock(Node, self()).
@@ -128,7 +130,8 @@ lock(Node) ->
 lock(Node, Pid) ->
     gen_server:call({?SERVER, Node}, {lock, Pid}, infinity).
 
-%% @doc Updates the tree on this node. {@see update/1}.
+%% @doc Updates the tree on this node.
+%% @see update/1
 -spec update() -> ok | not_locked | not_built | ongoing_update.
 update() ->
     update(node()).
@@ -154,7 +157,7 @@ update(Node) ->
 %% found between the two trees. `HandlerAcc' is passed to the first
 %% invocation of `HandlerFun'. Subsequent calls are passed the return
 %% value from the previous call.  This function returns the return
-%% value from the last call to `HandlerFun'. {@see hashtree_tree} for
+%% value from the last call to `HandlerFun'. {@link hashtree_tree} for
 %% more details on `RemoteFun', `HandlerFun' and `HandlerAcc'.
 -spec compare(hashtree_tree:remote_fun(), hashtree_tree:handler_fun(X), X) -> X.
 compare(RemoteFun, HandlerFun, HandlerAcc) ->

@@ -42,14 +42,14 @@
 %%   2. When the creation has propogated to all nodes, the type may be activated.
 %%      As the activation propogates, nodes will be able to use the type
 %%
-%% The first step is performed using {@see create/2}. The second by
-%% {@see activate/1}.  After the type has been activated, some
-%% properties may be updated using {@see update/2}. All operations are
+%% The first step is performed using {@link create/2}. The second by
+%% {@link activate/1}.  After the type has been activated, some
+%% properties may be updated using {@link update/2}. All operations are
 %% serialized through {@link riak_core_claimant} except reading bucket
-%% type properties with {@get/1}.
+%% type properties with {@link get/1}.
 %%
 %% Bucket types can be in one of four states. The
-%% state of a type can be queried using {@see status/1}.
+%% state of a type can be queried using {@link status/1}.
 %%
 %%   1. undefined - the type has not been created
 %%   2. created - the type has been created but has not propogated to all nodes
@@ -65,11 +65,11 @@
 %% {@link riak_core_claimant} to a new node -- ensuring concurrent
 %% updates do not break the invariant.
 %%
-%%   * calling {@see create/1} multiple times before a Bucket Type
+%%   * calling {@link create/1} multiple times before a Bucket Type
 %%     is active is allowed. The newer creation will supersede any
 %%     previous ones. In addition, the type will be "claimed" by the
 %%     {@link riak_core_claimant} node writing the property. Future
-%%     calls to {@see create/1} must be serialized through the same
+%%     calls to {@link create/1} must be serialized through the same
 %%     claimant node or the call will not succeed. In the case where
 %%     the claimed type fails to propogate to a new claimant during a
 %%     a failure the potential concurrent update is resolved with
@@ -77,9 +77,9 @@
 %%     safe.
 %%   * A type may only be activated if it is in the `ready' state. This means
 %%     all nodes must be reachable from the claimant
-%%   * {@see create/1} will fail if the type is active. Activation concurrent
+%%   * {@link create/1} will fail if the type is active. Activation concurrent
 %%     with creation is not possible due to the previous restriction
-%%   * {@see update/1} will fail unless the type is updated. {@see update/1} does
+%%   * {@link update/1} will fail unless the type is updated. {@link update/1} does
 %%     not allow modifications to properties for which the invariant must hold
 %%     (NOTE: this is up to the implementor of the riak_core bucket_validator).
 %%
@@ -145,7 +145,7 @@ defaults() ->
 %% function may be called arbitratily many times if the claimant does not change between
 %% calls and the type is not active. An error will also be returned if the properties
 %% are not valid. Properties not provided will be taken from those returned by
-%% {@see defaults/0}.
+%% @see defaults/0.
 -spec create(bucket_type(), bucket_type_props()) -> ok | {error, term()}.
 create(?DEFAULT_TYPE, _Props) ->
     {error, default_type};
@@ -186,7 +186,7 @@ get(BucketType) when is_binary(BucketType) ->
     riak_core_claimant:get_bucket_type(BucketType, undefined).
 
 %% @doc Reset the properties of the bucket. This only affects properties that
-%% can be set using {@see update/2} and can only be performed on an active
+%% can be set using {@link update/2} and can only be performed on an active
 %% type.
 -spec reset(bucket_type()) -> ok | {error, term()}.
 reset(BucketType) ->
