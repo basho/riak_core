@@ -248,7 +248,7 @@ itr_values({It, Opts}) ->
 %% a resolver was specified in the options when creating this iterator, they will be
 %% resolved. Otherwise, and error is returned. If conflicts are resolved, the resolved
 %% value is written locally and a broadcast is performed to update other nodes
-%% in the cluster if `allow_put' is `true' (the default value). If `allow_put' is `false`,
+%% in the cluster if `allow_put' is `true' (the default value). If `allow_put' is `false',
 %% values are resolved but not written or broadcast.
 %%
 %% NOTE: if resolution may be performed this function must be called at most once

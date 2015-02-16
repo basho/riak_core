@@ -18,6 +18,7 @@ basic_schema_test() ->
     cuttlefish_unit:assert_not_configured(Config, "riak_core.ssl.certfile"),
     cuttlefish_unit:assert_not_configured(Config, "riak_core.ssl.keyfile"),
     cuttlefish_unit:assert_not_configured(Config, "riak_core.ssl.cacertfile"),
+    cuttlefish_unit:assert_config(Config, "riak_core.handoff_ip", "0.0.0.0"),
     cuttlefish_unit:assert_config(Config, "riak_core.handoff_port", 8099 ),
     cuttlefish_unit:assert_not_configured(Config, "riak_core.handoff_ssl_options"),
     cuttlefish_unit:assert_config(Config, "riak_core.dtrace_support", false),
@@ -30,6 +31,22 @@ basic_schema_test() ->
     cuttlefish_unit:assert_config(Config, "riak_core.use_background_manager", false),
     cuttlefish_unit:assert_config(Config, "riak_core.vnode_management_timer", 10000),
     ok.
+
+%% Tests that configurations which should be prohibited by validators defined
+%% in the schema are, in fact, reported as invalid.
+invalid_states_test() ->
+    Conf = [
+        {["handoff", "ip"], "0.0.0.0.0"}
+    ],
+
+    Config = cuttlefish_unit:generate_templated_config("../priv/riak_core.schema", Conf, context()),
+
+    %% Confirm that we made it to validation and test that each expected failure
+    %% message is present.
+    cuttlefish_unit:assert_error_in_phase(Config, validation),
+    cuttlefish_unit:assert_error_message(Config, "handoff.ip invalid, must be a valid IP address"),
+    ok.
+
 
 default_bucket_properties_test() ->
     Conf = [
@@ -53,6 +70,7 @@ override_schema_test() ->
         {["ssl", "certfile"], "/absolute/etc/cert.pem"},
         {["ssl", "keyfile"], "/absolute/etc/key.pem"},
         {["ssl", "cacertfile"], "/absolute/etc/cacertfile.pem"},
+        {["handoff", "ip"], "1.2.3.4"},
         {["handoff", "port"], 8888},
         {["handoff", "ssl", "certfile"], "/tmp/erlserver.pem"},
         {["handoff", "ssl", "keyfile"], "/tmp/erlkey/pem"},
@@ -77,6 +95,7 @@ override_schema_test() ->
     cuttlefish_unit:assert_config(Config, "riak_core.ssl.certfile", "/absolute/etc/cert.pem"),
     cuttlefish_unit:assert_config(Config, "riak_core.ssl.keyfile", "/absolute/etc/key.pem"),
     cuttlefish_unit:assert_config(Config, "riak_core.ssl.cacertfile", "/absolute/etc/cacertfile.pem"),
+    cuttlefish_unit:assert_config(Config, "riak_core.handoff_ip", "1.2.3.4"),
     cuttlefish_unit:assert_config(Config, "riak_core.handoff_port", 8888),
     cuttlefish_unit:assert_config(Config, "riak_core.handoff_ssl_options.certfile", "/tmp/erlserver.pem"),
     cuttlefish_unit:assert_config(Config, "riak_core.handoff_ssl_options.keyfile", "/tmp/erlkey/pem"),
@@ -99,6 +118,7 @@ override_schema_test() ->
 %% in real life.
 context() ->
     [
+        {handoff_ip, "0.0.0.0"},
         {handoff_port, "8099"},
         {platform_bin_dir , "./bin"},
         {platform_data_dir, "./data"},

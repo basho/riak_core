@@ -1,5 +1,8 @@
 REBAR ?= ./rebar
 
+.PHONY: compile-no-deps test docs xref dialyzer-run dialyzer-quick dialyzer \
+		cleanplt
+
 compile-no-deps:
 	${REBAR} compile skip_deps=true
 

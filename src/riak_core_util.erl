@@ -150,7 +150,7 @@ replace_file(FN, Data) ->
             Err
     end.
 
-%% @doc Similar to {@link file:read_file} but uses raw file I/O
+%% @doc Similar to {@link file:read_file/1} but uses raw file `I/O'
 read_file(FName) ->
     {ok, FD} = file:open(FName, [read, raw, binary]),
     IOList = read_file(FD, []),
