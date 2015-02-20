@@ -1,3 +1,9 @@
+-ifdef(namespaced_types).
+-type riak_core_handoff_dict() :: dict:dict().
+-else.
+-type riak_core_handoff_dict() :: dict().
+-endif.
+
 -define(PT_MSG_INIT, 0).
 -define(PT_MSG_OBJ, 1).
 -define(PT_MSG_OLDSYNC, 2).
@@ -30,7 +36,7 @@
           transport_mon         :: reference(),
           timestamp             :: tuple(),
           status                :: any(),
-          stats                 :: dict(),
+          stats                 :: riak_core_handoff_dict(),
           vnode_pid             :: pid() | undefined,
           vnode_mon             :: reference(),
           type                  :: ho_type(),
