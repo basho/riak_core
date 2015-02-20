@@ -127,6 +127,14 @@
          mem_levels/1]).
 -export([compare2/4]).
 
+-ifdef(namespaced_types).
+-type hashtree_dict() :: dict:dict().
+-type hashtree_array() :: array:array().
+-else.
+-type hashtree_dict() :: dict().
+-type hashtree_array() :: array().
+-endif.
+
 -ifdef(TEST).
 -export([local_compare/2]).
 -export([run_local/0,
@@ -179,13 +187,13 @@
                 segments       :: pos_integer(),
                 width          :: pos_integer(),
                 mem_levels     :: integer(),
-                tree           :: dict(),
+                tree           :: hashtree_dict(),
                 ref            :: term(),
                 path           :: string(),
                 itr            :: term(),
                 write_buffer   :: [{put, binary(), binary()} | {delete, binary()}],
                 write_buffer_count :: integer(),
-                dirty_segments :: array()
+                dirty_segments :: hashtree_array()
                }).
 
 -record(itr_state, {itr                :: term(),
@@ -956,17 +964,17 @@ orddict_delta(D1, [], Acc) ->
 %%%===================================================================
 -define(W, 27).
 
--spec bitarray_new(integer()) -> array().
+-spec bitarray_new(integer()) -> hashtree_array().
 bitarray_new(N) -> array:new((N-1) div ?W + 1, {default, 0}).
 
--spec bitarray_set(integer(), array()) -> array().
+-spec bitarray_set(integer(), hashtree_array()) -> hashtree_array().
 bitarray_set(I, A) ->
     AI = I div ?W,
     V = array:get(AI, A),
     V1 = V bor (1 bsl (I rem ?W)),
     array:set(AI, V1, A).
 
--spec bitarray_to_list(array()) -> [integer()].
+-spec bitarray_to_list(hashtree_array()) -> [integer()].
 bitarray_to_list(A) ->
     lists:reverse(
       array:sparse_foldl(fun(I, V, Acc) ->

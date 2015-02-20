@@ -137,6 +137,8 @@
 
 -export_type([riak_core_ring/0]).
 
+-include("riak_core.hrl").
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -147,7 +149,8 @@
     vclock   :: vclock:vclock() | undefined, % for this chstate object, entries are
                                  % {Node, Ctr}
     chring   :: chash:chash(),   % chash ring of {IndexAsInt, Node} mappings
-    meta     :: dict() | undefined,  % dict of cluster-wide other data (primarily
+    meta     :: riak_core_dict() | undefined,
+                                 % dict of cluster-wide other data (primarily
                                  % bucket N-value, etc)
 
     clustername :: {term(), term()},

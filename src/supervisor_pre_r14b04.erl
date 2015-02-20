@@ -18,6 +18,8 @@
 %%
 -module(supervisor_pre_r14b04).
 
+-include("riak_core.hrl").
+
 -behaviour(gen_server).
 
 %% External exports
@@ -78,14 +80,14 @@
 -define(SET, set).
 
 -record(state, {name,
-		strategy               :: strategy(),
-		children = []          :: [child_rec()],
-		dynamics               :: ?DICT() | ?SET(),
-		intensity              :: non_neg_integer(),
-		period                 :: pos_integer(),
-		restarts = [],
-	        module,
-	        args}).
+    strategy               :: strategy(),
+    children = []          :: [child_rec()],
+    dynamics               :: riak_core_dict() | riak_core_set(),
+    intensity              :: non_neg_integer(),
+    period                 :: pos_integer(),
+    restarts = [],
+    module,
+    args}).
 -type state() :: #state{}.
 
 -define(is_simple(State), State#state.strategy =:= simple_one_for_one).
