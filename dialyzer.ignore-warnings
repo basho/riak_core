@@ -12,6 +12,8 @@ riak_core_gossip.erl:214: The pattern 1 can never match the type 2
 riak_core_gossip.erl:229: The pattern 'true' can never match the type 'false'
 riak_core_gossip.erl:245: The pattern 'true' can never match the type 'false'
 riak_core_ring_handler.erl:73: The pattern {'true', _, _, _} can never match the type {'false',boolean(),[integer()],'down' | 'exiting' | 'invalid' | 'joining' | 'leaving' | 'valid'}
+riak_core_claimant.erl:407: The pattern {'legacy', _} can never match the type {'error','invalid_resize_claim'} | {'ok',{'chstate_v2',_,'undefined' | [any()],{_,_},'undefined' | dict:dict(_,_),'undefined' | {_,_},'undefined' | [any()],[any()],_,'undefined' | [any()],'undefined' | [any()]}}
+riak_core_claimant.erl:913: The pattern {'legacy', _} can never match the type {'error','invalid_resize_claim'} | {'ok',{'chstate_v2',_,'undefined' | [any()],{_,_},'undefined' | dict:dict(_,_),'undefined' | {_,_},'undefined' | [any()],[any()],_,'undefined' | [any()],'undefined' | [any()]}}
 Unknown functions:
   cluster_info:format/3
   cluster_info:register_app/1

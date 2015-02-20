@@ -255,6 +255,9 @@ handle_info({clear, Socket}, State = #state{conns = Conns}) ->
 unwrap_socket({sslsocket, Socket, _}) ->
     unwrap_socket(Socket);
 
+unwrap_socket({gen_tcp, Socket, _, _}) ->       % 17.x
+    Socket;
+
 unwrap_socket({gen_tcp, Socket, _}) ->
     Socket;
 
