@@ -23,6 +23,9 @@
 -export([print_users/0, print_sources/0, print_user/1,
          print_groups/0, print_group/1, print_grants/1]).
 
+%% type exports
+-export_type([context/0]).
+
 %% API
 -export([authenticate/3, add_user/2, alter_user/2, del_user/1,
          add_group/2, alter_group/2, del_group/1,
