@@ -732,5 +732,14 @@ do_write_ringfile_test() ->
     ?assertMatch({error,_}, do_write_ringfile(GenR(ring_perms), ?TEST_RINGFILE)),
     ok = file:change_mode(?TEST_RINGDIR, 8#00755).
 
--endif.
+is_stable_ring_test() ->
+    % This test is efferently coupled to the PROMOTE_TIMEOUT macro value
+    {A,B,C} = Now = os:timestamp(),
+    Within = {A,B-45,C},
+    Outside = {A,B-90,C},
+    ?assertMatch({true,_},is_stable_ring(#state{ring_changed_time={0,0,0}})),
+    ?assertMatch({true,_},is_stable_ring(#state{ring_changed_time=Outside})),
+    ?assertMatch({false,_},is_stable_ring(#state{ring_changed_time=Within})),
+    ?assertMatch({false,_},is_stable_ring(#state{ring_changed_time=Now})).
 
+-endif.
