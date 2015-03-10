@@ -84,7 +84,8 @@
          ring_trans/2,
          run_fixups/3,
          set_cluster_name/1,
-         stop/0]).
+         stop/0,
+         is_stable_ring/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
         terminate/2, code_change/3]).
@@ -211,6 +212,9 @@ ring_trans(Fun, Args) ->
 
 set_cluster_name(Name) ->
     gen_server:call(?MODULE, {set_cluster_name, Name}, infinity).
+
+is_stable_ring() ->
+    gen_server:call(?MODULE, is_stable_ring, infinity).
 
 %% @doc Exposed for support/debug purposes. Forces the node to change its
 %%      ring in a manner that will trigger reconciliation on gossip.
@@ -406,7 +410,10 @@ handle_call({ring_trans, Fun, Args}, _From, State=#state{raw_ring=Ring}) ->
 handle_call({set_cluster_name, Name}, _From, State=#state{raw_ring=Ring}) ->
     NewRing = riak_core_ring:set_cluster_name(Ring, Name),
     State2 = prune_write_notify_ring(NewRing, State),
-    {reply, ok, State2}.
+    {reply, ok, State2};
+handle_call(is_stable_ring, _From, State) ->
+    {IsStable, _DeltaMS} = is_stable_ring(State),
+    {reply, IsStable, State}.
 
 handle_cast(stop, State) ->
     {stop,normal,State};
@@ -431,16 +438,14 @@ handle_cast(write_ringfile, State=#state{raw_ring=Ring}) ->
     {noreply,State}.
 
 
-handle_info(inactivity_timeout, State=#state{ring_changed_time=Then}) ->
-    DeltaUS = erlang:max(0, timer:now_diff(os:timestamp(), Then)),
-    DeltaMS = DeltaUS div 1000,
-    case DeltaMS >= ?PROMOTE_TIMEOUT of
-        true ->
+handle_info(inactivity_timeout, State) ->
+    case is_stable_ring(State) of
+        {true,DeltaMS} ->
             lager:debug("Promoting ring after ~p", [DeltaMS]),
             promote_ring(),
             State2 = State#state{inactivity_timer=undefined},
             {noreply, State2};
-        false ->
+        {false,DeltaMS} ->
             Remaining = ?PROMOTE_TIMEOUT - DeltaMS,
             State2 = set_timer(Remaining, State),
             {noreply, State2}
@@ -630,6 +635,12 @@ prune_write_ring(Ring, State) ->
     State2 = set_ring(Ring, State),
     State2.
 
+is_stable_ring(#state{ring_changed_time=Then}) ->
+    DeltaUS = erlang:max(0, timer:now_diff(os:timestamp(), Then)),
+    DeltaMS = DeltaUS div 1000,
+    IsStable = DeltaMS >= ?PROMOTE_TIMEOUT,
+    {IsStable, DeltaMS}.
+
 %% ===================================================================
 %% Unit tests
 %% ===================================================================
@@ -721,5 +732,14 @@ do_write_ringfile_test() ->
     ?assertMatch({error,_}, do_write_ringfile(GenR(ring_perms), ?TEST_RINGFILE)),
     ok = file:change_mode(?TEST_RINGDIR, 8#00755).
 
--endif.
+is_stable_ring_test() ->
+    {A,B,C} = Now = os:timestamp(),
+    TimeoutSecs = ?PROMOTE_TIMEOUT div 1000,
+    Within = {A, B - (TimeoutSecs div 2), C},
+    Outside = {A, B - (TimeoutSecs + 1), C},
+    ?assertMatch({true,_},is_stable_ring(#state{ring_changed_time={0,0,0}})),
+    ?assertMatch({true,_},is_stable_ring(#state{ring_changed_time=Outside})),
+    ?assertMatch({false,_},is_stable_ring(#state{ring_changed_time=Within})),
+    ?assertMatch({false,_},is_stable_ring(#state{ring_changed_time=Now})).
 
+-endif.
