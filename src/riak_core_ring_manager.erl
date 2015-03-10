@@ -733,7 +733,7 @@ do_write_ringfile_test() ->
     ok = file:change_mode(?TEST_RINGDIR, 8#00755).
 
 is_stable_ring_test() ->
-    % This test is efferently coupled to the PROMOTE_TIMEOUT macro value
+    % This test is coupled to the PROMOTE_TIMEOUT macro value
     {A,B,C} = Now = os:timestamp(),
     Within = {A,B-45,C},
     Outside = {A,B-90,C},
