@@ -635,7 +635,7 @@ prune_write_ring(Ring, State) ->
     State2 = set_ring(Ring, State),
     State2.
 
-is_stable_ring(_State=#state{ring_changed_time=Then}) ->
+is_stable_ring(#state{ring_changed_time=Then}) ->
     DeltaUS = erlang:max(0, timer:now_diff(os:timestamp(), Then)),
     DeltaMS = DeltaUS div 1000,
     IsStable = DeltaMS >= ?PROMOTE_TIMEOUT,
