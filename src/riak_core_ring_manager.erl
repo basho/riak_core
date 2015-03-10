@@ -412,7 +412,7 @@ handle_call({set_cluster_name, Name}, _From, State=#state{raw_ring=Ring}) ->
     State2 = prune_write_notify_ring(NewRing, State),
     {reply, ok, State2};
 handle_call(is_stable_ring, _From, State) ->
-    {IsStable,_DeltaMS} = is_stable_ring(State),
+    {IsStable, _DeltaMS} = is_stable_ring(State),
     {reply, IsStable, State}.
 
 handle_cast(stop, State) ->
