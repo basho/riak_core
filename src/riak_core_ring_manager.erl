@@ -733,10 +733,10 @@ do_write_ringfile_test() ->
     ok = file:change_mode(?TEST_RINGDIR, 8#00755).
 
 is_stable_ring_test() ->
-    % This test is coupled to the PROMOTE_TIMEOUT macro value
     {A,B,C} = Now = os:timestamp(),
-    Within = {A,B-45,C},
-    Outside = {A,B-90,C},
+    TimeoutSecs = ?PROMOTE_TIMEOUT div 1000,
+    Within = {A, B - (TimeoutSecs div 2), C},
+    Outside = {A, B - (TimeoutSecs + 1), C},
     ?assertMatch({true,_},is_stable_ring(#state{ring_changed_time={0,0,0}})),
     ?assertMatch({true,_},is_stable_ring(#state{ring_changed_time=Outside})),
     ?assertMatch({false,_},is_stable_ring(#state{ring_changed_time=Within})),
