@@ -63,10 +63,11 @@
         (R == normal orelse R == shutdown orelse
                                             (is_tuple(R) andalso element(1,R) == shutdown))).
 
--export_type([vnode_opt/0, pool_opt/0]).
+-export_type([vnode_opt/0, pool_opt/0, tick_opt/0]).
 
--type vnode_opt() :: pool_opt().
+-type vnode_opt() :: pool_opt() | tick_opt().
 -type pool_opt() :: {pool, WorkerModule::module(), PoolSize::pos_integer(), WorkerArgs::[term()]}.
+-type tick_opt() :: {tick, Interval::non_neg_integer()}.
 
 -callback init([partition()]) ->
     {ok, ModState::term()} |
@@ -146,6 +147,20 @@
 %% Here is what the spec for handle_info/2 would look like:
 %% -spec handle_info(term(), term()) -> {ok, term()}
 
+%% handle_tick/1 is an optional behaviour callback too.
+%% It will be called in the case when a vnode receives a tick message.
+%% Periodical tick is one of the vnode_opt()
+%% The function signature is: handle_tick(State).
+%% It should return a tuple of the form:
+%% - {ok, NextState} if you want tick to continue, or
+%% - {ok, NextState, NewTickInterval} to change tick interval, or
+%% - {cancel, NextState} to cancel tick.
+%%
+%% Here is what the spec for handle_tick/1 would look like:
+%% -spec handle_tick(term()) -> {ok, term()} |
+%%                              {ok, term(), non_neg_integer()} |
+%%                              {cancel, term()}
+
 -define(DEFAULT_TIMEOUT, 60000).
 -define(LOCK_RETRY_TIMEOUT, 10000).
 -record(state, {
@@ -159,7 +174,10 @@
           pool_pid :: pid() | undefined,
           pool_config :: tuple() | undefined,
           manager_event_timer :: reference(),
-          inactivity_timeout :: non_neg_integer()
+          inactivity_timeout :: non_neg_integer(),
+          inactivity_timer :: reference(),
+          tick_interval :: non_neg_integer(),
+          tick_timer :: reference()
          }).
 
 start_link(Mod, Index, Forward) ->
@@ -192,7 +210,7 @@ init([Mod, Index, InitialInactivityTimeout, Forward]) ->
         true ->
             case do_init(State) of
                 {ok, State2} ->
-                    {ok, active, State2, InitialInactivityTimeout};
+                    {ok, active, start_inactivity_timer(InitialInactivityTimeout, State2)};
                 {error, Reason} ->
                     {stop, Reason}
             end;
@@ -204,21 +222,22 @@ started(timeout, State =
             #state{inactivity_timeout=InitialInactivityTimeout}) ->
     case do_init(State) of
         {ok, State2} ->
-            {next_state, active, State2, InitialInactivityTimeout};
+            {next_state, active, start_inactivity_timer(InitialInactivityTimeout, State2)};
         {error, Reason} ->
-            {stop, Reason}
+            {stop, Reason, State}
     end.
 
 started(wait_for_init, _From, State =
             #state{inactivity_timeout=InitialInactivityTimeout}) ->
+    stop_inactivity_timer(State),
     case do_init(State) of
         {ok, State2} ->
-            {reply, ok, active, State2, InitialInactivityTimeout};
+            {reply, ok, active, start_inactivity_timer(InitialInactivityTimeout, State2)};
         {error, Reason} ->
-            {stop, Reason}
+            {stop, Reason, State}
     end.
 
-do_init(State = #state{index=Index, mod=Mod, forward=Forward}) ->
+do_init(State = #state{index=Index, mod=Mod}) ->
     {ModState, Props} = case Mod:init([Index]) of
         {ok, MS} -> {MS, []};
         {ok, MS, P} -> {MS, P};
@@ -228,26 +247,60 @@ do_init(State = #state{index=Index, mod=Mod, forward=Forward}) ->
         {error, Reason} ->
             {error, Reason};
         _ ->
-            case lists:keyfind(pool, 1, Props) of
-                {pool, WorkerModule, PoolSize, WorkerArgs}=PoolConfig ->
-                    lager:debug("starting worker pool ~p with size of ~p~n",
-                                [WorkerModule, PoolSize]),
-                    {ok, PoolPid} = riak_core_vnode_worker_pool:start_link(WorkerModule,
-                                                                       PoolSize,
-                                                                       Index,
-                                                                       WorkerArgs,
-                                                                       worker_props);
-                _ ->
-                    PoolPid = PoolConfig = undefined
-            end,
-            riak_core_handoff_manager:remove_exclusion(Mod, Index),
-            Timeout = app_helper:get_env(riak_core, vnode_inactivity_timeout, ?DEFAULT_TIMEOUT),
-            Timeout2 = Timeout + random:uniform(Timeout),
-            State2 = State#state{modstate=ModState, inactivity_timeout=Timeout2,
-                                 pool_pid=PoolPid, pool_config=PoolConfig},
-            lager:debug("vnode :: ~p/~p :: ~p~n", [Mod, Index, Forward]),
-            State3 = mod_set_forwarding(Forward, State2),
-            {ok, State3}
+            lists:foldl(fold_init_fun(Props),
+                        {ok, State#state{modstate=ModState}},
+                        [fun init_maybe_start_worker_pool/2,
+                         fun init_remove_exclusion/2,
+                         fun init_set_inactivity_timeout/2,
+                         fun init_set_forwarding/2,
+                         fun init_maybe_start_tick/2])
+    end.
+
+fold_init_fun(Props) ->
+    fun(_F, {error, _}=E) -> E;
+       (F, {ok, State}) -> F(Props, State)
+    end.
+
+init_maybe_start_worker_pool(Props, State = #state{index=Index}) ->
+    case lists:keyfind(pool, 1, Props) of
+        {pool, WorkerModule, PoolSize, WorkerArgs}=PoolConfig ->
+            lager:debug("starting worker pool ~p with size of ~p~n",
+                        [WorkerModule, PoolSize]),
+            {ok, PoolPid} = riak_core_vnode_worker_pool:start_link(WorkerModule,
+                                                                   PoolSize,
+                                                                   Index,
+                                                                   WorkerArgs,
+                                                                   worker_props),
+            {ok, State#state{pool_pid=PoolPid, pool_config=PoolConfig}};
+        _ ->
+            {ok, State}
+    end.
+
+init_remove_exclusion(_Props, State = #state{index=Index, mod=Mod}) ->
+    riak_core_handoff_manager:remove_exclusion(Mod, Index),
+    {ok, State}.
+
+init_set_inactivity_timeout(_Props, State) ->
+    Timeout = app_helper:get_env(riak_core, vnode_inactivity_timeout, ?DEFAULT_TIMEOUT),
+    Timeout2 = Timeout + random:uniform(Timeout),
+    {ok, State#state{inactivity_timeout=Timeout2}}.
+
+init_set_forwarding(_Props, State = #state{index=Index, mod=Mod, forward=Forward}) ->
+    lager:debug("vnode :: ~p/~p :: ~p~n", [Mod, Index, Forward]),
+    {ok, mod_set_forwarding(Forward, State)}.
+
+init_maybe_start_tick(Props, State = #state{mod=Mod}) ->
+    case lists:keyfind(tick, 1, Props) of
+        {tick, TickInterval} ->
+            case erlang:function_exported(Mod, handle_tick, 1) of
+                true ->
+                    lager:debug("setting tick with interval ~p~n", [TickInterval]),
+                    {ok, start_tick_timer(State#state{tick_interval=TickInterval})};
+                false ->
+                    {error, {missing, handle_tick}}
+            end;
+        _ ->
+            {ok, State}
     end.
 
 wait_for_init(Vnode) ->
@@ -275,7 +328,7 @@ core_status(VNode) ->
     gen_fsm:sync_send_all_state_event(VNode, core_status).
 
 continue(State) ->
-    {next_state, active, State, State#state.inactivity_timeout}.
+    {next_state, active, start_inactivity_timer(State)}.
 
 continue(State, NewModState) ->
     continue(State#state{modstate=NewModState}).
@@ -466,12 +519,15 @@ active(timeout, State=#state{mod=Mod, index=Idx}) ->
 active(?COVERAGE_REQ{keyspaces=KeySpaces,
                      request=Request,
                      sender=Sender}, State) ->
+    stop_inactivity_timer(State),
     %% Coverage request handled in handoff and non-handoff.  Will be forwarded if set.
     vnode_coverage(Sender, Request, KeySpaces, State);
 active(?VNODE_REQ{sender=Sender, request={resize_forward, Request}}, State) ->
+    stop_inactivity_timer(State),
     vnode_command(Sender, Request, State);
 active(?VNODE_REQ{sender=Sender, request=Request},
        State=#state{handoff_target=HT}) when HT =:= none ->
+    stop_inactivity_timer(State),
     forward_or_vnode_command(Sender, Request, State);
 active(?VNODE_REQ{sender=Sender, request=Request},
                   State=#state{handoff_type=resize,
@@ -479,6 +535,7 @@ active(?VNODE_REQ{sender=Sender, request=Request},
                                index=Index,
                                forward=Forward,
                                mod=Mod}) ->
+    stop_inactivity_timer(State),
     RequestHash = Mod:request_hash(Request),
     case RequestHash of
         %% will never have enough information to forward request so only handle locally
@@ -498,13 +555,16 @@ active(?VNODE_REQ{sender=Sender, request=Request},
             end
     end;
 active(?VNODE_REQ{sender=Sender, request=Request},State) ->
+    stop_inactivity_timer(State),
     vnode_handoff_command(Sender, Request, State#state.handoff_target, State);
 active(handoff_complete, State) ->
+    stop_inactivity_timer(State),
     State2 = start_manager_event_timer(handoff_complete, State),
     continue(State2);
 active({resize_transfer_complete, SeenIdxs}, State=#state{mod=Mod,
                                                           modstate=ModState,
                                                           handoff_target=Target}) ->
+    stop_inactivity_timer(State),
     case Target of
         none -> continue(State);
         _ ->
@@ -513,16 +573,21 @@ active({resize_transfer_complete, SeenIdxs}, State=#state{mod=Mod,
             finish_handoff(SeenIdxs, State#state{modstate=NewModState})
     end;
 active({handoff_error, _Err, _Reason}, State) ->
+    stop_inactivity_timer(State),
     State2 = start_manager_event_timer(handoff_error, State),
     continue(State2);
 active({send_manager_event, Event}, State) ->
+    stop_inactivity_timer(State),
     State2 = start_manager_event_timer(Event, State),
     continue(State2);
 active({trigger_handoff, TargetNode}, State) ->
+    stop_inactivity_timer(State),
     active({trigger_handoff, State#state.index, TargetNode}, State);
 active({trigger_handoff, TargetIdx, TargetNode}, State) ->
+    stop_inactivity_timer(State),
      maybe_handoff(TargetIdx, TargetNode, State);
 active(trigger_delete, State=#state{mod=Mod,modstate=ModState,index=Idx}) ->
+    stop_inactivity_timer(State),
     case mark_delete_complete(Idx, Mod) of
         {ok, _NewRing} ->
             {ok, NewModState} = Mod:delete(ModState),
@@ -533,6 +598,7 @@ active(trigger_delete, State=#state{mod=Mod,modstate=ModState,index=Idx}) ->
     riak_core_vnode_manager:unregister_vnode(Idx, Mod),
     continue(State#state{modstate={deleted,NewModState}});
 active(unregistered, State=#state{mod=Mod, index=Index}) ->
+    stop_inactivity_timer(State),
     %% Add exclusion so the ring handler will not try to spin this vnode
     %% up until it receives traffic.
     riak_core_handoff_manager:add_exclusion(Mod, Index),
@@ -543,8 +609,9 @@ active(unregistered, State=#state{mod=Mod, index=Index}) ->
                                pool_pid=undefined}}.
 
 active(_Event, _From, State) ->
+    stop_inactivity_timer(State),
     Reply = ok,
-    {reply, Reply, active, State, State#state.inactivity_timeout}.
+    {reply, Reply, active, start_inactivity_timer(State)}.
 
 %% This code lives in riak_core_vnode rather than riak_core_vnode_manager
 %% because the ring_trans call is a synchronous call to the ring manager,
@@ -706,19 +773,23 @@ handle_event({set_forwarding, undefined}, _StateName,
              State=#state{modstate={deleted, _ModState}}) ->
     %% The vnode must forward requests when in the deleted state, therefore
     %% ignore requests to stop forwarding.
+    stop_inactivity_timer(State),
     continue(State);
 handle_event({set_forwarding, ForwardTo}, _StateName, State) ->
+    stop_inactivity_timer(State),
     lager:debug("vnode fwd :: ~p/~p :: ~p -> ~p~n",
                 [State#state.mod, State#state.index, State#state.forward, ForwardTo]),
     State2 = mod_set_forwarding(ForwardTo, State),
     continue(State2#state{forward=ForwardTo});
 handle_event(finish_handoff, _StateName,
              State=#state{modstate={deleted, _ModState}}) ->
+    stop_inactivity_timer(State),
     stop_manager_event_timer(State),
     continue(State#state{handoff_target=none});
 handle_event(finish_handoff, _StateName, State=#state{mod=Mod,
                                                       modstate=ModState,
                                                       handoff_target=Target}) ->
+    stop_inactivity_timer(State),
     stop_manager_event_timer(State),
     case Target of
         none ->
@@ -731,6 +802,7 @@ handle_event(cancel_handoff, _StateName, State=#state{mod=Mod,
                                                       modstate=ModState}) ->
     %% it would be nice to pass {Err, Reason} to the vnode but the
     %% API doesn't currently allow for that.
+    stop_inactivity_timer(State),
     stop_manager_event_timer(State),
     case State#state.handoff_target of
         none ->
@@ -745,10 +817,12 @@ handle_event({trigger_handoff, TargetNode}, StateName, State) ->
     handle_event({trigger_handoff, State#state.index, TargetNode}, StateName, State);
 handle_event({trigger_handoff, _TargetIdx, _TargetNode}, _StateName,
              State=#state{modstate={deleted, _ModState}}) ->
+    stop_inactivity_timer(State),
     continue(State);
 handle_event(R={trigger_handoff, _TargetIdx, _TargetNode}, _StateName, State) ->
     active(R, State);
 handle_event(trigger_delete, _StateName, State=#state{modstate={deleted,_}}) ->
+    stop_inactivity_timer(State),
     continue(State);
 handle_event(trigger_delete, _StateName, State) ->
     active(trigger_delete, State);
@@ -759,30 +833,34 @@ handle_event(R=?COVERAGE_REQ{}, _StateName, State) ->
 
 
 handle_sync_event(current_state, _From, StateName, State) ->
+    stop_inactivity_timer(State),
     {reply, {StateName, State}, StateName, State};
 handle_sync_event(get_mod_index, _From, StateName,
                   State=#state{index=Idx,mod=Mod}) ->
-    {reply, {Mod, Idx}, StateName, State, State#state.inactivity_timeout};
+    stop_inactivity_timer(State),
+    {reply, {Mod, Idx}, StateName, start_inactivity_timer(State)};
 handle_sync_event({handoff_data,_BinObj}, _From, StateName,
                   State=#state{modstate={deleted, _ModState}}) ->
-    {reply, {error, vnode_exiting}, StateName, State,
-     State#state.inactivity_timeout};
+    stop_inactivity_timer(State),
+    {reply, {error, vnode_exiting}, StateName, start_inactivity_timer(State)};
 handle_sync_event({handoff_data,BinObj}, _From, StateName,
                   State=#state{mod=Mod, modstate=ModState}) ->
+    stop_inactivity_timer(State),
     case Mod:handle_handoff_data(BinObj, ModState) of
         {reply, ok, NewModState} ->
-            {reply, ok, StateName, State#state{modstate=NewModState},
-             State#state.inactivity_timeout};
+            {reply, ok, StateName,
+             start_inactivity_timer(State#state{modstate=NewModState})};
         {reply, {error, Err}, NewModState} ->
             lager:error("~p failed to store handoff obj: ~p", [Mod, Err]),
-            {reply, {error, Err}, StateName, State#state{modstate=NewModState},
-             State#state.inactivity_timeout}
+            {reply, {error, Err}, StateName,
+             start_inactivity_timer(State#state{modstate=NewModState})}
     end;
 handle_sync_event(core_status, _From, StateName, State=#state{index=Index,
                                                               mod=Mod,
                                                               modstate=ModState,
                                                               handoff_target=HT,
                                                               forward=FN}) ->
+    stop_inactivity_timer(State),
     Mode = case {FN, HT} of
                {undefined, none} ->
                    active;
@@ -812,11 +890,32 @@ handle_sync_event(core_status, _From, StateName, State=#state{index=Index,
             _ ->
                 []
         end,
-    {reply, {Mode, Status}, StateName, State, State#state.inactivity_timeout}.
+    {reply, {Mode, Status}, StateName, start_inactivity_timer(State)}.
+
+handle_info(tick, StateName,
+            State=#state{mod=Mod,modstate={deleted, _},index=Index}) ->
+    lager:info("~p ~p ignored tick - vnode unregistering\n",
+               [Index, Mod]),
+    {next_state, StateName, State};
+handle_info(tick, StateName, State = #state{mod=Mod, modstate=ModState}) ->
+    %% Assume that if an option tick is set, then handle_tick callback has been
+    %% also defined, otherwise crash.
+    case Mod:handle_tick(ModState) of
+        {ok, NewModState} ->
+            {next_state, StateName,
+             start_tick_timer(State#state{modstate=NewModState})};
+        {ok, NewModState, NewTickInterval} when NewTickInterval > 0 ->
+            {next_state, StateName,
+             start_tick_timer(State#state{modstate=NewModState,
+                                          tick_interval=NewTickInterval})};
+        {cancel, NewModState} ->
+            {next_state, StateName, State#state{modstate=NewModState}}
+    end;
 
 handle_info({'$vnode_proxy_ping', From, Msgs}, StateName, State) ->
+    stop_inactivity_timer(State),
     riak_core_vnode_proxy:cast(From, {vnode_proxy_pong, self(), Msgs}),
-    {next_state, StateName, State, State#state.inactivity_timeout};
+    {next_state, StateName, start_inactivity_timer(State)};
 
 handle_info({'EXIT', Pid, Reason},
             _StateName,
@@ -824,6 +923,7 @@ handle_info({'EXIT', Pid, Reason},
                          index=Index,
                          pool_pid=Pid,
                          pool_config=PoolConfig}) ->
+    stop_inactivity_timer(State),
     case Reason of
         Reason when Reason == normal; Reason == shutdown ->
             continue(State#state{pool_pid=undefined});
@@ -848,11 +948,13 @@ handle_info({'DOWN',_Ref,process,_Pid,normal}, _StateName,
     %% monitors; they are harmless, so don't yell about them. also
     %% only dustbin them in the deleted modstate, because pipe vnodes
     %% need them in other states
+    stop_inactivity_timer(State),
     continue(State);
 handle_info(Info, _StateName,
             State=#state{mod=Mod,modstate={deleted, _},index=Index}) ->
     lager:info("~p ~p ignored handle_info ~p - vnode unregistering\n",
                [Index, Mod, Info]),
+    stop_inactivity_timer(State),
     continue(State);
 handle_info({'EXIT', Pid, Reason}, StateName, State=#state{mod=Mod,modstate=ModState}) ->
     %% A linked processes has died so use the
@@ -860,11 +962,12 @@ handle_info({'EXIT', Pid, Reason}, StateName, State=#state{mod=Mod,modstate=ModS
     %% process to take appropriate action.
     %% If the function is not implemented default
     %% to crashing the process.
+    stop_inactivity_timer(State),
     try
         case Mod:handle_exit(Pid, Reason, ModState) of
             {noreply,NewModState} ->
-                {next_state, StateName, State#state{modstate=NewModState},
-                    State#state.inactivity_timeout};
+                {next_state, StateName,
+                 start_inactivity_timer(State#state{modstate=NewModState})};
             {stop, Reason1, NewModState} ->
                  {stop, Reason1, State#state{modstate=NewModState}}
         end
@@ -874,13 +977,14 @@ handle_info({'EXIT', Pid, Reason}, StateName, State=#state{mod=Mod,modstate=ModS
     end;
 
 handle_info(Info, StateName, State=#state{mod=Mod,modstate=ModState}) ->
+    stop_inactivity_timer(State),
     case erlang:function_exported(Mod, handle_info, 2) of
         true ->
             {ok, NewModState} = Mod:handle_info(Info, ModState),
-            {next_state, StateName, State#state{modstate=NewModState},
-             State#state.inactivity_timeout};
+            {next_state, StateName,
+             start_inactivity_timer(State#state{modstate=NewModState})};
         false ->
-            {next_state, StateName, State, State#state.inactivity_timeout}
+            {next_state, StateName, start_inactivity_timer(State)}
     end.
 
 terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState,
@@ -1054,6 +1158,21 @@ mod_set_forwarding(Forward, State=#state{mod=Mod, modstate=ModState}) ->
         false ->
             State
     end.
+
+start_inactivity_timer(State=#state{inactivity_timeout=InactivityTimeout}) ->
+    start_inactivity_timer(InactivityTimeout, State).
+
+start_inactivity_timer(InactivityTimeout, State) ->
+    T = gen_fsm:send_event_after(InactivityTimeout, timeout),
+    State#state{inactivity_timer=T}.
+
+stop_inactivity_timer(State=#state{inactivity_timer=T}) ->
+    _ = gen_fsm:cancel_timer(T),
+    State.
+
+start_tick_timer(State=#state{tick_interval=TickInterval}) ->
+    T = erlang:send_after(TickInterval, self(), tick),
+    State#state{tick_timer=T}.
 
 %% ===================================================================
 %% Test API
