@@ -2,7 +2,7 @@
 %%
 %% riak_core: Core Riak Application
 %%
-%% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2015 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -172,11 +172,22 @@ load_cert(Cert) ->
                     Type == 'Certificate', Cipher == 'not_encrypted']
     end.
 
-%% Reject another node whose common name is the same as ours unless it's a wildcard
+%% Reject another node whose common name is the same as ours unless it's
+%% a wildcard. A wildcard is defined ONLY as beginning with '*'.
+%%
+%% The test ONLY returns 'true' when the strings are identical (disregarding
+%% case) AND do not start with the character '*'. All other cases return false,
+%% hence the various shortcuts.
 invalid_cn_pair([$* | _], _) ->
     false;
-invalid_cn_pair(LeftCN, RightCN) ->
-    string:to_lower(LeftCN) == string:to_lower(RightCN).
+invalid_cn_pair(_, [$* | _]) ->
+    false;
+invalid_cn_pair(SameCN, SameCN) ->
+    true;
+invalid_cn_pair(LeftCN, RightCN) when length(LeftCN) == length(RightCN) ->
+    string:to_lower(LeftCN) == string:to_lower(RightCN);
+invalid_cn_pair(_, _) ->
+    false.
 
 %% Custom SSL verification function for checking common names against the
 %% whitelist.
@@ -198,15 +209,16 @@ verify_ssl(Cert, valid_peer, {App, MyCommonName}) ->
                 "certificate's common name: ~p", [CommonName]),
             {fail, duplicate_common_name};
         _ ->
-            case validate_common_name(CommonName,
-                    app_helper:get_env(App, peer_common_name_acl, "*")) of
+            ACL = app_helper:get_env(App, peer_common_name_acl, "*"),
+            case validate_common_name(CommonName, ACL) of
                 {true, Filter} ->
-                    lager:info("SSL connection from ~s granted by ACL ~s",
+                    lager:info("SSL connection from ~s granted by ACL \"~s\"",
                         [CommonName, Filter]),
                     {valid, MyCommonName};
                 false ->
-                    lager:error("SSL connection from ~s denied, no matching ACL",
-                        [CommonName]),
+                    lager:error(
+                        "SSL connection from ~s denied, no matching ACL in ~p",
+                        [CommonName, ACL]),
                     {fail, no_acl}
             end
     end.
