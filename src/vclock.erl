@@ -62,7 +62,8 @@ fresh(Node, Count) ->
 
 -spec fresh(vclock_node(), counter(), timestamp()) ->
                    vclock().
-fresh(Node, Count, Ts) ->
+fresh(Node, Count, Ts) when is_integer(Ts) andalso  Ts > 0,
+                            is_integer(Count) andalso Count > 0 ->
     [{Node, {Count, Ts}}].
 
 % @doc Return true if Va is a direct descendant of Vb, else false -- remember, a vclock is its own descendant!
