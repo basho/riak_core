@@ -31,6 +31,11 @@ init([]) ->
     VMods = riak_core:vnode_modules(),
     Proxies = [proxy_ref(Mod, Index) || {_, Mod} <- VMods,
                                         Index <- Indices],
+    %% Create ets table for caching the proxy process registered
+    %% names. See riak_core_vnode_proxy:reg_name/2,3.
+    riak_core_vnode_proxy = ets:new(riak_core_vnode_proxy,
+                                    [set, public, named_table,
+                                     {read_concurrency, true}]),
     {ok, {{one_for_one, 5, 10}, Proxies}}.
 
 start_proxy(Mod, Index) ->

@@ -43,10 +43,12 @@
 -define(DEFAULT_OVERLOAD_THRESHOLD, 10000).
 
 reg_name(Mod, Index) ->
-    ModBin = atom_to_binary(Mod, latin1),
-    IdxBin = list_to_binary(integer_to_list(Index)),
-    AllBin = <<$p,$r,$o,$x,$y,$_, ModBin/binary, $_, IdxBin/binary>>,
-    binary_to_atom(AllBin, latin1).
+    case get_reg_name(Mod, Index) of
+        [{{Mod,Index},RegName}] ->
+            RegName;
+        [] ->
+            compute_and_cache_reg_name(Mod, Index)
+    end.
 
 reg_name(Mod, Index, Node) ->
     {reg_name(Mod, Index), Node}.
@@ -299,6 +301,24 @@ get_vnode_pid(State=#state{mod=Mod, index=Index, vnode_pid=undefined}) ->
 get_vnode_pid(State=#state{vnode_pid=Pid}) ->
     {Pid, State}.
 
+%% @private
+cache_reg_name(Mod, Index, RegName) ->
+    ets:insert(?MODULE, {{Mod, Index}, RegName}).
+
+%% @private
+get_reg_name(Mod, Index) ->
+    ets:lookup(?MODULE, {Mod, Index}).
+
+%% @private
+compute_and_cache_reg_name(Mod, Index) ->
+    ModBin = atom_to_binary(Mod, latin1),
+    IdxBin = list_to_binary(integer_to_list(Index)),
+    AllBin = <<$p,$r,$o,$x,$y,$_, ModBin/binary, $_, IdxBin/binary>>,
+    RegName = binary_to_atom(AllBin, latin1),
+    true = cache_reg_name(Mod, Index, RegName),
+    RegName.
+
+
 -ifdef(TEST).
 
 update_msg_counter() ->
@@ -335,6 +355,17 @@ fake_loop_block() ->
         unblock ->
             fake_loop()
     end.
+
+reg_name_test() ->
+    %% TODO: This table might be lingering from previous tests
+    catch ets:new(?MODULE,[set, named_table]),
+    ?assertEqual([], get_reg_name(foo_vnode, 0)),
+    ?assertEqual(proxy_foo_vnode_0, reg_name(foo_vnode, 0)),
+    ?assertEqual([{{foo_vnode, 0}, proxy_foo_vnode_0}], get_reg_name(foo_vnode, 0)),
+    ?assertEqual(proxy_foo_vnode_0, reg_name(foo_vnode, 0))
+    %% ?assert(ets:delete(?MODULE)).
+    .
+
 
 overload_test_() ->
     {timeout, 900, {foreach,
