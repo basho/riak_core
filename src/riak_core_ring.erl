@@ -137,7 +137,7 @@
 
 -export_type([riak_core_ring/0, ring_size/0, partition_id/0]).
 
--include("riak_core.hrl").
+-include_lib("otp_compat/include/otp_compat.hrl").
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -149,7 +149,7 @@
     vclock   :: vclock:vclock() | undefined, % for this chstate object, entries are
                                  % {Node, Ctr}
     chring   :: chash:chash(),   % chash ring of {IndexAsInt, Node} mappings
-    meta     :: riak_core_dict() | undefined,
+    meta     :: dict_t() | undefined,
                                  % dict of cluster-wide other data (primarily
                                  % bucket N-value, etc)
 

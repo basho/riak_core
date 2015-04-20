@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2012 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2012-2015 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -127,14 +127,6 @@
          mem_levels/1]).
 -export([compare2/4]).
 
--ifdef(namespaced_types).
--type hashtree_dict() :: dict:dict().
--type hashtree_array() :: array:array().
--else.
--type hashtree_dict() :: dict().
--type hashtree_array() :: array().
--endif.
-
 -ifdef(TEST).
 -export([local_compare/2]).
 -export([run_local/0,
@@ -155,6 +147,8 @@
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
+
+-include_lib("otp_compat/include/otp_compat.hrl").
 
 -define(NUM_SEGMENTS, (1024*1024)).
 -define(WIDTH, 1024).
@@ -187,13 +181,13 @@
                 segments       :: pos_integer(),
                 width          :: pos_integer(),
                 mem_levels     :: integer(),
-                tree           :: hashtree_dict(),
+                tree           :: dict_t(),
                 ref            :: term(),
                 path           :: string(),
                 itr            :: term(),
                 write_buffer   :: [{put, binary(), binary()} | {delete, binary()}],
                 write_buffer_count :: integer(),
-                dirty_segments :: hashtree_array()
+                dirty_segments :: array_t()
                }).
 
 -record(itr_state, {itr                :: term(),
@@ -964,17 +958,17 @@ orddict_delta(D1, [], Acc) ->
 %%%===================================================================
 -define(W, 27).
 
--spec bitarray_new(integer()) -> hashtree_array().
+-spec bitarray_new(integer()) -> array_t().
 bitarray_new(N) -> array:new((N-1) div ?W + 1, {default, 0}).
 
--spec bitarray_set(integer(), hashtree_array()) -> hashtree_array().
+-spec bitarray_set(integer(), array_t()) -> array_t().
 bitarray_set(I, A) ->
     AI = I div ?W,
     V = array:get(AI, A),
     V1 = V bor (1 bsl (I rem ?W)),
     array:set(AI, V1, A).
 
--spec bitarray_to_list(hashtree_array()) -> [integer()].
+-spec bitarray_to_list(array_t()) -> [integer()].
 bitarray_to_list(A) ->
     lists:reverse(
       array:sparse_foldl(fun(I, V, Acc) ->

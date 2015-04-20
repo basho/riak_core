@@ -1,3 +1,23 @@
+%% -------------------------------------------------------------------
+%%
+%% Copyright (c) 2011,2015 Basho Technologies, Inc.
+%%
+%% This file is provided to you under the Apache License,
+%% Version 2.0 (the "License"); you may not use this file
+%% except in compliance with the License.  You may obtain
+%% a copy of the License at
+%%
+%%   http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing,
+%% software distributed under the License is distributed on an
+%% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+%% KIND, either express or implied.  See the License for the
+%% specific language governing permissions and limitations
+%% under the License.
+%%
+%% -------------------------------------------------------------------
+
 -module(new_cluster_membership_model_eqc).
 
 -ifdef(MODEL).
@@ -5,6 +25,7 @@
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("otp_compat/include/otp_compat.hrl").
 
 -compile(export_all).
 -define(TEST_ITERATIONS, 3000).
@@ -27,16 +48,16 @@
     vclock   :: vclock:vclock(), % for this chstate object, entries are
                                  % {Node, Ctr}
     chring   :: chash:chash(),   % chash ring of {IndexAsInt, Node} mappings
-    meta     :: dict(),          % dict of cluster-wide other data (primarily
+    meta     :: dict_t(),          % dict of cluster-wide other data (primarily
                                  % bucket N-value, etc)
 
-    clustername :: {node(), term()}, 
+    clustername :: {node(), term()},
     next     :: [{integer(), node(), node(), [module()], awaiting | complete}],
     members  :: [{node(), {member_status(), vclock:vclock(), []}}],
     claimant :: node(),
     seen     :: [{node(), vclock:vclock()}],
     rvsn     :: vclock:vclock()
-}). 
+}).
 
 -type member_status() :: valid | invalid | leaving | exiting.
 
@@ -50,7 +71,7 @@
 
 %% Global test state
 -record(state, {
-          nstates :: dict(),
+          nstates :: dict_t(),
           ring_size :: integer(),
           members  :: [{node(), {member_status(), vclock:vclock()}}],
           primary :: [integer()],
@@ -63,7 +84,7 @@
           active_handoffs :: [{integer(), integer(), integer()}],
           seed :: {integer(), integer(), integer()},
           old_seed :: {integer(), integer(), integer()},
-          split :: dict()
+          split :: dict_t()
         }).
 
 eqc_test_() ->
@@ -425,7 +446,7 @@ precondition2(State,_) ->
 is_joining(Node, State) ->
     CState = get_cstate(State, Node),
     member_status(CState, Node) =:= joining.
-            
+
 maybe_inconsistent(State, Node) ->
     NState = get_nstate(State, Node),
     CState = get_cstate(State, Node),
@@ -452,7 +473,7 @@ next_state(State, Result, Call) ->
         State2 ->
             State2
     catch
-        _:_ -> 
+        _:_ ->
             save_random(State#state{old_seed=OldSeed})
     end.
 
@@ -1068,7 +1089,7 @@ maybe_shutdown(State, Node) ->
         _ ->
             State
     end.
-            
+
 reconcile(State, CS01, CS02) ->
     VNode = owner_node(CS01),
     CS03 = update_seen(VNode, CS01),
@@ -1653,7 +1674,7 @@ change_owners(CState, Reassign) ->
     lists:foldl(fun({Idx, NewOwner}, CState0) ->
                         riak_core_ring:transfer_node(Idx, NewOwner, CState0)
                 end, CState, Reassign).
-    
+
 remove_node(CState, Node, Status) ->
     Indices = indices(CState, Node),
     remove_node(CState, Node, Status, Indices).
@@ -1733,7 +1754,7 @@ attempt_simple_transfer(Ring, [{P, Exit}|Rest], TargetN, Exit, Idx, Last) ->
                                            fun({_, Owner}) -> Node /= Owner end,
                                            Rest))
                           end,
-            case lists:filter(fun(N) -> 
+            case lists:filter(fun(N) ->
                                  Next = StepsToNext(N),
                                  (Next+1 >= TargetN)
                                           orelse (Next == length(Rest))
@@ -1820,7 +1841,7 @@ mark_transfer_complete(State, CState=?CHSTATE{next=Next, vclock=VClock}, Idx, Mo
                              {Idx, Owner, NextOwner, Transfers2, Status2}),
     VClock2 = vclock:increment(Owner, VClock),
     CState?CHSTATE{next=Next2, vclock=VClock2}.
-   
+
 %% VClock timestamps may be different for test generation versus
 %% shrinking/checking phases. Normalize to test for equality.
 equal_cstate(CS1, CS2) ->
@@ -1858,7 +1879,7 @@ filtered_seen(CS=?CHSTATE{seen=Seen}) ->
         Members ->
             orddict:filter(fun(N, _) -> lists:member(N, Members) end, Seen)
     end.
-  
+
 equal_vclock(VC1, VC2) ->
     VC3 = [{Node, {Count, 1}} || {Node, {Count, _TS}} <- VC1],
     VC4 = [{Node, {Count, 1}} || {Node, {Count, _TS}} <- VC2],
@@ -1874,7 +1895,7 @@ check_read(State, Owner, Idx) ->
             check_read2(State, Owner, Idx)
     end.
 
-check_read2(State, Owner, Idx) -> 
+check_read2(State, Owner, Idx) ->
     %%io:format("Checking if ~p has data for ~p~n", [Owner, Idx]),
     %% ?debugFmt("Checking if ~p has data for ~p~n", [Owner, Idx]),
     NState = get_nstate(State, Owner),
@@ -1955,7 +1976,7 @@ run_cmds(RingSize, Cmds) ->
 manual_test_list() ->
     [fun test_down_reassign/0].
 
-test_down_reassign() ->    
+test_down_reassign() ->
     run_cmds([{set,{var,1},
                {call,new_cluster_membership_model_eqc,initial_cluster,
                 [{[2,3,5],[0,1,4]},[0,1,2,3,4,5,6,7],{1,1,1}]}},

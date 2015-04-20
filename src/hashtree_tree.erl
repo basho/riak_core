@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013-2015 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -119,11 +119,7 @@
 
 -export_type([tree/0, tree_node/0, handler_fun/1, remote_fun/0]).
 
--ifdef(namespaced_types).
--type hashtree_gb_set() :: gb_sets:set().
--else.
--type hashtree_gb_set() :: gb_set().
--endif.
+-include_lib("otp_compat/include/otp_compat.hrl").
 
 -record(hashtree_tree, {
           %% the identifier for this tree. used as part of the ids
@@ -144,7 +140,7 @@
           snapshot   :: ets:tab(),
 
           %% set of dirty leaves
-          dirty      :: hashtree_gb_set()
+          dirty      :: gb_set_t()
          }).
 
 -define(ROOT, '$ht_root').
