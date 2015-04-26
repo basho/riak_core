@@ -2,7 +2,7 @@
 %%
 %% riak_core: Core Riak Application
 %%
-%% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2015 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -65,12 +65,12 @@
          proxy/2
         ]).
 
--include("riak_core_vnode.hrl").
-
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -export([counter_loop/1,incr_counter/1,decr_counter/1]).
 -endif.
+-include_lib("otp_compat/include/crypto_hash.hrl").
+-include("riak_core_vnode.hrl").
 
 %% R14 Compatibility
 -compile({no_auto_import,[integer_to_list/2]}).
@@ -198,19 +198,11 @@ integer_to_list(I0, Base, R0) ->
 	    integer_to_list(I1, Base, R1)
     end.
 
--ifndef(old_hash).
 sha(Bin) ->
-    crypto:hash(sha, Bin).
+    ?crypto_hash_sha(Bin).
 
 md5(Bin) ->
-    crypto:hash(md5, Bin).
--else.
-sha(Bin) ->
-    crypto:sha(Bin).
-
-md5(Bin) ->
-    crypto:md5(Bin).
--endif.
+    ?crypto_hash_md5(Bin).
 
 %% @spec unique_id_62() -> string()
 %% @doc Create a random identifying integer, returning its string

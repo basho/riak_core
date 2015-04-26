@@ -18,7 +18,7 @@
 %%
 %% -------------------------------------------------------------------
 
--include_lib("otp_compat/include/otp_compat.hrl").
+-include_lib("otp_compat/include/ns_types.hrl").
 
 -define(PT_MSG_INIT, 0).
 -define(PT_MSG_OBJ, 1).

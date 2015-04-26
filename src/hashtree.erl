@@ -148,7 +148,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--include_lib("otp_compat/include/otp_compat.hrl").
+-include_lib("otp_compat/include/ns_types.hrl").
+-include_lib("otp_compat/include/crypto_hash.hrl").
 
 -define(NUM_SEGMENTS, (1024*1024)).
 -define(WIDTH, 1024).
@@ -477,42 +478,6 @@ get_bucket(Level, Bucket, State) ->
 %%% Internal functions
 %%%===================================================================
 
--ifndef(old_hash).
-md5(Bin) ->
-    crypto:hash(md5, Bin).
-
--ifdef(TEST).
-esha(Bin) ->
-    crypto:hash(sha, Bin).
--endif.
-
-esha_init() ->
-    crypto:hash_init(sha).
-
-esha_update(Ctx, Bin) ->
-    crypto:hash_update(Ctx, Bin).
-
-esha_final(Ctx) ->
-    crypto:hash_final(Ctx).
--else.
-md5(Bin) ->
-    crypto:md5(Bin).
-
--ifdef(TEST).
-esha(Bin) ->
-    crypto:sha(Bin).
--endif.
-
-esha_init() ->
-    crypto:sha_init().
-
-esha_update(Ctx, Bin) ->
-    crypto:sha_update(Ctx, Bin).
-
-esha_final(Ctx) ->
-    crypto:sha_final(Ctx).
--endif.
-
 -spec set_bucket(integer(), integer(), any(), hashtree()) -> hashtree().
 set_bucket(Level, Bucket, Val, State) ->
     case Level =< State#state.mem_levels of
@@ -527,7 +492,8 @@ new_segment_store(Opts, State) ->
     DataDir = case proplists:get_value(segment_path, Opts) of
                   undefined ->
                       Root = "/tmp/anti/level",
-                      <<P:128/integer>> = md5(term_to_binary({erlang:now(), make_ref()})),
+                      <<P:128/integer>> = ?crypto_hash_md5(
+                          term_to_binary({erlang:now(), make_ref()})),
                       filename:join(Root, integer_to_list(P));
                   SegmentPath ->
                       SegmentPath
@@ -571,18 +537,18 @@ sha(Bin) ->
     sha(Chunk, Bin).
 
 sha(Chunk, Bin) ->
-    Ctx1 = esha_init(),
+    Ctx1 = ?crypto_hash_sha_init(),
     Ctx2 = sha(Chunk, Bin, Ctx1),
-    SHA = esha_final(Ctx2),
+    SHA = ?crypto_hash_sha_final(Ctx2),
     SHA.
 
 sha(Chunk, Bin, Ctx) ->
     case Bin of
         <<Data:Chunk/binary, Rest/binary>> ->
-            Ctx2 = esha_update(Ctx, Data),
+            Ctx2 = ?crypto_hash_sha_update(Ctx, Data),
             sha(Chunk, Rest, Ctx2);
         Data ->
-            Ctx2 = esha_update(Ctx, Data),
+            Ctx2 = ?crypto_hash_sha_update(Ctx, Data),
             Ctx2
     end.
 
@@ -1202,10 +1168,10 @@ snapshot_test() ->
     ok.
 
 delta_test() ->
-    T1 = update_tree(insert(<<"1">>, esha(term_to_binary(make_ref())),
-                            new())),
-    T2 = update_tree(insert(<<"2">>, esha(term_to_binary(make_ref())),
-                            new())),
+    T1 = update_tree(insert(<<"1">>,
+        ?crypto_hash_sha(term_to_binary(make_ref())), new())),
+    T2 = update_tree(insert(<<"2">>,
+        ?crypto_hash_sha(term_to_binary(make_ref())), new())),
     Diff = local_compare(T1, T2),
     ?assertEqual([{remote_missing, <<"1">>}, {missing, <<"2">>}], Diff),
     Diff2 = local_compare(T2, T1),
@@ -1237,7 +1203,7 @@ prop_sha() ->
                                 %% into the number of chunks (as a natural
                                 %% number)
                                 ChunkSize = max(1, (Size div NumChunks)),
-                                sha(ChunkSize, Bin) =:= esha(Bin)
+                                sha(ChunkSize, Bin) =:= ?crypto_hash_sha(Bin)
                             end)).
 
 eqc_test_() ->

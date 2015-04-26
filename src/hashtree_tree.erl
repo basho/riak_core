@@ -119,7 +119,7 @@
 
 -export_type([tree/0, tree_node/0, handler_fun/1, remote_fun/0]).
 
--include_lib("otp_compat/include/otp_compat.hrl").
+-include_lib("otp_compat/include/ns_types.hrl").
 
 -record(hashtree_tree, {
           %% the identifier for this tree. used as part of the ids
