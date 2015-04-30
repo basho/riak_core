@@ -62,12 +62,17 @@
          make_fold_req/4,
          make_newest_fold_req/1,
          proxy_spawn/1,
-         proxy/2
+         proxy/2,
+         consult/1
         ]).
 
 -include("riak_core_vnode.hrl").
 
 -ifdef(TEST).
+-ifdef(EQC).
+-export([prop_any_bin_consult/0]).
+-include_lib("eqc/include/eqc.hrl").
+-endif.
 -include_lib("eunit/include/eunit.hrl").
 -export([counter_loop/1,incr_counter/1,decr_counter/1]).
 -endif.
@@ -148,6 +153,55 @@ replace_file(FN, Data) ->
             end;
         Err ->
             Err
+    end.
+
+%% @doc Similar to {@link file:consult/1} but will consult files that
+%% are not valid unicode. Specifially files written with
+%% `io_lib:format("~p,", io_list())' in r16 before `utf8' became the
+%% default encoding.
+-spec consult(file:filename()) -> {ok, [term()]} | {error, Err :: term()}.
+consult(FName) ->
+    case file:consult(FName) of
+        {ok, Terms} ->
+            {ok, Terms};
+        {error, _Reason} ->
+            latin_consult(FName)
+    end.
+
+%% @private copied code from {@link file:consult/1} that first sets
+%% the encoding to legacy default of `latin1'.
+-spec latin_consult(file:filename()) -> {ok, [term()]} |
+                                        {error, Err :: term()}.
+latin_consult(FName) ->
+    case file:open(FName, [read]) of
+	{ok, Fd} ->
+	    R = consult_stream(Fd),
+	    file:close(Fd),
+	    R;
+	Error ->
+	    Error
+    end.
+
+%% @private copied code from {@link file:consult/1} for consulting a
+%% file of erlang terms.
+-spec consult_stream(file:fd()) -> {ok, [term()]} |
+                                   {error, Err :: term()}.
+consult_stream(Fd) ->
+    _ = epp:set_encoding(Fd, latin1), %% This is the pre-r17 default encoding
+    consult_stream(Fd, 1, []).
+
+%% @private read terms from an io device
+-spec consult_stream(file:fd(), io:location(), [term()]) ->
+                            {ok, [term()]} |
+                            {error, Err :: term()}.
+consult_stream(Fd, Line, Acc) ->
+    case io:read(Fd, '', Line) of
+	{ok,Term,EndLine} ->
+	    consult_stream(Fd, EndLine, [Term|Acc]);
+	{error,Error,_Line} ->
+	    {error,Error};
+	{eof,_Line} ->
+	    {ok,lists:reverse(Acc)}
     end.
 
 %% @doc Similar to {@link file:read_file/1} but uses raw file `I/O'
@@ -876,5 +930,16 @@ proxy_spawn_test() ->
         ok
     end.
 
+-ifdef(EQC).
+
+prop_any_bin_consult() ->
+    ?FORALL(Bin, binary(),
+            begin
+                Term = [{name, Bin}],
+                File = "consult_test.file",
+                ok = replace_file(File, io_lib:format("~w.", [Term])),
+                equals({ok, [Term]}, consult(File))
+            end).
 -endif.
 
+-endif.
