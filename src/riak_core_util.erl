@@ -62,7 +62,8 @@
          make_fold_req/4,
          make_newest_fold_req/1,
          proxy_spawn/1,
-         proxy/2
+         proxy/2,
+         consult/1
         ]).
 
 -ifdef(TEST).
@@ -148,6 +149,87 @@ replace_file(FN, Data) ->
             end;
         Err ->
             Err
+    end.
+
+-spec consult(file:filename()) -> {ok, [term()]} | {error, Reason :: term()}.
+%% @doc Similar to {@link file:consult/1} but will try to consult files that
+%% were written with an encoding other than the current runtime's default.
+%%
+%% The result is exactly as specified for {@link file:consult/1}. If reading
+%% in the alternate encoding fails, the error returned is that reported by
+%% attempting the operation in the default encoding (or the encoding set in
+%% the file).
+%%
+%% Erlang changed the default encoding between R16 & 17, so files written by
+%% one may not be read properly by the other, so if we don't get a valid set
+%% of terms with the default, try the opposite encoding.
+%%
+%% If the file was written with an encoding marker as described in
+%% {@link epp:read_encoding/1), that's the only encoding that will be tried.
+consult(FName) ->
+    case file:consult(FName) of
+        {ok, Terms} ->
+            {ok, Terms};
+        {error, {_, _, _}} = Failure ->
+            % Error interpreting terms in the file. There is no case in which
+            % the UTF-8 encoding of a term cannot be read as Latin-1 - the
+            % values may not be correct, but we won't get a format error. As
+            % such, we can't recover anything useful by trying to read the
+            % file differently if we're on a default-latin-1 version.
+            case otp_compat:otp_version() > 16 of
+                true ->
+                    case latin1_consult(FName) of
+                        {ok, _} = Success ->
+                            Success;
+                        _ ->
+                            % return the original error, it was probably right
+                            Failure
+                    end;
+                _ ->
+                    Failure
+            end;
+        OpenErr ->
+            % error opening the file
+            OpenErr
+    end.
+
+-spec latin1_consult(file:filename()) ->
+    {ok, [term()]} | {error, Reason :: term()}.
+%% @private
+%% @doc Try reading a named file in latin-1 encoding.
+%% This will only get called on a non-latin-1-defualt system.
+%% @end
+latin1_consult(FName) ->
+    case file:open(FName, [read]) of
+        {ok, Fd} ->
+            try
+                case epp:set_encoding(Fd, latin1) of
+                    none ->
+                        consult_stream(Fd, 1, []);
+                    Enc ->
+                        % encoding is set in the file, we can't override it
+                        {error, Enc}
+                end
+            after
+                file:close(Fd)
+            end;
+        Error ->
+            Error
+    end.
+
+-spec consult_stream(file:fd(), io:location(), [term()]) ->
+    {ok, [term()]} | {error, Reason :: term()}.
+%% @private
+%% @doc Read a stream the same way {@link file:consult/1} does.
+%% @end
+consult_stream(Fd, Line, Acc) ->
+    case io:read(Fd, '', Line) of
+        {ok, Term, EndLine} ->
+            consult_stream(Fd, EndLine, Acc ++ [Term]);
+        {error, Error, _Line} ->
+            {error, Error};
+        {eof, _Line} ->
+            {ok, Acc}
     end.
 
 %% @doc Similar to {@link file:read_file/1} but uses raw file `I/O'
@@ -866,6 +948,89 @@ proxy_spawn_test() ->
             ok
     after 1000 ->
         ok
+    end.
+
+consult_test() ->
+    FN = make_temp_file(),
+    ?assertEqual(true, is_list(FN)),
+    TestFun = case otp_compat:otp_version() > 16 of
+        true ->
+            fun test_consult_default_utf8/6;
+        _ ->
+            fun test_consult_default_latin1/6
+    end,
+    try
+        test_consult(0, 11 + random:uniform(567), FN, TestFun)
+    after
+        file:delete(FN)
+    end.
+
+test_consult(N, N, _FN, _TestFun) ->
+    ok;
+test_consult(Prev, Max, FN, TestFun) ->
+    Cur = Prev + 1,
+    Bin = binary_to_list(crypto:rand_bytes(random:uniform(987))),
+    % filter out quotes and backslashes, we're building a quotable string
+    Str = lists:filter(fun(C) -> C /= $" andalso C /= $\\ end, Bin),
+    Term = {test, Str},
+    Data = "{test, \"" ++ Str ++ "\"}.\n",
+    HiBits = lists:any(fun(Byte) -> Byte > 127 end, Str),
+    TestFun(FN, Cur, Max, Data, Term, HiBits),
+    test_consult(Cur, Max, FN, TestFun).
+
+%
+% include where we are in the loop and what encoding we're using to
+% get useful output if the comparison fails
+%
+
+test_consult_default_utf8(FN, Cur, Max, Data, Term, HiBits) ->
+    MatchL1 = {Cur, Max, latin1, {ok, [Term]}},
+    MatchU8 = {Cur, Max, utf8, {ok, [Term]}},
+    ok = file:write_file(FN, Data, [{encoding, utf8}]),
+    ?assertEqual(MatchU8, {Cur, Max, utf8, consult(FN)}),
+    ?assertEqual(MatchU8, {Cur, Max, utf8, file:consult(FN)}),
+    ok = file:write_file(FN, Data, [{encoding, latin1}]),
+    ?assertEqual(MatchL1, {Cur, Max, latin1, consult(FN)}),
+    case HiBits of
+        true ->
+            ?assertNotEqual(MatchL1, {Cur, Max, latin1, file:consult(FN)});
+        _ ->
+            ?assertEqual(MatchL1, {Cur, Max, latin1, file:consult(FN)})
+    end.
+
+test_consult_default_latin1(FN, Cur, Max, Data, Term, HiBits) ->
+    MatchL1 = {Cur, Max, latin1, {ok, [Term]}},
+    MatchU8 = {Cur, Max, utf8, {ok, [Term]}},
+    ok = file:write_file(FN, Data, [{encoding, latin1}]),
+    ?assertEqual(MatchL1, {Cur, Max, latin1, consult(FN)}),
+    ?assertEqual(MatchL1, {Cur, Max, latin1, file:consult(FN)}),
+    ok = file:write_file(FN, Data, [{encoding, utf8}]),
+    case HiBits of
+        true ->
+            ?assertNotEqual(MatchU8, {Cur, Max, utf8, consult(FN)}),
+            ?assertNotEqual(MatchU8, {Cur, Max, utf8, file:consult(FN)}),
+            %
+            % They should both be wrong, but they should be the same wrong.
+            %
+            ?assertEqual(
+                {Cur, Max, utf8, consult(FN)},
+                {Cur, Max, utf8, file:consult(FN)});
+        _ ->
+            ?assertEqual(MatchU8, {Cur, Max, utf8, consult(FN)}),
+            ?assertEqual(MatchU8, {Cur, Max, utf8, file:consult(FN)})
+    end.
+
+make_temp_file() ->
+    FN = io_lib:format("tf.~p", [erlang:phash2({random:uniform(), self()})]),
+    FP = filename:join("/tmp", FN),
+    case file:open(FP, [write, exclusive, raw]) of
+        {ok, FD} ->
+            ok = file:close(FD),
+            FP;
+        {error, eexist} ->
+            make_temp_file();
+        Err ->
+            Err
     end.
 
 -endif.
