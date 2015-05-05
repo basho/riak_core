@@ -3,7 +3,7 @@
 %% riak_core_coverage_fsm: Distribute work to a covering set of VNodes.
 %%
 %%
-%% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2015 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -67,8 +67,6 @@
 -behaviour(gen_fsm).
 
 %% API
--export([behaviour_info/1]).
-
 -export([start_link/3]).
 
 -ifdef(TEST).
@@ -87,15 +85,16 @@
          terminate/3,
          code_change/4]).
 
--spec behaviour_info(atom()) -> 'undefined' | [{atom(), arity()}].
-behaviour_info(callbacks) ->
-    [
-     {init, 2},
-     {process_results, 2},
-     {finish, 2}
-    ];
-behaviour_info(_) ->
-    undefined.
+-callback init(from(), Args::list()) -> State::term().
+%% In the several riak_kv_*_fsm where this behaviour is used,
+%% process_results has arity 2 or 3, with all but the last arg being
+%% too specific for particular modules, so let's not legislate what
+%% types those args should be.
+-callback process_results(Arg1::term(), State::term()) ->
+    {done, State::term()} | {error, term()} | {ok, State::term()}.
+-callback finish({error, term()}|clean, State::term()) ->
+    {stop, normal, State::term()}.
+
 
 -define(DEFAULT_TIMEOUT, 60000*8).
 
