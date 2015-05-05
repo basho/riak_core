@@ -1,5 +1,5 @@
 %%
-%% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2015 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -20,10 +20,11 @@
 
 -behaviour(gen_server).
 
--export([behaviour_info/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
         code_change/3]).
 -export([start_link/1, handle_work/3, handle_work/4]).
+
+-include("riak_core_vnode.hrl").
 
 -ifdef(PULSE).
 -compile(export_all).
@@ -37,12 +38,14 @@
         modstate :: any()
     }).
 
--spec behaviour_info(atom()) -> 'undefined' | [{atom(), arity()}].
-behaviour_info(callbacks) ->
-    [{init_worker,3},
-     {handle_work,3}];
-behaviour_info(_Other) ->
-    undefined.
+-callback init_worker(VNodeIndex::partition(),
+                      Args::list(), Props::proplists:proplist()) ->
+    {ok, State::term()}.
+-callback handle_work({Op::atom(),
+                       FoldFun::function(), FinishFun::function()},
+                      _Sender::pid(), State::term()) ->
+    {noreply, State::term()}.
+
 
 start_link(Args) ->
     WorkerMod = proplists:get_value(worker_callback_mod, Args),
