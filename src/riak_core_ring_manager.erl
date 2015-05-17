@@ -2,7 +2,7 @@
 %%
 %% riak_core: Core Riak Application
 %%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2015 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -346,14 +346,7 @@ reload_ring(live) ->
                                    [lager:posix_error(Reason)]),
                     throw({error, Reason});
                 Ring ->
-                    %% Upgrade the ring data structure if necessary.
-                    case riak_core_ring:legacy_ring(Ring) of
-                        true ->
-                            lager:info("Upgrading legacy ring"),
-                            riak_core_ring:upgrade(Ring);
-                        false ->
-                            Ring
-                    end
+                    Ring
             end;
         {error, not_found} ->
             lager:warning("No ring file available."),

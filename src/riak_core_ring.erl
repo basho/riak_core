@@ -2,7 +2,7 @@
 %%
 %% riak_core: Core Riak Application
 %%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2015 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -55,8 +55,6 @@
          remove_meta/2]).
 
 -export([cluster_name/1,
-         legacy_ring/1,
-         legacy_reconcile/2,
          upgrade/1,
          downgrade/2,
          set_tainted/1,
@@ -161,14 +159,6 @@
     rvsn     :: vclock:vclock()
 }).
 
-%% Legacy chstate
--record(chstate, {
-    nodename :: node(), % the Node responsible for this chstate
-    vclock,   % for this chstate object, entries are {Node, Ctr}
-    chring :: chash:chash(),   % chash ring of {IndexAsInt, Node} mappings
-    meta      % dict of cluster-wide other data (primarily bucket N-value, etc)
-}).
-
 -type member_status() :: joining | valid | invalid | leaving | exiting | down.
 
 %% type meta_entry(). Record for each entry in #chstate.meta
@@ -199,61 +189,17 @@
 %% Public API
 %% ===================================================================
 
-%% @doc Returns true if the given ring is a legacy ring.
-legacy_ring(#chstate{}) ->
-    true;
-legacy_ring(_) ->
-    false.
-
 %% @doc Upgrade old ring structures to the latest format.
 upgrade(Old=?CHSTATE{}) ->
-    Old;
-upgrade(Old=#chstate{}) ->
-    #chstate{nodename=Node,
-             vclock=VC,
-             chring=Ring,
-             meta=Meta} = Old,
-    New1 = ?CHSTATE{nodename=Node,
-                    vclock=VC,
-                    chring=Ring,
-                    meta=Meta,
-                    clustername=undefined,
-                    next=[],
-                    members=[],
-                    claimant=undefined,
-                    seen=[],
-                    rvsn=VC},
-    MemberVC = vclock:increment(Node, vclock:fresh()),
-    Members = [{Member, {valid, MemberVC, []}}
-               || Member <- chash:members(Ring)],
-    New2 = New1?CHSTATE{members=Members},
-    case node() of
-        Node ->
-            GVsn = riak_core_gossip:gossip_version(),
-            update_member_meta(Node, New2, Node,
-                               gossip_vsn, GVsn, same_vclock);
-        _ ->
-            New2
-    end.
+    Old.
 
 %% @doc Downgrade the latest ring structure to a specified version.
-downgrade(1,?CHSTATE{nodename=Node,
-                     vclock=VC,
-                     chring=Ring,
-                     meta=Meta}) ->
-    #chstate{nodename=Node,
-             vclock=VC,
-             chring=Ring,
-             meta=Meta};
 downgrade(2,State=?CHSTATE{}) ->
     State.
 
 set_tainted(Ring) ->
     update_meta(riak_core_ring_tainted, true, Ring).
 
-check_tainted(#chstate{}, _Msg) ->
-    %% Legacy ring is never tainted
-    ok;
 check_tainted(Ring=?CHSTATE{}, Msg) ->
     Exit = app_helper:get_env(riak_core, exit_when_tainted, false),
     case {get_meta(riak_core_ring_tainted, Ring), Exit} of
@@ -1363,77 +1309,6 @@ pretty_print(Ring, Opts) ->
 %% @doc Return a ring with all transfers cancelled - for claim sim
 cancel_transfers(Ring) ->
     Ring?CHSTATE{next=[]}.
-
-%% ===================================================================
-%% Legacy reconciliation
-%% ===================================================================
-
-%% @doc Incorporate another node's state into our view of the Riak world.
-legacy_reconcile(ExternState, MyState) ->
-    case vclock:equal(MyState#chstate.vclock, vclock:fresh()) of
-        true ->
-            {new_ring, #chstate{nodename=MyState#chstate.nodename,
-                                vclock=ExternState#chstate.vclock,
-                                chring=ExternState#chstate.chring,
-                                meta=ExternState#chstate.meta}};
-        false ->
-            case ancestors([ExternState, MyState]) of
-                [OlderState] ->
-                    case vclock:equal(OlderState#chstate.vclock,
-                                      MyState#chstate.vclock) of
-                        true ->
-                            {new_ring,
-                             #chstate{nodename=MyState#chstate.nodename,
-                                      vclock=ExternState#chstate.vclock,
-                                      chring=ExternState#chstate.chring,
-                                      meta=ExternState#chstate.meta}};
-                        false -> {no_change, MyState}
-                    end;
-                [] ->
-                    case legacy_equal_rings(ExternState,MyState) of
-                        true -> {no_change, MyState};
-                        false -> {new_ring,
-                                  legacy_reconcile(MyState#chstate.nodename,
-                                                   ExternState, MyState)}
-                    end
-            end
-    end.
-
-%% @private
-ancestors(RingStates) ->
-    Ancest = [[O2 || O2 <- RingStates,
-     vclock:descends(O1#chstate.vclock,O2#chstate.vclock),
-     (vclock:descends(O2#chstate.vclock,O1#chstate.vclock) == false)]
- || O1 <- RingStates],
-    lists:flatten(Ancest).
-
-%% @private
-legacy_equal_rings(_A=#chstate{chring=RA,meta=MA},
-                   _B=#chstate{chring=RB,meta=MB}) ->
-    MDA = lists:sort(dict:to_list(MA)),
-    MDB = lists:sort(dict:to_list(MB)),
-    case MDA =:= MDB of
-        false -> false;
-        true -> RA =:= RB
-    end.
-
-%% @private
-% @doc If two states are mutually non-descendant, merge them anyway.
-%      This can cause a bit of churn, but should converge.
-% @spec legacy_reconcile(MyNodeName :: term(),
-%                 StateA :: chstate(), StateB :: chstate())
-%              -> chstate()
-legacy_reconcile(MyNodeName, StateA, StateB) ->
-    % take two states (non-descendant) and merge them
-    VClock = vclock:increment(MyNodeName,
-        vclock:merge([StateA#chstate.vclock,
-                StateB#chstate.vclock])),
-    CHRing = chash:merge_rings(StateA#chstate.chring,StateB#chstate.chring),
-    Meta = merge_meta(StateA#chstate.meta, StateB#chstate.meta),
-    #chstate{nodename=MyNodeName,
-             vclock=VClock,
-             chring=CHRing,
-             meta=Meta}.
 
 %% ====================================================================
 %% Internal functions
