@@ -50,5 +50,5 @@ load_schema() ->
         {ok, Directories} ->
             ok = clique_config:load_schema(Directories);
         _ ->
-            ok = clique_config:load_schema([code:lib_dir()])
+            ok = clique_config:load_schema([code:priv_dir(riak_core)])
     end.
