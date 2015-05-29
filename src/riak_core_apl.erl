@@ -43,8 +43,8 @@
 -type ring() :: riak_core_ring:riak_core_ring().
 -type preflist() :: [{index(), node()}].
 -type preflist_ann() :: [{{index(), node()}, primary|fallback}].
-%% @type preflist_with_pnum_ann -
-%% Annoated preflist where the partition value is an id/number
+%% @type preflist_with_pnum_ann().
+%% Annotated preflist where the partition value is an id/number
 %% (0 to ring_size-1) instead of a hash.
 -type preflist_with_pnum_ann() :: [{{riak_core_ring:partition_id(), node()},
                                     primary|fallback}].
@@ -265,7 +265,7 @@ four_node_test() ->
                   {365375409332725729550921208179070754913983135744,nodea}],
                  get_apl(last_in_ring(), 3, Ring,  [nodea, nodeb])).
 
-%% @doc Create a perfect ring - RingSize must be a multiple of nodes
+%% Create a perfect ring - RingSize must be a multiple of nodes
 perfect_ring(RingSize, Nodes) when RingSize rem length(Nodes) =:= 0 ->
     Ring = riak_core_ring:fresh(RingSize,node()),
     Owners = riak_core_ring:all_owners(Ring),

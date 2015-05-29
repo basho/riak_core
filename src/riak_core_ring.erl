@@ -169,7 +169,7 @@
               %                             calendar:universal_time()),
 }).
 
-%% @type riak_core_ring() is the opaque data type used for partition ownership
+%% @type riak_core_ring(). Opaque data type used for partition ownership
 -type riak_core_ring() :: ?CHSTATE{}.
 -type chstate() :: riak_core_ring().
 
@@ -181,8 +181,7 @@
 -type resize_transfer() :: {{integer(),term()}, ordsets:ordset(node()), awaiting | complete}.
 
 -type ring_size() :: non_neg_integer().
-%% @type partition_id() (or partition number) -
-%% This integer represents a value in the range [0, ring_size-1].
+%% @type partition_id(). This integer represents a value in the range [0, ring_size-1].
 -type partition_id() :: non_neg_integer().
 
 %% ===================================================================
