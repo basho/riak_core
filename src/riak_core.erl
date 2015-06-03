@@ -83,7 +83,7 @@ join(_, Node, Rejoin, Auto) ->
     end.
 
 get_other_ring(Node) ->
-    riak_core_util:safe_rpc(Node, riak_core_ring_manager, get_my_ring, []).
+    riak_core_util:safe_rpc(Node, riak_core_ring_manager, get_raw_ring, []).
 
 standard_join(Node, Rejoin, Auto) when is_atom(Node) ->
     case net_adm:ping(Node) of
