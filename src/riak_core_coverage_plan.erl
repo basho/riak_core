@@ -26,13 +26,15 @@
 
 -module(riak_core_coverage_plan).
 
+-include("riak_core_vnode.hrl").
+
 %% API
 -export([create_plan/5]).
 
 -type index() :: chash:index_as_int().
 -type req_id() :: non_neg_integer().
 -type coverage_vnodes() :: [{index(), node()}].
--type vnode_filters() :: [{node(), [{index(), [index()]}]}].
+-type vnode_filters() :: [{node(), [{index(), [index()]}]}]. %% XXX: Y U NO FIND THIS DIALYZER
 -type coverage_plan() :: {coverage_vnodes(), vnode_filters()}.
 
 %% ===================================================================
@@ -41,10 +43,30 @@
 
 %% @doc Create a coverage plan to distribute work to a set
 %%      covering VNodes around the ring.
--spec create_plan(all | allup, pos_integer(), pos_integer(), 
+-spec create_plan(vnode_target(), pos_integer(), pos_integer(),
                   req_id(), atom()) ->
                          {error, term()} | coverage_plan().
-create_plan(VNodeSelector, NVal, PVC, ReqId, Service) ->
+%% create_plan(#vnode_selector{vnode_identifier=TargetHash,
+%%                             partition_filters=HashFilters,
+%%                             allow_remote=true},
+%%             NVal, PVC, ReqId, Service) ->
+%%     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
+%%     PartitionCount = chashbin:num_partitions(CHBin),
+%%     RingIndexInc = chash:ring_increment(PartitionCount),
+
+%%     %% Get a list of the VNodes owned by any unavailble nodes
+%%     DownVNodes = [Index ||
+%%                      {Index, _Node}
+%%                          <- riak_core_apl:offline_owners(Service, CHBin)],
+%% create_plan(#vnode_selector{vnode_identifier=TargetHash,
+%%                             partition_filters=HashFilters,
+%%                             allow_remote=false},
+create_plan(#vnode_selector{vnode_identifier=TargetHash,
+                            partition_filters=[],
+                            allow_remote=false},
+            _NVal, _PVC, _ReqId, _Service) ->
+    {[{TargetHash, node()}], []};
+create_plan(VNodeTarget, NVal, PVC, ReqId, Service) ->
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
     PartitionCount = chashbin:num_partitions(CHBin),
     %% Create a coverage plan with the requested primary
@@ -100,7 +122,7 @@ create_plan(VNodeSelector, NVal, PVC, ReqId, Service) ->
             %% executing the coverage operation.
             lists:mapfoldl(CoverageVNodeFun, [], CoveragePlan);
         {insufficient_vnodes_available, _KeySpace, PartialCoverage}  ->
-            case VNodeSelector of
+            case VNodeTarget of
                 allup ->
                     %% The allup indicator means generate a coverage plan
                     %% for any available VNodes.
@@ -255,4 +277,3 @@ compare_next_vnode({CA, _VA, TBA}, {CB, _VB, TBB}) ->
 %% @doc Count how many of CoversKeys appear in KeySpace
 covers(KeySpace, CoversKeys) ->
     ordsets:size(ordsets:intersection(KeySpace, CoversKeys)).
-
