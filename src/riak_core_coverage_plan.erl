@@ -58,14 +58,11 @@
 %%     DownVNodes = [Index ||
 %%                      {Index, _Node}
 %%                          <- riak_core_apl:offline_owners(Service, CHBin)],
-%% create_plan(#vnode_coverage{vnode_identifier=TargetHash,
-%%                             partition_filters=HashFilters,
-%%                             allow_remote=false},
 create_plan(#vnode_coverage{vnode_identifier=TargetHash,
-                            partition_filters=[],
+                            partition_filters=HashFilters,
                             allow_remote=false},
             _NVal, _PVC, _ReqId, _Service) ->
-    {[{TargetHash, node()}], []};
+    {[{TargetHash, node()}], [{TargetHash, HashFilters}]};
 create_plan(VNodeTarget, NVal, PVC, ReqId, Service) ->
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
     PartitionCount = chashbin:num_partitions(CHBin),
