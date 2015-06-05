@@ -43,10 +43,10 @@
 
 %% @doc Create a coverage plan to distribute work to a set
 %%      covering VNodes around the ring.
--spec create_plan(vnode_target(), pos_integer(), pos_integer(),
+-spec create_plan(vnode_selector(), pos_integer(), pos_integer(),
                   req_id(), atom()) ->
                          {error, term()} | coverage_plan().
-%% create_plan(#vnode_selector{vnode_identifier=TargetHash,
+%% create_plan(#vnode_coverage{vnode_identifier=TargetHash,
 %%                             partition_filters=HashFilters,
 %%                             allow_remote=true},
 %%             NVal, PVC, ReqId, Service) ->
@@ -58,10 +58,10 @@
 %%     DownVNodes = [Index ||
 %%                      {Index, _Node}
 %%                          <- riak_core_apl:offline_owners(Service, CHBin)],
-%% create_plan(#vnode_selector{vnode_identifier=TargetHash,
+%% create_plan(#vnode_coverage{vnode_identifier=TargetHash,
 %%                             partition_filters=HashFilters,
 %%                             allow_remote=false},
-create_plan(#vnode_selector{vnode_identifier=TargetHash,
+create_plan(#vnode_coverage{vnode_identifier=TargetHash,
                             partition_filters=[],
                             allow_remote=false},
             _NVal, _PVC, _ReqId, _Service) ->

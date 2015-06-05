@@ -36,11 +36,11 @@
 
 -type handoff_dest() :: {riak_core_handoff_manager:ho_type(), {partition(), node()}}.
 
--record(vnode_selector, {
+-record(vnode_coverage, {
           vnode_identifier = 0 :: non_neg_integer(),
           partition_filters = [] :: [non_neg_integer()],
           subpartition_specifier = [] :: [term()],
           allow_remote = false :: boolean()
          }).
 
--type vnode_target() :: all | allup | #vnode_selector{}.
+-type vnode_selector() :: all | allup | #vnode_coverage{}.
