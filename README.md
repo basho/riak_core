@@ -9,7 +9,7 @@ distributed, scalable, fault-tolerant applications.
 
 For some introductory reading on Riak Core (that’s not pure code),
 there’s an old but still valuable
-[blog post on the Basho Blog](http://basho.com/blog/technical/2011/04/12/Where-To-Start-With-Riak-Core/)
+[blog post on the Basho Blog](http://basho.com/where-to-start-with-riak-core/)
 that’s well worth your time.
 
 ## Contributing
