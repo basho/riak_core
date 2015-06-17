@@ -46,18 +46,6 @@
 -spec create_plan(vnode_selector(), pos_integer(), pos_integer(),
                   req_id(), atom()) ->
                          {error, term()} | coverage_plan().
-%% create_plan(#vnode_coverage{vnode_identifier=TargetHash,
-%%                             partition_filters=HashFilters,
-%%                             allow_remote=true},
-%%             NVal, PVC, ReqId, Service) ->
-%%     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
-%%     PartitionCount = chashbin:num_partitions(CHBin),
-%%     RingIndexInc = chash:ring_increment(PartitionCount),
-
-%%     %% Get a list of the VNodes owned by any unavailble nodes
-%%     DownVNodes = [Index ||
-%%                      {Index, _Node}
-%%                          <- riak_core_apl:offline_owners(Service, CHBin)],
 create_plan(#vnode_coverage{vnode_identifier=TargetHash,
                             partition_filters=HashFilters,
                             allow_remote=false},
