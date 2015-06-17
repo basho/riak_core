@@ -47,8 +47,7 @@
                   req_id(), atom()) ->
                          {error, term()} | coverage_plan().
 create_plan(#vnode_coverage{vnode_identifier=TargetHash,
-                            partition_filters=HashFilters,
-                            allow_remote=false},
+                            partition_filters=HashFilters},
             _NVal, _PVC, _ReqId, _Service) ->
     {[{TargetHash, node()}], [{TargetHash, HashFilters}]};
 create_plan(VNodeTarget, NVal, PVC, ReqId, Service) ->
