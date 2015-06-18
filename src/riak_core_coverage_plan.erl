@@ -37,6 +37,8 @@
 -type vnode_filters() :: [{node(), [{index(), [index()]}]}]. %% XXX: Y U NO FIND THIS DIALYZER
 -type coverage_plan() :: {coverage_vnodes(), vnode_filters()}.
 
+-export_type([coverage_plan/0, coverage_vnodes/0, vnode_filters/0]).
+
 %% ===================================================================
 %% Public API
 %% ===================================================================
