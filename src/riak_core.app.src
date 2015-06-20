@@ -13,6 +13,7 @@
                   lager,
                   sasl,
                   crypto,
+                  riak_net,
                   riak_sysmon,
                   os_mon,
                   basho_stats,
