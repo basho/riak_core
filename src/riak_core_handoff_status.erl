@@ -21,8 +21,8 @@
 
 -include("riak_core_handoff.hrl").
 
--export([handoff_summary/2,
-         handoff_details/2,
+-export([handoff_summary/3,
+         handoff_details/3,
          collect_node_transfer_data/0]).
 
 -define(ORDERED_TRANSFERS_FOR_DISPLAY,
@@ -32,18 +32,18 @@
 %%%%%%
 %% clique callbacks
 
--spec handoff_summary([tuple()], [tuple()]) -> clique_status:status().
-handoff_summary([], []) ->
+-spec handoff_summary([string()], [tuple()], [tuple()]) -> clique_status:status().
+handoff_summary(_, [], []) ->
     node_summary().
 
--spec handoff_details([tuple()], [tuple()]) -> clique_status:status().
-handoff_details([], []) ->
+-spec handoff_details([string()], [tuple()], [tuple()]) -> clique_status:status().
+handoff_details(_, [], []) ->
     build_handoff_details(node());
-handoff_details([], [{node, Node}]) ->
+handoff_details(_, [], [{node, Node}]) ->
     build_handoff_details(Node);
-handoff_details([], [{all, _Value}]) ->
+handoff_details(_, [], [{all, _Value}]) ->
     build_handoff_details(all);
-handoff_details([], _) ->
+handoff_details(_, [], _) ->
     [clique_status:alert([clique_status:text("Cannot use both --all and --node flags at the same time.")])].
 
 %% end of clique callbacks

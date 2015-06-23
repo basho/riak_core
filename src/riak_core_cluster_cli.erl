@@ -31,10 +31,10 @@
 
 -export([
     register_cli/0,
-    status/2,
-    partition_count/2,
-    partitions/2,
-    partition/2
+    status/3,
+    partition_count/3,
+    partitions/3,
+    partition/3
 ]).
 
 register_cli() ->
@@ -61,7 +61,7 @@ status_register() ->
     [["riak-admin", "cluster", "status"], % Cmd
      [],                                  % KeySpecs
      [],                                  % FlagSpecs
-     fun status/2].                       % Implementation callback.
+     fun status/3].                       % Implementation callback.
 
 cluster_usage() ->
     [
@@ -91,7 +91,7 @@ claim_percent(Ring, Node) ->
     Indices = riak_core_ring:indices(Ring, Node),
     io_lib:format("~5.1f", [length(Indices) * 100 / RingSize]).
 
-status([], []) ->
+status(_, [], []) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     RingStatus = riak_core_status:ring_status(),
     %% {Claimant, RingReady, Down, MarkedDown, Changes} = RingStatus
@@ -141,7 +141,7 @@ partition_count_register() ->
      [{node, [{shortname, "n"}, {longname, "node"},
               {typecast,
                fun clique_typecast:to_node/1}]}],% FlagSpecs
-     fun partition_count/2].                       % Implementation callback
+     fun partition_count/3].                       % Implementation callback
 
 partition_count_usage() ->
     ["riak-admin cluster partition-count [--node node]\n\n",
@@ -153,12 +153,12 @@ partition_count_usage() ->
      "      This flag can currently take only one node and be used once\n"
     ].
 
-partition_count([], [{node, Node}]) ->
+partition_count(_, [], [{node, Node}]) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Indices = riak_core_ring:indices(Ring, Node),
     Row = [[{node, Node}, {partitions, length(Indices)}, {pct, claim_percent(Ring, Node)}]],
     [clique_status:table(Row)];
-partition_count([], []) ->
+partition_count(_, [], []) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     [clique_status:text(
          io_lib:format("Cluster-wide partition-count: ~p",
@@ -174,7 +174,7 @@ partitions_register() ->
      [{node, [{shortname, "n"}, {longname, "node"},
               {typecast,
                fun clique_typecast:to_node/1}]}],% FlagSpecs
-     fun partitions/2].                            % Implementation callback
+     fun partitions/3].                            % Implementation callback
 
 
 partitions_usage() ->
@@ -186,9 +186,9 @@ partitions_usage() ->
      "      This flag can currently take only one node and be used once\n"
     ].
 
-partitions([], [{node, Node}]) ->
+partitions(_, [], [{node, Node}]) ->
     partitions_output(Node);
-partitions([], []) ->
+partitions(_, [], []) ->
     partitions_output(node()).
 
 partitions_output(Node) ->
@@ -219,9 +219,9 @@ generate_rows(RingSize, Type, Ids) ->
 partition_register() ->
     [["riak-admin", "cluster", "partition"],         % Cmd
      [{id,    [{typecast, fun list_to_integer/1}]},
-      {index, [{typecast, fun list_to_integer/1}]}], % Keyspecs                                             % KeySpecs
+      {index, [{typecast, fun list_to_integer/1}]}], % KeySpecs
      [],                                             % FlagSpecs
-     fun partition/2].                               % Implementation callback
+     fun partition/3].                               % Implementation callback
 
 partition_usage() ->
     ["riak-admin cluster partition id=0\n",
@@ -229,14 +229,14 @@ partition_usage() ->
      "  Display the id for the provided index, or index for the ",
      "specified id.\n"].
 
-partition([{index, Index}], []) when Index >= 0 ->
+partition(_, [{index, Index}], []) when Index >= 0 ->
     id_out(index, Index);
-partition([{id, Id}], []) when Id >= 0 ->
+partition(_, [{id, Id}], []) when Id >= 0 ->
     id_out(id, Id);
-partition([{Op, Value}], []) ->
+partition(_, [{Op, Value}], []) ->
     [make_alert(["ERROR: The given value ", integer_to_list(Value),
                 " for ", atom_to_list(Op), " is invalid."])];
-partition([], []) ->
+partition(_, [], []) ->
     clique_status:usage().
 
 id_out(InputType, Number) ->
