@@ -34,12 +34,12 @@ register_cli() ->
 
 register_cli_cmds() ->
     register_enable_disable_commands(),
-    clique:register_command(["riak-admin", "handoff", "summary"], [], [],
-                             fun riak_core_handoff_status:handoff_summary/2),
-    clique:register_command(["riak-admin", "handoff", "details"], [],
-                             node_and_all_flags(), fun riak_core_handoff_status:handoff_details/2),
-    clique:register_command(["riak-admin", "handoff", "config"], [],
-                              node_and_all_flags(), fun handoff_config/2).
+    ok = clique:register_command(["riak-admin", "handoff", "summary"], [], [],
+                                 fun riak_core_handoff_status:handoff_summary/3),
+    ok = clique:register_command(["riak-admin", "handoff", "details"], [],
+                                 node_and_all_flags(), fun riak_core_handoff_status:handoff_details/3),
+    ok = clique:register_command(["riak-admin", "handoff", "config"], [],
+                                 node_and_all_flags(), fun handoff_config/3).
 
 node_and_all_flags() ->
     [{node, [{shortname, "n"}, {longname, "node"},
@@ -112,7 +112,7 @@ handoff_enable_disable_usage() ->
 
 handoff_cmd_spec(EnOrDis, Direction) ->
     Cmd = ["riak-admin", "handoff", atom_to_list(EnOrDis), atom_to_list(Direction)],
-    Callback = fun([], Flags) ->
+    Callback = fun(_, [], Flags) ->
                        handoff_change_enabled_setting(EnOrDis, Direction, Flags)
                end,
     [
@@ -143,13 +143,13 @@ details_usage() ->
      "      Display the handoffs on every node in the cluster\n"
     ].
 
-handoff_config(_Args, Flags) when length(Flags) > 1 ->
+handoff_config(_CmdBase, _Args, Flags) when length(Flags) > 1 ->
     [clique_status:text("Can't specify both --all and --node flags")];
-handoff_config(_Args, []) ->
+handoff_config(_CmdBase, _Args, []) ->
     clique_config:show(config_vars(), []);
-handoff_config(_Args, [{all, Val}]) ->
+handoff_config(_CmdBase, _Args, [{all, Val}]) ->
     clique_config:show(config_vars(), [{all, Val}]);
-handoff_config(_Args, [{node, Node}]) ->
+handoff_config(_CmdBase, _Args, [{node, Node}]) ->
     clique_config:show(config_vars(), [{node, Node}]).
 
 config_vars() ->
