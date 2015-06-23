@@ -91,7 +91,7 @@ claim_percent(Ring, Node) ->
     Indices = riak_core_ring:indices(Ring, Node),
     io_lib:format("~5.1f", [length(Indices) * 100 / RingSize]).
 
-status(_, [], []) ->
+status(_CmdBase, [], []) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     RingStatus = riak_core_status:ring_status(),
     %% {Claimant, RingReady, Down, MarkedDown, Changes} = RingStatus
@@ -153,12 +153,12 @@ partition_count_usage() ->
      "      This flag can currently take only one node and be used once\n"
     ].
 
-partition_count(_, [], [{node, Node}]) ->
+partition_count(_CmdBase, [], [{node, Node}]) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     Indices = riak_core_ring:indices(Ring, Node),
     Row = [[{node, Node}, {partitions, length(Indices)}, {pct, claim_percent(Ring, Node)}]],
     [clique_status:table(Row)];
-partition_count(_, [], []) ->
+partition_count(_CmdBase, [], []) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     [clique_status:text(
          io_lib:format("Cluster-wide partition-count: ~p",
@@ -186,9 +186,9 @@ partitions_usage() ->
      "      This flag can currently take only one node and be used once\n"
     ].
 
-partitions(_, [], [{node, Node}]) ->
+partitions(_CmdBase, [], [{node, Node}]) ->
     partitions_output(Node);
-partitions(_, [], []) ->
+partitions(_CmdBase, [], []) ->
     partitions_output(node()).
 
 partitions_output(Node) ->
@@ -229,14 +229,14 @@ partition_usage() ->
      "  Display the id for the provided index, or index for the ",
      "specified id.\n"].
 
-partition(_, [{index, Index}], []) when Index >= 0 ->
+partition(_CmdBase, [{index, Index}], []) when Index >= 0 ->
     id_out(index, Index);
-partition(_, [{id, Id}], []) when Id >= 0 ->
+partition(_CmdBase, [{id, Id}], []) when Id >= 0 ->
     id_out(id, Id);
-partition(_, [{Op, Value}], []) ->
+partition(_CmdBase, [{Op, Value}], []) ->
     [make_alert(["ERROR: The given value ", integer_to_list(Value),
                 " for ", atom_to_list(Op), " is invalid."])];
-partition(_, [], []) ->
+partition(_CmdBase, [], []) ->
     clique_status:usage().
 
 id_out(InputType, Number) ->

@@ -33,17 +33,17 @@
 %% clique callbacks
 
 -spec handoff_summary([string()], [tuple()], [tuple()]) -> clique_status:status().
-handoff_summary(_, [], []) ->
+handoff_summary(_CmdBase, [], []) ->
     node_summary().
 
 -spec handoff_details([string()], [tuple()], [tuple()]) -> clique_status:status().
-handoff_details(_, [], []) ->
+handoff_details(_CmdBase, [], []) ->
     build_handoff_details(node());
-handoff_details(_, [], [{node, Node}]) ->
+handoff_details(_CmdBase, [], [{node, Node}]) ->
     build_handoff_details(Node);
-handoff_details(_, [], [{all, _Value}]) ->
+handoff_details(_CmdBase, [], [{all, _Value}]) ->
     build_handoff_details(all);
-handoff_details(_, [], _) ->
+handoff_details(_CmdBase, [], _) ->
     [clique_status:alert([clique_status:text("Cannot use both --all and --node flags at the same time.")])].
 
 %% end of clique callbacks

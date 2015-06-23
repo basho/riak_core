@@ -143,13 +143,13 @@ details_usage() ->
      "      Display the handoffs on every node in the cluster\n"
     ].
 
-handoff_config(_, _Args, Flags) when length(Flags) > 1 ->
+handoff_config(_CmdBase, _Args, Flags) when length(Flags) > 1 ->
     [clique_status:text("Can't specify both --all and --node flags")];
-handoff_config(_, _Args, []) ->
+handoff_config(_CmdBase, _Args, []) ->
     clique_config:show(config_vars(), []);
-handoff_config(_, _Args, [{all, Val}]) ->
+handoff_config(_CmdBase, _Args, [{all, Val}]) ->
     clique_config:show(config_vars(), [{all, Val}]);
-handoff_config(_, _Args, [{node, Node}]) ->
+handoff_config(_CmdBase, _Args, [{node, Node}]) ->
     clique_config:show(config_vars(), [{node, Node}]).
 
 config_vars() ->
