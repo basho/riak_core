@@ -53,6 +53,10 @@ create_plan(#vnode_coverage{vnode_identifier=TargetHash,
             _NVal, _PVC, _ReqId, _Service) ->
     {[{TargetHash, node()}], []};
 create_plan(#vnode_coverage{vnode_identifier=TargetHash,
+                            partition_filters={_Mask, _BSL}=SubpMask},
+            _NVal, _PVC, _ReqId, _Service) ->
+    {[{TargetHash, node()}], SubpMask};
+create_plan(#vnode_coverage{vnode_identifier=TargetHash,
                             partition_filters=HashFilters},
             _NVal, _PVC, _ReqId, _Service) ->
     {[{TargetHash, node()}], [{TargetHash, HashFilters}]};

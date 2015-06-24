@@ -36,10 +36,12 @@
 
 -type handoff_dest() :: {riak_core_handoff_manager:ho_type(), {partition(), node()}}.
 
+%% An integer, and the number of bits to shift it left
+-type subpartition() :: { non_neg_integer(), pos_integer() }.
+
 -record(vnode_coverage, {
           vnode_identifier = 0 :: non_neg_integer(),
-          partition_filters = [] :: [non_neg_integer()],
-          subpartition_specifier = [] :: [term()]
+          partition_filters = [] :: [non_neg_integer()] | subpartition()
          }).
 
 -type vnode_selector() :: all | allup | #vnode_coverage{}.
