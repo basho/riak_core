@@ -37,6 +37,9 @@
 -type vnode_filters() :: [{node(), [{index(), [index()]}]}]. %% XXX: Y U NO FIND THIS DIALYZER
 -type coverage_plan() :: {coverage_vnodes(), vnode_filters()}.
 
+%% Each: Node, Vnode hash, { Subpartition mask, BSL }
+-type subp_plan() :: [{index(), node(), { non_neg_integer(), pos_integer() }}].
+
 -export_type([coverage_plan/0, coverage_vnodes/0, vnode_filters/0]).
 
 %% ===================================================================
@@ -44,22 +47,37 @@
 %% ===================================================================
 
 %% @doc Create a coverage plan to distribute work to a set
-%%      covering VNodes around the ring.
+%%      of covering VNodes around the ring. If the first argument
+%%      is a vnode_coverage record, that means we've previously
+%%      generated a coverage plan and we're being fed back one
+%%      element of it. Return that element in the proper format.
 -spec create_plan(vnode_selector(), pos_integer(), pos_integer(),
                   req_id(), atom()) ->
-                         {error, term()} | coverage_plan().
+                         {error, term()} | coverage_plan() | subp_plan().
+create_plan(#vnode_coverage{vnode_identifier=TargetHash,
+                            subpartition={Mask, BSL}},
+            _NVal, _PVC, _ReqId, _Service) ->
+    {[{TargetHash, node()}], [{TargetHash, {Mask, BSL}}]};
 create_plan(#vnode_coverage{vnode_identifier=TargetHash,
                             partition_filters=[]},
             _NVal, _PVC, _ReqId, _Service) ->
     {[{TargetHash, node()}], []};
 create_plan(#vnode_coverage{vnode_identifier=TargetHash,
-                            partition_filters={_Mask, _BSL}=SubpMask},
-            _NVal, _PVC, _ReqId, _Service) ->
-    {[{TargetHash, node()}], SubpMask};
-create_plan(#vnode_coverage{vnode_identifier=TargetHash,
                             partition_filters=HashFilters},
             _NVal, _PVC, _ReqId, _Service) ->
     {[{TargetHash, node()}], [{TargetHash, HashFilters}]};
+create_plan(_VNodeTarget, {_NVal, _RingSize, TotalSubp}, _PVC, _ReqId, _Service) ->
+    %% XXX TODO - this completely ignores everything relevant to failed nodes
+    MaskBSL = 160 - (length(hd(io_lib:format("~.2b", [TotalSubp]))) - 1),
+    {ok, ChashBin} = riak_core_ring_manager:get_chash_bin(),
+    Partitions = chashbin:to_list(ChashBin),
+    lists:map(fun(X) ->
+                      PartID = chashbin:responsible_position(X bsl MaskBSL,
+                                                             ChashBin),
+                      {Idx, Node} = lists:nth(PartID + 1, Partitions),
+                      { Idx, Node, { X, MaskBSL } }
+              end,
+              lists:seq(0, TotalSubp - 1));
 create_plan(VNodeTarget, NVal, PVC, ReqId, Service) ->
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
     PartitionCount = chashbin:num_partitions(CHBin),
