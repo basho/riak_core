@@ -6,7 +6,7 @@
   {vsn, git},
   {modules, []},
   {registered, []},
-  {included_applications, [folsom, riak_ensemble]},
+  {included_applications, [folsom, riak_ensemble, chash]},
   {applications, [
                   kernel,
                   stdlib,
@@ -22,7 +22,7 @@
                   exometer_core,
                   clique
                  ]},
-  {mod, {riak_core_app, [chash]}},
+  {mod, {riak_core_app, []}},
   {env, [
          %% Cluster name
          {cluster_name, "default"},
