@@ -20,10 +20,9 @@
                   pbkdf2,
                   poolboy,
                   exometer_core,
-                  chash,
                   clique
                  ]},
-  {mod, {riak_core_app, []}},
+  {mod, {riak_core_app, [chash]}},
   {env, [
          %% Cluster name
          {cluster_name, "default"},
