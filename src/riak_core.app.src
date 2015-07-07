@@ -20,6 +20,7 @@
                   pbkdf2,
                   poolboy,
                   exometer_core,
+                  chash,
                   clique
                  ]},
   {mod, {riak_core_app, []}},
