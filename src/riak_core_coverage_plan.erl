@@ -46,10 +46,13 @@
 %%  ]
 %% }
 
-
 %% Snippet from a new-style coverage plan for a two node, 8 vnode
 %% cluster at nval=3, with each partition represented twice for up to
 %% 16 parallel queries
+
+%% XXX: think about including this in the comments here
+%% {1, node, 0.0}
+%% {1, node, 0.5}
 
 %% [
 %%  %% Second vnode, first half of first partition
@@ -80,14 +83,22 @@
 %% API
 -export([create_plan/5]).
 
+%% Indexes are values in the full 2^160 hash space
 -type index() :: chash:index_as_int().
+%% IDs (vnode or partition) are integers in the [0, RingSize) space
+%% (and trivially map to indexes). Private functions deal with IDs
+%% instead of indexes as much as possible
+-type vnode_id() :: non_neg_integer().
+-type partition_id() :: riak_core_ring:partition_id().
+-type subpartition_id() :: non_neg_integer().
+
 -type req_id() :: non_neg_integer().
 -type coverage_vnodes() :: [{index(), node()}].
--type vnode_filters() :: [{index(), [index()]}]. %% XXX: Y U NO FIND THIS DIALYZER
+-type vnode_filters() :: [{index(), [index()]}].
 -type coverage_plan() :: {coverage_vnodes(), vnode_filters()}.
 
-%% Each: Node, Vnode hash, { Subpartition mask, BSL }
--type subp_plan() :: [{index(), node(), { non_neg_integer(), pos_integer() }}].
+%% Each: Node, Vnode hash, { Subpartition id, BSL }
+-type subp_plan() :: [{index(), node(), { subpartition_id(), pos_integer() }}].
 
 -export_type([coverage_plan/0, coverage_vnodes/0, vnode_filters/0]).
 
@@ -100,7 +111,10 @@
 %%      is a vnode_coverage record, that means we've previously
 %%      generated a coverage plan and we're being fed back one
 %%      element of it. Return that element in the proper format.
--spec create_plan(vnode_selector(), pos_integer(), pos_integer(),
+-spec create_plan(vnode_selector(),
+                  pos_integer()|
+                  {pos_integer(), pos_integer(), pos_integer()},
+                  pos_integer(),
                   req_id(), atom()) ->
                          {error, term()} | coverage_plan() | subp_plan().
 create_plan(#vnode_coverage{vnode_identifier=TargetHash,
@@ -129,6 +143,10 @@ create_plan(_VNodeTarget, {_NVal, _RingSize, TotalSubp}, _PVC, _ReqId, _Service)
               lists:seq(0, TotalSubp - 1));
 create_plan(VNodeTarget, NVal, PVC, ReqId, Service) ->
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
+    create_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin).
+
+
+create_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin) ->
     PartitionCount = chashbin:num_partitions(CHBin),
 
     %% Calculate an offset based on the request id to offer the
@@ -167,13 +185,13 @@ create_plan(VNodeTarget, NVal, PVC, ReqId, Service) ->
     %% The offset value serves as a tiebreaker in the
     %% compare_vnode_keyspaces function and is used to distribute work
     %% to different sets of VNodes.
-    CoverageResult = find_coverage(AllKeySpaces,
-                                   Offset,
-                                   NVal,
-                                   PartitionCount,
-                                   UnavailableKeySpaces,
-                                   lists:min([PVC, NVal]),
-                                   []),
+    CoverageResult = find_minimal_coverage(AllKeySpaces,
+                                           Offset,
+                                           NVal,
+                                           PartitionCount,
+                                           UnavailableKeySpaces,
+                                           lists:min([PVC, NVal]),
+                                           []),
     case CoverageResult of
         {ok, CoveragePlan} ->
             %% Assemble the data structures required for
@@ -195,7 +213,7 @@ create_plan(VNodeTarget, NVal, PVC, ReqId, Service) ->
 %% ====================================================================
 
 %% @private
-%% Returns values in the range [0, RingSize)
+-spec identify_unavailable_keyspaces(chashbin:chashbin(), pos_integer(), atom()) -> list(vnode_id()).
 identify_unavailable_keyspaces(CHBin, PartitionSize, Service) ->
     %% Get a list of the VNodes owned by any unavailable nodes
     DownVNodes = [Index ||
@@ -203,39 +221,32 @@ identify_unavailable_keyspaces(CHBin, PartitionSize, Service) ->
                          <- riak_core_apl:offline_owners(Service, CHBin)],
     [(DownVNode div PartitionSize) || DownVNode <- DownVNodes].
 
+%% @private
+merge_coverage_results({VnodeId, PartitionIds}, Acc) ->
+    case proplists:get_value(VnodeId, Acc) of
+        undefined ->
+            [{VnodeId, PartitionIds} | Acc];
+        MorePartitionIds ->
+            UniqueValues =
+                lists:usort(PartitionIds ++ MorePartitionIds),
+            [{VnodeId, UniqueValues} |
+             proplists:delete(VnodeId, Acc)]
+    end.
+
 
 %% @private
-find_coverage(_AllKeySpaces, _Offset, _NVal, _PartitionCount,
+%% @doc Generates a minimal set of vnodes and partitions to find the requested data
+-spec find_minimal_coverage(list(partition_id()), non_neg_integer(), non_neg_integer(), non_neg_integer(), list(partition_id()), non_neg_integer(), list({vnode_id(), list(partition_id())})) -> {ok, list({vnode_id(), list(partition_id())})} | {error, term()}.
+find_minimal_coverage(_AllKeySpaces, _Offset, _NVal, _PartitionCount,
               _UnavailableKeySpaces, 0, Results) ->
     {ok, Results};
-find_coverage(AllKeySpaces, Offset, NVal, PartitionCount, UnavailableKeySpaces, PVC, []) ->
-    %% Calculate the available keyspaces.
-    AvailableKeySpaces = [{((VNode+Offset) rem PartitionCount),
-                           VNode,
-                           n_keyspaces(VNode, NVal, PartitionCount)}
-                          || VNode <- (AllKeySpaces -- UnavailableKeySpaces)],
-    case find_coverage_vnodes(
-           ordsets:from_list(AllKeySpaces),
-           AvailableKeySpaces,
-           []) of
-        {ok, CoverageResults} ->
-            find_coverage(AllKeySpaces,
-                          Offset,
-                          NVal,
-                          PartitionCount,
-                          UnavailableKeySpaces,
-                          PVC-1,
-                          CoverageResults);
-        Error ->
-            Error
-    end;
-find_coverage(AllKeySpaces,
-              Offset,
-              NVal,
-              PartitionCount,
-              UnavailableKeySpaces,
-              PVC,
-              ResultsAcc) ->
+find_minimal_coverage(AllKeySpaces,
+                      Offset,
+                      NVal,
+                      PartitionCount,
+                      UnavailableKeySpaces,
+                      PVC,
+                      ResultsAcc) ->
     %% Calculate the available keyspaces. The list of
     %% keyspaces for each vnode that have already been
     %% covered by the plan are subtracted from the complete
@@ -251,32 +262,22 @@ find_coverage(AllKeySpaces,
                               AvailableKeySpaces,
                               ResultsAcc) of
         {ok, CoverageResults} ->
-            UpdateResultsFun =
-                fun({Key, NewValues}, Results) ->
-                        case proplists:get_value(Key, Results) of
-                            undefined ->
-                                [{Key, NewValues} | Results];
-                            Values ->
-                                UniqueValues = lists:usort(Values ++ NewValues),
-                                [{Key, UniqueValues} |
-                                 proplists:delete(Key, Results)]
-                        end
-                end,
             UpdatedResults =
-                lists:foldl(UpdateResultsFun, ResultsAcc, CoverageResults),
-            find_coverage(AllKeySpaces,
-                          Offset,
-                          NVal,
-                          PartitionCount,
-                          UnavailableKeySpaces,
-                          PVC-1,
-                          UpdatedResults);
+                lists:foldl(fun merge_coverage_results/2, ResultsAcc, CoverageResults),
+            find_minimal_coverage(AllKeySpaces,
+                                  Offset,
+                                  NVal,
+                                  PartitionCount,
+                                  UnavailableKeySpaces,
+                                  PVC-1,
+                                  UpdatedResults);
         Error ->
             Error
     end.
 
 %% @private
 %% @doc Find the N key spaces for a VNode
+-spec n_keyspaces(vnode_id(), pos_integer(), pos_integer()) -> list(partition_id()).
 n_keyspaces(VNode, N, PartitionCount) ->
     ordsets:from_list([X rem PartitionCount ||
                           X <- lists:seq(PartitionCount + VNode - N,
@@ -287,9 +288,11 @@ n_keyspaces(VNode, N, PartitionCount) ->
 %% All parameters and return values are expressed as IDs in the [0,
 %% RingSize) range.
 %% Takes:
-%%   A list of available vnode IDs
-%%
+%%   A list of all partition IDs still needed for coverage
+%%   A list of available partition IDs
+%%   An accumulator for results
 %% Returns a list of {vnode_id, [partition_id,...]} tuples.
+-spec find_coverage_vnodes(list(partition_id()), list(partition_id()), list({vnode_id(), list(partition_id())})) -> list({vnode_id(), list(partition_id())}).
 find_coverage_vnodes([], _, Coverage) ->
     {ok, lists:sort(Coverage)};
 find_coverage_vnodes(KeySpaces, [], Coverage) ->
@@ -413,5 +416,33 @@ best_vnode_test() ->
                       [{2, 0, ?SET([6, 7, 0, 1, 2])},
                        {3, 7, ?SET([6, 7, 0, 1, 2])}])).
 
+create_plan_test_() ->
+    {setup,
+     fun cpsetup/0,
+     fun cpteardown/1,
+     fun test_create_plan/1}.
+
+cpsetup() ->
+    meck:new(riak_core_node_watcher, []),
+    meck:expect(riak_core_node_watcher, nodes, 1, [mynode]),
+    CHash = chash:fresh(8, mynode),
+    chashbin:create(CHash).
+
+cpteardown(_) ->
+    meck:unload().
+
+test_create_plan(CHBin) ->
+    Plan =
+        {[{1278813932664540053428224228626747642198940975104,
+           mynode},
+          {730750818665451459101842416358141509827966271488,
+           mynode},
+          {365375409332725729550921208179070754913983135744,
+           mynode}],
+         [{730750818665451459101842416358141509827966271488,
+           [548063113999088594326381812268606132370974703616,
+            730750818665451459101842416358141509827966271488]}]},
+    [?_assertEqual(Plan,
+                   create_plan(all, 3, 1, 1234, riak_kv, CHBin))].
 
 -endif.
