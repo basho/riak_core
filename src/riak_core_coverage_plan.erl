@@ -158,7 +158,7 @@ create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin) ->
 
     RingIndexInc = chash:ring_increment(PartitionCount),
     AllKeySpaces = lists:seq(0, PartitionCount - 1),
-    UnavailableKeySpaces = identify_unavailable_keyspaces(CHBin, RingIndexInc, Service),
+    UnavailableVnodes = identify_unavailable_vnodes(CHBin, RingIndexInc, Service),
 
     %% Create function to map coverage keyspaces to
     %% actual VNode indexes and determine which VNode
@@ -190,7 +190,7 @@ create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin) ->
                                            Offset,
                                            NVal,
                                            PartitionCount,
-                                           UnavailableKeySpaces,
+                                           UnavailableVnodes,
                                            lists:min([PVC, NVal]),
                                            []),
     case CoverageResult of
@@ -214,8 +214,8 @@ create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin) ->
 %% ====================================================================
 
 %% @private
--spec identify_unavailable_keyspaces(chashbin:chashbin(), pos_integer(), atom()) -> list(vnode_id()).
-identify_unavailable_keyspaces(CHBin, PartitionSize, Service) ->
+-spec identify_unavailable_vnodes(chashbin:chashbin(), pos_integer(), atom()) -> list(vnode_id()).
+identify_unavailable_vnodes(CHBin, PartitionSize, Service) ->
     %% Get a list of the VNodes owned by any unavailable nodes
     DownVNodes = [Index ||
                      {Index, _Node}
@@ -444,6 +444,6 @@ test_create_plan(CHBin) ->
            [548063113999088594326381812268606132370974703616,
             730750818665451459101842416358141509827966271488]}]},
     [?_assertEqual(Plan,
-                   create_plan(all, 3, 1, 1234, riak_kv, CHBin))].
+                   create_traditional_plan(all, 3, 1, 1234, riak_kv, CHBin))].
 
 -endif.
