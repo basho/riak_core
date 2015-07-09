@@ -158,8 +158,19 @@ create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service) ->
     {ok, ChashBin} = riak_core_ring_manager:get_chash_bin(),
     create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service, ChashBin).
 
+%% Must be able to comply with PVC if the target is 'all'
+check_pvc(List, _PVC, allup) ->
+    List;
+check_pvc(List, PVC, all) ->
+    check_pvc2(List, length(List), PVC).
+
+check_pvc2(List, Len, PVC) when Len >= PVC ->
+    List;
+check_pvc2(_List, _Len, _PVC) ->
+    [].
+
 %% @private
-create_subpartition_plan(VNodeTarget, NVal, Count, _PVC, ReqId, Service, CHBin) ->
+create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service, CHBin) ->
     MaskBSL = data_bits(Count),
 
     %% Calculate an offset based on the request id to offer the
@@ -173,31 +184,43 @@ create_subpartition_plan(VNodeTarget, NVal, Count, _PVC, ReqId, Service, CHBin) 
                                                                  CHBin),
                           PartIdx = <<(PartID bsl MaskBSL):160/integer>>,
 
-                          {PartID, X, partition_id_to_preflist(PartIdx, NVal, Offset, Service)}
+                          {PartID, X, check_pvc(partition_id_to_preflist(PartIdx, NVal, Offset, Service), PVC, VNodeTarget)}
                   end,
                   lists:seq(0, Count - 1)),
 
     %% Now we have a list of tuples; each subpartition maps to a
     %% partition ID, subpartition ID, and a list of zero or more
     %% {vnode_index, node} tuples for that partition
-    maybe_create_subpartition_plan(VNodeTarget, SubpList, MaskBSL).
+    maybe_create_subpartition_plan(VNodeTarget, SubpList, MaskBSL, PVC).
 
-maybe_create_subpartition_plan(allup, SubpList, Bits) ->
-    map_subplist_to_plan(SubpList, Bits);
-maybe_create_subpartition_plan(all, SubpList, Bits) ->
-    maybe_create_subpartition_plan(all, lists:keyfind([], 3, SubpList), SubpList, Bits).
+maybe_create_subpartition_plan(allup, SubpList, Bits, PVC) ->
+    map_subplist_to_plan(SubpList, Bits, PVC);
+maybe_create_subpartition_plan(all, SubpList, Bits, PVC) ->
+    maybe_create_subpartition_plan(all, lists:keyfind([], 3, SubpList), SubpList, Bits, PVC).
 
-maybe_create_subpartition_plan(all, {_, []}, _SubpList, _Bits) ->
-    {error, insufficient_vnodes_available};
-maybe_create_subpartition_plan(all, false, SubpList, Bits) ->
-    map_subplist_to_plan(SubpList, Bits).
+maybe_create_subpartition_plan(all, false, SubpList, Bits, PVC) ->
+    map_subplist_to_plan(SubpList, Bits, PVC);
+maybe_create_subpartition_plan(all, _, _SubpList, _Bits, _PVC) ->
+    {error, insufficient_vnodes_available}.
 
-map_subplist_to_plan(SubpList, Bits) ->
-    lists:filtermap(fun({_PartID, _SubpID, []}) ->
-                            false;
-                       ({_PartID, SubpID, [{VnodeIdx, Node}|_Tail]}) ->
-                            {true, { VnodeIdx, Node, { SubpID, Bits } }}
-                    end, SubpList).
+map_subplist_to_plan(SubpList, Bits, PVC) ->
+    lists:flatten(
+      lists:filtermap(fun({_PartID, _SubpID, []}) ->
+                              false;
+                         ({_PartID, SubpID, Vnodes}) ->
+                              {true,
+                               map_pvc_vnodes(Vnodes, SubpID, Bits, PVC)}
+                    end, SubpList)).
+
+
+map_pvc_vnodes(Vnodes, SubpID, Bits, PVC) ->
+    map_pvc_vnodes(Vnodes, SubpID, Bits, PVC, []).
+
+map_pvc_vnodes(_Vnodes, _SubpID, _Bits, 0, Accum) ->
+    lists:reverse(Accum);
+map_pvc_vnodes([{VnodeIdx, Node}|Tail], SubpID, Bits, PVC, Accum) ->
+    map_pvc_vnodes(Tail, SubpID, Bits, PVC-1,
+                   [{ VnodeIdx, Node, { SubpID, Bits } }] ++ Accum).
 
 
 %% @private
