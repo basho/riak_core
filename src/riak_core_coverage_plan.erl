@@ -143,10 +143,11 @@ create_plan(_VNodeTarget, {_NVal, _RingSize, TotalSubp}, _PVC, _ReqId, _Service)
               lists:seq(0, TotalSubp - 1));
 create_plan(VNodeTarget, NVal, PVC, ReqId, Service) ->
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
-    create_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin).
+    create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin).
 
-
-create_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin) ->
+%% @private
+%% Make it easier to unit test create_plan/5.
+create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin) ->
     PartitionCount = chashbin:num_partitions(CHBin),
 
     %% Calculate an offset based on the request id to offer the
