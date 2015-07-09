@@ -12,7 +12,7 @@
 %% specific language governing permissions and limitations
 %% under the License.
 
-%% Copyright (c) 2007-2015 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
 
 -module(riak_core_ring_handler).
 -behaviour(gen_event).
@@ -65,11 +65,14 @@ ensure_vnodes_started(Ring) ->
         AppMods ->
             case ensure_vnodes_started(AppMods, Ring, []) of
                 [] ->
+                    Legacy = riak_core_gossip:legacy_gossip(),
                     Ready = riak_core_ring:ring_ready(Ring),
                     FutureIndices = riak_core_ring:future_indices(Ring, node()),
                     Status = riak_core_ring:member_status(Ring, node()),
-                    case {Ready, FutureIndices, Status} of
-                        {true, [], leaving} ->
+                    case {Legacy, Ready, FutureIndices, Status} of
+                        {true, _, _, _} ->
+                            riak_core_ring_manager:refresh_my_ring();
+                        {_, true, [], leaving} ->
                             case ready_to_exit(AppMods) of
                                 true ->
                                     exit_ring_trans(),
@@ -77,12 +80,12 @@ ensure_vnodes_started(Ring) ->
                                 false ->
                                     ok
                             end;
-                        {_, _, invalid} ->
+                        {_, _, _, invalid} ->
                             riak_core_ring_manager:refresh_my_ring();
-                        {_, _, exiting} ->
+                        {_, _, _, exiting} ->
                             %% Deliberately do nothing.
                             ok;
-                        {_, _, _} ->
+                        {_, _, _, _} ->
                             ok
                     end;
                 _ -> ok
