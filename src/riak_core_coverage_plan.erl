@@ -157,7 +157,7 @@ create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin) ->
     Offset = ReqId rem NVal,
 
     RingIndexInc = chash:ring_increment(PartitionCount),
-    AllKeySpaces = lists:seq(0, PartitionCount - 1),
+    AllVnodes = lists:seq(0, PartitionCount - 1),
     UnavailableVnodes = identify_unavailable_vnodes(CHBin, RingIndexInc, Service),
 
     %% Create function to map coverage keyspaces to
@@ -186,7 +186,7 @@ create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin) ->
     %% The offset value serves as a tiebreaker in the
     %% compare_vnode_keyspaces function and is used to distribute work
     %% to different sets of VNodes.
-    CoverageResult = find_minimal_coverage(AllKeySpaces,
+    CoverageResult = find_minimal_coverage(AllVnodes,
                                            Offset,
                                            NVal,
                                            PartitionCount,
@@ -237,15 +237,15 @@ merge_coverage_results({VnodeId, PartitionIds}, Acc) ->
 
 %% @private
 %% @doc Generates a minimal set of vnodes and partitions to find the requested data
--spec find_minimal_coverage(list(partition_id()), non_neg_integer(), non_neg_integer(), non_neg_integer(), list(partition_id()), non_neg_integer(), list({vnode_id(), list(partition_id())})) -> {ok, list({vnode_id(), list(partition_id())})} | {error, term()}.
-find_minimal_coverage(_AllKeySpaces, _Offset, _NVal, _PartitionCount,
-              _UnavailableKeySpaces, 0, Results) ->
+-spec find_minimal_coverage(list(partition_id()), non_neg_integer(), non_neg_integer(), non_neg_integer(), list(vnode_id()), non_neg_integer(), list({vnode_id(), list(partition_id())})) -> {ok, list({vnode_id(), list(partition_id())})} | {error, term()}.
+find_minimal_coverage(_AllVnodes, _Offset, _NVal, _PartitionCount,
+                      _UnavailableVnodes, 0, Results) ->
     {ok, Results};
-find_minimal_coverage(AllKeySpaces,
+find_minimal_coverage(AllVnodes,
                       Offset,
                       NVal,
                       PartitionCount,
-                      UnavailableKeySpaces,
+                      UnavailableVnodes,
                       PVC,
                       ResultsAcc) ->
     %% Calculate the available keyspaces. The list of
@@ -258,18 +258,18 @@ find_minimal_coverage(AllKeySpaces,
                            VNode,
                            n_keyspaces(VNode, NVal, PartitionCount) --
                                proplists:get_value(VNode, ResultsAcc, [])}
-                          || VNode <- (AllKeySpaces -- UnavailableKeySpaces)],
-    case find_coverage_vnodes(ordsets:from_list(AllKeySpaces),
+                          || VNode <- (AllVnodes -- UnavailableVnodes)],
+    case find_coverage_vnodes(ordsets:from_list(AllVnodes),
                               AvailableKeySpaces,
                               ResultsAcc) of
         {ok, CoverageResults} ->
             UpdatedResults =
                 lists:foldl(fun merge_coverage_results/2, ResultsAcc, CoverageResults),
-            find_minimal_coverage(AllKeySpaces,
+            find_minimal_coverage(AllVnodes,
                                   Offset,
                                   NVal,
                                   PartitionCount,
-                                  UnavailableKeySpaces,
+                                  UnavailableVnodes,
                                   PVC-1,
                                   UpdatedResults);
         Error ->
@@ -289,25 +289,25 @@ n_keyspaces(VNode, N, PartitionCount) ->
 %% All parameters and return values are expressed as IDs in the [0,
 %% RingSize) range.
 %% Takes:
-%%   A list of all partition IDs still needed for coverage
-%%   A list of available partition IDs
+%%   A list of all vnode IDs still needed for coverage
+%%   A list of available vnode IDs
 %%   An accumulator for results
 %% Returns a list of {vnode_id, [partition_id,...]} tuples.
--spec find_coverage_vnodes(list(partition_id()), list(partition_id()), list({vnode_id(), list(partition_id())})) -> list({vnode_id(), list(partition_id())}).
+-spec find_coverage_vnodes(list(vnode_id()), list(vnode_id()), list({vnode_id(), list(partition_id())})) -> list({vnode_id(), list(partition_id())}).
 find_coverage_vnodes([], _, Coverage) ->
     {ok, lists:sort(Coverage)};
-find_coverage_vnodes(KeySpaces, [], Coverage) ->
-    {insufficient_vnodes_available, KeySpaces, lists:sort(Coverage)};
-find_coverage_vnodes(KeySpaces, Available, Coverage) ->
-    case find_best_vnode_for_keyspace(KeySpaces, Available) of
+find_coverage_vnodes(Vnodes, [], Coverage) ->
+    {insufficient_vnodes_available, Vnodes, lists:sort(Coverage)};
+find_coverage_vnodes(Vnodes, AvailableVnodes, Coverage) ->
+    case find_best_vnode_for_keyspace(Vnodes, AvailableVnodes) of
         {error, no_coverage} ->
             %% Bail
-            find_coverage_vnodes(KeySpaces, [], Coverage);
+            find_coverage_vnodes(Vnodes, [], Coverage);
         VNode ->
-            {value, {_, VNode, Covers}, UpdAvailable} = lists:keytake(VNode, 2, Available),
-            UpdCoverage = [{VNode, ordsets:intersection(KeySpaces, Covers)} | Coverage],
-            UpdKeySpaces = ordsets:subtract(KeySpaces, Covers),
-            find_coverage_vnodes(UpdKeySpaces, UpdAvailable, UpdCoverage)
+            {value, {_, VNode, Covers}, UpdAvailable} = lists:keytake(VNode, 2, AvailableVnodes),
+            UpdCoverage = [{VNode, ordsets:intersection(Vnodes, Covers)} | Coverage],
+            UpdVnodes = ordsets:subtract(Vnodes, Covers),
+            find_coverage_vnodes(UpdVnodes, UpdAvailable, UpdCoverage)
     end.
 
 %% @private
