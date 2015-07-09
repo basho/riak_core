@@ -81,7 +81,7 @@
 -endif.
 
 %% API
--export([create_plan/5]).
+-export([create_plan/5, create_subpartition_plan/6]).
 
 %% Indexes are values in the full 2^160 hash space
 -type index() :: chash:index_as_int().
@@ -112,11 +112,10 @@
 %%      generated a coverage plan and we're being fed back one
 %%      element of it. Return that element in the proper format.
 -spec create_plan(vnode_selector(),
-                  pos_integer()|
-                  {pos_integer(), pos_integer(), pos_integer()},
+                  pos_integer(),
                   pos_integer(),
                   req_id(), atom()) ->
-                         {error, term()} | coverage_plan() | subp_plan().
+                         {error, term()} | coverage_plan().
 create_plan(#vnode_coverage{vnode_identifier=TargetHash,
                             subpartition={Mask, BSL}},
             _NVal, _PVC, _ReqId, _Service) ->
@@ -129,21 +128,77 @@ create_plan(#vnode_coverage{vnode_identifier=TargetHash,
                             partition_filters=HashFilters},
             _NVal, _PVC, _ReqId, _Service) ->
     {[{TargetHash, node()}], [{TargetHash, HashFilters}]};
-create_plan(_VNodeTarget, {_NVal, _RingSize, TotalSubp}, _PVC, _ReqId, _Service) ->
-    %% XXX TODO - this completely ignores everything relevant to failed nodes
-    MaskBSL = data_bits(TotalSubp),
-    {ok, ChashBin} = riak_core_ring_manager:get_chash_bin(),
-    Partitions = chashbin:to_list(ChashBin),
-    lists:map(fun(X) ->
-                      PartID = chashbin:responsible_position(X bsl MaskBSL,
-                                                             ChashBin),
-                      {Idx, Node} = lists:nth(PartID + 1, Partitions),
-                      { Idx, Node, { X, MaskBSL } }
-              end,
-              lists:seq(0, TotalSubp - 1));
 create_plan(VNodeTarget, NVal, PVC, ReqId, Service) ->
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
     create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin).
+
+partition_id_to_preflist(PartIdx, NVal, Offset, Service) ->
+    OrigPreflist =
+        lists:map(fun({{Idx, Node}, primary}) -> {Idx, Node} end,
+                  riak_core_apl:get_primary_apl(PartIdx, NVal, Service)),
+    rotate_list(OrigPreflist, length(OrigPreflist), Offset).
+
+rotate_list(List, _Len, 0) ->
+    %% Unnecessary special case, slightly more efficient
+    List;
+rotate_list(List, Len, Offset) when Offset >= Len ->
+    List;
+rotate_list(List, _Len, Offset) ->
+    {Head, Tail} = lists:split(Offset, List),
+    Tail ++ Head.
+
+
+-spec create_subpartition_plan('all'|'allup',
+                               pos_integer(),
+                               pos_integer(),
+                               pos_integer(),
+                               req_id(), atom()) ->
+                                      {error, term()} | subp_plan().
+create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service) ->
+    {ok, ChashBin} = riak_core_ring_manager:get_chash_bin(),
+    create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service, ChashBin).
+
+%% @private
+create_subpartition_plan(VNodeTarget, NVal, Count, _PVC, ReqId, Service, CHBin) ->
+    MaskBSL = data_bits(Count),
+
+    %% Calculate an offset based on the request id to offer the
+    %% possibility of different sets of VNodes being used even when
+    %% all nodes are available.
+    Offset = ReqId rem NVal,
+
+    SubpList =
+        lists:map(fun(X) ->
+                          PartID = chashbin:responsible_position(X bsl MaskBSL,
+                                                                 CHBin),
+                          PartIdx = <<(PartID bsl MaskBSL):160/integer>>,
+
+                          {PartID, X, partition_id_to_preflist(PartIdx, NVal, Offset, Service)}
+                  end,
+                  lists:seq(0, Count - 1)),
+
+    %% Now we have a list of tuples; each subpartition maps to a
+    %% partition ID, subpartition ID, and a list of zero or more
+    %% {vnode_index, node} tuples for that partition
+    maybe_create_subpartition_plan(VNodeTarget, SubpList, MaskBSL).
+
+maybe_create_subpartition_plan(allup, SubpList, Bits) ->
+    map_subplist_to_plan(SubpList, Bits);
+maybe_create_subpartition_plan(all, SubpList, Bits) ->
+    maybe_create_subpartition_plan(all, lists:keyfind([], 3, SubpList), SubpList, Bits).
+
+maybe_create_subpartition_plan(all, {_, []}, _SubpList, _Bits) ->
+    {error, insufficient_vnodes_available};
+maybe_create_subpartition_plan(all, false, SubpList, Bits) ->
+    map_subplist_to_plan(SubpList, Bits).
+
+map_subplist_to_plan(SubpList, Bits) ->
+    lists:filtermap(fun({_PartID, _SubpID, []}) ->
+                            false;
+                       ({_PartID, SubpID, [{VnodeIdx, Node}|_Tail]}) ->
+                            {true, { VnodeIdx, Node, { SubpID, Bits } }}
+                    end, SubpList).
+
 
 %% @private
 %% Make it easier to unit test create_plan/5.
