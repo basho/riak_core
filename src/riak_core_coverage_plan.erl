@@ -82,6 +82,7 @@
 
 %% API
 -export([create_plan/5, create_subpartition_plan/6]).
+-export([replace_subpartition_chunk/7]).
 
 %% Indexes are values in the full 2^160 hash space
 -type index() :: chash:index_as_int().
@@ -132,10 +133,11 @@ create_plan(VNodeTarget, NVal, PVC, ReqId, Service) ->
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
     create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin).
 
-partition_id_to_preflist(PartIdx, NVal, Offset, Service) ->
+partition_id_to_preflist(PartIdx, NVal, Offset, UpNodes) ->
+    {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
     OrigPreflist =
         lists:map(fun({{Idx, Node}, primary}) -> {Idx, Node} end,
-                  riak_core_apl:get_primary_apl(PartIdx, NVal, Service)),
+                  riak_core_apl:get_primary_apl_chbin(PartIdx, NVal, CHBin, UpNodes)),
     rotate_list(OrigPreflist, length(OrigPreflist), Offset).
 
 rotate_list(List, _Len, 0) ->
@@ -146,6 +148,55 @@ rotate_list(List, Len, Offset) when Offset >= Len ->
 rotate_list(List, _Len, Offset) ->
     {Head, Tail} = lists:split(Offset, List),
     Tail ++ Head.
+
+
+%% replace_subpartition_chunk
+
+%% This is relatively easy: to replace all of a missing vnode, we'd
+%% have to create multiple chunks from multiple alternatives. Since
+%% subpartitions are at most one partition (and often smaller than a
+%% partition) we just need to find one alternative vnode.
+-spec replace_subpartition_chunk(VnodeIdx :: index(),
+                                 Node :: node(),
+                                 {Mask :: non_neg_integer(),
+                                  Bits :: non_neg_integer()},
+                                 NVal :: pos_integer(),
+                                 ReqId :: req_id(),
+                                 DownNodes :: list(node()),
+                                 Service :: atom()) ->
+                                        {error, term()} | subp_plan().
+
+replace_subpartition_chunk(VnodeIdx, Node, {Mask, Bits}, NVal,
+                           ReqId, DownNodes, Service) ->
+    Offset = ReqId rem NVal,
+    %% We have our own idea of what nodes are available. The client
+    %% may have a different idea of offline nodes based on network
+    %% partitions, so we take that into account.
+    %%
+    %% The client can't really tell us what nodes it thinks are up (it
+    %% only knows hostnames at best) but the opaque coverage chunks it
+    %% uses have node names embedded in them, and it can tell us which
+    %% chunks do *not* work.
+    UpNodes = riak_core_node_watcher:nodes(Service) -- [Node|DownNodes],
+    PrefList =
+        partition_id_to_preflist(<<(Mask bsl Bits):160/integer>>,
+                                 NVal, Offset, UpNodes),
+    singular_preflist_to_chunk(VnodeIdx, Node, PrefList, Mask, Bits).
+
+singular_preflist_to_chunk(_VnodeIdx, _Node, [], _Mask, _Bits) ->
+    {error, primary_partition_unavailable};
+singular_preflist_to_chunk(VnodeIdx, Node,
+                           [{VnodeIdx, Node}]=PrefList,
+                           Mask, Bits) ->
+    %% This can only mean that the preflist calculation ignored our down nodes list.
+    lager:error("Preflist calculation ignored down node ~p", [Node]),
+    %% What else can we do but return it and hope the client can
+    %% successfully reach it this time?
+    singular_preflist_to_chunk(VnodeIdx + 1, dummy_node, PrefList, Mask, Bits);
+singular_preflist_to_chunk(_OldVnodeIdx, _OldNode,
+                           [{VnodeIdx, Node}],
+                           Mask, Bits) ->
+    [{VnodeIdx, Node, {Mask, Bits}}].
 
 
 -spec create_subpartition_plan('all'|'allup',
@@ -178,6 +229,7 @@ create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service, CHBin) -
     %% all nodes are available.
     Offset = ReqId rem NVal,
 
+    UpNodes = riak_core_node_watcher:nodes(Service),
     SubpList =
         lists:map(fun(X) ->
                           PartID = chashbin:responsible_position(X bsl MaskBSL,
@@ -191,7 +243,7 @@ create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service, CHBin) -
                           %% decide later (based on all vs allup)
                           %% whether to return the successful
                           %% components of the coverage plan
-                          {PartID, X, check_pvc(partition_id_to_preflist(PartIdx, NVal, Offset, Service), PVC, VNodeTarget)}
+                          {PartID, X, check_pvc(partition_id_to_preflist(PartIdx, NVal, Offset, UpNodes), PVC, VNodeTarget)}
                   end,
                   lists:seq(0, Count - 1)),
 
