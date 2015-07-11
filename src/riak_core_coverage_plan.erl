@@ -149,6 +149,43 @@ rotate_list(List, _Len, Offset) ->
     {Head, Tail} = lists:split(Offset, List),
     Tail ++ Head.
 
+-spec replace_traditional_chunk(VnodeIdx :: index(),
+                                Node :: node(),
+                                Filters :: list(index()),
+                                NVal :: pos_integer(),
+                                ReqId :: req_id(),
+                                DownNodes :: list(node()),
+                                Service :: atom()) ->
+                                       {error, term()} | subp_plan().
+replace_traditional_chunk(VnodeIdx, Node, Filters, NVal,
+                          ReqId, DownNodes, Service) ->
+    Offset = ReqId rem NVal,
+    %% We have our own idea of what nodes are available. The client
+    %% may have a different idea of offline nodes based on network
+    %% partitions, so we take that into account.
+    %%
+    %% The client can't really tell us what nodes it thinks are up (it
+    %% only knows hostnames at best) but the opaque coverage chunks it
+    %% uses have node names embedded in them, and it can tell us which
+    %% chunks do *not* work.
+    UpNodes = riak_core_node_watcher:nodes(Service) -- [Node|DownNodes],
+    NeededPartitions = partitions_by_index_or_filter(
+                         VnodeIdx, NVal, Filters),
+    %% XXX: Pick up here: generate [1, NVal] replacement chunks
+
+find_vnode_partitions(Index, N) ->
+    {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
+    PartitionCount = chashbin:num_partitions(CHBin),
+    RingIndexInc = chash:ring_increment(PartitionCount),
+
+    %% n_keyspaces deals with short IDs but we need full index values
+    lists:map(fun(Id) -> Id * RingIndexInc end,
+              n_keyspaces(Index div RingIndexInc, N, PartitionCount)).
+
+partitions_by_index_or_filter(Idx, NVal, []) ->
+    find_vnode_partitions(Idx, NVal);
+partitions_by_index_or_filter(_Idx, _NVal, Filters) ->
+    Filters.
 
 %% replace_subpartition_chunk
 
@@ -165,7 +202,6 @@ rotate_list(List, _Len, Offset) ->
                                  DownNodes :: list(node()),
                                  Service :: atom()) ->
                                         {error, term()} | subp_plan().
-
 replace_subpartition_chunk(VnodeIdx, Node, {Mask, Bits}, NVal,
                            ReqId, DownNodes, Service) ->
     Offset = ReqId rem NVal,
