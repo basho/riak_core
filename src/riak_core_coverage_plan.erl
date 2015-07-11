@@ -184,6 +184,13 @@ create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service, CHBin) -
                                                                  CHBin),
                           PartIdx = <<(PartID bsl MaskBSL):160/integer>>,
 
+                          %% PVC is much like R; if the number of
+                          %% available primary partitions won't reach
+                          %% the specified PVC value, don't bother
+                          %% including this partition at all. We can
+                          %% decide later (based on all vs allup)
+                          %% whether to return the successful
+                          %% components of the coverage plan
                           {PartID, X, check_pvc(partition_id_to_preflist(PartIdx, NVal, Offset, Service), PVC, VNodeTarget)}
                   end,
                   lists:seq(0, Count - 1)),
