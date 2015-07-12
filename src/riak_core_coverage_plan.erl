@@ -171,6 +171,7 @@ replace_traditional_chunk(VnodeIdx, Node, Filters, NVal,
     UpNodes = riak_core_node_watcher:nodes(Service) -- [Node|DownNodes],
     NeededPartitions = partitions_by_index_or_filter(
                          VnodeIdx, NVal, Filters),
+
     Preflists =
       lists:map(
         fun(PartIdx) ->
@@ -186,18 +187,26 @@ replace_traditional_chunk(VnodeIdx, Node, Filters, NVal,
     maybe_create_traditional_replacement(Preflists, lists:keyfind({[], []}, 2, Preflists)).
 
 maybe_create_traditional_replacement(Preflists, false) ->
+    %% We do not go to great lengths to minimize the number of
+    %% coverage plan components we'll return, but we do at least sort
+    %% the vnodes we find so that we can consolidate filters later.
     create_traditional_replacement(lists:sort(Preflists));
 maybe_create_traditional_replacement(_Preflists, _) ->
     {error, primary_partition_unavailable}.
 
 
+%% Argument to this should be sorted
 create_traditional_replacement(Preflists) ->
     dechunk_traditional_replacement(
       lists:foldl(
+        %% First, see if the previous vnode in our accumulator is the
+        %% same as this one; if so, add our partition to the list of
+        %% filters
         fun({PartIdx, {{PrevVnode, ANode}, []}},
             [{{PrevVnode, ANode}, Partitions}|Tail]) ->
                 [{{PrevVnode, ANode},
                   lists:sort([PartIdx|Partitions])}|Tail];
+           %% If this is a new vnode to our accumulator
            ({PartIdx, {{NewVnode, ANode}, []}}, Coverage) ->
                 [{{NewVnode, ANode}, [PartIdx]}|Coverage]
         end,
