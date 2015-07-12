@@ -82,7 +82,7 @@
 
 %% API
 -export([create_plan/5, create_subpartition_plan/6]).
--export([replace_subpartition_chunk/7]).
+-export([replace_subpartition_chunk/7, replace_traditional_chunk/7]).
 
 %% Indexes are values in the full 2^160 hash space
 -type index() :: chash:index_as_int().
@@ -171,7 +171,59 @@ replace_traditional_chunk(VnodeIdx, Node, Filters, NVal,
     UpNodes = riak_core_node_watcher:nodes(Service) -- [Node|DownNodes],
     NeededPartitions = partitions_by_index_or_filter(
                          VnodeIdx, NVal, Filters),
-    %% XXX: Pick up here: generate [1, NVal] replacement chunks
+    Preflists =
+      lists:map(
+        fun(PartIdx) ->
+                {PartIdx,
+                 {
+                   safe_hd(
+                     partition_id_to_preflist(PartIdx, NVal, Offset, UpNodes)),
+                   []
+                 }
+                }
+        end,
+        NeededPartitions),
+    maybe_create_traditional_replacement(Preflists, lists:keyfind({[], []}, 2, Preflists)).
+
+maybe_create_traditional_replacement(Preflists, false) ->
+    create_traditional_replacement(lists:sort(Preflists));
+maybe_create_traditional_replacement(_Preflists, _) ->
+    {error, primary_partition_unavailable}.
+
+
+create_traditional_replacement(Preflists) ->
+    dechunk_traditional_replacement(
+      lists:foldl(
+        fun({PartIdx, {{PrevVnode, ANode}, []}},
+            [{{PrevVnode, ANode}, Partitions}|Tail]) ->
+                [{{PrevVnode, ANode},
+                  lists:sort([PartIdx|Partitions])}|Tail];
+           ({PartIdx, {{NewVnode, ANode}, []}}, Coverage) ->
+                [{{NewVnode, ANode}, [PartIdx]}|Coverage]
+        end,
+        [],
+        Preflists)).
+
+%% Take our replacement traditional coverage and make it look like a
+%% "real" traditional coverage plan
+dechunk_traditional_replacement(Coverage) ->
+    {
+      lists:map(fun({{Vnode, Node}, _Filters}) ->
+                        {Vnode, Node}
+                end, Coverage),
+      lists:filtermap(fun({{_Vnode, _Node}, []}) ->
+                              false;
+                         ({{Vnode, _Node}, Filters}) ->
+                              {true, {Vnode, Filters}}
+                      end,
+                      Coverage)
+    }.
+
+
+safe_hd([]) ->
+    [];
+safe_hd(List) ->
+    hd(List).
 
 find_vnode_partitions(Index, N) ->
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
