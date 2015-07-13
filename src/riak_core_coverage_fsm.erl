@@ -205,6 +205,15 @@ maybe_start_timeout_timer(Timeout) ->
     gen_fsm:start_timer(Timeout, {timer_expired, Timeout}),
     ok.
 
+%% @private
+find_plan(#vnode_coverage{}=Plan, _NVal, _PVC, _ReqId, _Service) ->
+    riak_core_coverage_plan:interpret_plan(Plan);
+find_plan(VNodeTarget, NVal, PVC, ReqId, Service) ->
+    riak_core_coverage_plan:create_plan(VNodeTarget,
+                                        NVal,
+                                        PVC,
+                                        ReqId,
+                                        Service).
 
 %% @private
 initialize(timeout, StateData0=#state{mod=Mod,
@@ -218,22 +227,11 @@ initialize(timeout, StateData0=#state{mod=Mod,
                                       timeout=Timeout,
                                       vnode_master=VNodeMaster,
                                       plan_fun = PlanFun}) ->
-    CoveragePlan = case VNodeSelector of
-		       VNS when VNS =:= all orelse
-				VNS =:= allup ->
-			   riak_core_coverage_plan:create_plan(VNodeSelector,
-				    NVal,
-				    PVC,
-				    ReqId,
-				    NodeCheckService);
-		       {colocated, CMod}     ->
-			   CMod:create_plan(VNodeSelector,
-					    NVal,
-					    PVC,
-					    ReqId,
-					    NodeCheckService,
-					    Request)
-		   end,
+    CoveragePlan = find_plan(VNodeSelector,
+                             NVal,
+                             PVC,
+                             ReqId,
+                             NodeCheckService),
     case CoveragePlan of
         {error, Reason} ->
             Mod:finish({error, Reason}, ModState);

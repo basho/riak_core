@@ -20,12 +20,24 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc A module to calculate a plan to cover a minimal set of VNodes.
-%%      There is also an option to specify a number of primary VNodes
-%%      from each preference list to use in the plan.
+%% @doc A module to calculate plans to cover a set of VNodes.
+%%
+%%      There are two types of plans available: a "traditional"
+%%      coverage plan which minimizes the set of VNodes to be
+%%      contacted. This is used internally for functionality such as
+%%      2i and Riak Pipe.
+%%
+%%      There is also a new "subpartition" coverage plan designed to
+%%      achieve the opposite: allow clients to make parallel requests
+%%      across as much of the cluster as is desired, designed for use
+%%      with Basho Data Platform.
+%%
+%%      Both plan types are now available through the protocol buffers
+%%      API, delivered as discrete opaque binary chunks to be sent
+%%      with queries that support the functionality (primarily 2i).
 
 
-%% Example "traditional" coverage plan for a two node, 8 vnode cluster
+%% Example traditional coverage plan for a two node, 8 vnode cluster
 %% at nval=3
 %% {
 %%   %% First component is a list of {vnode hash, node name} tuples
@@ -46,13 +58,14 @@
 %%  ]
 %% }
 
-%% Snippet from a new-style coverage plan for a two node, 8 vnode
+%% Snippet from a subpartition coverage plan for a two node, 8 vnode
 %% cluster at nval=3, with each partition represented twice for up to
-%% 16 parallel queries
+%% 16 parallel queries.
 
-%% XXX: think about including this in the comments here
-%% {1, node, 0.0}
-%% {1, node, 0.5}
+%% The nested tuple in the third position is a representation of the
+%% mask against the cluster's full keyspace and bits necessary to
+%% shift keys right to compare against the mask (or shift the mask
+%% left to represent its actual value).
 
 %% [
 %%  %% Second vnode, first half of first partition
@@ -82,6 +95,7 @@
 
 %% API
 -export([create_plan/5, create_subpartition_plan/6]).
+-export([interpret_plan/1]).
 -export([replace_subpartition_chunk/7, replace_traditional_chunk/7]).
 
 %% Indexes are values in the full 2^160 hash space
@@ -117,27 +131,45 @@
                   pos_integer(),
                   req_id(), atom()) ->
                          {error, term()} | coverage_plan().
-create_plan(#vnode_coverage{vnode_identifier=TargetHash,
-                            subpartition={Mask, BSL}},
-            _NVal, _PVC, _ReqId, _Service) ->
-    {[{TargetHash, node()}], [{TargetHash, {Mask, BSL}}]};
-create_plan(#vnode_coverage{vnode_identifier=TargetHash,
-                            partition_filters=[]},
-            _NVal, _PVC, _ReqId, _Service) ->
-    {[{TargetHash, node()}], []};
-create_plan(#vnode_coverage{vnode_identifier=TargetHash,
-                            partition_filters=HashFilters},
-            _NVal, _PVC, _ReqId, _Service) ->
-    {[{TargetHash, node()}], [{TargetHash, HashFilters}]};
 create_plan(VNodeTarget, NVal, PVC, ReqId, Service) ->
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
     create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin).
 
-partition_id_to_preflist(PartIdx, NVal, Offset, UpNodes) ->
+
+interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
+                               subpartition={Mask, BSL}}) ->
+    {[{TargetHash, node()}], [{TargetHash, {Mask, BSL}}]};
+interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
+                               partition_filters=[]}) ->
+    {[{TargetHash, node()}], []};
+interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
+                            partition_filters=HashFilters}) ->
+    {[{TargetHash, node()}], [{TargetHash, HashFilters}]}.
+
+wrap_ring(DocIdx) when DocIdx > 0 ->
+    <<DocIdx:160/integer>>;
+wrap_ring(_DocIdx) ->
+    <<((1 bsl 160) - 1):160/integer>>.
+
+%% The `riak_core_apl' functions we rely on assume a key hash, not a
+%% partition hash. Since partitions store data from the next hash
+%% range *below*, we have to subtract one to get the correct preflist
+partition_to_preflist(0, NVal, Offset, UpNodes) ->
+    %% Special case for the beginning of the
+    DocIdx = <<((1 bsl 160) - 1):160/integer>>,
+    docidx_to_preflist(DocIdx, NVal, Offset, UpNodes);
+partition_to_preflist(Partition, NVal, Offset, UpNodes) ->
+    {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
+    PartitionCount = chashbin:num_partitions(CHBin),
+    RingIndexInc = chash:ring_increment(PartitionCount),
+    DocIdx = wrap_ring(Partition - RingIndexInc + 1),
+    docidx_to_preflist(DocIdx, NVal, Offset, UpNodes).
+
+docidx_to_preflist(DocIdx, NVal, Offset, UpNodes) ->
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
     OrigPreflist =
         lists:map(fun({{Idx, Node}, primary}) -> {Idx, Node} end,
-                  riak_core_apl:get_primary_apl_chbin(PartIdx, NVal, CHBin, UpNodes)),
+                  riak_core_apl:get_primary_apl_chbin(DocIdx, NVal, CHBin, UpNodes)),
     rotate_list(OrigPreflist, length(OrigPreflist), Offset).
 
 rotate_list(List, _Len, 0) ->
@@ -178,7 +210,7 @@ replace_traditional_chunk(VnodeIdx, Node, Filters, NVal,
                 {PartIdx,
                  {
                    safe_hd(
-                     partition_id_to_preflist(PartIdx, NVal, Offset, UpNodes)),
+                     partition_to_preflist(PartIdx, NVal, Offset, UpNodes)),
                    []
                  }
                 }
@@ -276,8 +308,7 @@ replace_subpartition_chunk(VnodeIdx, Node, {Mask, Bits}, NVal,
     %% chunks do *not* work.
     UpNodes = riak_core_node_watcher:nodes(Service) -- [Node|DownNodes],
     PrefList =
-        partition_id_to_preflist(<<(Mask bsl Bits):160/integer>>,
-                                 NVal, Offset, UpNodes),
+        partition_to_preflist(Mask bsl Bits, NVal, Offset, UpNodes),
     singular_preflist_to_chunk(VnodeIdx, Node, PrefList, Mask, Bits).
 
 singular_preflist_to_chunk(_VnodeIdx, _Node, [], _Mask, _Bits) ->
@@ -328,10 +359,10 @@ create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service, CHBin) -
 
     UpNodes = riak_core_node_watcher:nodes(Service),
     SubpList =
-        lists:map(fun(X) ->
-                          PartID = chashbin:responsible_position(X bsl MaskBSL,
+        lists:map(fun(SubpID) ->
+                          SubpIdx = <<(SubpID bsl MaskBSL):160/integer>>,
+                          PartID = chashbin:responsible_position(SubpID bsl MaskBSL,
                                                                  CHBin),
-                          PartIdx = <<(PartID bsl MaskBSL):160/integer>>,
 
                           %% PVC is much like R; if the number of
                           %% available primary partitions won't reach
@@ -340,7 +371,7 @@ create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service, CHBin) -
                           %% decide later (based on all vs allup)
                           %% whether to return the successful
                           %% components of the coverage plan
-                          {PartID, X, check_pvc(partition_id_to_preflist(PartIdx, NVal, Offset, UpNodes), PVC, VNodeTarget)}
+                          {PartID, SubpID, check_pvc(docidx_to_preflist(SubpIdx, NVal, Offset, UpNodes), PVC, VNodeTarget)}
                   end,
                   lists:seq(0, Count - 1)),
 
