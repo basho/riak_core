@@ -527,7 +527,9 @@ n_keyspaces(VNode, N, PartitionCount) ->
 %%   A list of available vnode IDs
 %%   An accumulator for results
 %% Returns a list of {vnode_id, [partition_id,...]} tuples.
--spec find_coverage_vnodes(list(vnode_id()), list(vnode_id()), list({vnode_id(), list(partition_id())})) -> list({vnode_id(), list(partition_id())}).
+-spec find_coverage_vnodes(list(vnode_id()), list(vnode_id()), list({vnode_id(), list(partition_id())})) ->
+                                  {ok, list({vnode_id(), list(partition_id())})}|
+                                  {insufficient_vnodes_available, list(vnode_id()), list({vnode_id(), list(partition_id())})}.
 find_coverage_vnodes([], _, Coverage) ->
     {ok, lists:sort(Coverage)};
 find_coverage_vnodes(Vnodes, [], Coverage) ->
