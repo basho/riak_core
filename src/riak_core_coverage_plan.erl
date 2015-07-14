@@ -199,8 +199,13 @@ rotate_list(List, _Len, Offset) ->
 replace_traditional_chunk(VnodeIdx, Node, Filters, NVal,
                           ReqId, DownNodes, Service) ->
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
-    RingSize = chashbin:num_partitions(CHBin),
+    replace_traditional_chunk(VnodeIdx, Node, Filters, NVal,
+                              ReqId, DownNodes, Service, CHBin).
 
+replace_traditional_chunk(VnodeIdx, Node, Filters, NVal,
+                          ReqId, DownNodes, Service, CHBin) ->
+
+    RingSize = chashbin:num_partitions(CHBin),
     Offset = ReqId rem NVal,
     %% We have our own idea of what nodes are available. The client
     %% may have a different idea of offline nodes based on network
