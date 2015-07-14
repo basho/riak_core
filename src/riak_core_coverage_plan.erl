@@ -654,12 +654,16 @@ find_coverage_vnodes(Partitions, AvailableVnodes, Coverage) ->
     end.
 
 %% @private
-%% @doc Find the vnode that covers the most of the remaining
-%% keyspace. Use VNode ID + offset (determined by request ID) as the
-%% tiebreaker
+%% Find the vnode that covers the most of the remaining keyspace. Use
+%% VNode ID + offset (determined by request ID) as the tiebreaker
+%% (more precisely, the tagged tuple that contains the offset vnode's
+%% ID)
 find_best_vnode_for_keyspace(PartitionIDs, Available) ->
     CoverCount = [{covers(PartitionIDs, CoversKeys), VNode, TieBreaker} ||
                      {TieBreaker, VNode, CoversKeys} <- Available],
+
+    %% Head of the list is the best result unless all of them have
+    %% zero overlap with the partitions for which we need coverage
     interpret_best_vnode(hd(lists:sort(fun compare_vnode_keyspaces/2,
                                        CoverCount))).
 
