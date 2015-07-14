@@ -46,4 +46,4 @@
           subpartition = undefined :: subpartition()
          }).
 
--type vnode_selector() :: all | allup | #vnode_coverage{}.
+-type vnode_selector() :: all | allup.
