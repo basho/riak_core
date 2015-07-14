@@ -134,6 +134,11 @@
 
 -export_type([coverage_plan/0, coverage_vnodes/0, vnode_filters/0]).
 
+%% Function to determine nodes currently available. This can be
+%% swapped out for testing to avoid using meck. The argument ignored
+%% here is the chashbin, potentially useful for testing.
+-define(AVAIL_NODE_FUN, fun(Svc, _) -> riak_core_node_watcher:nodes(Svc) end).
+
 %% ===================================================================
 %% Public API
 %% ===================================================================
@@ -150,7 +155,8 @@
                          {error, term()} | coverage_plan().
 create_plan(VNodeTarget, NVal, PVC, ReqId, Service) ->
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
-    create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin).
+    create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service,
+                            CHBin, ?AVAIL_NODE_FUN).
 
 
 interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
@@ -200,10 +206,12 @@ replace_traditional_chunk(VnodeIdx, Node, Filters, NVal,
                           ReqId, DownNodes, Service) ->
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
     replace_traditional_chunk(VnodeIdx, Node, Filters, NVal,
-                              ReqId, DownNodes, Service, CHBin).
+                              ReqId, DownNodes, Service, CHBin,
+                              ?AVAIL_NODE_FUN).
 
 replace_traditional_chunk(VnodeIdx, Node, Filters, NVal,
-                          ReqId, DownNodes, Service, CHBin) ->
+                          ReqId, DownNodes, Service, CHBin,
+                          AvailNodeFun) ->
 
     RingSize = chashbin:num_partitions(CHBin),
     Offset = ReqId rem NVal,
@@ -215,7 +223,7 @@ replace_traditional_chunk(VnodeIdx, Node, Filters, NVal,
     %% only knows hostnames at best) but the opaque coverage chunks it
     %% uses have node names embedded in them, and it can tell us which
     %% chunks do *not* work.
-    UpNodes = riak_core_node_watcher:nodes(Service) -- [Node|DownNodes],
+    UpNodes = AvailNodeFun(Service, CHBin) -- [Node|DownNodes],
     NeededPartitions = partitions_by_index_or_filter(
                          VnodeIdx, NVal, Filters, RingSize),
 
@@ -313,11 +321,13 @@ replace_subpartition_chunk(VnodeIdx, Node, {Mask, Bits}, NVal,
                            ReqId, DownNodes, Service) ->
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
     replace_subpartition_chunk(VnodeIdx, Node, {Mask, Bits}, NVal,
-                               ReqId, DownNodes, Service, CHBin).
+                               ReqId, DownNodes, Service, CHBin,
+                               ?AVAIL_NODE_FUN).
 
 
 replace_subpartition_chunk(_VnodeIdx, Node, {_Mask, _Bits}=SubpID, NVal,
-                           ReqId, DownNodes, Service, CHBin) ->
+                           ReqId, DownNodes, Service, CHBin,
+                           AvailNodeFun) ->
     RingSize = chashbin:num_partitions(CHBin),
     RingIndexInc = chash:ring_increment(RingSize),
 
@@ -330,7 +340,7 @@ replace_subpartition_chunk(_VnodeIdx, Node, {_Mask, _Bits}=SubpID, NVal,
     %% only knows hostnames at best) but the opaque coverage chunks it
     %% uses have node names embedded in them, and it can tell us which
     %% chunks do *not* work.
-    UpNodes = riak_core_node_watcher:nodes(Service) -- [Node|DownNodes],
+    UpNodes = AvailNodeFun(Service, CHBin) -- [Node|DownNodes],
 
     %% We don't know what partition this subpartition is in, but we
     %% can request a preflist for it by subtracting RingIndexInc from
@@ -355,7 +365,8 @@ singular_preflist_to_chunk([{VnodeIdx, Node}], SubpID) ->
                                       {error, term()} | subp_plan().
 create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service) ->
     {ok, ChashBin} = riak_core_ring_manager:get_chash_bin(),
-    create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service, ChashBin).
+    create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service,
+                             ChashBin, ?AVAIL_NODE_FUN).
 
 %% Must be able to comply with PVC if the target is 'all'
 check_pvc(List, _PVC, allup) ->
@@ -369,7 +380,7 @@ check_pvc2(_List, _Len, _PVC) ->
     [].
 
 %% @private
-create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service, CHBin) ->
+create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service, CHBin, AvailNodeFun) ->
     MaskBSL = data_bits(Count),
 
     %% Calculate an offset based on the request id to offer the
@@ -379,7 +390,7 @@ create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service, CHBin) -
 
     RingSize = chashbin:num_partitions(CHBin),
 
-    UpNodes = riak_core_node_watcher:nodes(Service),
+    UpNodes = AvailNodeFun(Service, CHBin),
     SubpList =
         lists:map(fun(SubpCounter) ->
                           SubpID = {SubpCounter, MaskBSL},
@@ -440,7 +451,7 @@ map_pvc_vnodes([{VnodeIdx, Node}|Tail], SubpID, PVC, Accum) ->
 
 %% @private
 %% Make it easier to unit test create_plan/5.
-create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin) ->
+create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin, AvailNodeFun) ->
     RingSize = chashbin:num_partitions(CHBin),
 
     %% Calculate an offset based on the request id to offer the
@@ -456,7 +467,8 @@ create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin) ->
     AllPartitions = lists:map(fun({vnode_id, Id, RS}) ->
                                       {partition_id, Id, RS} end,
                               AllVnodes),
-    UnavailableVnodes = identify_unavailable_vnodes(CHBin, RingSize, Service),
+    UnavailableVnodes = identify_unavailable_vnodes(CHBin, RingSize,
+                                                    Service, AvailNodeFun),
 
     %% Create function to map coverage keyspaces to
     %% actual VNode indexes and determine which VNode
@@ -550,14 +562,17 @@ list_all_vnode_ids(RingSize) ->
 
 
 %% @private
--spec identify_unavailable_vnodes(chashbin:chashbin(), pos_integer(), atom()) -> list(vnode_id()).
-identify_unavailable_vnodes(CHBin, RingSize, Service) ->
+-spec identify_unavailable_vnodes(chashbin:chashbin(), pos_integer(), atom(),
+                                  fun((atom(), binary()) -> list(node()))) ->
+                                         list(vnode_id()).
+identify_unavailable_vnodes(CHBin, RingSize, Service, AvailNodeFun) ->
     PartitionSize = chash:ring_increment(RingSize),
 
     %% Get a list of the VNodes owned by any unavailable nodes
     [{vnode_id, Index div PartitionSize, RingSize} ||
         {Index, _Node}
-            <- riak_core_apl:offline_owners(Service, CHBin)].
+            <- riak_core_apl:offline_owners(
+                 AvailNodeFun(Service, CHBin), CHBin)].
 
 %% @private
 %% Note that these Id values are tagged tuples, not integers
@@ -791,8 +806,6 @@ chash_init() ->
       {1278813932664540053428224228626747642198940975104,node2}]}.
 
 cpsetup() ->
-    meck:new(riak_core_node_watcher, []),
-    meck:expect(riak_core_node_watcher, nodes, 1, [node1, node2, node3]),
     CHash = chash_init(),
     chashbin:create(CHash).
 
@@ -834,7 +847,7 @@ test_create_subpartition_plan(CHBin) ->
          {0,node1, {15, 156}}
         ],
     [?_assertEqual(Plan,
-                   create_subpartition_plan(all, 3, 16, 1, 3, riak_kv, CHBin))].
+                   create_subpartition_plan(all, 3, 16, 1, 3, riak_kv, CHBin, fun(_, _) -> [node1, node2, node3] end))].
 
 test_create_traditional_plan(CHBin) ->
     Plan =
@@ -848,6 +861,6 @@ test_create_traditional_plan(CHBin) ->
            [548063113999088594326381812268606132370974703616,
             730750818665451459101842416358141509827966271488]}]},
     [?_assertEqual(Plan,
-                   create_traditional_plan(all, 3, 1, 1234, riak_kv, CHBin))].
+                   create_traditional_plan(all, 3, 1, 1234, riak_kv, CHBin, fun(_, _) -> [node1, node2, node3] end))].
 
 -endif.
