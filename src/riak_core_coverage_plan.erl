@@ -117,8 +117,8 @@
 %% instead of indexes as much as possible.
 
 %% ID, ring size, ring index increment
--type vnode_id() :: {'vnode_id', non_neg_integer(), ring_size(), pos_integer()}.
--type partition_id() :: {'partition_id', non_neg_integer(), ring_size(), pos_integer()}.
+-type vnode_id() :: {'vnode_id', non_neg_integer(), ring_size()}.
+-type partition_id() :: {'partition_id', non_neg_integer(), ring_size()}.
 
 %% Not a tagged tuple. ID + bits necessary to shift the ID to the left
 %% to create the subpartition index.
@@ -202,7 +202,6 @@ replace_traditional_chunk(VnodeIdx, Node, Filters, NVal,
                           ReqId, DownNodes, Service) ->
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
     RingSize = chashbin:num_partitions(CHBin),
-    RingIndexInc = chash:ring_increment(RingSize),
 
     Offset = ReqId rem NVal,
     %% We have our own idea of what nodes are available. The client
@@ -215,7 +214,7 @@ replace_traditional_chunk(VnodeIdx, Node, Filters, NVal,
     %% chunks do *not* work.
     UpNodes = riak_core_node_watcher:nodes(Service) -- [Node|DownNodes],
     NeededPartitions = partitions_by_index_or_filter(
-                         VnodeIdx, NVal, Filters, RingSize, RingIndexInc),
+                         VnodeIdx, NVal, Filters, RingSize),
 
     Preflists =
       lists:map(
@@ -279,16 +278,17 @@ safe_hd([]) ->
 safe_hd(List) ->
     hd(List).
 
-find_vnode_partitions(Index, N, RingSize, RingIndexInc) ->
-    %% n_keyspaces deals with short IDs but we need full index values
-    lists:map(fun({partition_id, Id, _, _}) -> Id * RingIndexInc end,
-              n_keyspaces({vnode_id, Index div RingIndexInc,
-                           RingSize, RingIndexInc}, N)).
+find_vnode_partitions(Index, N, RingSize) ->
+    RingIndexInc = chash:ring_increment(RingSize),
 
-partitions_by_index_or_filter(Idx, NVal, [], RingSize, RingIndexInc) ->
-    find_vnode_partitions(Idx, NVal, RingSize, RingIndexInc);
-partitions_by_index_or_filter(_Idx, _NVal, Filters, RingSize, RingIndexInc) ->
-    lists:map(fun(P) -> {partition_id, P, RingSize, RingIndexInc} end,
+    %% n_keyspaces deals with short IDs but we need full index values
+    lists:map(fun({partition_id, Id, _}) -> Id * RingIndexInc end,
+              n_keyspaces({vnode_id, Index div RingIndexInc, RingSize}, N)).
+
+partitions_by_index_or_filter(Idx, NVal, [], RingSize) ->
+    find_vnode_partitions(Idx, NVal, RingSize);
+partitions_by_index_or_filter(_Idx, _NVal, Filters, RingSize) ->
+    lists:map(fun(P) -> {partition_id, P, RingSize} end,
               Filters).
 
 %% replace_subpartition_chunk
@@ -375,7 +375,6 @@ create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service, CHBin) -
     Offset = ReqId rem NVal,
 
     RingSize = chashbin:num_partitions(CHBin),
-    RingIndexInc = chash:ring_increment(RingSize),
 
     UpNodes = riak_core_node_watcher:nodes(Service),
     SubpList =
@@ -385,7 +384,7 @@ create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service, CHBin) -
                           PartID =
                               {partition_id,
                                chashbin:responsible_position(SubpIndex, CHBin),
-                               RingSize, RingIndexInc},
+                               RingSize},
 
                           %% PVC is much like R; if the number of
                           %% available primary partitions won't reach
@@ -447,16 +446,14 @@ create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin) ->
     %% tiebreaker.
     Offset = ReqId rem NVal,
 
-    RingIndexInc = chash:ring_increment(RingSize),
-    AllVnodes = list_all_vnode_ids(RingSize, RingIndexInc),
+    AllVnodes = list_all_vnode_ids(RingSize),
     %% Older versions of this call chain used the same list of
     %% integers for both vnode IDs and partition IDs, which made for
     %% confusing reading. We can cheat a little less obnoxiously
-    AllPartitions = lists:map(fun({vnode_id, Id, PC, Inc}) ->
-                                      {partition_id, Id, PC, Inc} end,
+    AllPartitions = lists:map(fun({vnode_id, Id, RS}) ->
+                                      {partition_id, Id, RS} end,
                               AllVnodes),
-    UnavailableVnodes = identify_unavailable_vnodes(CHBin, RingIndexInc,
-                                                    RingSize, Service),
+    UnavailableVnodes = identify_unavailable_vnodes(CHBin, RingSize, Service),
 
     %% Create function to map coverage keyspaces to
     %% actual VNode indexes and determine which VNode
@@ -511,13 +508,13 @@ create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin) ->
 %% Convert(from, to)
 %% We spend a lot of code mapping between data types, mostly
 %% integer-based. Consolidate that as much as possible here.
-convert({partition_id, PartitionID, RingSize, RingIndexInc}, keyspace_filter) ->
+convert({partition_id, PartitionID, RingSize}, keyspace_filter) ->
     %% Because data is stored one partition higher than the keyspace
     %% into which it directly maps, we have to increment a partition
     %% ID by one to find the relevant keyspace index for traditional
     %% coverage plan filters
-    ((PartitionID + 1) rem RingSize) * RingIndexInc;
-convert({partition_id, 0, _RingSize, _RingIndexInc}, doc_index) ->
+    ((PartitionID + 1) rem RingSize) * chash:ring_increment(RingSize);
+convert({partition_id, 0, _RingSize}, doc_index) ->
     %% Conversely, if we need an example index value inside a
     %% partition for functions that expect a document index, we need
     %% to move "back" in the hash space. Thus we'll subtract 1 from
@@ -526,34 +523,36 @@ convert({partition_id, 0, _RingSize, _RingIndexInc}, doc_index) ->
     %% If we start at the bottom of the hash range (partition 0),
     %% return the top of the range
     (1 bsl 160) - 1;
-convert({partition_id, _ID, _RingSize, _RingIndexInc}=PartID, doc_index) ->
+convert({partition_id, _ID, _RingSize}=PartID, doc_index) ->
     convert(PartID, partition_index) - 1;
-convert({partition_id, PartitionID, _RingSize, RingIndexInc}, partition_index) ->
-    PartitionID * RingIndexInc;
-convert({vnode_id, VNodeID, _RingSize, RingIndexInc}, vnode_index) ->
-    VNodeID * RingIndexInc;
-convert({vnode_id, VNodeID, _RingSize, _RingIndexInc}, int) ->
+convert({partition_id, PartitionID, RingSize}, partition_index) ->
+    PartitionID * chash:ring_increment(RingSize);
+convert({vnode_id, VNodeID, RingSize}, vnode_index) ->
+    VNodeID * chash:ring_increment(RingSize);
+convert({vnode_id, VNodeID, _RingSize}, int) ->
     VNodeID;
-convert({partition_id, PartitionID, _RingSize, _RingIndexInc}, int) ->
+convert({partition_id, PartitionID, _RingSize}, int) ->
     PartitionID;
 convert({SubpID, Bits}, subpartition_index) ->
     SubpID bsl Bits.
 
 %% @private
-increment_vnode({vnode_id, Position, RingSize, RingIndexInc}, Offset) ->
-    {vnode_id, (Position + Offset) rem RingSize, RingSize, RingIndexInc}.
+increment_vnode({vnode_id, Position, RingSize}, Offset) ->
+    {vnode_id, (Position + Offset) rem RingSize, RingSize}.
 
 %% @private
-list_all_vnode_ids(RingSize, Increment) ->
-    lists:map(fun(Id) -> {vnode_id, Id, RingSize, Increment} end,
+list_all_vnode_ids(RingSize) ->
+    lists:map(fun(Id) -> {vnode_id, Id, RingSize} end,
               lists:seq(0, RingSize - 1)).
 
 
 %% @private
--spec identify_unavailable_vnodes(chashbin:chashbin(), pos_integer(), pos_integer(), atom()) -> list(vnode_id()).
-identify_unavailable_vnodes(CHBin, PartitionSize, RingSize, Service) ->
+-spec identify_unavailable_vnodes(chashbin:chashbin(), pos_integer(), atom()) -> list(vnode_id()).
+identify_unavailable_vnodes(CHBin, RingSize, Service) ->
+    PartitionSize = chash:ring_increment(RingSize),
+
     %% Get a list of the VNodes owned by any unavailable nodes
-    [{vnode_id, Index div PartitionSize, RingSize, PartitionSize} ||
+    [{vnode_id, Index div PartitionSize, RingSize} ||
         {Index, _Node}
             <- riak_core_apl:offline_owners(Service, CHBin)].
 
@@ -619,11 +618,11 @@ find_minimal_coverage(AllPartitions,
 
 %% @private
 %% @doc Find the N key spaces for a VNode. These are *not* the same as
-%% the filters for the traditional cover plans; the filters are
+%% the filters for the traditional cover plans; the filters would be
 %% incremented by 1
 -spec n_keyspaces(vnode_id(), pos_integer()) -> list(partition_id()).
-n_keyspaces({vnode_id, VNode, RingSize, RingIndexInc}, N) ->
-    ordsets:from_list([{partition_id, X rem RingSize, RingSize, RingIndexInc} ||
+n_keyspaces({vnode_id, VNode, RingSize}, N) ->
+    ordsets:from_list([{partition_id, X rem RingSize, RingSize} ||
                           X <- lists:seq(RingSize + VNode - N,
                                          RingSize + VNode - 1)]).
 
@@ -722,19 +721,19 @@ bits_test() ->
     ?assertEqual(144, data_bits(65536)).
 
 partid(Partitions) ->
-    lists:map(fun({partition_id, P, _, _}) -> P end,
+    lists:map(fun({partition_id, P, _RingSize}) -> P end,
               Partitions).
 
 n_keyspaces_test() ->
     %% First vnode in a cluster with ring size 64 should (with nval 3)
     %% cover keyspaces 61-63
-    ?assertEqual([61, 62, 63], partid(n_keyspaces({vnode_id, 0, 64, 0}, 3))),
+    ?assertEqual([61, 62, 63], partid(n_keyspaces({vnode_id, 0, 64}, 3))),
     %% 4th vnode in a cluster with ring size 8 should (with nval 5)
     %% cover the first 3 and last 2 keyspaces
-    ?assertEqual([0, 1, 2, 6, 7], partid(n_keyspaces({vnode_id, 3, 8, 0}, 5))),
+    ?assertEqual([0, 1, 2, 6, 7], partid(n_keyspaces({vnode_id, 3, 8}, 5))),
     %% First vnode in a cluster with a single partition should (with
     %% any nval) cover the only keyspace
-    ?assertEqual([0], partid(n_keyspaces({vnode_id, 0, 1, 0}, 1))).
+    ?assertEqual([0], partid(n_keyspaces({vnode_id, 0, 1}, 1))).
 
 covers_test() ->
     %% Count the overlap between the sets
