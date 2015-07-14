@@ -102,6 +102,16 @@
 
 -type index() :: chash:index_as_int().
 
+%% This module is awash with lists of integers with the same range but
+%% and similar but distinct meanings (vnodes and partitions), or
+%% different ranges but same meanings (partition short id vs partition
+%% hash), or different values depending on context (partitions are
+%% incremented by a full RingIndexInc when used as traditional cover
+%% filters).
+%%
+%% Thus, tagged tuples are used in many places to make it easier for
+%% maintainers to keep track of what data is flowing where.
+
 %% IDs (vnode, partition) are integers in the [0, RingSize) space
 %% (and trivially map to indexes). Private functions deal with IDs
 %% instead of indexes as much as possible.
@@ -319,12 +329,11 @@ replace_subpartition_chunk(_VnodeIdx, Node, {_Mask, _Bits}=SubpID, NVal,
     %% chunks do *not* work.
     UpNodes = riak_core_node_watcher:nodes(Service) -- [Node|DownNodes],
 
-    %% We don't know what partition we're in, but we can request a
-    %% preflist for it by subtracting RingIndexInc from the
-    %% subpartition index to jump back a keyspace. The extra +1 at the
-    %% end is to protect against landing right on a partition boundary
-    %% and grabbing the wrong preflist
-    DocIdx = convert(SubpID, subpartition_index) - RingIndexInc + 1,
+    %% We don't know what partition this subpartition is in, but we
+    %% can request a preflist for it by subtracting RingIndexInc from
+    %% the subpartition index to jump back a keyspace and send that
+    %% new value to `riak_core_apl' as a document index.
+    DocIdx = convert(SubpID, subpartition_index) - RingIndexInc,
     PrefList =
         docidx_to_preflist(DocIdx, NVal, Offset, UpNodes),
     singular_preflist_to_chunk(PrefList, SubpID).
@@ -430,7 +439,7 @@ map_pvc_vnodes([{VnodeIdx, Node}|Tail], SubpID, PVC, Accum) ->
 %% @private
 %% Make it easier to unit test create_plan/5.
 create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin) ->
-    PartitionCount = chashbin:num_partitions(CHBin),
+    RingSize = chashbin:num_partitions(CHBin),
 
     %% Calculate an offset based on the request id to offer the
     %% possibility of different sets of VNodes being used even when
@@ -438,8 +447,8 @@ create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin) ->
     %% tiebreaker.
     Offset = ReqId rem NVal,
 
-    RingIndexInc = chash:ring_increment(PartitionCount),
-    AllVnodes = list_all_vnode_ids(PartitionCount, RingIndexInc),
+    RingIndexInc = chash:ring_increment(RingSize),
+    AllVnodes = list_all_vnode_ids(RingSize, RingIndexInc),
     %% Older versions of this call chain used the same list of
     %% integers for both vnode IDs and partition IDs, which made for
     %% confusing reading. We can cheat a little less obnoxiously
@@ -447,7 +456,7 @@ create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin) ->
                                       {partition_id, Id, PC, Inc} end,
                               AllVnodes),
     UnavailableVnodes = identify_unavailable_vnodes(CHBin, RingIndexInc,
-                                                    PartitionCount, Service),
+                                                    RingSize, Service),
 
     %% Create function to map coverage keyspaces to
     %% actual VNode indexes and determine which VNode
@@ -514,8 +523,8 @@ convert({partition_id, 0, _RingSize, _RingIndexInc}, doc_index) ->
     %% to move "back" in the hash space. Thus we'll subtract 1 from
     %% the partition *index* value.
     %%
-    %% If we're at the bottom of the hash range (partition 0), pick
-    %% the top of the range
+    %% If we start at the bottom of the hash range (partition 0),
+    %% return the top of the range
     (1 bsl 160) - 1;
 convert({partition_id, _ID, _RingSize, _RingIndexInc}=PartID, doc_index) ->
     convert(PartID, partition_index) - 1;
@@ -530,8 +539,6 @@ convert({partition_id, PartitionID, _RingSize, _RingIndexInc}, int) ->
 convert({SubpID, Bits}, subpartition_index) ->
     SubpID bsl Bits.
 
-
-
 %% @private
 increment_vnode({vnode_id, Position, RingSize, RingIndexInc}, Offset) ->
     {vnode_id, (Position + Offset) rem RingSize, RingSize, RingIndexInc}.
@@ -544,9 +551,9 @@ list_all_vnode_ids(RingSize, Increment) ->
 
 %% @private
 -spec identify_unavailable_vnodes(chashbin:chashbin(), pos_integer(), pos_integer(), atom()) -> list(vnode_id()).
-identify_unavailable_vnodes(CHBin, PartitionSize, PartitionCount, Service) ->
+identify_unavailable_vnodes(CHBin, PartitionSize, RingSize, Service) ->
     %% Get a list of the VNodes owned by any unavailable nodes
-    [{vnode_id, Index div PartitionSize, PartitionCount, PartitionSize} ||
+    [{vnode_id, Index div PartitionSize, RingSize, PartitionSize} ||
         {Index, _Node}
             <- riak_core_apl:offline_owners(Service, CHBin)].
 
