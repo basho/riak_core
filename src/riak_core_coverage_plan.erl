@@ -328,10 +328,8 @@ replace_subpartition_chunk(VnodeIdx, Node, {Mask, Bits}, NVal,
 replace_subpartition_chunk(_VnodeIdx, Node, {_Mask, _Bits}=SubpID, NVal,
                            ReqId, DownNodes, Service, CHBin,
                            AvailNodeFun) ->
-    RingSize = chashbin:num_partitions(CHBin),
-    RingIndexInc = chash:ring_increment(RingSize),
-
     Offset = ReqId rem NVal,
+
     %% We have our own idea of what nodes are available. The client
     %% may have a different idea of offline nodes based on network
     %% partitions, so we take that into account.
@@ -343,10 +341,13 @@ replace_subpartition_chunk(_VnodeIdx, Node, {_Mask, _Bits}=SubpID, NVal,
     UpNodes = AvailNodeFun(Service, CHBin) -- [Node|DownNodes],
 
     %% We don't know what partition this subpartition is in, but we
-    %% can request a preflist for it by subtracting RingIndexInc from
-    %% the subpartition index to jump back a keyspace and send that
-    %% new value to `riak_core_apl' as a document index.
-    DocIdx = convert(SubpID, subpartition_index) - RingIndexInc,
+    %% can request a preflist for it by converting the subpartition to
+    %% a document index.
+    %%
+    %% Unlike traditional coverage filters to document key hash
+    %% mappings which have off-by-one adjustments, subpartition masks
+    %% map directly against the relevant key hashes.
+    DocIdx = convert(SubpID, subpartition_index),
     PrefList =
         docidx_to_preflist(DocIdx, NVal, Offset, UpNodes, CHBin),
     singular_preflist_to_chunk(PrefList, SubpID).
@@ -791,7 +792,8 @@ create_plan_test_() ->
      fun cpsetup/0,
      fun cpteardown/1,
      [fun test_create_traditional_plan/1,
-      fun test_create_subpartition_plan/1]
+      fun test_create_subpartition_plan/1,
+      fun test_replace_subpartition/1]
     }.
 
 chash_init() ->
@@ -810,7 +812,18 @@ cpsetup() ->
     chashbin:create(CHash).
 
 cpteardown(_) ->
-    meck:unload().
+    do_nothing.
+
+test_replace_subpartition(CHBin) ->
+
+    NewChunk = [{548063113999088594326381812268606132370974703616,
+                 node1, {0, 156}}],
+
+    [?_assertEqual(NewChunk,
+                   replace_subpartition_chunk(182687704666362864775460604089535377456991567872,
+                                              node2, {0, 156}, 3,
+                                              0, [], riak_kv, CHBin,
+                                              fun(_, _) -> [node1] end))].
 
 test_create_subpartition_plan(CHBin) ->
     Plan =
