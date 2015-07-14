@@ -169,10 +169,8 @@ interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
                             partition_filters=HashFilters}) ->
     {[{TargetHash, node()}], [{TargetHash, HashFilters}]}.
 
-%% The `riak_core_apl' functions we rely on assume a key hash, not a
-%% partition hash.
 partition_to_preflist(Partition, NVal, Offset, UpNodes, CHBin) ->
-    DocIdx = convert(Partition, doc_index),
+    DocIdx = convert(Partition, partition_index),
     docidx_to_preflist(DocIdx, NVal, Offset, UpNodes, CHBin).
 
 docidx_to_preflist(DocIdx, NVal, Offset, UpNodes, CHBin) ->
@@ -185,9 +183,6 @@ docidx_to_preflist(DocIdx, NVal, Offset, UpNodes, CHBin) ->
                     <<DocIdx:160/integer>>, NVal, CHBin, UpNodes)),
     rotate_list(OrigPreflist, length(OrigPreflist), Offset).
 
-rotate_list(List, _Len, 0) ->
-    %% Unnecessary special case, slightly more efficient
-    List;
 rotate_list(List, Len, Offset) when Offset >= Len ->
     List;
 rotate_list(List, _Len, Offset) ->
@@ -201,7 +196,7 @@ rotate_list(List, _Len, Offset) ->
                                 ReqId :: req_id(),
                                 DownNodes :: list(node()),
                                 Service :: atom()) ->
-                                       {error, term()} | subp_plan().
+                                       {error, term()} | coverage_plan().
 replace_traditional_chunk(VnodeIdx, Node, Filters, NVal,
                           ReqId, DownNodes, Service) ->
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
@@ -227,13 +222,16 @@ replace_traditional_chunk(VnodeIdx, Node, Filters, NVal,
     NeededPartitions = partitions_by_index_or_filter(
                          VnodeIdx, NVal, Filters, RingSize),
 
+    %% For each partition, create a tuple with that partition (as a
+    %% filter index) mapped to a nested tuple of preflist + (initially
+    %% empty) filter list list.
     Preflists =
       lists:map(
-        fun(PartIdx) ->
-                {PartIdx,
+        fun(Partition) ->
+                {convert(Partition, keyspace_filter),
                  {
                    safe_hd(
-                     partition_to_preflist(PartIdx, NVal, Offset, UpNodes, CHBin)),
+                     partition_to_preflist(Partition, NVal, Offset, UpNodes, CHBin)),
                    []
                  }
                 }
@@ -292,9 +290,7 @@ safe_hd(List) ->
 find_vnode_partitions(Index, N, RingSize) ->
     RingIndexInc = chash:ring_increment(RingSize),
 
-    %% n_keyspaces deals with short IDs but we need full index values
-    lists:map(fun({partition_id, Id, _}) -> Id * RingIndexInc end,
-              n_keyspaces({vnode_id, Index div RingIndexInc, RingSize}, N)).
+    n_keyspaces({vnode_id, Index div RingIndexInc, RingSize}, N).
 
 partitions_by_index_or_filter(Idx, NVal, [], RingSize) ->
     find_vnode_partitions(Idx, NVal, RingSize);
@@ -790,9 +786,9 @@ best_vnode_test() ->
 create_plan_test_() ->
     {foreach,
      fun cpsetup/0,
-     fun cpteardown/1,
      [fun test_create_traditional_plan/1,
       fun test_create_subpartition_plan/1,
+      fun test_replace_traditional/1,
       fun test_replace_subpartition/1]
     }.
 
@@ -811,11 +807,54 @@ cpsetup() ->
     CHash = chash_init(),
     chashbin:create(CHash).
 
-cpteardown(_) ->
-    do_nothing.
+test_replace_traditional(CHBin) ->
+    %% We're asking or a replacement for the 4th vnode (id 3), with
+    %% nval of 3. This means it is responsible for partitions 0, 1, 2,
+    %% but given the off-by-one behavior for filter lists the implicit
+    %% filters for this vnode are 1, 2, and 3.
+
+    %% Because we need to replace all 3 partitions that this vnode is
+    %% responsible for, we're going to need at least 2 vnodes in the
+    %% new chunk.
+
+    %% We're reporting that node2 is the only node online, so the
+    %% vnodes we have available with relevant partitions are limited
+    %% to these two: 182687704666362864775460604089535377456991567872 (id 1)
+    %% and 730750818665451459101842416358141509827966271488 (id 4)
+
+    %% vnode 1 has partition 0 (filter 1)
+    %% vnode 4 has partitions 1 and 2 (filters 2 and 3)
+
+    {ExpectedVnodes, ExpectedFilters} = {
+      [
+       {182687704666362864775460604089535377456991567872, node2},
+       {730750818665451459101842416358141509827966271488, node2}
+      ],
+      [
+       {182687704666362864775460604089535377456991567872,
+        [182687704666362864775460604089535377456991567872]
+       },
+       {730750818665451459101842416358141509827966271488,
+        [365375409332725729550921208179070754913983135744,
+         548063113999088594326381812268606132370974703616]
+       }
+      ]
+     },
+
+    {NewVnodes, NewFilters} =
+        replace_traditional_chunk(
+          548063113999088594326381812268606132370974703616,
+          node1, [], 3, 0, [], riak_kv, CHBin,
+          fun(_, _) -> [node2] end),
+
+    [?_assertEqual(ExpectedVnodes, lists:sort(NewVnodes)),
+     ?_assertEqual(ExpectedFilters, lists:sort(NewFilters))].
+
 
 test_replace_subpartition(CHBin) ->
-
+    %% Our riak_core_node_watcher replacement function says only node1
+    %% is up, so the code will have no choice but to give us back the
+    %% only node1 vnode with the zeroth partition
     NewChunk = [{548063113999088594326381812268606132370974703616,
                  node1, {0, 156}}],
 
