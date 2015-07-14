@@ -165,13 +165,11 @@ interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
 
 %% The `riak_core_apl' functions we rely on assume a key hash, not a
 %% partition hash.
-partition_to_preflist(Partition, NVal, Offset, UpNodes) ->
+partition_to_preflist(Partition, NVal, Offset, UpNodes, CHBin) ->
     DocIdx = convert(Partition, doc_index),
-    docidx_to_preflist(DocIdx, NVal, Offset, UpNodes).
+    docidx_to_preflist(DocIdx, NVal, Offset, UpNodes, CHBin).
 
-docidx_to_preflist(DocIdx, NVal, Offset, UpNodes) ->
-    {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
-
+docidx_to_preflist(DocIdx, NVal, Offset, UpNodes, CHBin) ->
     %% `chashbin' would be fine with a straight integer, but
     %% `riak_core_apl' has a -spec that mandates binary(), so we'll
     %% play its game
@@ -222,7 +220,7 @@ replace_traditional_chunk(VnodeIdx, Node, Filters, NVal,
                 {PartIdx,
                  {
                    safe_hd(
-                     partition_to_preflist(PartIdx, NVal, Offset, UpNodes)),
+                     partition_to_preflist(PartIdx, NVal, Offset, UpNodes, CHBin)),
                    []
                  }
                 }
@@ -335,7 +333,7 @@ replace_subpartition_chunk(_VnodeIdx, Node, {_Mask, _Bits}=SubpID, NVal,
     %% new value to `riak_core_apl' as a document index.
     DocIdx = convert(SubpID, subpartition_index) - RingIndexInc,
     PrefList =
-        docidx_to_preflist(DocIdx, NVal, Offset, UpNodes),
+        docidx_to_preflist(DocIdx, NVal, Offset, UpNodes, CHBin),
     singular_preflist_to_chunk(PrefList, SubpID).
 
 singular_preflist_to_chunk([], _SubpID) ->
@@ -395,7 +393,7 @@ create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service, CHBin) -
                           %% components of the coverage plan
                           {PartID, SubpID,
                            check_pvc(
-                             docidx_to_preflist(SubpIndex, NVal, Offset, UpNodes),
+                             docidx_to_preflist(SubpIndex, NVal, Offset, UpNodes, CHBin),
                              PVC, VNodeTarget)}
                   end,
                   lists:seq(0, Count - 1)),
@@ -769,10 +767,12 @@ best_vnode_test() ->
                        {3, 7, ?SET([6, 7, 0, 1, 2])}])).
 
 create_plan_test_() ->
-    {setup,
+    {foreach,
      fun cpsetup/0,
      fun cpteardown/1,
-     fun test_create_plan/1}.
+     [fun test_create_traditional_plan/1,
+      fun test_create_subpartition_plan/1]
+    }.
 
 cpsetup() ->
     meck:new(riak_core_node_watcher, []),
@@ -783,7 +783,44 @@ cpsetup() ->
 cpteardown(_) ->
     meck:unload().
 
-test_create_plan(CHBin) ->
+test_create_subpartition_plan(CHBin) ->
+    Plan =
+        [
+         {182687704666362864775460604089535377456991567872,
+          mynode, {0, 156}},
+         {182687704666362864775460604089535377456991567872,
+          mynode, {1, 156}},
+         {365375409332725729550921208179070754913983135744,
+          mynode, {2, 156}},
+         {365375409332725729550921208179070754913983135744,
+          mynode, {3, 156}},
+         {548063113999088594326381812268606132370974703616,
+          mynode, {4, 156}},
+         {548063113999088594326381812268606132370974703616,
+          mynode, {5, 156}},
+         {730750818665451459101842416358141509827966271488,
+          mynode, {6, 156}},
+         {730750818665451459101842416358141509827966271488,
+          mynode, {7, 156}},
+         {913438523331814323877303020447676887284957839360,
+          mynode, {8, 156}},
+         {913438523331814323877303020447676887284957839360,
+          mynode, {9, 156}},
+         {1096126227998177188652763624537212264741949407232,
+          mynode, {10, 156}},
+         {1096126227998177188652763624537212264741949407232,
+          mynode, {11, 156}},
+         {1278813932664540053428224228626747642198940975104,
+          mynode, {12, 156}},
+         {1278813932664540053428224228626747642198940975104,
+          mynode, {13, 156}},
+         {0,mynode, {14, 156}},
+         {0,mynode, {15, 156}}
+        ],
+    [?_assertEqual(Plan,
+                   create_subpartition_plan(all, 3, 16, 1, 3, riak_kv, CHBin))].
+
+test_create_traditional_plan(CHBin) ->
     Plan =
         {[{1278813932664540053428224228626747642198940975104,
            mynode},
