@@ -158,7 +158,10 @@ create_plan(VNodeTarget, NVal, PVC, ReqId, Service) ->
     create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service,
                             CHBin, ?AVAIL_NODE_FUN).
 
-
+%% @doc The format for the return from this function is specifically
+%% tied to the needs of `riak_core_coverage_fsm:initialize'
+-spec interpret_plan(vnode_coverage()) -> {list({index(), node()}),
+                                           list({index(), term()})}.
 interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
                                subpartition={Mask, BSL}}) ->
     {[{TargetHash, node()}], [{TargetHash, {Mask, BSL}}]};
