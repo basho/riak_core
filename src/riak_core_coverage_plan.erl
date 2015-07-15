@@ -521,31 +521,18 @@ create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin, AvailNode
 %% Convert(from, to)
 %% We spend a lot of code mapping between data types, mostly
 %% integer-based. Consolidate that as much as possible here.
+-spec convert(partition_id() | vnode_id() | subpartition_id(), atom()) ->
+                     non_neg_integer().
 convert({partition_id, PartitionID, RingSize}, keyspace_filter) ->
     %% Because data is stored one partition higher than the keyspace
     %% into which it directly maps, we have to increment a partition
     %% ID by one to find the relevant keyspace index for traditional
     %% coverage plan filters
     ((PartitionID + 1) rem RingSize) * chash:ring_increment(RingSize);
-convert({partition_id, 0, _RingSize}, doc_index) ->
-    %% Conversely, if we need an example index value inside a
-    %% partition for functions that expect a document index, we need
-    %% to move "back" in the hash space. Thus we'll subtract 1 from
-    %% the partition *index* value.
-    %%
-    %% If we start at the bottom of the hash range (partition 0),
-    %% return the top of the range
-    (1 bsl 160) - 1;
-convert({partition_id, _ID, _RingSize}=PartID, doc_index) ->
-    convert(PartID, partition_index) - 1;
 convert({partition_id, PartitionID, RingSize}, partition_index) ->
     PartitionID * chash:ring_increment(RingSize);
 convert({vnode_id, VNodeID, RingSize}, vnode_index) ->
     VNodeID * chash:ring_increment(RingSize);
-convert({vnode_id, VNodeID, _RingSize}, int) ->
-    VNodeID;
-convert({partition_id, PartitionID, _RingSize}, int) ->
-    PartitionID;
 convert({SubpID, Bits}, subpartition_index) ->
     SubpID bsl Bits.
 
