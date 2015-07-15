@@ -351,11 +351,11 @@ replace_subpartition_chunk(_VnodeIdx, Node, {_Mask, _Bits}=SubpID, NVal,
     DocIdx = convert(SubpID, subpartition_index),
     PrefList =
         docidx_to_preflist(DocIdx, NVal, Offset, UpNodes, CHBin),
-    singular_preflist_to_chunk(PrefList, SubpID).
+    singular_preflist_to_chunk(safe_hd(PrefList), SubpID).
 
 singular_preflist_to_chunk([], _SubpID) ->
     {error, primary_partition_unavailable};
-singular_preflist_to_chunk([{VnodeIdx, Node}], SubpID) ->
+singular_preflist_to_chunk({VnodeIdx, Node}, SubpID) ->
     [{VnodeIdx, Node, SubpID}].
 
 
