@@ -47,3 +47,4 @@
          }).
 
 -type vnode_selector() :: all | allup.
+-type vnode_coverage() :: #vnode_coverage{}.

@@ -107,7 +107,7 @@ behaviour_info(_) ->
                 mod_state :: tuple(),
                 n_val :: pos_integer(),
                 node_check_service :: module(),
-                vnode_selector :: vnode_selector(),
+                vnode_selector :: vnode_selector() | vnode_coverage(),
                 pvc :: all | pos_integer(), % primary vnode coverage
                 request :: tuple(),
                 req_id :: req_id(),
