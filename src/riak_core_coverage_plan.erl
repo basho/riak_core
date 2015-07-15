@@ -266,8 +266,9 @@ create_traditional_replacement(Preflists) ->
         [],
         Preflists)).
 
-%% Take our replacement traditional coverage and make it look like a
-%% "real" traditional coverage plan
+%% Take our replacement traditional coverage chunks and consolidate it
+%% into a traditional coverage plan (that another layer will rechunk,
+%% but whatchagonnado)
 dechunk_traditional_replacement(Coverage) ->
     {
       lists:map(fun({{Vnode, Node}, _Filters}) ->
@@ -763,6 +764,9 @@ covers_test() ->
     ?assertEqual(0, covers(?SET([1, 2, 3]),
                            ?SET([4, 5, 6, 7]))).
 
+%% `find_best_vnode_for_keyspace' actually takes tagged tuples, but it
+%% works fine with plain ol' integers, and the logic is much easier to
+%% see this way
 best_vnode_test() ->
     %% Given two vnodes 0 and 7, pick 0 because it has more of the
     %% desired keyspaces
