@@ -233,15 +233,12 @@ replace_traditional_chunk(VnodeIdx, Node, Filters, NVal,
       lists:map(
         fun(Partition) ->
                 {convert(Partition, keyspace_filter),
-                 {
                    safe_hd(
-                     partition_to_preflist(Partition, NVal, Offset, UpNodes, CHBin)),
-                   []
-                 }
+                     partition_to_preflist(Partition, NVal, Offset, UpNodes, CHBin))
                 }
         end,
         NeededPartitions),
-    maybe_create_traditional_replacement(Preflists, lists:keyfind({[], []}, 2, Preflists)).
+    maybe_create_traditional_replacement(Preflists, lists:keyfind([], 2, Preflists)).
 
 maybe_create_traditional_replacement(Preflists, false) ->
     %% We do not go to great lengths to minimize the number of
@@ -256,16 +253,16 @@ maybe_create_traditional_replacement(_Preflists, _) ->
 create_traditional_replacement(Preflists) ->
     dechunk_traditional_replacement(
       lists:foldl(
-        %% First, see if the previous vnode in our accumulator is the
-        %% same as this one; if so, add our partition to the list of
-        %% filters
-        fun({PartIdx, {{PrevVnode, ANode}, []}},
-            [{{PrevVnode, ANode}, Partitions}|Tail]) ->
-                [{{PrevVnode, ANode},
+        %% Pattern match the current vnode against the head of the
+        %% accumulator; if the vnodes match, we can consolidate
+        %% partition filters
+        fun({PartIdx, VNode}, [{VNode, Partitions}|Tail]) ->
+                [{VNode,
                   lists:sort([PartIdx|Partitions])}|Tail];
-           %% If this is a new vnode to our accumulator
-           ({PartIdx, {{NewVnode, ANode}, []}}, Coverage) ->
-                [{{NewVnode, ANode}, [PartIdx]}|Coverage]
+           %% Instead if this vnode is new, place it into the
+           %% accumulator as is
+           ({PartIdx, VNode}, Accum) ->
+                [{VNode, [PartIdx]}|Accum]
         end,
         [],
         Preflists)).
