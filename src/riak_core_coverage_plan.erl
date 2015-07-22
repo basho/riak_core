@@ -799,6 +799,7 @@ create_plan_test_() ->
       fun test_create_subpartition_plan/1,
       fun test_replace_traditional/1,
       fun test_replace_traditional2/1,
+      fun test_replace_traditional3/1,
       fun test_replace_subpartition/1]
     }.
 
@@ -817,6 +818,31 @@ cpsetup() ->
     CHash = chash_init(),
     chashbin:create(CHash).
 
+test_replace_traditional3(CHBin) ->
+    %% Unlike test_replace_traditional, this function will iterate
+    %% through through N request IDs. Seems like an obvious place to
+    %% use QuickCheck for more coverage
+    OldFilters = [1278813932664540053428224228626747642198940975104, 0],
+    ?_assertMatch([true, true, true],
+                  lists:map(fun(N) ->
+                                    {NewVnodes, NewFilters} =
+                                        replace_traditional_chunk(
+                                          182687704666362864775460604089535377456991567872,
+                                          node2, OldFilters, 3, N, [], riak_kv, CHBin,
+                                          fun(_, _) -> [node1, node3] end),
+
+                                    equivalent_coverage(
+                                      OldFilters,
+                                      NewFilters) andalso
+                                        %% Make sure none of the new
+                                        %% vnodes live on our "down"
+                                        %% node, node3
+                                        [] ==
+                                        lists:filter(fun({_, node2}) -> true;
+                                                        (_) -> false
+                                                     end, NewVnodes)
+                  end, lists:seq(0, 2))).
+
 test_replace_traditional2(CHBin) ->
     %% Unlike test_replace_traditional, this function will iterate
     %% through through N request IDs. Seems like an obvious place to
@@ -831,7 +857,7 @@ test_replace_traditional2(CHBin) ->
                                           fun(_, _) -> [node1, node2] end),
                                     equivalent_coverage(
                                       913438523331814323877303020447676887284957839360,
-                                      {NewVnodes, NewFilters},
+                                      NewFilters,
                                       3, CHBin) andalso
                                         %% Make sure none of the new
                                         %% vnodes live on our "down"
@@ -842,19 +868,22 @@ test_replace_traditional2(CHBin) ->
                                                      end, NewVnodes)
                   end, lists:seq(0, 2))).
 
-equivalent_coverage(Old, {_NewVs, NewFs}, NVal, CHBin) ->
+equivalent_coverage(OldVNode, NewFilters, NVal, CHBin) ->
     RingSize = chashbin:num_partitions(CHBin),
     PartitionSize = chash:ring_increment(RingSize),
-    OldFilters = test_vnode_to_filters(Old, NVal, RingSize, PartitionSize),
+    OldFilters = test_vnode_to_filters(OldVNode, NVal, RingSize, PartitionSize),
+    equivalent_coverage(OldFilters, NewFilters).
+
+equivalent_coverage(OldFilters, NewFilters) ->
     %% This logic relies on the fact that all of the new vnodes must
     %% have an explicit filter list since we're replacing a full vnode
     %% and there is no other vnode which has exactly the same
     %% partitions
-    NewFilters = lists:foldl(
-                   fun({_VNode, FilterList}, Acc) -> Acc ++ FilterList end,
-                   [],
-                   NewFs),
-    lists:sort(OldFilters) == lists:sort(NewFilters).
+    ConsolidatedFilters = lists:foldl(
+                            fun({_VNode, FilterList}, Acc) -> Acc ++ FilterList end,
+                            [],
+                            NewFilters),
+    lists:sort(OldFilters) == lists:sort(ConsolidatedFilters).
 
 test_vnode_to_filters(Index, NVal, RingSize, PartitionSize) ->
     lists:map(fun(N) -> (((Index div PartitionSize) + (RingSize - N)) rem RingSize) * PartitionSize end,
