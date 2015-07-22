@@ -303,12 +303,12 @@ find_vnode_partitions(Index, N, RingSize) ->
 partitions_by_index_or_filter(Idx, NVal, [], RingSize) ->
     find_vnode_partitions(Idx, NVal, RingSize);
 partitions_by_index_or_filter(_Idx, _NVal, Filters, RingSize) ->
+    %% Filters for traditional coverage plans are offset by 1, so when
+    %% converting to partition indexes or IDs, we have to subtract 1
     lists:map(fun(P) ->
                       {partition_id,
-                       index_to_id(add_offset(P,
-                                              -chash:ring_increment(RingSize),
-                                              RingSize),
-                                   RingSize),
+                       add_offset(index_to_id(P, RingSize),
+                                  -1, RingSize),
                        RingSize} end,
               Filters).
 
