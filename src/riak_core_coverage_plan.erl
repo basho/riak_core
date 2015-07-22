@@ -289,15 +289,27 @@ safe_hd([]) ->
 safe_hd(List) ->
     hd(List).
 
-find_vnode_partitions(Index, N, RingSize) ->
+index_to_id(Index, RingSize) ->
     RingIndexInc = chash:ring_increment(RingSize),
+    Index div RingIndexInc.
 
-    n_keyspaces({vnode_id, Index div RingIndexInc, RingSize}, N).
+id_to_index(Id, RingSize) ->
+    RingIndexInc = chash:ring_increment(RingSize),
+    Id * RingIndexInc.
+
+find_vnode_partitions(Index, N, RingSize) ->
+    n_keyspaces({vnode_id, index_to_id(Index, RingSize), RingSize}, N).
 
 partitions_by_index_or_filter(Idx, NVal, [], RingSize) ->
     find_vnode_partitions(Idx, NVal, RingSize);
 partitions_by_index_or_filter(_Idx, _NVal, Filters, RingSize) ->
-    lists:map(fun(P) -> {partition_id, P, RingSize} end,
+    lists:map(fun(P) ->
+                      {partition_id,
+                       index_to_id(add_offset(P,
+                                              -chash:ring_increment(RingSize),
+                                              RingSize),
+                                   RingSize),
+                       RingSize} end,
               Filters).
 
 %% replace_subpartition_chunk
@@ -519,6 +531,13 @@ create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin, AvailNode
 %% ====================================================================
 
 %% @private
+%% Adding an offset while keeping the result inside [0, Top). Adding
+%% Top to the left of `rem' allows offset to be negative without
+%% violating the lower bound of zero
+add_offset(Position, Offset, Top) ->
+    (Position + (Top + Offset)) rem Top.
+
+%% @private
 %% Convert(from, to)
 %% We spend a lot of code mapping between data types, mostly
 %% integer-based. Consolidate that as much as possible here.
@@ -529,17 +548,17 @@ convert({partition_id, PartitionID, RingSize}, keyspace_filter) ->
     %% into which it directly maps, we have to increment a partition
     %% ID by one to find the relevant keyspace index for traditional
     %% coverage plan filters
-    ((PartitionID + 1) rem RingSize) * chash:ring_increment(RingSize);
+    id_to_index(add_offset(PartitionID, 1, RingSize), RingSize);
 convert({partition_id, PartitionID, RingSize}, partition_index) ->
-    PartitionID * chash:ring_increment(RingSize);
+    id_to_index(PartitionID, RingSize);
 convert({vnode_id, VNodeID, RingSize}, vnode_index) ->
-    VNodeID * chash:ring_increment(RingSize);
+    id_to_index(VNodeID, RingSize);
 convert({SubpID, Bits}, subpartition_index) ->
     SubpID bsl Bits.
 
 %% @private
 increment_vnode({vnode_id, Position, RingSize}, Offset) ->
-    {vnode_id, (Position + Offset) rem RingSize, RingSize}.
+    {vnode_id, add_offset(Position, Offset, RingSize), RingSize}.
 
 %% @private
 list_all_vnode_ids(RingSize) ->
@@ -552,10 +571,8 @@ list_all_vnode_ids(RingSize) ->
                                   fun((atom(), binary()) -> list(node()))) ->
                                          list(vnode_id()).
 identify_unavailable_vnodes(CHBin, RingSize, Service, AvailNodeFun) ->
-    PartitionSize = chash:ring_increment(RingSize),
-
     %% Get a list of the VNodes owned by any unavailable nodes
-    [{vnode_id, Index div PartitionSize, RingSize} ||
+    [{vnode_id, index_to_id(Index, RingSize), RingSize} ||
         {Index, _Node}
             <- riak_core_apl:offline_owners(
                  AvailNodeFun(Service, CHBin), CHBin)].
@@ -781,6 +798,7 @@ create_plan_test_() ->
      [fun test_create_traditional_plan/1,
       fun test_create_subpartition_plan/1,
       fun test_replace_traditional/1,
+      fun test_replace_traditional2/1,
       fun test_replace_subpartition/1]
     }.
 
@@ -798,6 +816,52 @@ chash_init() ->
 cpsetup() ->
     CHash = chash_init(),
     chashbin:create(CHash).
+
+test_replace_traditional2(CHBin) ->
+    %% Unlike test_replace_traditional, this function will iterate
+    %% through through N request IDs. Seems like an obvious place to
+    %% use QuickCheck for more coverage
+
+    ?_assertMatch([true, true, true],
+                  lists:map(fun(N) ->
+                                    {NewVnodes, NewFilters} =
+                                        replace_traditional_chunk(
+                                          913438523331814323877303020447676887284957839360,
+                                          node3, [], 3, N, [], riak_kv, CHBin,
+                                          fun(_, _) -> [node1, node2] end),
+                                    equivalent_coverage(
+                                      913438523331814323877303020447676887284957839360,
+                                      {NewVnodes, NewFilters},
+                                      3, CHBin) andalso
+                                        %% Make sure none of the new
+                                        %% vnodes live on our "down"
+                                        %% node, node3
+                                        [] ==
+                                        lists:filter(fun({_, node3}) -> true;
+                                                        (_) -> false
+                                                     end, NewVnodes)
+                  end, lists:seq(0, 2))).
+
+equivalent_coverage(Old, {_NewVs, NewFs}, NVal, CHBin) ->
+    RingSize = chashbin:num_partitions(CHBin),
+    PartitionSize = chash:ring_increment(RingSize),
+    OldFilters = test_vnode_to_filters(Old, NVal, RingSize, PartitionSize),
+    %% This logic relies on the fact that all of the new vnodes must
+    %% have an explicit filter list since we're replacing a full vnode
+    %% and there is no other vnode which has exactly the same
+    %% partitions
+    NewFilters = lists:foldl(
+                   fun({_VNode, FilterList}, Acc) -> Acc ++ FilterList end,
+                   [],
+                   NewFs),
+    lists:sort(OldFilters) == lists:sort(NewFilters).
+
+test_vnode_to_filters(Index, NVal, RingSize, PartitionSize) ->
+    lists:map(fun(N) -> (((Index div PartitionSize) + (RingSize - N)) rem RingSize) * PartitionSize end,
+              lists:seq(0, NVal-1)).
+
+
+
 
 test_replace_traditional(CHBin) ->
     %% We're asking or a replacement for the 4th vnode (id 3), with
