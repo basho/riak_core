@@ -293,7 +293,7 @@ index_to_id(Index, RingSize) ->
     RingIndexInc = chash:ring_increment(RingSize),
     Index div RingIndexInc.
 
-id_to_index(Id, RingSize) ->
+id_to_index(Id, RingSize) when Id < RingSize->
     RingIndexInc = chash:ring_increment(RingSize),
     Id * RingIndexInc.
 
