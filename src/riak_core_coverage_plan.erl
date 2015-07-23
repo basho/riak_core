@@ -368,6 +368,8 @@ singular_preflist_to_chunk({VnodeIdx, Node}, SubpID) ->
     [{VnodeIdx, Node, SubpID}].
 
 
+%% IMPORTANT: `Count' is assumed to be a power of 2 as determined by
+%% `riak_client'. Anything else will behave badly.
 -spec create_subpartition_plan('all'|'allup',
                                pos_integer(),
                                pos_integer(),
