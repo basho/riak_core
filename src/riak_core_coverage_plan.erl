@@ -129,7 +129,7 @@
 -type vnode_filters() :: [{index(), [index()]}].
 -type coverage_plan() :: {coverage_vnodes(), vnode_filters()}.
 
-%% Each: Node, Vnode hash, { Subpartition id, BSL }
+%% Vnode index, node, { Subpartition id, BSL }
 -type subp_plan() :: [{index(), node(), subpartition_id()}].
 
 -export_type([coverage_plan/0, coverage_vnodes/0, vnode_filters/0]).
@@ -143,11 +143,8 @@
 %% Public API
 %% ===================================================================
 
-%% @doc Create a coverage plan to distribute work to a set
-%%      of covering VNodes around the ring. If the first argument
-%%      is a vnode_coverage record, that means we've previously
-%%      generated a coverage plan and we're being fed back one
-%%      element of it. Return that element in the proper format.
+%% @doc Create Riak's traditional coverage plan to distribute work to
+%%      a minimal set of covering VNodes around the ring.
 -spec create_plan(vnode_selector(),
                   pos_integer(),
                   pos_integer(),
@@ -158,41 +155,9 @@ create_plan(VNodeTarget, NVal, PVC, ReqId, Service) ->
     create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service,
                             CHBin, ?AVAIL_NODE_FUN).
 
-%% @doc The format for the return from this function is specifically
-%% tied to the needs of `riak_core_coverage_fsm:initialize'
--spec interpret_plan(vnode_coverage()) ->
-                            {list({index(), node()}),
-                             list({index(), list(index())|tuple()})}.
-interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
-                               subpartition={Mask, BSL}}) ->
-    {[{TargetHash, node()}], [{TargetHash, {Mask, BSL}}]};
-interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
-                               partition_filters=[]}) ->
-    {[{TargetHash, node()}], []};
-interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
-                            partition_filters=HashFilters}) ->
-    {[{TargetHash, node()}], [{TargetHash, HashFilters}]}.
-
-partition_to_preflist(Partition, NVal, Offset, UpNodes, CHBin) ->
-    DocIdx = convert(Partition, partition_index),
-    docidx_to_preflist(DocIdx, NVal, Offset, UpNodes, CHBin).
-
-docidx_to_preflist(DocIdx, NVal, Offset, UpNodes, CHBin) ->
-    %% `chashbin' would be fine with a straight integer, but
-    %% `riak_core_apl' has a -spec that mandates binary(), so we'll
-    %% play its game
-    OrigPreflist =
-        lists:map(fun({{Idx, Node}, primary}) -> {Idx, Node} end,
-                  riak_core_apl:get_primary_apl_chbin(
-                    <<DocIdx:160/integer>>, NVal, CHBin, UpNodes)),
-    rotate_list(OrigPreflist, length(OrigPreflist), Offset).
-
-rotate_list(List, Len, Offset) when Offset >= Len ->
-    List;
-rotate_list(List, _Len, Offset) ->
-    {Head, Tail} = lists:split(Offset, List),
-    Tail ++ Head.
-
+%% @doc Create a "mini" traditional coverage plan to replace
+%%      components of a previously-generated plan that are not useful
+%%      to the client because the node is unavailable
 -spec replace_traditional_chunk(VnodeIdx :: index(),
                                 Node :: node(),
                                 Filters :: list(index()),
@@ -208,116 +173,25 @@ replace_traditional_chunk(VnodeIdx, Node, Filters, NVal,
                               ReqId, DownNodes, Service, CHBin,
                               ?AVAIL_NODE_FUN).
 
-replace_traditional_chunk(VnodeIdx, Node, Filters, NVal,
-                          ReqId, DownNodes, Service, CHBin,
-                          AvailNodeFun) ->
-
-    RingSize = chashbin:num_partitions(CHBin),
-    Offset = ReqId rem NVal,
-    %% We have our own idea of what nodes are available. The client
-    %% may have a different idea of offline nodes based on network
-    %% partitions, so we take that into account.
-    %%
-    %% The client can't really tell us what nodes it thinks are up (it
-    %% only knows hostnames at best) but the opaque coverage chunks it
-    %% uses have node names embedded in them, and it can tell us which
-    %% chunks do *not* work.
-    UpNodes = AvailNodeFun(Service, CHBin) -- [Node|DownNodes],
-    NeededPartitions = partitions_by_index_or_filter(
-                         VnodeIdx, NVal, Filters, RingSize),
-
-    %% For each partition, create a tuple with that partition (as a
-    %% filter index) mapped to a nested tuple of preflist + (initially
-    %% empty) filter list list.
-    Preflists =
-      lists:map(
-        fun(Partition) ->
-                {convert(Partition, keyspace_filter),
-                   safe_hd(
-                     partition_to_preflist(Partition, NVal, Offset, UpNodes, CHBin))
-                }
-        end,
-        NeededPartitions),
-    maybe_create_traditional_replacement(Preflists, lists:keyfind([], 2, Preflists)).
-
-maybe_create_traditional_replacement(Preflists, false) ->
-    %% We do not go to great lengths to minimize the number of
-    %% coverage plan components we'll return, but we do at least sort
-    %% the vnodes we find so that we can consolidate filters later.
-    create_traditional_replacement(lists:sort(Preflists));
-maybe_create_traditional_replacement(_Preflists, _) ->
-    {error, primary_partition_unavailable}.
+%% @doc Create a coverage plan with at least one slice per partition,
+%%      originally designed for parallel extraction of data via 2i.
+-spec create_subpartition_plan('all'|'allup',
+                               pos_integer(),
+                               pos_integer(),
+                               pos_integer(),
+                               req_id(), atom()) ->
+                                      {error, term()} | subp_plan().
+create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service) ->
+    %% IMPORTANT: `Count' is assumed to be a power of 2 as determined
+    %% by `riak_client'. Anything else will behave badly.
+    {ok, ChashBin} = riak_core_ring_manager:get_chash_bin(),
+    create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service,
+                             ChashBin, ?AVAIL_NODE_FUN).
 
 
-%% Argument to this should be sorted
-create_traditional_replacement(Preflists) ->
-    dechunk_traditional_replacement(
-      lists:foldl(
-        %% Pattern match the current vnode against the head of the
-        %% accumulator; if the vnodes match, we can consolidate
-        %% partition filters
-        fun({PartIdx, VNode}, [{VNode, Partitions}|Tail]) ->
-                [{VNode,
-                  lists:sort([PartIdx|Partitions])}|Tail];
-           %% Instead if this vnode is new, place it into the
-           %% accumulator as is
-           ({PartIdx, VNode}, Accum) ->
-                [{VNode, [PartIdx]}|Accum]
-        end,
-        [],
-        Preflists)).
-
-%% Take our replacement traditional coverage chunks and consolidate it
-%% into a traditional coverage plan (that another layer will rechunk,
-%% but whatchagonnado)
-dechunk_traditional_replacement(Coverage) ->
-    {
-      lists:map(fun({{Vnode, Node}, _Filters}) ->
-                        {Vnode, Node}
-                end, Coverage),
-      lists:filtermap(fun({{_Vnode, _Node}, []}) ->
-                              false;
-                         ({{Vnode, _Node}, Filters}) ->
-                              {true, {Vnode, Filters}}
-                      end,
-                      Coverage)
-    }.
-
-
-safe_hd([]) ->
-    [];
-safe_hd(List) ->
-    hd(List).
-
-index_to_id(Index, RingSize) ->
-    RingIndexInc = chash:ring_increment(RingSize),
-    Index div RingIndexInc.
-
-id_to_index(Id, RingSize) when Id < RingSize->
-    RingIndexInc = chash:ring_increment(RingSize),
-    Id * RingIndexInc.
-
-find_vnode_partitions(Index, N, RingSize) ->
-    n_keyspaces({vnode_id, index_to_id(Index, RingSize), RingSize}, N).
-
-partitions_by_index_or_filter(Idx, NVal, [], RingSize) ->
-    find_vnode_partitions(Idx, NVal, RingSize);
-partitions_by_index_or_filter(_Idx, _NVal, Filters, RingSize) ->
-    %% Filters for traditional coverage plans are offset by 1, so when
-    %% converting to partition indexes or IDs, we have to subtract 1
-    lists:map(fun(P) ->
-                      {partition_id,
-                       add_offset(index_to_id(P, RingSize),
-                                  -1, RingSize),
-                       RingSize} end,
-              Filters).
-
-%% replace_subpartition_chunk
-
-%% This is relatively easy: to replace all of a missing vnode, we'd
-%% have to create multiple chunks from multiple alternatives. Since
-%% subpartitions are at most one partition (and often smaller than a
-%% partition) we just need to find one alternative vnode.
+%% @doc Create a "mini" traditional coverage plan to replace
+%%      components of a previously-generated plan that are not useful
+%%      to the client because the node is unavailable
 -spec replace_subpartition_chunk(VnodeIdx :: index(),
                                  Node :: node(),
                                  {Mask :: non_neg_integer(),
@@ -334,136 +208,27 @@ replace_subpartition_chunk(VnodeIdx, Node, {Mask, Bits}, NVal,
                                ReqId, DownNodes, Service, CHBin,
                                ?AVAIL_NODE_FUN).
 
-
-replace_subpartition_chunk(_VnodeIdx, Node, {_Mask, _Bits}=SubpID, NVal,
-                           ReqId, DownNodes, Service, CHBin,
-                           AvailNodeFun) ->
-    Offset = ReqId rem NVal,
-
-    %% We have our own idea of what nodes are available. The client
-    %% may have a different idea of offline nodes based on network
-    %% partitions, so we take that into account.
-    %%
-    %% The client can't really tell us what nodes it thinks are up (it
-    %% only knows hostnames at best) but the opaque coverage chunks it
-    %% uses have node names embedded in them, and it can tell us which
-    %% chunks do *not* work.
-    UpNodes = AvailNodeFun(Service, CHBin) -- [Node|DownNodes],
-
-    %% We don't know what partition this subpartition is in, but we
-    %% can request a preflist for it by converting the subpartition to
-    %% a document index.
-    %%
-    %% Unlike traditional coverage filters to document key hash
-    %% mappings which have off-by-one adjustments, subpartition masks
-    %% map directly against the relevant key hashes.
-    DocIdx = convert(SubpID, subpartition_index),
-    PrefList =
-        docidx_to_preflist(DocIdx, NVal, Offset, UpNodes, CHBin),
-    singular_preflist_to_chunk(safe_hd(PrefList), SubpID).
-
-singular_preflist_to_chunk([], _SubpID) ->
-    {error, primary_partition_unavailable};
-singular_preflist_to_chunk({VnodeIdx, Node}, SubpID) ->
-    [{VnodeIdx, Node, SubpID}].
+%% @doc Take a `vnode_coverage' record and interpret it as
+%%      needed by `riak_core_coverage_fsm:initialize'
+-spec interpret_plan(vnode_coverage()) ->
+                            {list({index(), node()}),
+                             list({index(), list(index())|tuple()})}.
+interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
+                               subpartition={Mask, BSL}}) ->
+    {[{TargetHash, node()}], [{TargetHash, {Mask, BSL}}]};
+interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
+                               partition_filters=[]}) ->
+    {[{TargetHash, node()}], []};
+interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
+                            partition_filters=HashFilters}) ->
+    {[{TargetHash, node()}], [{TargetHash, HashFilters}]}.
 
 
-%% IMPORTANT: `Count' is assumed to be a power of 2 as determined by
-%% `riak_client'. Anything else will behave badly.
--spec create_subpartition_plan('all'|'allup',
-                               pos_integer(),
-                               pos_integer(),
-                               pos_integer(),
-                               req_id(), atom()) ->
-                                      {error, term()} | subp_plan().
-create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service) ->
-    {ok, ChashBin} = riak_core_ring_manager:get_chash_bin(),
-    create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service,
-                             ChashBin, ?AVAIL_NODE_FUN).
-
-%% Must be able to comply with PVC if the target is 'all'
-check_pvc(List, _PVC, allup) ->
-    List;
-check_pvc(List, PVC, all) ->
-    check_pvc2(List, length(List), PVC).
-
-check_pvc2(List, Len, PVC) when Len >= PVC ->
-    List;
-check_pvc2(_List, _Len, _PVC) ->
-    [].
+%% ====================================================================
+%% Internal functions
+%% ====================================================================
 
 %% @private
-create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service, CHBin, AvailNodeFun) ->
-    MaskBSL = data_bits(Count),
-
-    %% Calculate an offset based on the request id to offer the
-    %% possibility of different sets of VNodes being used even when
-    %% all nodes are available.
-    Offset = ReqId rem NVal,
-
-    RingSize = chashbin:num_partitions(CHBin),
-
-    UpNodes = AvailNodeFun(Service, CHBin),
-    SubpList =
-        lists:map(fun(SubpCounter) ->
-                          SubpID = {SubpCounter, MaskBSL},
-                          SubpIndex = convert(SubpID, subpartition_index),
-                          PartID =
-                              {partition_id,
-                               chashbin:responsible_position(SubpIndex, CHBin),
-                               RingSize},
-
-                          %% PVC is much like R; if the number of
-                          %% available primary partitions won't reach
-                          %% the specified PVC value, don't bother
-                          %% including this partition at all. We can
-                          %% decide later (based on all vs allup)
-                          %% whether to return the successful
-                          %% components of the coverage plan
-                          {PartID, SubpID,
-                           check_pvc(
-                             docidx_to_preflist(SubpIndex, NVal, Offset, UpNodes, CHBin),
-                             PVC, VNodeTarget)}
-                  end,
-                  lists:seq(0, Count - 1)),
-
-    %% Now we have a list of tuples; each subpartition maps to a
-    %% partition ID, subpartition ID, and a list of zero or more
-    %% {vnode_index, node} tuples for that partition
-    maybe_create_subpartition_plan(VNodeTarget, SubpList, PVC).
-
-maybe_create_subpartition_plan(allup, SubpList, PVC) ->
-    map_subplist_to_plan(SubpList, PVC);
-maybe_create_subpartition_plan(all, SubpList, PVC) ->
-    maybe_create_subpartition_plan(all, lists:keyfind([], 3, SubpList), SubpList, PVC).
-
-maybe_create_subpartition_plan(all, false, SubpList, PVC) ->
-    map_subplist_to_plan(SubpList, PVC);
-maybe_create_subpartition_plan(all, _, _SubpList, _PVC) ->
-    {error, insufficient_vnodes_available}.
-
-map_subplist_to_plan(SubpList, PVC) ->
-    lists:flatten(
-      lists:filtermap(fun({_PartID, _SubpID, []}) ->
-                              false;
-                         ({_PartID, SubpID, Vnodes}) ->
-                              {true,
-                               map_pvc_vnodes(Vnodes, SubpID, PVC)}
-                    end, SubpList)).
-
-
-map_pvc_vnodes(Vnodes, SubpID, PVC) ->
-    map_pvc_vnodes(Vnodes, SubpID, PVC, []).
-
-map_pvc_vnodes(_Vnodes, _SubpID, 0, Accum) ->
-    lists:reverse(Accum);
-map_pvc_vnodes([{VnodeIdx, Node}|Tail], SubpID, PVC, Accum) ->
-    map_pvc_vnodes(Tail, SubpID, PVC-1,
-                   [{ VnodeIdx, Node, SubpID }] ++ Accum).
-
-
-%% @private
-%% Make it easier to unit test create_plan/5.
 create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin, AvailNodeFun) ->
     RingSize = chashbin:num_partitions(CHBin),
 
@@ -528,19 +293,132 @@ create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service, CHBin, AvailNode
             end
     end.
 
-%% ====================================================================
-%% Internal functions
-%% ====================================================================
+%% @private
+replace_traditional_chunk(VnodeIdx, Node, Filters, NVal,
+                          ReqId, DownNodes, Service, CHBin,
+                          AvailNodeFun) ->
+
+    RingSize = chashbin:num_partitions(CHBin),
+    Offset = ReqId rem NVal,
+    %% We have our own idea of what nodes are available. The client
+    %% may have a different idea of offline nodes based on network
+    %% partitions, so we take that into account.
+    %%
+    %% The client can't really tell us what nodes it thinks are up (it
+    %% only knows hostnames at best) but the opaque coverage chunks it
+    %% uses have node names embedded in them, and it can tell us which
+    %% chunks do *not* work.
+    UpNodes = AvailNodeFun(Service, CHBin) -- [Node|DownNodes],
+    NeededPartitions = partitions_by_index_or_filter(
+                         VnodeIdx, NVal, Filters, RingSize),
+
+    %% For each partition, create a tuple with that partition (as a
+    %% filter index) mapped to a nested tuple of preflist + (initially
+    %% empty) filter list list.
+    Preflists =
+      lists:map(
+        fun(Partition) ->
+                {convert(Partition, keyspace_filter),
+                   safe_hd(
+                     partition_to_preflist(Partition, NVal, Offset, UpNodes, CHBin))
+                }
+        end,
+        NeededPartitions),
+    maybe_create_traditional_replacement(Preflists, lists:keyfind([], 2, Preflists)).
 
 %% @private
-%% Adding an offset while keeping the result inside [0, Top). Adding
-%% Top to the left of `rem' allows offset to be negative without
-%% violating the lower bound of zero
-add_offset(Position, Offset, Top) ->
-    (Position + (Top + Offset)) rem Top.
+maybe_create_traditional_replacement(Preflists, false) ->
+    %% We do not go to great lengths to minimize the number of
+    %% coverage plan components we'll return, but we do at least sort
+    %% the vnodes we find so that we can consolidate filters later.
+    create_traditional_replacement(lists:sort(Preflists));
+maybe_create_traditional_replacement(_Preflists, _) ->
+    {error, primary_partition_unavailable}.
+
 
 %% @private
-%% Convert(from, to)
+%% Argument to this should be sorted
+create_traditional_replacement(Preflists) ->
+    dechunk_traditional_replacement(
+      lists:foldl(
+        %% Pattern match the current vnode against the head of the
+        %% accumulator; if the vnodes match, we can consolidate
+        %% partition filters
+        fun({PartIdx, VNode}, [{VNode, Partitions}|Tail]) ->
+                [{VNode,
+                  lists:sort([PartIdx|Partitions])}|Tail];
+           %% Instead if this vnode is new, place it into the
+           %% accumulator as is
+           ({PartIdx, VNode}, Accum) ->
+                [{VNode, [PartIdx]}|Accum]
+        end,
+        [],
+        Preflists)).
+
+%% @private
+%% Take our replacement traditional coverage chunks and consolidate it
+%% into a traditional coverage plan (that another layer will rechunk,
+%% but whatchagonnado)
+dechunk_traditional_replacement(Coverage) ->
+    {
+      lists:map(fun({{Vnode, Node}, _Filters}) ->
+                        {Vnode, Node}
+                end, Coverage),
+      lists:filtermap(fun({{_Vnode, _Node}, []}) ->
+                              false;
+                         ({{Vnode, _Node}, Filters}) ->
+                              {true, {Vnode, Filters}}
+                      end,
+                      Coverage)
+    }.
+
+
+%% @private
+safe_hd([]) ->
+    [];
+safe_hd(List) ->
+    hd(List).
+
+%% @private
+replace_subpartition_chunk(_VnodeIdx, Node, {_Mask, _Bits}=SubpID, NVal,
+                           ReqId, DownNodes, Service, CHBin,
+                           AvailNodeFun) ->
+    Offset = ReqId rem NVal,
+
+    %% We have our own idea of what nodes are available. The client
+    %% may have a different idea of offline nodes based on network
+    %% partitions, so we take that into account.
+    %%
+    %% The client can't really tell us what nodes it thinks are up (it
+    %% only knows hostnames at best) but the opaque coverage chunks it
+    %% uses have node names embedded in them, and it can tell us which
+    %% chunks do *not* work.
+    UpNodes = AvailNodeFun(Service, CHBin) -- [Node|DownNodes],
+
+    %% We don't know what partition this subpartition is in, but we
+    %% can request a preflist for it by converting the subpartition to
+    %% a document index.
+    %%
+    %% Unlike traditional coverage filters to document key hash
+    %% mappings which have off-by-one adjustments, subpartition masks
+    %% map directly against the relevant key hashes.
+    DocIdx = convert(SubpID, subpartition_index),
+    PrefList =
+        docidx_to_preflist(DocIdx, NVal, Offset, UpNodes, CHBin),
+    singular_preflist_to_chunk(safe_hd(PrefList), SubpID).
+
+%% @private
+singular_preflist_to_chunk([], _SubpID) ->
+    {error, primary_partition_unavailable};
+singular_preflist_to_chunk({VnodeIdx, Node}, SubpID) ->
+    [{VnodeIdx, Node, SubpID}].
+
+
+
+%% ====================================================================
+%%% Conversion functions
+
+%% @private
 %% We spend a lot of code mapping between data types, mostly
 %% integer-based. Consolidate that as much as possible here.
 -spec convert(partition_id() | vnode_id() | subpartition_id(), atom()) ->
@@ -557,6 +435,153 @@ convert({vnode_id, VNodeID, RingSize}, vnode_index) ->
     id_to_index(VNodeID, RingSize);
 convert({SubpID, Bits}, subpartition_index) ->
     SubpID bsl Bits.
+
+%% @private
+partition_to_preflist(Partition, NVal, Offset, UpNodes, CHBin) ->
+    DocIdx = convert(Partition, partition_index),
+    docidx_to_preflist(DocIdx, NVal, Offset, UpNodes, CHBin).
+
+%% @private
+docidx_to_preflist(DocIdx, NVal, Offset, UpNodes, CHBin) ->
+    %% `chashbin' would be fine with a straight integer, but
+    %% `riak_core_apl' has a -spec that mandates binary(), so we'll
+    %% play its game
+    OrigPreflist =
+        lists:map(fun({{Idx, Node}, primary}) -> {Idx, Node} end,
+                  riak_core_apl:get_primary_apl_chbin(
+                    <<DocIdx:160/integer>>, NVal, CHBin, UpNodes)),
+    rotate_list(OrigPreflist, length(OrigPreflist), Offset).
+
+%% @private
+rotate_list(List, Len, Offset) when Offset >= Len ->
+    List;
+rotate_list(List, _Len, Offset) ->
+    {Head, Tail} = lists:split(Offset, List),
+    Tail ++ Head.
+
+%% @private
+index_to_id(Index, RingSize) ->
+    RingIndexInc = chash:ring_increment(RingSize),
+    Index div RingIndexInc.
+
+%% @private
+id_to_index(Id, RingSize) when Id < RingSize->
+    RingIndexInc = chash:ring_increment(RingSize),
+    Id * RingIndexInc.
+
+%% @private
+find_vnode_partitions(Index, N, RingSize) ->
+    n_keyspaces({vnode_id, index_to_id(Index, RingSize), RingSize}, N).
+
+%% @private
+partitions_by_index_or_filter(Idx, NVal, [], RingSize) ->
+    find_vnode_partitions(Idx, NVal, RingSize);
+partitions_by_index_or_filter(_Idx, _NVal, Filters, RingSize) ->
+    %% Filters for traditional coverage plans are offset by 1, so when
+    %% converting to partition indexes or IDs, we have to subtract 1
+    lists:map(fun(P) ->
+                      {partition_id,
+                       add_offset(index_to_id(P, RingSize),
+                                  -1, RingSize),
+                       RingSize} end,
+              Filters).
+
+
+
+%% @private
+%% Must be able to comply with PVC if the target is 'all'
+check_pvc(List, _PVC, allup) ->
+    List;
+check_pvc(List, PVC, all) ->
+    check_pvc2(List, length(List), PVC).
+
+%% @private
+check_pvc2(List, Len, PVC) when Len >= PVC ->
+    List;
+check_pvc2(_List, _Len, _PVC) ->
+    [].
+
+%% @private
+create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service, CHBin, AvailNodeFun) ->
+    MaskBSL = data_bits(Count),
+
+    %% Calculate an offset based on the request id to offer the
+    %% possibility of different sets of VNodes being used even when
+    %% all nodes are available.
+    Offset = ReqId rem NVal,
+
+    RingSize = chashbin:num_partitions(CHBin),
+
+    UpNodes = AvailNodeFun(Service, CHBin),
+    SubpList =
+        lists:map(fun(SubpCounter) ->
+                          SubpID = {SubpCounter, MaskBSL},
+                          SubpIndex = convert(SubpID, subpartition_index),
+                          PartID =
+                              {partition_id,
+                               chashbin:responsible_position(SubpIndex, CHBin),
+                               RingSize},
+
+                          %% PVC is much like R; if the number of
+                          %% available primary partitions won't reach
+                          %% the specified PVC value, don't bother
+                          %% including this partition at all. We can
+                          %% decide later (based on all vs allup)
+                          %% whether to return the successful
+                          %% components of the coverage plan
+                          {PartID, SubpID,
+                           check_pvc(
+                             docidx_to_preflist(SubpIndex, NVal, Offset, UpNodes, CHBin),
+                             PVC, VNodeTarget)}
+                  end,
+                  lists:seq(0, Count - 1)),
+
+    %% Now we have a list of tuples; each subpartition maps to a
+    %% partition ID, subpartition ID, and a list of zero or more
+    %% {vnode_index, node} tuples for that partition
+    maybe_create_subpartition_plan(VNodeTarget, SubpList, PVC).
+
+%% @private
+maybe_create_subpartition_plan(allup, SubpList, PVC) ->
+    map_subplist_to_plan(SubpList, PVC);
+maybe_create_subpartition_plan(all, SubpList, PVC) ->
+    maybe_create_subpartition_plan(all, lists:keyfind([], 3, SubpList), SubpList, PVC).
+
+%% @private
+maybe_create_subpartition_plan(all, false, SubpList, PVC) ->
+    map_subplist_to_plan(SubpList, PVC);
+maybe_create_subpartition_plan(all, _, _SubpList, _PVC) ->
+    {error, insufficient_vnodes_available}.
+
+%% @private
+map_subplist_to_plan(SubpList, PVC) ->
+    lists:flatten(
+      lists:filtermap(fun({_PartID, _SubpID, []}) ->
+                              false;
+                         ({_PartID, SubpID, Vnodes}) ->
+                              {true,
+                               map_pvc_vnodes(Vnodes, SubpID, PVC)}
+                    end, SubpList)).
+
+
+%% @private
+map_pvc_vnodes(Vnodes, SubpID, PVC) ->
+    map_pvc_vnodes(Vnodes, SubpID, PVC, []).
+
+%% @private
+map_pvc_vnodes(_Vnodes, _SubpID, 0, Accum) ->
+    lists:reverse(Accum);
+map_pvc_vnodes([{VnodeIdx, Node}|Tail], SubpID, PVC, Accum) ->
+    map_pvc_vnodes(Tail, SubpID, PVC-1,
+                   [{ VnodeIdx, Node, SubpID }] ++ Accum).
+
+
+%% @private
+%% Adding an offset while keeping the result inside [0, Top). Adding
+%% Top to the left of `rem' allows offset to be negative without
+%% violating the lower bound of zero
+add_offset(Position, Offset, Top) ->
+    (Position + (Top + Offset)) rem Top.
 
 %% @private
 increment_vnode({vnode_id, Position, RingSize}, Offset) ->
