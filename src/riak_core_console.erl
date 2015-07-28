@@ -19,6 +19,8 @@
 %% -------------------------------------------------------------------
 
 -module(riak_core_console).
+%% Legacy exports - unless needed by other modules, only expose
+%% functionality via command/1
 -export([member_status/1, ring_status/1, print_member_status/1,
          stage_leave/1, stage_remove/1, stage_replace/1, stage_resize_ring/1,
          stage_force_replace/1, print_staged/1, commit_staged/1,

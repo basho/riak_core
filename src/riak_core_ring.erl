@@ -159,6 +159,14 @@
     rvsn     :: vclock:vclock()
 }).
 
+%% Legacy chstate
+-record(chstate, {
+    nodename :: node(), % the Node responsible for this chstate
+    vclock,   % for this chstate object, entries are {Node, Ctr}
+    chring :: chash:chash(),   % chash ring of {IndexAsInt, Node} mappings
+    meta      % dict of cluster-wide other data (primarily bucket N-value, etc)
+}).
+
 -type member_status() :: joining | valid | invalid | leaving | exiting | down.
 
 %% type meta_entry(). Record for each entry in #chstate.meta
@@ -190,9 +198,44 @@
 
 %% @doc Upgrade old ring structures to the latest format.
 upgrade(Old=?CHSTATE{}) ->
-    Old.
+    Old;
+upgrade(Old=#chstate{}) ->
+    #chstate{nodename=Node,
+             vclock=VC,
+             chring=Ring,
+             meta=Meta} = Old,
+    New1 = ?CHSTATE{nodename=Node,
+                    vclock=VC,
+                    chring=Ring,
+                    meta=Meta,
+                    clustername=undefined,
+                    next=[],
+                    members=[],
+                    claimant=undefined,
+                    seen=[],
+                    rvsn=VC},
+    MemberVC = vclock:increment(Node, vclock:fresh()),
+    Members = [{Member, {valid, MemberVC, []}}
+               || Member <- chash:members(Ring)],
+    New2 = New1?CHSTATE{members=Members},
+    case node() of
+        Node ->
+            GVsn = riak_core_gossip:gossip_version(),
+            update_member_meta(Node, New2, Node,
+                               gossip_vsn, GVsn, same_vclock);
+        _ ->
+            New2
+    end.
 
 %% @doc Downgrade the latest ring structure to a specified version.
+downgrade(1,?CHSTATE{nodename=Node,
+                     vclock=VC,
+                     chring=Ring,
+                     meta=Meta}) ->
+    #chstate{nodename=Node,
+             vclock=VC,
+             chring=Ring,
+             meta=Meta};
 downgrade(2,State=?CHSTATE{}) ->
     State.
 
