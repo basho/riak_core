@@ -167,17 +167,15 @@ handle_cast({unregister_vnode, Pid}, State) ->
     catch demonitor(State#state.vnode_mref, [flush]),
     NewState = forget_vnode(State),
     {noreply, NewState};
-handle_cast({vnode_proxy_pong, Pid, Msgs}, State=#state{vnode_pid=VNodePid,
-                                                        check_request=RequestState,
+handle_cast({vnode_proxy_pong, Ref, Msgs}, State=#state{check_request=RequestState,
                                                         check_mailbox=Mailbox}) ->
-    ValidReply = (Pid =:= VNodePid) and (RequestState =:= sent),
-    NewState = case ValidReply of
-                   true ->
+    NewState = case Ref of
+                   RequestState ->
                        State#state{check_mailbox=Mailbox - Msgs,
                                    check_request=undefined,
                                    check_counter=0};
                    _ ->
-                       State#state{check_request=undefined}
+                       State
                end,
     {noreply, NewState};
 
@@ -229,9 +227,8 @@ handle_proxy(Msg, State=#state{check_counter=Counter,
             %% we can adjust our mailbox estimate accordingly.
             case RequestState of
                 undefined ->
-                    Pid ! {'$vnode_proxy_ping', self(), Mailbox + 1},
-                    RequestState2 = sent,
-                    Mailbox2 = Mailbox + 2;
+                    Mailbox2 = Mailbox + 2,
+                    RequestState2 = send_proxy_ping(Pid, Mailbox2);
                 _ ->
                     Mailbox2 = Mailbox + 1,
                     RequestState2 = RequestState
@@ -298,6 +295,12 @@ get_vnode_pid(State=#state{mod=Mod, index=Index, vnode_pid=undefined}) ->
     {Pid, NewState};
 get_vnode_pid(State=#state{vnode_pid=Pid}) ->
     {Pid, State}.
+
+%% @private
+send_proxy_ping(Pid, MailboxSizeAfterPing) ->
+    Ref = make_ref(),
+    Pid ! {'$vnode_proxy_ping', self(), Ref, MailboxSizeAfterPing},
+    Ref.
 
 -ifdef(TEST).
 
