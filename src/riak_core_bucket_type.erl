@@ -92,6 +92,7 @@
 -include("riak_core_bucket_type.hrl").
 
 -export([defaults/0,
+         defaults/1,
          create/2,
          status/1,
          activate/1,
@@ -140,6 +141,11 @@ defaults() ->
      %% to put it (except maybe fixups?)
      {dvv_enabled, true},
      {chash_keyfun, {riak_core_util, chash_std_keyfun}}].
+
+-spec defaults(default_type) -> bucket_type_props().
+defaults(default_type) ->
+    [{allow_mult, false},{dvv_enabled, false}] ++
+        proplists:delete(allow_mult, proplists:delete(dvv_enabled, defaults())).
 
 %% @doc Create the type. The type is not activated (available to nodes) at this time. This
 %% function may be called arbitratily many times if the claimant does not change between
