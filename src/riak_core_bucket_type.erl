@@ -119,6 +119,28 @@
 %% @doc The hardcoded defaults for all bucket types.
 -spec defaults() -> bucket_type_props().
 defaults() ->
+    custom_type_defaults().
+
+%% @doc The hardcoded defaults for the legacy, default bucket
+%% type. These find their way into the `default_bucket_props'
+%% environment variable
+-spec defaults(default_type) -> bucket_type_props().
+defaults(default_type) ->
+    default_type_defaults().
+
+default_type_defaults() ->
+    common_defaults() ++
+        [{dvv_enabled, false},
+         {allow_mult, false}].
+
+custom_type_defaults() ->
+    common_defaults() ++
+        %% @HACK dvv is a riak_kv only thing, yet there is nowhere else
+        %% to put it (except maybe fixups?)
+        [{dvv_enabled, true},
+         {allow_mult, true}].
+
+common_defaults() ->
     [{linkfun, {modfun, riak_kv_wm_link_walker, mapreduce_linkfun}},
      {old_vclock, 86400},
      {young_vclock, 20},
@@ -133,19 +155,10 @@ defaults() ->
      {basic_quorum, false},
      {notfound_ok, true},
      {n_val,3},
-     {allow_mult, true},
      {last_write_wins,false},
      {precommit, []},
      {postcommit, []},
-     %% @HACK this is a riak_kv only thing, yet there is nowhere else
-     %% to put it (except maybe fixups?)
-     {dvv_enabled, true},
      {chash_keyfun, {riak_core_util, chash_std_keyfun}}].
-
--spec defaults(default_type) -> bucket_type_props().
-defaults(default_type) ->
-    [{allow_mult, false},{dvv_enabled, false}] ++
-        proplists:delete(allow_mult, proplists:delete(dvv_enabled, defaults())).
 
 %% @doc Create the type. The type is not activated (available to nodes) at this time. This
 %% function may be called arbitratily many times if the claimant does not change between
@@ -194,6 +207,9 @@ get(BucketType) when is_binary(BucketType) ->
 %% @doc Reset the properties of the bucket. This only affects properties that
 %% can be set using {@see update/2} and can only be performed on an active
 %% type.
+%%
+%% This is not currently hooked into `riak-admin' but can be invoked
+%% from the console.
 -spec reset(bucket_type()) -> ok | {error, term()}.
 reset(BucketType) ->
     update(BucketType, defaults()).
