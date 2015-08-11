@@ -253,11 +253,11 @@ handle_call({insert, Id, Key, Hash, Options}, _From, State) ->
     {reply, ok, State2};
 handle_call({insert_object, BKey, RObj}, _From, State) ->
     VNode = State#state.vnode,
-    IndexN = riak_core_util:get_index_n(BKey),
+    IndexN = get_index_n(VNode, BKey),
     State2 = do_insert(IndexN, term_to_binary(BKey), VNode:hash_object(BKey, RObj), [], State),
     {reply, ok, State2};
 handle_call({delete, BKey}, _From, State) ->
-    IndexN = riak_core_util:get_index_n(BKey),
+    IndexN = get_index_n(State#state.vnode, BKey),
     State2 = do_delete(IndexN, term_to_binary(BKey), State),
     {reply, ok, State2};
 
@@ -312,7 +312,7 @@ handle_cast(stop, State) ->
 
 handle_cast({insert_object, BKey, RObj}, State) ->
     VNode = State#state.vnode,
-    IndexN = riak_core_util:get_index_n(BKey),
+    IndexN = get_index_n(VNode, BKey),
     State2 = do_insert(IndexN, term_to_binary(BKey), VNode:hash_object(BKey, RObj), [], State),
     {noreply, State2};
 
@@ -405,7 +405,7 @@ load_built(#state{trees=Trees}) ->
 fold_keys(Partition, Tree, VNode) ->
     Req = riak_core_util:make_fold_req(
             fun(BKey={Bucket,Key}, RObj, _) ->
-                    IndexN = riak_core_util:get_index_n({Bucket, Key}),
+                    IndexN = get_index_n(VNode, {Bucket, Key}),
                     insert(IndexN, term_to_binary(BKey), VNode:hash_object(BKey, RObj),
                            Tree, [if_missing]),
                     ok
@@ -701,3 +701,11 @@ build_or_rehash(Self, State=#state{index=Index, trees=Trees,
 close_trees(State=#state{trees=Trees}) ->
     Trees2 = [{IdxN, hashtree:close(Tree)} || {IdxN, Tree} <- Trees],
     State#state{trees=Trees2}.
+
+get_index_n(VNode, BKey) ->
+    case erlang:function_exported(VNode, get_index_n, 1) of
+        true ->
+            VNode:get_index_n({Bucket, Key});
+        false ->
+            riak_core_util:get_index_n({Bucket, Key})
+    end.
