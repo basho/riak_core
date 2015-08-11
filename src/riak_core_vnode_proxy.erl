@@ -18,7 +18,7 @@
 %% -------------------------------------------------------------------
 -module(riak_core_vnode_proxy).
 -export([start_link/2, init/1, reg_name/2, reg_name/3, call/2, call/3, cast/2,
-         unregister_vnode/3, command_return_vnode/2]).
+         unregister_vnode/3, command_return_vnode/2, overloaded/1]).
 -export([system_continue/3, system_terminate/4, system_code_change/4]).
 
 -include("riak_core_vnode.hrl").
@@ -105,6 +105,12 @@ unregister_vnode(Mod, Index, Pid) ->
 command_return_vnode({Mod,Index,Node}, Req) ->
     call(reg_name(Mod, Index, Node), {return_vnode, Req}).
 
+%% Return true if the next proxied message will return overload
+overloaded({Mod, Index, Node}) ->
+    call(reg_name(Mod, Index, Node), overloaded);
+overloaded(Pid) ->
+    call(Pid, overloaded).
+
 call(Name, Msg) ->
     call_reply(catch gen:call(Name, '$vnode_proxy_call', Msg)).
 
@@ -155,7 +161,27 @@ handle_call({return_vnode, Req}, _From, State) ->
     {Pid, NewState} = get_vnode_pid(State),
     gen_fsm:send_event(Pid, Req),
     {reply, {ok, Pid}, NewState};
-
+handle_call(overloaded, _From, State=#state{check_counter=Counter,
+                                            check_request_interval=RequestInterval,
+                                            check_mailbox=Mailbox,
+                                            check_request=RequestState,
+                                            check_threshold=Threshold}) ->
+    Counter2 = Counter + 1,
+    %% Mailbox2 count logic extracted from handle_proxy
+    Mailbox2 = case Counter2 of
+                   RequestInterval ->
+                       %% we can adjust our mailbox estimate accordingly.
+                       case RequestState of
+                           undefined ->
+                               Mailbox + 2;
+                           _ ->
+                               Mailbox + 1
+                       end;
+                   _ ->
+                       Mailbox + 1
+               end,
+    Result = (Mailbox2 > Threshold),
+    {reply, Result, State};
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
 
