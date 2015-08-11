@@ -138,7 +138,7 @@ standard_join(Node, Ring, Rejoin, Auto) ->
     Singleton = ([node()] =:= riak_core_ring:all_members(MyRing)),
     case {InitComplete, Rejoin or Singleton, SameSize} of
         {false, _, _} ->
-            {error, retry_later};
+            {error, node_still_starting};
         {_, false, _} ->
             {error, not_single_node};
         {_, _, false} ->
