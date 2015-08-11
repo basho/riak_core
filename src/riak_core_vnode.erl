@@ -37,6 +37,7 @@
 -export([reply/2,
          monitor/1]).
 -export([get_mod_index/1,
+         get_modstate/1,
          set_forwarding/2,
          trigger_handoff/2,
          trigger_handoff/3,
@@ -1058,6 +1059,12 @@ mod_set_forwarding(Forward, State=#state{mod=Mod, modstate=ModState}) ->
 %% ===================================================================
 %% Test API
 %% ===================================================================
+
+%% @doc Reveal the underlying module state for testing
+-spec(get_modstate(pid()) -> {atom(), #state{}}).
+get_modstate(Pid) ->
+    {_StateName, State} = gen_fsm:sync_send_all_state_event(Pid, current_state),
+    {State#state.mod, State#state.modstate}.
 
 -ifdef(TEST).
 
