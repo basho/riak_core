@@ -705,7 +705,7 @@ close_trees(State=#state{trees=Trees}) ->
 get_index_n(VNode, BKey) ->
     case erlang:function_exported(VNode, get_index_n, 1) of
         true ->
-            VNode:get_index_n({Bucket, Key});
+            VNode:get_index_n(BKey);
         false ->
-            riak_core_util:get_index_n({Bucket, Key})
+            riak_core_util:get_index_n(BKey)
     end.
