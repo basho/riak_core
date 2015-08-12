@@ -98,15 +98,30 @@ standard_join(Node, Rejoin, Auto) when is_atom(Node) ->
             {error, not_reachable}
     end.
 
+%% `init:get_status/0' will return a 2-tuple reflecting the init
+%% status on this node; the first element is one of `starting',
+%% `started', or `stopping'. We only want to allow join actions if all
+%% applications have finished starting to avoid ring status race
+%% conditions.
+init_complete({started, _}) ->
+    true;
+init_complete(_) ->
+    false.
+
 standard_join(Node, Ring, Rejoin, Auto) ->
     {ok, MyRing} = riak_core_ring_manager:get_raw_ring(),
+
+    InitComplete = init_complete(init:get_status()),
+
     SameSize = (riak_core_ring:num_partitions(MyRing) =:=
                 riak_core_ring:num_partitions(Ring)),
     Singleton = ([node()] =:= riak_core_ring:all_members(MyRing)),
-    case {Rejoin or Singleton, SameSize} of
-        {false, _} ->
+    case {InitComplete, Rejoin or Singleton, SameSize} of
+        {false, _, _} ->
+            {error, node_still_starting};
+        {_, false, _} ->
             {error, not_single_node};
-        {_, false} ->
+        {_, _, false} ->
             {error, different_ring_sizes};
         _ ->
             GossipVsn = riak_core_gossip:gossip_version(),
