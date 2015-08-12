@@ -42,6 +42,11 @@
          safe_rpc/5,
          rpc_every_member/4,
          rpc_every_member_ann/4,
+         keydelete/2,
+         multi_keydelete/2,
+         multi_keydelete/3,
+         compose/1,
+         compose/2,
          pmap/2,
          pmap/3,
          multi_rpc/4,
@@ -306,6 +311,46 @@ ensure_started(App) ->
 	{error, {already_started, App}} ->
 	    ok
     end.
+
+%% @doc Returns a copy of `TupleList' where the first occurrence of a tuple whose
+%% first element compares equal to `Key' is deleted, if there is such a tuple.
+%% Equivalent to `lists:keydelete(Key, 1, TupleList)'.
+-spec keydelete(atom(), [tuple()]) -> [tuple()].
+keydelete(Key, TupleList) ->
+    lists:keydelete(Key, 1, TupleList).
+
+%% @doc Returns a copy of `TupleList' where the first occurrence of a tuple whose
+%% first element compares equal to any key in `KeysToDelete' is deleted, if
+%% there is such a tuple.
+-spec multi_keydelete([atom()], [tuple()]) -> [tuple()].
+multi_keydelete(KeysToDelete, TupleList) ->
+    multi_keydelete(KeysToDelete, 1, TupleList).
+
+%% @doc Returns a copy of `TupleList' where the Nth occurrence of a tuple whose
+%% first element compares equal to any key in `KeysToDelete' is deleted, if
+%% there is such a tuple.
+-spec multi_keydelete([atom()], non_neg_integer(), [tuple()]) -> [tuple()].
+multi_keydelete(KeysToDelete, N, TupleList) ->
+    lists:foldl(
+      fun(Key, Acc) -> lists:keydelete(Key, N, Acc) end,
+      TupleList,
+      KeysToDelete).
+
+%% @doc Function composition: returns a function that is the composition of
+%% `F' and `G'.
+-spec compose(fun(), fun()) -> fun().
+compose(F, G) when is_function(F), is_function(G) ->
+    fun(X) ->
+        F(G(X))
+    end.
+
+%% @doc Function composition: returns a function that is the composition of all
+%% functions in the `Funs' list.
+-spec compose([fun()]) -> fun().
+compose([Fun]) ->
+    Fun;
+compose([Fun|Funs]) ->
+    lists:foldl(fun compose/2, Fun, Funs).
 
 %% @doc Invoke function `F' over each element of list `L' in parallel,
 %%      returning the results in the same order as the input list.
@@ -741,6 +786,25 @@ incr_counter(CounterPid) ->
 
 decr_counter(CounterPid) ->
     CounterPid ! down.
+
+multi_keydelete_test_() ->
+    Languages = [{lisp, 1958},
+                 {ml, 1973},
+                 {erlang, 1986},
+                 {haskell, 1990},
+                 {ocaml, 1996},
+                 {clojure, 2007},
+                 {elixir, 2012}],
+    ?_assertMatch(
+       [{lisp, _}, {ml, _}, {erlang, _}, {haskell, _}],
+       multi_keydelete([ocaml, clojure, elixir], Languages)).
+
+compose_test_() ->
+    Upper = fun string:to_upper/1,
+    Reverse = fun lists:reverse/1,
+    Strip = fun(S) -> string:strip(S, both, $!) end,
+    Composed = compose([Upper, Reverse, Strip]),
+    ?_assertEqual("DLROW OLLEH", Composed("Hello world!")).
 
 pmap_test_() ->
     Fgood = fun(X) -> 2 * X end,
