@@ -161,26 +161,9 @@ handle_call({return_vnode, Req}, _From, State) ->
     {Pid, NewState} = get_vnode_pid(State),
     gen_fsm:send_event(Pid, Req),
     {reply, {ok, Pid}, NewState};
-handle_call(overloaded, _From, State=#state{check_counter=Counter,
-                                            check_request_interval=RequestInterval,
-                                            check_mailbox=Mailbox,
-                                            check_request=RequestState,
+handle_call(overloaded, _From, State=#state{check_mailbox=Mailbox,
                                             check_threshold=Threshold}) ->
-    Counter2 = Counter + 1,
-    %% Mailbox2 count logic extracted from handle_proxy
-    Mailbox2 = case Counter2 of
-                   RequestInterval ->
-                       %% we can adjust our mailbox estimate accordingly.
-                       case RequestState of
-                           undefined ->
-                               Mailbox + 2;
-                           _ ->
-                               Mailbox + 1
-                       end;
-                   _ ->
-                       Mailbox + 1
-               end,
-    Result = (Mailbox2 > Threshold),
+    Result = (Mailbox > Threshold),
     {reply, Result, State};
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
@@ -243,6 +226,15 @@ handle_proxy(Msg, State=#state{check_counter=Counter,
             State2 = State
     end,
 
+    Mailbox2 = case Mailbox =< Threshold of
+                   true ->
+                       Pid ! Msg,
+                       Mailbox + 1;
+                   false ->
+                       handle_overload(Msg, State),
+                       Mailbox
+               end,
+
     Counter2 = Counter + 1,
     case Counter2 of
         RequestInterval ->
@@ -253,12 +245,11 @@ handle_proxy(Msg, State=#state{check_counter=Counter,
             %% we can adjust our mailbox estimate accordingly.
             case RequestState of
                 undefined ->
-                    Mailbox2 = Mailbox + 2,
                     RequestState2 = send_proxy_ping(Pid, Mailbox2);
                 _ ->
-                    Mailbox2 = Mailbox + 1,
                     RequestState2 = RequestState
             end,
+            Mailbox3 = Mailbox2,
             Counter3 = Counter2;
         Interval ->
             %% Time to directly check the mailbox size. This operation may
@@ -268,27 +259,19 @@ handle_proxy(Msg, State=#state{check_counter=Counter,
             {_, L} =
                 erlang:process_info(Pid, message_queue_len),
             Counter3 = 0,
-            Mailbox2 = L + 1,
+            Mailbox3 = L + 1,
             %% Send a new proxy ping so that if the new length is above the
             %% threshold then the proxy will detect the work is completed,
             %% rather than being stuck in overload state until the interval
             %% counts are reached.
-            RequestState2 = send_proxy_ping(Pid, Mailbox2);
+            RequestState2 = send_proxy_ping(Pid, Mailbox3);
         _ ->
+            Mailbox3 = Mailbox2,
             Counter3 = Counter2,
-            Mailbox2 = Mailbox + 1,
             RequestState2 = RequestState
     end,
-
-    case Mailbox2 =< Threshold of
-        true ->
-            Pid ! Msg;
-        false ->
-            handle_overload(Msg, State)
-    end,
-
     {noreply, State2#state{check_counter=Counter3,
-                           check_mailbox=Mailbox2,
+                           check_mailbox=Mailbox3,
                            check_request=RequestState2}}.
 
 handle_overload(Msg, #state{mod=Mod, index=Index}) ->
@@ -343,6 +326,10 @@ fake_loop() ->
         {get_count, Pid} ->
             Pid ! {count, erlang:get(count)},
             fake_loop();
+        %% Original tests do not expect replies
+        %% {'$vnode_proxy_ping', ReplyTo, Ref, Msgs} ->
+        %%     ReplyTo ! {Ref, Msgs},
+        %%     fake_loop();
         _Msg ->
             update_msg_counter(),
             fake_loop()
@@ -387,28 +374,36 @@ overload_test_() ->
              exit(ProxyPid, kill)
      end,
      [
-      %% TODO: Fix after refactoring
-      %% fun({_VnodePid, ProxyPid}) ->
-      %%         {"should not discard in normal operation", timeout, 60,
-      %%          fun() ->
-      %%                  ToSend = ?DEFAULT_OVERLOAD_THRESHOLD-2,
-      %%                  [ProxyPid ! hello || _ <- lists:seq(1, ToSend)],
-      %%                  %% synchronize on the mailbox
-      %%                  ProxyPid ! {get_count, self()},
-      %%                  receive
-      %%                      {count, Count} ->
-      %%                          %% ToSend messages + 1 unanswered vnode_proxy_ping
-      %%                          ?assertEqual(ToSend+1, Count)
-      %%                  end
-      %%          end
-      %%         }
-      %% end,
+      fun({_VnodePid, ProxyPid}) ->
+              {"should not discard in normal operation", timeout, 60,
+               fun() ->
+                       ToSend = ?DEFAULT_OVERLOAD_THRESHOLD * 2,
+                       [ProxyPid ! hello || _ <- lists:seq(1, ToSend)],
+
+                       %% synchronize on the proxy and the mailbox
+                       {ok, ok} = gen:call(ProxyPid, '$vnode_proxy_call', sync, infinity),
+                       ProxyPid ! {get_count, self()},
+                       receive
+                           {count, Count} ->
+                               %% Every ReqInterval happy proxy will do a ping/pong
+                               %%  2500 ->  2501
+                               %%  5000 ->  5002
+                               %%  7500 ->  7503
+                               %% 10000 -> 10004 etc
+                               %% ToSend messages + 4 vnode_proxy_pings
+                               PingReqs = 1 + % for first request intarval
+                                   ToSend div ?DEFAULT_CHECK_INTERVAL,
+                               ?assertEqual(ToSend+PingReqs, Count)
+                       end
+               end
+              }
+      end,
       fun({VnodePid, ProxyPid}) ->
               {"should discard during overflow", timeout, 60,
                fun() ->
                        VnodePid ! block,
                        [ProxyPid ! hello || _ <- lists:seq(1, 50000)],
-                       %% synchronize on the mailbox
+                       %% synchronize on the mailbox - no-op that hits msg catchall
                        Reply = gen:call(ProxyPid, '$vnode_proxy_call', sync, infinity),
                        ?assertEqual({ok, ok}, Reply),
                        VnodePid ! unblock,
@@ -426,7 +421,7 @@ overload_test_() ->
                fun() ->
                        VnodePid ! slow,
                        [ProxyPid ! hello || _ <- lists:seq(1, 50000)],
-                       %% synchronize on the mailbox
+                       %% synchronize on the mailbox - no-op that hits msg catchall
                        Reply = gen:call(ProxyPid, '$vnode_proxy_call', sync, infinity),
                        ?assertEqual({ok, ok}, Reply),
                        %% check that the outstanding message count is
