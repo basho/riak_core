@@ -326,7 +326,10 @@ fake_loop() ->
         {get_count, Pid} ->
             Pid ! {count, erlang:get(count)},
             fake_loop();
-        %% Original tests do not expect replies
+        %% Original tests do not expect replies - the
+        %% results below expect the pings to be counted
+        %% towards messages received.  If you ever wanted
+        %% to re-instance, uncomment below.
         %% {'$vnode_proxy_ping', ReplyTo, Ref, Msgs} ->
         %%     ReplyTo ! {Ref, Msgs},
         %%     fake_loop();
@@ -385,12 +388,10 @@ overload_test_() ->
                        ProxyPid ! {get_count, self()},
                        receive
                            {count, Count} ->
-                               %% Every ReqInterval happy proxy will do a ping/pong
-                               %%  2500 ->  2501
-                               %%  5000 ->  5002
-                               %%  7500 ->  7503
-                               %% 10000 -> 10004 etc
-                               %% ToSend messages + 4 vnode_proxy_pings
+                               %% First will hit the request check interval,
+                               %% then will check message queue every interval
+                               %% (no new ping will be resubmitted after the first
+                               %% as the request will already have a reference)
                                PingReqs = 1 + % for first request intarval
                                    ToSend div ?DEFAULT_CHECK_INTERVAL,
                                ?assertEqual(ToSend+PingReqs, Count)
