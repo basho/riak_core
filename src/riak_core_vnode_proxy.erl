@@ -380,7 +380,7 @@ overload_test_() ->
       fun({_VnodePid, ProxyPid}) ->
               {"should not discard in normal operation", timeout, 60,
                fun() ->
-                       ToSend = ?DEFAULT_OVERLOAD_THRESHOLD * 2,
+                       ToSend = ?DEFAULT_OVERLOAD_THRESHOLD,
                        [ProxyPid ! hello || _ <- lists:seq(1, ToSend)],
 
                        %% synchronize on the proxy and the mailbox
