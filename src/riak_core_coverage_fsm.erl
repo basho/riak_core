@@ -48,7 +48,9 @@
 %%        enough VNodes must be available to achieve a minimal
 %%        covering set or `allup' to use whatever VNodes are
 %%        available even if they do not represent a fully covering
-%%        set.</li>
+%%        set or the tuple {colocated, Module} where Module is the name of
+%%        a module that exposes a function create_plan/5 for data that is
+%%        colocated in some way (eg a TimeSeries or Geohash).</li>
 %%      <li>NVal - Indicates the replication factor and is used to
 %%        accurately create a minimal covering set of VNodes.</li>
 %%      <li>PrimaryVNodeCoverage - The number of primary VNodes
@@ -107,7 +109,7 @@ behaviour_info(_) ->
                 mod_state :: tuple(),
                 n_val :: pos_integer(),
                 node_check_service :: module(),
-                vnode_selector :: all | allup,
+                vnode_selector :: all | allup | {colocated, atom()},
                 pvc :: all | pos_integer(), % primary vnode coverage
                 request :: tuple(),
                 req_id :: req_id(),
@@ -216,11 +218,22 @@ initialize(timeout, StateData0=#state{mod=Mod,
                                       timeout=Timeout,
                                       vnode_master=VNodeMaster,
                                       plan_fun = PlanFun}) ->
-    CoveragePlan = riak_core_coverage_plan:create_plan(VNodeSelector,
-                                                       NVal,
-                                                       PVC,
-                                                       ReqId,
-                                                       NodeCheckService),
+    CoveragePlan = case VNodeSelector of
+                       VNS when VNS =:= all orelse
+                                VNS =:= allup ->
+                           riak_core_coverage_plan:create_plan(VNodeSelector,
+                                    NVal,
+                                    PVC,
+                                    ReqId,
+                                    NodeCheckService);
+                       {colocated, CMod}     ->
+                           CMod:create_plan(VNodeSelector,
+                                            NVal,
+                                            PVC,
+                                            ReqId,
+                                            NodeCheckService,
+                                            Request)
+                   end,
     case CoveragePlan of
         {error, Reason} ->
             Mod:finish({error, Reason}, ModState);
