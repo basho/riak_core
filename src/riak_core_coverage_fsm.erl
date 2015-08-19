@@ -219,21 +219,21 @@ initialize(timeout, StateData0=#state{mod=Mod,
                                       vnode_master=VNodeMaster,
                                       plan_fun = PlanFun}) ->
     CoveragePlan = case VNodeSelector of
-		       VNS when VNS =:= all orelse
-				VNS =:= allup ->
-			   riak_core_coverage_plan:create_plan(VNodeSelector,
-				    NVal,
-				    PVC,
-				    ReqId,
-				    NodeCheckService);
-		       {colocated, CMod}     ->
-			   CMod:create_plan(VNodeSelector,
-					    NVal,
-					    PVC,
-					    ReqId,
-					    NodeCheckService,
-					    Request)
-		   end,
+                       VNS when VNS =:= all orelse
+                                VNS =:= allup ->
+                           riak_core_coverage_plan:create_plan(VNodeSelector,
+                                    NVal,
+                                    PVC,
+                                    ReqId,
+                                    NodeCheckService);
+                       {colocated, CMod}     ->
+                           CMod:create_plan(VNodeSelector,
+                                            NVal,
+                                            PVC,
+                                            ReqId,
+                                            NodeCheckService,
+                                            Request)
+                   end,
     case CoveragePlan of
         {error, Reason} ->
             Mod:finish({error, Reason}, ModState);
