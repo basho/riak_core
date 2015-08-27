@@ -16,11 +16,15 @@
                   riak_sysmon,
                   os_mon,
                   basho_stats,
+                  riak_ensemble,
                   eleveldb,
                   pbkdf2,
                   poolboy,
                   exometer_core,
-                  clique
+                  clique,
+                  cluster_info,
+                  folsom,
+                  runtime_tools
                  ]},
   {mod, {riak_core_app, []}},
   {env, [
@@ -67,13 +71,13 @@
          {dist_send_buf_size, 393216},
          {dist_recv_buf_size, 786432},
 
-	 %% Exometer defaults
-	 {exometer_defaults,
-	  [
-	   {['_'], histogram, [{options,
-				[{histogram_module, exometer_slot_slide},
-				 {keep_high, 500}]}
-			    ]}
-	  ]}
+     %% Exometer defaults
+     {exometer_defaults,
+      [
+       {['_'], histogram, [{options,
+                [{histogram_module, exometer_slot_slide},
+                 {keep_high, 500}]}
+                ]}
+      ]}
         ]}
  ]}.
