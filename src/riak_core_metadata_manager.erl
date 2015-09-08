@@ -565,6 +565,13 @@ store({FullPrefix, Key}=PKey, Metadata, State) ->
     ets:insert(ets_tab(FullPrefix), Objs),
     riak_core_metadata_hashtree:insert(PKey, Hash),
     ok = dets_insert(dets_tabname(FullPrefix), Objs),
+
+    case FullPrefix of
+        {core, bucket_types} ->
+            ok = riak_core_metadata_evt:sync_notify_stored(Key);
+        _ ->
+            ok
+    end,
     {Metadata, State}.
 
 read({FullPrefix, Key}) ->
