@@ -699,23 +699,30 @@ get_type_status(_BucketType, undefined) ->
     undefined;
 get_type_status(BucketType, Props) ->
     case type_active(Props) of
-        true -> active;
-        false -> get_remote_type_status(BucketType, Props)
+        true  -> active;
+        false -> is_type_ready(Props, get_remote_type_status(BucketType))
     end.
 
 %% @private
-get_remote_type_status(BucketType, Props) ->
+-spec get_remote_type_status(BucketType::binary()) ->
+    {AllProps::[any()], BadNodes::[node()]}.
+get_remote_type_status(BucketType) ->
     {ok, R} = riak_core_ring_manager:get_my_ring(),
     Members = riak_core_ring:all_members(R),
-    {AllProps, BadNodes} = rpc:multicall(lists:delete(node(), Members),
-                                         riak_core_metadata,
-                                         get, [?BUCKET_TYPE_PREFIX, BucketType, [{default, []}]]),
+    rpc:multicall(lists:delete(node(), Members),
+                  riak_core_metadata,
+                  get, [?BUCKET_TYPE_PREFIX, BucketType, [{default, []}]]).
+
+%% Check if this nodes and other nodes in the cluster have the same properties
+%% for a bucket type.
+is_type_ready(Props, {AllProps, BadNodes}) ->
     SortedProps = lists:ukeysort(1, Props),
     %% P may be a {badrpc, ...} in addition to a list of properties when there are older nodes involved
     DiffProps = [P || P <- AllProps, (not is_list(P) orelse lists:ukeysort(1, P) =/= SortedProps)],
     case {DiffProps, BadNodes} of
         {[], []} -> ready;
-        %% unreachable nodes may or may not have correct value, so we assume they dont
+        % unreachable nodes may or may not have correct value, so we assume
+        % they dont
         {_, _} -> created
     end.
 
@@ -1513,3 +1520,59 @@ log(next, {Idx, Owner, NewOwner}) ->
     lager:debug("(pending) ~b :: ~p -> ~p~n", [Idx, Owner, NewOwner]);
 log(_, _) ->
     ok.
+
+%% ===================================================================
+%% EUnit tests
+%% ===================================================================
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+is_type_ready_empty_test() ->
+    ?assertEqual(
+        ready,
+        is_type_ready([], {[], []})
+    ).
+
+is_type_ready_same_props_1_test() ->
+    P = [{a,1}],
+    ?assertEqual(
+        ready,
+        is_type_ready(P, {[P], []})
+    ).
+
+is_type_ready_same_props_2_test() ->
+    P = [{a,1}],
+    ?assertEqual(
+        ready,
+        is_type_ready(P, {[P, P, P], []})
+    ).
+
+is_type_ready_same_props_3_test() ->
+    P = [{b,2}, {a,1}, {c,3}],
+    ?assertEqual(
+        ready,
+        is_type_ready(P, {[P, P, P], []})
+    ).
+
+is_type_ready_different_props_1_test() ->
+    ?assertEqual(
+        created,
+        is_type_ready([{a,1}], {[[{a,2}]], []})
+    ).
+
+is_type_ready_different_props_2_test() ->
+    P = [{a,1}],
+    ?assertEqual(
+        created,
+        is_type_ready(P, {[P, [{a,2}]], []})
+    ).
+
+is_type_ready_bad_nodes_test() ->
+    P = [{b,2}, {a,1}, {c,3}],
+    ?assertEqual(
+        created,
+        is_type_ready(P, {[P], ['riak@localhost']})
+    ).
+
+-endif.
