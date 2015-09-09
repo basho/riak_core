@@ -699,23 +699,52 @@ get_type_status(_BucketType, undefined) ->
     undefined;
 get_type_status(BucketType, Props) ->
     case type_active(Props) of
-        true  -> active;
-        false -> is_type_ready(Props, get_remote_type_status(BucketType))
+        true  ->
+            active;
+        false ->
+            Is_ddl_compiled = is_ddl_compiled(get_remote_ddl_compiled_status(BucketType, Props)),
+            is_type_ready(
+                Props, get_remote_type_status(BucketType), 
+                Is_ddl_compiled)
     end.
+
+%%
+all_members() ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    riak_core_ring:all_members(Ring).
 
 %% @private
 -spec get_remote_type_status(BucketType::binary()) ->
     {AllProps::[any()], BadNodes::[node()]}.
 get_remote_type_status(BucketType) ->
-    {ok, R} = riak_core_ring_manager:get_my_ring(),
-    Members = riak_core_ring:all_members(R),
-    rpc:multicall(lists:delete(node(), Members),
+    rpc:multicall(all_members() -- [node()],
                   riak_core_metadata,
                   get, [?BUCKET_TYPE_PREFIX, BucketType, [{default, []}]]).
 
+%%
+get_remote_ddl_compiled_status(Bucket_type, Props) ->
+    case proplists:is_defined(ddl, Props) of
+        true ->
+            rpc:multicall(all_members(),
+                          riak_core_metadata_evt,
+                          is_type_compiled, [Bucket_type]);
+        false ->
+            no_ddl_to_compile
+    end.
+
+%%
+is_ddl_compiled(no_ddl_to_compile) ->
+    true;
+is_ddl_compiled({_, BadNodes}) when BadNodes =/= [] ->
+    false;
+is_ddl_compiled({Results, _}) ->
+    lists:all(fun(E) -> E == true end, Results).
+
 %% Check if this nodes and other nodes in the cluster have the same properties
 %% for a bucket type.
-is_type_ready(Props, {AllProps, BadNodes}) ->
+is_type_ready(_,_,false) ->
+    created;
+is_type_ready(Props, {AllProps, BadNodes}, _) ->
     SortedProps = lists:ukeysort(1, Props),
     %% P may be a {badrpc, ...} in addition to a list of properties when there are older nodes involved
     DiffProps = [P || P <- AllProps, (not is_list(P) orelse lists:ukeysort(1, P) =/= SortedProps)],
@@ -723,7 +752,7 @@ is_type_ready(Props, {AllProps, BadNodes}) ->
         {[], []} -> ready;
         % unreachable nodes may or may not have correct value, so we assume
         % they dont
-        {_, _} -> created
+        {_,_} -> created
     end.
 
 %% @private
@@ -1574,5 +1603,24 @@ is_type_ready_bad_nodes_test() ->
         created,
         is_type_ready(P, {[P], ['riak@localhost']})
     ).
+
+is_ddl_compiled_1_test() ->
+    ?assertEqual(
+        true,
+        is_ddl_compiled([])
+    ).
+
+is_ddl_compiled_2_test() ->
+    ?assertEqual(
+        false,
+        is_ddl_compiled([{ddl, b}])
+    ).
+
+is_ddl_compiled_3_test() ->
+    ?assertEqual(
+        true,
+        is_ddl_compiled([{ddl, b}, {ddl_module, a}])
+    ).
+
 
 -endif.

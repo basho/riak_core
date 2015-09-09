@@ -26,9 +26,12 @@
 %%% API Function Exports
 %%% ------------------------------------------------------------------
 
+-export([is_type_compiled/1]).
 -export([start_link/0]).
 -export([swap_handler/2]).
 -export([sync_notify_stored/1]).
+
+-define(SERVER, ?MODULE).
 
 %%% ------------------------------------------------------------------
 %%% API Function Definitions
@@ -36,7 +39,7 @@
 
 %%
 start_link() ->
-    gen_event:start_link({local, ?MODULE}).
+    gen_event:start_link({local, ?SERVER}).
 
 %% Swap the existing `Handler' with the given one, or create a new one
 %% if one does not exist. Prevents event handlers being added multiple
@@ -44,10 +47,17 @@ start_link() ->
 swap_handler(Handler, Args) ->
     Terminate_args = [],
     gen_event:swap_handler(
-        ?MODULE, {Handler, Terminate_args}, {Handler, Args}).
+        ?SERVER, {Handler, Terminate_args}, {Handler, Args}).
 
 %% Notify all listeners that metadata has been stored, this could mean
 %% that a new bucket type has been created or that it has been updated.
 %% Listeners receive the event type `{metadata_stored, Bucket_type :: binary()}'.
 sync_notify_stored(Bucket_type) when is_binary(Bucket_type) ->
-    gen_event:sync_notify(?MODULE, {metadata_stored, Bucket_type}).
+    gen_event:sync_notify(?SERVER, {metadata_stored, Bucket_type}).
+
+%% 
+is_type_compiled(Bucket_type) ->
+    Handlers = gen_event:which_handlers(?SERVER),
+    Req = {is_type_compiled, Bucket_type},
+    Results = [gen_event:call(?SERVER, H, Req) || H <- Handlers],
+    lists:member(true, Results).
