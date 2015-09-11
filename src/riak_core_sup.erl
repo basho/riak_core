@@ -67,7 +67,7 @@ init([]) ->
                   ?CHILD(riak_core_handoff_sup, supervisor),
                   ?CHILD(riak_core_ring_events, worker),
                   ?CHILD(riak_core_ring_manager, worker),
-                  ?CHILD(riak_core_metadata_evt, worker),
+                  ?CHILD(riak_core_metadata_evt_sup, supervisor),
                   ?CHILD(riak_core_metadata_manager, worker),
                   ?CHILD(riak_core_metadata_hashtree, worker),
                   ?CHILD(riak_core_broadcast, worker),

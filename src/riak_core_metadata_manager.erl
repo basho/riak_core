@@ -38,7 +38,8 @@
          iterator_done/1,
          iterator_close/1,
          put/3,
-         merge/3]).
+         merge/3,
+         swap_notification_handler/3]).
 
 %% riak_core_broadcast_handler callbacks
 -export([broadcast_data/1,
@@ -246,6 +247,12 @@ put({{Prefix, SubPrefix}, _Key}=PKey, Context, ValueOrFun)
 merge(Node, {PKey, _Context}, Obj) ->
     gen_server:call({?SERVER, Node}, {merge, PKey, Obj}, infinity).
 
+%% @doc Add a listener to metadata events for types of the given full prefix.
+swap_notification_handler(Full_prefix, Handler, Handler_args) ->
+    gen_server:call(?SERVER, 
+        {swap_notification_handler, Full_prefix, Handler, Handler_args}, infinity).
+
+
 %%%===================================================================
 %%% riak_core_broadcast_handler callbacks
 %%%===================================================================
@@ -379,7 +386,13 @@ handle_call({iterator_close, RemoteRef}, _From, State) ->
 handle_call({is_stale, PKey, Context}, _From, State) ->
     Existing = read(PKey),
     IsStale = riak_core_metadata_object:is_stale(Context, Existing),
-    {reply, IsStale, State}.
+    {reply, IsStale, State};
+handle_call({swap_notification_handler, Metadata_type, Handler, Handler_args}, _From, State) ->
+    Result = riak_core_metadata_evt_sup:swap_notification_handler(
+        Metadata_type, Handler, Handler_args),
+    {reply, Result, State}.
+
+
 
 %% @private
 -spec handle_cast(term(), #state{}) -> {noreply, #state{}} |
@@ -565,13 +578,7 @@ store({FullPrefix, Key}=PKey, Metadata, State) ->
     ets:insert(ets_tab(FullPrefix), Objs),
     riak_core_metadata_hashtree:insert(PKey, Hash),
     ok = dets_insert(dets_tabname(FullPrefix), Objs),
-
-    case FullPrefix of
-        {core, bucket_types} ->
-            ok = riak_core_metadata_evt:sync_notify_stored(Key);
-        _ ->
-            ok
-    end,
+    ok = riak_core_metadata_evt_sup:sync_notify(FullPrefix, Key),
     {Metadata, State}.
 
 read({FullPrefix, Key}) ->

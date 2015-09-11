@@ -726,7 +726,7 @@ get_remote_ddl_compiled_status(Bucket_type, Props) ->
     case proplists:is_defined(ddl, Props) of
         true ->
             rpc:multicall(all_members(),
-                          riak_core_metadata_evt,
+                          riak_core_metadata_evt_sup,
                           is_type_compiled, [Bucket_type]);
         false ->
             no_ddl_to_compile
@@ -1560,66 +1560,72 @@ log(_, _) ->
 is_type_ready_empty_test() ->
     ?assertEqual(
         ready,
-        is_type_ready([], {[], []})
+        is_type_ready([], {[], []}, true)
     ).
 
 is_type_ready_same_props_1_test() ->
     P = [{a,1}],
     ?assertEqual(
         ready,
-        is_type_ready(P, {[P], []})
+        is_type_ready(P, {[P], []}, true)
     ).
 
 is_type_ready_same_props_2_test() ->
     P = [{a,1}],
     ?assertEqual(
         ready,
-        is_type_ready(P, {[P, P, P], []})
+        is_type_ready(P, {[P, P, P], []}, true)
     ).
 
 is_type_ready_same_props_3_test() ->
     P = [{b,2}, {a,1}, {c,3}],
     ?assertEqual(
         ready,
-        is_type_ready(P, {[P, P, P], []})
+        is_type_ready(P, {[P, P, P], []}, true)
     ).
 
 is_type_ready_different_props_1_test() ->
     ?assertEqual(
         created,
-        is_type_ready([{a,1}], {[[{a,2}]], []})
+        is_type_ready([{a,1}], {[[{a,2}]], []}, true)
     ).
 
 is_type_ready_different_props_2_test() ->
     P = [{a,1}],
     ?assertEqual(
         created,
-        is_type_ready(P, {[P, [{a,2}]], []})
+        is_type_ready(P, {[P, [{a,2}]], []}, true)
     ).
 
 is_type_ready_bad_nodes_test() ->
     P = [{b,2}, {a,1}, {c,3}],
     ?assertEqual(
         created,
-        is_type_ready(P, {[P], ['riak@localhost']})
+        is_type_ready(P, {[P], ['riak@localhost']}, true)
     ).
 
 is_ddl_compiled_1_test() ->
     ?assertEqual(
         true,
-        is_ddl_compiled([])
+        is_ddl_compiled(no_ddl_to_compile)
     ).
 
 is_ddl_compiled_2_test() ->
     ?assertEqual(
         false,
-        is_ddl_compiled([{ddl, b}])
+        is_ddl_compiled({[true], [a_node]})
     ).
 
 is_ddl_compiled_3_test() ->
     ?assertEqual(
         true,
-        is_ddl_compiled([{ddl, b}, {ddl_module, a}])
+        is_ddl_compiled({[true], []})
+    ).
+
+is_ddl_compiled_4_test() ->
+    ?assertEqual(
+        false,
+        is_ddl_compiled({[true, false], []})
     ).
 
 
