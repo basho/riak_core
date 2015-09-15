@@ -248,9 +248,9 @@ merge(Node, {PKey, _Context}, Obj) ->
     gen_server:call({?SERVER, Node}, {merge, PKey, Obj}, infinity).
 
 %% @doc Add a listener to metadata events for types of the given full prefix.
-swap_notification_handler(Full_prefix, Handler, Handler_args) ->
+swap_notification_handler(FullPrefix, Handler, HandlerArgs) ->
     gen_server:call(?SERVER, 
-        {swap_notification_handler, Full_prefix, Handler, Handler_args}, infinity).
+        {swap_notification_handler, FullPrefix, Handler, HandlerArgs}, infinity).
 
 
 %%%===================================================================
@@ -387,9 +387,9 @@ handle_call({is_stale, PKey, Context}, _From, State) ->
     Existing = read(PKey),
     IsStale = riak_core_metadata_object:is_stale(Context, Existing),
     {reply, IsStale, State};
-handle_call({swap_notification_handler, Metadata_type, Handler, Handler_args}, _From, State) ->
+handle_call({swap_notification_handler, MetadataType, Handler, HandlerArgs}, _From, State) ->
     Result = riak_core_metadata_evt_sup:swap_notification_handler(
-        Metadata_type, Handler, Handler_args),
+        MetadataType, Handler, HandlerArgs),
     {reply, Result, State}.
 
 

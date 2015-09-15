@@ -721,18 +721,18 @@ get_remote_type_status(BucketType) ->
                   riak_core_metadata,
                   get, [?BUCKET_TYPE_PREFIX, BucketType, [{default, []}]]).
 
-%%
-get_remote_ddl_compiled_status(Bucket_type, Props) ->
+%% 
+get_remote_ddl_compiled_status(BucketType, Props) ->
     case proplists:is_defined(ddl, Props) of
         true ->
             rpc:multicall(all_members(),
                           riak_core_metadata_evt_sup,
-                          is_type_compiled, [Bucket_type]);
+                          is_type_compiled, [BucketType]);
         false ->
             no_ddl_to_compile
     end.
 
-%%
+%% Checks if the result of the call to is_type_compiled across the cluster.
 is_ddl_compiled(no_ddl_to_compile) ->
     true;
 is_ddl_compiled({_, BadNodes}) when BadNodes =/= [] ->
@@ -742,6 +742,9 @@ is_ddl_compiled({Results, _}) ->
 
 %% Check if this nodes and other nodes in the cluster have the same properties
 %% for a bucket type.
+-spec is_type_ready(Props::[proplists:property()],
+                    TypeReadyRpcResult::{[term()], [node()]},
+                    IsDDLCompiled::boolean()) -> created | ready.
 is_type_ready(_,_,false) ->
     created;
 is_type_ready(Props, {AllProps, BadNodes}, _) ->

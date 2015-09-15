@@ -48,23 +48,22 @@ start_link() ->
 %% Swap the existing `Handler' with the given one, or create a new one
 %% if one does not exist. Prevents event handlers being added multiple
 %% times.
-swap_notification_handler(Full_prefix, Handler, Handler_args) ->
-    case ets:lookup(?TABLE, Full_prefix) of
-        [{Full_prefix, Pid}] ->
-            swap_notification_handler2(Pid, Handler, Handler_args);
+swap_notification_handler(FullPrefix, Handler, HandlerArgs) ->
+    case ets:lookup(?TABLE, FullPrefix) of
+        [{FullPrefix, Pid}] ->
+            swap_notification_handler2(Pid, Handler, HandlerArgs);
         [] ->
-            {ok, Pid} = supervisor:start_child(?MODULE, [])
-            ,
-            true = ets:insert_new(?TABLE, {Full_prefix, Pid}),
-            swap_notification_handler2(Pid, Handler, Handler_args)
+            {ok, Pid} = supervisor:start_child(?MODULE, []) ,
+            true = ets:insert_new(?TABLE, {FullPrefix, Pid}),
+            swap_notification_handler2(Pid, Handler, HandlerArgs)
     end.
 
 %% Notify all listeners that metadata has been stored, this could mean
 %% that a new bucket type has been created or that it has been updated.
 %% Listeners receive the event type `{metadata_stored, Key::any()}'.
-sync_notify(Full_prefix, Key) ->
-    case (catch ets:lookup(?TABLE, Full_prefix)) of
-        [{Full_prefix, Pid}] ->
+sync_notify(FullPrefix, Key) ->
+    case (catch ets:lookup(?TABLE, FullPrefix)) of
+        [{FullPrefix, Pid}] ->
             gen_event:sync_notify(Pid, {metadata_stored, Key});
         _ ->
             ok
@@ -75,11 +74,12 @@ sync_notify(Full_prefix, Key) ->
 %% that do not handle this should return false, or any value that is not true.
 %%
 %% This should only be called if the bucket type has the ddl property.
-is_type_compiled(Bucket_type) when is_binary(Bucket_type) ->
+-spec is_type_compiled(BucketType :: binary()) -> boolean().
+is_type_compiled(BucketType) when is_binary(BucketType) ->
     case ets:lookup(?TABLE, ?BUCKET_TYPE_PREFIX) of
         [{?BUCKET_TYPE_PREFIX, Pid}] ->
             Handlers = gen_event:which_handlers(Pid),
-            Req = {is_type_compiled, Bucket_type},
+            Req = {is_type_compiled, BucketType},
             Results = [gen_event:call(Pid, H, Req) || H <- Handlers],
             lists:member(true, Results);
         [] ->
@@ -101,10 +101,10 @@ init([]) ->
     {ok, {{simple_one_for_one, 1, 5}, Procs}}.
 
 %%
-swap_notification_handler2(Pid, Handler, Handler_args) when is_pid(Pid) ->
+swap_notification_handler2(Pid, Handler, HandlerArgs) when is_pid(Pid) ->
     Terminate_args = [],
     gen_event:swap_handler(
-        Pid, {Handler, Terminate_args}, {Handler, Handler_args}).
+        Pid, {Handler, Terminate_args}, {Handler, HandlerArgs}).
 
 
 %% ===================================================================
