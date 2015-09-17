@@ -174,7 +174,7 @@ stats() ->
      {gossip_received, spiral, [], [{one, gossip_received}]},
      {rejected_handoffs, counter, [], [{value, rejected_handoffs}]},
      {handoff_timeouts, counter, [], [{value, handoff_timeouts}]},
-     {dropped_vnode_requests_total, counter, [], [{value,dropped_vnode_requests_total}]},
+     {dropped_vnode_requests, counter, [], [{value, dropped_vnode_requests_total}]},
      {converge_delay, duration, [], [{mean, converge_delay_mean},
                                      {min, converge_delay_min},
                                      {max, converge_delay_max},
