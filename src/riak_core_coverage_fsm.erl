@@ -133,17 +133,17 @@
       ModState :: tuple()
     }.
 
--callback process_results(Results:term(), ModState :: tuple()) ->
+-callback process_results(Results :: term(), ModState :: tuple()) ->
     {ok, NewModState :: tuple()} |
     {done, NewModState :: tuple()} |
     {error, Reason :: term()}.
 
--optional_callbacks([process_results/3]).
 -callback process_results(VNode :: pos_integer(),
-                          Results:term(), ModState :: tuple()) ->
+                          Results::term(), ModState :: tuple()) ->
     {ok, NewModState :: tuple()} |
     {done, NewModState :: tuple()} |
     {error, Reason :: term()}.
+-optional_callbacks([process_results/3]).
 
 -callback finish({error, Reason::term()} | clean, ModState :: tuple()) ->
     ok.
