@@ -136,7 +136,7 @@ maybe_create_hashtrees(true, Service, Index, VNode, Last) ->
 %% To the hashtree. It will allow up to `riak_core.anti_entropy_max_async`
 %% asyncronous hashtree updates before requiering a syncronous update.
 %% `riak_core.anti_entropy_max_async` if not set defaults to 90.
--spec update_hashtree(binary(), binary(), binary(), pid()) -> ok.
+-spec update_hashtree(binary(), term(), binary(), pid()) -> ok.
 update_hashtree(Bucket, Key, Val, Trees) ->
     case get_hashtree_token() of
         true ->
