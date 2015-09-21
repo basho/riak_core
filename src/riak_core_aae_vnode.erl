@@ -1,7 +1,5 @@
 -module(riak_core_aae_vnode).
 
--export([behaviour_info/1]).
-
 -export([maybe_create_hashtrees/4,
          update_hashtree/4]).
 
@@ -16,12 +14,6 @@
 %%%===================================================================
 %%% Behaviour callbacks
 %%%===================================================================
-
--spec behaviour_info(atom()) -> 'undefined' | [{atom(), arity()}].
-behaviour_info(callbacks) ->
-    [{aae_repair, 2},
-     {hash_object, 2},
-     {master, 0}];
 
 %% @doc aae_repair is called when the AAE system detectes a difference
 %% the simplest method to handle this is causing a read-repair if the
@@ -43,8 +35,6 @@ behaviour_info(callbacks) ->
 
 -callback master() -> Master::atom().
 
-behaviour_info(_Other) ->
-    undefined.
 
 %%%===================================================================
 %%% AAE Calls
