@@ -146,7 +146,8 @@
 -optional_callbacks([process_results/3]).
 
 -callback finish({error, Reason::term()} | clean, ModState :: tuple()) ->
-    ok.
+    {error, Reason::term()} |
+    {'stop', Reason::term(), ModState :: tuple()}.
 
 %% ===================================================================
 %% Public API
