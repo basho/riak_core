@@ -116,7 +116,7 @@ insert(Id, Key, Hash, Tree, Options) ->
 %%      index_hashtree pid. The hash value is generated using
 %%      {@link hash_object/2}. Any encoding version is supported. The encoding
 %%      will be changed to the appropriate version before hashing the object.
--spec insert_object({binary(), binary()}, riak_object_t2b(), pid()) -> ok.
+-spec insert_object({binary(), term()}, riak_object_t2b(), pid()) -> ok.
 insert_object(_BKey, _RObj, undefined) ->
     ok;
 insert_object(BKey, RObj, Tree) ->
@@ -128,7 +128,7 @@ async_insert_object(BKey, RObj, Tree) ->
 
 %% @doc Remove the key/hash pair associated with a given bucket/key from the
 %%      appropriate hashtree managed by the provided index_hashtree pid.
--spec delete({binary(), binary()}, pid()) -> ok.
+-spec delete({binary(), term()}, pid()) -> ok.
 delete(_BKey, undefined) ->
     ok;
 delete(BKey, Tree) ->
