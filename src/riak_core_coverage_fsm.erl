@@ -101,17 +101,17 @@
 
 -type req_id() :: non_neg_integer().
 -type from() :: {atom(), req_id(), pid()}.
+-type pvc() :: all | pos_integer().
+-type request() :: tuple().
 -type vnode_selector() :: all | allup.
--type primary_vnode_coverage() :: all | pos_integer().
-
 -record(state, {coverage_vnodes :: [{non_neg_integer(), node()}],
                 mod :: atom(),
                 mod_state :: mod_state(),
                 n_val :: pos_integer(),
                 node_check_service :: module(),
-                vnode_selector :: all | allup | {colocated, atom()},
-                pvc :: all | pos_integer(), % primary vnode coverage
-                request :: tuple(),
+                vnode_selector :: vnode_selector(),
+                pvc :: pvc(), % primary vnode coverage
+                request :: request(),
                 req_id :: req_id(),
                 required_responses :: pos_integer(),
                 response_count=0 :: non_neg_integer(),
@@ -120,6 +120,33 @@
                 plan_fun :: function(),
                 process_fun :: function()
                }).
+
+-callback init(From::from(), RequestArgs::any()) ->
+    {
+      Request :: request(),
+      VNodeSelector:: vnode_selector(),
+      NVal :: pos_integer(),
+      PrimaryVNodeCoverage :: pvc(),
+      NodeCheckService :: module(),
+      VNodeMaster :: atom(),
+      Timeout :: pos_integer(),
+      ModState :: tuple()
+    }.
+
+-callback process_results(Results:term(), ModState :: tuple()) ->
+    {ok, NewModState :: tuple()} |
+    {done, NewModState :: tuple()} |
+    {error, Reason :: term()}.
+
+-optional_callbacks([process_results/3]).
+-callback process_results(VNode :: pos_integer(),
+                          Results:term(), ModState :: tuple()) ->
+    {ok, NewModState :: tuple()} |
+    {done, NewModState :: tuple()} |
+    {error, Reason :: term()}.
+
+-callback finish({error, Reason::term()} | clean, ModState :: tuple()) ->
+    ok.
 
 %% ===================================================================
 %% Public API
@@ -154,7 +181,6 @@ test_link(Mod, From, RequestArgs, _Options, StateProps) ->
 %% ====================================================================
 %% gen_fsm callbacks
 %% ====================================================================
-
 %% @private
 init([Mod,
       From={_, ReqId, _},
