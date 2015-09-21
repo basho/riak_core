@@ -19,14 +19,14 @@
 %% the simplest method to handle this is causing a read-repair if the
 %% system supports it. But the actual implemetation is left to the
 %% vnode to handle whatever is best.
--callback aae_repair(Bucket::binary(), Key::binary()) -> term().
+-callback aae_repair(Bucket::binary(), Key::term()) -> term().
 
 
 %% @doc hash_object is called by the AAE subsyste to hash a object when the
 %% tree first gets generated, a object needs to be hash or is inserted.
 %% To AAE system does not care for the details as long as it returns a binary
 %% and is deterministic in it's outcome. (see {@link riak_core_index_hashtree})
--callback hash_object({Bucket::binary(), Key::binary()}, Obj::term()) -> binary().
+-callback hash_object({Bucket::binary(), Key::term()}, Obj::term()) -> binary().
 
 %% @doc Returns the vnode master for this vnode type, that is the same
 %% used when registering the vnode.
