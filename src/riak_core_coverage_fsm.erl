@@ -235,7 +235,13 @@ maybe_start_timeout_timer(Timeout) ->
 %% @private
 find_plan(#vnode_coverage{}=Plan, _NVal, _PVC, _ReqId, _Service) ->
     riak_core_coverage_plan:interpret_plan(Plan);
-find_plan(VNodeTarget, NVal, PVC, ReqId, Service) ->
+find_plan({colocated, CMod}, NVal, PVC, ReqId, Service, Request) ->
+    CMod:create_plan(NVal,
+                     PVC,
+                     ReqId,
+                     Service,
+                     Request);
+find_plan(VNodeTarget, NVal, PVC, ReqId, Service, _Request) ->
     riak_core_coverage_plan:create_plan(VNodeTarget,
                                         NVal,
                                         PVC,
