@@ -212,7 +212,7 @@ find_plan({colocated, CMod}, NVal, PVC, ReqId, Service, Request) ->
     CMod:create_plan(NVal,
                      PVC,
                      ReqId,
-                     NodeCheckService,
+                     Service,
                      Request);
 find_plan(VNodeTarget, NVal, PVC, ReqId, Service, _Request) ->
     riak_core_coverage_plan:create_plan(VNodeTarget,
