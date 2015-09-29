@@ -35,3 +35,16 @@
 -define(FOLD_REQ, #riak_core_fold_req_v2).
 
 -type handoff_dest() :: {riak_core_handoff_manager:ho_type(), {partition(), node()}}.
+
+%% An integer, and the number of bits to shift it left to treat it as
+%% a mask in the 2^160 key space
+-type subpartition() :: { non_neg_integer(), pos_integer() }.
+
+-record(vnode_coverage, {
+          vnode_identifier = 0 :: non_neg_integer(),
+          partition_filters = [] :: [non_neg_integer()],
+          subpartition = undefined :: subpartition()
+         }).
+
+-type vnode_selector() :: all | allup.
+-type vnode_coverage() :: #vnode_coverage{}.
