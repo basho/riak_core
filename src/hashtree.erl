@@ -533,7 +533,7 @@ new_segment_store(Opts, State) ->
     DataDir = case proplists:get_value(segment_path, Opts) of
                   undefined ->
                       Root = "/tmp/anti/level",
-                      <<P:128/integer>> = md5(term_to_binary({erlang:now(), make_ref()})),
+                      <<P:128/integer>> = md5(term_to_binary({erlang:timestamp(), make_ref()})),
                       filename:join(Root, integer_to_list(P));
                   SegmentPath ->
                       SegmentPath
@@ -550,7 +550,7 @@ new_segment_store(Opts, State) ->
     %% flushed to disk at once when under a heavy uniform load.
     WriteBufferMin = proplists:get_value(write_buffer_size_min, Config, DefaultWriteBufferMin),
     WriteBufferMax = proplists:get_value(write_buffer_size_max, Config, DefaultWriteBufferMax),
-    {Offset, _} = random:uniform_s(1 + WriteBufferMax - WriteBufferMin, now()),
+    {Offset, _} = random:uniform_s(1 + WriteBufferMax - WriteBufferMin, erlang:timestamp()),
     WriteBufferSize = WriteBufferMin + Offset,
     Config2 = orddict:store(write_buffer_size, WriteBufferSize, Config),
     Config3 = orddict:erase(write_buffer_size_min, Config2),
