@@ -133,7 +133,7 @@ format_transfer_type(repair) ->
 format_transfer_size({Num, objects}) ->
     io_lib:format("~B Objs", [Num]);
 format_transfer_size({Num, bytes}) ->
-    riak_core_format:human_size_fmt("~B", Num);
+    riak_core_format:human_size_fmt("~.1f", Num);
 format_transfer_size(_) ->
     "--".
 
