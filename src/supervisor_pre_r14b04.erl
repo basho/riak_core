@@ -1188,7 +1188,7 @@ add_restart(State) ->
     I = State#state.intensity,
     P = State#state.period,
     R = State#state.restarts,
-    Now = erlang:timestamp(),
+    Now = time_compat:timestamp(),
     R1 = add_restart([Now|R], Now, P),
     State1 = State#state{restarts = R1},
     case length(R1) of
