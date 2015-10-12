@@ -64,7 +64,7 @@ start(_StartType, _StartArgs) ->
 
     %% add these defaults now to supplement the set that may have been
     %% configured in app.config
-    riak_core_bucket:append_bucket_defaults(riak_core_bucket_type:defaults()),
+    riak_core_bucket:append_bucket_defaults(riak_core_bucket_type:defaults(default_type)),
 
     %% Spin up the supervisor; prune ring files as necessary
     case riak_core_sup:start_link() of
