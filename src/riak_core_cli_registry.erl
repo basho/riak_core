@@ -23,6 +23,7 @@
 
 -define(CLI_MODULES, [
                       riak_core_cluster_cli,
+                      riak_core_ring_cli,
                       riak_core_handoff_cli
                      ]).
 

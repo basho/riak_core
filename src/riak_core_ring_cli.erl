@@ -1,10 +1,10 @@
 -module(riak_core_ring_cli).
--compile(export_all).
 
 -behavior(clique_handler).
--export([register_cli/0]).
-
--define(CMD, "riak-admin").
+-export([
+         register_cli/0,
+         member_status/3
+        ]).
 
 -spec register_cli() -> ok.
 register_cli() ->
@@ -13,35 +13,21 @@ register_cli() ->
     ok.
 
 register_cli_cmds() ->
-    [ apply(clique, register_command, Args)
-      || Args <-
-         [
-          member_status_register()          
-         ]], ok.
+    lists:foreach(fun(Args) -> apply(clique, register_command, Args) end,
+                  [ member_status_register() ]).
 
 register_cli_usage() ->
-    clique:register_usage([?CMD], base_usage()),
-    clique:register_usage([?CMD, "member-status"], member_status_usage()),
-    clique:register_usage([?CMD, "service-nodes"], service_nodes_usage()).
+    clique:register_usage(["riak-admin", "member-status"], member_status_usage()).
 
 %%%
 %% Ring status
 %%%
 
-status_register() ->
+member_status_register() ->
     [["riak-admin", "member-status"], % Cmd
      [],                              % KeySpecs
      [],                              % FlagSpecs
-     fun member_status/3].                   % Implementation callback.
-
-base_usage() ->
-    [
-     "data-platform-admin <command>\n\n",
-     "  Commands:\n",
-     "    member-status             Check the cluster\n\n",
-     "    service-nodes             Display all instances running the designated service\n\n",
-     "Use --help after a sub-command for more details.\n"
-    ].
+     fun member_status/3].            % Implementation callback.
 
 member_status_usage() ->
     [
@@ -49,9 +35,48 @@ member_status_usage() ->
      " TODO\n"
     ].
 
-member_status([], [], []) ->
+member_status(_Cmd, [], []) ->
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    print_member_status(Ring).
+    AllStatus = lists:keysort(2, riak_core_ring:all_member_status(Ring)),
+    IsPending = ([] /= riak_core_ring:pending_changes(Ring)),
+
+    {Joining, Valid, Down, Leaving, Exiting, Rows} =
+        lists:foldl(fun({Node, Status},
+                        {Joining0, Valid0, Down0, Leaving0, Exiting0, Rows0}) ->
+                            {RingPercent, NextPercent} =
+                                pending_claim_percentage(Ring, Node),
+                            Pending =
+                            case IsPending of
+                                true ->
+                                    {pending, NextPercent};
+                                false ->
+                                    {pending, "--"}
+                            end,
+                            Row =
+                                [{status, Status},
+                                 {node, Node},
+                                 {ring, RingPercent},
+                                 Pending],
+                            case Status of
+                                joining ->
+                                    {Joining0 + 1, Valid0, Down0, Leaving0, Exiting0, Rows0 ++ [Row]};
+                                valid ->
+                                    {Joining0, Valid0 + 1, Down0, Leaving0, Exiting0, Rows0 ++ [Row]};
+                                down ->
+                                    {Joining0, Valid0, Down0 + 1, Leaving0, Exiting0, Rows0 ++ [Row]};
+                                leaving ->
+                                    {Joining0, Valid0, Down0, Leaving0 + 1, Exiting0, Rows0 ++ [Row]};
+                                exiting ->
+                                    {Joining0, Valid0, Down0, Leaving0, Exiting0 + 1, Rows0 ++ [Row]}
+                            end
+                    end, { 0,0,0,0,0, []}, AllStatus),
+
+    Header = clique_status:text("---- Ring Status ----"),
+    CountsRows = [[{valid, Valid}, {leaving, Leaving}, {exiting, Exiting},
+                  {joining, Joining}, {down, Down}]],
+    CountsTable = clique_status:table(CountsRows),
+    NodeTable = clique_status:table(Rows),
+    [Header, NodeTable, CountsTable].
 
 %% @doc Return for a given ring and node, percentage currently owned and
 %% anticipated after the transitions have been completed.
@@ -63,43 +88,3 @@ pending_claim_percentage(Ring, Node) ->
     RingPercent = length(Indices) * 100 / RingSize,
     NextPercent = length(NextIndices) * 100 / FutureRingSize,
     {RingPercent, NextPercent}.
-
-print_member_status(Ring) ->
-    io:format("~33..=s Membership ~34..=s~n", ["", ""]),
-    io:format("Status     Ring    Pending    Node~n"),
-    io:format("~79..-s~n", [""]),
-    AllStatus = lists:keysort(2, riak_core_ring:all_member_status(Ring)),
-    IsPending = ([] /= riak_core_ring:pending_changes(Ring)),
-
-    {Joining, Valid, Down, Leaving, Exiting} =
-        lists:foldl(fun({Node, Status},
-                        {Joining0, Valid0, Down0, Leaving0, Exiting0}) ->
-                            {RingPercent, NextPercent} =
-                                pending_claim_percentage(Ring, Node),
-
-                            case IsPending of
-                                true ->
-                                    io:format("~-8s  ~5.1f%    ~5.1f%    ~p~n",
-                                              [Status, RingPercent,
-                                               NextPercent, Node]);
-                                false ->
-                                    io:format("~-8s  ~5.1f%      --      ~p~n",
-                                              [Status, RingPercent, Node])
-                            end,
-                            case Status of
-                                joining ->
-                                    {Joining0 + 1, Valid0, Down0, Leaving0, Exiting0};
-                                valid ->
-                                    {Joining0, Valid0 + 1, Down0, Leaving0, Exiting0};
-                                down ->
-                                    {Joining0, Valid0, Down0 + 1, Leaving0, Exiting0};
-                                leaving ->
-                                    {Joining0, Valid0, Down0, Leaving0 + 1, Exiting0};
-                                exiting ->
-                                    {Joining0, Valid0, Down0, Leaving0, Exiting0 + 1}
-                            end
-                    end, {0,0,0,0,0}, AllStatus),
-    io:format("~79..-s~n", [""]),
-    io:format("Valid:~b / Leaving:~b / Exiting:~b / Joining:~b / Down:~b~n",
-              [Valid, Leaving, Exiting, Joining, Down]),
-    ok.
