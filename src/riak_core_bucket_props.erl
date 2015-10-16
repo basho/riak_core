@@ -77,6 +77,16 @@ validate_core_prop(create, {_Bucket, undefined}, Existing, {claimant, Claimant})
 validate_core_prop(update, {_Bucket, _BucketName}, _Existing, {claimant, _Claimant}) ->
     %% cannot update claimant
     {claimant, "Cannot update claimant property"};
+validate_core_prop(update, {_Bucket, _BucketName}, _Existing, {ddl, _DDL}) ->
+    %% cannot update time series DDL
+    {ddl, "Cannot update time series data definition"};
+validate_core_prop(update, {_Bucket, _BucketName}, _Existing, {table_def, _DDL}) ->
+    %% cannot update time series DDL (or, if it slips past riak_kv_console,
+    %% the table_def SQL(ish) code that is parsed to make a DDL)
+    %%
+    %% Defining the table_def atom here also sidesteps occasional
+    %% errors from existing_atom functions
+    {ddl, "Cannot update time series data definition"};
 validate_core_prop(create, {_Bucket, undefined}, undefined, {active, false}) ->
     %% first creation call that sets active to false is always valid
     true;
