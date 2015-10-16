@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2012 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2012-2015 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -100,7 +100,6 @@
 %% ``local_compare/2'' and ``do_remote/1'' for examples (-ifdef(TEST) only).
 
 -module(hashtree).
-
 -export([new/0,
          new/2,
          new/3,
@@ -125,12 +124,20 @@
          segments/1,
          width/1,
          mem_levels/1,
-         path/1]).
+         path/1,
+         next_rebuild/1,
+         set_next_rebuild/2,
+         mark_open_empty/2,
+         mark_open_and_check/2,
+         mark_clean_close/2]).
 -export([compare2/4]).
 -export([multi_select_segment/3, safe_decode/1]).
+
+-define(ALL_SEGMENTS, ['*', '*']).
+-define(BIN_TO_INT(B), list_to_integer(binary_to_list(B))).
+
 -ifdef(TEST).
--compile([export_all]).
--export([local_compare/2]).
+-export([fake_close/1, local_compare/2]).
 -export([run_local/0,
          run_local/1,
          run_concurrent_build/0,
@@ -164,6 +171,7 @@
 -type proplist() :: proplists:proplist().
 -type orddict() :: orddict:orddict().
 -type index() :: non_neg_integer().
+-type index_n() :: {index(), pos_integer()}.
 
 -type keydiff() :: {missing | remote_missing | different, binary()}.
 
@@ -175,19 +183,23 @@
 
 -type select_fun(T) :: fun((orddict()) -> T).
 
--record(state, {id             :: tree_id_bin(),
-                index          :: index(),
-                levels         :: pos_integer(),
-                segments       :: pos_integer(),
-                width          :: pos_integer(),
-                mem_levels     :: integer(),
-                tree           :: dict(),
-                ref            :: term(),
-                path           :: string(),
-                itr            :: term(),
-                write_buffer   :: [{put, binary(), binary()} | {delete, binary()}],
+-type next_rebuild() :: full | incremental.
+
+-record(state, {id                 :: tree_id_bin(),
+                index              :: index(),
+                levels             :: pos_integer(),
+                segments           :: pos_integer(),
+                width              :: pos_integer(),
+                mem_levels         :: integer(),
+                tree               :: dict(),
+                ref                :: term(),
+                path               :: string(),
+                itr                :: term(),
+                next_rebuild       :: next_rebuild(),
+                write_buffer       :: [{put, binary(), binary()} |
+                                       {delete, binary()}],
                 write_buffer_count :: integer(),
-                dirty_segments :: array()
+                dirty_segments     :: array()
                }).
 
 -record(itr_state, {itr                :: term(),
@@ -244,6 +256,7 @@ new({Index,TreeId}, LinkedStore, Options) ->
                    mem_levels=MemLevels,
                    %% dirty_segments=gb_sets:new(),
                    dirty_segments=bitarray_new(NumSegments),
+                   next_rebuild=full,
                    write_buffer=[],
                    write_buffer_count=0,
                    tree=dict:new()},
@@ -357,40 +370,112 @@ update_tree(State) ->
     update_perform(State3).
 
 -spec update_perform(hashtree()) -> hashtree().
-update_perform(State2=#state{dirty_segments=Dirty, segments=NumSegments}) ->
-    %% Segments = gb_sets:to_list(Dirty),
-    Segments = bitarray_to_list(Dirty),
+update_perform(State=#state{dirty_segments=Dirty, segments=NumSegments}) ->
+    NextRebuild = State#state.next_rebuild,
+    Segments = case NextRebuild of
+                   full ->
+                       ?ALL_SEGMENTS;
+                   incremental ->
+                       %% gb_sets:to_list(Dirty),
+                       bitarray_to_list(Dirty)
+               end,
+    State2 = maybe_clear_buckets(Segments, State),
     State3 = update_tree(Segments, State2),
-    %% State3#state{dirty_segments=gb_sets:new()}.
-    State3#state{dirty_segments=bitarray_new(NumSegments)}.
+    %% State2#state{dirty_segments=gb_sets:new()}
+    State3#state{dirty_segments=bitarray_new(NumSegments),
+                 next_rebuild=incremental}.
+
+maybe_clear_buckets(?ALL_SEGMENTS, State) ->
+    Segments = lists:seq(0, State#state.segments div State#state.width - 1),
+    %% Limit the clear to the disk buckets, then dump the whole tree
+    State2 = clear_bucket(State#state.mem_levels, State#state.levels, Segments, State),
+    State2#state{tree = dict:new()};
+maybe_clear_buckets(_Segments, State) ->
+    State.
+
+clear_bucket(MinLevel, Level, _Segments, State) when Level =< MinLevel ->
+    State;
+clear_bucket(MinLevel, Level, Segments, State = #state{width = Width}) ->
+    State2 = lists:foldl(fun(Segment, State1) ->
+                                 del_disk_bucket(Level, Segment, State1)
+                         end, State, Segments),
+    ParentSegments = lists:usort([Segment div Width || Segment <- Segments]),
+    clear_bucket(MinLevel, Level - 1, ParentSegments, State2).
+
 
 -spec update_tree([integer()], hashtree()) -> hashtree().
 update_tree([], State) ->
     State;
-update_tree(Segments, State) ->
+update_tree(Segments, State=#state{next_rebuild=NextRebuild, width=Width,
+                                   levels=Levels}) ->
+    LastLevel = Levels,
     Hashes = orddict:from_list(hashes(State, Segments)),
-    Groups = group(Hashes, State#state.width),
-    LastLevel = State#state.levels,
-    NewState = update_levels(LastLevel, Groups, State),
-    NewState.
+    Groups = group(Hashes, Width),
+    update_levels(LastLevel, Groups, State, NextRebuild).
 
 -spec rehash_tree(hashtree()) -> hashtree().
 rehash_tree(State) ->
-    State2 = snapshot(State),
-    rehash_perform(State2).
+    State2 = flush_buffer(State),
+    State3 = snapshot(State2),
+    rehash_perform(State3).
 
 -spec rehash_perform(hashtree()) -> hashtree().
 rehash_perform(State) ->
-    Hashes = orddict:from_list(hashes(State, ['*', '*'])),
+    Hashes = orddict:from_list(hashes(State, ?ALL_SEGMENTS)),
     case Hashes of
         [] ->
             State;
         _ ->
             Groups = group(Hashes, State#state.width),
             LastLevel = State#state.levels,
-            NewState = update_levels(LastLevel, Groups, State),
+            %% Always do a full rebuild on rehash
+            NewState = update_levels(LastLevel, Groups, State, full),
             NewState
     end.
+
+%% @doc Mark/clear metadata for tree-id opened/closed.
+%%      Set next_rebuild to be incremental.
+-spec mark_open_empty(index_n()|binary(), hashtree()) -> hashtree().
+mark_open_empty(TreeId, State) when is_binary(TreeId) ->
+    State1 = write_meta(TreeId, [{opened, 1}, {closed, 0}], State),
+    State1#state{next_rebuild=incremental};
+mark_open_empty(TreeId, State) ->
+    mark_open_empty(term_to_binary(TreeId), State).
+
+%% @doc Check if shutdown/closing of tree-id was clean/dirty by comparing
+%%      `closed' to `opened' metadata count for the hashtree, and,
+%%      increment opened count for hashtree-id.
+%%
+%%
+%%      If it was a clean shutdown, set `next_rebuild' to be an incremental one.
+%%      Otherwise, if it was a dirty shutdown, set `next_rebuild', instead,
+%%      to be a full one.
+-spec mark_open_and_check(index_n()|binary(), hashtree()) -> hashtree().
+mark_open_and_check(TreeId, State) when is_binary(TreeId) ->
+    MetaTerm = read_meta_term(TreeId, [], State),
+    OpenedCnt = proplists:get_value(opened, MetaTerm, 0),
+    ClosedCnt = proplists:get_value(closed, MetaTerm, -1),
+    _ = write_meta(TreeId, lists:keystore(opened, 1, MetaTerm,
+                                          {opened, OpenedCnt + 1}), State),
+    case ClosedCnt =/= OpenedCnt orelse State#state.mem_levels > 0 of
+        true ->
+            State#state{next_rebuild = full};
+        false ->
+            State#state{next_rebuild = incremental}
+    end;
+mark_open_and_check(TreeId, State) ->
+    mark_open_and_check(term_to_binary(TreeId), State).
+
+%% @doc Call on a clean-close to update the meta for a tree-id's `closed' count
+%%      to match the current `opened' count, which is checked on new/reopen.
+-spec mark_clean_close(index_n()|binary(), hashtree()) -> hashtree().
+mark_clean_close(TreeId, State) when is_binary(TreeId) ->
+    MetaTerm = read_meta_term(TreeId, [], State),
+    OpenedCnt = proplists:get_value(opened, MetaTerm, 0),
+    _ = write_meta(TreeId, lists:keystore(closed, 1, MetaTerm,
+                                          {closed, OpenedCnt}), State);
+mark_clean_close(TreeId, State) ->
+    mark_clean_close(term_to_binary(TreeId), State).
 
 -spec top_hash(hashtree()) -> [] | [{0, binary()}].
 top_hash(State) ->
@@ -419,14 +504,25 @@ mem_levels(#state{mem_levels=M}) ->
 path(#state{path=P}) ->
     P.
 
+-spec next_rebuild(hashtree()) -> next_rebuild().
+next_rebuild(#state{next_rebuild=NextRebuild}) ->
+    NextRebuild.
+
+-spec set_next_rebuild(hashtree(), next_rebuild()) -> hashtree().
+set_next_rebuild(Tree, NextRebuild) ->
+    Tree#state{next_rebuild = NextRebuild}.
+
 %% Note: meta is currently a one per file thing, even if there are multiple
 %%       trees per file. This is intentional. If we want per tree metadata
 %%       this will need to be added as a separate thing.
--spec write_meta(binary(), binary(), hashtree()) -> hashtree().
+-spec write_meta(binary(), binary()|term(), hashtree()) -> hashtree().
 write_meta(Key, Value, State) when is_binary(Key) and is_binary(Value) ->
     HKey = encode_meta(Key),
     ok = eleveldb:put(State#state.ref, HKey, Value, []),
-    State.
+    State;
+write_meta(Key, Value0, State) when is_binary(Key) ->
+    Value = term_to_binary(Value0),
+    write_meta(Key, Value, State).
 
 -spec read_meta(binary(), hashtree()) -> {ok, binary()} | undefined.
 read_meta(Key, State) when is_binary(Key) ->
@@ -436,6 +532,15 @@ read_meta(Key, State) when is_binary(Key) ->
             {ok, Value};
         _ ->
             undefined
+    end.
+
+-spec read_meta_term(binary(), term(), hashtree()) -> term().
+read_meta_term(Key, Default, State) when is_binary(Key) ->
+    case read_meta(Key, State) of
+        {ok, Value} ->
+            binary_to_term(Value);
+        _ ->
+            Default
     end.
 
 %% @doc
@@ -515,6 +620,7 @@ esha_update(Ctx, Bin) ->
 
 esha_final(Ctx) ->
     crypto:sha_final(Ctx).
+
 -endif.
 
 -spec set_bucket(integer(), integer(), any(), hashtree()) -> hashtree().
@@ -596,23 +702,38 @@ get_env(Key, Default) ->
 
 -spec update_levels(integer(),
                     [{integer(), [{integer(), binary()}]}],
-                    hashtree()) -> hashtree().
-update_levels(0, _, State) ->
+                    hashtree(), next_rebuild()) -> hashtree().
+update_levels(0, _, State, _) ->
     State;
-update_levels(Level, Groups, State) ->
-    {NewState, NewBuckets} =
-        lists:foldl(fun({Bucket, NewHashes}, {StateAcc, BucketsAcc}) ->
-                            Hashes1 = get_bucket(Level, Bucket, StateAcc),
-                            Hashes2 = orddict:from_list(NewHashes),
-                            Hashes3 = orddict:merge(fun(_, _, New) -> New end,
-                                                    Hashes1,
-                                                    Hashes2),
-                            StateAcc2 = set_bucket(Level, Bucket, Hashes3, StateAcc),
-                            NewBucket = {Bucket, hash(Hashes3)},
-                            {StateAcc2, [NewBucket | BucketsAcc]}
-                    end, {State, []}, Groups),
+update_levels(Level, Groups, State, Type) ->
+    {_, _, NewState, NewBuckets} = rebuild_fold(Level, Groups, State, Type),
     Groups2 = group(NewBuckets, State#state.width),
-    update_levels(Level - 1, Groups2, NewState).
+    update_levels(Level - 1, Groups2, NewState, Type).
+
+-spec rebuild_fold(integer(),
+                   [{integer(), [{integer(), binary()}]}], hashtree(),
+                   next_rebuild()) -> {integer(), next_rebuild(),
+                                      hashtree(), [{integer(), binary()}]}.
+rebuild_fold(Level, Groups, State, Type) ->
+    lists:foldl(fun rebuild_folder/2, {Level, Type, State, []}, Groups).
+
+rebuild_folder({Bucket, NewHashes}, {Level, Type, StateAcc, BucketsAcc}) ->
+    Hashes = case Type of
+                 full ->
+                     orddict:from_list(NewHashes);
+                 incremental ->
+                     Hashes1 = get_bucket(Level, Bucket,
+                                          StateAcc),
+                     Hashes2 = orddict:from_list(NewHashes),
+                     orddict:merge(
+                       fun(_, _, New) -> New end,
+                       Hashes1,
+                       Hashes2)
+             end,
+    StateAcc2 = set_bucket(Level, Bucket, Hashes, StateAcc),
+    NewBucket = {Bucket, hash(Hashes)},
+    {Level, Type, StateAcc2, [NewBucket | BucketsAcc]}.
+
 
 %% Takes a list of bucket-hash entries from level X and groups them together
 %% into groups representing entries at parent level X-1.
@@ -626,6 +747,8 @@ update_levels(Level, Groups, State) ->
 %%
 -spec group([{integer(), binary()}], pos_integer())
            -> [{integer(), [{integer(), binary()}]}].
+group([], _) ->
+    [];
 group(L, Width) ->
     {FirstId, _} = hd(L),
     FirstBucket = FirstId div Width,
@@ -670,6 +793,11 @@ set_disk_bucket(Level, Bucket, Val, State=#state{id=Id, ref=Ref}) ->
     HKey = encode_bucket(Id, Level, Bucket),
     Bin = term_to_binary(Val),
     ok = eleveldb:put(Ref, HKey, Bin, []),
+    State.
+
+del_disk_bucket(Level, Bucket, State = #state{id = Id, ref = Ref}) ->
+    HKey = encode_bucket(Id, Level, Bucket),
+    ok = eleveldb:delete(Ref, HKey, []),
     State.
 
 -spec encode_id(binary() | non_neg_integer()) -> tree_id_bin().
@@ -765,8 +893,31 @@ iterator_move(Itr, Seek) ->
 
 -spec iterate({'error','invalid_iterator'} | {'ok',binary(),binary()},
               #itr_state{}) -> #itr_state{}.
-iterate({error, invalid_iterator}, IS=#itr_state{}) ->
+
+%% Ended up at an invalid_iterator likely due to encountering a missing dirty
+%% segment - e.g. segment dirty, but removed last entries for it
+iterate({error, invalid_iterator}, IS=#itr_state{current_segment='*'}) ->
     IS;
+iterate({error, invalid_iterator}, IS=#itr_state{itr=Itr,
+                                                 id=Id,
+                                                 current_segment=CurSeg,
+                                                 remaining_segments=Segments,
+                                                 acc_fun=F,
+                                                 segment_acc=Acc,
+                                                 final_acc=FinalAcc}) ->
+    case Segments of
+        [] ->
+            IS;
+        ['*'] ->
+            IS;
+        [NextSeg | Remaining] ->
+            Seek = encode(Id, NextSeg, <<>>),
+            IS2 = IS#itr_state{current_segment=NextSeg,
+                               remaining_segments=Remaining,
+                               segment_acc=[],
+                               final_acc=[{CurSeg, F(Acc)} | FinalAcc]},
+            iterate(iterator_move(Itr, Seek), IS2)
+    end;
 iterate({ok, K, V}, IS=#itr_state{itr=Itr,
                                   id=Id,
                                   current_segment=CurSeg,
@@ -1129,8 +1280,8 @@ message_loop(Tree, Msgs, Bytes) ->
             Size = byte_size(term_to_binary(Reply)),
             message_loop(Tree, Msgs+1, Bytes+Size);
         done ->
-            io:format("Exchanged messages: ~b~n", [Msgs]),
-            io:format("Exchanged bytes:    ~b~n", [Bytes]),
+            %% io:format("Exchanged messages: ~b~n", [Msgs]),
+            %% io:format("Exchanged bytes:    ~b~n", [Bytes]),
             ok
     end.
 
@@ -1188,6 +1339,11 @@ compare(Tree, Remote) ->
 compare(Tree, Remote, AccFun) ->
     compare(Tree, Remote, AccFun, []).
 
+-spec fake_close(hashtree()) -> hashtree().
+fake_close(State) ->
+    catch eleveldb:close(State#state.ref),
+    State.
+
 %% Verify that `update_tree/1' generates a snapshot of the underlying
 %% LevelDB store that is used by `compare', therefore isolating the
 %% compare from newer/concurrent insertions into the tree.
@@ -1215,6 +1371,106 @@ delta_test() ->
     Diff2 = local_compare(T2, T1),
     ?assertEqual([{missing, <<"1">>}, {remote_missing, <<"2">>}], Diff2),
     ok.
+
+delete_without_update_test() ->
+    A1 = new({0,0},[{segment_path, "t1"}]),
+    A2 = insert(<<"k">>, <<1234:32>>, A1),
+    A3 = update_tree(A2),
+
+    B1 = new({0,0},[{segment_path, "t2"}]),
+    B2 = insert(<<"k">>, <<1234:32>>, B1),
+    B3 = update_tree(B2),
+
+    Diff = local_compare(A3, B3),
+
+    C1 = delete(<<"k">>, A3),
+    C2 = rehash_tree(C1),
+    C3 = flush_buffer(C2),
+    close(C3),
+
+    AA1 = new({0,0},[{segment_path, "t1"}]),
+    AA2 = update_tree(AA1),
+    Diff2 = local_compare(AA2, B3),
+
+    close(B3),
+    close(AA2),
+    destroy(C3),
+    destroy(B3),
+    destroy(AA2),
+
+    ?assertEqual([], Diff),
+    ?assertEqual([{missing, <<"k">>}], Diff2).
+
+opened_closed_test() ->
+    TreeId0 = {0,0},
+    TreeId1 = term_to_binary({0,0}),
+    A1 = new(TreeId0, [{segment_path, "t1000"}]),
+    A2 = mark_open_and_check(TreeId0, A1),
+    A3 = insert(<<"totes">>, <<1234:32>>, A2),
+    A4 = update_tree(A3),
+
+    B1 = new(TreeId0, [{segment_path, "t2000"}]),
+    B2 = mark_open_empty(TreeId0, B1),
+    B3 = insert(<<"totes">>, <<1234:32>>, B2),
+    B4 = update_tree(B3),
+
+    StatusA4 = {proplists:get_value(opened, read_meta_term(TreeId1, [], A4)),
+                proplists:get_value(closed, read_meta_term(TreeId1, [], A4))},
+    StatusB4 = {proplists:get_value(opened, read_meta_term(TreeId1, [], B4)),
+                proplists:get_value(closed, read_meta_term(TreeId1, [], B4))},
+
+    A5 = set_next_rebuild(A4, incremental),
+    A6 = mark_clean_close(TreeId0, A5),
+    StatusA6 = {proplists:get_value(opened, read_meta_term(TreeId1, [], A6)),
+                proplists:get_value(closed, read_meta_term(TreeId1, [], A6))},
+
+    close(A6),
+    close(B4),
+
+    AA1 = new(TreeId0, [{segment_path, "t1000"}]),
+    AA2 = mark_open_and_check(TreeId0, AA1),
+    AA3 = update_tree(AA2),
+    StatusAA3 = {proplists:get_value(opened, read_meta_term(TreeId1, [], AA3)),
+                 proplists:get_value(closed, read_meta_term(TreeId1, [], AA3))},
+
+    fake_close(AA3),
+
+    AAA1 = new(TreeId0,[{segment_path, "t1000"}]),
+    AAA2 = mark_open_and_check(TreeId0, AAA1),
+    StatusAAA2 = {proplists:get_value(opened, read_meta_term(TreeId1, [], AAA2)),
+                  proplists:get_value(closed, read_meta_term(TreeId1, [], AAA2))},
+
+    AAA3 = mark_clean_close(TreeId0, AAA2),
+    close(AAA3),
+
+    AAAA1 = new({0,0},[{segment_path, "t1000"}]),
+    AAAA2 = mark_open_and_check(TreeId0, AAAA1),
+    StatusAAAA2 = {proplists:get_value(opened, read_meta_term(TreeId1, [], AAAA2)),
+                   proplists:get_value(closed, read_meta_term(TreeId1, [], AAAA2))},
+
+    AAAA3 = mark_clean_close(TreeId0, AAAA2),
+    StatusAAAA3 = {proplists:get_value(opened, read_meta_term(TreeId1, [], AAAA3)),
+                   proplists:get_value(closed, read_meta_term(TreeId1, [], AAAA3))},
+    close(AAAA3),
+    destroy(B3),
+    destroy(A6),
+    destroy(AA3),
+    destroy(AAA3),
+    destroy(AAAA3),
+
+    ?assertEqual({1,undefined}, StatusA4),
+    ?assertEqual({1,0}, StatusB4),
+    ?assertEqual(full, A2#state.next_rebuild),
+    ?assertEqual(incremental, B2#state.next_rebuild),
+    ?assertEqual(incremental, A5#state.next_rebuild),
+    ?assertEqual({1,1}, StatusA6),
+    ?assertEqual({2,1}, StatusAA3),
+    ?assertEqual(incremental, AA2#state.next_rebuild),
+    ?assertEqual({3,1}, StatusAAA2),
+    ?assertEqual(full, AAA1#state.next_rebuild),
+    ?assertEqual({4,3}, StatusAAAA2),
+    ?assertEqual({4,4}, StatusAAAA3).
+
 -endif.
 
 %%%===================================================================
