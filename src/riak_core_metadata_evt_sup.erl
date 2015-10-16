@@ -27,7 +27,7 @@
 -behaviour(supervisor).
 
 -export([init/1]).
--export([is_type_compiled/1]).
+-export([is_type_compiled/2]).
 -export([start_link/0]).
 -export([swap_notification_handler/3]).
 -export([sync_notify/2]).
@@ -74,12 +74,12 @@ sync_notify(FullPrefix, Key) ->
 %% that do not handle this should return false, or any value that is not true.
 %%
 %% This should only be called if the bucket type has the ddl property.
--spec is_type_compiled(BucketType :: binary()) -> boolean().
-is_type_compiled(BucketType) when is_binary(BucketType) ->
+-spec is_type_compiled(BucketType :: binary(), DDL :: term()) -> boolean().
+is_type_compiled(BucketType, DDL) when is_binary(BucketType) ->
     case ets:lookup(?TABLE, ?BUCKET_TYPE_PREFIX) of
         [{?BUCKET_TYPE_PREFIX, Pid}] ->
             Handlers = gen_event:which_handlers(Pid),
-            Req = {is_type_compiled, BucketType},
+            Req = {is_type_compiled, [BucketType, DDL]},
             Results = [gen_event:call(Pid, H, Req) || H <- Handlers],
             lists:member(true, Results);
         [] ->

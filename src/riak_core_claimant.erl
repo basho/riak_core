@@ -721,15 +721,15 @@ get_remote_type_status(BucketType) ->
                   riak_core_metadata,
                   get, [?BUCKET_TYPE_PREFIX, BucketType, [{default, []}]]).
 
-%% 
+%%
 get_remote_ddl_compiled_status(BucketType, Props) ->
-    case proplists:is_defined(ddl, Props) of
-        true ->
+    case proplists:get_value(ddl, Props) of
+        undefined ->
+            no_ddl_to_compile;
+        DDL ->
             rpc:multicall(all_members(),
                           riak_core_metadata_evt_sup,
-                          is_type_compiled, [BucketType]);
-        false ->
-            no_ddl_to_compile
+                          is_type_compiled, [BucketType, DDL])
     end.
 
 %% Checks if the result of the call to is_type_compiled across the cluster.
