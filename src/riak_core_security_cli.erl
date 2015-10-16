@@ -1,12 +1,124 @@
 -module(riak_core_security_cli).
+
+-behaviour(clique_handler).
+-export([
+         register_cli/0, command/1,
+         security_status/3, security_enable/3, security_disable/3
+        ]).
+
 -export([
          add_user/1, alter_user/1, del_user/1,
          add_group/1, alter_group/1, del_group/1,
          add_source/1, del_source/1, grant/1, revoke/1,
          print_users/1, print_user/1, print_sources/1,
-         print_groups/1, print_group/1, print_grants/1,
-         security_enable/1, security_disable/1, security_status/1, ciphers/1
+         print_groups/1, print_group/1, print_grants/1, ciphers/1
         ]).
+
+-spec register_cli() -> ok.
+register_cli() ->
+    register_cli_usage(),
+    register_cli_cmds().
+
+register_cli_usage() ->
+    clique:register_usage(["riak-admin", "security"], base_usage()),
+    clique:register_usage(["riak-admin", "security", "status"], status_usage()),
+    clique:register_usage(["riak-admin", "security", "enable"], enable_usage()),
+    clique:register_usage(["riak-admin", "security", "disable"], disable_usage()).
+
+
+register_cli_cmds() ->
+    lists:foreach(fun(Args) -> apply(clique, register_command, Args) end,
+                  [ status_register(), enable_register(), disable_register() ]).
+
+-spec command([string()]) -> ok.
+command(C) ->
+    clique:run(C).
+
+%%%
+%% Usage
+%%%
+
+base_usage() ->
+    "riak-admin security <command>\n\n"
+    "The following commands modify users and security ACLs for Riak:\n\n"
+    "    add-user <username> [<option>=<value> [...]]\n"
+    "    add-group <groupname> [<option>=<value> [...]]\n"
+    "    alter-user <username> <option> [<option>=<value> [...]]\n"
+    "    alter-group <groupname> <option> [<option>=<value> [...]]\n"
+    "    del-user <username>\n"
+    "    del-group <groupname>\n"
+    "    add-source all|<users> <CIDR> <source> [<option>=<value> [...]]\n"
+    "    del-source all|<users> <CIDR>\n"
+    "    grant <permissions> on any|<type> [bucket] to <users>\n"
+    "    revoke <permissions> on any|<type> [bucket] from <users>\n"
+    "    print-users\n"
+    "    print-groups\n"
+    "    print-user <user>\n"
+    "    print-group <group>\n"
+    "    print-grants <user|group>\n"
+    "    print-sources\n"
+    "    enable\n"
+    "    disable\n"
+    "    status\n"
+    "    ciphers [cipherlist]\n".
+
+% Obvious usage is used obviously.
+status_usage() ->
+    "riak-admin security status\n"
+    "    Show the status of the cluster security.\n".
+
+enable_usage() ->
+    "riak-admin security enable\n"
+    "    Enable security.\n".
+
+disable_usage() ->
+    "riak-admin security enable\n"
+    "    Disable security.\n".
+
+%%%
+%% Registration
+%%%
+
+status_register() ->
+    [["riak-admin", "security", "status"],
+     [],
+     [],
+     fun security_status/3].
+
+enable_register() ->
+    [["riak-admin", "security", "enable"],
+     [],
+     [],
+     fun security_enable/3].
+
+disable_register() ->
+    [["riak-admin", "security", "disable"],
+     [],
+     [],
+     fun security_disable/3].
+
+%%%
+%% Handlers
+%%%
+
+security_enable(_Cmd, [], []) ->
+    riak_core_security:enable(),
+    security_status(_Cmd, [], []).
+
+security_disable(_Cmd, [], []) ->
+    riak_core_security:disable(),
+    security_status(_Cmd, [], []).
+
+security_status(_Cmd, [], []) ->
+    case riak_core_security:status() of
+        enabled ->
+            [clique_status:text("Enabled\n")];
+        disabled ->
+            [clique_status:text("Disabled\n")];
+        enabled_but_no_capability ->
+            [clique_status:text("WARNING: Configured to be enabled, but not supported "
+                      "on all nodes so it is disabled!\n")]
+    end.
 
 security_error_xlate({errors, Errors}) ->
     string:join(
@@ -281,23 +393,6 @@ ciphers([CipherList]) ->
             ok;
         error ->
             error
-    end.
-
-security_enable([]) ->
-    riak_core_security:enable().
-
-security_disable([]) ->
-    riak_core_security:disable().
-
-security_status([]) ->
-    case riak_core_security:status() of
-        enabled ->
-            io:format("Enabled~n");
-        disabled ->
-            io:format("Disabled~n");
-        enabled_but_no_capability ->
-            io:format("WARNING: Configured to be enabled, but not supported "
-                      "on all nodes so it is disabled!~n")
     end.
 
 parse_options(Options) ->
