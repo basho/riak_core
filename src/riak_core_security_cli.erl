@@ -2,7 +2,7 @@
 
 -behaviour(clique_handler).
 -export([
-         register_cli/0, command/1,
+         register_cli/0,
          security_status/3, security_enable/3, security_disable/3
         ]).
 
@@ -29,10 +29,6 @@ register_cli_usage() ->
 register_cli_cmds() ->
     lists:foreach(fun(Args) -> apply(clique, register_command, Args) end,
                   [ status_register(), enable_register(), disable_register() ]).
-
--spec command([string()]) -> ok.
-command(C) ->
-    clique:run(C).
 
 %%%
 %% Usage
