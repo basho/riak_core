@@ -19,14 +19,11 @@
 %% -------------------------------------------------------------------
 -module(riak_core_security).
 
-%% printing functions
--export([format_grants/1]).
-
 %% TODO Most of these now do a bunch of atom-to-string/-binary conversion
 %% that is probably largely unnecessary now. Clean that up!
 %% Formatting functions
 -export([format_user/1, format_users/0, format_users/1,
-         format_sources/0, format_sources/1,
+         format_sources/0, format_sources/1, format_grants/1,
          format_group/1, format_groups/0, format_groups/1]).
 
 %% type exports
