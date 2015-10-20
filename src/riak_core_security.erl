@@ -20,8 +20,7 @@
 -module(riak_core_security).
 
 %% printing functions
--export([print_sources/0,
-         print_groups/0, print_group/1, print_grants/1]).
+-export([print_groups/0, print_group/1, print_grants/1]).
 
 %% TODO Most of these now do a bunch of atom-to-string/-binary conversion
 %% that is probably largely unnecessary now. Clean that up!
@@ -97,9 +96,6 @@ prettyprint_users(Users0, Width) ->
     %% my kingdom for an iolist join...
     Users = [unicode:characters_to_list(U, utf8) || U <- Users0],
     prettyprint_permissions(Users, Width).
-
-print_sources() ->
-    clique:print(format_sources(), ["riak-admin", "security", "format-sources"]).
 
 format_sources() ->
     Sources = riak_core_metadata:fold(fun({{Username, CIDR}, [{Source, Options}]}, Acc) ->

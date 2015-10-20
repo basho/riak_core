@@ -5,6 +5,7 @@
          register_cli/0,
          print_users/3, print_user/3,
          print_groups/3, print_group/3,
+         print_sources/3,
          security_status/3, security_enable/3, security_disable/3
         ]).
 
@@ -12,7 +13,6 @@
          add_user/1, alter_user/1, del_user/1,
          add_group/1, alter_group/1, del_group/1,
          add_source/1, del_source/1, grant/1, revoke/1,
-         print_sources/1,
          print_grants/1, ciphers/1
         ]).
 
@@ -27,6 +27,7 @@ register_cli_usage() ->
     clique:register_usage(["riak-admin", "security", "print-user"], print_user_usage()),
     clique:register_usage(["riak-admin", "security", "print-groups"], print_groups_usage()),
     clique:register_usage(["riak-admin", "security", "print-group"], print_group_usage()),
+    clique:register_usage(["riak-admin", "security", "print-sources"], print_sources_usage()),
     clique:register_usage(["riak-admin", "security", "status"], status_usage()),
     clique:register_usage(["riak-admin", "security", "enable"], enable_usage()),
     clique:register_usage(["riak-admin", "security", "disable"], disable_usage()).
@@ -36,6 +37,7 @@ register_cli_cmds() ->
     lists:foreach(fun(Args) -> apply(clique, register_command, Args) end,
                   [print_users_register(), print_user_register(),
                    print_groups_register(), print_group_register(),
+                   print_sources_register(),
                    status_register(), enable_register(), disable_register() ]).
 
 %%%
@@ -95,6 +97,10 @@ print_group_usage() ->
     "riak-admin security print-group <group>\n"
     "    Print a single group.\n".
 
+print_sources_usage() ->
+    "riak-admin security print-sources\n"
+    "    Print all sources.\n".
+
 %%%
 %% Registration
 %%%
@@ -140,6 +146,12 @@ print_group_register() ->
      [],
      [],
      fun print_group/3].
+
+print_sources_register() ->
+    [["riak-admin", "security", "print-sources"],
+     [],
+     [],
+     fun print_sources/3].
 
 %%%
 %% Handlers
@@ -195,6 +207,13 @@ print_groups(["riak-admin", "security", "print-groups"], [], []) ->
         [] -> [];
         [_|_]=Groups ->
             [clique_status:table(Groups)]
+    end.
+
+print_sources(["riak-admin", "security", "print-sources"], [], []) ->
+    case riak_core_security:format_sources() of
+        [] -> [];
+        [_|_]=Sources ->
+            [clique_status:table(Sources)]
     end.
 
 %%%
@@ -435,9 +454,6 @@ print_grants([Name]) ->
             io:format("~n"),
             Error
     end.
-
-print_sources([]) ->
-    riak_core_security:print_sources().
 
 ciphers([]) ->
     riak_core_security:print_ciphers();
