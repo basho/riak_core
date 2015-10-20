@@ -38,6 +38,9 @@
 
 %% An integer, and the number of bits to shift it left to treat it as
 %% a mask in the 2^160 key space
+%%
+%% For a more thorough explanation of how these structures are used,
+%% see `riak_core_coverage_plan'.
 -type subpartition() :: { non_neg_integer(), pos_integer() }.
 
 -record(vnode_coverage, {
