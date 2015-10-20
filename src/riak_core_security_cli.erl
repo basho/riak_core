@@ -4,6 +4,7 @@
 -export([
          register_cli/0,
          print_users/3, print_user/3,
+         print_groups/3, print_group/3,
          security_status/3, security_enable/3, security_disable/3
         ]).
 
@@ -12,7 +13,7 @@
          add_group/1, alter_group/1, del_group/1,
          add_source/1, del_source/1, grant/1, revoke/1,
          print_sources/1,
-         print_groups/1, print_group/1, print_grants/1, ciphers/1
+         print_grants/1, ciphers/1
         ]).
 
 -spec register_cli() -> ok.
@@ -24,6 +25,8 @@ register_cli_usage() ->
     clique:register_usage(["riak-admin", "security"], base_usage()),
     clique:register_usage(["riak-admin", "security", "print-users"], print_users_usage()),
     clique:register_usage(["riak-admin", "security", "print-user"], print_user_usage()),
+    clique:register_usage(["riak-admin", "security", "print-groups"], print_groups_usage()),
+    clique:register_usage(["riak-admin", "security", "print-group"], print_group_usage()),
     clique:register_usage(["riak-admin", "security", "status"], status_usage()),
     clique:register_usage(["riak-admin", "security", "enable"], enable_usage()),
     clique:register_usage(["riak-admin", "security", "disable"], disable_usage()).
@@ -32,6 +35,7 @@ register_cli_usage() ->
 register_cli_cmds() ->
     lists:foreach(fun(Args) -> apply(clique, register_command, Args) end,
                   [print_users_register(), print_user_register(),
+                   print_groups_register(), print_group_register(),
                    status_register(), enable_register(), disable_register() ]).
 
 %%%
@@ -83,6 +87,14 @@ print_user_usage() ->
     "riak-admin security print-user <user>\n"
     "    Print a single user.\n".
 
+print_groups_usage() ->
+    "riak-admin security print-groups\n"
+    "    Print all groups.\n".
+
+print_group_usage() ->
+    "riak-admin security print-group <group>\n"
+    "    Print a single group.\n".
+
 %%%
 %% Registration
 %%%
@@ -117,6 +129,18 @@ print_user_register() ->
      [],
      fun print_user/3].
 
+print_groups_register() ->
+    [["riak-admin", "security", "print-groups"],
+     [],
+     [],
+     fun print_groups/3].
+
+print_group_register() ->
+    [["riak-admin", "security", "print-group", '*'],
+     [],
+     [],
+     fun print_group/3].
+
 %%%
 %% Handlers
 %%%
@@ -140,13 +164,6 @@ security_status(_Cmd, [], []) ->
                       "on all nodes so it is disabled!\n")]
     end.
 
-print_users(_Cmd, [], []) ->
-    case riak_core_security:format_users() of
-        [] -> [];
-        [_|_]=Users ->
-            [clique_status:table(Users)]
-    end.
-
 print_user(["riak-admin", "security", "print-user", User], [], []) ->
     case riak_core_security:format_user(User) of
         {error, _}=Error ->
@@ -155,6 +172,29 @@ print_user(["riak-admin", "security", "print-user", User], [], []) ->
             [clique_status:alert(Output)];
         [_|_]=Users -> % NB No [] match as that's an {error, ...}
             [clique_status:table(Users)]
+    end.
+
+print_users(_Cmd, [], []) ->
+    case riak_core_security:format_users() of
+        [] -> [];
+        [_|_]=Users ->
+            [clique_status:table(Users)]
+    end.
+
+print_group(["riak-admin", "security", "print-group", Group], [], []) ->
+    case riak_core_security:format_group(Group) of
+        {error, _}=Error ->
+            Output = [clique_status:text(security_error_xlate(Error))],
+            [clique_status:alert(Output)];
+        [_|_]=Groups ->
+            [clique_status:table(Groups)]
+    end.
+
+print_groups(["riak-admin", "security", "print-groups"], [], []) ->
+    case riak_core_security:format_groups() of
+        [] -> [];
+        [_|_]=Groups ->
+            [clique_status:table(Groups)]
     end.
 
 %%%
@@ -388,20 +428,6 @@ revoke(_) ->
 
 print_grants([Name]) ->
     case riak_core_security:print_grants(Name) of
-        ok ->
-            ok;
-        Error ->
-            io:format(security_error_xlate(Error)),
-            io:format("~n"),
-            Error
-    end.
-
-
-print_groups([]) ->
-    riak_core_security:print_groups().
-
-print_group([Group]) ->
-    case riak_core_security:print_group(Group) of
         ok ->
             ok;
         Error ->
