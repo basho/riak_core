@@ -20,7 +20,7 @@
 -module(riak_core_security).
 
 %% printing functions
--export([print_groups/0, print_group/1, print_grants/1]).
+-export([print_grants/1]).
 
 %% TODO Most of these now do a bunch of atom-to-string/-binary conversion
 %% that is probably largely unnecessary now. Clean that up!
@@ -153,14 +153,6 @@ format_users(Users) ->
           {password, Password},
           {options, lists:flatten(io_lib:format("~p", [OtherOptions]))}]
      end || {Username, [Options]} <- Users].
-
--spec print_group(Group :: string()) ->
-    ok | {error, term()}.
-print_group(Group) ->
-    clique:print(format_group(Group), ["riak-admin", "security", "print-group"]).
-
-print_groups() ->
-    clique:print(format_groups(), ["riak-admin", "security", "print-groups"]).
 
 format_group(Group) ->
     Name = name2bin(Group),
