@@ -35,9 +35,8 @@
          get_ciphers/0, set_ciphers/1, print_ciphers/0]).
 
 -ifdef(TEST).
--export([format_user/1]).
--export([format_users/0]).
--export([format_users/1]).
+-export([format_user/1, format_users/0, format_users/1,
+         format_group/1, format_groups/0, format_groups/1]).
 -endif.
 
 -define(DEFAULT_CIPHER_LIST,
@@ -165,39 +164,45 @@ format_users(Users) ->
 -spec print_group(Group :: string()) ->
     ok | {error, term()}.
 print_group(Group) ->
+    clique:print(format_group(Group), ["riak-admin", "security", "print-group"]).
+
+print_groups() ->
+    clique:print(format_groups(), ["riak-admin", "security", "print-groups"]).
+
+format_group(Group) ->
     Name = name2bin(Group),
     Details = group_details(Name),
     case Details of
         undefined ->
             {error, {unknown_group, Name}};
         _ ->
-            print_groups([{Name, [Details]}])
+            format_groups([{Name, [Details]}])
     end.
 
-print_groups() ->
+format_groups() ->
     Groups = riak_core_metadata:fold(fun({_Groupname, [?TOMBSTONE]}, Acc) ->
                                              Acc;
                                         ({Groupname, Options}, Acc) ->
                                     [{Groupname, Options}|Acc]
                             end, [], {<<"security">>, <<"groups">>}),
-    print_groups(Groups).
+    format_groups(Groups).
 
-print_groups(Groups) ->
-    riak_core_console_table:print([{group, 10}, {'member of', 15}, {options, 30}],
-                [begin
-                     GroupOptions = case proplists:get_value("groups", Options) of
-                                 undefined ->
-                                     "";
-                                 List ->
-                                     prettyprint_permissions([unicode:characters_to_list(R, utf8)
-                                                              || R <- List,
-                                                                 group_exists(R)], 20)
-                             end,
-                     OtherOptions = lists:keydelete("groups", 1, Options),
-                     [Groupname, GroupOptions,
-                      lists:flatten(io_lib:format("~p", [OtherOptions]))]
-                 end ||
-            {Groupname, [Options]} <- Groups]).
+format_groups(Groups) ->
+    [clique_status:table(
+      [begin
+           GroupOptions = case proplists:get_value("groups", Options) of
+                              undefined ->
+                                  "";
+                              List ->
+                                  prettyprint_permissions(
+                                    [unicode:characters_to_list(R, utf8) || R <- List, group_exists(R)],
+                                    20)
+                          end,
+           OtherOptions = lists:keydelete("groups", 1, Options),
+           [{group, Groupname}, {'member of', GroupOptions},
+            {options, lists:flatten(io_lib:format("~p", [OtherOptions]))}]
+       end
+       || {Groupname, [Options]} <- Groups])].
 
 -spec print_grants(Rolename :: string()) ->
     ok | {error, term()}.
