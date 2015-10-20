@@ -35,7 +35,10 @@
          get_ciphers/0, set_ciphers/1, print_ciphers/0]).
 
 -ifdef(TEST).
+%% TODO Most of these now do a bunch of atom-to-string/-binary conversion
+%% that is probably largely unnecessary now. Clean that up!
 -export([format_user/1, format_users/0, format_users/1,
+         format_sources/0, format_sources/1,
          format_group/1, format_groups/0, format_groups/1]).
 -endif.
 
@@ -96,20 +99,23 @@ prettyprint_users(Users0, Width) ->
     prettyprint_permissions(Users, Width).
 
 print_sources() ->
+    clique:print(format_sources(), ["riak-admin", "security", "format-sources"]).
+
+format_sources() ->
     Sources = riak_core_metadata:fold(fun({{Username, CIDR}, [{Source, Options}]}, Acc) ->
                                               [{Username, CIDR, Source, Options}|Acc];
                                          ({{_, _}, [?TOMBSTONE]}, Acc) ->
                                               Acc
                                       end, [], {<<"security">>, <<"sources">>}),
 
-    print_sources(Sources).
+    format_sources(Sources).
 
-print_sources(Sources) ->
+format_sources(Sources) ->
     GS = group_sources(Sources),
-    riak_core_console_table:print([{users, 20}, {cidr, 10}, {source, 10}, {options, 10}],
-                [[prettyprint_users(Users, 20), prettyprint_cidr(CIDR),
-                  atom_to_list(Source), io_lib:format("~p", [Options])] ||
-            {Users, CIDR, Source, Options} <- GS]).
+    [clique_status:table(
+       [[{users, prettyprint_users(Users, 20)}, {cidr, prettyprint_cidr(CIDR)},
+         {source, atom_to_list(Source)}, {options, io_lib:format("~p", [Options])}]
+        || {Users, CIDR, Source, Options} <- GS])].
 
 -spec print_user(Username :: string()) ->
     ok | {error, term()}.
