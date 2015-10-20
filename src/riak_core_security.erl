@@ -20,7 +20,7 @@
 -module(riak_core_security).
 
 %% printing functions
--export([print_sources/0, print_user/1,
+-export([print_sources/0,
          print_groups/0, print_group/1, print_grants/1]).
 
 %% TODO Most of these now do a bunch of atom-to-string/-binary conversion
@@ -116,11 +116,6 @@ format_sources(Sources) ->
        [[{users, prettyprint_users(Users, 20)}, {cidr, prettyprint_cidr(CIDR)},
          {source, atom_to_list(Source)}, {options, io_lib:format("~p", [Options])}]
         || {Users, CIDR, Source, Options} <- GS])].
-
--spec print_user(Username :: string()) ->
-    ok | {error, term()}.
-print_user(User) ->
-    clique:print(format_user(User), ["riak-admin", "security", "print-users"]).
 
 format_user(User) ->
     Name = name2bin(User),
