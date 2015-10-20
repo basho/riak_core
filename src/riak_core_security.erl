@@ -112,10 +112,9 @@ format_sources() ->
 
 format_sources(Sources) ->
     GS = group_sources(Sources),
-    [clique_status:table(
-       [[{users, prettyprint_users(Users, 20)}, {cidr, prettyprint_cidr(CIDR)},
-         {source, atom_to_list(Source)}, {options, io_lib:format("~p", [Options])}]
-        || {Users, CIDR, Source, Options} <- GS])].
+    [[{users, prettyprint_users(Users, 20)}, {cidr, prettyprint_cidr(CIDR)},
+      {source, atom_to_list(Source)}, {options, io_lib:format("~p", [Options])}]
+     || {Users, CIDR, Source, Options} <- GS].
 
 format_user(User) ->
     Name = name2bin(User),
@@ -186,7 +185,6 @@ format_groups() ->
     format_groups(Groups).
 
 format_groups(Groups) ->
-    [clique_status:table(
       [begin
            GroupOptions = case proplists:get_value("groups", Options) of
                               undefined ->
@@ -200,7 +198,7 @@ format_groups(Groups) ->
            [{group, Groupname}, {'member of', GroupOptions},
             {options, lists:flatten(io_lib:format("~p", [OtherOptions]))}]
        end
-       || {Groupname, [Options]} <- Groups])].
+       || {Groupname, [Options]} <- Groups].
 
 -spec print_grants(Rolename :: string()) ->
     ok | {error, term()}.

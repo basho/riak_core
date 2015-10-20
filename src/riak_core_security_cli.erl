@@ -151,9 +151,9 @@ print_user(["riak-admin", "security", "print-user", User], [], []) ->
     case riak_core_security:format_user(User) of
         {error, _}=Error ->
             Output = [clique_status:text(security_error_xlate(Error))],
+            %% TODO Maybe we should use an exit_status here
             [clique_status:alert(Output)];
-        [] -> [] ;
-        [_|_]=Users ->
+        [_|_]=Users -> % NB No [] match as that's an {error, ...}
             [clique_status:table(Users)]
     end.
 
