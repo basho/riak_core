@@ -23,6 +23,13 @@
 -export([print_users/0, print_sources/0, print_user/1,
          print_groups/0, print_group/1, print_grants/1]).
 
+%% TODO Most of these now do a bunch of atom-to-string/-binary conversion
+%% that is probably largely unnecessary now. Clean that up!
+%% Formatting functions
+-export([format_user/1, format_users/0, format_users/1,
+         format_sources/0, format_sources/1,
+         format_group/1, format_groups/0, format_groups/1]).
+
 %% type exports
 -export_type([context/0]).
 
@@ -34,13 +41,6 @@
          get_username/1, is_enabled/0, enable/0, disable/0, status/0,
          get_ciphers/0, set_ciphers/1, print_ciphers/0]).
 
--ifdef(TEST).
-%% TODO Most of these now do a bunch of atom-to-string/-binary conversion
-%% that is probably largely unnecessary now. Clean that up!
--export([format_user/1, format_users/0, format_users/1,
-         format_sources/0, format_sources/1,
-         format_group/1, format_groups/0, format_groups/1]).
--endif.
 
 -define(DEFAULT_CIPHER_LIST,
 "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256"
@@ -812,25 +812,28 @@ get_ciphers() ->
     end.
 
 print_ciphers() ->
+    clique:print(format_ciphers(), ["riak-admin", "security", "print-ciphers"]).
+
+format_ciphers() ->
     Ciphers = get_ciphers(),
     {Good, Bad} = riak_core_ssl_util:parse_ciphers(Ciphers),
-    io:format("Configured ciphers~n~n~s~n~n", [Ciphers]),
-    io:format("Valid ciphers(~b)~n~n~s~n~n",
-              [length(Good), riak_core_ssl_util:print_ciphers(Good)]),
+    Cfgd = clique_status:text(io_lib:format("Configured ciphers~n~n~s~n~n", [Ciphers])),
+    Valid = clique_status:text(
+      io_lib:format("Valid ciphers(~b)~n~n~s~n~n",
+                    [length(Good), riak_core_ssl_util:print_ciphers(Good)])),
     case Bad of
         [] ->
-            ok;
+            [Cfgd, Valid];
         _ ->
-            io:format("Unknown/Unsupported ciphers(~b)~n~n~s~n~n",
-                      [length(Bad), string:join(Bad, ":")])
+            Invalid = clique_status:text(
+                        io_lib:format("Unknown/Unsupported ciphers(~b)~n~n~s~n~n",
+                                      [length(Bad), string:join(Bad, ":")])),
+            [Cfgd, Valid, Invalid]
     end.
 
 set_ciphers(CipherList) ->
     case riak_core_ssl_util:parse_ciphers(CipherList) of
-        {[], _} ->
-            %% no valid ciphers
-            io:format("No known or supported ciphers in list.~n"),
-            error;
+        {[], _} -> {error, no_matching_ciphers};
         _ ->
             riak_core_metadata:put({<<"security">>, <<"config">>}, ciphers,
                                    CipherList),

@@ -3,7 +3,7 @@
 -behaviour(clique_handler).
 -export([
          register_cli/0,
-         print_users/3,
+         print_users/3, print_user/3,
          security_status/3, security_enable/3, security_disable/3
         ]).
 
@@ -11,7 +11,7 @@
          add_user/1, alter_user/1, del_user/1,
          add_group/1, alter_group/1, del_group/1,
          add_source/1, del_source/1, grant/1, revoke/1,
-         print_user/1, print_sources/1,
+         print_sources/1,
          print_groups/1, print_group/1, print_grants/1, ciphers/1
         ]).
 
@@ -23,6 +23,7 @@ register_cli() ->
 register_cli_usage() ->
     clique:register_usage(["riak-admin", "security"], base_usage()),
     clique:register_usage(["riak-admin", "security", "print-users"], print_users_usage()),
+    clique:register_usage(["riak-admin", "security", "print-user"], print_user_usage()),
     clique:register_usage(["riak-admin", "security", "status"], status_usage()),
     clique:register_usage(["riak-admin", "security", "enable"], enable_usage()),
     clique:register_usage(["riak-admin", "security", "disable"], disable_usage()).
@@ -30,7 +31,7 @@ register_cli_usage() ->
 
 register_cli_cmds() ->
     lists:foreach(fun(Args) -> apply(clique, register_command, Args) end,
-                  [print_users_register(),
+                  [print_users_register(), print_user_register(),
                    status_register(), enable_register(), disable_register() ]).
 
 %%%
@@ -78,6 +79,10 @@ print_users_usage() ->
     "riak-admin security print-users\n"
     "    Print all users.\n".
 
+print_user_usage() ->
+    "riak-admin security print-user <user>\n"
+    "    Print a single user.\n".
+
 %%%
 %% Registration
 %%%
@@ -106,6 +111,12 @@ print_users_register() ->
      [],
      fun print_users/3].
 
+print_user_register() ->
+    [["riak-admin", "security", "print-user", '*'],
+     [],
+     [],
+     fun print_user/3].
+
 %%%
 %% Handlers
 %%%
@@ -128,6 +139,22 @@ security_status(_Cmd, [], []) ->
             [clique_status:text("WARNING: Configured to be enabled, but not supported "
                       "on all nodes so it is disabled!\n")]
     end.
+
+print_users(_Cmd, [], []) ->
+    riak_core_security:format_users().
+
+print_user(["riak-admin", "security", "print-user", User], [], []) ->
+    case riak_core_security:format_user(User) of
+        {error, _}=Error ->
+            Output = [clique_status:text(security_error_xlate(Error))],
+            [clique_status:alert(Output)];
+        MaybeOK ->
+            MaybeOK
+    end.
+
+%%%
+%%% Here be dragons.
+%%%
 
 security_error_xlate({errors, Errors}) ->
     string:join(
@@ -182,6 +209,8 @@ security_error_xlate({error, illegal_name_char}) ->
     "Illegal character(s) in name";
 security_error_xlate({error, role_exists}) ->
     "This name is already in use";
+security_error_xlate({error, no_matching_ciphers}) ->
+    "No known or supported ciphers in list";
 
 %% If we get something we hadn't planned on, better an ugly error
 %% message than an ugly RPC call failure
@@ -362,19 +391,6 @@ print_grants([Name]) ->
             Error
     end.
 
-print_users(_Cmd, [], []) ->
-    riak_core_security:print_users().
-
-print_user([User]) ->
-    case riak_core_security:print_user(User) of
-        ok ->
-            ok;
-        Error ->
-            io:format(security_error_xlate(Error)),
-            io:format("~n"),
-            Error
-    end.
-
 
 print_groups([]) ->
     riak_core_security:print_groups().
@@ -400,8 +416,10 @@ ciphers([CipherList]) ->
         ok ->
             riak_core_security:print_ciphers(),
             ok;
-        error ->
-            error
+        {error, _} = Error ->
+            io:format(security_error_xlate(Error)),
+            io:format("~n"),
+            Error
     end.
 
 parse_options(Options) ->
