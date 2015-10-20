@@ -221,7 +221,7 @@ format_grants(User, user) ->
         _U ->
             Grants = accumulate_grants(User, user),
             InheritHeader = io_lib:format("Inherited permissions (user/~ts)", [User]),
-            InheritTable = 
+            InheritTable =
                 [begin
                      lists:zip(
                        [group, type, bucket, grants],
@@ -303,7 +303,7 @@ format_grants(Group, group) ->
                                 prettyprint_permissions(Permissions, 40)]
                        end)
                  end ||
-                 {{Groupname, Bucket}, Permissions} <- Grants, chop_name(Groupname) /= Group], 
+                 {{Groupname, Bucket}, Permissions} <- Grants, chop_name(Groupname) /= Group],
             DedicatedHeader = io_lib:format("Dedicated permissions (group/~ts)", [Group]),
             DedicatedTable =
                 [begin
