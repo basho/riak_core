@@ -20,7 +20,7 @@
 -module(riak_core_security).
 
 %% printing functions
--export([print_grants/1]).
+-export([format_grants/1]).
 
 %% TODO Most of these now do a bunch of atom-to-string/-binary conversion
 %% that is probably largely unnecessary now. Clean that up!
@@ -154,6 +154,9 @@ format_users(Users) ->
           {options, lists:flatten(io_lib:format("~p", [OtherOptions]))}]
      end || {Username, [Options]} <- Users].
 
+-spec format_group(string()) ->
+    {error, {unknown_group, string()}}
+    | list(proplists:proplist()).
 format_group(Group) ->
     Name = name2bin(Group),
     Details = group_details(Name),
@@ -164,6 +167,7 @@ format_group(Group) ->
             format_groups([{Name, [Details]}])
     end.
 
+-spec format_groups() -> list(proplists:proplist()).
 format_groups() ->
     Groups = riak_core_metadata:fold(fun({_Groupname, [?TOMBSTONE]}, Acc) ->
                                              Acc;
@@ -172,6 +176,8 @@ format_groups() ->
                             end, [], {<<"security">>, <<"groups">>}),
     format_groups(Groups).
 
+-spec format_groups(list({GName::string(), Options::list(any())})) ->
+    list(proplists:proplist()).
 format_groups(Groups) ->
       [begin
            GroupOptions = case proplists:get_value("groups", Options) of
@@ -188,149 +194,159 @@ format_groups(Groups) ->
        end
        || {Groupname, [Options]} <- Groups].
 
--spec print_grants(Rolename :: string()) ->
+-spec format_grants(Rolename :: string()) ->
     ok | {error, term()}.
-print_grants(RoleName) ->
+format_grants(RoleName) ->
     Name = name2bin(RoleName),
     case is_prefixed(Name) of
         true ->
-            print_grants(chop_name(Name), role_type(Name));
+            format_grants(chop_name(Name), role_type(Name));
         false ->
-            case { print_grants(Name, user), print_grants(Name, group) } of
+            case { format_grants(Name, user), format_grants(Name, group) } of
                 {{error, _}, {error, _}} ->
                     {error, {unknown_role, Name}};
-                _ ->
-                    ok
+                %% TODO This format is FAR from ideal.
+                {{error, _}, [_|_]=Group} ->
+                    Group;
+                {[_|_]=User, {error, _}} ->
+                    User;
+                {[_|_]=User, [_|_]=Group} ->
+                    User ++ Group
             end
     end.
 
-print_grants(User, unknown) ->
+format_grants(User, unknown) ->
     {error, {unknown_role, User}};
-print_grants(User, user) ->
+format_grants(User, user) ->
     case user_details(User) of
         undefined ->
             {error, {unknown_user, User}};
         _U ->
             Grants = accumulate_grants(User, user),
-
-            riak_core_console_table:print(
-              io_lib:format("Inherited permissions (user/~ts)", [User]),
-              [{group, 20}, {type, 10}, {bucket, 10}, {grants, 40}],
-                        [begin
-                             case Bucket of
-                                 any ->
-                                     [chop_name(Username), "*", "*",
-                                      prettyprint_permissions(Permissions, 40)];
-                                 {T, B} ->
-                                     [chop_name(Username), T, B,
-                                      prettyprint_permissions(Permissions, 40)];
-                                 T ->
-                                     [chop_name(Username), T, "*",
-                                      prettyprint_permissions(Permissions, 40)]
-                             end
-                         end ||
-                         {{Username, Bucket}, Permissions} <- Grants, Username /= <<"user/", User/binary>>]),
-
-            riak_core_console_table:print(
-              io_lib:format("Dedicated permissions (user/~ts)", [User]),
-              [{type, 10}, {bucket, 10}, {grants, 40}],
-                        [begin
-                             case Bucket of
-                                 any ->
-                                     ["*", "*",
-                                      prettyprint_permissions(Permissions, 40)];
-                                 {T, B} ->
-                                     [T, B,
-                                      prettyprint_permissions(Permissions, 40)];
-                                 T ->
-                                     [T, "*",
-                                      prettyprint_permissions(Permissions, 40)]
-                             end
-                         end ||
-                         {{Username, Bucket}, Permissions} <- Grants, Username == <<"user/", User/binary>>]),
+            InheritHeader = io_lib:format("Inherited permissions (user/~ts)", [User]),
+            InheritTable = 
+                [begin
+                     lists:zip(
+                       [group, type, bucket, grants],
+                       case Bucket of
+                           any ->
+                               [chop_name(Username), "*", "*",
+                                prettyprint_permissions(Permissions, 40)];
+                           {T, B} ->
+                               [chop_name(Username), T, B,
+                                prettyprint_permissions(Permissions, 40)];
+                           T ->
+                               [chop_name(Username), T, "*",
+                                prettyprint_permissions(Permissions, 40)]
+                       end)
+                 end ||
+                 {{Username, Bucket}, Permissions} <- Grants, Username /= <<"user/", User/binary>>],
+            DedicatedHeader = io_lib:format("Dedicated permissions (user/~ts)", [User]),
+            DedicatedTable =
+                [begin
+                     lists:zip(
+                       [type, bucket, grants],
+                       case Bucket of
+                           any ->
+                               ["*", "*",
+                                prettyprint_permissions(Permissions, 40)];
+                           {T, B} ->
+                               [T, B,
+                                prettyprint_permissions(Permissions, 40)];
+                           T ->
+                               [T, "*",
+                                prettyprint_permissions(Permissions, 40)]
+                       end)
+                 end ||
+                 {{Username, Bucket}, Permissions} <- Grants, Username == <<"user/", User/binary>>],
             GroupedGrants = group_grants(Grants),
-
-            riak_core_console_table:print(
-              io_lib:format("Cumulative permissions (user/~ts)", [User]),
-              [{type, 10}, {bucket, 10}, {grants, 40}],
-                        [begin
-                             case Bucket of
-                                 any ->
-                                     ["*", "*",
-                                      prettyprint_permissions(Permissions, 40)];
-                                 {T, B} ->
-                                     [T, B,
-                                      prettyprint_permissions(Permissions, 40)];
-                                 T ->
-                                     [T, "*",
-                                      prettyprint_permissions(Permissions, 40)]
-                             end
-                         end ||
-                         {Bucket, Permissions} <- GroupedGrants]),
-            ok
+            CumulativeHeader = io_lib:format("Cumulative permissions (user/~ts)", [User]),
+            CumulativeTable =
+                [begin
+                     lists:zip(
+                       [type, bucket, grants],
+                       case Bucket of
+                           any ->
+                               ["*", "*",
+                                prettyprint_permissions(Permissions, 40)];
+                           {T, B} ->
+                               [T, B,
+                                prettyprint_permissions(Permissions, 40)];
+                           T ->
+                               [T, "*",
+                                prettyprint_permissions(Permissions, 40)]
+                       end)
+                 end ||
+                 {Bucket, Permissions} <- GroupedGrants],
+            [{InheritHeader, InheritTable},
+             {DedicatedHeader, DedicatedTable},
+             {CumulativeHeader, CumulativeTable}]
     end;
-print_grants(Group, group) ->
+
+format_grants(Group, group) ->
     case group_details(Group) of
         undefined ->
             {error, {unknown_group, Group}};
         _U ->
             Grants = accumulate_grants(Group, group),
-
-            riak_core_console_table:print(
-              io_lib:format("Inherited permissions (group/~ts)", [Group]),
-              [{group, 20}, {type, 10}, {bucket, 10}, {grants, 40}],
-                        [begin
-                             case Bucket of
-                                 any ->
-                                     [chop_name(Groupname), "*", "*",
-                                      prettyprint_permissions(Permissions, 40)];
-                                 {T, B} ->
-                                     [chop_name(Groupname), T, B,
-                                      prettyprint_permissions(Permissions, 40)];
-                                 T ->
-                                     [chop_name(Groupname), T, "*",
-                                      prettyprint_permissions(Permissions, 40)]
-                             end
-                         end ||
-                         {{Groupname, Bucket}, Permissions} <- Grants, chop_name(Groupname) /= Group]),
-
-            riak_core_console_table:print(
-              io_lib:format("Dedicated permissions (group/~ts)", [Group]),
-              [{type, 10}, {bucket, 10}, {grants, 40}],
-                        [begin
-                             case Bucket of
-                                 any ->
-                                     ["*", "*",
-                                      prettyprint_permissions(Permissions, 40)];
-                                 {T, B} ->
-                                     [T, B,
-                                      prettyprint_permissions(Permissions, 40)];
-                                 T ->
-                                     [T, "*",
-                                      prettyprint_permissions(Permissions, 40)]
-                             end
-                         end ||
-                         {{Groupname, Bucket}, Permissions} <- Grants, chop_name(Groupname) == Group]),
+            InheritHeader = io_lib:format("Inherited permissions (group/~ts)", [Group]),
+            InheritTable =
+                [begin
+                     lists:zip(
+                       [group, type, bucket, grants],
+                       case Bucket of
+                           any ->
+                               [chop_name(Groupname), "*", "*",
+                                prettyprint_permissions(Permissions, 40)];
+                           {T, B} ->
+                               [chop_name(Groupname), T, B,
+                                prettyprint_permissions(Permissions, 40)];
+                           T ->
+                               [chop_name(Groupname), T, "*",
+                                prettyprint_permissions(Permissions, 40)]
+                       end)
+                 end ||
+                 {{Groupname, Bucket}, Permissions} <- Grants, chop_name(Groupname) /= Group], 
+            DedicatedHeader = io_lib:format("Dedicated permissions (group/~ts)", [Group]),
+            DedicatedTable =
+                [begin
+                     lists:zip(
+                       [type, bucket, grants],
+                       case Bucket of
+                           any ->
+                               ["*", "*",
+                                prettyprint_permissions(Permissions, 40)];
+                           {T, B} ->
+                               [T, B,
+                                prettyprint_permissions(Permissions, 40)];
+                           T ->
+                               [T, "*",
+                                prettyprint_permissions(Permissions, 40)]
+                       end)
+                 end ||
+                 {{Groupname, Bucket}, Permissions} <- Grants, chop_name(Groupname) == Group],
             GroupedGrants = group_grants(Grants),
-
-            riak_core_console_table:print(
-              io_lib:format("Cumulative permissions (group/~ts)", [Group]),
-              [{type, 10}, {bucket, 10}, {grants, 40}],
-                        [begin
-                             case Bucket of
-                                 any ->
-                                     ["*", "*",
-                                      prettyprint_permissions(Permissions, 40)];
-                                 {T, B} ->
-                                     [T, B,
-                                      prettyprint_permissions(Permissions, 40)];
-                                 T ->
-                                     [T, "*",
-                                      prettyprint_permissions(Permissions, 40)]
-                             end
-                         end ||
-                         {Bucket, Permissions} <- GroupedGrants]),
-            ok
+            CumulativeHeader = io_lib:format("Cumulative permissions (group/~ts)", [Group]),
+            CumulativeTable =
+                [begin
+                     lists:zip(
+                       [type, bucket, grants],
+                       case Bucket of
+                           any ->
+                               ["*", "*",
+                                prettyprint_permissions(Permissions, 40)];
+                           {T, B} ->
+                               [T, B,
+                                prettyprint_permissions(Permissions, 40)];
+                           T ->
+                               [T, "*",
+                                prettyprint_permissions(Permissions, 40)]
+                       end)
+                 end ||
+                 {Bucket, Permissions} <- GroupedGrants],
+            [{InheritHeader, InheritTable},
+             {DedicatedHeader, DedicatedTable},
+             {CumulativeHeader, CumulativeTable}]
     end.
 
 prettyprint_permissions(Permissions, Width) ->

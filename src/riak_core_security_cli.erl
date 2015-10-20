@@ -5,7 +5,7 @@
          register_cli/0,
          print_users/3, print_user/3,
          print_groups/3, print_group/3,
-         print_sources/3,
+         print_sources/3, print_grants/3,
          security_status/3, security_enable/3, security_disable/3
         ]).
 
@@ -13,7 +13,7 @@
          add_user/1, alter_user/1, del_user/1,
          add_group/1, alter_group/1, del_group/1,
          add_source/1, del_source/1, grant/1, revoke/1,
-         print_grants/1, ciphers/1
+         ciphers/1
         ]).
 
 -spec register_cli() -> ok.
@@ -28,6 +28,7 @@ register_cli_usage() ->
     clique:register_usage(["riak-admin", "security", "print-groups"], print_groups_usage()),
     clique:register_usage(["riak-admin", "security", "print-group"], print_group_usage()),
     clique:register_usage(["riak-admin", "security", "print-sources"], print_sources_usage()),
+    clique:register_usage(["riak-admin", "security", "print-grants"], print_grants_usage()),
     clique:register_usage(["riak-admin", "security", "status"], status_usage()),
     clique:register_usage(["riak-admin", "security", "enable"], enable_usage()),
     clique:register_usage(["riak-admin", "security", "disable"], disable_usage()).
@@ -37,7 +38,7 @@ register_cli_cmds() ->
     lists:foreach(fun(Args) -> apply(clique, register_command, Args) end,
                   [print_users_register(), print_user_register(),
                    print_groups_register(), print_group_register(),
-                   print_sources_register(),
+                   print_grants_register(), print_sources_register(),
                    status_register(), enable_register(), disable_register() ]).
 
 %%%
@@ -101,6 +102,10 @@ print_sources_usage() ->
     "riak-admin security print-sources\n"
     "    Print all sources.\n".
 
+print_grants_usage() ->
+    "riak-admin security print-grants\n"
+    "    Print all grants.\n".
+
 %%%
 %% Registration
 %%%
@@ -152,6 +157,12 @@ print_sources_register() ->
      [],
      [],
      fun print_sources/3].
+
+print_grants_register() ->
+    [["riak-admin", "security", "print-grants", '*'],
+     [],
+     [],
+     fun print_grants/3].
 
 %%%
 %% Handlers
@@ -215,6 +226,18 @@ print_sources(["riak-admin", "security", "print-sources"], [], []) ->
         [_|_]=Sources ->
             [clique_status:table(Sources)]
     end.
+
+print_grants(["riak-admin", "security", "print-grants", Name], [], []) ->
+    case riak_core_security:format_grants(Name) of
+        {error,_}=Error ->
+            Output = [clique_status:text(security_error_xlate(Error))],
+            [clique_status:alert(Output)];
+        [_|_]=OK ->
+            lists:flatten(
+              [[ clique_status:text(Hdr), clique_status:table(Tbl) ] 
+               || {Hdr, Tbl} <- OK ])
+    end.
+
 
 %%%
 %%% Here be dragons.
@@ -444,16 +467,6 @@ revoke([Grants, "on", Type, "from", Users]) ->
 revoke(_) ->
     io:format("Usage: revoke <permissions> on <type> [bucket] from <users>~n"),
     error.
-
-print_grants([Name]) ->
-    case riak_core_security:print_grants(Name) of
-        ok ->
-            ok;
-        Error ->
-            io:format(security_error_xlate(Error)),
-            io:format("~n"),
-            Error
-    end.
 
 ciphers([]) ->
     riak_core_security:print_ciphers();
