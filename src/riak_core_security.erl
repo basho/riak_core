@@ -34,6 +34,12 @@
          get_username/1, is_enabled/0, enable/0, disable/0, status/0,
          get_ciphers/0, set_ciphers/1, print_ciphers/0]).
 
+-ifdef(TEST).
+-export([format_user/1]).
+-export([format_users/0]).
+-export([format_users/1]).
+-endif.
+
 -define(DEFAULT_CIPHER_LIST,
 "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256"
 ":ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384"
@@ -109,48 +115,52 @@ print_sources(Sources) ->
 -spec print_user(Username :: string()) ->
     ok | {error, term()}.
 print_user(User) ->
+    clique:print(format_user(User), ["riak-admin", "security", "print-users"]).
+
+print_users() ->
+    clique:print(format_users(), ["riak-admin", "security", "print-users"]).
+
+format_user(User) ->
     Name = name2bin(User),
     Details = user_details(Name),
     case Details of
         undefined ->
             {error, {unknown_user, Name}};
         _ ->
-            print_users([{Name, [Details]}])
+            format_users([{Name, [Details]}])
     end.
 
-print_users() ->
+format_users() ->
     Users = riak_core_metadata:fold(fun({_Username, [?TOMBSTONE]}, Acc) ->
                                             Acc;
                                         ({Username, Options}, Acc) ->
                                     [{Username, Options}|Acc]
                             end, [], {<<"security">>, <<"users">>}),
-    print_users(Users).
+    format_users(Users).
 
-
-print_users(Users) ->
-    riak_core_console_table:print([{username, 10}, {'member of', 15}, {password, 40}, {options, 30}],
-                [begin
-                     Groups = case proplists:get_value("groups", Options) of
-                                 undefined ->
-                                     "";
-                                 List ->
-                                     prettyprint_permissions([unicode:characters_to_list(R, utf8)
-                                                              || R <- List,
-                                                                 group_exists(R)], 20)
-                             end,
-                     Password = case proplists:get_value("password", Options) of
-                                    undefined ->
-                                        "";
-                                    Pw ->
-                                        proplists:get_value(hash_pass, Pw)
-                                end,
-                     OtherOptions = lists:keydelete("password", 1,
-                                                    lists:keydelete("groups", 1,
-                                                                    Options)),
-                     [Username, Groups, Password,
-                      lists:flatten(io_lib:format("~p", [OtherOptions]))]
-                 end ||
-            {Username, [Options]} <- Users]).
+format_users(Users) ->
+    [clique_status:table([begin
+         Groups = case proplists:get_value("groups", Options) of
+                     undefined ->
+                         "";
+                     List ->
+                          Perms = [unicode:characters_to_list(R, utf8)
+                                   || R <- List, group_exists(R)],
+                         prettyprint_permissions(Perms, 20)
+                 end,
+         Password = case proplists:get_value("password", Options) of
+                        undefined ->
+                            "";
+                        Pw ->
+                            proplists:get_value(hash_pass, Pw)
+                    end,
+         OtherOptions = lists:keydelete("password", 1,
+                                        lists:keydelete("groups", 1, Options)),
+         [{username, Username},
+          {'member of', Groups},
+          {password, Password},
+          {options, lists:flatten(io_lib:format("~p", [OtherOptions]))}]
+     end || {Username, [Options]} <- Users])].
 
 -spec print_group(Group :: string()) ->
     ok | {error, term()}.

@@ -50,10 +50,16 @@ security_test_() ->
                               ?assertEqual(ok, riak_core_security:add_source(all, {{127, 0, 0, 1}, 32}, trust, [])),
                               ?assertMatch({ok, _}, riak_core_security:authenticate(<<"user">>, <<"password">>,
                                                                                     [{ip, {127, 0, 0, 1}}])),
+                              % NB We only test format_* calls as we trust clique to do The Right Thing™
+                              ?assertMatch([{table, [[{username, <<"user">>}, {'member of', []},
+                                                      {password, _}, {options, _}]]}],
+                                           riak_core_security:format_users()),
+                              ?assertMatch([{table,
+                                             [[{username, <<"user">>}, {'member of', []},
+                                              {password, _}, {options, _}]]}],
+                                           riak_core_security:format_user(<<"user">>)),
                               %% make sure these don't crash, at least
-                              ?assertEqual(ok, riak_core_security:print_users()),
                               ?assertEqual(ok, riak_core_security:print_sources()),
-                              ?assertEqual(ok, riak_core_security:print_user(<<"user">>)),
                               ok
                       end}},
      {timeout, 60, { "password auth works",
@@ -73,9 +79,13 @@ security_test_() ->
                              ?assertMatch({ok, _}, riak_core_security:authenticate(<<"user">>, <<"password">>,
                                                                                    [{ip, {127, 0, 0, 1}}])),
                              %% make sure these don't crash, at least
-                             ?assertEqual(ok, riak_core_security:print_users()),
+                             ?assertMatch([{table, [[{username, <<"user">>}, {'member of', []},
+                                                     {password, _}, {options, _}]]}],
+                                          riak_core_security:format_users()),
+                             ?assertMatch([{table, [[{username, <<"user">>}, {'member of', []},
+                                                     {password, _}, {options, _}]]}],
+                                          riak_core_security:format_user(<<"user">>)),
                              ?assertEqual(ok, riak_core_security:print_sources()),
-                             ?assertEqual(ok, riak_core_security:print_user(<<"user">>)),
                              ok
                      end}},
      {timeout, 60, { "user grant/revoke on type/bucket works",
@@ -94,9 +104,13 @@ security_test_() ->
                              ?assertMatch({false, _, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
                              ?assertMatch({true, _}, riak_core_security:check_permissions({"riak_kv.put", {<<"default">>, <<"mybucket">>}}, Ctx)),
                              %% make sure these don't crash, at least
-                             ?assertEqual(ok, riak_core_security:print_users()),
+                             ?assertMatch([{table, [[{username, <<"user">>}, {'member of', []},
+                                                     {password, _}, {options, _}]]}],
+                                          riak_core_security:format_users()),
+                             ?assertMatch([{table, [[{username, <<"user">>}, {'member of', []},
+                                                     {password, _}, {options, _}]]}],
+                                          riak_core_security:format_user(<<"user">>)),
                              ?assertEqual(ok, riak_core_security:print_sources()),
-                             ?assertEqual(ok, riak_core_security:print_user(<<"user">>)),
                              %% delete the user
                              ?assertMatch(ok, riak_core_security:del_user(<<"user">>)),
                              %% re-add them
@@ -133,9 +147,13 @@ security_test_() ->
                              ?assertMatch({false, _, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
                              ?assertEqual(ok, riak_core_security:alter_user(<<"user">>, [{"groups", ["group"]}])),
                              %% make sure these don't crash, at least
-                             ?assertEqual(ok, riak_core_security:print_users()),
+                             ?assertMatch([{table, [[{username, <<"user">>}, {'member of', "group"},
+                                                     {password, _}, {options, _}]]}],
+                                          riak_core_security:format_users()),
+                             ?assertMatch([{table, [[{username, <<"user">>}, {'member of', "group"},
+                                                     {password, _}, {options, _}]]}],
+                                          riak_core_security:format_user(<<"user">>)),
                              ?assertEqual(ok, riak_core_security:print_sources()),
-                             ?assertEqual(ok, riak_core_security:print_user(<<"user">>)),
                              ?assertEqual(ok, riak_core_security:print_groups()),
                              ?assertEqual(ok, riak_core_security:print_group(<<"group">>)),
                              ok
@@ -154,9 +172,13 @@ security_test_() ->
                              ?assertEqual(ok, riak_core_security:add_revoke(all, {<<"default">>, <<"mybucket">>}, ["riak_kv.get"])),
                              ?assertMatch({false, _,  _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
                              %% make sure these don't crash, at least
-                             ?assertEqual(ok, riak_core_security:print_users()),
+                             ?assertMatch([{table, [[{username, <<"user">>}, {'member of', []},
+                                                     {password, _}, {options, _}]]}],
+                                          riak_core_security:format_users()),
+                             ?assertMatch([{table, [[{username, <<"user">>}, {'member of', []},
+                                                     {password, _}, {options, _}]]}],
+                                          riak_core_security:format_user(<<"user">>)),
                              ?assertEqual(ok, riak_core_security:print_sources()),
-                             ?assertEqual(ok, riak_core_security:print_user(<<"user">>)),
                              ?assertEqual(ok, riak_core_security:print_groups()),
                              ?assertEqual({error, {unknown_group, <<"all">>}}, riak_core_security:print_group(<<"all">>)),
                              ok
@@ -181,9 +203,13 @@ security_test_() ->
                              ?assertMatch({true, _}, riak_core_security:check_permissions({"riak_kv.get", {<<"default">>, <<"mybucket">>}}, Ctx)),
                              ?assertMatch({true, _}, riak_core_security:check_permissions({"riak_kv.put", {<<"default">>, <<"myotherbucket">>}}, Ctx)),
                              %% make sure these don't crash, at least
-                             ?assertEqual(ok, riak_core_security:print_users()),
+                             ?assertMatch([{table, [[{username, <<"user">>}, {'member of', "superuser"},
+                                                     {password, _}, {options, _}]]}],
+                                          riak_core_security:format_users()),
+                             ?assertMatch([{table, [[{username, <<"user">>}, {'member of', "superuser"},
+                                                     {password, _}, {options, _}]]}],
+                                          riak_core_security:format_user(<<"user">>)),
                              ?assertEqual(ok, riak_core_security:print_sources()),
-                             ?assertEqual(ok, riak_core_security:print_user(<<"user">>)),
                              ?assertEqual(ok, riak_core_security:print_grants(<<"user">>)),
                              ?assertEqual(ok, riak_core_security:print_groups()),
                              ?assertEqual(ok, riak_core_security:print_group(<<"superuser">>)),
@@ -226,7 +252,7 @@ security_test_() ->
                      fun() ->
                              ?assertMatch({error, _}, riak_core_security:add_group(<<"all">>, [])),
                              ?assertMatch({error, _}, riak_core_security:alter_user(<<"sysadmin">>, [{"password", "password"}])),
-                             ?assertMatch({error, _}, riak_core_security:print_user(<<"sysadmin">>)),
+                             ?assertMatch({error, {unknown_user, <<"sysadmin">>}}, riak_core_security:format_user(<<"sysadmin">>)),
                              ?assertMatch({error, _}, riak_core_security:alter_group(<<"sysadmin">>, [{"password", "password"}])),
                              ?assertMatch({error, _}, riak_core_security:print_group(<<"sysadmin">>)),
                              ?assertEqual(ok, riak_core_security:add_group(<<"sysadmin">>, [])),

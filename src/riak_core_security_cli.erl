@@ -3,6 +3,7 @@
 -behaviour(clique_handler).
 -export([
          register_cli/0,
+         print_users/3,
          security_status/3, security_enable/3, security_disable/3
         ]).
 
@@ -10,7 +11,7 @@
          add_user/1, alter_user/1, del_user/1,
          add_group/1, alter_group/1, del_group/1,
          add_source/1, del_source/1, grant/1, revoke/1,
-         print_users/1, print_user/1, print_sources/1,
+         print_user/1, print_sources/1,
          print_groups/1, print_group/1, print_grants/1, ciphers/1
         ]).
 
@@ -21,6 +22,7 @@ register_cli() ->
 
 register_cli_usage() ->
     clique:register_usage(["riak-admin", "security"], base_usage()),
+    clique:register_usage(["riak-admin", "security", "print-users"], print_users_usage()),
     clique:register_usage(["riak-admin", "security", "status"], status_usage()),
     clique:register_usage(["riak-admin", "security", "enable"], enable_usage()),
     clique:register_usage(["riak-admin", "security", "disable"], disable_usage()).
@@ -28,7 +30,8 @@ register_cli_usage() ->
 
 register_cli_cmds() ->
     lists:foreach(fun(Args) -> apply(clique, register_command, Args) end,
-                  [ status_register(), enable_register(), disable_register() ]).
+                  [print_users_register(),
+                   status_register(), enable_register(), disable_register() ]).
 
 %%%
 %% Usage
@@ -71,6 +74,10 @@ disable_usage() ->
     "riak-admin security enable\n"
     "    Disable security.\n".
 
+print_users_usage() ->
+    "riak-admin security print-users\n"
+    "    Print all users.\n".
+
 %%%
 %% Registration
 %%%
@@ -92,6 +99,12 @@ disable_register() ->
      [],
      [],
      fun security_disable/3].
+
+print_users_register() ->
+    [["riak-admin", "security", "print-users"],
+     [],
+     [],
+     fun print_users/3].
 
 %%%
 %% Handlers
@@ -349,7 +362,7 @@ print_grants([Name]) ->
             Error
     end.
 
-print_users([]) ->
+print_users(_Cmd, [], []) ->
     riak_core_security:print_users().
 
 print_user([User]) ->
