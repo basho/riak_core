@@ -141,15 +141,20 @@ security_status(_Cmd, [], []) ->
     end.
 
 print_users(_Cmd, [], []) ->
-    riak_core_security:format_users().
+    case riak_core_security:format_users() of
+        [] -> [];
+        [_|_]=Users ->
+            [clique_status:table(Users)]
+    end.
 
 print_user(["riak-admin", "security", "print-user", User], [], []) ->
     case riak_core_security:format_user(User) of
         {error, _}=Error ->
             Output = [clique_status:text(security_error_xlate(Error))],
             [clique_status:alert(Output)];
-        MaybeOK ->
-            MaybeOK
+        [] -> [] ;
+        [_|_]=Users ->
+            [clique_status:table(Users)]
     end.
 
 %%%

@@ -20,7 +20,7 @@
 -module(riak_core_security).
 
 %% printing functions
--export([print_users/0, print_sources/0, print_user/1,
+-export([print_sources/0, print_user/1,
          print_groups/0, print_group/1, print_grants/1]).
 
 %% TODO Most of these now do a bunch of atom-to-string/-binary conversion
@@ -122,9 +122,6 @@ format_sources(Sources) ->
 print_user(User) ->
     clique:print(format_user(User), ["riak-admin", "security", "print-users"]).
 
-print_users() ->
-    clique:print(format_users(), ["riak-admin", "security", "print-users"]).
-
 format_user(User) ->
     Name = name2bin(User),
     Details = user_details(Name),
@@ -144,7 +141,7 @@ format_users() ->
     format_users(Users).
 
 format_users(Users) ->
-    [clique_status:table([begin
+    [begin
          Groups = case proplists:get_value("groups", Options) of
                      undefined ->
                          "";
@@ -165,7 +162,7 @@ format_users(Users) ->
           {'member of', Groups},
           {password, Password},
           {options, lists:flatten(io_lib:format("~p", [OtherOptions]))}]
-     end || {Username, [Options]} <- Users])].
+     end || {Username, [Options]} <- Users].
 
 -spec print_group(Group :: string()) ->
     ok | {error, term()}.
