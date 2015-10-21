@@ -235,7 +235,7 @@ print_grants(["riak-admin", "security", "print-grants", Name], [], []) ->
         [_|_]=OK ->
             lists:flatten(
               [[ clique_status:text(Hdr), clique_status:table(Tbl) ] 
-               || {Hdr, Tbl} <- OK ])
+               || {Hdr, [_|_]=Tbl} <- OK ])
     end.
 
 
