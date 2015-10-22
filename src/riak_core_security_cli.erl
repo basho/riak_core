@@ -6,12 +6,12 @@
          print_users/3, print_user/3,
          print_groups/3, print_group/3,
          print_sources/3, print_grants/3,
+         add_group/3, alter_group/1, del_group/3,
          security_status/3, security_enable/3, security_disable/3
         ]).
 
 -export([
          add_user/1, alter_user/1, del_user/1,
-         add_group/1, alter_group/1, del_group/1,
          add_source/1, del_source/1, grant/1, revoke/1,
          ciphers/1
         ]).
@@ -29,6 +29,8 @@ register_cli_usage() ->
     clique:register_usage(["riak-admin", "security", "print-group"], print_group_usage()),
     clique:register_usage(["riak-admin", "security", "print-sources"], print_sources_usage()),
     clique:register_usage(["riak-admin", "security", "print-grants"], print_grants_usage()),
+    clique:register_usage(["riak-admin", "security", "add-group"], add_group_usage()),
+    clique:register_usage(["riak-admin", "security", "del-group"], del_group_usage()),
     clique:register_usage(["riak-admin", "security", "status"], status_usage()),
     clique:register_usage(["riak-admin", "security", "enable"], enable_usage()),
     clique:register_usage(["riak-admin", "security", "disable"], disable_usage()).
@@ -39,12 +41,12 @@ register_cli_cmds() ->
                   [print_users_register(), print_user_register(),
                    print_groups_register(), print_group_register(),
                    print_grants_register(), print_sources_register(),
+                   add_group_register(), del_group_register(),
                    status_register(), enable_register(), disable_register() ]).
 
 %%%
 %% Usage
 %%%
-
 base_usage() ->
     "riak-admin security <command>\n\n"
     "The following commands modify users and security ACLs for Riak:\n\n"
@@ -106,6 +108,14 @@ print_grants_usage() ->
     "riak-admin security print-grants\n"
     "    Print all grants.\n".
 
+add_group_usage() ->
+    "riak-admin security add-group <group> [<option>=<value> [...]]\n"
+    "    Add a group called <group>.\n".
+
+del_group_usage() ->
+    "riak-admin security del-group <group>\n"
+    "    Delete a group called <group>.\n".
+
 %%%
 %% Registration
 %%%
@@ -164,6 +174,22 @@ print_grants_register() ->
      [],
      fun print_grants/3].
 
+add_group_register() ->
+    % "    add-group <groupname> [<option>=<value> [...]]\n"
+    [["riak-admin", "security", "add-group", '*'], %% Cmd
+     [], %% KeySpecs TODO
+     [], %% FlagSpecs TODO
+     fun add_group/3 ].  %% Callback
+
+del_group_register() ->
+    % "    del-group <groupname>\n"
+    [["riak-admin", "security", "del-group", '*'], %% Cmd
+     [],
+     [],
+     fun del_group/3 ].  %% Callback
+
+
+
 %%%
 %% Handlers
 %%%
@@ -207,8 +233,7 @@ print_users(_Cmd, [], []) ->
 print_group(["riak-admin", "security", "print-group", Group], [], []) ->
     case riak_core_security:format_group(Group) of
         {error, _}=Error ->
-            Output = [clique_status:text(security_error_xlate(Error))],
-            [clique_status:alert(Output)];
+            fmt_error(Error);
         [_|_]=Groups ->
             [clique_status:table(Groups)]
     end.
@@ -230,14 +255,43 @@ print_sources(["riak-admin", "security", "print-sources"], [], []) ->
 print_grants(["riak-admin", "security", "print-grants", Name], [], []) ->
     case riak_core_security:format_grants(Name) of
         {error,_}=Error ->
-            Output = [clique_status:text(security_error_xlate(Error))],
-            [clique_status:alert(Output)];
+            fmt_error(Error);
         [_|_]=OK ->
             lists:flatten(
-              [[ clique_status:text(Hdr), clique_status:table(Tbl) ] 
+              [[ clique_status:text(Hdr), clique_status:table(Tbl) ]
                || {Hdr, [_|_]=Tbl} <- OK ])
     end.
 
+
+add_group(["riak-admin", "security", "add-group", Groupname], [], Options) ->
+    add_role(Groupname, Options, fun riak_core_security:add_group/2).
+
+add_role(Name, Options, Fun) ->
+    try Fun(Name, parse_options(Options)) of
+        ok ->
+            []; %% TODO This can't be the desired outcome
+        {error,_}=Error ->
+            fmt_error(Error)
+    catch % TODO This catch can go now that we're using clique.
+        throw:{error, {invalid_option, Option}} ->
+            Msg = io_lib:format("Invalid option ~p, options are of the form key=value~n",
+                      [Option]),
+            [clique_status:alert([clique_status:text(Msg)])]
+    end.
+
+del_group(["riak-admin", "security", "del-group", Groupname], [], []) ->
+    del_role(Groupname, fun riak_core_security:del_group/1).
+
+del_role(Name, Fun) ->
+    case Fun(Name) of
+        ok -> [];
+        {error,_}=Error ->
+            fmt_error(Error)
+    end.
+
+fmt_error({error, _Reason}=Err) ->
+    Output = [clique_status:text(security_error_xlate(Err))],
+    [clique_status:alert(Output)].
 
 %%%
 %%% Here be dragons.
@@ -307,24 +361,6 @@ security_error_xlate(Error) ->
 add_user([Username|Options]) ->
     add_role(Username, Options, fun riak_core_security:add_user/2).
 
-add_group([Groupname|Options]) ->
-    add_role(Groupname, Options, fun riak_core_security:add_group/2).
-
-add_role(Name, Options, Fun) ->
-    try Fun(Name, parse_options(Options)) of
-        ok ->
-            ok;
-        Error ->
-            io:format(security_error_xlate(Error)),
-            io:format("~n"),
-            Error
-    catch
-        throw:{error, {invalid_option, Option}} ->
-            io:format("Invalid option ~p, options are of the form key=value~n",
-                      [Option]),
-            error
-    end.
-
 alter_user([Username|Options]) ->
     alter_role(Username, Options, fun riak_core_security:alter_user/2).
 
@@ -348,20 +384,6 @@ alter_role(Name, Options, Fun) ->
 
 del_user([Username]) ->
     del_role(Username, fun riak_core_security:del_user/1).
-
-del_group([Groupname]) ->
-    del_role(Groupname, fun riak_core_security:del_group/1).
-
-del_role(Name, Fun) ->
-    case Fun(Name) of
-        ok ->
-            io:format("Successfully deleted ~ts~n", [Name]),
-            ok;
-        Error ->
-            io:format(security_error_xlate(Error)),
-            io:format("~n"),
-            Error
-    end.
 
 add_source([Users, CIDR, Source | Options]) ->
     Unames = case string:tokens(Users, ",") of
