@@ -281,6 +281,12 @@ print_grants(["riak-admin", "security", "print-grants", Name], [], []) ->
 add_group(["riak-admin", "security", "add-group", Groupname], Options, []) ->
     add_role(Groupname, Options, fun riak_core_security:add_group/2).
 
+alter_group(["riak-admin", "security", "alter-group", Groupname], Options, []) ->
+    alter_role(Groupname, Options, fun riak_core_security:alter_group/2).
+
+del_group(["riak-admin", "security", "del-group", Groupname], [], []) ->
+    del_role(Groupname, fun riak_core_security:del_group/1).
+
 add_role(Name, Options, Fun) ->
     try Fun(Name, Options) of
         ok ->
@@ -294,19 +300,6 @@ add_role(Name, Options, Fun) ->
             [clique_status:alert([clique_status:text(Msg)])]
     end.
 
-alter_group(["riak-admin", "security", "alter-group", Groupname], Options, []) ->
-    alter_role(Groupname, Options, fun riak_core_security:alter_group/2).
-
-del_group(["riak-admin", "security", "del-group", Groupname], [], []) ->
-    del_role(Groupname, fun riak_core_security:del_group/1).
-
-del_role(Name, Fun) ->
-    case Fun(Name) of
-        ok -> [];
-        {error,_}=Error ->
-            fmt_error(Error)
-    end.
-
 alter_role(Name, Options, Fun) ->
     try Fun(Name, Options) of
         ok ->
@@ -318,6 +311,13 @@ alter_role(Name, Options, Fun) ->
             Msg = io_lib:format("Invalid option ~p, options are of the form key=value~n",
                       [Option]),
             [clique_status:alert([clique_status:text(Msg)])]
+    end.
+
+del_role(Name, Fun) ->
+    case Fun(Name) of
+        ok -> [];
+        {error,_}=Error ->
+            fmt_error(Error)
     end.
 
 fmt_error({error, _Reason}=Err) ->
