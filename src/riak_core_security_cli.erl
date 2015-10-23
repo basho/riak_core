@@ -6,12 +6,12 @@
          print_users/3, print_user/3,
          print_groups/3, print_group/3,
          print_sources/3, print_grants/3,
+         add_user/3, alter_user/3, del_user/3,
          add_group/3, alter_group/3, del_group/3,
          security_status/3, security_enable/3, security_disable/3
         ]).
 
 -export([
-         add_user/1, alter_user/1, del_user/1,
          add_source/1, del_source/1, grant/1, revoke/1,
          ciphers/1
         ]).
@@ -29,6 +29,9 @@ register_cli_usage() ->
     clique:register_usage(["riak-admin", "security", "print-group"], print_group_usage()),
     clique:register_usage(["riak-admin", "security", "print-sources"], print_sources_usage()),
     clique:register_usage(["riak-admin", "security", "print-grants"], print_grants_usage()),
+    clique:register_usage(["riak-admin", "security", "add-user"], add_user_usage()),
+    clique:register_usage(["riak-admin", "security", "alter-user"], alter_user_usage()),
+    clique:register_usage(["riak-admin", "security", "del-user"], del_user_usage()),
     clique:register_usage(["riak-admin", "security", "add-group"], add_group_usage()),
     clique:register_usage(["riak-admin", "security", "alter-group"], alter_group_usage()),
     clique:register_usage(["riak-admin", "security", "del-group"], del_group_usage()),
@@ -42,6 +45,7 @@ register_cli_cmds() ->
                   [print_users_register(), print_user_register(),
                    print_groups_register(), print_group_register(),
                    print_grants_register(), print_sources_register(),
+                   add_user_register(), alter_user_register(), del_user_register(),
                    add_group_register(), alter_group_register(), del_group_register(),
                    status_register(), enable_register(), disable_register() ]).
 
@@ -108,6 +112,18 @@ print_sources_usage() ->
 print_grants_usage() ->
     "riak-admin security print-grants\n"
     "    Print all grants.\n".
+
+add_user_usage() ->
+    "riak-admin security add-user <user> [<option>=<value> [...]]\n"
+    "    Add a user called <user>.\n".
+
+alter_user_usage() ->
+    "riak-admin security alter-user <user> [<option>=<value> [...]]\n"
+    "    Alter a user called <user>.\n".
+
+del_user_usage() ->
+    "riak-admin security del-user <user>\n"
+    "    Delete a user called <user>.\n".
 
 add_group_usage() ->
     "riak-admin security add-group <group> [<option>=<value> [...]]\n"
@@ -178,6 +194,31 @@ print_grants_register() ->
      [],
      [],
      fun print_grants/3].
+
+add_user_register() ->
+    % "    add-user <username> [<option>=<value> [...]]\n"
+    GroupsFlag = {groups, [{longname, "groups"}]},
+    PasswordFlag = {password, [{longname, "password"}]},
+    [["riak-admin", "security", "add-user", '*'], %% Cmd
+     [GroupsFlag, PasswordFlag], %% KeySpecs
+     [], %% FlagSpecs
+     fun(C, O, F) -> add_user(C, atom_keys_to_strings(O), F) end]. %% Callback
+
+alter_user_register() ->
+    % "    alter-user <username> [<option>=<value> [...]]\n"
+    GroupsFlag = {groups, [{longname, "groups"}]},
+    PasswordFlag = {password, [{longname, "password"}]},
+    [["riak-admin", "security", "alter-user", '*'], %% Cmd
+     [GroupsFlag, PasswordFlag], %% KeySpecs
+     [], %% FlagSpecs
+     fun(C, O, F) -> alter_user(C, atom_keys_to_strings(O), F) end]. %% Callback
+
+del_user_register() ->
+    % "    del-user <username>\n"
+    [["riak-admin", "security", "del-user", '*'], %% Cmd
+     [],
+     [],
+     fun del_user/3 ].  %% Callback
 
 add_group_register() ->
     % "    add-group <groupname> [<option>=<value> [...]]\n"
@@ -287,6 +328,15 @@ alter_group(["riak-admin", "security", "alter-group", Groupname], Options, []) -
 del_group(["riak-admin", "security", "del-group", Groupname], [], []) ->
     del_role(Groupname, fun riak_core_security:del_group/1).
 
+add_user(["riak-admin", "security", "add-user", Username], Options, []) ->
+    add_role(Username, Options, fun riak_core_security:add_user/2).
+
+alter_user(["riak-admin", "security", "alter-user", Username], Options, []) ->
+    alter_role(Username, Options, fun riak_core_security:alter_user/2).
+
+del_user(["riak-admin", "security", "del-user", Username], [], []) ->
+    del_role(Username, fun riak_core_security:del_user/1).
+
 add_role(Name, Options, Fun) ->
     try Fun(Name, Options) of
         ok ->
@@ -388,15 +438,6 @@ security_error_xlate({error, no_matching_ciphers}) ->
 %% message than an ugly RPC call failure
 security_error_xlate(Error) ->
     io_lib:format("~p", [Error]).
-
-add_user([Username|Options]) ->
-    add_role(Username, Options, fun riak_core_security:add_user/2).
-
-alter_user([Username|Options]) ->
-    alter_role(Username, Options, fun riak_core_security:alter_user/2).
-
-del_user([Username]) ->
-    del_role(Username, fun riak_core_security:del_user/1).
 
 add_source([Users, CIDR, Source | Options]) ->
     Unames = case string:tokens(Users, ",") of
