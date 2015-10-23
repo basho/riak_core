@@ -8,11 +8,12 @@
          print_sources/3, print_grants/3,
          add_user/3, alter_user/3, del_user/3,
          add_group/3, alter_group/3, del_group/3,
+         add_source/3, del_source/3,
          security_status/3, security_enable/3, security_disable/3
         ]).
 
 -export([
-         add_source/1, del_source/1, grant/1, revoke/1,
+         grant/1, revoke/1,
          ciphers/1
         ]).
 
@@ -35,6 +36,8 @@ register_cli_usage() ->
     clique:register_usage(["riak-admin", "security", "add-group"], add_group_usage()),
     clique:register_usage(["riak-admin", "security", "alter-group"], alter_group_usage()),
     clique:register_usage(["riak-admin", "security", "del-group"], del_group_usage()),
+    clique:register_usage(["riak-admin", "security", "add-source"], add_source_usage()),
+    clique:register_usage(["riak-admin", "security", "del-source"], del_source_usage()),
     clique:register_usage(["riak-admin", "security", "status"], status_usage()),
     clique:register_usage(["riak-admin", "security", "enable"], enable_usage()),
     clique:register_usage(["riak-admin", "security", "disable"], disable_usage()).
@@ -47,6 +50,7 @@ register_cli_cmds() ->
                    print_grants_register(), print_sources_register(),
                    add_user_register(), alter_user_register(), del_user_register(),
                    add_group_register(), alter_group_register(), del_group_register(),
+                   add_source_register(),del_source_register(),
                    status_register(), enable_register(), disable_register() ]).
 
 %%%
@@ -136,6 +140,14 @@ alter_group_usage() ->
 del_group_usage() ->
     "riak-admin security del-group <group>\n"
     "    Delete a group called <group>.\n".
+
+add_source_usage() ->
+    "riak-admin security add-source all|<users> <CIDR> <source> [<option>=<value> [...]]\n"
+    "    Add a <source> (e.g. 'password') for <CIDR> to a list of <users> or 'all'.\n".
+
+del_source_usage() ->
+    "riak-admin security del-source all|<users> <CIDR>\n"
+    "    Delete source <CIDR> for 'all' users or only <users>\n.".
 
 %%%
 %% Registration
@@ -243,6 +255,21 @@ del_group_register() ->
      [],
      fun del_group/3 ].  %% Callback
 
+add_source_register() ->
+    % "add-source all|<users> <CIDR> <source> [<option>=<value> [...]]\n"
+    [["riak-admin", "security", "add-source", '*', '*', '*'], %% Cmd
+     [], %% TODO Some Arg specs maybe? what options are allowed?
+     [],
+     fun add_source/3 ].  %% Callback
+
+del_source_register() ->
+    % "del-source all|<users> <CIDR>\n"
+    [["riak-admin", "security", "del-source", '*', '*'], %% Cmd,
+     [], %% TODO Some Arg specs maybe? what options are allowed?
+     [],
+     fun del_source/3 ].  %% Callback
+     
+
 atom_keys_to_strings(Opts) ->
     [ {atom_to_list(Key), Val} || {Key, Val} <- Opts ].
 
@@ -272,9 +299,7 @@ security_status(_Cmd, [], []) ->
 print_user(["riak-admin", "security", "print-user", User], [], []) ->
     case riak_core_security:format_user(User) of
         {error, _}=Error ->
-            Output = [clique_status:text(security_error_xlate(Error))],
-            %% TODO Maybe we should use an exit_status here
-            [clique_status:alert(Output)];
+            fmt_error(Error);
         [_|_]=Users -> % NB No [] match as that's an {error, ...}
             [clique_status:table(Users)]
     end.
@@ -351,6 +376,44 @@ del_role(Name, Fun) ->
             fmt_error(Error)
     end.
 
+add_source(["riak-admin", "security", "add-source", Users, CIDR, Source], Options, []) ->
+    Unames = case string:tokens(Users, ",") of
+        ["all"] ->
+            all;
+        Other ->
+            Other
+    end,
+    %% Unicode note: atoms are constrained to latin1 until R18, so our
+    %% sources are as well
+    try riak_core_security:add_source(Unames, parse_cidr(CIDR),
+                                  list_to_atom(string:to_lower(Source)),
+                                  parse_options(Options)) of
+        ok ->
+            %io:format("Successfully added source~n"),
+            [];
+        {error,_}=Error ->
+            fmt_error(Error)
+    catch
+        error:badarg ->
+            io:format("Invalid source ~ts, must be latin1, sorry~n",
+                      [Source]),
+            [] %% TODO Yeah this one too
+    end.
+
+del_source(["riak-admin", "security", "del-source", Users, CIDR], [], []) ->
+    Unames = case string:tokens(Users, ",") of
+        ["all"] ->
+            all;
+        Other ->
+            Other
+    end,
+    %% TODO Should this let you know if nothing was deleted...?
+    ok = riak_core_security:del_source(Unames, parse_cidr(CIDR)),
+    %% TODO Affirmative output with clique a bonus
+    io:format("Deleted source~n"),
+    [].
+
+
 fmt_error({error, _Reason}=Err) ->
     Output = [clique_status:text(security_error_xlate(Err))],
     [clique_status:alert(Output)].
@@ -419,45 +482,6 @@ security_error_xlate({error, no_matching_ciphers}) ->
 %% message than an ugly RPC call failure
 security_error_xlate(Error) ->
     io_lib:format("~p", [Error]).
-
-add_source([Users, CIDR, Source | Options]) ->
-    Unames = case string:tokens(Users, ",") of
-        ["all"] ->
-            all;
-        Other ->
-            Other
-    end,
-    %% Unicode note: atoms are constrained to latin1 until R18, so our
-    %% sources are as well
-    try riak_core_security:add_source(Unames, parse_cidr(CIDR),
-                                  list_to_atom(string:to_lower(Source)),
-                                  parse_options(Options)) of
-        ok ->
-            io:format("Successfully added source~n"),
-            ok;
-        Error ->
-            io:format(security_error_xlate(Error)),
-            io:format("~n"),
-            Error
-    catch
-        throw:{error, {invalid_option, Option}} ->
-            io:format("Invalid option ~p, options are of the form key=value~n",
-                      [Option]);
-        error:badarg ->
-            io:format("Invalid source ~ts, must be latin1, sorry~n",
-                      [Source])
-    end.
-
-del_source([Users, CIDR]) ->
-    Unames = case string:tokens(Users, ",") of
-        ["all"] ->
-            all;
-        Other ->
-            Other
-    end,
-    riak_core_security:del_source(Unames, parse_cidr(CIDR)),
-    io:format("Deleted source~n").
-
 
 parse_roles(Roles) ->
     case string:tokens(Roles, ",") of
