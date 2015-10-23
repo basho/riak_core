@@ -6,7 +6,7 @@
          print_users/3, print_user/3,
          print_groups/3, print_group/3,
          print_sources/3, print_grants/3,
-         add_group/3, alter_group/1, del_group/3,
+         add_group/3, alter_group/3, del_group/3,
          security_status/3, security_enable/3, security_disable/3
         ]).
 
@@ -30,6 +30,7 @@ register_cli_usage() ->
     clique:register_usage(["riak-admin", "security", "print-sources"], print_sources_usage()),
     clique:register_usage(["riak-admin", "security", "print-grants"], print_grants_usage()),
     clique:register_usage(["riak-admin", "security", "add-group"], add_group_usage()),
+    clique:register_usage(["riak-admin", "security", "alter-group"], alter_group_usage()),
     clique:register_usage(["riak-admin", "security", "del-group"], del_group_usage()),
     clique:register_usage(["riak-admin", "security", "status"], status_usage()),
     clique:register_usage(["riak-admin", "security", "enable"], enable_usage()),
@@ -41,7 +42,7 @@ register_cli_cmds() ->
                   [print_users_register(), print_user_register(),
                    print_groups_register(), print_group_register(),
                    print_grants_register(), print_sources_register(),
-                   add_group_register(), del_group_register(),
+                   add_group_register(), alter_group_register(), del_group_register(),
                    status_register(), enable_register(), disable_register() ]).
 
 %%%
@@ -112,6 +113,10 @@ add_group_usage() ->
     "riak-admin security add-group <group> [<option>=<value> [...]]\n"
     "    Add a group called <group>.\n".
 
+alter_group_usage() ->
+    "riak-admin security alter-group <group> [<option>=<value> [...]]\n"
+    "    Alter a group called <group>.\n".
+
 del_group_usage() ->
     "riak-admin security del-group <group>\n"
     "    Delete a group called <group>.\n".
@@ -176,10 +181,19 @@ print_grants_register() ->
 
 add_group_register() ->
     % "    add-group <groupname> [<option>=<value> [...]]\n"
+    GroupsFlag = {groups, [{longname, "groups"}]},
     [["riak-admin", "security", "add-group", '*'], %% Cmd
-     [], %% KeySpecs TODO
+     [GroupsFlag], %% KeySpecs TODO
      [], %% FlagSpecs TODO
-     fun add_group/3 ].  %% Callback
+     fun(C, O, F) -> add_group(C, atom_keys_to_strings(O), F) end]. %% Callback
+
+alter_group_register() ->
+    % "    alter-group <groupname> [<option>=<value> [...]]\n"
+    GroupsFlag = {groups, [{longname, "groups"}]},
+    [["riak-admin", "security", "alter-group", '*'], %% Cmd
+     [GroupsFlag], %% KeySpecs TODO
+     [], %% FlagSpecs TODO
+     fun(C, O, F) -> alter_group(C, atom_keys_to_strings(O), F) end]. %% Callback
 
 del_group_register() ->
     % "    del-group <groupname>\n"
@@ -188,7 +202,8 @@ del_group_register() ->
      [],
      fun del_group/3 ].  %% Callback
 
-
+atom_keys_to_strings(Opts) ->
+    [ {atom_to_list(Key), Val} || {Key, Val} <- Opts ].
 
 %%%
 %% Handlers
@@ -263,11 +278,11 @@ print_grants(["riak-admin", "security", "print-grants", Name], [], []) ->
     end.
 
 
-add_group(["riak-admin", "security", "add-group", Groupname], [], Options) ->
+add_group(["riak-admin", "security", "add-group", Groupname], Options, []) ->
     add_role(Groupname, Options, fun riak_core_security:add_group/2).
 
 add_role(Name, Options, Fun) ->
-    try Fun(Name, parse_options(Options)) of
+    try Fun(Name, Options) of
         ok ->
             []; %% TODO This can't be the desired outcome
         {error,_}=Error ->
@@ -287,6 +302,22 @@ del_role(Name, Fun) ->
         ok -> [];
         {error,_}=Error ->
             fmt_error(Error)
+    end.
+
+alter_group(["riak-admin", "security", "alter-group", Groupname], Options, []) ->
+    alter_role(Groupname, Options, fun riak_core_security:alter_group/2).
+
+alter_role(Name, Options, Fun) ->
+    try Fun(Name, Options) of
+        ok ->
+            [];
+        {error,_}=Error ->
+            fmt_error(Error)
+    catch
+        throw:{error, {invalid_option, Option}} ->
+            Msg = io_lib:format("Invalid option ~p, options are of the form key=value~n",
+                      [Option]),
+            [clique_status:alert([clique_status:text(Msg)])]
     end.
 
 fmt_error({error, _Reason}=Err) ->
@@ -363,24 +394,6 @@ add_user([Username|Options]) ->
 
 alter_user([Username|Options]) ->
     alter_role(Username, Options, fun riak_core_security:alter_user/2).
-
-alter_group([Groupname|Options]) ->
-    alter_role(Groupname, Options, fun riak_core_security:alter_group/2).
-
-alter_role(Name, Options, Fun) ->
-    try Fun(Name, parse_options(Options)) of
-        ok ->
-            ok;
-        Error ->
-            io:format(security_error_xlate(Error)),
-            io:format("~n"),
-            Error
-    catch
-        throw:{error, {invalid_option, Option}} ->
-            io:format("Invalid option ~p, options are of the form key=value~n",
-                      [Option]),
-            error
-    end.
 
 del_user([Username]) ->
     del_role(Username, fun riak_core_security:del_user/1).
