@@ -339,14 +339,14 @@ del_user(["riak-admin", "security", "del-user", Username], [], []) ->
 
 alter_role(Name, Options, Fun) ->
     case Fun(Name, Options) of
-        ok -> [];
+        ok -> []; %% TODO Is this really all we need?
         {error,_}=Error ->
             fmt_error(Error)
     end.
 
 del_role(Name, Fun) ->
     case Fun(Name) of
-        ok -> [];
+        ok -> []; %% TODO Is this really all we need?
         {error,_}=Error ->
             fmt_error(Error)
     end.
