@@ -224,16 +224,16 @@ add_group_register() ->
     % "    add-group <groupname> [<option>=<value> [...]]\n"
     GroupsArg = {groups, [{longname, "groups"}]},
     [["riak-admin", "security", "add-group", '*'], %% Cmd
-     [GroupsArg], %% KeySpecs TODO
-     [], %% FlagSpecs TODO
+     [GroupsArg], %% KeySpecs
+     [], %% FlagSpecs
      fun(C, O, F) -> add_group(C, atom_keys_to_strings(O), F) end]. %% Callback
 
 alter_group_register() ->
     % "    alter-group <groupname> [<option>=<value> [...]]\n"
     GroupsArg = {groups, [{longname, "groups"}]},
     [["riak-admin", "security", "alter-group", '*'], %% Cmd
-     [GroupsArg], %% KeySpecs TODO
-     [], %% FlagSpecs TODO
+     [GroupsArg], %% KeySpecs
+     [], %% FlagSpecs
      fun(C, O, F) -> alter_group(C, atom_keys_to_strings(O), F) end]. %% Callback
 
 del_group_register() ->
@@ -320,7 +320,7 @@ print_grants(["riak-admin", "security", "print-grants", Name], [], []) ->
 
 
 add_group(["riak-admin", "security", "add-group", Groupname], Options, []) ->
-    add_role(Groupname, Options, fun riak_core_security:add_group/2).
+    alter_role(Groupname, Options, fun riak_core_security:add_group/2).
 
 alter_group(["riak-admin", "security", "alter-group", Groupname], Options, []) ->
     alter_role(Groupname, Options, fun riak_core_security:alter_group/2).
@@ -329,7 +329,7 @@ del_group(["riak-admin", "security", "del-group", Groupname], [], []) ->
     del_role(Groupname, fun riak_core_security:del_group/1).
 
 add_user(["riak-admin", "security", "add-user", Username], Options, []) ->
-    add_role(Username, Options, fun riak_core_security:add_user/2).
+    alter_role(Username, Options, fun riak_core_security:add_user/2).
 
 alter_user(["riak-admin", "security", "alter-user", Username], Options, []) ->
     alter_role(Username, Options, fun riak_core_security:alter_user/2).
@@ -337,30 +337,11 @@ alter_user(["riak-admin", "security", "alter-user", Username], Options, []) ->
 del_user(["riak-admin", "security", "del-user", Username], [], []) ->
     del_role(Username, fun riak_core_security:del_user/1).
 
-add_role(Name, Options, Fun) ->
-    try Fun(Name, Options) of
-        ok ->
-            []; %% TODO This can't be the desired outcome
-        {error,_}=Error ->
-            fmt_error(Error)
-    catch % TODO This catch can go now that we're using clique.
-        throw:{error, {invalid_option, Option}} ->
-            Msg = io_lib:format("Invalid option ~p, options are of the form key=value~n",
-                      [Option]),
-            [clique_status:alert([clique_status:text(Msg)])]
-    end.
-
 alter_role(Name, Options, Fun) ->
-    try Fun(Name, Options) of
-        ok ->
-            [];
+    case Fun(Name, Options) of
+        ok -> [];
         {error,_}=Error ->
             fmt_error(Error)
-    catch
-        throw:{error, {invalid_option, Option}} ->
-            Msg = io_lib:format("Invalid option ~p, options are of the form key=value~n",
-                      [Option]),
-            [clique_status:alert([clique_status:text(Msg)])]
     end.
 
 del_role(Name, Fun) ->
