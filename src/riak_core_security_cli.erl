@@ -294,6 +294,9 @@ add_role(Name, Options, Fun) ->
             [clique_status:alert([clique_status:text(Msg)])]
     end.
 
+alter_group(["riak-admin", "security", "alter-group", Groupname], Options, []) ->
+    alter_role(Groupname, Options, fun riak_core_security:alter_group/2).
+
 del_group(["riak-admin", "security", "del-group", Groupname], [], []) ->
     del_role(Groupname, fun riak_core_security:del_group/1).
 
@@ -303,9 +306,6 @@ del_role(Name, Fun) ->
         {error,_}=Error ->
             fmt_error(Error)
     end.
-
-alter_group(["riak-admin", "security", "alter-group", Groupname], Options, []) ->
-    alter_role(Groupname, Options, fun riak_core_security:alter_group/2).
 
 alter_role(Name, Options, Fun) ->
     try Fun(Name, Options) of
