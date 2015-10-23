@@ -197,19 +197,19 @@ print_grants_register() ->
 
 add_user_register() ->
     % "    add-user <username> [<option>=<value> [...]]\n"
-    GroupsFlag = {groups, [{longname, "groups"}]},
-    PasswordFlag = {password, [{longname, "password"}]},
+    GroupsArg = {groups, [{longname, "groups"}]},
+    PasswordArg = {password, [{longname, "password"}]},
     [["riak-admin", "security", "add-user", '*'], %% Cmd
-     [GroupsFlag, PasswordFlag], %% KeySpecs
+     [GroupsArg, PasswordArg], %% KeySpecs
      [], %% FlagSpecs
      fun(C, O, F) -> add_user(C, atom_keys_to_strings(O), F) end]. %% Callback
 
 alter_user_register() ->
     % "    alter-user <username> [<option>=<value> [...]]\n"
-    GroupsFlag = {groups, [{longname, "groups"}]},
-    PasswordFlag = {password, [{longname, "password"}]},
+    GroupsArg = {groups, [{longname, "groups"}]},
+    PasswordArg = {password, [{longname, "password"}]},
     [["riak-admin", "security", "alter-user", '*'], %% Cmd
-     [GroupsFlag, PasswordFlag], %% KeySpecs
+     [GroupsArg, PasswordArg], %% KeySpecs
      [], %% FlagSpecs
      fun(C, O, F) -> alter_user(C, atom_keys_to_strings(O), F) end]. %% Callback
 
@@ -222,17 +222,17 @@ del_user_register() ->
 
 add_group_register() ->
     % "    add-group <groupname> [<option>=<value> [...]]\n"
-    GroupsFlag = {groups, [{longname, "groups"}]},
+    GroupsArg = {groups, [{longname, "groups"}]},
     [["riak-admin", "security", "add-group", '*'], %% Cmd
-     [GroupsFlag], %% KeySpecs TODO
+     [GroupsArg], %% KeySpecs TODO
      [], %% FlagSpecs TODO
      fun(C, O, F) -> add_group(C, atom_keys_to_strings(O), F) end]. %% Callback
 
 alter_group_register() ->
     % "    alter-group <groupname> [<option>=<value> [...]]\n"
-    GroupsFlag = {groups, [{longname, "groups"}]},
+    GroupsArg = {groups, [{longname, "groups"}]},
     [["riak-admin", "security", "alter-group", '*'], %% Cmd
-     [GroupsFlag], %% KeySpecs TODO
+     [GroupsArg], %% KeySpecs TODO
      [], %% FlagSpecs TODO
      fun(C, O, F) -> alter_group(C, atom_keys_to_strings(O), F) end]. %% Callback
 
