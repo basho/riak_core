@@ -9,11 +9,11 @@
          add_user/3, alter_user/3, del_user/3,
          add_group/3, alter_group/3, del_group/3,
          add_source/3, del_source/3,
+         grant/3, revoke/3,
          security_status/3, security_enable/3, security_disable/3
         ]).
 
 -export([
-         grant/1, revoke/1,
          ciphers/1
         ]).
 
@@ -38,6 +38,8 @@ register_cli_usage() ->
     clique:register_usage(["riak-admin", "security", "del-group"], del_group_usage()),
     clique:register_usage(["riak-admin", "security", "add-source"], add_source_usage()),
     clique:register_usage(["riak-admin", "security", "del-source"], del_source_usage()),
+    clique:register_usage(["riak-admin", "security", "grant"], grant_usage()),
+    clique:register_usage(["riak-admin", "security", "revoke"], revoke_usage()),
     clique:register_usage(["riak-admin", "security", "status"], status_usage()),
     clique:register_usage(["riak-admin", "security", "enable"], enable_usage()),
     clique:register_usage(["riak-admin", "security", "disable"], disable_usage()).
@@ -51,6 +53,8 @@ register_cli_cmds() ->
                    add_user_register(), alter_user_register(), del_user_register(),
                    add_group_register(), alter_group_register(), del_group_register(),
                    add_source_register(),del_source_register(),
+                   grant_type_register(), grant_type_bucket_register(),
+                   revoke_type_register(), revoke_type_bucket_register(),
                    status_register(), enable_register(), disable_register() ]).
 
 %%%
@@ -148,6 +152,14 @@ add_source_usage() ->
 del_source_usage() ->
     "riak-admin security del-source all|<users> <CIDR>\n"
     "    Delete source <CIDR> for 'all' users or only <users>\n.".
+
+grant_usage() ->
+    "riak-admin security grant <permissions> on any|<type> [bucket] to <users>\n"
+    "    Grant <permissions> on specified bucket (or any) to <users>.\n".
+
+revoke_usage() ->
+    "riak-admin security revoke <permissions> on any|<type> [bucket] from <users>\n"
+    "    Revoke <permissions from <users> on specified (or any) bucket.\n".
 
 %%%
 %% Registration
@@ -268,7 +280,36 @@ del_source_register() ->
      [], %% TODO Some Arg specs maybe? what options are allowed?
      [],
      fun del_source/3 ].  %% Callback
-     
+
+grant_type_register() ->
+    % "grant <permissions> on <bucket-type> to all|{<user>|<group>[,...]}
+    [["riak-admin", "security", "grant", '*', '*', '*', '*', '*'],
+     [],
+     [],
+     fun grant/3].
+
+grant_type_bucket_register() ->
+    % "grant <permissions> on <bucket-type> to all|{<user>|<group>[,...]}
+    [["riak-admin", "security", "grant", '*', '*', '*', '*', '*', '*'],
+     [],
+     [],
+     fun grant/3].
+
+revoke_type_register() ->
+    % "revoke <permissions> on <bucket-type> from all|{<user>|<group>[,...]}
+    %[["riak-admin", "security", "revoke", '*'], %, "on", '*', "from", '*'],
+    [["riak-admin", "security", "revoke", '*', '*', '*', '*', '*'], %, "on", '*', "from", '*'],
+     [],
+     [],
+     fun revoke/3].
+
+revoke_type_bucket_register() ->
+    % "revoke <permissions> on <bucket-type> <bucket> from all|{<user>|<group>[,...]
+    %[["riak-admin", "security", "revoke", '*'], %, "on", '*', '*', "from", '*'],
+    [["riak-admin", "security", "revoke", '*', '*', '*', '*', '*', '*'],
+     [],
+     [],
+     fun revoke/3].
 
 atom_keys_to_strings(Opts) ->
     [ {atom_to_list(Key), Val} || {Key, Val} <- Opts ].
@@ -497,14 +538,14 @@ parse_grants(Grants) ->
 grant_int(Permissions, Bucket, Roles) ->
     case riak_core_security:add_grant(Roles, Bucket, Permissions) of
         ok ->
-            io:format("Successfully granted~n"),
-            ok;
-        Error ->
-            io:format(security_error_xlate(Error)),
-            io:format("~n"),
-            Error
+            [clique_status:text("Successfully granted")];
+        {error,_}=Error ->
+            fmt_error(Error)
     end.
 
+
+grant(["riak-admin", "security", "grant" | Grants], [], []) ->
+    grant(Grants).
 
 grant([Grants, "on", "any", "to", Users]) ->
     grant_int(parse_grants(Grants),
@@ -517,21 +558,18 @@ grant([Grants, "on", Type, Bucket, "to", Users]) ->
 grant([Grants, "on", Type, "to", Users]) ->
     grant_int(parse_grants(Grants),
               Type,
-              parse_roles(Users));
-grant(_) ->
-    io:format("Usage: grant <permissions> on (<type> [bucket]|any) to <users>~n"),
-    error.
+              parse_roles(Users)).
 
 revoke_int(Permissions, Bucket, Roles) ->
     case riak_core_security:add_revoke(Roles, Bucket, Permissions) of
         ok ->
-            io:format("Successfully revoked~n"),
-            ok;
-        Error ->
-            io:format(security_error_xlate(Error)),
-            io:format("~n"),
-            Error
+            [clique_status:text("Successfully revoked")];
+        {error,_}=Error ->
+            fmt_error(Error)
     end.
+
+revoke(["riak-admin", "security", "revoke" | Revokes], [], []) ->
+    revoke(Revokes).
 
 revoke([Grants, "on", "any", "from", Users]) ->
     revoke_int(parse_grants(Grants),
@@ -544,10 +582,7 @@ revoke([Grants, "on", Type, Bucket, "from", Users]) ->
 revoke([Grants, "on", Type, "from", Users]) ->
     revoke_int(parse_grants(Grants),
                Type,
-               parse_roles(Users));
-revoke(_) ->
-    io:format("Usage: revoke <permissions> on <type> [bucket] from <users>~n"),
-    error.
+               parse_roles(Users)).
 
 ciphers([]) ->
     riak_core_security:print_ciphers();
@@ -555,12 +590,10 @@ ciphers([]) ->
 ciphers([CipherList]) ->
     case riak_core_security:set_ciphers(CipherList) of
         ok ->
-            riak_core_security:print_ciphers(),
-            ok;
+            riak_core_security:print_ciphers(), %% TODO clique-ify
+            [];
         {error, _} = Error ->
-            io:format(security_error_xlate(Error)),
-            io:format("~n"),
-            Error
+            fmt_error(Error)
     end.
 
 parse_options(Options) ->
