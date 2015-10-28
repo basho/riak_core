@@ -5,16 +5,15 @@
          register_cli/0,
          print_users/3, print_user/3,
          print_groups/3, print_group/3,
-         print_sources/3, print_grants/3,
+         print_sources/3,
+         print_grants/3,
+         print_ciphers/3,
          add_user/3, alter_user/3, del_user/3,
          add_group/3, alter_group/3, del_group/3,
          add_source/3, del_source/3,
          grant/3, revoke/3,
+         ciphers/3,
          security_status/3, security_enable/3, security_disable/3
-        ]).
-
--export([
-         ciphers/1
         ]).
 
 -spec register_cli() -> ok.
@@ -30,6 +29,7 @@ register_cli_usage() ->
     clique:register_usage(["riak-admin", "security", "print-group"], print_group_usage()),
     clique:register_usage(["riak-admin", "security", "print-sources"], print_sources_usage()),
     clique:register_usage(["riak-admin", "security", "print-grants"], print_grants_usage()),
+    clique:register_usage(["riak-admin", "security", "print-ciphers"], ciphers_usage()),
     clique:register_usage(["riak-admin", "security", "add-user"], add_user_usage()),
     clique:register_usage(["riak-admin", "security", "alter-user"], alter_user_usage()),
     clique:register_usage(["riak-admin", "security", "del-user"], del_user_usage()),
@@ -40,6 +40,7 @@ register_cli_usage() ->
     clique:register_usage(["riak-admin", "security", "del-source"], del_source_usage()),
     clique:register_usage(["riak-admin", "security", "grant"], grant_usage()),
     clique:register_usage(["riak-admin", "security", "revoke"], revoke_usage()),
+    clique:register_usage(["riak-admin", "security", "ciphers"], ciphers_usage()),
     clique:register_usage(["riak-admin", "security", "status"], status_usage()),
     clique:register_usage(["riak-admin", "security", "enable"], enable_usage()),
     clique:register_usage(["riak-admin", "security", "disable"], disable_usage()).
@@ -55,6 +56,7 @@ register_cli_cmds() ->
                    add_source_register(),del_source_register(),
                    grant_type_register(), grant_type_bucket_register(),
                    revoke_type_register(), revoke_type_bucket_register(),
+                   print_ciphers_register(), ciphers_register(),
                    status_register(), enable_register(), disable_register() ]).
 
 %%%
@@ -161,6 +163,12 @@ revoke_usage() ->
     "riak-admin security revoke <permissions> on any|<type> [bucket] from <users>\n"
     "    Revoke <permissions from <users> on specified (or any) bucket.\n".
 
+ciphers_usage() ->
+    "riak-admin security print-ciphers\n"
+    "    Print all configured, valid and invalid ciphers.\n"
+    "riak-admin security ciphers <cipher-list>\n"
+    "    Configure the ciphers available.\n".
+
 %%%
 %% Registration
 %%%
@@ -218,6 +226,12 @@ print_grants_register() ->
      [],
      [],
      fun print_grants/3].
+
+print_ciphers_register() ->
+    [["riak-admin", "security", "print-ciphers"],
+     [],
+     [],
+     fun print_ciphers/3].
 
 add_user_register() ->
     % "    add-user <username> [<option>=<value> [...]]\n"
@@ -311,6 +325,12 @@ revoke_type_bucket_register() ->
      [],
      fun revoke/3].
 
+ciphers_register() ->
+    [["riak-admin", "security", "ciphers", '*'],
+     [],
+     [],
+     fun ciphers/3].
+
 atom_keys_to_strings(Opts) ->
     [ {atom_to_list(Key), Val} || {Key, Val} <- Opts ].
 
@@ -384,6 +404,8 @@ print_grants(["riak-admin", "security", "print-grants", Name], [], []) ->
                || {Hdr, [_|_]=Tbl} <- OK ])
     end.
 
+print_ciphers(["riak-admin", "security", "print-ciphers"], [], []) ->
+    riak_core_security:format_ciphers().
 
 add_group(["riak-admin", "security", "add-group", Groupname], Options, []) ->
     alter_role(Groupname, Options, fun riak_core_security:add_group/2).
@@ -429,6 +451,8 @@ add_source(["riak-admin", "security", "add-source", Users, CIDR, Source], Option
     try riak_core_security:add_source(Unames, parse_cidr(CIDR),
                                   list_to_atom(string:to_lower(Source)),
                                   parse_options(Options)) of
+        %% TODO We shouldn't need to use parse_options/1 with clique..?
+        %% But maybe it's the only way to enforce the latin1 restriction
         ok ->
             %io:format("Successfully added source~n"),
             [];
@@ -584,18 +608,25 @@ revoke([Grants, "on", Type, "from", Users]) ->
                Type,
                parse_roles(Users)).
 
-ciphers([]) ->
-    riak_core_security:print_ciphers();
+ciphers(["riak-admin", "security", "ciphers"], [], []) ->
+    case riak_core_security:format_ciphers() of
+        {Cfgd, Valid} ->
+            [ clique_status:text(C) || C <- [Cfgd, Valid]];
+        {Cfgd, Valid, Invalid} ->
+            [ clique_status:text(C) || C <- [Cfgd, Valid, Invalid]]
+    end;
 
-ciphers([CipherList]) ->
+ciphers(["riak-admin", "security", "ciphers", CipherList], [], []) ->
     case riak_core_security:set_ciphers(CipherList) of
         ok ->
-            riak_core_security:print_ciphers(), %% TODO clique-ify
-            [];
+            %% TODO This will get neater after refactoring all the patterns in
+            %% the module
+            ciphers(["riak-admin", "security", "ciphers"], [], []);
         {error, _} = Error ->
             fmt_error(Error)
     end.
 
+% TODO This needs to die. I think.
 parse_options(Options) ->
     parse_options(Options, []).
 

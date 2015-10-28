@@ -24,7 +24,7 @@
 %% Formatting functions
 -export([format_user/1, format_users/0, format_users/1,
          format_sources/0, format_sources/1, format_grants/1,
-         format_group/1, format_groups/0, format_groups/1]).
+         format_group/1, format_groups/0, format_groups/1, format_ciphers/0]).
 
 %% type exports
 -export_type([context/0]).
@@ -35,7 +35,7 @@
          add_source/4, del_source/2,
          add_grant/3, add_revoke/3, check_permission/2, check_permissions/2,
          get_username/1, is_enabled/0, enable/0, disable/0, status/0,
-         get_ciphers/0, set_ciphers/1, print_ciphers/0]).
+         get_ciphers/0, set_ciphers/1]).
 
 
 -define(DEFAULT_CIPHER_LIST,
@@ -802,24 +802,20 @@ get_ciphers() ->
             Result
     end.
 
-print_ciphers() ->
-    clique:print(format_ciphers(), ["riak-admin", "security", "print-ciphers"]).
-
 format_ciphers() ->
     Ciphers = get_ciphers(),
     {Good, Bad} = riak_core_ssl_util:parse_ciphers(Ciphers),
-    Cfgd = clique_status:text(io_lib:format("Configured ciphers~n~n~s~n~n", [Ciphers])),
-    Valid = clique_status:text(
-      io_lib:format("Valid ciphers(~b)~n~n~s~n~n",
-                    [length(Good), riak_core_ssl_util:print_ciphers(Good)])),
+    %% TODO This should really be a more rigid structure - proplist maybe?
+    Cfgd = io_lib:format("Configured ciphers~n~n~s~n~n", [Ciphers]),
+    Valid = io_lib:format("Valid ciphers(~b)~n~n~s~n~n",
+                          [length(Good), riak_core_ssl_util:print_ciphers(Good)]),
     case Bad of
         [] ->
-            [Cfgd, Valid];
+            {Cfgd, Valid};
         _ ->
-            Invalid = clique_status:text(
-                        io_lib:format("Unknown/Unsupported ciphers(~b)~n~n~s~n~n",
-                                      [length(Bad), string:join(Bad, ":")])),
-            [Cfgd, Valid, Invalid]
+            Invalid = io_lib:format("Unknown/Unsupported ciphers(~b)~n~n~s~n~n",
+                                    [length(Bad), string:join(Bad, ":")]),
+            {Cfgd, Valid, Invalid}
     end.
 
 set_ciphers(CipherList) ->
