@@ -449,15 +449,12 @@ add_source(["riak-admin", "security", "add-source", Users, CIDR, Source], Option
         %% TODO We shouldn't need to use parse_options/1 with clique..?
         %% But maybe it's the only way to enforce the latin1 restriction
         ok ->
-            %io:format("Successfully added source~n"),
-            [];
+            [clique_status:text("Successfully added source")];
         {error,_}=Error ->
             fmt_error(Error)
     catch
         error:badarg ->
-            io:format("Invalid source ~ts, must be latin1, sorry~n",
-                      [Source]),
-            [] %% TODO Yeah this one too
+            fmt_error({error, badarg})
     end.
 
 del_source(["riak-admin", "security", "del-source", Users, CIDR], [], []) ->
@@ -469,17 +466,15 @@ del_source(["riak-admin", "security", "del-source", Users, CIDR], [], []) ->
     end,
     %% TODO Should this let you know if nothing was deleted...?
     ok = riak_core_security:del_source(Unames, parse_cidr(CIDR)),
-    %% TODO Affirmative output with clique a bonus
-    io:format("Deleted source~n"),
-    [].
-
-fmt_error({error, _Reason}=Err) ->
-    Output = [clique_status:text(security_error_xlate(Err))],
-    [clique_status:alert(Output)].
+    [clique_status:text("Deleted source~n")].
 
 %%%
 %%% Here be dragons.
 %%%
+
+fmt_error({error, _Reason}=Err) ->
+    Output = [clique_status:text(security_error_xlate(Err))],
+    [clique_status:alert(Output)].
 
 security_error_xlate({errors, Errors}) ->
     string:join(
