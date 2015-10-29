@@ -16,36 +16,42 @@
          security_status/3, security_enable/3, security_disable/3
         ]).
 
+-define(CLI_PREFIX, ["riak-admin", "security"]).
+
 -spec register_cli() -> ok.
 register_cli() ->
     register_cli_usage(),
     register_cli_cmds().
 
 register_cli_usage() ->
-    clique:register_usage(["riak-admin", "security"], base_usage()),
-    clique:register_usage(["riak-admin", "security", "print-users"], print_users_usage()),
-    clique:register_usage(["riak-admin", "security", "print-user"], print_user_usage()),
-    clique:register_usage(["riak-admin", "security", "print-groups"], print_groups_usage()),
-    clique:register_usage(["riak-admin", "security", "print-group"], print_group_usage()),
-    clique:register_usage(["riak-admin", "security", "print-sources"], print_sources_usage()),
-    clique:register_usage(["riak-admin", "security", "print-grants"], print_grants_usage()),
-    clique:register_usage(["riak-admin", "security", "print-ciphers"], ciphers_usage()),
-    clique:register_usage(["riak-admin", "security", "add-user"], add_user_usage()),
-    clique:register_usage(["riak-admin", "security", "alter-user"], alter_user_usage()),
-    clique:register_usage(["riak-admin", "security", "del-user"], del_user_usage()),
-    clique:register_usage(["riak-admin", "security", "add-group"], add_group_usage()),
-    clique:register_usage(["riak-admin", "security", "alter-group"], alter_group_usage()),
-    clique:register_usage(["riak-admin", "security", "del-group"], del_group_usage()),
-    clique:register_usage(["riak-admin", "security", "add-source"], add_source_usage()),
-    clique:register_usage(["riak-admin", "security", "del-source"], del_source_usage()),
-    clique:register_usage(["riak-admin", "security", "grant"], grant_usage()),
-    clique:register_usage(["riak-admin", "security", "revoke"], revoke_usage()),
-    clique:register_usage(["riak-admin", "security", "ciphers"], ciphers_usage()),
-    clique:register_usage(["riak-admin", "security", "status"], status_usage()),
-    clique:register_usage(["riak-admin", "security", "enable"], enable_usage()),
-    clique:register_usage(["riak-admin", "security", "disable"], disable_usage()).
+    [ clique:register_usage(?CLI_PREFIX++Cmd, Usage)
+      || {Cmd, Usage} <-
+         [ { [], base_usage() },
+           { ["print-users"],   print_users_usage() },
+           { ["print-user"],    print_user_usage() },
+           { ["print-groups"],  print_groups_usage() },
+           { ["print-group"],   print_group_usage() },
+           { ["print-sources"], print_sources_usage() },
+           { ["print-grants"],  print_grants_usage() },
+           { ["print-ciphers"], ciphers_usage() },
+           { ["add-user"],    add_user_usage() },
+           { ["alter-user"],  alter_user_usage() },
+           { ["del-user"],    del_user_usage() },
+           { ["add-group"],   add_group_usage() },
+           { ["alter-group"], alter_group_usage() },
+           { ["del-group"],   del_group_usage() },
+           { ["add-source"],  add_source_usage() },
+           { ["del-source"],  del_source_usage() },
+           { ["grant"],   grant_usage() },
+           { ["revoke"],  revoke_usage() },
+           { ["ciphers"], ciphers_usage() },
+           { ["status"],  status_usage() },
+           { ["enable"],  enable_usage() },
+           { ["disable"], disable_usage() }]].
 
 
+%% TODO Roll this in with the usage so that we can factor out the common prefix
+%% pleasantly.
 register_cli_cmds() ->
     lists:foreach(fun(Args) -> apply(clique, register_command, Args) end,
                   [print_users_register(), print_user_register(),
@@ -62,6 +68,9 @@ register_cli_cmds() ->
 %%%
 %% Usage
 %%%
+%% TODO Build this base usage dynamically from all other registered commands
+%% by having each _usage() fun return the brief usage and the description separately,
+%% then aggregating all one-line usages automatically.
 base_usage() ->
     "riak-admin security <command>\n\n"
     "The following commands modify users and security ACLs for Riak:\n\n"
@@ -172,6 +181,8 @@ ciphers_usage() ->
 %%%
 %% Registration
 %%%
+%% TODO Would be nice to factor out the common prefix to allow moving these around
+%% more easily.
 
 status_register() ->
     [["riak-admin", "security", "status"],
@@ -284,14 +295,14 @@ del_group_register() ->
 add_source_register() ->
     % "add-source all|<users> <CIDR> <source> [<option>=<value> [...]]\n"
     [["riak-admin", "security", "add-source", '*', '*', '*'], %% Cmd
-     [], %% TODO Some Arg specs maybe? what options are allowed?
+     [], %% TODO Some Arg specs definitely. what options are allowed?
      [],
      fun add_source/3 ].  %% Callback
 
 del_source_register() ->
     % "del-source all|<users> <CIDR>\n"
     [["riak-admin", "security", "del-source", '*', '*'], %% Cmd,
-     [], %% TODO Some Arg specs maybe? what options are allowed?
+     [], %% TODO Some Arg specs definitely. what options are allowed?
      [],
      fun del_source/3 ].  %% Callback
 
@@ -311,7 +322,6 @@ grant_type_bucket_register() ->
 
 revoke_type_register() ->
     % "revoke <permissions> on <bucket-type> from all|{<user>|<group>[,...]}
-    %[["riak-admin", "security", "revoke", '*'], %, "on", '*', "from", '*'],
     [["riak-admin", "security", "revoke", '*', '*', '*', '*', '*'], %, "on", '*', "from", '*'],
      [],
      [],
@@ -338,6 +348,8 @@ atom_keys_to_strings(Opts) ->
 %% Handlers
 %%%
 
+%% TODO There has to be a nicer pattern to chain a print-* command
+%% after a config change
 security_enable(_Cmd, [], []) ->
     riak_core_security:enable(),
     security_status(_Cmd, [], []).
@@ -548,7 +560,6 @@ grant_int(Permissions, Bucket, Roles) ->
         {error,_}=Error ->
             fmt_error(Error)
     end.
-
 
 grant(["riak-admin", "security", "grant" | Grants], [], []) ->
     grant(Grants).
