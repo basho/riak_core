@@ -357,44 +357,27 @@ security_status(_Cmd, [], []) ->
                       "on all nodes so it is disabled!\n")]
     end.
 
+maybe_empty_table([]) -> [];
+maybe_empty_table({error, _}=Error) -> fmt_error(Error);
+maybe_empty_table([_|_]=Rows) -> [clique_status:table(Rows)].
+
 print_user(["riak-admin", "security", "print-user", User], [], []) ->
-    case riak_core_security:format_user(User) of
-        {error, _}=Error ->
-            fmt_error(Error);
-        [_|_]=Users -> % NB No [] match as that's an {error, ...}
-            [clique_status:table(Users)]
-    end.
+    maybe_empty_table(riak_core_security:format_user(User)).
 
 print_users(_Cmd, [], []) ->
-    case riak_core_security:format_users() of
-        [] -> [];
-        [_|_]=Users ->
-            [clique_status:table(Users)]
-    end.
+    maybe_empty_table(riak_core_security:format_users()).
 
 print_group(["riak-admin", "security", "print-group", Group], [], []) ->
-    case riak_core_security:format_group(Group) of
-        {error, _}=Error ->
-            fmt_error(Error);
-        [_|_]=Groups ->
-            [clique_status:table(Groups)]
-    end.
+    maybe_empty_table(riak_core_security:format_group(Group)).
 
 print_groups(["riak-admin", "security", "print-groups"], [], []) ->
-    case riak_core_security:format_groups() of
-        [] -> [];
-        [_|_]=Groups ->
-            [clique_status:table(Groups)]
-    end.
+    maybe_empty_table(riak_core_security:format_groups()).
 
 print_sources(["riak-admin", "security", "print-sources"], [], []) ->
-    case riak_core_security:format_sources() of
-        [] -> [];
-        [_|_]=Sources ->
-            [clique_status:table(Sources)]
-    end.
+    maybe_empty_table(riak_core_security:format_sources()).
 
 print_grants(["riak-admin", "security", "print-grants", Name], [], []) ->
+    %% TODO Maybe this wasn't the best return structure?
     case riak_core_security:format_grants(Name) of
         {error,_}=Error ->
             fmt_error(Error);
@@ -477,7 +460,6 @@ del_source(["riak-admin", "security", "del-source", Users, CIDR], [], []) ->
     %% TODO Affirmative output with clique a bonus
     io:format("Deleted source~n"),
     [].
-
 
 fmt_error({error, _Reason}=Err) ->
     Output = [clique_status:text(security_error_xlate(Err))],
