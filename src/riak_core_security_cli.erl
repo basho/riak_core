@@ -129,7 +129,7 @@ register_add_user() ->
     ["add-user", '*'], %% Cmd
     [?groups_arg, ?password_arg], %% KeySpecs
     [], %% FlagSpecs
-    fun(C, O, F) -> add_user(C, atom_keys_to_strings(O), F) end}.  
+    fun(C, O, F) -> add_user(C, atom_keys_to_strings(O), F) end}.
 
 register_alter_user() ->
     {"Alter a user called <user>.",
