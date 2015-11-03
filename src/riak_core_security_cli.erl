@@ -17,329 +17,216 @@
         ]).
 
 -define(CLI_PREFIX, ["riak-admin", "security"]).
+-define(CLI_PREFIX(Cmd), ["riak-admin", "security" | Cmd]).
+
+-define(groups_arg, {groups, [{longname, "groups"}]}).
+-define(password_arg, {password, [{longname, "password"}]}).
 
 -spec register_cli() -> ok.
 register_cli() ->
-    register_cli_usage(),
-    register_cli_cmds().
-
-register_cli_usage() ->
-    [ clique:register_usage(?CLI_PREFIX++Cmd, Usage)
-      || {Cmd, Usage} <-
-         [ { [], base_usage() },
-           { ["print-users"],   print_users_usage() },
-           { ["print-user"],    print_user_usage() },
-           { ["print-groups"],  print_groups_usage() },
-           { ["print-group"],   print_group_usage() },
-           { ["print-sources"], print_sources_usage() },
-           { ["print-grants"],  print_grants_usage() },
-           { ["print-ciphers"], ciphers_usage() },
-           { ["add-user"],    add_user_usage() },
-           { ["alter-user"],  alter_user_usage() },
-           { ["del-user"],    del_user_usage() },
-           { ["add-group"],   add_group_usage() },
-           { ["alter-group"], alter_group_usage() },
-           { ["del-group"],   del_group_usage() },
-           { ["add-source"],  add_source_usage() },
-           { ["del-source"],  del_source_usage() },
-           { ["grant"],   grant_usage() },
-           { ["revoke"],  revoke_usage() },
-           { ["ciphers"], ciphers_usage() },
-           { ["status"],  status_usage() },
-           { ["enable"],  enable_usage() },
-           { ["disable"], disable_usage() }]].
-
-
-%% TODO Roll this in with the usage so that we can factor out the common prefix
-%% pleasantly.
-register_cli_cmds() ->
-    lists:foreach(fun(Args) -> apply(clique, register_command, Args) end,
-                  [print_users_register(), print_user_register(),
-                   print_groups_register(), print_group_register(),
-                   print_grants_register(), print_sources_register(),
-                   add_user_register(), alter_user_register(), del_user_register(),
-                   add_group_register(), alter_group_register(), del_group_register(),
-                   add_source_register(),del_source_register(),
-                   grant_type_register(), grant_type_bucket_register(),
-                   revoke_type_register(), revoke_type_bucket_register(),
-                   print_ciphers_register(), ciphers_register(),
-                   status_register(), enable_register(), disable_register() ]).
+    register_all(?CLI_PREFIX).
 
 %%%
 %% Usage
 %%%
-%% TODO Build this base usage dynamically from all other registered commands
-%% by having each _usage() fun return the brief usage and the description separately,
-%% then aggregating all one-line usages automatically.
-base_usage() ->
-    "riak-admin security <command>\n\n"
-    "The following commands modify users and security ACLs for Riak:\n\n"
-    "    add-user <username> [<option>=<value> [...]]\n"
-    "    add-group <groupname> [<option>=<value> [...]]\n"
-    "    alter-user <username> <option> [<option>=<value> [...]]\n"
-    "    alter-group <groupname> <option> [<option>=<value> [...]]\n"
-    "    del-user <username>\n"
-    "    del-group <groupname>\n"
-    "    add-source all|<users> <CIDR> <source> [<option>=<value> [...]]\n"
-    "    del-source all|<users> <CIDR>\n"
-    "    grant <permissions> on any|<type> [bucket] to <users>\n"
-    "    revoke <permissions> on any|<type> [bucket] from <users>\n"
-    "    print-users\n"
-    "    print-groups\n"
-    "    print-user <user>\n"
-    "    print-group <group>\n"
-    "    print-grants <user|group>\n"
-    "    print-sources\n"
-    "    enable\n"
-    "    disable\n"
-    "    status\n"
-    "    ciphers [cipherlist]\n".
+register_all(Prefix) ->
+    %% TODO This is a bit ugly
+    BaseHeadline = io_lib:format(
+                     "~s <command>\n\n"
+                     "The following commands modify users and security ACLs for Riak:\n\n",
+                     [string:join(Prefix, " ")]),
+    BaseUsage =
+    lists:foldl(
+      fun({Detail, Usage, [Cmd|_]=Spec, Keys, Flags, Fun}, BaseUsage) ->
+              %% TODO So much use of io_lib offends me.
+              FullUsage = io_lib:format("~s~n    ~s~n", [Usage, Detail]),
+              true = clique:register_usage(Prefix ++ [Cmd], FullUsage),
+              %% TODO What if this doesn't return ok ?
+              ok = clique:register_command(Prefix ++ Spec, Keys, Flags, Fun),
+              io_lib:format("~s    ~s~n", [BaseUsage, Usage])
+      end,
+      BaseHeadline,
+      [
+       register_security_status(),
+       register_security_enable(),
+       register_security_disable(),
+       register_print_users(),
+       register_print_user(),
+       register_print_groups(),
+       register_print_group(),
+       register_print_sources(),
+       register_print_grants(),
+       register_print_ciphers(),
+       register_add_user(),
+       register_alter_user(),
+       register_del_user(),
+       register_add_group(),
+       register_alter_group(),
+       register_del_group(),
+       register_add_source(),
+       register_del_source(),
+       register_ciphers(),
+       register_grant_type(),
+       register_grant_type_bucket(),
+       register_revoke_type(),
+       register_revoke_type_bucket()]),
+    clique:register_usage(Prefix, BaseUsage).
 
 % Obvious usage is used obviously.
-status_usage() ->
-    "riak-admin security status\n"
-    "    Show the status of the cluster security.\n".
+register_security_status() ->
+    {"Show the status of the cluster security.",
+     "status",
+     ["status"], [], [], fun security_status/3}.
 
-enable_usage() ->
-    "riak-admin security enable\n"
-    "    Enable security.\n".
+register_security_enable() ->
+    {"Enable security.",
+     "enable",
+     ["enable"], [], [], fun security_enable/3}.
 
-disable_usage() ->
-    "riak-admin security enable\n"
-    "    Disable security.\n".
+register_security_disable() ->
+    {"Disable security.",
+     "disable",
+    ["disable"], [], [], fun security_disable/3}.
 
-print_users_usage() ->
-    "riak-admin security print-users\n"
-    "    Print all users.\n".
+register_print_users() ->
+    {"Print all users.",
+     "print-users",
+    ["print-users"], [], [], fun print_users/3}.
 
-print_user_usage() ->
-    "riak-admin security print-user <user>\n"
-    "    Print a single user.\n".
+register_print_user() ->
+    {"Print a single user.",
+    "print-user <user>",
+    ["print-user", '*'], [], [], fun print_user/3}.
 
-print_groups_usage() ->
-    "riak-admin security print-groups\n"
-    "    Print all groups.\n".
+register_print_groups() ->
+    {"Print all groups.",
+     "print-groups",
+    ["print-groups"], [], [], fun print_groups/3}.
 
-print_group_usage() ->
-    "riak-admin security print-group <group>\n"
-    "    Print a single group.\n".
+register_print_group() ->
+    {"Print a single group.",
+     "print-group <group>",
+    ["print-group", '*'], [], [], fun print_group/3}.
 
-print_sources_usage() ->
-    "riak-admin security print-sources\n"
-    "    Print all sources.\n".
+register_print_sources() ->
+    {"Print all sources.",
+     "print-sources",
+    ["print-sources"], [], [], fun print_sources/3}.
 
-print_grants_usage() ->
-    "riak-admin security print-grants\n"
-    "    Print all grants.\n".
+register_print_grants() ->
+    {"Print all grants.",
+     "print-grants <identifier>",
+    ["print-grants", '*'], [], [], fun print_grants/3}.
 
-add_user_usage() ->
-    "riak-admin security add-user <user> [<option>=<value> [...]]\n"
-    "    Add a user called <user>.\n".
+register_print_ciphers() ->
+    {"Print all configured, valid and invalid ciphers.",
+     "print-ciphers",
+    ["print-ciphers"], [], [], fun print_ciphers/3}.
 
-alter_user_usage() ->
-    "riak-admin security alter-user <user> [<option>=<value> [...]]\n"
-    "    Alter a user called <user>.\n".
+register_add_user() ->
+    {"Add a user called <user>.",
+     "add-user <user> [<option>=<value> [...]]",
+    ["add-user", '*'], %% Cmd
+    [?groups_arg, ?password_arg], %% KeySpecs
+    [], %% FlagSpecs
+    fun(C, O, F) -> add_user(C, atom_keys_to_strings(O), F) end}.  
 
-del_user_usage() ->
-    "riak-admin security del-user <user>\n"
-    "    Delete a user called <user>.\n".
+register_alter_user() ->
+    {"Alter a user called <user>.",
+     "alter-user <user> [<option>=<value> [...]]",
+    ["alter-user", '*'], %% Cmd
+    [?groups_arg, ?password_arg], %% KeySpecs
+    [], %% FlagSpecs
+    fun(C, O, F) -> alter_user(C, atom_keys_to_strings(O), F) end }.
 
-add_group_usage() ->
-    "riak-admin security add-group <group> [<option>=<value> [...]]\n"
-    "    Add a group called <group>.\n".
+register_del_user() ->
+    {"Delete a user called <user>.",
+     "del-user <user>",
+    ["del-user", '*'], %% Cmd
+    [],
+    [],
+    fun del_user/3 }.
 
-alter_group_usage() ->
-    "riak-admin security alter-group <group> [<option>=<value> [...]]\n"
-    "    Alter a group called <group>.\n".
+register_add_group() ->
+    {"Add a group called <group>.",
+     "add-group <group> [<option>=<value> [...]]",
+    ["add-group", '*'], %% Cmd
+    [?groups_arg], %% KeySpecs
+    [], %% FlagSpecs
+    fun(C, O, F) -> add_group(C, atom_keys_to_strings(O), F) end }.
 
-del_group_usage() ->
-    "riak-admin security del-group <group>\n"
-    "    Delete a group called <group>.\n".
+register_alter_group() ->
+    {"Alter a group called <group>.",
+     "alter-group <group> [<option>=<value> [...]]",
+    ["alter-group", '*'], %% Cmd
+    [?groups_arg], %% KeySpecs
+    [], %% FlagSpecs
+    fun(C, O, F) -> alter_group(C, atom_keys_to_strings(O), F) end }.
 
-add_source_usage() ->
-    "riak-admin security add-source all|<users> <CIDR> <source> [<option>=<value> [...]]\n"
-    "    Add a <source> (e.g. 'password') for <CIDR> to a list of <users> or 'all'.\n".
+register_del_group() ->
+    {"Delete a group called <group>.",
+     "del-group <group>",
+    ["del-group", '*'],
+    [],
+    [],
+    fun del_group/3 }.
 
-del_source_usage() ->
-    "riak-admin security del-source all|<users> <CIDR>\n"
-    "    Delete source <CIDR> for 'all' users or only <users>\n.".
+register_add_source() ->
+    {"Add a <source> (e.g. 'password') for <CIDR> to a list of <users> or 'all'.",
+     "add-source all|<users> <CIDR> <source> [<option>=<value> [...]]",
+    ["add-source", '*', '*', '*'], %% Cmd
+    [], %% TODO Some Arg specs definitely. what options are allowed?
+    [],
+    fun add_source/3 }.
 
-grant_usage() ->
-    "riak-admin security grant <permissions> on any|<type> [bucket] to <users>\n"
-    "    Grant <permissions> on specified bucket (or any) to <users>.\n".
+register_del_source() ->
+    {"Delete source <CIDR> for 'all' users or only <users>.",
+     "del-source all|<users> <CIDR>",
+    ["del-source", '*', '*'], %% Cmd,
+    [], %% TODO Some Arg specs definitely. what options are allowed?
+    [],
+    fun del_source/3 }.
 
-revoke_usage() ->
-    "riak-admin security revoke <permissions> on any|<type> [bucket] from <users>\n"
-    "    Revoke <permissions from <users> on specified (or any) bucket.\n".
+register_ciphers() ->
+    {"Configure the ciphers available.",
+     "ciphers <cipher-list>",
+    ["ciphers", '*'],
+    [],
+    [],
+    fun ciphers/3 }.
 
-ciphers_usage() ->
-    "riak-admin security print-ciphers\n"
-    "    Print all configured, valid and invalid ciphers.\n"
-    "riak-admin security ciphers <cipher-list>\n"
-    "    Configure the ciphers available.\n".
+register_grant_type() ->
+    {"Grant <permissions> on specified bucket (or any) to <users>.",
+     "grant <permissions> on any|<type> [bucket] to <users>",
+    ["grant", '*', '*', '*', '*', '*'],
+    [],
+    [],
+    fun grant/3 }.
 
-%%%
-%% Registration
-%%%
-%% TODO Would be nice to factor out the common prefix to allow moving these around
-%% more easily.
+%% TODO Is there a way to register this as part of register_grant_type() above?
+register_grant_type_bucket() ->
+    {"Grant <permissions> on specified bucket (or any) to <users>.",
+     "grant <permissions> on any|<type> [bucket] to <users>",
+    ["grant", '*', '*', '*', '*', '*', '*'],
+    [],
+    [],
+    fun grant/3 }.
 
-status_register() ->
-    [["riak-admin", "security", "status"],
-     [],
-     [],
-     fun security_status/3].
+register_revoke_type() ->
+    {"Revoke <permissions> from <users> on specified (or any) bucket.",
+     "revoke <permissions> on any|<type> [bucket] from <users>",
+    ["revoke", '*', '*', '*', '*', '*'],
+    [],
+    [],
+    fun revoke/3 }.
 
-enable_register() ->
-    [["riak-admin", "security", "enable"],
-     [],
-     [],
-     fun security_enable/3].
-
-disable_register() ->
-    [["riak-admin", "security", "disable"],
-     [],
-     [],
-     fun security_disable/3].
-
-print_users_register() ->
-    [["riak-admin", "security", "print-users"],
-     [],
-     [],
-     fun print_users/3].
-
-print_user_register() ->
-    [["riak-admin", "security", "print-user", '*'],
-     [],
-     [],
-     fun print_user/3].
-
-print_groups_register() ->
-    [["riak-admin", "security", "print-groups"],
-     [],
-     [],
-     fun print_groups/3].
-
-print_group_register() ->
-    [["riak-admin", "security", "print-group", '*'],
-     [],
-     [],
-     fun print_group/3].
-
-print_sources_register() ->
-    [["riak-admin", "security", "print-sources"],
-     [],
-     [],
-     fun print_sources/3].
-
-print_grants_register() ->
-    [["riak-admin", "security", "print-grants", '*'],
-     [],
-     [],
-     fun print_grants/3].
-
-print_ciphers_register() ->
-    [["riak-admin", "security", "print-ciphers"],
-     [],
-     [],
-     fun print_ciphers/3].
-
-add_user_register() ->
-    % "    add-user <username> [<option>=<value> [...]]\n"
-    GroupsArg = {groups, [{longname, "groups"}]},
-    PasswordArg = {password, [{longname, "password"}]},
-    [["riak-admin", "security", "add-user", '*'], %% Cmd
-     [GroupsArg, PasswordArg], %% KeySpecs
-     [], %% FlagSpecs
-     fun(C, O, F) -> add_user(C, atom_keys_to_strings(O), F) end]. %% Callback
-
-alter_user_register() ->
-    % "    alter-user <username> [<option>=<value> [...]]\n"
-    GroupsArg = {groups, [{longname, "groups"}]},
-    PasswordArg = {password, [{longname, "password"}]},
-    [["riak-admin", "security", "alter-user", '*'], %% Cmd
-     [GroupsArg, PasswordArg], %% KeySpecs
-     [], %% FlagSpecs
-     fun(C, O, F) -> alter_user(C, atom_keys_to_strings(O), F) end]. %% Callback
-
-del_user_register() ->
-    % "    del-user <username>\n"
-    [["riak-admin", "security", "del-user", '*'], %% Cmd
-     [],
-     [],
-     fun del_user/3 ].  %% Callback
-
-add_group_register() ->
-    % "    add-group <groupname> [<option>=<value> [...]]\n"
-    GroupsArg = {groups, [{longname, "groups"}]},
-    [["riak-admin", "security", "add-group", '*'], %% Cmd
-     [GroupsArg], %% KeySpecs
-     [], %% FlagSpecs
-     fun(C, O, F) -> add_group(C, atom_keys_to_strings(O), F) end]. %% Callback
-
-alter_group_register() ->
-    % "    alter-group <groupname> [<option>=<value> [...]]\n"
-    GroupsArg = {groups, [{longname, "groups"}]},
-    [["riak-admin", "security", "alter-group", '*'], %% Cmd
-     [GroupsArg], %% KeySpecs
-     [], %% FlagSpecs
-     fun(C, O, F) -> alter_group(C, atom_keys_to_strings(O), F) end]. %% Callback
-
-del_group_register() ->
-    % "    del-group <groupname>\n"
-    [["riak-admin", "security", "del-group", '*'], %% Cmd
-     [],
-     [],
-     fun del_group/3 ].  %% Callback
-
-add_source_register() ->
-    % "add-source all|<users> <CIDR> <source> [<option>=<value> [...]]\n"
-    [["riak-admin", "security", "add-source", '*', '*', '*'], %% Cmd
-     [], %% TODO Some Arg specs definitely. what options are allowed?
-     [],
-     fun add_source/3 ].  %% Callback
-
-del_source_register() ->
-    % "del-source all|<users> <CIDR>\n"
-    [["riak-admin", "security", "del-source", '*', '*'], %% Cmd,
-     [], %% TODO Some Arg specs definitely. what options are allowed?
-     [],
-     fun del_source/3 ].  %% Callback
-
-grant_type_register() ->
-    % "grant <permissions> on <bucket-type> to all|{<user>|<group>[,...]}
-    [["riak-admin", "security", "grant", '*', '*', '*', '*', '*'],
-     [],
-     [],
-     fun grant/3].
-
-grant_type_bucket_register() ->
-    % "grant <permissions> on <bucket-type> to all|{<user>|<group>[,...]}
-    [["riak-admin", "security", "grant", '*', '*', '*', '*', '*', '*'],
-     [],
-     [],
-     fun grant/3].
-
-revoke_type_register() ->
-    % "revoke <permissions> on <bucket-type> from all|{<user>|<group>[,...]}
-    [["riak-admin", "security", "revoke", '*', '*', '*', '*', '*'], %, "on", '*', "from", '*'],
-     [],
-     [],
-     fun revoke/3].
-
-revoke_type_bucket_register() ->
-    % "revoke <permissions> on <bucket-type> <bucket> from all|{<user>|<group>[,...]
-    %[["riak-admin", "security", "revoke", '*'], %, "on", '*', '*', "from", '*'],
-    [["riak-admin", "security", "revoke", '*', '*', '*', '*', '*', '*'],
-     [],
-     [],
-     fun revoke/3].
-
-ciphers_register() ->
-    [["riak-admin", "security", "ciphers", '*'],
-     [],
-     [],
-     fun ciphers/3].
+register_revoke_type_bucket() ->
+    {"Revoke <permissions> from <users> on specified (or any) bucket.",
+     "revoke <permissions> on any|<type> [bucket] from <users>",
+    ["revoke", '*', '*', '*', '*', '*', '*'],
+    [],
+    [],
+    fun revoke/3 }.
 
 atom_keys_to_strings(Opts) ->
     [ {atom_to_list(Key), Val} || {Key, Val} <- Opts ].
@@ -373,22 +260,22 @@ maybe_empty_table([]) -> [];
 maybe_empty_table({error, _}=Error) -> fmt_error(Error);
 maybe_empty_table([_|_]=Rows) -> [clique_status:table(Rows)].
 
-print_user(["riak-admin", "security", "print-user", User], [], []) ->
+print_user(?CLI_PREFIX(["print-user", User]), [], []) ->
     maybe_empty_table(riak_core_security:format_user(User)).
 
 print_users(_Cmd, [], []) ->
     maybe_empty_table(riak_core_security:format_users()).
 
-print_group(["riak-admin", "security", "print-group", Group], [], []) ->
+print_group(?CLI_PREFIX(["print-group", Group]), [], []) ->
     maybe_empty_table(riak_core_security:format_group(Group)).
 
-print_groups(["riak-admin", "security", "print-groups"], [], []) ->
+print_groups(?CLI_PREFIX(["print-groups"]), [], []) ->
     maybe_empty_table(riak_core_security:format_groups()).
 
-print_sources(["riak-admin", "security", "print-sources"], [], []) ->
+print_sources(?CLI_PREFIX(["print-sources"]), [], []) ->
     maybe_empty_table(riak_core_security:format_sources()).
 
-print_grants(["riak-admin", "security", "print-grants", Name], [], []) ->
+print_grants(?CLI_PREFIX(["print-grants", Name]), [], []) ->
     %% TODO Maybe this wasn't the best return structure?
     case riak_core_security:format_grants(Name) of
         {error,_}=Error ->
@@ -399,25 +286,25 @@ print_grants(["riak-admin", "security", "print-grants", Name], [], []) ->
                || {Hdr, [_|_]=Tbl} <- OK ])
     end.
 
-print_ciphers(["riak-admin", "security", "print-ciphers"], [], []) ->
+print_ciphers(?CLI_PREFIX(["print-ciphers"]), [], []) ->
     riak_core_security:format_ciphers().
 
-add_group(["riak-admin", "security", "add-group", Groupname], Options, []) ->
+add_group(?CLI_PREFIX(["add-group", Groupname]), Options, []) ->
     alter_role(Groupname, Options, fun riak_core_security:add_group/2).
 
-alter_group(["riak-admin", "security", "alter-group", Groupname], Options, []) ->
+alter_group(?CLI_PREFIX(["alter-group", Groupname]), Options, []) ->
     alter_role(Groupname, Options, fun riak_core_security:alter_group/2).
 
-del_group(["riak-admin", "security", "del-group", Groupname], [], []) ->
+del_group(?CLI_PREFIX(["del-group", Groupname]), [], []) ->
     del_role(Groupname, fun riak_core_security:del_group/1).
 
-add_user(["riak-admin", "security", "add-user", Username], Options, []) ->
+add_user(?CLI_PREFIX(["add-user", Username]), Options, []) ->
     alter_role(Username, Options, fun riak_core_security:add_user/2).
 
-alter_user(["riak-admin", "security", "alter-user", Username], Options, []) ->
+alter_user(?CLI_PREFIX(["alter-user", Username]), Options, []) ->
     alter_role(Username, Options, fun riak_core_security:alter_user/2).
 
-del_user(["riak-admin", "security", "del-user", Username], [], []) ->
+del_user(?CLI_PREFIX(["del-user", Username]), [], []) ->
     del_role(Username, fun riak_core_security:del_user/1).
 
 alter_role(Name, Options, Fun) ->
@@ -434,7 +321,7 @@ del_role(Name, Fun) ->
             fmt_error(Error)
     end.
 
-add_source(["riak-admin", "security", "add-source", Users, CIDR, Source], Options, []) ->
+add_source(?CLI_PREFIX(["add-source", Users, CIDR, Source]), Options, []) ->
     Unames = case string:tokens(Users, ",") of
         ["all"] ->
             all;
@@ -457,7 +344,7 @@ add_source(["riak-admin", "security", "add-source", Users, CIDR, Source], Option
             fmt_error({error, badarg})
     end.
 
-del_source(["riak-admin", "security", "del-source", Users, CIDR], [], []) ->
+del_source(?CLI_PREFIX(["del-source", Users, CIDR]), [], []) ->
     Unames = case string:tokens(Users, ",") of
         ["all"] ->
             all;
@@ -556,7 +443,7 @@ grant_int(Permissions, Bucket, Roles) ->
             fmt_error(Error)
     end.
 
-grant(["riak-admin", "security", "grant" | Grants], [], []) ->
+grant(?CLI_PREFIX(["grant" | Grants]), [], []) ->
     grant(Grants).
 
 grant([Grants, "on", "any", "to", Users]) ->
@@ -580,7 +467,7 @@ revoke_int(Permissions, Bucket, Roles) ->
             fmt_error(Error)
     end.
 
-revoke(["riak-admin", "security", "revoke" | Revokes], [], []) ->
+revoke(?CLI_PREFIX(["revoke" | Revokes]), [], []) ->
     revoke(Revokes).
 
 revoke([Grants, "on", "any", "from", Users]) ->
@@ -596,7 +483,7 @@ revoke([Grants, "on", Type, "from", Users]) ->
                Type,
                parse_roles(Users)).
 
-ciphers(["riak-admin", "security", "ciphers"], [], []) ->
+ciphers(?CLI_PREFIX(["ciphers"]), [], []) ->
     case riak_core_security:format_ciphers() of
         {Cfgd, Valid} ->
             [ clique_status:text(C) || C <- [Cfgd, Valid]];
@@ -604,12 +491,12 @@ ciphers(["riak-admin", "security", "ciphers"], [], []) ->
             [ clique_status:text(C) || C <- [Cfgd, Valid, Invalid]]
     end;
 
-ciphers(["riak-admin", "security", "ciphers", CipherList], [], []) ->
+ciphers(?CLI_PREFIX(["ciphers", CipherList]), [], []) ->
     case riak_core_security:set_ciphers(CipherList) of
         ok ->
             %% TODO This will get neater after refactoring all the patterns in
             %% the module
-            ciphers(["riak-admin", "security", "ciphers"], [], []);
+            ciphers(?CLI_PREFIX(["ciphers"]), [], []);
         {error, _} = Error ->
             fmt_error(Error)
     end.
