@@ -811,11 +811,11 @@ format_ciphers() ->
                           [length(Good), riak_core_ssl_util:print_ciphers(Good)]),
     case Bad of
         [] ->
-            {Cfgd, Valid};
+            [ Cfgd, Valid ];
         _ ->
             Invalid = io_lib:format("Unknown/Unsupported ciphers(~b)~n~n~s~n~n",
                                     [length(Bad), string:join(Bad, ":")]),
-            {Cfgd, Valid, Invalid}
+            [ Cfgd, Valid, Invalid ]
     end.
 
 set_ciphers(CipherList) ->

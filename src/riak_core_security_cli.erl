@@ -287,7 +287,7 @@ print_grants(?CLI_PREFIX(["print-grants", Name]), [], []) ->
     end.
 
 print_ciphers(?CLI_PREFIX(["print-ciphers"]), [], []) ->
-    riak_core_security:format_ciphers().
+    [ clique_status:text(S) || S <- riak_core_security:format_ciphers()].
 
 add_group(?CLI_PREFIX(["add-group", Groupname]), Options, []) ->
     alter_role(Groupname, Options, fun riak_core_security:add_group/2).
