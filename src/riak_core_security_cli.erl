@@ -235,15 +235,15 @@ atom_keys_to_strings(Opts) ->
 
 %% TODO There has to be a nicer pattern to chain a print-* command
 %% after a config change
-security_enable(_Cmd, [], []) ->
+security_enable(?CLI_PREFIX(["enable"]), [], []) ->
     riak_core_security:enable(),
-    security_status(_Cmd, [], []).
+    security_status(?CLI_PREFIX(["status"]), [], []).
 
-security_disable(_Cmd, [], []) ->
+security_disable(?CLI_PREFIX(["disable"]), [], []) ->
     riak_core_security:disable(),
-    security_status(_Cmd, [], []).
+    security_status(?CLI_PREFIX(["status"]), [], []).
 
-security_status(_Cmd, [], []) ->
+security_status(?CLI_PREFIX(["status"]), [], []) ->
     case riak_core_security:status() of
         enabled ->
             [clique_status:text("Enabled\n")];
