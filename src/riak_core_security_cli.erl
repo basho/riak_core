@@ -41,7 +41,6 @@ register_all(Prefix) ->
               %% TODO So much use of io_lib offends me.
               FullUsage = io_lib:format("~s~n    ~s~n", [Usage, Detail]),
               true = clique:register_usage(Prefix ++ [Cmd], FullUsage),
-              %% TODO What if this doesn't return ok ?
               ok = clique:register_command(Prefix ++ Spec, Keys, Flags, Fun),
               io_lib:format("~s    ~s~n", [BaseUsage, Usage])
       end,
@@ -203,7 +202,6 @@ register_grant_type() ->
     [],
     fun grant/3 }.
 
-%% TODO Is there a way to register this as part of register_grant_type() above?
 register_grant_type_bucket() ->
     {"Grant <permissions> on specified bucket (or any) to <users>.",
      "grant <permissions> on any|<type> [bucket] to <users>",
@@ -309,14 +307,14 @@ del_user(?CLI_PREFIX(["del-user", Username]), [], []) ->
 
 alter_role(Name, Options, Fun) ->
     case Fun(Name, Options) of
-        ok -> []; %% TODO Is this really all we need?
+        ok -> [];
         {error,_}=Error ->
             fmt_error(Error)
     end.
 
 del_role(Name, Fun) ->
     case Fun(Name) of
-        ok -> []; %% TODO Is this really all we need?
+        ok -> [];
         {error,_}=Error ->
             fmt_error(Error)
     end.
@@ -351,7 +349,6 @@ del_source(?CLI_PREFIX(["del-source", Users, CIDR]), [], []) ->
         Other ->
             Other
     end,
-    %% TODO Should this let you know if nothing was deleted...?
     ok = riak_core_security:del_source(Unames, parse_cidr(CIDR)),
     [clique_status:text("Deleted source~n")].
 
