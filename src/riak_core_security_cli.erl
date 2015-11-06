@@ -176,7 +176,7 @@ register_add_source() ->
     ["add-source", '*', '*', '*'],
     [],
     [],
-    fun add_source/3 }.
+    fun(C, O, F) -> add_source(C, string_keys_to_lower(O), F) end}.
 
 register_del_source() ->
     {"Delete source <CIDR> for 'all' users or only <users>.",
@@ -228,6 +228,9 @@ register_revoke_type_bucket() ->
 
 atom_keys_to_strings(Opts) ->
     [ {atom_to_list(Key), Val} || {Key, Val} <- Opts ].
+
+string_keys_to_lower(Opts) ->
+    [ {string:to_lower(Key), Val} || {Key, Val} <- Opts ].
 
 %%%
 %% Handlers
@@ -340,9 +343,7 @@ add_source(?CLI_PREFIX(["add-source", Users, CIDR, Source]), Options, []) ->
     %% sources are as well
     try riak_core_security:add_source(Unames, parse_cidr(CIDR),
                                   list_to_atom(string:to_lower(Source)),
-                                  parse_options(Options)) of
-        %% TODO We shouldn't need to use parse_options/1 with clique..?
-        %% But maybe it's the only way to enforce the latin1 restriction
+                                  Options) of
         ok ->
             [clique_status:text("Successfully added source")];
         {error,_}=Error ->
@@ -506,20 +507,6 @@ ciphers(?CLI_PREFIX(["ciphers", CipherList]), [], []) ->
             ciphers(?CLI_PREFIX(["ciphers"]), [], []);
         {error, _} = Error ->
             format_error(Error)
-    end.
-
-% TODO This needs to die. I think.
-parse_options(Options) ->
-    parse_options(Options, []).
-
-parse_options([], Acc) ->
-    Acc;
-parse_options([H|T], Acc) ->
-    case re:split(H, "=", [{parts, 2}, {return, list}]) of
-        [Key, Value] when is_list(Key), is_list(Value) ->
-            parse_options(T, [{string:to_lower(Key), Value}|Acc]);
-        _Other ->
-            throw({error, {invalid_option, H}})
     end.
 
 -spec parse_cidr(string()) -> {inet:ip_address(), non_neg_integer()}.
