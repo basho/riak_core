@@ -383,12 +383,7 @@ del_user(?CLI_PREFIX(["del-user", Username]), [], []) ->
     end.
 
 add_source(?CLI_PREFIX(["add-source", Users, CIDR, Source]), Options, []) ->
-    Unames = case string:tokens(Users, ",") of
-        ["all"] ->
-            all;
-        Other ->
-            Other
-    end,
+    Unames = parse_roles(Users),
     %% Unicode note: atoms are constrained to latin1 until R18, so our
     %% sources are as well
     try riak_core_security:add_source(Unames, parse_cidr(CIDR),
@@ -404,12 +399,7 @@ add_source(?CLI_PREFIX(["add-source", Users, CIDR, Source]), Options, []) ->
     end.
 
 del_source(?CLI_PREFIX(["del-source", Users, CIDR]), [], []) ->
-    Unames = case string:tokens(Users, ",") of
-        ["all"] ->
-            all;
-        Other ->
-            Other
-    end,
+    Unames = parse_roles(Users),
     ok = riak_core_security:del_source(Unames, parse_cidr(CIDR)),
     [clique_status:text("Deleted source~n")].
 
