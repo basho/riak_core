@@ -255,7 +255,7 @@ security_status(?CLI_PREFIX(["status"]), [], []) ->
     end.
 
 maybe_empty_table([]) -> [];
-maybe_empty_table({error, _}=Error) -> fmt_error(Error);
+maybe_empty_table({error, _}=Error) -> format_error(Error);
 maybe_empty_table([_|_]=Rows) -> [clique_status:table(Rows)].
 
 print_user(?CLI_PREFIX(["print-user", User]), [], []) ->
@@ -277,7 +277,7 @@ print_grants(?CLI_PREFIX(["print-grants", Name]), [], []) ->
     %% TODO Maybe this wasn't the best return structure?
     case riak_core_security:format_grants(Name) of
         {error,_}=Error ->
-            fmt_error(Error);
+            format_error(Error);
         [_|_]=OK ->
             lists:flatten(
               [[ clique_status:text(Hdr), clique_status:table(Tbl) ]
@@ -309,14 +309,14 @@ alter_role(Name, Options, Fun) ->
     case Fun(Name, Options) of
         ok -> [];
         {error,_}=Error ->
-            fmt_error(Error)
+            format_error(Error)
     end.
 
 del_role(Name, Fun) ->
     case Fun(Name) of
         ok -> [];
         {error,_}=Error ->
-            fmt_error(Error)
+            format_error(Error)
     end.
 
 add_source(?CLI_PREFIX(["add-source", Users, CIDR, Source]), Options, []) ->
@@ -336,10 +336,10 @@ add_source(?CLI_PREFIX(["add-source", Users, CIDR, Source]), Options, []) ->
         ok ->
             [clique_status:text("Successfully added source")];
         {error,_}=Error ->
-            fmt_error(Error)
+            format_error(Error)
     catch
         error:badarg ->
-            fmt_error({error, badarg})
+            format_error({error, badarg})
     end.
 
 del_source(?CLI_PREFIX(["del-source", Users, CIDR]), [], []) ->
@@ -356,7 +356,7 @@ del_source(?CLI_PREFIX(["del-source", Users, CIDR]), [], []) ->
 %%% Here be dragons.
 %%%
 
-fmt_error({error, _Reason}=Err) ->
+format_error({error, _Reason}=Err) ->
     Output = [clique_status:text(security_error_xlate(Err))],
     [clique_status:alert(Output)].
 
@@ -437,7 +437,7 @@ grant_int(Permissions, Bucket, Roles) ->
         ok ->
             [clique_status:text("Successfully granted")];
         {error,_}=Error ->
-            fmt_error(Error)
+            format_error(Error)
     end.
 
 grant(?CLI_PREFIX(["grant" | Grants]), [], []) ->
@@ -461,7 +461,7 @@ revoke_int(Permissions, Bucket, Roles) ->
         ok ->
             [clique_status:text("Successfully revoked")];
         {error,_}=Error ->
-            fmt_error(Error)
+            format_error(Error)
     end.
 
 revoke(?CLI_PREFIX(["revoke" | Revokes]), [], []) ->
@@ -495,7 +495,7 @@ ciphers(?CLI_PREFIX(["ciphers", CipherList]), [], []) ->
             %% the module
             ciphers(?CLI_PREFIX(["ciphers"]), [], []);
         {error, _} = Error ->
-            fmt_error(Error)
+            format_error(Error)
     end.
 
 % TODO This needs to die. I think.
