@@ -72,56 +72,86 @@ register_all(Prefix) ->
     clique:register_usage(Prefix, BaseUsage).
 
 % Obvious usage is used obviously.
+-type usage_and_cmd() ::
+    { Description :: string(),
+      UsageArgs   :: string(),
+      CmdSpec     :: list(string()),
+      Flags       :: list(),
+      Args        :: list(),
+      Callback    :: fun()}. %% TODO this might not be right.
+
+-spec register_security_status() ->
+    usage_and_cmd().
 register_security_status() ->
     {"Show the status of the cluster security.",
      "status",
      ["status"], [], [], fun security_status/3}.
 
+-spec register_security_enable() ->
+	usage_and_cmd().
 register_security_enable() ->
     {"Enable security.",
      "enable",
      ["enable"], [], [], fun security_enable/3}.
 
+-spec register_security_disable() ->
+	usage_and_cmd().
 register_security_disable() ->
     {"Disable security.",
      "disable",
     ["disable"], [], [], fun security_disable/3}.
 
+-spec register_print_users() ->
+	usage_and_cmd().
 register_print_users() ->
     {"Print all users.",
      "print-users",
     ["print-users"], [], [], fun print_users/3}.
 
+-spec register_print_user() ->
+	usage_and_cmd().
 register_print_user() ->
     {"Print a single user.",
     "print-user <user>",
     ["print-user", '*'], [], [], fun print_user/3}.
 
+-spec register_print_groups() ->
+	usage_and_cmd().
 register_print_groups() ->
     {"Print all groups.",
      "print-groups",
     ["print-groups"], [], [], fun print_groups/3}.
 
+-spec register_print_group() ->
+	usage_and_cmd().
 register_print_group() ->
     {"Print a single group.",
      "print-group <group>",
     ["print-group", '*'], [], [], fun print_group/3}.
 
+-spec register_print_sources() ->
+	usage_and_cmd().
 register_print_sources() ->
     {"Print all sources.",
      "print-sources",
     ["print-sources"], [], [], fun print_sources/3}.
 
+-spec register_print_grants() ->
+	usage_and_cmd().
 register_print_grants() ->
     {"Print all grants.",
      "print-grants <identifier>",
     ["print-grants", '*'], [], [], fun print_grants/3}.
 
+-spec register_print_ciphers() ->
+	usage_and_cmd().
 register_print_ciphers() ->
     {"Print all configured, valid and invalid ciphers.",
      "print-ciphers",
     ["print-ciphers"], [], [], fun print_ciphers/3}.
 
+-spec register_add_user() ->
+	usage_and_cmd().
 register_add_user() ->
     {"Add a user called <user>.",
      "add-user <user> [<option>=<value> [...]]",
@@ -130,6 +160,8 @@ register_add_user() ->
     [],
     fun(C, O, F) -> add_user(C, atom_keys_to_strings(O), F) end}.
 
+-spec register_alter_user() ->
+	usage_and_cmd().
 register_alter_user() ->
     {"Alter a user called <user>.",
      "alter-user <user> [<option>=<value> [...]]",
@@ -138,6 +170,8 @@ register_alter_user() ->
     [],
     fun(C, O, F) -> alter_user(C, atom_keys_to_strings(O), F) end }.
 
+-spec register_del_user() ->
+	usage_and_cmd().
 register_del_user() ->
     {"Delete a user called <user>.",
      "del-user <user>",
@@ -146,6 +180,8 @@ register_del_user() ->
     [],
     fun del_user/3 }.
 
+-spec register_add_group() ->
+	usage_and_cmd().
 register_add_group() ->
     {"Add a group called <group>.",
      "add-group <group> [<option>=<value> [...]]",
@@ -154,6 +190,8 @@ register_add_group() ->
     [],
     fun(C, O, F) -> add_group(C, atom_keys_to_strings(O), F) end }.
 
+-spec register_alter_group() ->
+	usage_and_cmd().
 register_alter_group() ->
     {"Alter a group called <group>.",
      "alter-group <group> [<option>=<value> [...]]",
@@ -162,6 +200,8 @@ register_alter_group() ->
     [],
     fun(C, O, F) -> alter_group(C, atom_keys_to_strings(O), F) end }.
 
+-spec register_del_group() ->
+	usage_and_cmd().
 register_del_group() ->
     {"Delete a group called <group>.",
      "del-group <group>",
@@ -170,6 +210,8 @@ register_del_group() ->
     [],
     fun del_group/3 }.
 
+-spec register_add_source() ->
+	usage_and_cmd().
 register_add_source() ->
     {"Add a <source> (e.g. 'password') for <CIDR> to a list of <users> or 'all'.",
      "add-source all|<users> <CIDR> <source> [<option>=<value> [...]]",
@@ -178,6 +220,8 @@ register_add_source() ->
     [],
     fun(C, O, F) -> add_source(C, string_keys_to_lower(O), F) end}.
 
+-spec register_del_source() ->
+	usage_and_cmd().
 register_del_source() ->
     {"Delete source <CIDR> for 'all' users or only <users>.",
      "del-source all|<users> <CIDR>",
@@ -186,6 +230,8 @@ register_del_source() ->
     [],
     fun del_source/3 }.
 
+-spec register_ciphers() ->
+	usage_and_cmd().
 register_ciphers() ->
     {"Configure the ciphers available.",
      "ciphers <cipher-list>",
@@ -194,6 +240,8 @@ register_ciphers() ->
     [],
     fun ciphers/3 }.
 
+-spec register_grant_type() ->
+	usage_and_cmd().
 register_grant_type() ->
     {"Grant <permissions> on specified bucket (or any) to <users>.",
      "grant <permissions> on any|<type> [bucket] to <users>",
@@ -202,6 +250,8 @@ register_grant_type() ->
     [],
     fun grant/3 }.
 
+-spec register_grant_type_bucket() ->
+	usage_and_cmd().
 register_grant_type_bucket() ->
     {"Grant <permissions> on specified bucket (or any) to <users>.",
      "grant <permissions> on any|<type> [bucket] to <users>",
@@ -210,6 +260,8 @@ register_grant_type_bucket() ->
     [],
     fun grant/3 }.
 
+-spec register_revoke_type() ->
+	usage_and_cmd().
 register_revoke_type() ->
     {"Revoke <permissions> from <users> on specified (or any) bucket.",
      "revoke <permissions> on any|<type> [bucket] from <users>",
@@ -218,6 +270,8 @@ register_revoke_type() ->
     [],
     fun revoke/3 }.
 
+-spec register_revoke_type_bucket() ->
+	usage_and_cmd().
 register_revoke_type_bucket() ->
     {"Revoke <permissions> from <users> on specified (or any) bucket.",
      "revoke <permissions> on any|<type> [bucket] from <users>",
