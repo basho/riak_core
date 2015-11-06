@@ -32,7 +32,7 @@ member_status_register() ->
 member_status_usage() ->
     [
      "riak-admin member-status\n",
-     " TODO\n"
+     "    Display the cluster status and member counts by node status.\n"
     ].
 
 member_status(_Cmd, [], []) ->
