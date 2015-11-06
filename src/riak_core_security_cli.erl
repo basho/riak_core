@@ -403,9 +403,92 @@ del_source(?CLI_PREFIX(["del-source", Users, CIDR]), [], []) ->
     ok = riak_core_security:del_source(Unames, parse_cidr(CIDR)),
     [clique_status:text("Deleted source~n")].
 
+grant(?CLI_PREFIX(["grant" | Grants]), [], []) ->
+    grant(Grants).
+
+grant([Grants, "on", "any", "to", Users]) ->
+    grant_int(parse_grants(Grants),
+              any,
+              parse_roles(Users));
+grant([Grants, "on", Type, Bucket, "to", Users]) ->
+    grant_int(parse_grants(Grants),
+              { Type, Bucket },
+              parse_roles(Users));
+grant([Grants, "on", Type, "to", Users]) ->
+    grant_int(parse_grants(Grants),
+              Type,
+              parse_roles(Users)).
+
+grant_int(Permissions, Bucket, Roles) ->
+    case riak_core_security:add_grant(Roles, Bucket, Permissions) of
+        ok ->
+            [clique_status:text("Successfully granted")];
+        {error,_}=Error ->
+            format_error(Error)
+    end.
+
+revoke(?CLI_PREFIX(["revoke" | Revokes]), [], []) ->
+    revoke(Revokes).
+
+revoke([Grants, "on", "any", "from", Users]) ->
+    revoke_int(parse_grants(Grants),
+               any,
+               parse_roles(Users));
+revoke([Grants, "on", Type, Bucket, "from", Users]) ->
+    revoke_int(parse_grants(Grants),
+               { Type, Bucket },
+               parse_roles(Users));
+revoke([Grants, "on", Type, "from", Users]) ->
+    revoke_int(parse_grants(Grants),
+               Type,
+               parse_roles(Users)).
+
+revoke_int(Permissions, Bucket, Roles) ->
+    case riak_core_security:add_revoke(Roles, Bucket, Permissions) of
+        ok ->
+            [clique_status:text("Successfully revoked")];
+        {error,_}=Error ->
+            format_error(Error)
+    end.
+
+ciphers(?CLI_PREFIX(["ciphers"]), [], []) ->
+    case riak_core_security:format_ciphers() of
+        {Cfgd, Valid} ->
+            [ clique_status:text(C) || C <- [Cfgd, Valid]];
+        {Cfgd, Valid, Invalid} ->
+            [ clique_status:text(C) || C <- [Cfgd, Valid, Invalid]]
+    end;
+
+ciphers(?CLI_PREFIX(["ciphers", CipherList]), [], []) ->
+    case riak_core_security:set_ciphers(CipherList) of
+        ok ->
+            %% TODO This will get neater after refactoring all the patterns in
+            %% the module
+            ciphers(?CLI_PREFIX(["ciphers"]), [], []);
+        {error, _} = Error ->
+            format_error(Error)
+    end.
+
 %%%
 %%% Here be dragons.
 %%%
+
+parse_roles(Roles) ->
+    case string:tokens(Roles, ",") of
+        ["all"] ->
+            all;
+        Other ->
+            Other
+    end.
+
+parse_grants(Grants) ->
+    string:tokens(Grants, ",").
+
+-spec parse_cidr(string()) -> {inet:ip_address(), non_neg_integer()}.
+parse_cidr(CIDR) ->
+    [IP, Mask] = string:tokens(CIDR, "/"),
+    {ok, Addr} = inet_parse:address(IP),
+    {Addr, list_to_integer(Mask)}.
 
 maybe_empty_table([]) -> [];
 maybe_empty_table({error, _}=Error) -> format_error(Error);
@@ -470,91 +553,7 @@ security_error_xlate({error, role_exists}) ->
     "This name is already in use";
 security_error_xlate({error, no_matching_ciphers}) ->
     "No known or supported ciphers in list";
-
 %% If we get something we hadn't planned on, better an ugly error
 %% message than an ugly RPC call failure
 security_error_xlate(Error) ->
     io_lib:format("~p", [Error]).
-
-parse_roles(Roles) ->
-    case string:tokens(Roles, ",") of
-        ["all"] ->
-            all;
-        Other ->
-            Other
-    end.
-
-parse_grants(Grants) ->
-    string:tokens(Grants, ",").
-
-grant_int(Permissions, Bucket, Roles) ->
-    case riak_core_security:add_grant(Roles, Bucket, Permissions) of
-        ok ->
-            [clique_status:text("Successfully granted")];
-        {error,_}=Error ->
-            format_error(Error)
-    end.
-
-grant(?CLI_PREFIX(["grant" | Grants]), [], []) ->
-    grant(Grants).
-
-grant([Grants, "on", "any", "to", Users]) ->
-    grant_int(parse_grants(Grants),
-              any,
-              parse_roles(Users));
-grant([Grants, "on", Type, Bucket, "to", Users]) ->
-    grant_int(parse_grants(Grants),
-              { Type, Bucket },
-              parse_roles(Users));
-grant([Grants, "on", Type, "to", Users]) ->
-    grant_int(parse_grants(Grants),
-              Type,
-              parse_roles(Users)).
-
-revoke_int(Permissions, Bucket, Roles) ->
-    case riak_core_security:add_revoke(Roles, Bucket, Permissions) of
-        ok ->
-            [clique_status:text("Successfully revoked")];
-        {error,_}=Error ->
-            format_error(Error)
-    end.
-
-revoke(?CLI_PREFIX(["revoke" | Revokes]), [], []) ->
-    revoke(Revokes).
-
-revoke([Grants, "on", "any", "from", Users]) ->
-    revoke_int(parse_grants(Grants),
-               any,
-               parse_roles(Users));
-revoke([Grants, "on", Type, Bucket, "from", Users]) ->
-    revoke_int(parse_grants(Grants),
-               { Type, Bucket },
-               parse_roles(Users));
-revoke([Grants, "on", Type, "from", Users]) ->
-    revoke_int(parse_grants(Grants),
-               Type,
-               parse_roles(Users)).
-
-ciphers(?CLI_PREFIX(["ciphers"]), [], []) ->
-    case riak_core_security:format_ciphers() of
-        {Cfgd, Valid} ->
-            [ clique_status:text(C) || C <- [Cfgd, Valid]];
-        {Cfgd, Valid, Invalid} ->
-            [ clique_status:text(C) || C <- [Cfgd, Valid, Invalid]]
-    end;
-
-ciphers(?CLI_PREFIX(["ciphers", CipherList]), [], []) ->
-    case riak_core_security:set_ciphers(CipherList) of
-        ok ->
-            %% TODO This will get neater after refactoring all the patterns in
-            %% the module
-            ciphers(?CLI_PREFIX(["ciphers"]), [], []);
-        {error, _} = Error ->
-            format_error(Error)
-    end.
-
--spec parse_cidr(string()) -> {inet:ip_address(), non_neg_integer()}.
-parse_cidr(CIDR) ->
-    [IP, Mask] = string:tokens(CIDR, "/"),
-    {ok, Addr} = inet_parse:address(IP),
-    {Addr, list_to_integer(Mask)}.
