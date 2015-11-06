@@ -257,10 +257,6 @@ security_status(?CLI_PREFIX(["status"]), [], []) ->
                       "on all nodes so it is disabled!\n")]
     end.
 
-maybe_empty_table([]) -> [];
-maybe_empty_table({error, _}=Error) -> format_error(Error);
-maybe_empty_table([_|_]=Rows) -> [clique_status:table(Rows)].
-
 print_user(?CLI_PREFIX(["print-user", User]), [], []) ->
     maybe_empty_table(riak_core_security:format_user(User)).
 
@@ -366,6 +362,10 @@ del_source(?CLI_PREFIX(["del-source", Users, CIDR]), [], []) ->
 %%%
 %%% Here be dragons.
 %%%
+
+maybe_empty_table([]) -> [];
+maybe_empty_table({error, _}=Error) -> format_error(Error);
+maybe_empty_table([_|_]=Rows) -> [clique_status:table(Rows)].
 
 format_error({error, _Reason}=Err) ->
     Output = [clique_status:text(security_error_xlate(Err))],
