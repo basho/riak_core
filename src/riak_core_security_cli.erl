@@ -32,8 +32,8 @@ register_cli() ->
 register_all(Prefix) ->
     %% TODO Is there a more structured way to define this data for clique?
     BaseHeadline = io_lib:format(
-                     "~s <command>\n\n"
-                     "The following commands modify users and security ACLs for Riak:\n\n",
+                     "~s <command>~n~n"
+                     "The following commands modify users and security ACLs for Riak:~n~n",
                      [string:join(Prefix, " ")]),
     BaseUsage =
     lists:foldl(
