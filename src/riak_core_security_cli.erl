@@ -288,32 +288,42 @@ print_ciphers(?CLI_PREFIX(["print-ciphers"]), [], []) ->
     [ clique_status:text(S) || S <- riak_core_security:format_ciphers()].
 
 add_group(?CLI_PREFIX(["add-group", Groupname]), Options, []) ->
-    alter_role(Groupname, Options, fun riak_core_security:add_group/2).
-
-alter_group(?CLI_PREFIX(["alter-group", Groupname]), Options, []) ->
-    alter_role(Groupname, Options, fun riak_core_security:alter_group/2).
-
-del_group(?CLI_PREFIX(["del-group", Groupname]), [], []) ->
-    del_role(Groupname, fun riak_core_security:del_group/1).
-
-add_user(?CLI_PREFIX(["add-user", Username]), Options, []) ->
-    alter_role(Username, Options, fun riak_core_security:add_user/2).
-
-alter_user(?CLI_PREFIX(["alter-user", Username]), Options, []) ->
-    alter_role(Username, Options, fun riak_core_security:alter_user/2).
-
-del_user(?CLI_PREFIX(["del-user", Username]), [], []) ->
-    del_role(Username, fun riak_core_security:del_user/1).
-
-alter_role(Name, Options, Fun) ->
-    case Fun(Name, Options) of
+    case riak_core_security:add_group(Groupname, Options) of
         ok -> [];
         {error,_}=Error ->
             format_error(Error)
     end.
 
-del_role(Name, Fun) ->
-    case Fun(Name) of
+alter_group(?CLI_PREFIX(["alter-group", Groupname]), Options, []) ->
+    case riak_core_security:alter_group(Groupname, Options) of
+        ok -> [];
+        {error,_}=Error ->
+            format_error(Error)
+    end.
+
+del_group(?CLI_PREFIX(["del-group", Groupname]), [], []) ->
+    case riak_core_security:del_group(Groupname) of
+        ok -> [];
+        {error,_}=Error ->
+            format_error(Error)
+    end.
+
+add_user(?CLI_PREFIX(["add-user", Username]), Options, []) ->
+    case riak_core_security:add_user(Username, Options) of
+        ok -> [];
+        {error,_}=Error ->
+            format_error(Error)
+    end.
+
+alter_user(?CLI_PREFIX(["alter-user", Username]), Options, []) ->
+    case riak_core_security:alter_user(Username, Options) of
+        ok -> [];
+        {error,_}=Error ->
+            format_error(Error)
+    end.
+
+del_user(?CLI_PREFIX(["del-user", Username]), [], []) ->
+    case riak_core_security:del_user(Username) of
         ok -> [];
         {error,_}=Error ->
             format_error(Error)
