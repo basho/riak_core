@@ -30,7 +30,7 @@ register_cli() ->
 %% Usage
 %%%
 register_all(Prefix) ->
-    %% TODO This is a bit ugly
+    %% TODO Is there a more structured way to define this data for clique?
     BaseHeadline = io_lib:format(
                      "~s <command>\n\n"
                      "The following commands modify users and security ACLs for Riak:\n\n",
@@ -38,7 +38,7 @@ register_all(Prefix) ->
     BaseUsage =
     lists:foldl(
       fun({Detail, Usage, [Cmd|_]=Spec, Keys, Flags, Fun}, BaseUsage) ->
-              %% TODO So much use of io_lib offends me.
+              %% TODO Is there a more structured way to define this data for clique?
               FullUsage = io_lib:format("~s~n    ~s~n", [Usage, Detail]),
               true = clique:register_usage(Prefix ++ [Cmd], FullUsage),
               ok = clique:register_command(Prefix ++ Spec, Keys, Flags, Fun),
@@ -125,23 +125,23 @@ register_print_ciphers() ->
 register_add_user() ->
     {"Add a user called <user>.",
      "add-user <user> [<option>=<value> [...]]",
-    ["add-user", '*'], %% Cmd
-    [?groups_arg, ?password_arg], %% KeySpecs
-    [], %% FlagSpecs
+    ["add-user", '*'],
+    [?groups_arg, ?password_arg],
+    [],
     fun(C, O, F) -> add_user(C, atom_keys_to_strings(O), F) end}.
 
 register_alter_user() ->
     {"Alter a user called <user>.",
      "alter-user <user> [<option>=<value> [...]]",
-    ["alter-user", '*'], %% Cmd
-    [?groups_arg, ?password_arg], %% KeySpecs
-    [], %% FlagSpecs
+    ["alter-user", '*'],
+    [?groups_arg, ?password_arg],
+    [],
     fun(C, O, F) -> alter_user(C, atom_keys_to_strings(O), F) end }.
 
 register_del_user() ->
     {"Delete a user called <user>.",
      "del-user <user>",
-    ["del-user", '*'], %% Cmd
+    ["del-user", '*'],
     [],
     [],
     fun del_user/3 }.
@@ -149,17 +149,17 @@ register_del_user() ->
 register_add_group() ->
     {"Add a group called <group>.",
      "add-group <group> [<option>=<value> [...]]",
-    ["add-group", '*'], %% Cmd
-    [?groups_arg], %% KeySpecs
-    [], %% FlagSpecs
+    ["add-group", '*'],
+    [?groups_arg],
+    [],
     fun(C, O, F) -> add_group(C, atom_keys_to_strings(O), F) end }.
 
 register_alter_group() ->
     {"Alter a group called <group>.",
      "alter-group <group> [<option>=<value> [...]]",
-    ["alter-group", '*'], %% Cmd
-    [?groups_arg], %% KeySpecs
-    [], %% FlagSpecs
+    ["alter-group", '*'],
+    [?groups_arg],
+    [],
     fun(C, O, F) -> alter_group(C, atom_keys_to_strings(O), F) end }.
 
 register_del_group() ->
@@ -173,16 +173,16 @@ register_del_group() ->
 register_add_source() ->
     {"Add a <source> (e.g. 'password') for <CIDR> to a list of <users> or 'all'.",
      "add-source all|<users> <CIDR> <source> [<option>=<value> [...]]",
-    ["add-source", '*', '*', '*'], %% Cmd
-    [], %% TODO Some Arg specs definitely. what options are allowed?
+    ["add-source", '*', '*', '*'],
+    [],
     [],
     fun add_source/3 }.
 
 register_del_source() ->
     {"Delete source <CIDR> for 'all' users or only <users>.",
      "del-source all|<users> <CIDR>",
-    ["del-source", '*', '*'], %% Cmd,
-    [], %% TODO Some Arg specs definitely. what options are allowed?
+    ["del-source", '*', '*'],
+    [],
     [],
     fun del_source/3 }.
 
