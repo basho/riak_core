@@ -29,7 +29,7 @@
 %% order information.
 %%
 %% For further reading, visit the
-%% <a href="https://github.com/ricardobcl/Dotted-Version-Vectors/tree/ompact">github page</a>.
+%% <a href="https://github.com/ricardobcl/Dotted-Version-Vectors">github page</a>.
 %% @end  
 %%
 %% @reference
