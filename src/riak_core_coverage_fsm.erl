@@ -33,7 +33,7 @@
 %%      the module implementing this behavior.
 %%
 %%      Modules implementing this behavior should return
-%%      a 5 member tuple from their init function that looks
+%%      a 9 member tuple from their init function that looks
 %%      like this:
 %%
 %%         `{Request, VNodeSelector, NVal, PrimaryVNodeCoverage,
@@ -44,22 +44,22 @@
 %%      <ul>
 %%      <li>Request - An opaque data structure that is used by
 %%        the VNode to implement the specific coverage request.</li>
-%%      <li>VNodeSelector - Either the atom `all' to indicate that
-%%        enough VNodes must be available to achieve a minimal
-%%        covering set or `allup' to use whatever VNodes are
-%%        available even if they do not represent a fully covering
-%%        set or the tuple {colocated, Module} where Module is the name of
-%%        a module that exposes a function create_plan/5 for data that is
-%%        colocated in some way (eg a TimeSeries or Geohash).</li>
+%%      <li>VNodeSelector - If using the standard riak_core_coverage_plan
+%%          module, 'all' for all VNodes or 'allup' for all reachable.
+%%          If using an alternative coverage plan generator, whatever
+%%          value is useful to its `create_plan' function; will be passed
+%%          as the first argument.</li>
 %%      <li>NVal - Indicates the replication factor and is used to
 %%        accurately create a minimal covering set of VNodes.</li>
 %%      <li>PrimaryVNodeCoverage - The number of primary VNodes
 %%      from the preference list to use in creating the coverage
-%%      plan.</li>
+%%      plan. Typically just 1.</li>
 %%      <li>NodeCheckService - The service to use to check for available
 %%      nodes (e.g. riak_kv).</li>
 %%      <li>VNodeMaster - The atom to use to reach the vnode master module.</li>
 %%      <li>Timeout - The timeout interval for the coverage request.</li>
+%%      <li>PlannerMod - The module which defines `create_plan' and optionally
+%%          functions to support a coverage query API</li>
 %%      <li>State - The initial state for the module.</li>
 %%      </ul>
 -module(riak_core_coverage_fsm).
@@ -104,6 +104,8 @@
 -type pvc() :: all | pos_integer().
 -type request() :: tuple().
 -type vnode_selector() :: all | allup.
+-type index() :: chash:index_as_int().
+
 -record(state, {coverage_vnodes :: [{non_neg_integer(), node()}],
                 mod :: atom(),
                 mod_state :: mod_state(),
@@ -238,11 +240,27 @@ maybe_start_timeout_timer(Timeout) ->
     ok.
 
 %% @private
-%% It is the planner module's responsibility to determine whether this
-%% is a new request necessitating a new plan, or whether Target is in
-%% fact a predefined chunk of a coverage plan to be interpreted
+find_plan(_Mod, #vnode_coverage{}=Plan, _NVal, _PVC, _ReqId, _Service,
+          _Request) ->
+    interpret_plan(Plan);
 find_plan(Mod, Target, NVal, PVC, ReqId, Service, Request) ->
     Mod:create_plan(Target, NVal, PVC, ReqId, Service, Request).
+
+%% @private
+%% Take a `vnode_coverage' record and interpret it as a mini coverage plan
+-spec interpret_plan(vnode_coverage()) ->
+                            {list({index(), node()}),
+                             list({index(), list(index())|tuple()})}.
+interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
+                               subpartition={Mask, BSL}}) ->
+    {[{TargetHash, node()}], [{TargetHash, {Mask, BSL}}]};
+interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
+                               partition_filters=[]}) ->
+    {[{TargetHash, node()}], []};
+interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
+                            partition_filters=HashFilters}) ->
+    {[{TargetHash, node()}], [{TargetHash, HashFilters}]}.
+
 
 %% @private
 initialize(timeout, StateData0=#state{mod=Mod,

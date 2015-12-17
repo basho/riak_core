@@ -149,8 +149,6 @@
                   pos_integer(),
                   req_id(), atom(), term()) ->
                          {error, term()} | coverage_plan().
-create_plan(#vnode_coverage{}=Plan, _NVal, _PVC, _ReqId, _Service, _Request) ->
-    interpret_plan(Plan);
 create_plan(VNodeTarget, NVal, PVC, ReqId, Service, _Request) ->
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
     create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service,
@@ -217,22 +215,6 @@ replace_subpartition_chunk(VnodeIdx, Node, {Mask, Bits}, NVal,
     replace_subpartition_chunk(VnodeIdx, Node, {Mask, Bits}, NVal,
                                ReqId, DownNodes, Service, CHBin,
                                ?AVAIL_NODE_FUN).
-
-%% @doc Take a `vnode_coverage' record and interpret it as
-%%      needed by `riak_core_coverage_fsm:initialize'
--spec interpret_plan(vnode_coverage()) ->
-                            {list({index(), node()}),
-                             list({index(), list(index())|tuple()})}.
-interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
-                               subpartition={Mask, BSL}}) ->
-    {[{TargetHash, node()}], [{TargetHash, {Mask, BSL}}]};
-interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
-                               partition_filters=[]}) ->
-    {[{TargetHash, node()}], []};
-interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
-                            partition_filters=HashFilters}) ->
-    {[{TargetHash, node()}], [{TargetHash, HashFilters}]}.
-
 
 %% ====================================================================
 %% Internal functions
