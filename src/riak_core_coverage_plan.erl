@@ -97,6 +97,10 @@
 -export([create_plan/6, create_subpartition_plan/6]).
 -export([replace_subpartition_chunk/7, replace_traditional_chunk/7]).
 
+%% For other riak_core applications' coverage plan modules
+-export([identify_unavailable_vnodes/3, identify_unavailable_vnodes/4]).
+-export([add_offset/3]).
+
 -type ring_size() :: pos_integer().
 
 -type index() :: chash:index_as_int().
@@ -215,6 +219,33 @@ replace_subpartition_chunk(VnodeIdx, Node, {Mask, Bits}, NVal,
     replace_subpartition_chunk(VnodeIdx, Node, {Mask, Bits}, NVal,
                                ReqId, DownNodes, Service, CHBin,
                                ?AVAIL_NODE_FUN).
+
+%% ====================================================================
+%% Internal functions that are useful for other riak_core applications
+%% that need to generate custom coverage plans
+%% ====================================================================
+
+
+-spec identify_unavailable_vnodes(chashbin:chashbin(), pos_integer(), atom()) ->
+                                         list(vnode_id()).
+identify_unavailable_vnodes(CHBin, RingSize, Service) ->
+    identify_unavailable_vnodes(CHBin, RingSize, Service, ?AVAIL_NODE_FUN).
+
+-spec identify_unavailable_vnodes(chashbin:chashbin(), pos_integer(), atom(),
+                                  fun((atom(), binary()) -> list(node()))) ->
+                                         list(vnode_id()).
+identify_unavailable_vnodes(CHBin, RingSize, Service, AvailNodeFun) ->
+    %% Get a list of the VNodes owned by any unavailable nodes
+    [{vnode_id, index_to_id(Index, RingSize), RingSize} ||
+        {Index, _Node}
+            <- riak_core_apl:offline_owners(
+                 AvailNodeFun(Service, CHBin), CHBin)].
+
+%% Adding an offset while keeping the result inside [0, Top). Adding
+%% Top to the left of `rem' allows offset to be negative without
+%% violating the lower bound of zero
+add_offset(Position, Offset, Top) ->
+    (Position + (Top + Offset)) rem Top.
 
 %% ====================================================================
 %% Internal functions
@@ -569,13 +600,6 @@ map_pvc_vnodes([{VnodeIdx, Node}|Tail], SubpID, PVC, Accum) ->
 
 
 %% @private
-%% Adding an offset while keeping the result inside [0, Top). Adding
-%% Top to the left of `rem' allows offset to be negative without
-%% violating the lower bound of zero
-add_offset(Position, Offset, Top) ->
-    (Position + (Top + Offset)) rem Top.
-
-%% @private
 increment_vnode({vnode_id, Position, RingSize}, Offset) ->
     {vnode_id, add_offset(Position, Offset, RingSize), RingSize}.
 
@@ -584,17 +608,6 @@ list_all_vnode_ids(RingSize) ->
     lists:map(fun(Id) -> {vnode_id, Id, RingSize} end,
               lists:seq(0, RingSize - 1)).
 
-
-%% @private
--spec identify_unavailable_vnodes(chashbin:chashbin(), pos_integer(), atom(),
-                                  fun((atom(), binary()) -> list(node()))) ->
-                                         list(vnode_id()).
-identify_unavailable_vnodes(CHBin, RingSize, Service, AvailNodeFun) ->
-    %% Get a list of the VNodes owned by any unavailable nodes
-    [{vnode_id, index_to_id(Index, RingSize), RingSize} ||
-        {Index, _Node}
-            <- riak_core_apl:offline_owners(
-                 AvailNodeFun(Service, CHBin), CHBin)].
 
 %% @private
 %% Note that these Id values are tagged tuples, not integers
