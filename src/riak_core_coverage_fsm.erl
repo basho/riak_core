@@ -109,7 +109,10 @@ behaviour_info(_) ->
                 mod_state :: tuple(),
                 n_val :: pos_integer(),
                 node_check_service :: module(),
-                vnode_selector :: vnode_selector() | vnode_coverage() | {colocated, module()},
+                %% `vnode_selector' can be any useful value for different
+                %% `riak_core' applications that define their own coverage
+                %% plan module
+                vnode_selector :: vnode_selector() | vnode_coverage() | term(),
                 pvc :: all | pos_integer(), % primary vnode coverage
                 request :: tuple(),
                 req_id :: req_id(),
@@ -118,7 +121,8 @@ behaviour_info(_) ->
                 timeout :: timeout(),
                 vnode_master :: atom(),
                 plan_fun :: function(),
-                process_fun :: function()
+                process_fun :: function(),
+                coverage_plan_mod :: module()
                }).
 
 %% ===================================================================
@@ -161,7 +165,7 @@ init([Mod,
       RequestArgs]) ->
     Exports = Mod:module_info(exports),
     {Request, VNodeSelector, NVal, PrimaryVNodeCoverage,
-     NodeCheckService, VNodeMaster, Timeout, ModState} =
+     NodeCheckService, VNodeMaster, Timeout, PlannerMod, ModState} =
         Mod:init(From, RequestArgs),
     maybe_start_timeout_timer(Timeout),
     PlanFun = plan_callback(Mod, Exports),
@@ -177,7 +181,8 @@ init([Mod,
                        timeout=infinity,
                        vnode_master=VNodeMaster,
                        plan_fun = PlanFun,
-                       process_fun = ProcessFun},
+                       process_fun = ProcessFun,
+                       coverage_plan_mod = PlannerMod},
     {ok, initialize, StateData, 0};
 init({test, Args, StateProps}) ->
     %% Call normal init
@@ -206,20 +211,11 @@ maybe_start_timeout_timer(Timeout) ->
     ok.
 
 %% @private
-find_plan(#vnode_coverage{}=Plan, _NVal, _PVC, _ReqId, _Service, _Request) ->
-    riak_core_coverage_plan:interpret_plan(Plan);
-find_plan({colocated, CMod}, NVal, PVC, ReqId, Service, Request) ->
-    CMod:create_plan(NVal,
-                     PVC,
-                     ReqId,
-                     Service,
-                     Request);
-find_plan(VNodeTarget, NVal, PVC, ReqId, Service, _Request) ->
-    riak_core_coverage_plan:create_plan(VNodeTarget,
-                                        NVal,
-                                        PVC,
-                                        ReqId,
-                                        Service).
+%% It is the planner module's responsibility to determine whether this
+%% is a new request necessitating a new plan, or whether Target is in
+%% fact a predefined chunk of a coverage plan to be interpreted
+find_plan(Mod, Target, NVal, PVC, ReqId, Service, Request) ->
+    Mod:create_plan(Target, NVal, PVC, ReqId, Service, Request).
 
 %% @private
 initialize(timeout, StateData0=#state{mod=Mod,
@@ -232,8 +228,10 @@ initialize(timeout, StateData0=#state{mod=Mod,
                                       req_id=ReqId,
                                       timeout=Timeout,
                                       vnode_master=VNodeMaster,
-                                      plan_fun = PlanFun}) ->
-    CoveragePlan = find_plan(VNodeSelector,
+                                      plan_fun = PlanFun,
+                                      coverage_plan_mod = PlanMod}) ->
+    CoveragePlan = find_plan(PlanMod,
+                             VNodeSelector,
                              NVal,
                              PVC,
                              ReqId,

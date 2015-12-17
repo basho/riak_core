@@ -94,8 +94,7 @@
 -endif.
 
 %% API
--export([create_plan/5, create_subpartition_plan/6]).
--export([interpret_plan/1]).
+-export([create_plan/6, create_subpartition_plan/6]).
 -export([replace_subpartition_chunk/7, replace_traditional_chunk/7]).
 
 -type ring_size() :: pos_integer().
@@ -148,9 +147,11 @@
 -spec create_plan(vnode_selector(),
                   pos_integer(),
                   pos_integer(),
-                  req_id(), atom()) ->
+                  req_id(), atom(), term()) ->
                          {error, term()} | coverage_plan().
-create_plan(VNodeTarget, NVal, PVC, ReqId, Service) ->
+create_plan(#vnode_coverage{}=Plan, _NVal, _PVC, _ReqId, _Service, _Request) ->
+    interpret_plan(Plan);
+create_plan(VNodeTarget, NVal, PVC, ReqId, Service, _Request) ->
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
     create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service,
                             CHBin, ?AVAIL_NODE_FUN).
@@ -177,13 +178,22 @@ replace_traditional_chunk(VnodeIdx, Node, Filters, NVal,
 %%      originally designed for parallel extraction of data via 2i.
 -spec create_subpartition_plan('all'|'allup',
                                pos_integer(),
-                               pos_integer(),
+                               pos_integer() | {pos_integer(), pos_integer()},
                                pos_integer(),
                                req_id(), atom()) ->
                                       {error, term()} | subp_plan().
+create_subpartition_plan(VNodeTarget, NVal, {MinPar, RingSize}, PVC, ReqId, Service) ->
+    Count =
+        if
+            MinPar =< RingSize ->
+                RingSize;
+            true ->
+                next_power_of_two(MinPar)
+        end,
+    create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service);
 create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service) ->
-    %% IMPORTANT: `Count' is assumed to be a power of 2 as determined
-    %% by `riak_client'. Anything else will behave badly.
+    %% IMPORTANT: `Count' is assumed to be a power of 2. Anything else
+    %% will behave badly.
     {ok, ChashBin} = riak_core_ring_manager:get_chash_bin(),
     create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service,
                              ChashBin, ?AVAIL_NODE_FUN).
@@ -758,6 +768,17 @@ covers(KeySpace, CoversKeys) ->
 %% creating a coverage plan for subpartitions
 data_bits(PartitionCount) ->
     160 - round(math:log(PartitionCount) / math:log(2)).
+
+%% @private
+
+%% Crimes against computerkind. Finds the next value of two greater
+%% than the requested value using string manipulation.
+next_power_of_two(X) ->
+    Next = 1 bsl length(hd(io_lib:format("~.2b", [X]))),
+    if X * 2 =:= Next -> X;
+       true -> Next
+    end.
+
 
 %% ===================================================================
 %% EUnit tests
