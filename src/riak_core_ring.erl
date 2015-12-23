@@ -357,7 +357,7 @@ fresh(RingSize, NodeName) ->
     VClock=vclock:increment(NodeName, vclock:fresh()),
     GossipVsn = riak_core_gossip:gossip_version(),
     ?CHSTATE{nodename=NodeName,
-             clustername={NodeName, erlang:now()},
+             clustername={NodeName, riak_core_util:unique_seed()},
              members=[{NodeName, {valid, VClock, [{gossip_vsn, GossipVsn}]}}],
              chring=chash:fresh(RingSize, NodeName),
              next=[],

@@ -223,7 +223,7 @@ bucket_type_iterator() ->
 %%%===================================================================
 
 reassign_indices(CState) ->
-    reassign_indices(CState, [], erlang:now(), fun no_log/2).
+    reassign_indices(CState, [], riak_core_util:unique_seed(), fun no_log/2).
 
 %%%===================================================================
 %%% Internal API helpers
@@ -250,7 +250,7 @@ maybe_filter_inactive_type(true, Default, Props) ->
 
 init([]) ->
     schedule_tick(),
-    {ok, #state{changes=[], seed=erlang:now()}}.
+    {ok, #state{changes=[], seed=riak_core_util:unique_seed()}}.
 
 handle_call(clear, _From, State) ->
     State2 = clear_staged(State),
@@ -388,7 +388,7 @@ commit_staged(State) ->
         {ok, _} ->
             State2 = State#state{next_ring=undefined,
                                  changes=[],
-                                 seed=erlang:now()},
+                                 seed=riak_core_util:unique_seed()},
             {ok, State2};
         not_changed ->
             {error, State};
@@ -438,7 +438,7 @@ maybe_commit_staged(Ring, NextRing, #state{next_ring=PlannedRing}) ->
 %%      call {@link clear/0}.
 clear_staged(State) ->
     remove_joining_nodes(),
-    State#state{changes=[], seed=erlang:now()}.
+    State#state{changes=[], seed=riak_core_util:unique_seed()}.
 
 %% @private
 remove_joining_nodes() ->
@@ -662,7 +662,7 @@ maybe_force_ring_update(Ring) ->
     end.
 
 do_maybe_force_ring_update(Ring) ->
-    case compute_next_ring([], erlang:now(), Ring) of
+    case compute_next_ring([], riak_core_util:unique_seed(), Ring) of
         {ok, NextRing} ->
             case same_plan(Ring, NextRing) of
                 false ->
@@ -1109,7 +1109,7 @@ internal_ring_changed(Node, CState) ->
     %% Set cluster name if it is undefined
     case {IsClaimant, riak_core_ring:cluster_name(CState5)} of
         {true, undefined} ->
-            ClusterName = {Node, erlang:now()},
+            ClusterName = {Node, riak_core_util:unique_seed()},
             {_,_} = riak_core_util:rpc_every_member(riak_core_ring_manager,
                                                     set_cluster_name,
                                                     [ClusterName],
@@ -1143,7 +1143,7 @@ do_claimant_quiet(Node, CState, Replacing, Seed) ->
     do_claimant(Node, CState, Replacing, Seed, fun no_log/2).
 
 do_claimant(Node, CState, Log) ->
-    do_claimant(Node, CState, [], erlang:now(), Log).
+    do_claimant(Node, CState, [], riak_core_util:unique_seed(), Log).
 
 do_claimant(Node, CState, Replacing, Seed, Log) ->
     AreJoining = are_joining_nodes(CState),
