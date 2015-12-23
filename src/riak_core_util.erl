@@ -67,7 +67,8 @@
          make_fold_req/4,
          make_newest_fold_req/1,
          proxy_spawn/1,
-         proxy/2
+         proxy/2,
+         unique_seed/0
         ]).
 
 -include("riak_core_vnode.hrl").
@@ -942,3 +943,6 @@ proxy_spawn_test() ->
 
 -endif.
 
+unique_seed() ->
+    {erlang:unique_integer([positive]), erlang:unique_integer([positive]), 
+     erlang:unique_integer([positive])}.

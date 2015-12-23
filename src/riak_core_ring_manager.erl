@@ -222,7 +222,7 @@ force_update() ->
     ring_trans(
       fun(Ring, _) ->
               NewRing = riak_core_ring:update_member_meta(node(), Ring, node(),
-                                                          unused, now()),
+                                                          unused, riak_core_util:unique_seed()),
               {new_ring, NewRing}
       end, []),
     ok.
