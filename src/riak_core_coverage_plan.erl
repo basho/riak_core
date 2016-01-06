@@ -766,14 +766,10 @@ data_bits(PartitionCount) ->
 
 %% @private
 
-%% Crimes against computerkind. Finds the next value of two greater
-%% than the requested value using string manipulation.
 next_power_of_two(X) ->
-    Next = 1 bsl length(hd(io_lib:format("~.2b", [X]))),
-    if X * 2 =:= Next -> X;
-       true -> Next
-    end.
+    round(math:pow(2, round(log2(X - 1) + 0.5))).
 
+log2(X) -> math:log(X) / math:log(2.0).
 
 %% ===================================================================
 %% EUnit tests
