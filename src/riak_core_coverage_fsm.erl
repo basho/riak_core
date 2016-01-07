@@ -251,15 +251,17 @@ find_plan(Mod, Target, NVal, PVC, ReqId, Service, Request) ->
 -spec interpret_plan(vnode_coverage()) ->
                             {list({index(), node()}),
                              list({index(), list(index())|tuple()})}.
-interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
-                               subpartition={Mask, BSL}}) ->
-    {[{TargetHash, node()}], [{TargetHash, {Mask, BSL}}]};
-interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
-                               partition_filters=[]}) ->
+interpret_plan(#vnode_coverage{vnode_identifier  = TargetHash,
+                               partition_filters = [],
+                               subpartition = undefined}) ->
     {[{TargetHash, node()}], []};
-interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
-                            partition_filters=HashFilters}) ->
-    {[{TargetHash, node()}], [{TargetHash, HashFilters}]}.
+interpret_plan(#vnode_coverage{vnode_identifier  = TargetHash,
+                               partition_filters = HashFilters,
+                               subpartition = undefined}) ->
+    {[{TargetHash, node()}], [{TargetHash, HashFilters}]};
+interpret_plan(#vnode_coverage{vnode_identifier = TargetHash,
+                               subpartition     = {Mask, BSL}}) ->
+    {[{TargetHash, node()}], [{TargetHash, {Mask, BSL}}]}.
 
 
 %% @private
