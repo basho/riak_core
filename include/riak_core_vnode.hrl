@@ -46,7 +46,7 @@
 -record(vnode_coverage, {
           vnode_identifier = 0 :: non_neg_integer(),
           partition_filters = [] :: [non_neg_integer()],
-          subpartition = undefined :: subpartition()
+          subpartition = undefined :: undefined | subpartition()
          }).
 
 -type vnode_selector() :: all | allup.
