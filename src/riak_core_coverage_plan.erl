@@ -2,7 +2,7 @@
 %%
 %% riak_core_coverage_plan: Create a plan to cover a minimal set of VNodes.
 %%
-%% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2015 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -94,9 +94,12 @@
 -endif.
 
 %% API
--export([create_plan/5, create_subpartition_plan/6]).
--export([interpret_plan/1]).
+-export([create_plan/6, create_subpartition_plan/6]).
 -export([replace_subpartition_chunk/7, replace_traditional_chunk/7]).
+
+%% For other riak_core applications' coverage plan modules
+-export([identify_unavailable_vnodes/3, identify_unavailable_vnodes/4]).
+-export([add_offset/3]).
 
 -type ring_size() :: pos_integer().
 
@@ -148,9 +151,9 @@
 -spec create_plan(vnode_selector(),
                   pos_integer(),
                   pos_integer(),
-                  req_id(), atom()) ->
+                  req_id(), atom(), term()) ->
                          {error, term()} | coverage_plan().
-create_plan(VNodeTarget, NVal, PVC, ReqId, Service) ->
+create_plan(VNodeTarget, NVal, PVC, ReqId, Service, _Request) ->
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
     create_traditional_plan(VNodeTarget, NVal, PVC, ReqId, Service,
                             CHBin, ?AVAIL_NODE_FUN).
@@ -177,13 +180,22 @@ replace_traditional_chunk(VnodeIdx, Node, Filters, NVal,
 %%      originally designed for parallel extraction of data via 2i.
 -spec create_subpartition_plan('all'|'allup',
                                pos_integer(),
-                               pos_integer(),
+                               pos_integer() | {pos_integer(), pos_integer()},
                                pos_integer(),
                                req_id(), atom()) ->
                                       {error, term()} | subp_plan().
+create_subpartition_plan(VNodeTarget, NVal, {MinPar, RingSize}, PVC, ReqId, Service) ->
+    Count =
+        if
+            MinPar =< RingSize ->
+                RingSize;
+            true ->
+                next_power_of_two(MinPar)
+        end,
+    create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service);
 create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service) ->
-    %% IMPORTANT: `Count' is assumed to be a power of 2 as determined
-    %% by `riak_client'. Anything else will behave badly.
+    %% IMPORTANT: `Count' is assumed to be a power of 2. Anything else
+    %% will behave badly.
     {ok, ChashBin} = riak_core_ring_manager:get_chash_bin(),
     create_subpartition_plan(VNodeTarget, NVal, Count, PVC, ReqId, Service,
                              ChashBin, ?AVAIL_NODE_FUN).
@@ -208,21 +220,32 @@ replace_subpartition_chunk(VnodeIdx, Node, {Mask, Bits}, NVal,
                                ReqId, DownNodes, Service, CHBin,
                                ?AVAIL_NODE_FUN).
 
-%% @doc Take a `vnode_coverage' record and interpret it as
-%%      needed by `riak_core_coverage_fsm:initialize'
--spec interpret_plan(vnode_coverage()) ->
-                            {list({index(), node()}),
-                             list({index(), list(index())|tuple()})}.
-interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
-                               subpartition={Mask, BSL}}) ->
-    {[{TargetHash, node()}], [{TargetHash, {Mask, BSL}}]};
-interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
-                               partition_filters=[]}) ->
-    {[{TargetHash, node()}], []};
-interpret_plan(#vnode_coverage{vnode_identifier=TargetHash,
-                            partition_filters=HashFilters}) ->
-    {[{TargetHash, node()}], [{TargetHash, HashFilters}]}.
+%% ====================================================================
+%% Internal functions that are useful for other riak_core applications
+%% that need to generate custom coverage plans
+%% ====================================================================
 
+
+-spec identify_unavailable_vnodes(chashbin:chashbin(), pos_integer(), atom()) ->
+                                         list(vnode_id()).
+identify_unavailable_vnodes(CHBin, RingSize, Service) ->
+    identify_unavailable_vnodes(CHBin, RingSize, Service, ?AVAIL_NODE_FUN).
+
+-spec identify_unavailable_vnodes(chashbin:chashbin(), pos_integer(), atom(),
+                                  fun((atom(), binary()) -> list(node()))) ->
+                                         list(vnode_id()).
+identify_unavailable_vnodes(CHBin, RingSize, Service, AvailNodeFun) ->
+    %% Get a list of the VNodes owned by any unavailable nodes
+    [{vnode_id, index_to_id(Index, RingSize), RingSize} ||
+        {Index, _Node}
+            <- riak_core_apl:offline_owners(
+                 AvailNodeFun(Service, CHBin), CHBin)].
+
+%% Adding an offset while keeping the result inside [0, Top). Adding
+%% Top to the left of `rem' allows offset to be negative without
+%% violating the lower bound of zero
+add_offset(Position, Offset, Top) ->
+    (Position + (Top + Offset)) rem Top.
 
 %% ====================================================================
 %% Internal functions
@@ -577,13 +600,6 @@ map_pvc_vnodes([{VnodeIdx, Node}|Tail], SubpID, PVC, Accum) ->
 
 
 %% @private
-%% Adding an offset while keeping the result inside [0, Top). Adding
-%% Top to the left of `rem' allows offset to be negative without
-%% violating the lower bound of zero
-add_offset(Position, Offset, Top) ->
-    (Position + (Top + Offset)) rem Top.
-
-%% @private
 increment_vnode({vnode_id, Position, RingSize}, Offset) ->
     {vnode_id, add_offset(Position, Offset, RingSize), RingSize}.
 
@@ -592,17 +608,6 @@ list_all_vnode_ids(RingSize) ->
     lists:map(fun(Id) -> {vnode_id, Id, RingSize} end,
               lists:seq(0, RingSize - 1)).
 
-
-%% @private
--spec identify_unavailable_vnodes(chashbin:chashbin(), pos_integer(), atom(),
-                                  fun((atom(), binary()) -> list(node()))) ->
-                                         list(vnode_id()).
-identify_unavailable_vnodes(CHBin, RingSize, Service, AvailNodeFun) ->
-    %% Get a list of the VNodes owned by any unavailable nodes
-    [{vnode_id, index_to_id(Index, RingSize), RingSize} ||
-        {Index, _Node}
-            <- riak_core_apl:offline_owners(
-                 AvailNodeFun(Service, CHBin), CHBin)].
 
 %% @private
 %% Note that these Id values are tagged tuples, not integers
@@ -758,6 +763,13 @@ covers(KeySpace, CoversKeys) ->
 %% creating a coverage plan for subpartitions
 data_bits(PartitionCount) ->
     160 - round(math:log(PartitionCount) / math:log(2)).
+
+%% @private
+
+next_power_of_two(X) ->
+    round(math:pow(2, round(log2(X - 1) + 0.5))).
+
+log2(X) -> math:log(X) / math:log(2.0).
 
 %% ===================================================================
 %% EUnit tests

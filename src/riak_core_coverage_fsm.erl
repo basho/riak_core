@@ -3,7 +3,7 @@
 %% riak_core_coverage_fsm: Distribute work to a covering set of VNodes.
 %%
 %%
-%% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2015 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -33,7 +33,7 @@
 %%      the module implementing this behavior.
 %%
 %%      Modules implementing this behavior should return
-%%      a 5 member tuple from their init function that looks
+%%      a 9 member tuple from their init function that looks
 %%      like this:
 %%
 %%         `{Request, VNodeSelector, NVal, PrimaryVNodeCoverage,
@@ -44,22 +44,22 @@
 %%      <ul>
 %%      <li>Request - An opaque data structure that is used by
 %%        the VNode to implement the specific coverage request.</li>
-%%      <li>VNodeSelector - Either the atom `all' to indicate that
-%%        enough VNodes must be available to achieve a minimal
-%%        covering set or `allup' to use whatever VNodes are
-%%        available even if they do not represent a fully covering
-%%        set or the tuple {colocated, Module} where Module is the name of
-%%        a module that exposes a function create_plan/5 for data that is
-%%        colocated in some way (eg a TimeSeries or Geohash).</li>
+%%      <li>VNodeSelector - If using the standard riak_core_coverage_plan
+%%          module, 'all' for all VNodes or 'allup' for all reachable.
+%%          If using an alternative coverage plan generator, whatever
+%%          value is useful to its `create_plan' function; will be passed
+%%          as the first argument.</li>
 %%      <li>NVal - Indicates the replication factor and is used to
 %%        accurately create a minimal covering set of VNodes.</li>
 %%      <li>PrimaryVNodeCoverage - The number of primary VNodes
 %%      from the preference list to use in creating the coverage
-%%      plan.</li>
+%%      plan. Typically just 1.</li>
 %%      <li>NodeCheckService - The service to use to check for available
 %%      nodes (e.g. riak_kv).</li>
 %%      <li>VNodeMaster - The atom to use to reach the vnode master module.</li>
 %%      <li>Timeout - The timeout interval for the coverage request.</li>
+%%      <li>PlannerMod - The module which defines `create_plan' and optionally
+%%          functions to support a coverage query API</li>
 %%      <li>State - The initial state for the module.</li>
 %%      </ul>
 -module(riak_core_coverage_fsm).
@@ -103,13 +103,17 @@ behaviour_info(_) ->
 
 -type req_id() :: non_neg_integer().
 -type from() :: {atom(), req_id(), pid()}.
+-type index() :: chash:index_as_int().
 
 -record(state, {coverage_vnodes :: [{non_neg_integer(), node()}],
                 mod :: atom(),
                 mod_state :: tuple(),
                 n_val :: pos_integer(),
                 node_check_service :: module(),
-                vnode_selector :: vnode_selector() | vnode_coverage() | {colocated, module()},
+                %% `vnode_selector' can be any useful value for different
+                %% `riak_core' applications that define their own coverage
+                %% plan module
+                vnode_selector :: vnode_selector() | vnode_coverage() | term(),
                 pvc :: all | pos_integer(), % primary vnode coverage
                 request :: tuple(),
                 req_id :: req_id(),
@@ -118,7 +122,8 @@ behaviour_info(_) ->
                 timeout :: timeout(),
                 vnode_master :: atom(),
                 plan_fun :: function(),
-                process_fun :: function()
+                process_fun :: function(),
+                coverage_plan_mod :: module()
                }).
 
 %% ===================================================================
@@ -161,7 +166,7 @@ init([Mod,
       RequestArgs]) ->
     Exports = Mod:module_info(exports),
     {Request, VNodeSelector, NVal, PrimaryVNodeCoverage,
-     NodeCheckService, VNodeMaster, Timeout, ModState} =
+     NodeCheckService, VNodeMaster, Timeout, PlannerMod, ModState} =
         Mod:init(From, RequestArgs),
     maybe_start_timeout_timer(Timeout),
     PlanFun = plan_callback(Mod, Exports),
@@ -177,7 +182,8 @@ init([Mod,
                        timeout=infinity,
                        vnode_master=VNodeMaster,
                        plan_fun = PlanFun,
-                       process_fun = ProcessFun},
+                       process_fun = ProcessFun,
+                       coverage_plan_mod = PlannerMod},
     {ok, initialize, StateData, 0};
 init({test, Args, StateProps}) ->
     %% Call normal init
@@ -206,20 +212,29 @@ maybe_start_timeout_timer(Timeout) ->
     ok.
 
 %% @private
-find_plan(#vnode_coverage{}=Plan, _NVal, _PVC, _ReqId, _Service, _Request) ->
-    riak_core_coverage_plan:interpret_plan(Plan);
-find_plan({colocated, CMod}, NVal, PVC, ReqId, Service, Request) ->
-    CMod:create_plan(NVal,
-                     PVC,
-                     ReqId,
-                     Service,
-                     Request);
-find_plan(VNodeTarget, NVal, PVC, ReqId, Service, _Request) ->
-    riak_core_coverage_plan:create_plan(VNodeTarget,
-                                        NVal,
-                                        PVC,
-                                        ReqId,
-                                        Service).
+find_plan(_Mod, #vnode_coverage{}=Plan, _NVal, _PVC, _ReqId, _Service,
+          _Request) ->
+    interpret_plan(Plan);
+find_plan(Mod, Target, NVal, PVC, ReqId, Service, Request) ->
+    Mod:create_plan(Target, NVal, PVC, ReqId, Service, Request).
+
+%% @private
+%% Take a `vnode_coverage' record and interpret it as a mini coverage plan
+-spec interpret_plan(vnode_coverage()) ->
+                            {list({index(), node()}),
+                             list({index(), list(index())|tuple()})}.
+interpret_plan(#vnode_coverage{vnode_identifier  = TargetHash,
+                               partition_filters = [],
+                               subpartition = undefined}) ->
+    {[{TargetHash, node()}], []};
+interpret_plan(#vnode_coverage{vnode_identifier  = TargetHash,
+                               partition_filters = HashFilters,
+                               subpartition = undefined}) ->
+    {[{TargetHash, node()}], [{TargetHash, HashFilters}]};
+interpret_plan(#vnode_coverage{vnode_identifier = TargetHash,
+                               subpartition     = {Mask, BSL}}) ->
+    {[{TargetHash, node()}], [{TargetHash, {Mask, BSL}}]}.
+
 
 %% @private
 initialize(timeout, StateData0=#state{mod=Mod,
@@ -232,8 +247,10 @@ initialize(timeout, StateData0=#state{mod=Mod,
                                       req_id=ReqId,
                                       timeout=Timeout,
                                       vnode_master=VNodeMaster,
-                                      plan_fun = PlanFun}) ->
-    CoveragePlan = find_plan(VNodeSelector,
+                                      plan_fun = PlanFun,
+                                      coverage_plan_mod = PlanMod}) ->
+    CoveragePlan = find_plan(PlanMod,
+                             VNodeSelector,
                              NVal,
                              PVC,
                              ReqId,
