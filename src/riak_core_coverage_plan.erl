@@ -94,7 +94,7 @@
 -endif.
 
 %% API
--export([create_plan/6, create_subpartition_plan/6]).
+-export([create_plan/5, create_plan/6, create_subpartition_plan/6]).
 -export([replace_subpartition_chunk/7, replace_traditional_chunk/7]).
 
 %% For other riak_core applications' coverage plan modules
@@ -148,6 +148,17 @@
 
 %% @doc Create Riak's traditional coverage plan to distribute work to
 %%      a minimal set of covering VNodes around the ring.
+-spec create_plan(vnode_selector(),
+                  pos_integer(),
+                  pos_integer(),
+                  req_id(), atom()) ->
+                         {error, term()} | coverage_plan().
+create_plan(VNodeTarget, NVal, PVC, ReqId, Service) ->
+    %% jdaily added a sixth parameter, _Request, which is ignored
+    %% here, apparently used in coverage API work. See
+    %% riak_kv_qry_coverage_plan:create_plan for more clues.
+    create_plan(VNodeTarget, NVal, PVC, ReqId, Service, undefined).
+
 -spec create_plan(vnode_selector(),
                   pos_integer(),
                   pos_integer(),
