@@ -1052,7 +1052,7 @@ exchange_final(_Level, Segments, Local, Remote, AccFun, Acc0, _Opts) ->
                                     {_Id, Segment, Key} = decode(KBin),
                                     Type = key_diff_type(Diff),
                                     {Type, Key}
-                                end || {KBin, Diff} <- Delta],
+                                end || {KBin, Diff} <- Delta, not tombstone_diff(Diff)],
                         AccFun(Keys, Acc)
                 end, Acc0, Segments).
 
@@ -1086,9 +1086,11 @@ compare_segments(Segment, Tree=#state{id=Id}, Remote) ->
                 {Id, Segment, Key} = decode(KBin),
                 Type = key_diff_type(Diff),
                 {Type, Key}
-            end || {KBin, Diff} <- Delta],
+            end || {KBin, Diff} <- Delta, not tombstone_diff(Diff)],
     Keys.
 
+tombstone_diff(Diff) ->
+    key_diff_type(Diff) == tombstone_diff.
 
 key_diff_type({?TOMBSTONE , _}) ->
     tombstone_diff;
