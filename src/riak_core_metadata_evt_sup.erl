@@ -79,7 +79,13 @@ is_type_compiled(BucketType, DDL) when is_binary(BucketType) ->
     case ets:lookup(?TABLE, ?BUCKET_TYPE_PREFIX) of
         [{?BUCKET_TYPE_PREFIX, Pid}] ->
             Handlers = gen_event:which_handlers(Pid),
-            Req = {is_type_compiled, [BucketType, DDL]},
+            %% riak_ts-1.1 had in
+            %% riak_kv_metadata_store_listener:is_type_compiled a
+            %% comparison of DDL objects, so downgrade our DDL for
+            %% that (unnecessary) check to succeed:
+            Req = {is_type_compiled, [BucketType, riak_ql_ddl:downgrade(DDL, v1)]},
+            %% in riak_ts-1.2, DDL object is ignored for the purpose
+            %% of determining its compiled status
             Results = [gen_event:call(Pid, H, Req) || H <- Handlers],
             lists:member(true, Results);
         [] ->
