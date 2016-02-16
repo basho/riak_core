@@ -264,11 +264,8 @@ unwrap_socket({gen_tcp, Socket}) ->
 unwrap_socket(Socket) ->
     Socket.
 
-safe_getopts({sslsocket, _, _} = Socket, Opts) ->
-    ssl:getopts(Socket, Opts);
-
 safe_getopts(Socket, Opts) ->
-    inet:getopts(Socket, Opts).
+    inet:getopts(unwrap_socket(Socket), Opts).
 
 terminate(_Reason, _State) ->
     lager:info("Shutting down TCP Monitor"),
