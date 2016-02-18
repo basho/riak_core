@@ -12,3 +12,9 @@ doc/*
 dialyzer_warnings
 dialyzer_unhandled_warnings
 .rebar
+
+_build/
+data/
+nonode@nohost/
+ring_manager_eunit/
+sim.out

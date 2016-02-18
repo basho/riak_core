@@ -8,8 +8,9 @@
 basic_schema_test() ->
     %% The defaults are defined in ../priv/riak_core.schema. it is the
     %% file under test.
+    io:format(user, ">>>>>>> ~p~n", [file:consult("priv/riak_core.schema")]),
     Config = cuttlefish_unit:generate_templated_config(
-               "../priv/riak_core.schema", [], context()),
+               "priv/riak_core.schema", [], context()),
 
     cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.n_val", 3),
     cuttlefish_unit:assert_config(Config, "riak_core.ring_creation_size", 64),
@@ -39,7 +40,7 @@ invalid_states_test() ->
         {["handoff", "ip"], "0.0.0.0.0"}
     ],
 
-    Config = cuttlefish_unit:generate_templated_config("../priv/riak_core.schema", Conf, context()),
+    Config = cuttlefish_unit:generate_templated_config("priv/riak_core.schema", Conf, context()),
 
     %% Confirm that we made it to validation and test that each expected failure
     %% message is present.
@@ -54,7 +55,7 @@ default_bucket_properties_test() ->
     ],
 
     Config = cuttlefish_unit:generate_templated_config(
-        "../priv/riak_core.schema", Conf, context()),
+        "priv/riak_core.schema", Conf, context()),
 
     cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.n_val", 5),
     ok.
@@ -86,7 +87,7 @@ override_schema_test() ->
         {["vnode_management_timer"], "20s"}
     ],
 
-    Config = cuttlefish_unit:generate_templated_config("../priv/riak_core.schema", Conf, context()),
+    Config = cuttlefish_unit:generate_templated_config("priv/riak_core.schema", Conf, context()),
 
     cuttlefish_unit:assert_config(Config, "riak_core.default_bucket_props.n_val", 4),
     cuttlefish_unit:assert_config(Config, "riak_core.ring_creation_size", 8),

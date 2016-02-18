@@ -4,19 +4,15 @@ PULSE_TESTS = worker_pool_pulse
 
 .PHONY: deps test
 
-all: deps compile
+all: compile
 
 compile: deps
-	./rebar compile
-
-deps:
-	./rebar get-deps
+	./rebar3 compile
 
 clean:
-	./rebar clean
+	./rebar3 clean
 
 distclean: clean
-	./rebar delete-deps
 
 # You should 'clean' before your first run of this target
 # so that deps get built with PULSE where needed.

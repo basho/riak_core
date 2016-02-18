@@ -699,19 +699,38 @@ new_segment_store(Opts, State) ->
     DataDir = case proplists:get_value(segment_path, Opts) of
                   undefined ->
                       Root = "/tmp/anti/level",
-                      <<P:128/integer>> = md5(term_to_binary({erlang:now(), make_ref()})),
+                      <<P:128/integer>> = md5(term_to_binary({erlang:monotonic_time(), make_ref()})),
                       filename:join(Root, integer_to_list(P));
                   SegmentPath ->
                       SegmentPath
               end,
 
-    filelib:ensure_dir(DataDir),
-    Keys = [aae_total_leveldb_mem_percent, aae_total_leveldb_mem,
-            aae_limited_developer_mem, aae_use_bloomfilter, aae_sst_block_size,
-            aae_block_restart_interval, aae_verify_compaction,
-            aae_eleveldb_threads, aae_fadvise_willneed, aae_delete_threshold],
-    Options = open_opts(Keys, [{create_if_missing, true}]),
+    DefaultWriteBufferMin = 4 * 1024 * 1024,
+    DefaultWriteBufferMax = 14 * 1024 * 1024,
+    ConfigVars = get_env(anti_entropy_leveldb_opts,
+                         [{write_buffer_size_min, DefaultWriteBufferMin},
+                          {write_buffer_size_max, DefaultWriteBufferMax}]),
+    Config = orddict:from_list(ConfigVars),
 
+    %% Use a variable write buffer size to prevent against all buffers being
+    %% flushed to disk at once when under a heavy uniform load.
+    WriteBufferMin = proplists:get_value(write_buffer_size_min, Config, DefaultWriteBufferMin),
+    WriteBufferMax = proplists:get_value(write_buffer_size_max, Config, DefaultWriteBufferMax),
+    %% this looks like a really really really bad idea as it depends on how the internal datastricture
+    %% is build .... but we'll keep it for now
+    Now = {erlang:phash2([node()]),
+           erlang:monotonic_time(),
+           erlang:unique_integer()},
+    {Offset, _} = random:uniform_s(1 + WriteBufferMax - WriteBufferMin, Now),
+    WriteBufferSize = WriteBufferMin + Offset,
+    Config2 = orddict:store(write_buffer_size, WriteBufferSize, Config),
+    Config3 = orddict:erase(write_buffer_size_min, Config2),
+    Config4 = orddict:erase(write_buffer_size_max, Config3),
+    Config5 = orddict:store(is_internal_db, true, Config4),
+    Config6 = orddict:store(use_bloomfilter, true, Config5),
+    Options = orddict:store(create_if_missing, true, Config6),
+
+    ok = filelib:ensure_dir(DataDir),
     {ok, Ref} = eleveldb:open(DataDir, Options),
     State#state{ref=Ref, path=DataDir}.
 

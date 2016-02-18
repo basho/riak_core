@@ -61,6 +61,7 @@
          sockname/2,
          sha/1,
          md5/1,
+         seed/0,
          make_fold_req/1,
          make_fold_req/2,
          make_fold_req/4,
@@ -234,6 +235,11 @@ sha(Bin) ->
 md5(Bin) ->
     crypto:md5(Bin).
 -endif.
+
+seed() ->
+    {erlang:phash2([node()]),
+     erlang:monotonic_time(),
+     erlang:unique_integer()}.
 
 %% @spec unique_id_62() -> string()
 %% @doc Create a random identifying integer, returning its string

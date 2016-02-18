@@ -228,7 +228,7 @@ force_update() ->
     ring_trans(
       fun(Ring, _) ->
               NewRing = riak_core_ring:update_member_meta(node(), Ring, node(),
-                                                          unused, now()),
+                                                          unused, erlang:timestamp()),
               {new_ring, NewRing}
       end, []),
     ok.
