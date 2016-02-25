@@ -17,6 +17,7 @@
                   os_mon,
                   basho_stats,
                   eleveldb,
+                  erocksdb,
                   pbkdf2,
                   poolboy,
                   exometer_core,
