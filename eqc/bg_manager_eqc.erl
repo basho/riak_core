@@ -22,7 +22,7 @@
 -ifdef(TEST).
 -ifdef(EQC).
 
--include("riak_core_bg_manager.hrl").
+-include_lib("riak_core/include/riak_core_bg_manager.hrl").
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
 -include_lib("eunit/include/eunit.hrl").

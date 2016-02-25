@@ -1,5 +1,5 @@
 -module(riak_core_schema_tests).
-
+-ifdef(SCHEMA_TESTS).
 -include_lib("eunit/include/eunit.hrl").
 -compile(export_all).
 
@@ -127,3 +127,4 @@ context() ->
         {platform_lib_dir , "./lib"},
         {platform_log_dir , "./log"}
     ].
+-endif.
