@@ -3,7 +3,7 @@
 {application, riak_core,
 [
   {description, "Riak Core"},
-  {vsn, git},
+  {vsn, "2.1.5"},
   {modules, []},
   {registered, []},
   {included_applications, [folsom, riak_ensemble, chash]},
@@ -75,5 +75,9 @@
 				 {keep_high, 500}]}
 			    ]}
 	  ]}
-        ]}
+        ]},
+  {pkg_name, "riak_core_ng"},
+  {maintainers,["basho", "Heinz N. Gies"]},
+  {licenses,["Apache"]},
+  {links,[{"Github","https://github.com/basho/riak_core"}]}
  ]}.
