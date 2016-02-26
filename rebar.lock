@@ -7,7 +7,7 @@
  {<<"eleveldb">>,{pkg,<<"eleveldb">>,<<"2.1.3">>},0},
  {<<"erocksdb">>,
   {git,"https://github.com/project-fifo/erocksdb.git",
-       {ref,"1544b4698448aefe3d46f3da0891264905ea588c"}},
+       {ref,"061fe6888450c9f7ea24bc926e655fc6f812d9d0"}},
   0},
  {<<"exometer_core">>,{pkg,<<"exometer_core">>,<<"1.0.0">>},0},
  {<<"folsom">>,{pkg,<<"folsom">>,<<"0.8.3">>},1},
