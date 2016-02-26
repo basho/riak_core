@@ -80,5 +80,5 @@
   {pkg_name, "riak_core_ng"},
   {maintainers,["basho", "Heinz N. Gies"]},
   {licenses,["Apache"]},
-  {links,[{"Github","https://github.com/basho/riak_core"}]}
+  {links,[{"Github","https://github.com/project-fifo/riak_core"}]}
  ]}.
