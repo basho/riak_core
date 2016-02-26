@@ -1,3 +1,12 @@
+# What is riak_core_ng?
+
+The 'ng' version of riak core is a modernized version of riak core, it is entirely build with rebar3 using hex packages for all dependences, with more modern versions of some libraries. 99.9% of all credit goes to basho, very little extra work has happened here! The aim is to keep this up to date with all changes pushed to riak_core proper.
+
+## Improvements and Additions
+
+* `rocksdb` backend - this version ships with a pluggable backend for the hashtree (aae and metadata) functionality, using either `leveldb` or `rocksdb`
+* AAE - this version includes the Active Anti Entropy code extracted from `riak_kv` and provides a new behavior called `riak_core_aae_vnode`.
+
 # Riak Core
 
 [![Build Status](https://secure.travis-ci.org/basho/riak_core.png)](http://travis-ci.org/basho/riak_core)
