@@ -1,84 +1,35 @@
-%% -*- tab-width: 4;erlang-indent-level: 4;indent-tabs-mode: nil -*-
-%% ex: ts=4 sw=4 et
-{application, riak_core,
-[
-  {description, "Riak Core"},
-  {vsn, "2.1.5-rocks"},
-  {modules, []},
-  {registered, []},
-  {included_applications, [folsom, riak_ensemble, chash]},
-  {applications, [
-                  kernel,
-                  stdlib,
-                  lager,
-                  sasl,
-                  crypto,
-                  riak_sysmon,
-                  os_mon,
-                  basho_stats,
-                  eleveldb,
-                  erocksdb,
-                  pbkdf2,
-                  poolboy,
-                  exometer_core,
-                  clique
-                 ]},
-  {mod, {riak_core_app, []}},
-  {env, [
-         %% Cluster name
-         {cluster_name, "default"},
-
-         %% Default location for ring, cluster and other data files
-         {platform_data_dir, "data"},
-
-         %% Default ring creation size.  Make sure it is a power of 2,
-         %% e.g. 16, 32, 64, 128, 256, 512 etc
-         {ring_creation_size, 64},
-
-         %% Default gossip interval (milliseconds)
-         {gossip_interval, 60000},
-
-         %% Target N value
-         {target_n_val, 4},
-
-         %% Default claims functions
-         {wants_claim_fun, {riak_core_claim, default_wants_claim}},
-         {choose_claim_fun, {riak_core_claim, default_choose_claim}},
-
-         %% Vnode inactivity timeout (how often to check if fallback vnodes
-         %% should return their data) in ms.
-         {vnode_inactivity_timeout, 60000},
-
-         %% Number of VNodes allowed to do handoff concurrently.
-         {handoff_concurrency, 2},
-
-         %% Disable Nagle on HTTP sockets
-         {disable_http_nagle, true},
-
-         %% Handoff IP/port
-         {handoff_port, 8099},
-         {handoff_ip, "0.0.0.0"},
-
-         %% Disterl buffer sizes in bytes.
-         %% These sizes (3*128*1024 & 6*128*1024) were
-         %% derived from a limited amount of testing in a
-         %% 10GE environment, and may need tuning for your
-         %% network and workload. In particular they're likely
-         %% too small to be optimal for larger object sizes.
-         {dist_send_buf_size, 393216},
-         {dist_recv_buf_size, 786432},
-
-	 %% Exometer defaults
-	 {exometer_defaults,
-	  [
-	   {['_'], histogram, [{options,
-				[{histogram_module, exometer_slot_slide},
-				 {keep_high, 500}]}
-			    ]}
-	  ]}
-        ]},
-  {pkg_name, "riak_core_ng"},
-  {maintainers,["basho", "Heinz N. Gies"]},
-  {licenses,["Apache"]},
-  {links,[{"Github","https://github.com/project-fifo/riak_core"}]}
- ]}.
+{application,riak_core,
+    [{description,"Riak Core"},
+     {vsn,"2.2.1"},
+     {modules,[]},
+     {registered,[]},
+     {included_applications,[folsom,riak_ensemble,chash]},
+     {applications,
+         [kernel,stdlib,lager,sasl,crypto,riak_sysmon,os_mon,basho_stats,
+          eleveldb,erocksdb,pbkdf2,poolboy,exometer_core,clique]},
+     {mod,{riak_core_app,[]}},
+     {env,
+         [{cluster_name,"default"},
+          {platform_data_dir,"data"},
+          {ring_creation_size,64},
+          {gossip_interval,60000},
+          {target_n_val,4},
+          {wants_claim_fun,{riak_core_claim,default_wants_claim}},
+          {choose_claim_fun,{riak_core_claim,default_choose_claim}},
+          {vnode_inactivity_timeout,60000},
+          {handoff_concurrency,2},
+          {disable_http_nagle,true},
+          {handoff_port,8099},
+          {handoff_ip,"0.0.0.0"},
+          {dist_send_buf_size,393216},
+          {dist_recv_buf_size,786432},
+          {exometer_defaults,
+              [{['_'],
+                histogram,
+                [{options,
+                     [{histogram_module,exometer_slot_slide},
+                      {keep_high,500}]}]}]}]},
+     {pkg_name,"riak_core_ng"},
+     {maintainers,["basho","Heinz N. Gies"]},
+     {licenses,["Apache"]},
+     {links,[{"Github","https://github.com/project-fifo/riak_core"}]}]}.
