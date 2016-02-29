@@ -65,7 +65,9 @@ set_bucket({<<"default">>, Name}, BucketProps) ->
     set_bucket(Name, BucketProps);
 set_bucket({Type, _Name}=Bucket, BucketProps0) ->
     case riak_core_bucket_type:get(Type) of
-        undefined -> {error, no_type};
+        undefined -> 
+            lager:error("Attempt to set properties of non-existant bucket type ~p", [Bucket]),
+            {error, no_type};
         _ -> set_bucket(fun set_bucket_in_metadata/2, Bucket, BucketProps0)
     end;
 set_bucket(Name, BucketProps0) ->
@@ -118,7 +120,9 @@ get_bucket({Type, _Name}=Bucket) ->
     BucketMeta = riak_core_metadata:get(?METADATA_PREFIX, bucket_key(Bucket),
                                         [{resolver, fun riak_core_bucket_props:resolve/2}]),
     case merge_type_props(TypeMeta, BucketMeta) of
-        {error, _}=Error -> Error;
+        {error, _}=Error -> 
+            lager:error("~p getting properties of bucket ~p",[Error,Bucket]),
+            Error;
         Props -> [{name, Bucket} | Props]
     end;
 get_bucket(Name) ->
