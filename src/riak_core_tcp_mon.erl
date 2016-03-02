@@ -55,10 +55,8 @@
 -record(state, {conns = gb_trees:empty(),      % conn records keyed by Socket
                 tags = gb_trees:empty(),       % tags to ports
                 interval = ?DEFAULT_INTERVAL,  % how often to get stats
-                limit = ?DEFAULT_LIMIT,        %
+                limit = ?DEFAULT_LIMIT,        % how many entries to keep per stat
                 clear_after = ?DEFAULT_CLEAR,  % how long to leave errored sockets in status
-                stats = ?INET_STATS,           % Stats to read
-                opts  = ?INET_OPTS,            % Opts to read
                 status_funs = dict:from_list(default_status_funs())  % Status reporting functions
                 }).
 
@@ -233,36 +231,37 @@ handle_info({nodedown, Node, _InfoList}, State) ->
     end,
     {noreply, State#state{conns = Conns2}};
 
-handle_info(measurement_tick, State0 = #state{limit = Limit, stats = Stats,
-                                             opts = Opts, conns = Conns}) ->
+handle_info(measurement_tick, State0) ->
     State = schedule_tick(State0),
-    UpdateConn = fun
-        (_, Conn = #conn{type = error}) ->
-            Conn;
-        (Socket, Conn = #conn{ts_hist = TSHist, hist = Hist}) ->
-            try
-                RawSock = unwrap_socket(Socket),
-                {ok, StatVals} = inet:getstat(RawSock, Stats),
-                % get the timestamp between stats and opts, split the difference
-                TS = os:timestamp(),
-                {ok, OptVals} = inet:getopts(RawSock, Opts),
-                NewHist = update_hist(OptVals, Limit,
-                    update_hist(StatVals, Limit, Hist)),
-                Conn#conn{
-                    ts_hist = prepend_trunc(TS, TSHist, Limit), hist = NewHist}
-            catch
-                _E:_R ->
-                    %io:format("Error ~p: ~p\n", [_E, _R]),
-                    %% Any problems with getstat/getopts mark in error
-                    erlang:send_after(
-                        State#state.clear_after, self(), {clear, Socket}),
-                    Conn#conn{type = error}
-            end
+    Limit = State#state.limit,
+    ClearAfter = State#state.clear_after,
+    UpdateConn = fun(Socket, Conn) ->
+        update_conn(Socket, Conn, Limit, ClearAfter)
     end,
-    {noreply, State#state{conns = gb_trees:map(UpdateConn, Conns)}};
+    {noreply, State#state{conns = gb_trees:map(UpdateConn, State#state.conns)}};
 
 handle_info({clear, Socket}, State = #state{conns = Conns}) ->
     {noreply, State#state{conns = gb_trees:delete_any(Socket, Conns)}}.
+
+update_conn(_Socket, Conn = #conn{type = error}, _Limit, _ClearAfter) ->
+    Conn;
+update_conn(Socket, Conn = #conn{ts_hist = TSHist, hist = Hist},
+            Limit, ClearAfter) ->
+    try
+        RawSock = unwrap_socket(Socket),
+        {ok, StatVals} = inet:getstat(RawSock, ?INET_STATS),
+        % get the timestamp between stats and opts, split the difference
+        TS = os:timestamp(),
+        {ok, OptVals} = inet:getopts(RawSock, ?INET_OPTS),
+        NewHist = update_hist(OptVals, Limit, update_hist(StatVals, Limit, Hist)),
+        Conn#conn{ts_hist = prepend_trunc(TS, TSHist, Limit), hist = NewHist}
+    catch
+        _E:_R ->
+            % io:format("Error ~p: ~p\n", [_E, _R]),
+            %% Any problems with getstat/getopts mark in error
+            erlang:send_after(ClearAfter, self(), {clear, Socket}),
+            Conn#conn{type = error}
+    end.
 
 %%
 %% The #sslsocket record type definition is invisible outside the ssl
