@@ -316,7 +316,7 @@ update_hist(Readings, Limit, Histories) ->
         fun update_hist/2, {Limit, Histories}, Readings),
     NewHists.
 
--spec update_hist({atom(), term()}, {pos_integer(), list()}) -> list().
+-spec update_hist({atom(), term()}, {pos_integer(), list()}) -> {pos_integer(), list()}.
 %% Update the a name/value entry in a histogram, to be called from lists:fold
 update_hist({Stat, Val}, {Limit, Histories}) ->
     %% Prepend newest reading and truncate
