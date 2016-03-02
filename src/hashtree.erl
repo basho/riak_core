@@ -1004,8 +1004,11 @@ iterator_move(undefined, _Seek, _IS) ->
     {error, invalid_iterator};
 
 iterator_move(Itr, Seek, IS) ->
-    try
-        ?IDB:iterator_move(Itr, Seek)
+    try ?IDB:iterator_move(Itr, Seek) of
+        {einval, _} ->
+            {error, invalid_iterator};
+        Res ->
+            Res
     catch
         _:badarg ->
             {error, invalid_iterator}
