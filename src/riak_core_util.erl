@@ -237,9 +237,14 @@ md5(Bin) ->
 -endif.
 
 seed() ->
-    {erlang:phash2([node()]),
-     erlang:monotonic_time(),
-     erlang:unique_integer()}.
+    %% We need to do this since passing in a seed that isn't
+    %% properly formated causes horrors!
+    OldSeed = random:seed(),
+    Result = random:seed({erlang:phash2([node()]),
+                          erlang:monotonic_time(),
+                          erlang:unique_integer()}),
+    random:seed(OldSeed),
+    Result.
 
 %% @spec unique_id_62() -> string()
 %% @doc Create a random identifying integer, returning its string
