@@ -573,7 +573,9 @@ do_new_tree(Id, State=#state{trees=Trees, path=Path}) ->
     IdBin = tree_id(Id),
     NewTree = case Trees of
                   [] ->
-                      hashtree:new({Index,IdBin}, [{segment_path, Path}]);
+                      hashtree:new({Index,IdBin},
+                                   [{segment_path,
+                                     filename:join(Path, atom_to_list(Service))}]);
                   [{_,Other}|_] ->
                       hashtree:new({Index,IdBin}, Other)
               end,
