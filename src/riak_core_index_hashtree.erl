@@ -568,7 +568,7 @@ index_2i_n() ->
 %% tree. In other words, all hashtrees for a given index_hashtree are stored in
 %% the same on-disk store.
 -spec do_new_tree(index_n(), state()) -> state().
-do_new_tree(Id, State=#state{trees=Trees, path=Path}) ->
+do_new_tree(Id, State=#state{service = Service, trees=Trees, path=Path}) ->
     Index = State#state.index,
     IdBin = tree_id(Id),
     NewTree = case Trees of
