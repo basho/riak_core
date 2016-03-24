@@ -16,18 +16,22 @@
 %% specific language governing permissions and limitations
 %% under the License.
 %%
-%% This is a direct copy of:
+%% Copy of:
 %% https://github.com/basho/riak_kv/blob/develop/src/riak_kv_entropy_info.erl
 %% -------------------------------------------------------------------
 -module(riak_core_entropy_info).
 
--export([tree_built/3,
+-export([tree_built/2,
+         tree_built/3,
+         exchange_complete/4,
          exchange_complete/5,
          create_table/0,
          dump/0,
-         compute_exchange_info/1,
+         compute_exchange_info/0,
          compute_exchange_info/2,
+         compute_tree_info/0,
          compute_tree_info/1,
+         exchanges/2,
          all_exchanges/2]).
 
 -define(ETS, ets_riak_core_entropy).
@@ -37,9 +41,11 @@
 -type exchange_id() :: {index(), index_n()}.
 -type orddict(K,V) :: [{K,V}].
 -type riak_core_ring() :: riak_core_ring:riak_core_ring().
--type t_now() :: calendar:t_now().
+-type t_now() :: erlang:timestamp().
 
 -record(simple_stat, {last, min, max, count, sum}).
+
+-type simple_stat() :: #simple_stat{}.
 
 -type repair_stats() :: {Last :: pos_integer(),
                          Min  :: pos_integer(),
@@ -47,14 +53,14 @@
                          Mean :: pos_integer()}.
 
 -record(exchange_info, {time :: t_now(),
-                        repaired :: pos_integer()}).
+                        repaired :: non_neg_integer()}).
 
 -type exchange_info() :: #exchange_info{}.
 
--record(index_info, {build_time    = undefined     :: t_now(),
-                     repaired      = undefined     :: pos_integer(),
+-record(index_info, {build_time    :: t_now(),
+                     repaired      :: simple_stat(),
                      exchanges     = orddict:new() :: orddict(exchange_id(), exchange_info()),
-                     last_exchange = undefined     :: exchange_id()}).
+                     last_exchange :: exchange_id()}).
 
 -type index_info() :: #index_info{}.
 
@@ -62,25 +68,34 @@
 %%% API
 %%%===================================================================
 
+%% @see tree_built/3
+tree_built(Index, Time) ->
+    tree_built(riak_core, Index, Time).
+
 %% @doc Store AAE tree build time
 -spec tree_built(atom(), index(), t_now()) -> ok.
 tree_built(Type, Index, Time) ->
     update_index_info({Type, Index}, {tree_built, Time}).
 
+%% @see exchange_complete/5
+-spec exchange_complete(index(), index(), index_n(), non_neg_integer()) -> ok.
+exchange_complete(Index, RemoteIdx, IndexN, Repaired) ->
+    exchange_complete(riak_core, Index, RemoteIdx, IndexN, Repaired).
+
 %% @doc Store information about a just-completed AAE exchange
--spec exchange_complete(atom(), index(), index(), index_n(), pos_integer()) -> ok.
+-spec exchange_complete(atom(), index(), index(), index_n(), non_neg_integer()) -> ok.
 exchange_complete(Type, Index, RemoteIdx, IndexN, Repaired) ->
     update_index_info({Type, Index},
                       {exchange_complete, RemoteIdx, IndexN, Repaired}).
 
-%% @doc Called by {@link riak_kv_sup} to create public ETS table used for
+%% @doc Called by {@link riak_core_sup} to create public ETS table used for
 %%      holding AAE information for reporting. Table will be owned by
-%%      the `riak_kv_sup' to ensure longevity.
+%%      the `riak_core_sup' to ensure longevity.
 create_table() ->
     (ets:info(?ETS) /= undefined) orelse
         ets:new(?ETS, [named_table, public, set, {write_concurrency, true}]).
 
-%% @doc Return state of ets_riak_kv_entropy table as a list
+%% @doc Return state of ets_riak_core_entropy table as a list
 dump() ->
     ets:tab2list(?ETS).
 
@@ -89,11 +104,11 @@ dump() ->
 %% indices. For each index, return a tuple containing time of most recent
 %% exchange; time since the index completed exchanges with all sibling indices;
 %% as well as statistics about repairs triggered by different exchanges.
--spec compute_exchange_info(atom())  ->
+-spec compute_exchange_info()  ->
                                    [{index(), Last :: t_now(), All :: t_now(),
                                      repair_stats()}].
-compute_exchange_info(Type) ->
-    compute_exchange_info(Type, {?MODULE, all_exchanges}).
+compute_exchange_info() ->
+    compute_exchange_info(riak_core, {?MODULE, all_exchanges}).
 
 -spec compute_exchange_info(atom(), {atom(), atom()})  ->
                                    [{index(), Last :: t_now(), All :: t_now(),
@@ -107,6 +122,10 @@ compute_exchange_info(Type, {M,F}) ->
                  || {{Type2, Index}, Info} <- all_index_info(), Type2 == Type],
     merge_to_first(KnownInfo, Defaults).
 
+%% @see compute_tree_info/1
+compute_tree_info() ->
+    compute_tree_info(riak_core).
+
 %% @doc Return a list of AAE build times for each locally owned index.
 -spec compute_tree_info(atom()) -> [{index(), t_now()}].
 compute_tree_info(Type) ->
@@ -117,6 +136,20 @@ compute_tree_info(Type) ->
     KnownInfo = [{Index, Info#index_info.build_time}
                  || {{Type2, Index}, Info} <- all_index_info(), Type2 == Type],
     merge_to_first(KnownInfo, Defaults).
+
+%% Return information about all exchanges for given index/index_n
+exchanges(Index, IndexN) ->
+    case ets:lookup(?ETS, {index, {riak_core, Index}}) of
+        [{_, #index_info{exchanges=Exchanges}}] ->
+            [{Idx, Time, Repaired}
+             || {{Idx,IdxN}, #exchange_info{time=Time,
+                                            repaired=Repaired}} <- Exchanges,
+                IdxN =:= IndexN,
+                Time =/= undefined];
+        _ ->
+            %% TODO: Should this really be empty list?
+            []
+    end.
 
 %%%===================================================================
 %%% Internal functions
@@ -133,7 +166,7 @@ update_index_info(Key, Cmd) ->
                [{_, I}] ->
                    I
            end,
-    Info2 = handle_index_info(Cmd, Key, Info),
+    Info2 = handle_index_info(Cmd, Info),
     ets:insert(?ETS, {{index, Key}, Info2}),
     ok.
 
@@ -153,11 +186,11 @@ filter_index_info() ->
     ok.
 
 %% Update provided index info based on request.
--spec handle_index_info(term(), index(), index_info()) -> index_info().
-handle_index_info({tree_built, Time}, _, Info) ->
+-spec handle_index_info(term(), index_info()) -> index_info().
+handle_index_info({tree_built, Time}, Info) ->
     Info#index_info{build_time=Time};
 
-handle_index_info({exchange_complete, RemoteIdx, IndexN, Repaired}, _, Info) ->
+handle_index_info({exchange_complete, RemoteIdx, IndexN, Repaired}, Info) ->
     ExInfo = #exchange_info{time=os:timestamp(),
                             repaired=Repaired},
     ExId = {RemoteIdx, IndexN},

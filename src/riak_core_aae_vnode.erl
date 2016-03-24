@@ -110,15 +110,18 @@ maybe_create_hashtrees(false, _Service, _Index, _VNode, Last) ->
 maybe_create_hashtrees(true, Service, Index, VNode, Last) ->
     %% Only maintain a hashtree if a primary vnode
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    lager:debug("~p/~p: creating hashtree.", [Service, Index]),
     case riak_core_ring:vnode_type(Ring, Index) of
         primary ->
-            RP = riak_core_util:responsible_preflists(Index),
-            case riak_core_index_hashtree:start(Service, Index, RP, self(),
-                                                VNode) of
+            %%{ok, ModCaps} = Mod:capabilities(ModState),
+            %% Empty = case is_empty(State) of
+            %%             {true, _}     -> true;
+            %%             {false, _, _} -> false
+            %% end,
+            %%Opts = [vnode_empty || Empty],
+            Opts = [],
+            case riak_core_index_hashtree:start(Service, Index, self(),
+                                                VNode, Opts) of
                 {ok, Trees} ->
-                    lager:debug("~p/~p: hashtree created: ~p.",
-                                [Service, Index, Trees]),
                     monitor(process, Trees),
                     Trees;
                 Error ->
@@ -128,7 +131,6 @@ maybe_create_hashtrees(true, Service, Index, VNode, Last) ->
                     Last
             end;
         _ ->
-            lager:debug("~p/~p: not primary", [Service, Index]),
             Last
     end.
 
@@ -137,14 +139,14 @@ maybe_create_hashtrees(true, Service, Index, VNode, Last) ->
 %% asyncronous hashtree updates before requiering a syncronous update.
 %% `riak_core.anti_entropy_max_async` if not set defaults to 90.
 -spec update_hashtree(binary(), term(), binary(), pid()) -> ok.
-update_hashtree(Bucket, Key, Val, Trees) ->
+update_hashtree(Bucket, Key, RObj, Trees) ->
+    Items = [{object, {Bucket, Key}, RObj}],
     case get_hashtree_token() of
         true ->
-            riak_core_index_hashtree:async_insert_object({Bucket, Key}, Val,
-                                                         Trees),
+            riak_core_index_hashtree:async_insert(Items, [], Trees),
             ok;
         false ->
-            riak_core_index_hashtree:insert_object({Bucket, Key}, Val, Trees),
+            riak_core_index_hashtree:insert(Items, [], Trees),
             reset_hashtree_token(),
             ok
     end.

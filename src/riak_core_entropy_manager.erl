@@ -40,10 +40,24 @@
          exchange_status/5,
          supervisor_spec/2]).
 -export([all_pairwise_exchanges/2]).
+-export([get_aae_throttle/0,
+         set_aae_throttle/1,
+         get_aae_throttle_kill/0,
+         set_aae_throttle_kill/1,
+         get_aae_throttle_limits/0,
+         set_aae_throttle_limits/1,
+         get_max_local_vnodeq/0]).
+-export([multicall/5]).                         % for meck twiddle-testing
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
+
+-ifdef(TEST).
+-export([query_and_set_aae_throttle/1]).        % for eunit twiddle-testing
+-export([make_state/0, get_last_throttle/1]).   % for eunit twiddle-testing
+-include_lib("eunit/include/eunit.hrl").
+-endif.
 
 -type index() :: non_neg_integer().
 -type index_n() :: {index(), pos_integer()}.
@@ -59,13 +73,17 @@
                 exchange_queue = []        :: [exchange()],
                 exchanges      = []        :: [{index(), reference(), pid()}],
                 service        = undefined :: atom(),
-                vnode          = undefined :: atom()
+                vnode          = undefined :: atom(),
+                vnode_status_pid = undefined :: 'undefined' | pid(),
+                last_throttle  = undefined :: 'undefined' | non_neg_integer()
                }).
 
 -type state() :: #state{}.
 
 -define(DEFAULT_CONCURRENCY, 2).
 -define(DEFAULT_BUILD_LIMIT, {1, 3600000}). %% Once per hour
+-define(AAE_THROTTLE_ENV_KEY, aae_throttle_sleep_time).
+-define(AAE_THROTTLE_KILL_ENV_KEY, aae_throttle_kill_switch).
 
 
 -spec supervisor_spec(Service::atom(), VNode::atom()) ->
@@ -122,14 +140,14 @@ start_exchange_remote(Service, _VNode={Index, Node}, IndexN, FsmPid) ->
                     {start_exchange_remote, FsmPid, Index, IndexN},
                     infinity).
 
-%% @doc Used by {@link riak_kv_index_hashtree} to requeue a poke on
+%% @doc Used by {@link riak_core_index_hashtree} to requeue a poke on
 %%      build failure.
 -spec requeue_poke(atom(), index()) -> ok.
 requeue_poke(Service, Index) ->
     Name = gen_name(Service),
     gen_server:cast(Name, {requeue_poke, Index}).
 
-%% @doc Used by {@link riak_kv_exchange_fsm} to inform the entropy
+%% @doc Used by {@link riak_core_exchange_fsm} to inform the entropy
 %%      manager about the status of an exchange (ie. completed without
 %%      issue, failed, etc)
 -spec exchange_status(atom(), vnode(), vnode(), index_n(), any()) -> ok.
@@ -177,9 +195,9 @@ set_debug(Enabled) ->
 
 enable(Service) ->
     gen_server:call(gen_name(Service), enable, infinity).
-
 disable(Service) ->
     gen_server:call(gen_name(Service), disable, infinity).
+
 
 %% @doc Manually trigger hashtree exchanges.
 %%      -- If an index is provided, trigger exchanges between the index and all
@@ -191,8 +209,7 @@ disable(Service) ->
 %%         exchange between the index and remote index for the specified
 %%         index_n.
 -spec manual_exchange(atom(),
-                      index() |
-                      {index(), index_n()} |
+                      index() |                      {index(), index_n()} |
                       {index(), index(), index_n()}) -> ok.
 manual_exchange(Service, Exchange) ->
     gen_server:call(gen_name(Service), {manual_exchange, Exchange}, infinity).
@@ -209,9 +226,29 @@ cancel_exchanges(Service) ->
 %%% gen_server callbacks
 %%%===================================================================
 
--spec init([]) -> {'ok',state()}.
+-spec init([atom()]) -> {'ok',state()}.
 init([Service, VNode]) ->
+    %% Side-effects section
+    set_aae_throttle(0),
+    %% riak_core.app has some sane limits already set, or config via Cuttlefish
+    %% If the value is not sane, the pattern match below will fail.
+    Limits = case app_helper:get_env(riak_core, aae_throttle_limits, []) of
+                 [] ->
+                     [{-1,0}, {200,10}, {500,50}, {750,250}, {900,1000}, {1100,5000}];
+                 OtherLs ->
+                     OtherLs
+             end,
+    case set_aae_throttle_limits(Limits) of
+        ok ->
+            ok;
+        {error, DiagProps} ->
+            _ = [lager:error("aae_throttle_limits/anti_entropy.throttle.limits "
+                         "list fails this test: ~p\n", [Check]) ||
+                {Check, false} <- DiagProps],
+            error(invalid_aae_throttle_limits)
+    end,
     schedule_tick(gen_name(Service)),
+
     {_, Opts} = settings(),
     Mode = case proplists:is_defined(manual, Opts) of
                true ->
@@ -232,8 +269,15 @@ init([Service, VNode]) ->
     schedule_reset_build_tokens(),
     {ok, State2}.
 
-handle_call({set_mode, Mode}, _From, State) ->
-    {reply, ok, State#state{mode=Mode}};
+handle_call({set_mode, Mode}, _From, State=#state{mode=CurrentMode}) ->
+    State2 = case {CurrentMode, Mode} of
+                 {automatic, manual} ->
+                     %% Clear exchange queue when switching to manual mode
+                     State#state{exchange_queue=[]};
+                 _ ->
+                     State
+             end,
+    {reply, ok, State2#state{mode=Mode}};
 handle_call({manual_exchange, Exchange}, _From, State) ->
     State2 = enqueue_exchange(Exchange, State),
     {reply, ok, State2};
@@ -244,7 +288,7 @@ handle_call(enable, _From, State) ->
 handle_call(disable, _From, State) ->
     {_, Opts} = settings(),
     application:set_env(riak_core, anti_entropy, {off, Opts}),
-    [riak_core_index_hashtree:stop(T) || {_,T} <- State#state.trees],
+    _ = [riak_core_index_hashtree:stop(T) || {_,T} <- State#state.trees],
     {reply, ok, State};
 handle_call({get_lock, Type, Pid}, _From, State) ->
     {Reply, State2} = do_get_lock(Type, Pid, State),
@@ -294,8 +338,8 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info(tick, State) ->
-    State2 = maybe_tick(State),
-    {noreply, State2};
+    State1 = maybe_tick(State),
+    {noreply, State1};
 handle_info(reset_build_tokens, State) ->
     State2 = reset_build_tokens(State),
     schedule_reset_build_tokens(),
@@ -306,6 +350,15 @@ handle_info({{hashtree_pid, Index}, Reply}, State) ->
             State2 = add_hashtree_pid(Index, Pid, State),
             {noreply, State2};
         _ ->
+            {noreply, State}
+    end;
+handle_info({'DOWN', _, _, Pid, Status}, #state{vnode_status_pid=Pid}=State) ->
+    case Status of
+        {result, _} = RES ->
+            State2 = query_and_set_aae_throttle3(RES, State#state{vnode_status_pid=undefined}),
+            {noreply, State2};
+        Else ->
+            lager:error("query_and_set_aae_throttle error: ~p",[Else]),
             {noreply, State}
     end;
 handle_info({'DOWN', Ref, _, Obj, Status}, State) ->
@@ -344,7 +397,7 @@ settings() ->
         {off, Opts} ->
             {false, Opts};
         X ->
-            lager:warning("Invalid setting for riak_kv/anti_entropy: ~p", [X]),
+            lager:warning("Invalid setting for riak_core/anti_entropy: ~p", [X]),
             application:set_env(riak_core, anti_entropy, {off, []}),
             {false, []}
     end.
@@ -370,7 +423,8 @@ reload_hashtrees(Ring, State=#state{trees=Trees}) ->
                          not dict:is_key(Idx, Existing)],
     VNode = State#state.vnode,
     Master = VNode:master(),
-    [riak_core_aae_vnode:request_hashtree_pid(Master, Idx) || Idx <- MissingIdx],
+    _ = [riak_core_aae_vnode:request_hashtree_pid(Master, Idx) 
+         || Idx <- MissingIdx],
     State.
 
 add_hashtree_pid(Index, Pid, State) ->
@@ -405,7 +459,6 @@ do_get_lock(Type, Pid, State=#state{locks=Locks}) ->
             case check_lock_type(Type, State) of
                 {ok, State2} ->
                     Ref = monitor(process, Pid),
-                    lager:debug("Get lock: ~p", [Ref]),
                     State3 = State2#state{locks=[{Pid,Ref}|Locks]},
                     {ok, State3};
                 Error ->
@@ -424,7 +477,6 @@ check_lock_type(_Type, State) ->
 
 -spec maybe_release_lock(reference(), state()) -> state().
 maybe_release_lock(Ref, State) ->
-    lager:debug("Release lock: ~p", [Ref]),
     Locks = lists:keydelete(Ref, 2, State#state.locks),
     State#state{locks=Locks}.
 
@@ -470,9 +522,9 @@ schedule_tick(Service) ->
 maybe_tick(State) ->
     case enabled() of
         true ->
-            case riak_core_capability:get({State#state.service, anti_entropy}, disabled) of
+            case riak_core_capability:get({State#state.service, anti_entropy},
+                                          disabled) of
                 disabled ->
-                    lager:debug("Ticks disabled for: ~p", [State#state.service]),
                     NextState = State;
                 enabled_v1 ->
                     NextState = tick(State)
@@ -480,7 +532,7 @@ maybe_tick(State) ->
         false ->
             %% Ensure we do not have any running index_hashtrees, which can
             %% happen when disabling anti-entropy on a live system.
-            [riak_core_index_hashtree:stop(T) || {_,T} <- State#state.trees],
+            _ = [riak_core_index_hashtree:stop(T) || {_,T} <- State#state.trees],
             NextState = State
     end,
     schedule_tick(gen_name(State#state.service)),
@@ -488,9 +540,9 @@ maybe_tick(State) ->
 
 -spec tick(state()) -> state().
 tick(State) ->
-    lager:debug("Tick tick."),
     {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    State2 = maybe_reload_hashtrees(Ring, State),
+    State1 = query_and_set_aae_throttle(State),
+    State2 = maybe_reload_hashtrees(Ring, State1),
     State3 = lists:foldl(fun(_,S) ->
                                  maybe_poke_tree(S)
                          end, State2, lists:seq(1,10)),
@@ -502,7 +554,6 @@ maybe_poke_tree(State=#state{trees=[]}) ->
     State;
 maybe_poke_tree(State) ->
     {Tree, State2} = next_tree(State),
-    lager:debug("Poking ~p", [Tree]),
     riak_core_index_hashtree:poke(Tree),
     State2.
 
@@ -726,3 +777,153 @@ requeue_exchange(LocalIdx, RemoteIdx, IndexN, State) ->
             Exchanges = State#state.exchange_queue ++ [Exchange],
             State#state{exchange_queue=Exchanges}
     end.
+
+get_aae_throttle() ->
+    app_helper:get_env(riak_core, ?AAE_THROTTLE_ENV_KEY, 0).
+
+set_aae_throttle(Milliseconds) when is_integer(Milliseconds), Milliseconds >= 0 ->
+    application:set_env(riak_core, ?AAE_THROTTLE_ENV_KEY, Milliseconds).
+
+get_aae_throttle_kill() ->
+    case app_helper:get_env(riak_core, ?AAE_THROTTLE_KILL_ENV_KEY, undefined) of
+        true ->
+            true;
+        _ ->
+            false
+    end.
+
+set_aae_throttle_kill(Bool) when Bool == true; Bool == false ->
+    application:set_env(riak_core, ?AAE_THROTTLE_KILL_ENV_KEY, Bool).
+
+get_max_local_vnodeq() ->
+    try
+	{ok, [{max,M}]} =
+	    exometer:get_value(
+	      [riak_core_stat:prefix(),riak_core,vnodeq,riak_core_vnode],
+	      [max]),
+	{M, node()}
+    catch _X:_Y ->
+            %% This can fail locally if riak_core & riak_core haven't finished their setup.
+            {0, node()}
+    end.
+
+get_aae_throttle_limits() ->
+    %% init() should have already set a sane default, so the default below should never be used.
+    app_helper:get_env(riak_core, aae_throttle_limits, [{-1, 0}]).
+
+%% @doc Set AAE throttle limits list
+%%
+%% Limit list = [{max_vnode_q_len, per-repair-delay}]
+%% A tuple with max_vnode_q_len=-1 must be present.
+%% List sorting is not required: the throttle is robust with any ordering.
+
+set_aae_throttle_limits(Limits) ->
+    case {lists:keyfind(-1, 1, Limits),
+          catch lists:all(fun({Min, Lim}) ->
+                                  is_integer(Min) andalso is_integer(Lim) andalso
+                                      Lim >= 0
+                          end, Limits)} of
+        {{-1, _}, true} ->
+            lager:info("Setting AAE throttle limits: ~p\n", [Limits]),
+            application:set_env(riak_core, aae_throttle_limits, Limits),
+            ok;
+        {Else1, Else2} ->
+            {error, [{negative_one_length_is_present, Else1},
+                     {all_sleep_times_are_non_negative_integers, Else2}]}
+    end.
+
+query_and_set_aae_throttle(#state{last_throttle=LastThrottle} = State) ->
+    case get_aae_throttle_kill() of
+        false ->
+            query_and_set_aae_throttle2(State);
+        true ->
+            perhaps_log_throttle_change(LastThrottle, 0, kill_switch),
+            set_aae_throttle(0),
+            State#state{last_throttle=0}
+    end.
+
+query_and_set_aae_throttle2(#state{vnode_status_pid = undefined} = State) ->
+    {Pid, _Ref} = spawn_monitor(fun() ->
+        RES = fix_up_rpc_errors(
+                ?MODULE:multicall([node()|nodes()],
+                                  ?MODULE, get_max_local_vnodeq, [], 10*1000)),
+              exit({result, RES})
+         end),
+    State#state{vnode_status_pid = Pid};
+query_and_set_aae_throttle2(State) ->
+    State.
+
+query_and_set_aae_throttle3({result, {MaxNds, BadNds}},
+                            #state{last_throttle=LastThrottle} = State) ->
+    Limits = lists:sort(get_aae_throttle_limits()),
+    %% If a node is really hosed, then this RPC call is going to fail
+    %% for that node.  We might also delay the 'tick' processing by
+    %% several seconds.  But the tick processing is OK if it's delayed
+    %% while we wait for slow nodes here.
+    {WorstVMax, WorstNode} =
+        case {BadNds, lists:reverse(lists:sort(MaxNds))} of
+            {[], [{VMax, Node}|_]} ->
+                {VMax, Node};
+            {BadNodes, _} ->
+                %% If anyone couldn't respond, let's assume the worst.
+                %% If that node is actually down, then the net_kernel
+                %% will mark it down for us soon, and then we'll
+                %% calculate a real value after that.  Note that a
+                %% tuple as WorstVMax will always be bigger than an
+                %% integer, so we can avoid using false information
+                %% like WorstVMax=99999999999999 and also give
+                %% something meaningful in the user's info msg.
+                {{unknown_mailbox_sizes, node_list, BadNds}, BadNodes}
+        end,
+    {Sat, _NonSat} = lists:partition(fun({X, _Limit}) -> X < WorstVMax end, Limits),
+    [{_, NewThrottle}|_] = lists:reverse(lists:sort(Sat)),
+    perhaps_log_throttle_change(LastThrottle, NewThrottle,
+                                {WorstVMax, WorstNode}),
+    set_aae_throttle(NewThrottle),
+    State#state{last_throttle=NewThrottle}.
+
+perhaps_log_throttle_change(Last, New, kill_switch) when Last /= New ->
+    _ = lager:info("Changing AAE throttle from ~p -> ~p msec/key, "
+                   "based on kill switch on local node",
+                   [Last, New]);
+perhaps_log_throttle_change(Last, New, {WorstVMax, WorstNode}) when Last /= New ->
+    _ = lager:info("Changing AAE throttle from ~p -> ~p msec/key, "
+                   "based on maximum vnode mailbox size ~p from ~p",
+                   [Last, New, WorstVMax, WorstNode]);
+perhaps_log_throttle_change(_, _, _) ->
+    ok.
+
+%% Wrapper for meck interception for testing.
+multicall(A, B, C, D, E) ->
+    rpc:multicall(A, B, C, D, E).
+
+fix_up_rpc_errors({ResL, BadL}) ->
+    lists:foldl(fun({N, _}=R, {Rs, Bs}) when is_integer(N) ->
+                        {[R|Rs], Bs};
+                   (_, {Rs, Bs}) ->
+                        {Rs, [bad_rpc_result|Bs]}
+                end, {[], BadL}, ResL).
+
+-ifdef(TEST).
+
+make_state() ->
+    #state{}.
+
+get_last_throttle(State) ->
+    State2 = wait_for_vnode_status(State),
+    {State2#state.last_throttle, State2}.
+
+wait_for_vnode_status(State) ->
+    case get_aae_throttle_kill() of
+        true ->
+            State;
+        false ->
+            receive
+                {'DOWN',_,_,_,_} = Msg ->
+                    element(2, handle_info(Msg, State))
+            after 10*1000 ->
+                    error({?MODULE, wait_for_vnode_status, timeout})
+            end
+    end.
+
+-endif.
