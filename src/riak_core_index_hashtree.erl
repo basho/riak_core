@@ -268,7 +268,8 @@ init([Service, Index, VNPid, VNode, Opts]) ->
             %% If vnode is empty, mark tree as built without performing fold
             case VNEmpty of
                 true ->
-                    lager:debug("Built empty AAE tree for ~p", [Index]),
+                    lager:debug("[AAE:~s] Built empty tree for ~p",
+                                [Service, Index]),
                     gen_server:cast(self(), build_finished);
                 _ ->
                     ok
@@ -296,7 +297,8 @@ handle_call(get_trees, _From, #state{trees=Trees}=State) ->
     {reply, Trees, State};
 
 handle_call({update_tree, Id}, From, State) ->
-    lager:debug("Updating tree: (vnode)=~p (preflist)=~p", [State#state.index, Id]),
+    lager:debug("[AAE:~s] Updating tree: (vnode)=~p (preflist)=~p",
+                [State#state.service, State#state.index, Id]),
     apply_tree(Id,
                fun(Tree) ->
                        {SnapTree, Tree2} = hashtree:update_snapshot(Tree),
@@ -338,7 +340,8 @@ handle_call(clear, _From, State) ->
 
 handle_call(expire, _From, State) ->
     State2 = State#state{expired=true},
-    lager:info("Manually expired tree: ~p", [State#state.index]),
+    lager:info("[AAE:~s] Manually expired tree: ~p",
+               [State#state.service, State#state.index]),
     {reply, ok, State2};
 
 handle_call(estimate_keys, _From,  State=#state{trees=Trees}) ->
@@ -507,7 +510,7 @@ maybe_throttle_build(RObjBin, Limit, Wait, Acc) ->
     ObjSize = byte_size(RObjBin),
     Acc2 = Acc + ObjSize,
     if (Limit =/= 0) andalso (Acc2 > Limit) ->
-            lager:debug("Throttling AAE build for ~b ms", [Wait]),
+            lager:debug("[AAE] Throttling build for ~b ms", [Wait]),
             timer:sleep(Wait),
             0;
        true ->
@@ -584,14 +587,16 @@ do_new_tree(Id, State=#state{service = Service, trees=Trees, path=Path}) ->
 
 -spec do_get_lock(any(), pid(), state()) -> {not_built | ok | already_locked, state()}.
 do_get_lock(_, _, State) when State#state.built /= true ->
-    lager:debug("Not built: ~p :: ~p", [State#state.index, State#state.built]),
+    lager:debug("[AAE:~s] Not built: ~p :: ~p",
+                [State#state.service, State#state.index, State#state.built]),
     {not_built, State};
 do_get_lock(_Type, Pid, State=#state{lock=undefined}) ->
     Ref = monitor(process, Pid),
     State2 = State#state{lock=Ref},
     {ok, State2};
 do_get_lock(_, _, State) ->
-    lager:debug("Already locked: ~p", [State#state.index]),
+    lager:debug("[AAE:~s] Already locked: ~p",
+                [State#state.service, State#state.index]),
     {already_locked, State}.
 
 -spec maybe_release_lock(reference(), state()) -> state().
@@ -629,7 +634,7 @@ apply_tree(Id, Fun, State=#state{trees=Trees}) ->
 
 -spec do_build_finished(state()) -> state().
 do_build_finished(State=#state{index=Index, built=_Pid}) ->
-    lager:debug("Finished build: ~p", [Index]),
+    lager:debug("[AAE:~s] Finished build: ~p", [State#state.service, Index]),
     {_,Tree0} = hd(State#state.trees),
     BuildTime = get_build_time(Tree0),
     _ = hashtree:write_meta(<<"built">>, <<1>>, Tree0),
@@ -774,14 +779,15 @@ handle_unexpected_key(Id, Key, State=#state{index=Partition}) ->
             %% N to 4, and the object now maps to preflist '{<index>, 4}' which
             %% may not have an existing hashtree if there were previously no
             %% objects with N=4.
-            lager:info("Partition/tree ~p/~p does not exist to hold object ~p",
-                       [Partition, Id, Key]),
+            lager:info("[AAE:~s] Partition/tree ~p/~p does not exist to hold object ~p",
+                       [State#state.service, Partition, Id, Key]),
             case State#state.built of
                 true ->
                     %% If the tree is already built, clear the tree to trigger
                     %% a rebuild that will re-distribute objects into the
                     %% proper hashtrees based on current N values.
-                    lager:info("Clearing tree to trigger future rebuild"),
+                    lager:info("[AAE:~s] Clearing tree to trigger future rebuild",
+                              [State#state.service]),
                     clear_tree(State);
                 _ ->
                     %% Initialize a new index_n tree to prevent future errors.
@@ -809,7 +815,7 @@ do_compare(Id, Remote, AccFun, Acc, From, State) ->
     case orddict:find(Id, State#state.trees) of
         error ->
             %% This case shouldn't happen, but might as well safely handle it.
-            lager:warning("Tried to compare nonexistent tree "
+            lager:warning("[AAE] Tried to compare nonexistent tree "
                           "(vnode)=~p (preflist)=~p", [State#state.index, Id]),
             gen_server:reply(From, []);
         {ok, Tree} ->
@@ -838,7 +844,8 @@ maybe_expire(State=#state{lock=undefined, built=true, expired=false}) ->
     %% Need to convert from millsec to microsec
     case (Expire =/= never) andalso (Diff > (Expire * 1000)) of
         true ->
-            lager:debug("Tree expired: ~p", [State#state.index]),
+            lager:debug("[AAE:~s] Tree expired: ~p",
+                        [State#state.service, State#state.index]),
             State#state{expired=true};
         false ->
             State
@@ -848,7 +855,7 @@ maybe_expire(State) ->
 
 -spec clear_tree(state()) -> state().
 clear_tree(State=#state{index=Index}) ->
-    lager:info("Clearing AAE tree: ~p", [Index]),
+    lager:info("[AAE:~s] Clearing tree: ~p", [State#state.service, Index]),
     IndexNs = responsible_preflists(State),
     State2 = destroy_trees(State),
     State3 = init_trees(IndexNs, State2#state{trees=orddict:new()}),
@@ -883,17 +890,18 @@ build_or_rehash(Self, State=#state{service=Service, index=Index}) ->
     Locked = get_all_locks(Service, Type, Index, self()),
     build_or_rehash(Self, Locked, Type, State).
 
-build_or_rehash(Self, Locked, Type, #state{index=Index, trees=Trees}) ->
+build_or_rehash(Self, Locked, Type,
+                #state{service=Service, index=Index, trees=Trees}) ->
     case {Locked, Type} of
         {true, build} ->
-            lager:info("Starting AAE tree build: ~p", [Index]),
+            lager:info("[AAE:~s] Starting tree build: ~p", [Service, Index]),
             fold_keys(Index, Self, has_index_tree(Trees)),
-            lager:info("Finished AAE tree build: ~p", [Index]), 
+            lager:info("[AAE:~s] Finished tree build: ~p", [Service, Index]),
             gen_server:cast(Self, build_finished);
         {true, rehash} ->
-            lager:debug("Starting AAE tree rehash: ~p", [Index]),
+            lager:debug("[AAE:~s] Starting tree rehash: ~p", [Service, Index]),
             _ = [hashtree:rehash_tree(T) || {_,T} <- Trees],
-            lager:debug("Finished AAE tree rehash: ~p", [Index]),
+            lager:debug("[AAE:~s] Finished tree rehash: ~p", [Service, Index]),
             gen_server:cast(Self, build_finished);
         _ ->
             gen_server:cast(Self, build_failed)

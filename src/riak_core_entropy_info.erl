@@ -28,6 +28,7 @@
          create_table/0,
          dump/0,
          compute_exchange_info/0,
+         compute_exchange_info/1,
          compute_exchange_info/2,
          compute_tree_info/0,
          compute_tree_info/1,
@@ -109,6 +110,12 @@ dump() ->
                                      repair_stats()}].
 compute_exchange_info() ->
     compute_exchange_info(riak_core, {?MODULE, all_exchanges}).
+
+-spec compute_exchange_info(atom())  ->
+                                   [{index(), Last :: t_now(), All :: t_now(),
+                                     repair_stats()}].
+compute_exchange_info(Type) ->
+    compute_exchange_info(Type, {?MODULE, all_exchanges}).
 
 -spec compute_exchange_info(atom(), {atom(), atom()})  ->
                                    [{index(), Last :: t_now(), All :: t_now(),
