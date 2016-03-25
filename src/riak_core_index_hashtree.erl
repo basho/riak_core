@@ -900,7 +900,7 @@ build_or_rehash(Self, Locked, Type, #state{index=Index, trees=Trees}) ->
     end.
 
 -spec maybe_rebuild(state()) -> state().
-maybe_rebuild(State=#state{lock=undefined, built=true, expired=true, index=Index}) ->
+maybe_rebuild(State=#state{service=Service, lock=undefined, built=true, expired=true, index=Index}) ->
     Self = self(),
     Pid = spawn_link(fun() ->
                              receive
@@ -910,7 +910,7 @@ maybe_rebuild(State=#state{lock=undefined, built=true, expired=true, index=Index
                                      ok
                              end
                      end),
-    Locked = get_all_locks(build, Index, Pid),
+    Locked = get_all_locks(Service, build, Index, Pid),
     case Locked of
         true ->
             State2 = clear_tree(State),
@@ -940,8 +940,8 @@ close_trees(State=#state{trees=Trees}) ->
     Trees3 = [{IdxN, hashtree:close(Tree)} || {IdxN, Tree} <- Trees2],
     State#state{trees=Trees3}.
 
-get_all_locks(Type, Index, Pid) ->
-    case riak_core_entropy_manager:get_lock(Type, Pid) of
+get_all_locks(Service, Type, Index, Pid) ->
+    case riak_core_entropy_manager:get_lock(Service,Type, Pid) of
         ok ->
             case maybe_get_vnode_lock(Type, Index, Pid) of
                 ok ->
