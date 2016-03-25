@@ -633,13 +633,13 @@ apply_tree(Id, Fun, State=#state{trees=Trees}) ->
     end.
 
 -spec do_build_finished(state()) -> state().
-do_build_finished(State=#state{index=Index, built=_Pid}) ->
-    lager:debug("[AAE:~s] Finished build: ~p", [State#state.service, Index]),
+do_build_finished(State=#state{service=Service, index=Index, built=_Pid}) ->
+    lager:debug("[AAE:~s] Finished build: ~p", [Service, Index]),
     {_,Tree0} = hd(State#state.trees),
     BuildTime = get_build_time(Tree0),
     _ = hashtree:write_meta(<<"built">>, <<1>>, Tree0),
     _ = hashtree:write_meta(<<"build_time">>, term_to_binary(BuildTime), Tree0),
-    riak_core_entropy_info:tree_built(Index, BuildTime),
+    riak_core_entropy_info:tree_built(Service, Index, BuildTime),
     State#state{built=true, build_time=BuildTime, expired=false}.
 
 %% Determine the build time for all trees associated with this

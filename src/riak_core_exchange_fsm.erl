@@ -343,7 +343,7 @@ next_state_with_timeout(StateName, State, Timeout) ->
 exchange_complete({LocalIdx, _}, {RemoteIdx, RemoteNode}, IndexN, Repaired, Service) ->
     riak_core_entropy_info:exchange_complete(Service, LocalIdx, RemoteIdx, IndexN, Repaired),
     rpc:call(RemoteNode, riak_core_entropy_info, exchange_complete,
-             [RemoteIdx, LocalIdx, IndexN, Repaired]).
+             [Service, RemoteIdx, LocalIdx, IndexN, Repaired]).
 
 open_disk_log(Name, Path, RWorRO) ->
     open_disk_log(Name, Path, RWorRO, [{type, halt}, {format, internal}]).
