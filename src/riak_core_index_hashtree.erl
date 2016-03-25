@@ -875,12 +875,12 @@ maybe_build(State) ->
 %% a fold/build. Otherwise, trigger a rehash to ensure the hashtrees match the
 %% current on-disk segments.
 -spec build_or_rehash(pid(), state()) -> ok.
-build_or_rehash(Self, State=#state{index=Index}) ->
+build_or_rehash(Self, State=#state{service=Service, index=Index}) ->
     Type = case load_built(State) of
                false -> build;
                true  -> rehash
            end,
-    Locked = get_all_locks(Type, Index, self()),
+    Locked = get_all_locks(Service, Type, Index, self()),
     build_or_rehash(Self, Locked, Type, State).
 
 build_or_rehash(Self, Locked, Type, #state{index=Index, trees=Trees}) ->

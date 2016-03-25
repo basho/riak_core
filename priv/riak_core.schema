@@ -135,6 +135,70 @@
   {datatype, bytesize},
   {level, advanced}]}.
 
+%% @doc Whether the distributed throttle for active anti-entropy is
+%% enabled.
+{mapping, "anti_entropy.throttle", "riak_core.aae_throttle_kill_switch", [
+  {default, on},
+  {datatype, {flag, off, on}},
+  hidden
+]}.
+
+%% @doc Sets the throttling tiers for active anti-entropy. Each tier
+%% is a minimum vnode mailbox size and a time-delay that the throttle
+%% should observe at that size and above. For example:
+%%
+%%     anti_entropy.throttle.tier1.mailbox_size = 0
+%%     anti_entropy.throttle.tier1.delay = 0ms
+%%     anti_entropy.throttle.tier2.mailbox_size = 40
+%%     anti_entropy.throttle.tier2.delay = 5ms
+%%
+%% If configured, there must be a tier which includes a mailbox size
+%% of 0. Both .mailbox_size and .delay must be set for each tier.
+%% @see anti_entropy.throttle
+{mapping,
+ "anti_entropy.throttle.$tier.mailbox_size",
+ "riak_core.aae_throttle_limits", [
+  {datatype, integer},
+  hidden,
+  {validators, ["non_negative"]}
+]}.
+
+%% @see anti_entropy.throttle.$tier.mailbox_size
+{mapping,
+ "anti_entropy.throttle.$tier.delay",
+ "riak_core.aae_throttle_limits", [
+  {datatype, {duration, ms}},
+  hidden
+]}.
+
+{validator,
+ "non_negative",
+ "must be greater than or equal to 0",
+ fun(Value) -> Value >= 0 end}.
+
+{translation,
+ "riak_core.aae_throttle_limits",
+ fun(Conf) ->
+   %% Grab all of the possible names of tiers so we can ensure that
+   %% both mailbox_size and delay are included for each tier.
+   TierNamesM = cuttlefish_variable:fuzzy_matches(["anti_entropy", "throttle", "$tier", "mailbox_size"], Conf),
+   TierNamesD = cuttlefish_variable:fuzzy_matches(["anti_entropy", "throttle", "$tier", "delay"], Conf),
+   TierNames = lists:usort(TierNamesM ++ TierNamesD),
+   Throttles = lists:sort(lists:foldl(
+     fun({"$tier", Tier}, Settings) ->
+         Mbox = cuttlefish:conf_get(["anti_entropy", "throttle", Tier, "mailbox_size"], Conf),
+         Delay = cuttlefish:conf_get(["anti_entropy", "throttle", Tier, "delay"], Conf),
+         [{Mbox - 1, Delay}|Settings]
+     end, [], TierNames)),
+   case Throttles of
+       %% -1 is a magic "minimum" bound and must be included, so if it
+       %% isn't present we call it invalid
+       [{-1,_}|_] -> Throttles;
+       _ -> cuttlefish:invalid("anti_entropy.throttle tiers must include a tier with mailbox_size 0")
+   end
+end
+}.
+
 
 %% @doc Each database .sst table file can include an optional "bloom filter"
 %% that is highly effective in shortcutting data queries that are destined
