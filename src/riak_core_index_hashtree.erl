@@ -494,7 +494,7 @@ hash_index_data(IndexData) when is_list(IndexData) ->
 %% If `HasIndexTree` is true, also update the index spec tree.
 -spec fold_keys(atom(), index(), pid(), boolean()) -> ok.
 fold_keys(VNode, Partition, Tree, HasIndexTree) ->
-    Master = Master:master(),
+    Master = VNode:master(),
     FoldFun = fold_fun(VNode, Tree, HasIndexTree),
     Req = riak_core_util:make_fold_req(FoldFun,
                                        0, false, 
@@ -523,7 +523,7 @@ maybe_throttle_build(RObjBin, Limit, Wait, Acc) ->
 
 %% @doc Generate the folding function
 %% for a riak fold_req
--spec fold_fun(pid(), boolean()) -> fun().
+-spec fold_fun(atom(), pid(), boolean()) -> fun().
 fold_fun(VNode, Tree, _HasIndexTree = false) ->
     ObjectFoldFun = object_fold_fun(VNode, Tree),
     {Limit, Wait} = get_build_throttle(),
@@ -547,7 +547,7 @@ fold_fun(VNode,Tree, _HasIndexTree = true) ->
             Acc2
     end.
 
--spec object_fold_fun(pid()) -> fun().
+-spec object_fold_fun(atom(), pid()) -> fun().
 object_fold_fun(VNode, Tree) ->
     fun(BKey={Bucket,Key}, RObj, BinBKey) ->
             IndexN = riak_core_util:get_index_n({Bucket, Key}),
@@ -894,7 +894,7 @@ build_or_rehash(Self, State=#state{service=Service, index=Index}) ->
     Locked = get_all_locks(Service, Type, Index, self()),
     build_or_rehash(Self, Locked, Type, State).
 
-build_or_rehash(Self, Locked, Type, #state{vnode=VMode, service=Service,
+build_or_rehash(Self, Locked, Type, #state{vnode=VNode, service=Service,
                                            index=Index, trees=Trees}) ->
     case {Locked, Type} of
         {true, build} ->
