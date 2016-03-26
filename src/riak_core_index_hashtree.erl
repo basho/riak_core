@@ -671,19 +671,19 @@ valid_time({X,Y,Z}) when is_integer(X) and is_integer(Y) and is_integer(Z) ->
 valid_time(_) ->
     false.
 
-do_insert(Items, Opts, State=#state{trees=Trees}) ->
+do_insert(Items, Opts, State=#state{vnode=VNode, trees=Trees}) ->
     HasIndex = has_index_tree(Trees),
-    do_insert_expanded(expand_items(HasIndex, Items), Opts, State).
+    do_insert_expanded(expand_items(VNode, HasIndex, Items), Opts, State).
 
-expand_items(HasIndex, Items) ->
+expand_items(VNode, HasIndex, Items) ->
     lists:foldl(fun(I, Acc) ->
-                        expand_item(HasIndex, I, Acc)
+                        expand_item(VNode, HasIndex, I, Acc)
                 end, [], Items).
 
-expand_item(Has2ITree, {object, BKey, RObj}, Others) ->
+expand_item(VNode, Has2ITree, {object, BKey, RObj}, Others) ->
     IndexN = riak_core_util:get_index_n(BKey),
     BinBKey = term_to_binary(BKey),
-    ObjHash = hash_object(BKey, RObj),
+    ObjHash = VNode:hash_object(BKey, RObj),
     Item0 = {IndexN, BinBKey, ObjHash},
     case Has2ITree of
         false ->
@@ -693,7 +693,7 @@ expand_item(Has2ITree, {object, BKey, RObj}, Others) ->
             Hash2i =  hash_index_data(IndexData),
             [Item0, {?INDEX_2I_N, BinBKey, Hash2i} | Others]
     end;
-expand_item(_, Item, Others) ->
+expand_item(_, _, Item, Others) ->
     [Item | Others].
 
 -spec do_insert_expanded([{index_n(), binary(), binary()}], proplist(),
@@ -701,7 +701,7 @@ expand_item(_, Item, Others) ->
 do_insert_expanded([], _Opts, State) ->
     State;
 do_insert_expanded([{Id, Key, Hash}|Rest], Opts, State=#state{trees=Trees}) ->
-    State2 = 
+    State2 =
     case orddict:find(Id, Trees) of
         {ok, Tree} ->
             Tree2 = hashtree:insert(Key, Hash, Tree, Opts),
