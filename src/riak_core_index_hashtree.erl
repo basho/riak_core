@@ -81,6 +81,7 @@
                 path,
                 build_time,
                 service,
+                master,
                 trees,
                 use_2i = false :: boolean()}).
 
@@ -251,6 +252,7 @@ init([Service, Index, VNPid, VNode, Opts]) ->
             end,
             ignore;
         Root ->
+            Master = VNode:master(),
             Path = filename:join(Root, integer_to_list(Index)),
             monitor(process, VNPid),
             Use2i = lists:member(use_2i, Opts),
@@ -260,6 +262,7 @@ init([Service, Index, VNPid, VNode, Opts]) ->
                            trees=orddict:new(),
                            built=false,
                            vnode=VNode,
+                           master=Master,
                            service=Service,
                            use_2i=Use2i,
                            path=Path},
@@ -489,8 +492,8 @@ hash_index_data(IndexData) when is_list(IndexData) ->
 %% before the fold reaches the now out-of-date version of the object, the old
 %% key/hash pair will be ignored.
 %% If `HasIndexTree` is true, also update the index spec tree.
--spec fold_keys(index(), pid(), boolean()) -> ok.
-fold_keys(Partition, Tree, HasIndexTree) ->
+-spec fold_keys(atom(), index(), pid(), boolean()) -> ok.
+fold_keys(Master, Partition, Tree, HasIndexTree) ->
     FoldFun = fold_fun(Tree, HasIndexTree),
     Req = riak_core_util:make_fold_req(FoldFun,
                                        0, false, 
@@ -498,7 +501,7 @@ fold_keys(Partition, Tree, HasIndexTree) ->
                                         {iterator_refresh, true}]),
     riak_core_vnode_master:sync_command({Partition, node()},
                                         Req,
-                                        riak_core_vnode_master, infinity),
+                                        Master, infinity),
     ok.
 
 get_build_throttle() ->
@@ -890,12 +893,12 @@ build_or_rehash(Self, State=#state{service=Service, index=Index}) ->
     Locked = get_all_locks(Service, Type, Index, self()),
     build_or_rehash(Self, Locked, Type, State).
 
-build_or_rehash(Self, Locked, Type,
-                #state{service=Service, index=Index, trees=Trees}) ->
+build_or_rehash(Self, Locked, Type, #state{master=Master, service=Service,
+                                           index=Index, trees=Trees}) ->
     case {Locked, Type} of
         {true, build} ->
             lager:info("[AAE:~s] Starting tree build: ~p", [Service, Index]),
-            fold_keys(Index, Self, has_index_tree(Trees)),
+            fold_keys(Master, Index, Self, has_index_tree(Trees)),
             lager:info("[AAE:~s] Finished tree build: ~p", [Service, Index]),
             gen_server:cast(Self, build_finished);
         {true, rehash} ->
