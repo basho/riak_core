@@ -510,7 +510,7 @@ get_build_throttle() ->
                        anti_entropy_build_throttle,
                        ?DEFAULT_BUILD_THROTTLE).
 
-maybe_throttle_build(RObjBin, Limit, Wait, Acc) ->
+maybe_throttle_build(RObjBin, Limit, Wait, Acc) when is_binary(RObjBin) ->
     ObjSize = byte_size(RObjBin),
     Acc2 = Acc + ObjSize,
     if (Limit =/= 0) andalso (Acc2 > Limit) ->
@@ -519,7 +519,9 @@ maybe_throttle_build(RObjBin, Limit, Wait, Acc) ->
             0;
        true ->
             Acc2
-    end.
+    end;
+maybe_throttle_build(RObj, Limit, Wait, Acc) ->
+    maybe_throttle_build(term_to_binary(RObj), Limit, Wait, Acc).
 
 %% @doc Generate the folding function
 %% for a riak fold_req
