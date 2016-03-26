@@ -493,8 +493,9 @@ hash_index_data(IndexData) when is_list(IndexData) ->
 %% key/hash pair will be ignored.
 %% If `HasIndexTree` is true, also update the index spec tree.
 -spec fold_keys(atom(), index(), pid(), boolean()) -> ok.
-fold_keys(Master, Partition, Tree, HasIndexTree) ->
-    FoldFun = fold_fun(Tree, HasIndexTree),
+fold_keys(VNode, Partition, Tree, HasIndexTree) ->
+    Master = Master:master(),
+    FoldFun = fold_fun(VNode, Tree, HasIndexTree),
     Req = riak_core_util:make_fold_req(FoldFun,
                                        0, false, 
                                        [aae_reconstruction,
@@ -523,8 +524,8 @@ maybe_throttle_build(RObjBin, Limit, Wait, Acc) ->
 %% @doc Generate the folding function
 %% for a riak fold_req
 -spec fold_fun(pid(), boolean()) -> fun().
-fold_fun(Tree, _HasIndexTree = false) ->
-    ObjectFoldFun = object_fold_fun(Tree),
+fold_fun(VNode, Tree, _HasIndexTree = false) ->
+    ObjectFoldFun = object_fold_fun(VNode, Tree),
     {Limit, Wait} = get_build_throttle(),
     fun(BKey, RObj, Acc) ->
             BinBKey = term_to_binary(BKey),
@@ -532,9 +533,9 @@ fold_fun(Tree, _HasIndexTree = false) ->
             Acc2 = maybe_throttle_build(RObj, Limit, Wait, Acc),
             Acc2
     end;
-fold_fun(Tree, _HasIndexTree = true) ->
+fold_fun(VNode,Tree, _HasIndexTree = true) ->
     %% Index AAE backend, so hash the indexes
-    ObjectFoldFun = object_fold_fun(Tree),
+    ObjectFoldFun = object_fold_fun(VNode,Tree),
     IndexFoldFun = index_fold_fun(Tree),
     {Limit, Wait} = get_build_throttle(),
     fun(BKey = {Bucket, Key}, BinObj, Acc) ->
@@ -547,10 +548,10 @@ fold_fun(Tree, _HasIndexTree = true) ->
     end.
 
 -spec object_fold_fun(pid()) -> fun().
-object_fold_fun(Tree) ->
+object_fold_fun(VNode, Tree) ->
     fun(BKey={Bucket,Key}, RObj, BinBKey) ->
             IndexN = riak_core_util:get_index_n({Bucket, Key}),
-            insert([{IndexN, BinBKey, hash_object(BKey, RObj)}],
+            insert([{IndexN, BinBKey, VNode:hash_object(BKey, RObj)}],
                    [if_missing],
                    Tree)
     end.
@@ -893,12 +894,12 @@ build_or_rehash(Self, State=#state{service=Service, index=Index}) ->
     Locked = get_all_locks(Service, Type, Index, self()),
     build_or_rehash(Self, Locked, Type, State).
 
-build_or_rehash(Self, Locked, Type, #state{master=Master, service=Service,
+build_or_rehash(Self, Locked, Type, #state{vnode=VMode, service=Service,
                                            index=Index, trees=Trees}) ->
     case {Locked, Type} of
         {true, build} ->
             lager:info("[AAE:~s] Starting tree build: ~p", [Service, Index]),
-            fold_keys(Master, Index, Self, has_index_tree(Trees)),
+            fold_keys(VNode, Index, Self, has_index_tree(Trees)),
             lager:info("[AAE:~s] Finished tree build: ~p", [Service, Index]),
             gen_server:cast(Self, build_finished);
         {true, rehash} ->
