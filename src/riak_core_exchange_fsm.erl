@@ -43,13 +43,14 @@
                 local_tree  :: pid(),
                 remote_tree :: pid(),
                 built       :: non_neg_integer(),
+                timer       :: reference(),
                 timeout     :: pos_integer(),
                 vnode       :: atom(),
                 service     :: atom()
                }).
 
 %% Per state transition timeout used by certain transitions
--define(DEFAULT_ACTION_TIMEOUT, 300000). %% 5 minutes
+-define(DEFAULT_ACTION_TIMEOUT, 60000). %% 1 minute
 
 %% Use occasional calls to disk_log:log() for some backpressure periodically
 -define(LOG_BATCH_SIZE, 5000).
@@ -119,7 +120,9 @@ prepare_exchange(start_exchange, State=#state{remote=RemoteVN,
                                                    local_fsm) of
                 ok ->
                     remote_exchange_request(Service, RemoteVN, IndexN),
-                    next_state_with_timeout(prepare_exchange, State);
+                    Timer = gen_fsm:send_event_after(State#state.timeout,
+                                                     timeout),
+                    {next_state, prepare_exchange, State#state{timer=Timer}};
                 _ ->
                     send_exchange_status(already_locked, State),
                     {stop, normal, State}
@@ -131,12 +134,14 @@ prepare_exchange(start_exchange, State=#state{remote=RemoteVN,
 prepare_exchange(timeout, State) ->
     do_timeout(State);
 prepare_exchange({remote_exchange, Pid}, State) when is_pid(Pid) ->
+    _ = gen_fsm:cancel_timer(State#state.timer),
     monitor(process, Pid),
-    State2 = State#state{remote_tree=Pid},
+    State2 = State#state{remote_tree=Pid, timer=undefined},
     update_trees(start_exchange, State2);
 prepare_exchange({remote_exchange, Error}, State) ->
+    _ = gen_fsm:cancel_timer(State#state.timer),
     send_exchange_status({remote, Error}, State),
-    {stop, normal, State}.
+    {stop, normal, State#state{timer=undefined}}.
 
 %% @doc Now that locks have been acquired, ask both the local and remote
 %%      hashtrees to perform a tree update. If updates do not occur within
@@ -181,14 +186,12 @@ key_exchange(timeout, State=#state{local=LocalVN,
     lager:debug("Starting key exchange between ~p and ~p", [LocalVN, RemoteVN]),
     lager:debug("Exchanging hashes for preflist ~p", [IndexN]),
 
-    TmpDir = app_helper:get_env(riak_core, platform_data_dir, "/tmp"),
+    TmpDir = tmp_dir(),
     {NA, NB, NC} = Now = WriteLog = erlang:timestamp(),
-    LogFile1 = lists:flatten(io_lib:format("~s/~s/in.~p.~p.~p",
-                                           [TmpDir, ?MODULE, NA, NB, NC])),
-    ok = filelib:ensure_dir(LogFile1),
-    LogFile2 = lists:flatten(io_lib:format("~s/~s/out.~p.~p.~p",
-                                           [TmpDir, ?MODULE, NA, NB, NC])),
-    ok = filelib:ensure_dir(LogFile2),
+    LogFile1 = lists:flatten(io_lib:format("~s/in.~p.~p.~p",
+                                           [TmpDir, NA, NB, NC])),
+    LogFile2 = lists:flatten(io_lib:format("~s/out.~p.~p.~p",
+                                           [TmpDir, NA, NB, NC])),
     Remote = fun(get_bucket, {L, B}) ->
                      exchange_bucket(RemoteTree, IndexN, L, B);
                 (key_hashes, Segment) ->
@@ -203,6 +206,10 @@ key_exchange(timeout, State=#state{local=LocalVN,
                 (final, _Y) ->
                      ok = disk_log:sync(Now),
                      ok = disk_log:close(Now),
+                     ok;
+                (start_exchange_level, {_Level, _Buckets}) ->
+                     ok;
+                (start_exchange_segments, _Segments) ->
                      ok;
                 (_X, _Y) ->
                      lager:error("~s LINE ~p: ~p ~p", [?MODULE, ?LINE, _X, _Y]),
@@ -230,6 +237,7 @@ key_exchange(timeout, State=#state{local=LocalVN,
     Count = riak_core_index_hashtree:compare(IndexN, Remote, AccFun, 0,
                                              LocalTree),
     if Count == 0 ->
+            Complete = true,
             ok;
        true ->
             %% Sort the keys.  For vnodes that use backends that preserve
@@ -251,16 +259,19 @@ key_exchange(timeout, State=#state{local=LocalVN,
                               end, 0, ReadLog),
             disk_log:close(ReadLog),
             if Count == FoldRes ->
+                    Complete = true,
                     ok;
                true ->
                     lager:error("~s:key_exchange: Count ~p /= FoldRes ~p\n",
-                                [?MODULE, Count, FoldRes])
+                                [?MODULE, Count, FoldRes]),
+                    send_exchange_status(failed, State),
+                    Complete = false
             end,
             lager:info("Repaired ~b keys during active anti-entropy exchange "
                        "of ~p between ~p and ~p",
                        [Count, IndexN, LocalVN, RemoteVN])
     end,
-    exchange_complete(LocalVN, RemoteVN, IndexN, Count, Service),
+    [exchange_complete(Service, LocalVN, RemoteVN, IndexN, Count) || Complete],
     _ = file:delete(LogFile1),
     _ = file:delete(LogFile2),
     {stop, normal, State}.
@@ -287,6 +298,7 @@ read_repair_keydiff(VNode, LocalVN, RemoteVN, {Bucket, Key, _Reason}) ->
     VNode:aae_repair(Bucket, Key),
     %% Force vnodes to update AAE tree in case read repair wasn't triggered
     riak_core_aae_vnode:rehash(VNode:master(), [LocalVN, RemoteVN], Bucket, Key),
+    timer:sleep(riak_core_entropy_manager:get_aae_throttle()),
     ok.
 
 %% @private
@@ -325,7 +337,7 @@ do_timeout(State=#state{local=LocalVN,
     lager:info("Timeout during exchange between (local) ~p and (remote) ~p, "
                "(preflist) ~p", [LocalVN, RemoteVN, IndexN]),
     send_exchange_status({timeout, RemoteVN, IndexN}, State),
-    {stop, normal, State}.
+    {stop, normal, State#state{timer=undefined}}.
 
 %% @private
 send_exchange_status(Status, #state{local=LocalVN,
@@ -334,13 +346,7 @@ send_exchange_status(Status, #state{local=LocalVN,
                                     service=Service}) ->
     riak_core_entropy_manager:exchange_status(Service, LocalVN, RemoteVN, IndexN, Status).
 
-%% @private
-next_state_with_timeout(StateName, State) ->
-    next_state_with_timeout(StateName, State, State#state.timeout).
-next_state_with_timeout(StateName, State, Timeout) ->
-    {next_state, StateName, State, Timeout}.
-
-exchange_complete({LocalIdx, _}, {RemoteIdx, RemoteNode}, IndexN, Repaired, Service) ->
+exchange_complete(Service, {LocalIdx, _}, {RemoteIdx, RemoteNode}, IndexN, Repaired) ->
     riak_core_entropy_info:exchange_complete(Service, LocalIdx, RemoteIdx, IndexN, Repaired),
     rpc:call(RemoteNode, riak_core_entropy_info, exchange_complete,
              [Service, RemoteIdx, LocalIdx, IndexN, Repaired]).
@@ -358,7 +364,7 @@ sort_disk_log(InputFile, OutputFile) ->
     Input = sort_disk_log_input(ReadLog),
     Output = sort_disk_log_output(WriteLog),
     try
-        file_sorter:sort(Input, Output, {format, term})
+        file_sorter:sort(Input, Output, [{format, term}, {tmpdir, tmp_dir()}])
     after
         ok = disk_log:close(ReadLog),
         ok = disk_log:close(WriteLog)
@@ -414,3 +420,10 @@ fold_disk_log({Cont, Terms}, Fun, Acc, DiskLog) ->
                    Acc
            end,
     fold_disk_log(disk_log:chunk(DiskLog, Cont), Fun, Acc2, DiskLog).
+
+tmp_dir() ->
+    PDD = app_helper:get_env(riak_core, platform_data_dir, "/tmp"),
+    TmpDir = filename:join(PDD, ?MODULE),
+    TmpCanary = filename:join(TmpDir, "canary"),
+    ok = filelib:ensure_dir(TmpCanary),
+    TmpDir.
