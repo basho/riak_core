@@ -496,7 +496,7 @@ end
 {mapping, "handoff.ip", "riak_core.handoff_ip", [
   {default, "{{handoff_ip}}" },
   {datatype, string},
-  {validators, ["valid_ipaddr"]},
+  {validators, ["valid_ipaddr", "not_localhost"]},
   hidden
 ]}.
 
@@ -505,6 +505,17 @@ end
   "must be a valid IP address",
   fun(AddrString) ->
     case inet_parse:address(AddrString) of
+      {ok, _} -> true;
+      {error, _} -> false
+    end
+  end}.
+
+{validator,
+  "not_localhost",
+  "can't be a local ip",
+  fun(AddrString) ->
+    case inet_parse:address(AddrString) of
+      {ok, {127, _, _, _}} -> false;
       {ok, _} -> true;
       {error, _} -> false
     end
