@@ -10,6 +10,8 @@
 -define(PT_MSG_SYNC, 3).
 -define(PT_MSG_CONFIGURE, 4).
 -define(PT_MSG_BATCH, 5).
+-define(PT_MSG_VERIFY_NODE, 6).
+-define(PT_MSG_UNKNOWN, 255).
 
 -record(ho_stats,
         {
