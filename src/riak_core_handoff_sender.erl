@@ -96,7 +96,7 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
 
     try
         %% Give workers one more chance to abort or get a lock or whatever.
-         FoldOpts = maybe_call_handoff_started(Module, SrcPartition),
+        FoldOpts = maybe_call_handoff_started(Module, SrcPartition),
 
          Filter = get_filter(Opts),
          [_Name,Host] = string:tokens(atom_to_list(TargetNode), "@"),
@@ -131,7 +131,27 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
          Msg = <<?PT_MSG_OLDSYNC:8,ModBin/binary>>,
          ok = TcpMod:send(Socket, Msg),
 
+
          RecvTimeout = get_handoff_receive_timeout(),
+
+        %% We want to ensure that the node we think we are talking to
+        %% really is the node we expect.
+        %% The remote node will reply with PT_MSG_VERIFY_NODE if it
+        %% is the correct node or close the connection if not.
+        %% If the node does not support this functionality we
+        %% print an error and keep going with our fingers crossed.
+        TargetBin = term_to_binary(TargetNode),
+        VerifyNodeMsg = <<?PT_MSG_VERIFY_NODE:8,TargetBin/binary>>,
+        ok = TcpMod:send(Socket, VerifyNodeMsg),
+        case TcpMod:recv(Socket, 0, RecvTimeout) of
+            {ok,[?PT_MSG_VERIFY_NODE | _]} -> ok;
+            {ok,[?PT_MSG_UNKNOWN | _]} ->
+                lager:warning("Could not verify identity of peer ~s.",
+                              [TargetNode]),
+                ok;
+            {error, timeout} -> exit({shutdown, timeout});
+            {error, closed} -> exit({shutdown, wrong_node})
+        end,
 
          AckSyncThreshold = app_helper:get_env(riak_core, handoff_acksync_threshold, 25),
 

@@ -153,13 +153,27 @@ process_message(?PT_MSG_SYNC, _MsgData, State=#state{sock=Socket,
                                                      tcp_mod=TcpMod}) ->
     TcpMod:send(Socket, <<?PT_MSG_SYNC:8, "sync">>),
     State;
+
+process_message(?PT_MSG_VERIFY_NODE, ExpectedName, State=#state{sock=Socket,
+                                                                tcp_mod=TcpMod,
+                                                                peer=Peer}) ->
+    case term_to_binary(ExpectedName) of
+        _Node when _Node =:= node() ->
+            TcpMod:send(Socket, <<?PT_MSG_VERIFY_NODE:8>>),
+            State;
+        Node ->
+            lager:error("Handoff from ~s expects us to be ~s but we are ~s.",
+                        [Peer, Node, node()]),
+            exit({error, {wrong_node, Node}})
+    end;
+
 process_message(?PT_MSG_CONFIGURE, MsgData, State) ->
     ConfProps = binary_to_term(MsgData),
     State#state{vnode_mod=proplists:get_value(vnode_mod, ConfProps),
                 partition=proplists:get_value(partition, ConfProps)};
 process_message(_, _MsgData, State=#state{sock=Socket,
                                           tcp_mod=TcpMod}) ->
-    TcpMod:send(Socket, <<255:8,"unknown_msg">>),
+    TcpMod:send(Socket, <<?PT_MSG_UNKNOWN:8,"unknown_msg">>),
     State.
 
 handle_cast(_Msg, State) -> {noreply, State}.
