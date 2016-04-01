@@ -412,25 +412,22 @@ update_tree(Segments, State=#state{next_rebuild=NextRebuild, width=Width,
     Hashes = orddict:from_list(hashes(State, Segments)),
     %% Paranoia to make sure all of the hash entries are updated as expected
     lager:debug("segments ~p -> hashes ~p\n", [Segments, Hashes]),
-    case {Segments, length(Segments), length(Hashes)} of
-	{?ALL_SEGMENTS, _, _} ->
-	    NextRebuild = full, % Paranoia to crash if ever here on incremental
-	    ok;
-	{_, Len, Len} ->
-	    ok;
-	{_, _SegLen, _HashLen} ->
-	    %% At this point the hashes are no longer sufficient to update
-	    %% the upper trees.  Alternative is to crash here, but that would
-	    %% lose updates and is the action taken on repair anyway.
-	    %% Save the customer some pain by doing that now and log.
-	    %% Enable lager debug tracing with lager:trace_file(hashtree, "/tmp/ht.trace"
-	    %% to get the detailed segment information.
-	    lager:warning("Incremental AAE hash was unable to find all required data, "
-			  "forcing full rebuild of ~p", [State#state.path]),
-	    update_perform(State#state{next_rebuild = full})
-    end,
-    Groups = group(Hashes, Width),
-    update_levels(LastLevel, Groups, State, NextRebuild).
+    case Segments == ?ALL_SEGMENTS orelse
+        length(Segments) == length(Hashes) of
+        true ->
+            Groups = group(Hashes, Width),
+            update_levels(LastLevel, Groups, State, NextRebuild);
+        false ->
+            %% At this point the hashes are no longer sufficient to update
+            %% the upper trees.  Alternative is to crash here, but that would
+            %% lose updates and is the action taken on repair anyway.
+            %% Save the customer some pain by doing that now and log.
+            %% Enable lager debug tracing with lager:trace_file(hashtree, "/tmp/ht.trace"
+            %% to get the detailed segment information.
+            lager:warning("Incremental AAE hash was unable to find all required data, "
+                          "forcing full rebuild of ~p", [State#state.path]),
+            update_perform(State#state{next_rebuild = full})
+    end.
 
 -spec rehash_tree(hashtree()) -> hashtree().
 rehash_tree(State) ->
