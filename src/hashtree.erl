@@ -410,8 +410,24 @@ update_tree(Segments, State=#state{next_rebuild=NextRebuild, width=Width,
                                    levels=Levels}) ->
     LastLevel = Levels,
     Hashes = orddict:from_list(hashes(State, Segments)),
-    Groups = group(Hashes, Width),
-    update_levels(LastLevel, Groups, State, NextRebuild).
+    %% Paranoia to make sure all of the hash entries are updated as expected
+    lager:debug("segments ~p -> hashes ~p\n", [Segments, Hashes]),
+    case Segments == ?ALL_SEGMENTS orelse
+        length(Segments) == length(Hashes) of
+        true ->
+            Groups = group(Hashes, Width),
+            update_levels(LastLevel, Groups, State, NextRebuild);
+        false ->
+            %% At this point the hashes are no longer sufficient to update
+            %% the upper trees.  Alternative is to crash here, but that would
+            %% lose updates and is the action taken on repair anyway.
+            %% Save the customer some pain by doing that now and log.
+            %% Enable lager debug tracing with lager:trace_file(hashtree, "/tmp/ht.trace"
+            %% to get the detailed segment information.
+            lager:warning("Incremental AAE hash was unable to find all required data, "
+                          "forcing full rebuild of ~p", [State#state.path]),
+            update_perform(State#state{next_rebuild = full})
+    end.
 
 -spec rehash_tree(hashtree()) -> hashtree().
 rehash_tree(State) ->
@@ -707,6 +723,7 @@ update_levels(0, _, State, _) ->
     State;
 update_levels(Level, Groups, State, Type) ->
     {_, _, NewState, NewBuckets} = rebuild_fold(Level, Groups, State, Type),
+    lager:debug("level ~p hashes ~w\n", [Level, NewBuckets]),
     Groups2 = group(NewBuckets, State#state.width),
     update_levels(Level - 1, Groups2, NewState, Type).
 
@@ -868,10 +885,18 @@ multi_select_segment(#state{id=Id, itr=Itr}, Segments, F) ->
                    encode(Id, First, <<>>)
            end,
     IS2 = iterate(iterator_move(Itr, Seek), IS1),
-    #itr_state{current_segment=LastSegment,
+    #itr_state{remaining_segments = LeftOver,
+               current_segment=LastSegment,
                segment_acc=LastAcc,
                final_acc=FA} = IS2,
-    Result = [{LastSegment, F(LastAcc)} | FA],
+
+    %% iterate completes without processing the last entries in the state.  Compute
+    %% the final visited segment, and add calls to the F([]) for all of the segments
+    %% that do not exist at the end of the file (due to deleting the last entry in the
+    %% segment).
+    Result = [{LeftSeg, F([])} || LeftSeg <- lists:reverse(LeftOver),
+				  LeftSeg =/= '*'] ++
+	[{LastSegment, F(LastAcc)} | FA],
     case Result of
         [{'*', _}] ->
             %% Handle wildcard select when all segments are empty
@@ -966,13 +991,19 @@ iterate({ok, K, V}, IS=#itr_state{itr=Itr,
                                segment_acc=[{K,V}],
                                prefetch=true},
             iterate(iterator_move(Itr, prefetch), IS2);
-        {Id, _, [_NextSeg | _Remaining], true} ->
+        {Id, _, [NextSeg | Remaining], true} ->
             %% Pointing at uninteresting segment, but need to halt the
             %% prefetch to ensure the interator can be reused
-            IS2 = IS#itr_state{segment_acc=[],
+
+            %% Do not update segment/final_acc
+            IS2 = IS#itr_state{current_segment=NextSeg,
+                               segment_acc=[],
+                               remaining_segments=Remaining,
                                final_acc=[{Segment, F(Acc)} | FinalAcc],
-                               prefetch=false},
-            iterate(iterator_move(Itr, prefetch_stop), IS2);
+                               prefetch=true}, % will be after second move
+            _ = iterator_move(Itr, prefetch_stop), % ignore the pre-fetch,
+            Seek = encode(Id, NextSeg, <<>>),      % and risk wasting a reseek
+            iterate(iterator_move(Itr, Seek), IS2);% to get to the next segment
         {Id, _, [NextSeg | Remaining], false} ->
             %% Pointing at uninteresting segment, seek to next interesting one
             Seek = encode(Id, NextSeg, <<>>),
@@ -1025,6 +1056,9 @@ exchange_level(Level, Buckets, Local, Remote, _Opts) ->
                           B = Remote(get_bucket, {Level, Bucket}),
                           Delta = riak_ensemble_util:orddict_delta(lists:keysort(1, A),
                                                                    lists:keysort(1, B)),
+			  lager:debug("Exchange Level ~p Bucket ~p\nA=~p\nB=~p\nD=~p\n",
+				      [Level, Bucket, A, B, Delta]),
+
                           Diffs = Delta,
                           [BK || {BK, _} <- Diffs]
                   end, Buckets).
@@ -1036,6 +1070,8 @@ exchange_final(_Level, Segments, Local, Remote, AccFun, Acc0, _Opts) ->
                         B = Remote(key_hashes, Segment),
                         Delta = riak_ensemble_util:orddict_delta(lists:keysort(1, A),
                                                                  lists:keysort(1, B)),
+			lager:debug("Exchange Final\nA=~p\nB=~p\nD=~p\n",
+				    [A, B, Delta]),
                         Keys = [begin
                                     {_Id, Segment, Key} = decode(KBin),
                                     Type = key_diff_type(Diff),
@@ -1057,6 +1093,8 @@ compare(Level, Bucket, Tree, Remote, AccFun, KeyAcc) ->
     Inter = ordsets:intersection(ordsets:from_list(HL1),
                                  ordsets:from_list(HL2)),
     Diff = ordsets:subtract(Union, Inter),
+    lager:debug("Tree ~p level ~p bucket ~p\nL=~p\nR=~p\nD=\n",
+		[Tree, Level, Bucket, HL1, HL2, Diff]),
     KeyAcc3 =
         lists:foldl(fun({Bucket2, _}, KeyAcc2) ->
                             compare(Level+1, Bucket2, Tree, Remote, AccFun, KeyAcc2)
@@ -1070,6 +1108,8 @@ compare_segments(Segment, Tree=#state{id=Id}, Remote) ->
     HL1 = orddict:from_list(KeyHashes1),
     HL2 = orddict:from_list(KeyHashes2),
     Delta = orddict_delta(HL1, HL2),
+    lager:debug("Tree ~p segment ~p diff ~p\n",
+                [Tree, Segment, Delta]),
     Keys = [begin
                 {Id, Segment, Key} = decode(KBin),
                 Type = key_diff_type(Diff),
