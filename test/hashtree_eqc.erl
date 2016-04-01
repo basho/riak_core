@@ -136,7 +136,8 @@ params() -> % {Segments, Width, MemLevels}
          {trunc(math:pow(Width, Levels)), Width, MemLevels}).
 
 mark() ->
-    frequency([{1, mark_empty}, {5, mark_open}]).
+    %% frequency([{1, mark_empty}, {5, mark_open}]).
+    ?SHRINK(oneof([mark_empty, mark_open]), [mark_empty]). % should shrink towards mark_empty
 
 %% Generate tree ids - the first one is used for the test, the others are added
 %% as empty hashtrees.
@@ -295,8 +296,8 @@ update_perform(T) ->
 %% completed.
 %%
 set_next_rebuild(T) ->
-    put(T, hashtree:set_next_rebuild(get(T), incremental)).
-
+    put(T, hashtree:set_next_rebuild(get(T), incremental)),
+    ok.
 
 %% Wrap hashtree:insert to (over)write key with a new hash to a single
 %% table and insert into the model tree.
@@ -427,9 +428,18 @@ postcondition(_S,{call,_,start, [_Params, _ExtraIds, T1Mark, T2Mark]},_R) ->
     end;
 %% After a comparison, check against the results against
 %% the ETS table containing the *snapshot* copies.
-postcondition(_S,{call, _, local_compare, _},  Result) ->
+postcondition(_S,{call, _, local_compare, _},  Result0) ->
+    Result = lists:sort(Result0),
+    T1Top = hashtree:top_hash(get(t1)),
+    T2Top = hashtree:top_hash(get(t2)),
     Expect = expect_compare(),
-    eq(Expect, lists:sort(Result));	
+    case Expect of
+        [] ->
+            eqc_statem:conj([eq({result, Expect}, {result, Result}),
+                             eq({top, T1Top}, {top, T2Top})]);
+        _ ->
+            eq(Expect, Result)
+    end;
 postcondition(_S,{call,_,_,_},_R) ->
     true.
 
