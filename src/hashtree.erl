@@ -379,29 +379,50 @@ update_perform(State=#state{dirty_segments=Dirty, segments=NumSegments}) ->
                        %% gb_sets:to_list(Dirty),
                        bitarray_to_list(Dirty)
                end,
-    State2 = maybe_clear_buckets(Segments, State),
+    State2 = maybe_clear_buckets(NextRebuild, State),
     State3 = update_tree(Segments, State2),
     %% State2#state{dirty_segments=gb_sets:new()}
     State3#state{dirty_segments=bitarray_new(NumSegments),
                  next_rebuild=incremental}.
 
-maybe_clear_buckets(?ALL_SEGMENTS, State) ->
-    Segments = lists:seq(0, State#state.segments div State#state.width - 1),
-    %% Limit the clear to the disk buckets, then dump the whole tree
-    State2 = clear_bucket(State#state.mem_levels, State#state.levels, Segments, State),
-    State2#state{tree = dict:new()};
-maybe_clear_buckets(_Segments, State) ->
+%% Clear buckets if doing a full rebuild
+maybe_clear_buckets(full, State) ->
+    clear_buckets(State);
+maybe_clear_buckets(incremental, State) ->
     State.
 
-clear_bucket(MinLevel, Level, _Segments, State) when Level =< MinLevel ->
-    State;
-clear_bucket(MinLevel, Level, Segments, State = #state{width = Width}) ->
-    State2 = lists:foldl(fun(Segment, State1) ->
-                                 del_disk_bucket(Level, Segment, State1)
-                         end, State, Segments),
-    ParentSegments = lists:usort([Segment div Width || Segment <- Segments]),
-    clear_bucket(MinLevel, Level - 1, ParentSegments, State2).
+%% Fold over the 'live' data (outside of the snapshot), removing all
+%% bucket entries for the tree.
+clear_buckets(State=#state{id=Id, ref=Ref}) ->
+    Fun = fun({K,_V},Acc) ->
+                  try
+                      case decode_bucket(K) of
+                          {Id, _, _} ->
+                              eleveldb:delete(Ref, K, []),
+                              Acc + 1;
+                          _ ->
+                              throw({break, Acc})
+                      end
+                  catch
+                      _:_ -> % not a decodable bucket
+                          throw({break, Acc})
+                  end
+          end,
+    Opts = [{first_key, encode_bucket(Id, 0, 0)}],
+    Removed = try
+                  eleveldb:fold(Ref, Fun, 0, Opts)
+              catch
+                  {break, AccFinal} ->
+                      AccFinal
+              end,
+    lager:debug("Tree ~p cleared ~p segments.\n", [Id, Removed]),
 
+    %% Mark the tree as requiring a full rebuild (will be fixed
+    %% reset at end of update_trees) AND dump the in-memory
+    %% tree.
+    State#state{next_rebuild = full,
+                tree = dict:new()}.
+            
 
 -spec update_tree([integer()], hashtree()) -> hashtree().
 update_tree([], State) ->
@@ -812,10 +833,10 @@ set_disk_bucket(Level, Bucket, Val, State=#state{id=Id, ref=Ref}) ->
     ok = eleveldb:put(Ref, HKey, Bin, []),
     State.
 
-del_disk_bucket(Level, Bucket, State = #state{id = Id, ref = Ref}) ->
-    HKey = encode_bucket(Id, Level, Bucket),
-    ok = eleveldb:delete(Ref, HKey, []),
-    State.
+%% del_disk_bucket(Level, Bucket, State = #state{id = Id, ref = Ref}) ->
+%%     HKey = encode_bucket(Id, Level, Bucket),
+%%     ok = eleveldb:delete(Ref, HKey, []),
+%%     State.
 
 -spec encode_id(binary() | non_neg_integer()) -> tree_id_bin().
 encode_id(TreeId) when is_integer(TreeId) ->
@@ -851,6 +872,11 @@ decode(Bin) ->
 -spec encode_bucket(tree_id_bin(), integer(), integer()) -> bucket_bin().
 encode_bucket(TreeId, Level, Bucket) ->
     <<$b,TreeId:22/binary,$b,Level:64/integer,Bucket:64/integer>>.
+
+-spec decode_bucket(bucket_bin()) -> {tree_id_bin(), integer(), integer()}.
+decode_bucket(Bin) ->
+    <<$b,TreeId:22/binary,$b,Level:64/integer,Bucket:64/integer>> = Bin,
+    {TreeId, Level, Bucket}.
 
 -spec encode_meta(binary()) -> meta_bin().
 encode_meta(Key) ->
