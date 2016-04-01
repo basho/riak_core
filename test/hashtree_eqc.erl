@@ -295,7 +295,7 @@ update_perform(T) ->
 %% completed.
 %%
 set_next_rebuild(T) ->
-    _ = hashtree:set_next_rebuild(get(T), incremental).
+    put(T, hashtree:set_next_rebuild(get(T), incremental)).
 
 
 %% Wrap hashtree:insert to (over)write key with a new hash to a single
