@@ -54,6 +54,11 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
+%% Make it possible to run from '-s hashtree_eqc runfor 60' to run from cmdline
+runfor([DurationMinsStr]) ->
+    DurationSecs = 60 * list_to_integer(atom_to_list(DurationMinsStr)),
+    eqc:quickcheck(eqc:testing_time(DurationSecs, hashtree_eqc:sometimes_correct())).
+
 hashtree_test_() ->
     {setup,
      fun() ->
@@ -68,7 +73,8 @@ hashtree_test_() ->
              application:stop(goldrush),
              application:stop(compiler),
              application:stop(syntax_tools),
-             application:unload(lager)
+             application:unload(lager),
+             delete_ets()
      end,
      [{timeout, 60,
        fun() ->
@@ -141,8 +147,14 @@ mark() ->
 
 %% Generate tree ids - the first one is used for the test, the others are added
 %% as empty hashtrees.
+%%
+%% Make sure the TreeId is unique (the second element), does not matter if there
+%% are dupes in the first number (Index)
 ids() ->
-    non_empty(list({?LET(X, nat(), 1+X), ?LET(X,nat(), min(X,255))})).
+    ?SUCHTHAT(TreeIds,
+              non_empty(list({?LET(X, nat(), 1+X), ?LET(X,nat(), min(X,255))})),
+              %% not lists:member(hd(TreeIds), tl(TreeIds)) andalso
+              lists:keyfind(element(2, hd(TreeIds)), 2, tl(TreeIds)) == false).
 
 %%
 %% Generate the commands, split into two cases to force the start to happen as
@@ -228,12 +240,10 @@ start(Params, [TreeId | ExtraIds], T1Mark, T2Mark) ->
     put(t2, T2A),
 
     %% Make sure ETS is pristine
-    catch ets:delete(t1),
-    catch ets:delete(t2),
-    catch ets:delete(s1),
-    catch ets:delete(s2),
-    ets_new(t1),
-    ets_new(t2),
+    delete_ets(),
+    create_ets(),
+
+    %% Return treeid for future hashtree recreation
     TreeId.
 			   
 
@@ -243,7 +253,8 @@ add_extra_hashtrees(ExtraIds, T) ->
     lists:foldl(fun(ExtraId, Tacc) ->
 			Tacc2 = hashtree:new(ExtraId, Tacc),
 			Tacc3 = hashtree:mark_open_empty(ExtraId, Tacc2),
-			Tacc4 = hashtree:insert(<<"k">>, <<"v">>, Tacc3),
+			Tacc4 = hashtree:insert(<<"keyfromextratree">>,
+                                                <<"valuefromextratree">>, Tacc3),
 			hashtree:flush_buffer(Tacc4)
 		end, T, ExtraIds).
 
@@ -486,6 +497,20 @@ next_state(S,_R,{call, _, rehash_tree, [t2]}) ->
 next_state(S,_R,{call, _, local_compare, []}) ->
     S.
 
+
+%% Property wrapped with sometimes to copy with
+%% some non-determinism in tests - assuming it comes
+%% from eleveldb as all hashtree operations are thought
+%% to be deterministic.
+sometimes_correct() ->
+    sometimes_correct(3).
+
+sometimes_correct(N) ->
+    ?SOMETIMES(N, prop_correct()).
+
+%% Property to generate a series of commands against the
+%% hashtrees and afterwards force them to a comparable state.
+%%
 prop_correct() ->
     ?FORALL(Cmds,commands(?MODULE, #state{}),
             aggregate(command_names(Cmds),
@@ -495,7 +520,7 @@ prop_correct() ->
                     put(t2, undefined),
                     catch ets:delete(t1),
                     catch ets:delete(t2),
-                    {_H,S,Res} = HSR = run_commands(?MODULE,Cmds),
+                    {_H,S,Res0} = HSR = run_commands(?MODULE,Cmds),
 		    {Segments, Width, MemLevels} = 
                         case S#state.params of
                             undefined ->
@@ -505,6 +530,22 @@ prop_correct() ->
                             Params ->
                                 Params
                         end,
+                    %% If ok after steps, do a final compare to increase
+                    %% the number of tests.
+                    Res = case (S#state.started andalso Res0 == ok) of
+                              true ->
+                                  final_compare(S);
+                              _ ->
+                                  Res0
+                          end,
+                    %% Clean up after the test
+                    case Res of 
+                        ok -> %  if all went well, remove leveldb files
+                            catch cleanup_hashtree(get(t1)),
+                            catch cleanup_hashtree(get(t2));
+                        _ -> % otherwise, leave them around for inspection
+                            ok
+                    end,
                     NumUpdates = S#state.num_updates,
                     pretty_commands(?MODULE, Cmds, HSR,
                                     ?WHENFAIL(
@@ -517,10 +558,7 @@ prop_correct() ->
 					   eqc:format("=== t2 ===\n~p\n\n", [ets:tab2list(t2)]),
 					   eqc:format("=== s2 ===\n~p\n\n", [safe_tab2list(s2)]),
 					   eqc:format("=== ht1 ===\n~w\n~p\n\n", [get(t1), catch dump(get(t1))]),
-					   eqc:format("=== ht2 ===\n~w\n~p\n\n", [get(t2), catch dump(get(t2))]),
-					   
-                                           catch hashtree:destroy(hashtree:close(get(t1))),
-                                           catch hashtree:destroy(hashtree:close(get(t2)))
+					   eqc:format("=== ht2 ===\n~w\n~p\n\n", [get(t2), catch dump(get(t2))])
                                        end,
                                        measure(num_updates, NumUpdates,
                                        measure(segment_fill_ratio, NumUpdates / (2 * Segments), % Est of avg fill rate per segment
@@ -530,6 +568,13 @@ prop_correct() ->
                                                equals(ok, Res))))))))
 		end)).
 
+cleanup_hashtree(HT) ->
+    Path = hashtree:path(HT),
+    HT2 = hashtree:close(HT),
+    hashtree:destroy(HT2),
+    ok = file:del_dir(Path).
+
+
 
 dump(Tree) ->
     Fun = fun(Entries) ->
@@ -537,6 +582,27 @@ dump(Tree) ->
           end,
     {SnapTree, _Tree2} = hashtree:update_snapshot(Tree),
     hashtree:multi_select_segment(SnapTree, ['*','*'], Fun).
+
+
+%% Force a final comparison to make sure we get a comparison test
+%% for every case we try, as that is after all the point of the module.
+final_compare(S) ->
+    maybe_update_tree(S#state.snap1, t1, s1),
+    maybe_update_tree(S#state.snap2, t2, s2),
+    Expect = expect_compare(),
+    case lists:sort(hashtree:local_compare(get(t1), get(t2))) of
+        Expect ->
+            ok;
+        Result ->
+            {Expect, '/=', Result}
+    end.
+
+maybe_update_tree(_SnapState = undefined, Tree, Snap) ->
+    update_tree(Tree, Snap); % snapshot and calculate
+maybe_update_tree(_SnapState = created, Tree, _Snap) ->
+    update_perform(Tree);
+maybe_update_tree(_SnapState = updated, _Tree, _Snap) ->
+    ok. % Do nothing - waiting for setting rebuild status
 
 
 expect_compare() ->
@@ -551,6 +617,17 @@ expect_compare() ->
 %%
 %% Functions for handling the model data stored in ETS tables
 %%
+
+ets_tables() -> [t1, s1, t2, s2].
+
+delete_ets() ->
+    [catch ets:delete(X) || X <- ets_tables()],
+    ok.
+
+create_ets() ->
+    [ets_new(X) || X <- ets_tables()],
+    ok.
+
 
 %% Create ETS table with public options
 ets_new(T) ->

@@ -322,6 +322,8 @@ maybe_flush_buffer(State=#state{write_buffer_count=WCount}) ->
             State
     end.
 
+flush_buffer(State=#state{write_buffer=[], write_buffer_count=0}) ->
+    State;
 flush_buffer(State=#state{write_buffer=WBuffer}) ->
     %% Write buffer is built backwards, reverse to build update list
     Updates = lists:reverse(WBuffer),
@@ -398,7 +400,7 @@ clear_buckets(State=#state{id=Id, ref=Ref}) ->
                   try
                       case decode_bucket(K) of
                           {Id, _, _} ->
-                              eleveldb:delete(Ref, K, []),
+                              ok = eleveldb:delete(Ref, K, []),
                               Acc + 1;
                           _ ->
                               throw({break, Acc})
@@ -410,6 +412,8 @@ clear_buckets(State=#state{id=Id, ref=Ref}) ->
           end,
     Opts = [{first_key, encode_bucket(Id, 0, 0)}],
     Removed = try
+%hashtree.erl:415: The call eleveldb:fold(Ref::any(),Fun::fun((_,_) -> number()),0,Opts::[{'first_key',<<_:320>>},...]) breaks the contract (db_ref(),fold_fun(),any(),read_options()) -> any()
+
                   eleveldb:fold(Ref, Fun, 0, Opts)
               catch
                   {break, AccFinal} ->
@@ -669,6 +673,15 @@ set_bucket(Level, Bucket, Val, State) ->
             set_disk_bucket(Level, Bucket, Val, State)
     end.
 
+-spec del_bucket(integer(), integer(), hashtree()) -> hashtree().
+del_bucket(Level, Bucket, State) ->
+    case Level =< State#state.mem_levels of
+        true ->
+            del_memory_bucket(Level, Bucket, State);
+        false ->
+            del_disk_bucket(Level, Bucket, State)
+    end.
+
 -spec new_segment_store(proplist(), hashtree()) -> hashtree().
 new_segment_store(Opts, State) ->
     DataDir = case proplists:get_value(segment_path, Opts) of
@@ -708,7 +721,9 @@ new_segment_store(Opts, State) ->
 share_segment_store(State, #state{ref=Ref, path=Path}) ->
     State#state{ref=Ref, path=Path}.
 
--spec hash(term()) -> binary().
+-spec hash(term()) -> empty | binary().
+hash([]) ->
+    empty;
 hash(X) ->
     %% erlang:phash2(X).
     sha(term_to_binary(X)).
@@ -768,9 +783,31 @@ rebuild_folder({Bucket, NewHashes}, {Level, Type, StateAcc, BucketsAcc}) ->
                        Hashes1,
                        Hashes2)
              end,
-    StateAcc2 = set_bucket(Level, Bucket, Hashes, StateAcc),
-    NewBucket = {Bucket, hash(Hashes)},
-    {Level, Type, StateAcc2, [NewBucket | BucketsAcc]}.
+    %% All of the segments that make up this bucket, trim any
+    %% newly emptied hashes (likely result of deletion)
+    PopHashes = [{S, H} || {S, H} <- Hashes, H /= [], H /= empty],
+
+    case PopHashes of
+        [] ->
+            %% No more hash entries, if a full rebuild then disk
+            %% already clear.  If not, remove the empty bucket.
+            StateAcc2 = case Type of
+                            full ->
+                                StateAcc;
+                            incremental ->
+                                del_bucket(Level, Bucket, StateAcc)
+                        end,
+            %% Although not written to disk, propagate hash up to next level
+            %% to mark which entries of the tree need updating.
+            NewBucket = {Bucket, []},
+            {Level, Type, StateAcc2, [NewBucket | BucketsAcc]};
+        _ ->
+            %% Otherwise, at least one hash entry present, update
+            %% and propagate
+            StateAcc2 = set_bucket(Level, Bucket, Hashes, StateAcc),
+            NewBucket = {Bucket, hash(PopHashes)},
+            {Level, Type, StateAcc2, [NewBucket | BucketsAcc]}
+    end.
 
 
 %% Takes a list of bucket-hash entries from level X and groups them together
@@ -816,6 +853,11 @@ set_memory_bucket(Level, Bucket, Val, State) ->
     Tree = dict:store({Level, Bucket}, Val, State#state.tree),
     State#state{tree=Tree}.
 
+-spec del_memory_bucket(integer(), integer(), hashtree()) -> hashtree().
+del_memory_bucket(Level, Bucket, State) ->
+    Tree = dict:erase({Level, Bucket}, State#state.tree),
+    State#state{tree=Tree}.
+
 -spec get_disk_bucket(integer(), integer(), hashtree()) -> any().
 get_disk_bucket(Level, Bucket, #state{id=Id, ref=Ref}) ->
     HKey = encode_bucket(Id, Level, Bucket),
@@ -833,10 +875,10 @@ set_disk_bucket(Level, Bucket, Val, State=#state{id=Id, ref=Ref}) ->
     ok = eleveldb:put(Ref, HKey, Bin, []),
     State.
 
-%% del_disk_bucket(Level, Bucket, State = #state{id = Id, ref = Ref}) ->
-%%     HKey = encode_bucket(Id, Level, Bucket),
-%%     ok = eleveldb:delete(Ref, HKey, []),
-%%     State.
+del_disk_bucket(Level, Bucket, State = #state{id = Id, ref = Ref}) ->
+    HKey = encode_bucket(Id, Level, Bucket),
+    ok = eleveldb:delete(Ref, HKey, []),
+    State.
 
 -spec encode_id(binary() | non_neg_integer()) -> tree_id_bin().
 encode_id(TreeId) when is_integer(TreeId) ->
@@ -884,7 +926,7 @@ encode_meta(Key) ->
 
 -spec hashes(hashtree(), list('*'|integer())) -> [{integer(), binary()}].
 hashes(State, Segments) ->
-    multi_select_segment(State, Segments, fun hash/1).
+     multi_select_segment(State, Segments, fun hash/1).
 
 -spec snapshot(hashtree()) -> hashtree().
 snapshot(State) ->
