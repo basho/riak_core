@@ -367,12 +367,12 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 plan_callback(Mod) ->
     try
         Mod:plan(a, b),
-	fun(CoverageVNodes, ModState) ->
-		Mod:plan(CoverageVNodes, ModState) end
+        fun(CoverageVNodes, ModState) ->
+                Mod:plan(CoverageVNodes, ModState) end
     catch
         error:undef ->
-	    fun(_, ModState) ->
-		    {ok, ModState} end;
+            fun(_, ModState) ->
+                    {ok, ModState} end;
         _:_ -> %% If Mod:plan(a, b) fails on atoms
             fun(CoverageVNodes, ModState) ->
                     Mod:plan(CoverageVNodes, ModState) end
@@ -386,14 +386,14 @@ plan_callback(Mod) ->
 
 process_results_callback(Mod) ->
     try
-	Mod:process_results(a, b, c),
-	fun(VNode, Results, ModState) ->
-		Mod:process_results(VNode, Results, ModState) end
+        Mod:process_results(a, b, c),
+        fun(VNode, Results, ModState) ->
+                Mod:process_results(VNode, Results, ModState) end
     catch
         error:undef ->
-	    fun(_VNode, Results, ModState) ->
-		    Mod:process_results(Results, ModState) end;
+            fun(_VNode, Results, ModState) ->
+                    Mod:process_results(Results, ModState) end;
         _:_ -> %% If Mod:plan(a, b, c) fails on atoms
-	    fun(VNode, Results, ModState) ->
-		    Mod:process_results(VNode, Results, ModState) end
+            fun(VNode, Results, ModState) ->
+                    Mod:process_results(VNode, Results, ModState) end
     end.
