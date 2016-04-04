@@ -358,26 +358,42 @@ terminate(Reason, _StateName, _State) ->
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
+%% This is to avoid expensive module_info calls, which were consuming
+%% 30% of the query-path time for small queries
+%%
+%% Instead we try Mod:plan/2, if undef, we define it.  On success or
+%% match error on atoms, we pass on Mod:plan/2 
+
 plan_callback(Mod) ->
     try
-        Mod:plan(a, b)
+        Mod:plan(a, b),
+	fun(CoverageVNodes, ModState) ->
+		Mod:plan(CoverageVNodes, ModState) end
     catch
         error:undef ->
 	    fun(_, ModState) ->
 		    {ok, ModState} end;
-        _:_ -> %% provided that Mod:plan(a, b) fails on atoms
+        _:_ -> %% If Mod:plan(a, b) fails on atoms
             fun(CoverageVNodes, ModState) ->
                     Mod:plan(CoverageVNodes, ModState) end
     end.
 
+%% This is to avoid expensive module_info calls, which were consuming
+%% 30% of the query-path time for small queries
+%%
+%% Instead we try Mod:process_results/3, if undef, we define it.  On success or
+%% match error on atoms, we pass on Mod:process_results/3
+
 process_results_callback(Mod) ->
     try
-	Mod:process_results(a, b, c)
+	Mod:process_results(a, b, c),
+	fun(VNode, Results, ModState) ->
+		Mod:process_results(VNode, Results, ModState) end
     catch
         error:undef ->
 	    fun(_VNode, Results, ModState) ->
 		    Mod:process_results(Results, ModState) end;
-	error:badarg -> %% or _:_ if Mod:process_results/3 isn't picky enough
+        _:_ -> %% If Mod:plan(a, b, c) fails on atoms
 	    fun(VNode, Results, ModState) ->
 		    Mod:process_results(VNode, Results, ModState) end
     end.
