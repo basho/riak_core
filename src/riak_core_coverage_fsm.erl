@@ -192,13 +192,12 @@ test_link(Mod, From, RequestArgs, _Options, StateProps) ->
 init([Mod,
       From={_, ReqId, _},
       RequestArgs]) ->
-    Exports = Mod:module_info(exports),
     {Request, VNodeSelector, NVal, PrimaryVNodeCoverage,
      NodeCheckService, VNodeMaster, Timeout, PlannerMod, ModState} =
         Mod:init(From, RequestArgs),
     maybe_start_timeout_timer(Timeout),
-    PlanFun = plan_callback(Mod, Exports),
-    ProcessFun = process_results_callback(Mod, Exports),
+    PlanFun = plan_callback(Mod),
+    ProcessFun = process_results_callback(Mod),
     StateData = #state{mod=Mod,
                        mod_state=ModState,
                        node_check_service=NodeCheckService,
@@ -359,27 +358,26 @@ terminate(Reason, _StateName, _State) ->
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
-plan_callback(Mod, Exports) ->
-    case exports(plan, Exports) of
-        true ->
+plan_callback(Mod) ->
+    try
+        Mod:plan(a, b)
+    catch
+        error:undef ->
+	    fun(_, ModState) ->
+		    {ok, ModState} end;
+        _:_ -> %% provided that Mod:plan(a, b) fails on atoms
             fun(CoverageVNodes, ModState) ->
-                    Mod:plan(CoverageVNodes, ModState) end;
-        _ -> fun(_, ModState) ->
-                     {ok, ModState} end
+                    Mod:plan(CoverageVNodes, ModState) end
     end.
 
-process_results_callback(Mod, Exports) ->
-    case exports_arity(process_results, 3, Exports) of
-        true ->
-            fun(VNode, Results, ModState) ->
-                    Mod:process_results(VNode, Results, ModState) end;
-        false ->
-            fun(_VNode, Results, ModState) ->
-                    Mod:process_results(Results, ModState) end
+process_results_callback(Mod) ->
+    try
+	Mod:process_results(a, b, c)
+    catch
+        error:undef ->
+	    fun(_VNode, Results, ModState) ->
+		    Mod:process_results(Results, ModState) end;
+	error:badarg -> %% or _:_ if Mod:process_results/3 isn't picky enough
+	    fun(VNode, Results, ModState) ->
+		    Mod:process_results(VNode, Results, ModState) end
     end.
-
-exports(Function, Exports) ->
-    proplists:is_defined(Function, Exports).
-
-exports_arity(Function, Arity, Exports) ->
-    lists:member(Arity, proplists:get_all_values(Function, Exports)).
