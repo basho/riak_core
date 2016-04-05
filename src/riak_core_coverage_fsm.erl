@@ -365,17 +365,17 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %% match error on atoms, we pass on Mod:plan/2 
 
 plan_callback(Mod) ->
+    SuccessFun = fun(CoverageVNodes, ModState) ->
+			 Mod:plan(CoverageVNodes, ModState) end,
     try
-        Mod:plan(a, b),
-        fun(CoverageVNodes, ModState) ->
-                Mod:plan(CoverageVNodes, ModState) end
+        SuccessFun(a, b),
+	SuccessFun
     catch
         error:undef ->
             fun(_, ModState) ->
                     {ok, ModState} end;
         _:_ -> %% If Mod:plan(a, b) fails on atoms
-            fun(CoverageVNodes, ModState) ->
-                    Mod:plan(CoverageVNodes, ModState) end
+	    SuccessFun
     end.
 
 %% This is to avoid expensive module_info calls, which were consuming
@@ -385,15 +385,15 @@ plan_callback(Mod) ->
 %% match error on atoms, we pass on Mod:process_results/3
 
 process_results_callback(Mod) ->
+    SuccessFun = fun(VNode, Results, ModState) ->
+			 Mod:process_results(VNode, Results, ModState) end,
     try
-        Mod:process_results(a, b, c),
-        fun(VNode, Results, ModState) ->
-                Mod:process_results(VNode, Results, ModState) end
+	SuccessFun(a,b,c),
+        SuccessFun
     catch
         error:undef ->
             fun(_VNode, Results, ModState) ->
                     Mod:process_results(Results, ModState) end;
         _:_ -> %% If Mod:plan(a, b, c) fails on atoms
-            fun(VNode, Results, ModState) ->
-                    Mod:process_results(VNode, Results, ModState) end
+	    SuccessFun
     end.
