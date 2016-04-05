@@ -952,7 +952,14 @@ multi_select_segment(#state{id=Id, itr=Itr}, Segments, F) ->
                _ ->
                    encode(Id, First, <<>>)
            end,
-    IS2 = iterate(iterator_move(Itr, Seek), IS1),
+    IS2 = try
+              iterate(iterator_move(Itr, Seek), IS1)
+          after
+              %% Always call prefetch stop to ensure the iterator
+              %% is safe to use in the compare.  Requires
+              %% eleveldb > 2.0.16 or this may segv/hang.
+              _ = eleveldb:iterator_move(Itr, prefetch_stop)
+          end,
     #itr_state{remaining_segments = LeftOver,
                current_segment=LastSegment,
                segment_acc=LastAcc,
