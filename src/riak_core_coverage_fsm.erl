@@ -366,16 +366,16 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 
 plan_callback(Mod) ->
     SuccessFun = fun(CoverageVNodes, ModState) ->
-			 Mod:plan(CoverageVNodes, ModState) end,
+                         Mod:plan(CoverageVNodes, ModState) end,
     try
         SuccessFun(a, b),
-	SuccessFun
+        SuccessFun
     catch
         error:undef ->
             fun(_, ModState) ->
                     {ok, ModState} end;
         _:_ -> %% If Mod:plan(a, b) fails on atoms
-	    SuccessFun
+            SuccessFun
     end.
 
 %% This is to avoid expensive module_info calls, which were consuming
@@ -386,14 +386,14 @@ plan_callback(Mod) ->
 
 process_results_callback(Mod) ->
     SuccessFun = fun(VNode, Results, ModState) ->
-			 Mod:process_results(VNode, Results, ModState) end,
+                         Mod:process_results(VNode, Results, ModState) end,
     try
-	SuccessFun(a,b,c),
+        SuccessFun(a,b,c),
         SuccessFun
     catch
         error:undef ->
             fun(_VNode, Results, ModState) ->
                     Mod:process_results(Results, ModState) end;
         _:_ -> %% If Mod:plan(a, b, c) fails on atoms
-	    SuccessFun
+            SuccessFun
     end.
