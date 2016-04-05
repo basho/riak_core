@@ -429,14 +429,17 @@ precondition(_S, _C) ->
 postcondition(_S,{call,_,start, [_Params, _ExtraIds, T1Mark, T2Mark]},_R) ->
     NextRebuildT1 = hashtree:next_rebuild(get(t1)),
     NextRebuildT2 = hashtree:next_rebuild(get(t2)),
-    case T1Mark of
-        mark_empty -> eq(NextRebuildT1, incremental);
-        _ -> eq(NextRebuildT1, full)
-    end,
-    case T2Mark of
-        mark_empty -> eq(NextRebuildT2, incremental);
-        _ -> eq(NextRebuildT2, full)
-    end;
+    %% TODO: Convert this to a conjunction
+    T1Expect = case T1Mark of
+                   mark_empty -> incremental;
+                   _ -> full
+               end,
+    T2Expect = case T2Mark of
+                   mark_empty -> incremental;
+                   _ -> full
+               end,
+    eqc_statem:conj([eq({t1, T1Expect}, {t1, NextRebuildT1}),
+                     eq({t2, T2Expect}, {t2, NextRebuildT2})]);
 %% After a comparison, check against the results against
 %% the ETS table containing the *snapshot* copies.
 postcondition(_S,{call, _, local_compare, _},  Result0) ->
