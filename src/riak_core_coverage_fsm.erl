@@ -164,13 +164,12 @@ test_link(Mod, From, RequestArgs, _Options, StateProps) ->
 init([Mod,
       From={_, ReqId, _},
       RequestArgs]) ->
-    Exports = Mod:module_info(exports),
     {Request, VNodeSelector, NVal, PrimaryVNodeCoverage,
      NodeCheckService, VNodeMaster, Timeout, PlannerMod, ModState} =
         Mod:init(From, RequestArgs),
     maybe_start_timeout_timer(Timeout),
-    PlanFun = plan_callback(Mod, Exports),
-    ProcessFun = process_results_callback(Mod, Exports),
+    PlanFun = plan_callback(Mod),
+    ProcessFun = process_results_callback(Mod),
     StateData = #state{mod=Mod,
                        mod_state=ModState,
                        node_check_service=NodeCheckService,
@@ -332,27 +331,42 @@ terminate(Reason, _StateName, _State) ->
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
-plan_callback(Mod, Exports) ->
-    case exports(plan, Exports) of
-        true ->
-            fun(CoverageVNodes, ModState) ->
-                    Mod:plan(CoverageVNodes, ModState) end;
-        _ -> fun(_, ModState) ->
-                     {ok, ModState} end
+%% This is to avoid expensive module_info calls, which were consuming
+%% 30% of the query-path time for small queries
+%%
+%% Instead we try Mod:plan/2, if undef, we define it.  On success or
+%% match error on atoms, we pass on Mod:plan/2 
+
+plan_callback(Mod) ->
+    SuccessFun = fun(CoverageVNodes, ModState) ->
+                         Mod:plan(CoverageVNodes, ModState) end,
+    try
+        SuccessFun(a, b),
+        SuccessFun
+    catch
+        error:undef ->
+            fun(_, ModState) ->
+                    {ok, ModState} end;
+        _:_ -> %% If Mod:plan(a, b) fails on atoms
+            SuccessFun
     end.
 
-process_results_callback(Mod, Exports) ->
-    case exports_arity(process_results, 3, Exports) of
-        true ->
-            fun(VNode, Results, ModState) ->
-                    Mod:process_results(VNode, Results, ModState) end;
-        false ->
+%% This is to avoid expensive module_info calls, which were consuming
+%% 30% of the query-path time for small queries
+%%
+%% Instead we try Mod:process_results/3, if undef, we define it.  On success or
+%% match error on atoms, we pass on Mod:process_results/3
+
+process_results_callback(Mod) ->
+    SuccessFun = fun(VNode, Results, ModState) ->
+                         Mod:process_results(VNode, Results, ModState) end,
+    try
+        SuccessFun(a,b,c),
+        SuccessFun
+    catch
+        error:undef ->
             fun(_VNode, Results, ModState) ->
-                    Mod:process_results(Results, ModState) end
+                    Mod:process_results(Results, ModState) end;
+        _:_ -> %% If Mod:plan(a, b, c) fails on atoms
+            SuccessFun
     end.
-
-exports(Function, Exports) ->
-    proplists:is_defined(Function, Exports).
-
-exports_arity(Function, Arity, Exports) ->
-    lists:member(Arity, proplists:get_all_values(Function, Exports)).
