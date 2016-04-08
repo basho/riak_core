@@ -176,7 +176,7 @@ command(_S = #state{started = true, tree_id = TreeId,
 	[{10*SF, {call, ?MODULE, update_snapshot,  [t1, s1]}} || Snap1 == undefined, MemLevels == 0] ++
 	[{10*SF, {call, ?MODULE, update_perform,   [t1]}} || Snap1 == created, MemLevels == 0] ++
 	[{10*SF, {call, ?MODULE, set_next_rebuild, [t1]}} || Snap1 == updated] ++
-        [{10*SF, {call, ?MODULE, update_tree,  [t2, s2]}} || Snap1 == undefined] ++
+        [{10*SF, {call, ?MODULE, update_tree,  [t2, s2]}} || Snap2 == undefined] ++
 	[{10*SF, {call, ?MODULE, update_snapshot,  [t2, s2]}} || Snap2 == undefined, MemLevels == 0] ++
 	[{10*SF, {call, ?MODULE, update_perform,   [t2]}} || Snap2 == created, MemLevels == 0] ++
 	[{10*SF, {call, ?MODULE, set_next_rebuild, [t2]}} || Snap2 == updated] ++
