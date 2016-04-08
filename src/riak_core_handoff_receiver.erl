@@ -157,12 +157,12 @@ process_message(?PT_MSG_SYNC, _MsgData, State=#state{sock=Socket,
 process_message(?PT_MSG_VERIFY_NODE, ExpectedName, State=#state{sock=Socket,
                                                                 tcp_mod=TcpMod,
                                                                 peer=Peer}) ->
-    case term_to_binary(ExpectedName) of
+    case binary_to_term(ExpectedName) of
         _Node when _Node =:= node() ->
             TcpMod:send(Socket, <<?PT_MSG_VERIFY_NODE:8>>),
             State;
         Node ->
-            lager:error("Handoff from ~s expects us to be ~s but we are ~s.",
+            lager:error("Handoff from ~p expects us to be ~s but we are ~s.",
                         [Peer, Node, node()]),
             exit({error, {wrong_node, Node}})
     end;
