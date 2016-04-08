@@ -116,23 +116,32 @@ start_link(Service, Index, VNPid, VNode, Opts) ->
 %%      Valid options:
 %%       ``if_missing'' :: Only insert the key/hash pair if the key does not
 %%                         already exist in the hashtree.
+-spec insert([{object, {binary(), binary()}, binary()}] |
+             [{{non_neg_integer(),non_neg_integer()}, term(), binary()}],
+             list(), pid()) ->
+                    ok.
 insert(Items, _Opts, Tree) when Tree =:= undefined; Items =:= [] ->
     ok;
 insert(Items=[_|_], Opts, Tree) ->
     catch gen_server:call(Tree, {insert, Items, Opts}, infinity).
 
+-spec async_insert([{object, {binary(), binary()}, binary()}] |
+                   [{{non_neg_integer(),non_neg_integer()}, term(), binary()}],
+                   list(), pid()) ->
+                          ok.
 async_insert(Items, _Opts, Tree) when Tree =:= undefined; Items =:= [] ->
     ok;
 async_insert(Items=[_|_], Opts, Tree) ->
     gen_server:cast(Tree, {insert, Items, Opts}).
 
--spec delete([{binary(), binary()}], pid()) -> ok.
+-spec delete([{object, {binary(), binary()}}], pid()) -> ok.
 delete(Items, Tree) when Tree =:= undefined; Items =:= [] ->
     ok;
 delete(Items=[{_Id, _Key}|_], Tree) ->
     catch gen_server:call(Tree, {delete, Items}, infinity).
 
--spec async_delete({binary(), binary()}|[{binary(), binary()}], pid()) -> ok.
+-spec async_delete({object, {binary(), binary()}}|
+                   [{object, {binary(), binary()}}], pid()) -> ok.
 async_delete(Items, Tree) when Tree =:= undefined; Items =:= [] ->
     ok;
 async_delete(Items=[{_Id, _Key}|_], Tree) ->
