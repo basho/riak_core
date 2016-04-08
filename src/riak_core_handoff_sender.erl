@@ -121,17 +121,6 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                      {Skt, gen_tcp}
              end,
 
-         %% Piggyback the sync command from previous releases to send
-         %% the vnode type across.  If talking to older nodes they'll
-         %% just do a sync, newer nodes will decode the module name.
-         %% After 0.12.0 the calls can be switched to use PT_MSG_SYNC
-         %% and PT_MSG_CONFIGURE
-         VMaster = list_to_atom(atom_to_list(Module) ++ "_master"),
-         ModBin = atom_to_binary(Module, utf8),
-         Msg = <<?PT_MSG_OLDSYNC:8,ModBin/binary>>,
-         ok = TcpMod:send(Socket, Msg),
-
-
          RecvTimeout = get_handoff_receive_timeout(),
 
         %% We want to ensure that the node we think we are talking to
@@ -152,6 +141,16 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
             {error, timeout} -> exit({shutdown, timeout});
             {error, closed} -> exit({shutdown, wrong_node})
         end,
+
+         %% Piggyback the sync command from previous releases to send
+         %% the vnode type across.  If talking to older nodes they'll
+         %% just do a sync, newer nodes will decode the module name.
+         %% After 0.12.0 the calls can be switched to use PT_MSG_SYNC
+         %% and PT_MSG_CONFIGURE
+         VMaster = list_to_atom(atom_to_list(Module) ++ "_master"),
+         ModBin = atom_to_binary(Module, utf8),
+         Msg = <<?PT_MSG_OLDSYNC:8,ModBin/binary>>,
+         ok = TcpMod:send(Socket, Msg),
 
          AckSyncThreshold = app_helper:get_env(riak_core, handoff_acksync_threshold, 25),
 
