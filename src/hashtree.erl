@@ -1058,17 +1058,9 @@ iterate({ok, K, V}, IS=#itr_state{itr=Itr,
                                final_acc=[{Segment, F(Acc)} | FinalAcc],
                                prefetch=true},
             iterate(iterator_move(Itr, prefetch), IS2);
-        {Id, NextSeg, [NextSeg|Remaining], _} ->
-            %% A previous prefetch_stop left us at the start of the
-            %% next interesting segment.
-            IS2 = IS#itr_state{current_segment=NextSeg,
-                               remaining_segments=Remaining,
-                               segment_acc=[{K,V}],
-                               prefetch=true},
-            iterate(iterator_move(Itr, prefetch), IS2);
         {Id, _, [NextSeg | Remaining], true} ->
             %% Pointing at uninteresting segment, but need to halt the
-            %% prefetch to ensure the interator can be reused
+            %% prefetch to ensure the iterator can be reused
 
             %% Do not update segment/final_acc
             IS2 = IS#itr_state{current_segment=NextSeg,

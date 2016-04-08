@@ -40,6 +40,13 @@
 %% likely that compares will take place once both trees are updated.
 %%
 
+
+%% Notes/Questions for JDM
+%% There's much knowledge in here about how *_index_hashtrees work, which makes
+%% me worried that hashtree itself isn't factored correctly. Example: why would it be
+%% different if memory levels are used or not? Why _should_ hashtree allow it to be?
+
+
 -module(hashtree_eqc).
 -compile([export_all]).
 
@@ -50,14 +57,12 @@
 -define(QC_OUT(P),
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 
--define(POWERS, [8, 16, 32, 64, 128, 256, 512, 1024]).
-
 -include_lib("eunit/include/eunit.hrl").
 
 %% Make it possible to run from '-s hashtree_eqc runfor 60' to run from cmdline
 runfor([DurationMinsStr]) ->
     DurationSecs = 60 * list_to_integer(atom_to_list(DurationMinsStr)),
-    eqc:quickcheck(eqc:testing_time(DurationSecs, hashtree_eqc:sometimes_correct())).
+    eqc:quickcheck(eqc:testing_time(DurationSecs, hashtree_eqc:prop_correct())).
 
 hashtree_test_() ->
     {setup,
@@ -119,8 +124,8 @@ levels() ->
                { 5, 2}, % production
                { 1, 3}]).
 
-mem_levels() -> %% Number of memory levels - strongly favor defefault setting
-    frequency([{20, 0},
+mem_levels() -> %% Number of memory levels - strongly favor default setting
+    frequency([{20, 0}, %% Default setting to not use memory levels
                { 1, 1},
                { 1, 2},
                { 1, 3},
@@ -128,7 +133,7 @@ mem_levels() -> %% Number of memory levels - strongly favor defefault setting
 
 width() ->
     frequency([{  1,    8},
-               {100,   16}, % pick for high density segments
+               {100,   16}, % pick for high density segments - WHY???
                {  1,   32},
                {  1,   64},
                {  1,  128},
@@ -139,21 +144,28 @@ width() ->
 params() -> % {Segments, Width, MemLevels}
     %% Generate in terms of number of levels, from that work out the segments
     ?LET({Levels, Width, MemLevels},{levels(), width(), mem_levels()},
-         {trunc(math:pow(Width, Levels)), Width, MemLevels}).
+         {calculate_num_segments(Width, Levels), Width, MemLevels}).
 
-mark() ->
+calculate_num_segments(Width, Levels) ->
+    trunc(math:pow(Width, Levels)).
+
+initial_open_mode() ->
     %% frequency([{1, mark_empty}, {5, mark_open}]).
     ?SHRINK(oneof([mark_empty, mark_open]), [mark_empty]). % should shrink towards mark_empty
 
 %% Generate tree ids - the first one is used for the test, the others are added
-%% as empty hashtrees.
+%% as empty hashtrees. This is done to provoke issues where we hit the end of a keyspace
+%% but not the end of the leveldb data, which exercises different code paths than only ever
+%% having 1 hashtree
 %%
 %% Make sure the TreeId is unique (the second element), does not matter if there
 %% are dupes in the first number (Index)
 ids() ->
     ?SUCHTHAT(TreeIds,
-              non_empty(list({?LET(X, nat(), 1+X), ?LET(X,nat(), min(X,255))})),
-              %% not lists:member(hd(TreeIds), tl(TreeIds)) andalso
+              non_empty(list({
+                  ?LET(X, nat(), 1+X), %% Partition ID - not critical for test
+                  ?LET(X,nat(), min(X,255))} %% Tree ID as integer - must be unique
+              )),
               lists:keyfind(element(2, hd(TreeIds)), 2, tl(TreeIds)) == false).
 
 %%
@@ -161,46 +173,52 @@ ids() ->
 %% the first command.
 %%
 command(_S = #state{started = false}) ->
-    {call, ?MODULE, start, [params(), ids(), mark(), mark()]};
+    {call, ?MODULE, start, [params(), ids(), initial_open_mode(), initial_open_mode()]};
 command(_S = #state{started = true, tree_id = TreeId,
                     params = {_Segments, _Width, MemLevels},
                     snap1 = Snap1, snap2 = Snap2}) ->
+    %% Calculate weighting values for different groups of commands.
     %% Weights to increase snap frequency once update snapshot has begun
-    SS = Snap1 /= undefined orelse Snap2 /= undefined,
-    SF = case SS of true -> 100; _ -> 1 end,
+    SnapshotsDefined = Snap1 /= undefined orelse Snap2 /= undefined,
+    SnapshotFrequency = case SnapshotsDefined of true -> 100; _ -> 1 end,
+    SimilarWeight = 10 * SnapshotFrequency,
+    MoreAfterSnapshots = 100 * SnapshotFrequency,
+    FewerAfterSnapshots = 101 - SnapshotFrequency,
+    Infrequently = 1,
     frequency(
-      %% Update snapshots/trees. If memory is enabled must test with update_tree
-      %% If not, can use the method used by kv/yz_index_hashtree and separate
-      %% the two steps, dumping the result from update_perform.
-        [{10*SF, {call, ?MODULE, update_tree,  [t1, s1]}} || Snap1 == undefined] ++
-	[{10*SF, {call, ?MODULE, update_snapshot,  [t1, s1]}} || Snap1 == undefined, MemLevels == 0] ++
-	[{10*SF, {call, ?MODULE, update_perform,   [t1]}} || Snap1 == created, MemLevels == 0] ++
-	[{10*SF, {call, ?MODULE, set_next_rebuild, [t1]}} || Snap1 == updated] ++
-        [{10*SF, {call, ?MODULE, update_tree,  [t2, s2]}} || Snap2 == undefined] ++
-	[{10*SF, {call, ?MODULE, update_snapshot,  [t2, s2]}} || Snap2 == undefined, MemLevels == 0] ++
-	[{10*SF, {call, ?MODULE, update_perform,   [t2]}} || Snap2 == created, MemLevels == 0] ++
-	[{10*SF, {call, ?MODULE, set_next_rebuild, [t2]}} || Snap2 == updated] ++
+        %% Update snapshots/trees. If memory is enabled must test with update_tree
+        %% If not, can use the method used by kv/yz_index_hashtree and separate
+        %% the two steps, dumping the result from update_perform.
+        %% JDM: Why is this so? What is it about memory levels that reuquire update_tree?
+        %% Is hashtree going to break if we enable memory levels and _don't_ do this?
+        [{SimilarWeight, {call, ?MODULE, update_tree, [t1, s1]}}     || Snap1 == undefined] ++
+        [{SimilarWeight, {call, ?MODULE, update_snapshot, [t1, s1]}} || Snap1 == undefined, MemLevels == 0] ++
+        [{SimilarWeight, {call, ?MODULE, update_perform, [t1]}}      || Snap1 == created, MemLevels == 0] ++
+        [{SimilarWeight, {call, ?MODULE, set_next_rebuild, [t1]}}    || Snap1 == updated] ++
+        [{SimilarWeight, {call, ?MODULE, update_tree, [t2, s2]}}     || Snap2 == undefined] ++
+        [{SimilarWeight, {call, ?MODULE, update_snapshot, [t2, s2]}} || Snap2 == undefined, MemLevels == 0] ++
+        [{SimilarWeight, {call, ?MODULE, update_perform, [t2]}}      || Snap2 == created, MemLevels == 0] ++
+        [{SimilarWeight, {call, ?MODULE, set_next_rebuild, [t2]}}    || Snap2 == updated] ++
 
-      %% Can only run compares when both snapshots are updated.  Boost the frequency
-      %% when both are snapshotted (note this is guarded by both snapshot being updatable)
-        [{100*SF, {call, ?MODULE, local_compare, []}} || Snap1 == updated, Snap2 == updated] ++
+        %% Can only run compares when both snapshots are updated.  Boost the frequency
+        %% when both are snapshotted (note this is guarded by both snapshot being updatable)
+        [{MoreAfterSnapshots, {call, ?MODULE, local_compare, []}}    || Snap1 == updated, Snap2 == updated] ++
 
-      %% Modify the data in the two tables
-        [{101-SF, {call, ?MODULE, write, [t1, objects()]}},
-	 {101-SF, {call, ?MODULE, write, [t2, objects()]}},
-         {101-SF, {call, ?MODULE, write_both, [objects()]}},
-         {101-SF, {call, ?MODULE, delete, [t1, key()]}},
-         {101-SF, {call, ?MODULE, delete, [t2, key()]}},
-         {101-SF, {call, ?MODULE, delete_both, [key()]}},
+        %% Modify the data in the two tables
+        [{FewerAfterSnapshots, {call, ?MODULE, write, [t1, objects()]}}] ++
+        [{FewerAfterSnapshots, {call, ?MODULE, write, [t2, objects()]}}] ++
+        [{FewerAfterSnapshots, {call, ?MODULE, write_both, [objects()]}}] ++
+        [{FewerAfterSnapshots, {call, ?MODULE, delete, [t1, key()]}}] ++
+        [{FewerAfterSnapshots, {call, ?MODULE, delete, [t2, key()]}}] ++
+        [{FewerAfterSnapshots, {call, ?MODULE, delete_both, [key()]}}] ++
 
-      %% Mess around with reopening, crashing and rehashing.
-         {  1, {call, ?MODULE, reopen_tree, [t1, TreeId]}},
-         {  1, {call, ?MODULE, reopen_tree, [t2, TreeId]}},
-         {  1, {call, ?MODULE, unsafe_close, [t1, TreeId]}},
-         {  1, {call, ?MODULE, unsafe_close, [t2, TreeId]}},
-         {  1, {call, ?MODULE, rehash_tree, [t1]}},
-         {  1, {call, ?MODULE, rehash_tree, [t2]}}
-	]
+        %% Mess around with reopening, crashing and rehashing.
+        [{Infrequently, {call, ?MODULE, reopen_tree, [t1, TreeId]}}] ++
+        [{Infrequently, {call, ?MODULE, reopen_tree, [t2, TreeId]}}] ++
+        [{Infrequently, {call, ?MODULE, unsafe_close, [t1, TreeId]}}] ++
+        [{Infrequently, {call, ?MODULE, unsafe_close, [t2, TreeId]}}] ++
+        [{Infrequently, {call, ?MODULE, rehash_tree, [t1]}}] ++
+        [{Infrequently, {call, ?MODULE, rehash_tree, [t2]}}]
     ).
 
 %%
@@ -210,32 +228,16 @@ command(_S = #state{started = true, tree_id = TreeId,
 %%
 %% Store the hashtree records in the process dictionary under keys 't1' and 't2'.
 %% 
-start(Params, [TreeId | ExtraIds], T1Mark, T2Mark) ->
+start(Params, [TreeId | ExtraIds], Tree1OpenOrEmpty, Tree2OpenOrEmpty) ->
     {Segments, Width, MemLevels} = Params,
     %% Return now so we can store symbolic value in procdict in next_state call
-    T1 = hashtree:new(TreeId, [{segments, Segments},
-                               {width, Width},
-                               {mem_levels, MemLevels}]),
-
-    T1A = case T1Mark of
-        mark_empty -> hashtree:mark_open_empty(TreeId, T1);
-        _ -> hashtree:mark_open_and_check(TreeId, T1)
-    end,
-
-    add_extra_hashtrees(ExtraIds, T1A),
+    T1A = create_and_open_hashtree(TreeId, Segments, Width, MemLevels, Tree1OpenOrEmpty, ExtraIds),
 
     put(t1, T1A),
 
-    T2 = hashtree:new(TreeId, [{segments, hashtree:segments(T1A)},
-                               {width, hashtree:width(T1A)},
-                               {mem_levels, hashtree:mem_levels(T1A)}]),
-
-    T2A = case T2Mark of
-        mark_empty -> hashtree:mark_open_empty(TreeId, T2);
-        _ -> hashtree:mark_open_and_check(TreeId, T2)
-    end,
-
-    add_extra_hashtrees(ExtraIds, T2A),
+    %% TODO: Can we just use Segments, Width, Memlevels?
+    T2A = create_and_open_hashtree(TreeId, hashtree:segments(T1A), hashtree:width(T1A), 
+        hashtree:mem_levels(T1A), Tree2OpenOrEmpty, ExtraIds),
 
     put(t2, T2A),
 
@@ -245,18 +247,31 @@ start(Params, [TreeId | ExtraIds], T1Mark, T2Mark) ->
 
     %% Return treeid for future hashtree recreation
     TreeId.
-			   
+
+%% Create a new hashtree given TreeId, Segments, Width, and MemLevels.
+%% Add some extra trees to stress iteration beyond keyspaces.
+create_and_open_hashtree(TreeId, Segments, Width, MemLevels, OpenOrEmpty, ExtraIds) ->
+    Tree0 = hashtree:new(TreeId, [{segments, Segments},
+        {width, Width},
+        {mem_levels, MemLevels}]),
+    Tree = case OpenOrEmpty of
+              mark_empty -> hashtree:mark_open_empty(TreeId, Tree0);
+              _ -> hashtree:mark_open_and_check(TreeId, Tree0)
+          end,
+    add_extra_hashtrees(ExtraIds, Tree),
+    Tree.
+
 
 %% Add some extra tree ids and update the metadata to give
 %% the iterator code a workout on non-matching ids.
 add_extra_hashtrees(ExtraIds, T) ->
     lists:foldl(fun(ExtraId, Tacc) ->
-			Tacc2 = hashtree:new(ExtraId, Tacc),
-			Tacc3 = hashtree:mark_open_empty(ExtraId, Tacc2),
-			Tacc4 = hashtree:insert(<<"keyfromextratree">>,
+            Tacc2 = hashtree:new(ExtraId, Tacc),
+            Tacc3 = hashtree:mark_open_empty(ExtraId, Tacc2),
+            Tacc4 = hashtree:insert(<<"keyfromextratree">>,
                                                 <<"valuefromextratree">>, Tacc3),
-			hashtree:flush_buffer(Tacc4)
-		end, T, ExtraIds).
+            hashtree:flush_buffer(Tacc4)
+        end, T, ExtraIds).
 
 %% Wrap the hashtree:update_tree call.  This works with memory levels
 %% enabled.  Copy the model tree to a snapshot table.
@@ -278,7 +293,7 @@ update_tree(T, S) ->
 %%
 %% N.B. This does not work with memory levels enabled as update_perform uses the
 %% snapshot state which is dumped.
-%%
+%% JDM: Is this a limitation of the model, or hashtree?
 update_snapshot(T, S) ->
     %% Snapshot the hashtree and store both states
     {SS, HT} = hashtree:update_snapshot(get(T)),
@@ -505,6 +520,7 @@ next_state(S,_R,{call, _, local_compare, []}) ->
 %% some non-determinism in tests - assuming it comes
 %% from eleveldb as all hashtree operations are thought
 %% to be deterministic.
+%% JDM: This should no longer be needed w/ final updates from MvM, no?
 sometimes_correct() ->
     sometimes_correct(3).
 
@@ -524,7 +540,7 @@ prop_correct() ->
                     catch ets:delete(t1),
                     catch ets:delete(t2),
                     {_H,S,Res0} = HSR = run_commands(?MODULE,Cmds),
-		    {Segments, Width, MemLevels} = 
+            {Segments, Width, MemLevels} =
                         case S#state.params of
                             undefined ->
                                 %% Possible if Cmds just init
@@ -553,23 +569,23 @@ prop_correct() ->
                     pretty_commands(?MODULE, Cmds, HSR,
                                     ?WHENFAIL(
                                        begin
-					   {Segments, Width, MemLevels} = S#state.params,
-					   eqc:format("Segments ~p\nWidth ~p\nMemLevels ~p\n",
-						      [Segments, Width, MemLevels]),
-					   eqc:format("=== t1 ===\n~p\n\n", [ets:tab2list(t1)]),
-					   eqc:format("=== s1 ===\n~p\n\n", [safe_tab2list(s1)]),
-					   eqc:format("=== t2 ===\n~p\n\n", [ets:tab2list(t2)]),
-					   eqc:format("=== s2 ===\n~p\n\n", [safe_tab2list(s2)]),
-					   eqc:format("=== ht1 ===\n~w\n~p\n\n", [get(t1), catch dump(get(t1))]),
-					   eqc:format("=== ht2 ===\n~w\n~p\n\n", [get(t2), catch dump(get(t2))])
+                       {Segments, Width, MemLevels} = S#state.params,
+                       eqc:format("Segments ~p\nWidth ~p\nMemLevels ~p\n",
+                              [Segments, Width, MemLevels]),
+                       eqc:format("=== t1 ===\n~p\n\n", [ets:tab2list(t1)]),
+                       eqc:format("=== s1 ===\n~p\n\n", [safe_tab2list(s1)]),
+                       eqc:format("=== t2 ===\n~p\n\n", [ets:tab2list(t2)]),
+                       eqc:format("=== s2 ===\n~p\n\n", [safe_tab2list(s2)]),
+                       eqc:format("=== ht1 ===\n~w\n~p\n\n", [get(t1), catch dump(get(t1))]),
+                       eqc:format("=== ht2 ===\n~w\n~p\n\n", [get(t2), catch dump(get(t2))])
                                        end,
                                        measure(num_updates, NumUpdates,
                                        measure(segment_fill_ratio, NumUpdates / (2 * Segments), % Est of avg fill rate per segment
-				       collect(with_title(mem_levels), MemLevels,
+                       collect(with_title(mem_levels), MemLevels,
                                        collect(with_title(segments), Segments,
                                        collect(with_title(width), Width,
                                                equals(ok, Res))))))))
-		end)).
+        end)).
 
 cleanup_hashtree(HT) ->
     Path = hashtree:path(HT),
@@ -611,11 +627,11 @@ maybe_update_tree(_SnapState = updated, _Tree, _Snap) ->
 expect_compare() ->
     Snap1 = orddict:from_list(ets:tab2list(s1)),
     Snap2 = orddict:from_list(ets:tab2list(s2)),
-    SnapDeltas = riak_ensemble_util:orddict_delta(Snap1, Snap2),
+    SnapDeltas = riak_core_util:orddict_delta(Snap1, Snap2),
 
     lists:sort(
       [{missing, K} || {K, {'$none', _}} <- SnapDeltas] ++
-	  [{remote_missing, K} || {K, {_, '$none'}} <- SnapDeltas] ++
+      [{remote_missing, K} || {K, {_, '$none'}} <- SnapDeltas] ++
           [{different, K} || {K, {V1, V2}} <- SnapDeltas, V1 /= '$none', V2 /= '$none']). %% UNDO SnapDeltas this line
 %%
 %% Functions for handling the model data stored in ETS tables
