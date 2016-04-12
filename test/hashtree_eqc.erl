@@ -181,7 +181,7 @@ command(_S = #state{started = true, tree_id = TreeId,
     %% Weights to increase snap frequency once update snapshot has begun
     SnapshotsDefined = Snap1 /= undefined orelse Snap2 /= undefined,
     SnapshotFrequency = case SnapshotsDefined of true -> 100; _ -> 1 end,
-    SimilarWeight = 10 * SnapshotFrequency,
+    SnapshotWeight = 10 * SnapshotFrequency,
     MoreAfterSnapshots = 100 * SnapshotFrequency,
     FewerAfterSnapshots = 101 - SnapshotFrequency,
     Infrequently = 1,
@@ -191,18 +191,19 @@ command(_S = #state{started = true, tree_id = TreeId,
         %% the two steps, dumping the result from update_perform.
         %% JDM: Why is this so? What is it about memory levels that reuquire update_tree?
         %% Is hashtree going to break if we enable memory levels and _don't_ do this?
-        [{SimilarWeight, {call, ?MODULE, update_tree, [t1, s1]}}     || Snap1 == undefined] ++
-        [{SimilarWeight, {call, ?MODULE, update_snapshot, [t1, s1]}} || Snap1 == undefined, MemLevels == 0] ++
-        [{SimilarWeight, {call, ?MODULE, update_perform, [t1]}}      || Snap1 == created, MemLevels == 0] ++
-        [{SimilarWeight, {call, ?MODULE, set_next_rebuild, [t1]}}    || Snap1 == updated] ++
-        [{SimilarWeight, {call, ?MODULE, update_tree, [t2, s2]}}     || Snap2 == undefined] ++
-        [{SimilarWeight, {call, ?MODULE, update_snapshot, [t2, s2]}} || Snap2 == undefined, MemLevels == 0] ++
-        [{SimilarWeight, {call, ?MODULE, update_perform, [t2]}}      || Snap2 == created, MemLevels == 0] ++
-        [{SimilarWeight, {call, ?MODULE, set_next_rebuild, [t2]}}    || Snap2 == updated] ++
+        [{SnapshotWeight, {call, ?MODULE, update_tree, [t1, s1]}}     || Snap1 == undefined] ++
+        [{SnapshotWeight, {call, ?MODULE, update_snapshot, [t1, s1]}} || Snap1 == undefined, MemLevels == 0] ++
+        [{SnapshotWeight, {call, ?MODULE, update_perform, [t1]}}      || Snap1 == created, MemLevels == 0] ++
+        [{SnapshotWeight, {call, ?MODULE, set_next_rebuild, [t1]}}    || Snap1 == updated] ++
+        [{SnapshotWeight, {call, ?MODULE, update_tree, [t2, s2]}}     || Snap2 == undefined] ++
+        [{SnapshotWeight, {call, ?MODULE, update_snapshot, [t2, s2]}} || Snap2 == undefined, MemLevels == 0] ++
+        [{SnapshotWeight, {call, ?MODULE, update_perform, [t2]}}      || Snap2 == created, MemLevels == 0] ++
+        [{SnapshotWeight, {call, ?MODULE, set_next_rebuild, [t2]}}    || Snap2 == updated] ++
 
         %% Can only run compares when both snapshots are updated.  Boost the frequency
         %% when both are snapshotted (note this is guarded by both snapshot being updatable)
         [{MoreAfterSnapshots, {call, ?MODULE, local_compare, []}}    || Snap1 == updated, Snap2 == updated] ++
+        [{MoreAfterSnapshots, {call, ?MODULE, local_compare1, []}}    || Snap1 == updated, Snap2 == updated] ++
 
         %% Modify the data in the two tables
         [{FewerAfterSnapshots, {call, ?MODULE, write, [t1, objects()]}}] ++
@@ -412,6 +413,9 @@ unsafe_close(T, TreeId) ->
 local_compare() ->
     hashtree:local_compare(get(t1), get(t2)).
 
+local_compare1() ->
+    hashtree:local_compare1(get(t1), get(t2)).
+
 %% Preconditions to guard against impossible situations during shrinking.
 precondition(#state{started = false}, {call, _, F, _A}) ->
     F == start;
@@ -457,7 +461,8 @@ postcondition(_S,{call,_,start, [_Params, _ExtraIds, T1Mark, T2Mark]},_R) ->
                      eq({t2, T2Expect}, {t2, NextRebuildT2})]);
 %% After a comparison, check against the results against
 %% the ETS table containing the *snapshot* copies.
-postcondition(_S,{call, _, local_compare, _},  Result0) ->
+postcondition(_S,{call, _, Function, _},  Result0) when Function == local_compare;
+                                                        Function == local_compare1 ->
     Result = lists:sort(Result0),
     T1Top = hashtree:top_hash(get(t1)),
     T2Top = hashtree:top_hash(get(t2)),
@@ -513,6 +518,8 @@ next_state(S,_R,{call, _, rehash_tree, [t1]}) ->
 next_state(S,_R,{call, _, rehash_tree, [t2]}) ->
     S#state{snap2 = undefined};
 next_state(S,_R,{call, _, local_compare, []}) ->
+    S;
+next_state(S,_R,{call, _, local_compare1, []}) ->
     S.
 
 
