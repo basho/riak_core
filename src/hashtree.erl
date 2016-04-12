@@ -926,7 +926,7 @@ encode_meta(Key) ->
 
 -spec hashes(hashtree(), list('*'|integer())) -> [{integer(), binary()}].
 hashes(State, Segments) ->
-     multi_select_segment(State, Segments, fun hash/1).
+    multi_select_segment(State, Segments, fun hash/1).
 
 -spec snapshot(hashtree()) -> hashtree().
 snapshot(State) ->
