@@ -970,8 +970,8 @@ multi_select_segment(#state{id=Id, itr=Itr}, Segments, F) ->
     %% that do not exist at the end of the file (due to deleting the last entry in the
     %% segment).
     Result = [{LeftSeg, F([])} || LeftSeg <- lists:reverse(LeftOver),
-				  LeftSeg =/= '*'] ++
-	[{LastSegment, F(LastAcc)} | FA],
+                  LeftSeg =/= '*'] ++
+    [{LastSegment, F(LastAcc)} | FA],
     case Result of
         [{'*', _}] ->
             %% Handle wildcard select when all segments are empty
@@ -1123,8 +1123,8 @@ exchange_level(Level, Buckets, Local, Remote, _Opts) ->
                           B = Remote(get_bucket, {Level, Bucket}),
                           Delta = riak_ensemble_util:orddict_delta(lists:keysort(1, A),
                                                                    lists:keysort(1, B)),
-			  lager:debug("Exchange Level ~p Bucket ~p\nA=~p\nB=~p\nD=~p\n",
-				      [Level, Bucket, A, B, Delta]),
+              lager:debug("Exchange Level ~p Bucket ~p\nA=~p\nB=~p\nD=~p\n",
+                      [Level, Bucket, A, B, Delta]),
 
                           Diffs = Delta,
                           [BK || {BK, _} <- Diffs]
@@ -1137,8 +1137,8 @@ exchange_final(_Level, Segments, Local, Remote, AccFun, Acc0, _Opts) ->
                         B = Remote(key_hashes, Segment),
                         Delta = riak_ensemble_util:orddict_delta(lists:keysort(1, A),
                                                                  lists:keysort(1, B)),
-			lager:debug("Exchange Final\nA=~p\nB=~p\nD=~p\n",
-				    [A, B, Delta]),
+            lager:debug("Exchange Final\nA=~p\nB=~p\nD=~p\n",
+                    [A, B, Delta]),
                         Keys = [begin
                                     {_Id, Segment, Key} = decode(KBin),
                                     Type = key_diff_type(Diff),
@@ -1161,7 +1161,7 @@ compare(Level, Bucket, Tree, Remote, AccFun, KeyAcc) ->
                                  ordsets:from_list(HL2)),
     Diff = ordsets:subtract(Union, Inter),
     lager:debug("Tree ~p level ~p bucket ~p\nL=~p\nR=~p\nD=\n",
-		[Tree, Level, Bucket, HL1, HL2, Diff]),
+        [Tree, Level, Bucket, HL1, HL2, Diff]),
     KeyAcc3 =
         lists:foldl(fun({Bucket2, _}, KeyAcc2) ->
                             compare(Level+1, Bucket2, Tree, Remote, AccFun, KeyAcc2)
