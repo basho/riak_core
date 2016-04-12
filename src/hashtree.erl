@@ -137,7 +137,7 @@
 -define(BIN_TO_INT(B), list_to_integer(binary_to_list(B))).
 
 -ifdef(TEST).
--export([fake_close/1, local_compare/2]).
+-export([fake_close/1, local_compare/2, local_compare1/2]).
 -export([run_local/0,
          run_local/1,
          run_concurrent_build/0,
@@ -1058,17 +1058,9 @@ iterate({ok, K, V}, IS=#itr_state{itr=Itr,
                                final_acc=[{Segment, F(Acc)} | FinalAcc],
                                prefetch=true},
             iterate(iterator_move(Itr, prefetch), IS2);
-        {Id, NextSeg, [NextSeg|Remaining], _} ->
-            %% A previous prefetch_stop left us at the start of the
-            %% next interesting segment.
-            IS2 = IS#itr_state{current_segment=NextSeg,
-                               remaining_segments=Remaining,
-                               segment_acc=[{K,V}],
-                               prefetch=true},
-            iterate(iterator_move(Itr, prefetch), IS2);
         {Id, _, [NextSeg | Remaining], true} ->
             %% Pointing at uninteresting segment, but need to halt the
-            %% prefetch to ensure the interator can be reused
+            %% prefetch to ensure the iterator can be reused
 
             %% Do not update segment/final_acc
             IS2 = IS#itr_state{current_segment=NextSeg,
@@ -1443,6 +1435,23 @@ local_compare(T1, T2) ->
                      Keys ++ KeyAcc
              end,
     compare2(T1, Remote, AccFun, []).
+
+-spec local_compare1(hashtree(), hashtree()) -> [keydiff()].
+local_compare1(T1, T2) ->
+    Remote = fun(get_bucket, {L, B}) ->
+        get_bucket(L, B, T2);
+        (start_exchange_level, {_Level, _Buckets}) ->
+            ok;
+        (start_exchange_segments, _Segments) ->
+            ok;
+        (key_hashes, Segment) ->
+            [{_, KeyHashes2}] = key_hashes(T2, Segment),
+            KeyHashes2
+             end,
+    AccFun = fun(Keys, KeyAcc) ->
+        Keys ++ KeyAcc
+             end,
+    compare(T1, Remote, AccFun, []).
 
 -spec compare(hashtree(), remote_fun()) -> [keydiff()].
 compare(Tree, Remote) ->
