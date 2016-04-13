@@ -41,12 +41,6 @@
 %%
 
 
-%% Notes/Questions for JDM
-%% There's much knowledge in here about how *_index_hashtrees work, which makes
-%% me worried that hashtree itself isn't factored correctly. Example: why would it be
-%% different if memory levels are used or not? Why _should_ hashtree allow it to be?
-
-
 -module(hashtree_eqc).
 -compile([export_all]).
 
@@ -189,8 +183,6 @@ command(_S = #state{started = true, tree_id = TreeId,
         %% Update snapshots/trees. If memory is enabled must test with update_tree
         %% If not, can use the method used by kv/yz_index_hashtree and separate
         %% the two steps, dumping the result from update_perform.
-        %% JDM: Why is this so? What is it about memory levels that reuquire update_tree?
-        %% Is hashtree going to break if we enable memory levels and _don't_ do this?
         [{SnapshotWeight, {call, ?MODULE, update_tree, [t1, s1]}}     || Snap1 == undefined] ++
         [{SnapshotWeight, {call, ?MODULE, update_snapshot, [t1, s1]}} || Snap1 == undefined, MemLevels == 0] ++
         [{SnapshotWeight, {call, ?MODULE, update_perform, [t1]}}      || Snap1 == created, MemLevels == 0] ++
@@ -232,13 +224,13 @@ command(_S = #state{started = true, tree_id = TreeId,
 start(Params, [TreeId | ExtraIds], Tree1OpenOrEmpty, Tree2OpenOrEmpty) ->
     {Segments, Width, MemLevels} = Params,
     %% Return now so we can store symbolic value in procdict in next_state call
-    T1A = create_and_open_hashtree(TreeId, Segments, Width, MemLevels, Tree1OpenOrEmpty, ExtraIds),
+    T1A = create_and_open_hashtree(TreeId, Segments, Width, MemLevels,
+        Tree1OpenOrEmpty, ExtraIds),
 
     put(t1, T1A),
 
-    %% TODO: Can we just use Segments, Width, Memlevels?
-    T2A = create_and_open_hashtree(TreeId, hashtree:segments(T1A), hashtree:width(T1A), 
-        hashtree:mem_levels(T1A), Tree2OpenOrEmpty, ExtraIds),
+    T2A = create_and_open_hashtree(TreeId, Segments, Width, MemLevels,
+        Tree2OpenOrEmpty, ExtraIds),
 
     put(t2, T2A),
 
@@ -294,7 +286,7 @@ update_tree(T, S) ->
 %%
 %% N.B. This does not work with memory levels enabled as update_perform uses the
 %% snapshot state which is dumped.
-%% JDM: Is this a limitation of the model, or hashtree?
+
 update_snapshot(T, S) ->
     %% Snapshot the hashtree and store both states
     {SS, HT} = hashtree:update_snapshot(get(T)),
@@ -522,17 +514,6 @@ next_state(S,_R,{call, _, local_compare, []}) ->
 next_state(S,_R,{call, _, local_compare1, []}) ->
     S.
 
-
-%% Property wrapped with sometimes to copy with
-%% some non-determinism in tests - assuming it comes
-%% from eleveldb as all hashtree operations are thought
-%% to be deterministic.
-%% JDM: This should no longer be needed w/ final updates from MvM, no?
-sometimes_correct() ->
-    sometimes_correct(3).
-
-sometimes_correct(N) ->
-    ?SOMETIMES(N, prop_correct()).
 
 %% Property to generate a series of commands against the
 %% hashtrees and afterwards force them to a comparable state.
