@@ -1121,7 +1121,7 @@ exchange_level(Level, Buckets, Local, Remote, _Opts) ->
     lists:flatmap(fun(Bucket) ->
                           A = Local(get_bucket, {Level, Bucket}),
                           B = Remote(get_bucket, {Level, Bucket}),
-                          Delta = riak_ensemble_util:orddict_delta(lists:keysort(1, A),
+                          Delta = riak_core_util:orddict_delta(lists:keysort(1, A),
                                                                    lists:keysort(1, B)),
               lager:debug("Exchange Level ~p Bucket ~p\nA=~p\nB=~p\nD=~p\n",
                       [Level, Bucket, A, B, Delta]),
@@ -1135,7 +1135,7 @@ exchange_final(_Level, Segments, Local, Remote, AccFun, Acc0, _Opts) ->
     lists:foldl(fun(Segment, Acc) ->
                         A = Local(key_hashes, Segment),
                         B = Remote(key_hashes, Segment),
-                        Delta = riak_ensemble_util:orddict_delta(lists:keysort(1, A),
+                        Delta = riak_core_util:orddict_delta(lists:keysort(1, A),
                                                                  lists:keysort(1, B)),
             lager:debug("Exchange Final\nA=~p\nB=~p\nD=~p\n",
                     [A, B, Delta]),
@@ -1174,7 +1174,7 @@ compare_segments(Segment, Tree=#state{id=Id}, Remote) ->
     KeyHashes2 = Remote(key_hashes, Segment),
     HL1 = orddict:from_list(KeyHashes1),
     HL2 = orddict:from_list(KeyHashes2),
-    Delta = orddict_delta(HL1, HL2),
+    Delta = riak_core_util:orddict_delta(HL1, HL2),
     lager:debug("Tree ~p segment ~p diff ~p\n",
                 [Tree, Segment, Delta]),
     Keys = [begin
@@ -1190,30 +1190,6 @@ key_diff_type({_, '$none'}) ->
     remote_missing;
 key_diff_type(_) ->
     different.
-
-orddict_delta(D1, D2) ->
-    orddict_delta(D1, D2, []).
-
-orddict_delta([{K1,V1}|D1], [{K2,_}=E2|D2], Acc) when K1 < K2 ->
-    Acc2 = [{K1,{V1,'$none'}} | Acc],
-    orddict_delta(D1, [E2|D2], Acc2);
-orddict_delta([{K1,_}=E1|D1], [{K2,V2}|D2], Acc) when K1 > K2 ->
-    Acc2 = [{K2,{'$none',V2}} | Acc],
-    orddict_delta([E1|D1], D2, Acc2);
-orddict_delta([{K1,V1}|D1], [{_K2,V2}|D2], Acc) -> %K1 == K2
-    case V1 of
-        V2 ->
-            orddict_delta(D1, D2, Acc);
-        _ ->
-            Acc2 = [{K1,{V1,V2}} | Acc],
-            orddict_delta(D1, D2, Acc2)
-    end;
-orddict_delta([], D2, Acc) ->
-    L = [{K2,{'$none',V2}} || {K2,V2} <- D2],
-    L ++ Acc;
-orddict_delta(D1, [], Acc) ->
-    L = [{K1,{V1,'$none'}} || {K1,V1} <- D1],
-    L ++ Acc.
 
 %%%===================================================================
 %%% bitarray
