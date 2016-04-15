@@ -1061,8 +1061,6 @@ iterate({ok, K, V}, IS=#itr_state{itr=Itr,
         {Id, _, [NextSeg | Remaining], true} ->
             %% Pointing at uninteresting segment, but need to halt the
             %% prefetch to ensure the iterator can be reused
-
-            %% Do not update segment/final_acc
             IS2 = IS#itr_state{current_segment=NextSeg,
                                segment_acc=[],
                                remaining_segments=Remaining,
