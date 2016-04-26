@@ -124,7 +124,7 @@
                 vnode_master :: atom(),
                 plan_fun :: function(),
                 process_fun :: function(),
-                coverage_plan_mod :: module()
+                coverage_plan_fn :: function()
                }).
 
 -callback init(From::from(), RequestArgs::any()) ->
@@ -193,7 +193,7 @@ init([Mod,
       From={_, ReqId, _},
       RequestArgs]) ->
     {Request, VNodeSelector, NVal, PrimaryVNodeCoverage,
-     NodeCheckService, VNodeMaster, Timeout, PlannerMod, ModState} =
+     NodeCheckService, VNodeMaster, Timeout, CoveragePlanFn, ModState} =
         Mod:init(From, RequestArgs),
     maybe_start_timeout_timer(Timeout),
     PlanFun = plan_callback(Mod),
@@ -210,7 +210,7 @@ init([Mod,
                        vnode_master=VNodeMaster,
                        plan_fun = PlanFun,
                        process_fun = ProcessFun,
-                       coverage_plan_mod = PlannerMod},
+                       coverage_plan_fn = CoveragePlanFn},
     {ok, initialize, StateData, 0};
 init({test, Args, StateProps}) ->
     %% Call normal init
@@ -239,11 +239,11 @@ maybe_start_timeout_timer(Timeout) ->
     ok.
 
 %% @private
-find_plan(_Mod, #vnode_coverage{}=Plan, _NVal, _PVC, _ReqId, _Service,
+find_plan(_CoveragePlanFn, #vnode_coverage{}=Plan, _NVal, _PVC, _ReqId, _Service,
           _Request) ->
     interpret_plan(Plan);
-find_plan(Mod, Target, NVal, PVC, ReqId, Service, Request) ->
-    Mod:create_plan(Target, NVal, PVC, ReqId, Service, Request).
+find_plan(CoveragePlanFn, Target, NVal, PVC, ReqId, Service, Request) ->
+    CoveragePlanFn(Target, NVal, PVC, ReqId, Service, Request).
 
 %% @private
 %% Take a `vnode_coverage' record and interpret it as a mini coverage plan
@@ -275,8 +275,8 @@ initialize(timeout, StateData0=#state{mod=Mod,
                                       timeout=Timeout,
                                       vnode_master=VNodeMaster,
                                       plan_fun = PlanFun,
-                                      coverage_plan_mod = PlanMod}) ->
-    CoveragePlan = find_plan(PlanMod,
+                                      coverage_plan_fn = CoveragePlanFn}) ->
+    CoveragePlan = find_plan(CoveragePlanFn,
                              VNodeSelector,
                              NVal,
                              PVC,
