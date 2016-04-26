@@ -420,7 +420,7 @@ vnode_handoff_command(Sender, Request, ForwardTo,
         {forward, NewModState} ->
             forward_request(HOType, Request, HOTarget, ForwardTo, Sender, State),
             continue(State, NewModState);
- 	{forward, NewReq, NewModState} ->
+        {forward, NewReq, NewModState} ->
             forward_request(HOType, NewReq, HOTarget, ForwardTo, Sender, State),
             continue(State, NewModState);
         {drop, NewModState} ->

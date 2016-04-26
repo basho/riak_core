@@ -35,7 +35,7 @@
          sync_spawn_command/3, make_request/3,
          make_coverage_request/4, all_nodes/1, reg_name/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-	 terminate/2, code_change/3]).
+         terminate/2, code_change/3]).
 -record(state, {idxtab, sup_name, vnode_mod, legacy}).
 
 -define(LONG_TIMEOUT, 120*1000).
