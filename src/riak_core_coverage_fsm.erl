@@ -193,8 +193,29 @@ init([Mod,
       From={_, ReqId, _},
       RequestArgs]) ->
     {Request, VNodeSelector, NVal, PrimaryVNodeCoverage,
-     NodeCheckService, VNodeMaster, Timeout, CoveragePlanFn, ModState} =
+     NodeCheckService, VNodeMaster, Timeout, CoveragePlanRet, ModState} =
         Mod:init(From, RequestArgs),
+
+    %% As part of fixing listkeys, we have changed the API model so
+    %% that modules with riak_core_coverage_fsm behaviour now return a
+    %% coverage plan function rather than a module.  The four
+    %% core_coverage_fsm modules used regularly in RiakTS have all
+    %% been changed to return functions.  
+    %%
+    %% However, to ensure backwards compatibility with any modules
+    %% that may have been missed, we add a check here in case someone
+    %% is still sending us back a module atom.  In that case, convert
+    %% the coverage plan module to the appropriate function for use
+    %% further down the stack
+
+    CoveragePlanFn = 
+	case is_atom(CoveragePlanRet) of
+	    true ->
+		fun CoveragePlanRet:create_plan/6;
+	    _ ->
+		CoveragePlanRet
+	end,
+
     maybe_start_timeout_timer(Timeout),
     PlanFun = plan_callback(Mod),
     ProcessFun = process_results_callback(Mod),
