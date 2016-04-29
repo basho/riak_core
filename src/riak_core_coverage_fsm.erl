@@ -123,7 +123,7 @@ behaviour_info(_) ->
                 vnode_master :: atom(),
                 plan_fun :: function(),
                 process_fun :: function(),
-                coverage_plan_mod :: module()
+                coverage_plan_fn :: function()
                }).
 
 %% ===================================================================
@@ -165,8 +165,29 @@ init([Mod,
       From={_, ReqId, _},
       RequestArgs]) ->
     {Request, VNodeSelector, NVal, PrimaryVNodeCoverage,
-     NodeCheckService, VNodeMaster, Timeout, PlannerMod, ModState} =
+     NodeCheckService, VNodeMaster, Timeout, CoveragePlanRet, ModState} =
         Mod:init(From, RequestArgs),
+
+    %% As part of fixing listkeys, we have changed the API model so
+    %% that modules with riak_core_coverage_fsm behaviour now return a
+    %% coverage plan function rather than a module.  The four
+    %% core_coverage_fsm modules used regularly in RiakTS have all
+    %% been changed to return functions.  
+    %%
+    %% However, to ensure backwards compatibility with any modules
+    %% that may have been missed, we add a check here in case someone
+    %% is still sending us back a module atom.  In that case, convert
+    %% the coverage plan module to the appropriate function for use
+    %% further down the stack
+
+    CoveragePlanFn = 
+        case is_atom(CoveragePlanRet) of
+            true ->
+                fun CoveragePlanRet:create_plan/6;
+            _ ->
+                CoveragePlanRet
+        end,
+
     maybe_start_timeout_timer(Timeout),
     PlanFun = plan_callback(Mod),
     ProcessFun = process_results_callback(Mod),
@@ -182,7 +203,7 @@ init([Mod,
                        vnode_master=VNodeMaster,
                        plan_fun = PlanFun,
                        process_fun = ProcessFun,
-                       coverage_plan_mod = PlannerMod},
+                       coverage_plan_fn = CoveragePlanFn},
     {ok, initialize, StateData, 0};
 init({test, Args, StateProps}) ->
     %% Call normal init
@@ -211,11 +232,11 @@ maybe_start_timeout_timer(Timeout) ->
     ok.
 
 %% @private
-find_plan(_Mod, #vnode_coverage{}=Plan, _NVal, _PVC, _ReqId, _Service,
+find_plan(_CoveragePlanFn, #vnode_coverage{}=Plan, _NVal, _PVC, _ReqId, _Service,
           _Request) ->
     interpret_plan(Plan);
-find_plan(Mod, Target, NVal, PVC, ReqId, Service, Request) ->
-    Mod:create_plan(Target, NVal, PVC, ReqId, Service, Request).
+find_plan(CoveragePlanFn, Target, NVal, PVC, ReqId, Service, Request) ->
+    CoveragePlanFn(Target, NVal, PVC, ReqId, Service, Request).
 
 %% @private
 %% Take a `vnode_coverage' record and interpret it as a mini coverage plan
@@ -247,8 +268,8 @@ initialize(timeout, StateData0=#state{mod=Mod,
                                       timeout=Timeout,
                                       vnode_master=VNodeMaster,
                                       plan_fun = PlanFun,
-                                      coverage_plan_mod = PlanMod}) ->
-    CoveragePlan = find_plan(PlanMod,
+                                      coverage_plan_fn = CoveragePlanFn}) ->
+    CoveragePlan = find_plan(CoveragePlanFn,
                              VNodeSelector,
                              NVal,
                              PVC,
