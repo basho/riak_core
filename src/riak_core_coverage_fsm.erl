@@ -209,12 +209,12 @@ init([Mod,
     %% further down the stack
 
     CoveragePlanFn = 
-	case is_atom(CoveragePlanRet) of
-	    true ->
-		fun CoveragePlanRet:create_plan/6;
-	    _ ->
-		CoveragePlanRet
-	end,
+        case is_atom(CoveragePlanRet) of
+            true ->
+                fun CoveragePlanRet:create_plan/6;
+            _ ->
+                CoveragePlanRet
+        end,
 
     maybe_start_timeout_timer(Timeout),
     PlanFun = plan_callback(Mod),
