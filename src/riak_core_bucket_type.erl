@@ -99,6 +99,7 @@
          update/2,
          get/1,
          reset/1,
+         fold/2,
          iterator/0,
          itr_next/1,
          itr_done/1,
@@ -213,6 +214,29 @@ get(BucketType) when is_binary(BucketType) ->
 -spec reset(bucket_type()) -> ok | {error, term()}.
 reset(BucketType) ->
     update(BucketType, defaults()).
+
+%% @doc Fold over all bucket types, storing result in accumulator
+-spec fold(fun(({bucket_type(), bucket_type_props()}, any()) -> any()),
+           Accumulator::any()) ->
+    any().
+fold(Fun, Accum) ->
+    fold(iterator(), Fun, Accum).
+
+-spec fold(
+    riak_core_metadata:iterator(),
+    fun(({bucket_type(), bucket_type_props()}, any()) -> any()),
+    any()
+) ->
+    any().
+fold(It, Fun, Accum) ->
+    case riak_core_bucket_type:itr_done(It) of
+        true ->
+            riak_core_bucket_type:itr_close(It),
+            Accum;
+        _ ->
+            NewAccum = Fun(itr_value(It), Accum),
+            fold(riak_core_bucket_type:itr_next(It), Fun, NewAccum)
+    end.
 
 %% @doc Return an iterator that can be used to walk through all existing bucket types
 %% and their properties
