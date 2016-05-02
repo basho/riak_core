@@ -251,7 +251,7 @@ n_val(BProps) ->
 % a slighly faster version of proplists:get_value
 get_value(Key, Proplist) ->
     case lists:keyfind(Key, 1, Proplist) of
-        {n_val, Value} -> Value;
+        {Key, Value} -> Value;
         _ -> undefined
     end.
 
