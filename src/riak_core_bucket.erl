@@ -21,31 +21,34 @@
 %% -------------------------------------------------------------------
 
 %% @doc Functions for manipulating bucket properties.
-%% @type riak_core_bucketprops() = [{Propkey :: atom(), Propval :: term()}]
-
 -module(riak_core_bucket).
 
 -export([append_bucket_defaults/1,
-         set_bucket/2,
-         get_bucket/1,
-         get_bucket/2,
-         reset_bucket/1,
-         get_buckets/1,
-         bucket_nval_map/1,
-         default_object_nval/0,
-         all_n/1,
-         merge_props/2,
-         name/1,
-         n_val/1]).
+    set_bucket/2,
+    get_bucket/1,
+    get_bucket/2,
+    reset_bucket/1,
+    get_buckets/1,
+    bucket_nval_map/1,
+    default_object_nval/0,
+    all_n/1,
+    merge_props/2,
+    name/1,
+    n_val/1, get_value/2]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
+-type property() :: {PropName::atom(), PropValue::any()}.
+-type properties() :: [property()].
+
 -type riak_core_ring() :: riak_core_ring:riak_core_ring().
 -type bucket_type()  :: riak_core_bucket_type:bucket_type().
--type bucket_props() :: [{term(), term()}].
 -type nval_set() :: ordsets:ordset(pos_integer()).
+-type bucket() :: binary() | {bucket_type(), binary()}.
+
+-export_type([property/0, properties/0, bucket/0, nval_set/0]).
 
 -define(METADATA_PREFIX, {core, buckets}).
 
@@ -60,7 +63,7 @@ append_bucket_defaults(Items) when is_list(Items) ->
 
 %% @doc Set the given BucketProps in Bucket or {BucketType, Bucket}. If BucketType does not
 %% exist, or is not active, {error, no_type} is returned.
--spec set_bucket(binary() | {riak_core_bucket_type:bucket_type(), binary()}, [{atom(), any()}]) ->
+-spec set_bucket(bucket(), [{atom(), any()}]) ->
                         ok | {error, no_type | [{atom(), atom()}]}.
 set_bucket({<<"default">>, Name}, BucketProps) ->
     set_bucket(Name, BucketProps);
@@ -138,9 +141,9 @@ get_bucket({<<"default">>, Name}, Ring) ->
 get_bucket({_Type, _Name}=Bucket, _Ring) ->
     %% non-default type buckets are not stored in the ring, so just ignore it
     get_bucket(Bucket);
-get_bucket(Name, Ring) ->
-    Meta = riak_core_ring:get_meta(bucket_key(Name), Ring),
-    get_bucket_props(Name, Meta).
+get_bucket(Bucket, Ring) ->
+    Meta = riak_core_ring:get_meta(bucket_key(Bucket), Ring),
+    get_bucket_props(Bucket, Meta).
 
 get_bucket_props(Name, undefined) ->
     [{name, Name} | riak_core_bucket_props:defaults()];
@@ -200,7 +203,7 @@ default_object_nval() ->
 -spec all_n(riak_core_ring()) -> [pos_integer(),...].
 all_n(Ring) ->
     BucketNVals = bucket_nvals(Ring),
-    BucketTypeNVals = bucket_type_nvals(),
+    BucketTypeNVals = riak_core_bucket_type:all_n(),
     ordsets:to_list(
         ordsets:union(BucketNVals, BucketTypeNVals)
     ).
@@ -215,32 +218,6 @@ bucket_nvals(Ring) ->
                        end, [DefaultN], BucketNs),
     AllN.
 
-%% @private
--spec bucket_type_nvals() -> nval_set().
-bucket_type_nvals() ->
-    riak_core_bucket_type:fold(fun bucket_type_prop_nval_fold/2, ordsets:new()).
-
-%% @private
--spec bucket_type_prop_nval_fold({bucket_type(), bucket_props()}, nval_set()) ->
-    nval_set().
-bucket_type_prop_nval_fold({_BType, BProps}, Accum) ->
-    case get_value(active, BProps) of
-        true ->
-            bucket_prop_nval_fold(BProps, Accum);
-        _ ->
-            Accum
-    end.
-
-%% @private
--spec bucket_prop_nval_fold(bucket_props(), nval_set()) ->
-    nval_set().
-bucket_prop_nval_fold(BProps, Accum) ->
-    case get_value(n_val, BProps) of
-        undefined ->
-            Accum;
-        NVal ->
-            ordsets:add_element(NVal, Accum)
-    end.
 
 name(BProps) ->
     get_value(name, BProps).
@@ -249,6 +226,7 @@ n_val(BProps) ->
     get_value(n_val, BProps).
 
 % a slighly faster version of proplists:get_value
+-spec get_value(atom(), properties()) -> any().
 get_value(Key, Proplist) ->
     case lists:keyfind(Key, 1, Proplist) of
         {Key, Value} -> Value;
