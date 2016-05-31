@@ -1,5 +1,6 @@
+%% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -25,6 +26,8 @@
         code_change/3]).
 -export([start_link/1, handle_work/3, handle_work/4]).
 
+-include("riak_core_vnode.hrl").
+
 -ifdef(PULSE).
 -compile(export_all).
 -compile({parse_transform, pulse_instrument}).
@@ -32,17 +35,45 @@
                                  {gen_server, pulse_gen_server}]}).
 -endif.
 
--record(state, {
-        module :: atom(),
-        modstate :: any()
-    }).
-
+%% It would be nice to be able to provide proper specs for callbacks, but the
+%% behavior of the optional_callbacks attribute is nonsensical, so we implement
+%% behaviour_info/1 ourselves and live without the dialyzer type information.
+%%
+%% Were they properly specified, the callback specs would be:
+%%
+%%  init_worker(VNodeIndex, WorkerArgs, WorkerProps) -> {ok, WorkerState}.
+%%  where:
+%%      VNodeIndex  :: partition()
+%%      WorkerArgs  :: list()
+%%      WorkerProps :: [atom() | {atom(), term()}]
+%%      WorkerState :: term()
+%%
+%%  handle_work(WorkSpec, Sender, WorkerState) -> Response.
+%%  where:
+%%      WorkSpec    :: tuple() | record()
+%%      Sender      :: sender()
+%%      WorkerState :: term()
+%%      Response    :: {reply, Reply, WorkerState} | {noreply, WorkerState}
+%%      Reply       :: term()
+%%
+%% Optionally, the following can be provided to tell the vnode worker pool
+%% whether a particular type of work specification is recognized by
+%% handle_work/3:
+%%
+%%  worker_supports(RecordType :: atom()) -> boolean()
+%%
 -spec behaviour_info(atom()) -> 'undefined' | [{atom(), arity()}].
 behaviour_info(callbacks) ->
-    [{init_worker,3},
-     {handle_work,3}];
-behaviour_info(_Other) ->
+    [{init_worker, 3}, {handle_work, 3}];
+behaviour_info(optional_callbacks) ->
+    [{worker_supports, 1}];
+behaviour_info(_) ->
     undefined.
+
+-record(state, {
+    module :: atom(),
+    modstate :: any()
+}).
 
 start_link(Args) ->
     WorkerMod = proplists:get_value(worker_callback_mod, Args),
@@ -52,6 +83,9 @@ start_link(Args) ->
 handle_work(Worker, Work, From) ->
     handle_work(Worker, Work, From, self()).
 
+%% TODO: should workers be required to handle ?VNODE_JOB{} ?
+handle_work(Worker, ?VNODE_JOB{work = Work}, From, Caller) ->
+    handle_work(Worker, Work, From, Caller);
 handle_work(Worker, Work, From, Caller) ->
     gen_server:cast(Worker, {work, Work, From, Caller}).
 

@@ -2,7 +2,7 @@
 %%
 %% riak_core: Core Riak Application
 %%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -99,6 +99,9 @@ start(_StartType, _StartArgs) ->
                                           false),
             riak_core_capability:register({riak_core, net_ticktime},
                                           [true, false],
+                                          false),
+            riak_core_capability:register({riak_core, job_version},
+                                          [v1, false],
                                           false),
 
             riak_core_cli_registry:load_schema(),
