@@ -212,12 +212,10 @@ queueing(Event, State) ->
 shutdown(_Event, _From, State) ->
     {reply, ok, shutdown, State}.
 
-shutdown(?VNODE_JOB{from = From}, State) ->
-    riak_core_vnode:reply(From, {error, vnode_shutdown}),
-    {next_state, shutdown, State};
-shutdown({work, _, From}, State) ->
-    riak_core_vnode:reply(From, {error, vnode_shutdown}),
-    {next_state, shutdown, State};
+shutdown(?VNODE_JOB{} = Work, State) ->
+    incoming_work(shutdown, Work, State);
+shutdown({work, _, _} = Work, State) ->
+    incoming_work(shutdown, Work, State);
 
 shutdown(Event, State) ->
     lager:debug("Unrecognized ~s state event: ~p", [shutdown, Event]),
