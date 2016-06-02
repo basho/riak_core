@@ -384,8 +384,9 @@ update_perform(State=#state{dirty_segments=Dirty, segments=NumSegments}) ->
     State2 = maybe_clear_buckets(NextRebuild, State),
     State3 = update_tree(Segments, State2),
     %% State2#state{dirty_segments=gb_sets:new()}
+    close_iterator(State#state.itr),
     State3#state{dirty_segments=bitarray_new(NumSegments),
-                 next_rebuild=incremental}.
+                 next_rebuild=incremental, itr=undefined}.
 
 %% Clear buckets if doing a full rebuild
 maybe_clear_buckets(full, State) ->
@@ -931,7 +932,6 @@ hashes(State, Segments) ->
 -spec snapshot(hashtree()) -> hashtree().
 snapshot(State) ->
     %% Abuse eleveldb iterators as snapshots
-    catch eleveldb:iterator_close(State#state.itr),
     {ok, Itr} = eleveldb:iterator(State#state.ref, []),
     State#state{itr=Itr}.
 
