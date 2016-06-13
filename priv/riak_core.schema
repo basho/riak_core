@@ -563,6 +563,12 @@ end
   hidden
 ]}.
 
+%% @doc The time a vnode has to be idle for a handoff to occour. (I think)
+{mapping, "handoff.inactivity_timeout", "riak_core.vnode_inactivity_timeout", [
+  {default, "1m"},
+ {datatype, {duration, ms}}
+]}.
+
 %% @doc DTrace support Do not enable 'dtrace' unless your Erlang/OTP
 %% runtime is compiled to support DTrace.  DTrace is available in
 %% R15B01 (supported by the Erlang/OTP official source package) and in
