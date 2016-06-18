@@ -101,7 +101,7 @@ start(_StartType, _StartArgs) ->
                                           [true, false],
                                           false),
             riak_core_capability:register({riak_core, job_version},
-                                          [v1, false],
+                                          riak_core_job:versions() ++ [false],
                                           false),
 
             riak_core_cli_registry:load_schema(),

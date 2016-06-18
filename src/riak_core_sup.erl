@@ -50,8 +50,8 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-    DistMonEnabled = app_helper:get_env(riak_core, enable_dist_mon,
-                                        true),
+    DistMonEnabled = app_helper:get_env(riak_core, enable_dist_mon, true),
+
     {ok, Root} = application:get_env(riak_core, platform_data_dir),
 
     EnsembleSup = {riak_ensemble_sup,
@@ -78,7 +78,8 @@ init([]) ->
                   ?CHILD(riak_core_gossip, worker),
                   ?CHILD(riak_core_claimant, worker),
                   ?CHILD(riak_core_stat_sup, supervisor),
-                  [EnsembleSup || ensembles_enabled()]
+                  [EnsembleSup || ensembles_enabled()],
+                  ?CHILD(riak_core_job_sup, supervisor)
                  ]),
 
     {ok, {{one_for_one, 10, 10}, Children}}.
