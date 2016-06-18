@@ -9,6 +9,30 @@
 
 ### You have been warned!
 
+## Contents
+
+* [Overview](#overview)
+  * [API Status](#api-status)
+    * [Worker Pool](#worker-pool)
+    * [Job Management](#job-management)
+* [How To Use It](#how-to-use-it)
+* [Digging Deeper](#digging-deeper)
+  * [About VNodeIDs](#about-vnodeids)
+  * [Starting and Stopping VNode Job Managers](#starting-and-stopping-vnode-job-managers)
+  * [More About Jobs](#more-about-jobs)
+  * [Managing Jobs](#managing-jobs)
+* [The Supervision Tree](#the-supervision-tree)
+  * [Managing All The Things](#managing-all-the-things)
+    * [Global:](#global)
+    * [Per VNode:](#per-vnode)
+  * [Effects of Process Exits](#effects-of-process-exits)
+    * [Runner](#runner)
+    * [Work Supervisor](#work-supervisor)
+    * [Manager](#manager)
+    * [VNode Supervisor](#vnode-supervisor)
+    * [Service](#service)
+    * [Jobs Supervisor](#jobs-supervisor)
+
 ## Overview
 
 Starting with version 2.3, Riak Core uses an entirely new Job Management API designed to provide the following benefits:
@@ -36,7 +60,7 @@ Starting with version 2.3, Riak Core uses an entirely new Job Management API des
 
 ## How To Use It
 
-The Job API is comprised of a lot of working components under the hood, but the API you use is pretty small. There are two basic concepts, the [Job](#more-about-jobs) and the [Manager](#starting-and-stopping-vnode-job-managers).
+The Job API is comprised of a lot of working components under the hood, but the API you use is pretty small. There are three basic concepts, the [Job](#more-about-jobs), the [Manager](#managing-jobs), and the [Service](#starting-and-stopping-vnode-job-managers).
 > A _Manager_ is roughly analogous to the _Worker Pool_ it replaces.
 
 A Job is an encapsulation of a unit of work, has a unique identifier, and can be run on one or a group of vnodes. When a job is run on multiple vnodes, all of the instances can be managed as a set.
@@ -100,16 +124,16 @@ A `VNodeID` is a unique identifier aligned with the `riak_core_vnode` model, spe
 
 ```
 -type node_type()   :: atom().
--type node_id()     :: integer().
+-type node_id()     :: {node_type(), integer()}.
 ```
 
-The elements are expected to be `{module(), non_neg_integer()}`, but aside from dialyzer warnings almost any 2-tuple will work (it ***is*** pattern matched in the code as a 2-tuple, but as of this writing the types of the elements are not checked, _though that could change!_) - a `VNodeID` of `{deep_thought, 42}` would work just fine, `{"Dent", "Arthur"}` _might_ work, and `{answer, 7.5, 42}` certainly would not.
+The elements are expected to be `{module(), non_neg_integer()}`, but aside from dialyzer warnings almost any 2-tuple whose first element is an atom will work (it ***is*** matched in the code as a 2-tuple starting with an atom, but as of this writing the type of the second element is not checked, _though that could change!_) - a `VNodeID` of `{deep_thought, 42}` would work just fine, `{'Dent', "Arthur"}` _might_ work, and `{answer, 7.5, 42}` certainly would not.
 
 VNodeIDs represent a grouping such that all vnodes with the same first element in their ID are assumed to be operating on the same type of vnode. This allows a single configuration to be used to start multiple VNodeIDs, and a job to be submitted to all vnodes of a type.
 
 ### Starting and Stopping VNode Job Managers
 
-The `riak_core_job_mgr` module exposes functions to start and stop per-vnode job managers. The operations have different arguments to operate synchronously or asynchronously and with default, pre-existing, or specified configurations.
+The `riak_core_job_svc` module exposes functions to start and stop per-vnode job managers and their related processes. The operations have different arguments to operate synchronously or asynchronously and with default, pre-existing, or specified configurations.
 
 Starting and stopping vnode managers is accomplished with the following interfaces:
 
@@ -169,17 +193,37 @@ Additionally, some of the following interfaces _may_ be included if they are det
 
 ### More About Jobs
 
-The [introductory description](#how-to-use-it) tells you most of what you need to know about submitting jobs to be executed - it really is that simple - so for the time being I'm not elaborating further. When I'm sure of the details, I'll expand upon them here.
-
 Unlike some of the other modules, the Job object is pretty stable at this point, and even has decent documentation, so refer to the @doc comment for `job/1` in the [source](src/riak_core_job.erl) for details until I get around to polishing up the description here.
 
-### Supervision Tree
+### Managing Jobs
+
+The [introductory description](#how-to-use-it) tells you most of what you need to know about submitting jobs to be executed - it really is that simple - so for the time being I'll just provide the submission API specification in the `riak_core_job_mgr` module:
+
+```
+-spec submit(Where, Job) -> Result when
+        Where   :: node_type() | node_id() | [node_id()],
+        Result  :: ok | {error, Reason},
+        Reason  :: job_queue_full | job_rejected | vnode_shutdown | term().
+```
+> There are, as well, a bunch of possible job validation errors, as the job's callbacks aren't fully checked until it arrives at the node on which it's going to be run. For instance, we don't check for a specified exported function when the job's created because it's not an error to specify a {M, F, A} that's not present at that time, it only becomes an error if it's not present on the node that will run it.
+
+When the rest of the job management operations are stabilized, we'll expand upon them here.
+
+## The Supervision Tree
+
+### Managing All The Things
 
 #### Global:
 
 ```
+             +----------------+
+             | riak_core_sup  |
+             +----------------+
+               /     |      \
+             ...     |      ...
+                     |
             +------------------+
-            | Core Supervisor  |
+            | Jobs Supervisor  |
             +------------------+
              /       |        \
             /        |         \
@@ -209,43 +253,41 @@ Unlike some of the other modules, the Job object is pretty stable at this point,
             +---------+     +---------+
 ```
 
-#### Managing All The Things
+In the above, the `Jobs Supervisor` is a singleton started by the `riak_core` application, and everything but the `Runner` processes is restarted automatically if they crash for any reason. The `Service` process acts primarily to serialize and coordinate starting and stopping `VNode Supervisors` and acts as the name registry to map VNodeIDs to their servicing processes.
 
-In the above, the `Core Supervisor` is a singleton started by the `riak_core` application, and everything but it and the `Runner` processes is restarted automatically if they crash for any reason. The `Service` process acts primarily to serialize and coordinate starting and stopping `VNode Supervisors` and acts as the name registry to map VNodeIDs to their servicing processes.
-
-#### Effects of Process Exits
+### Effects of Process Exits
 
 The various supervisors do nothing but watch their child processes, so they shouldn't go down unexpectedly. Nevertheless, the effect if they do is noted for completeness.
 
-##### Runner
+#### Runner
 
 These processes are created individually to run each unit of work. On a clean exit, no extrenal action is taken, as it is presumed that if the submitter wants to know when the job finishes, it will include a suitable callback in the job's unit of work.
 
 If the unit of work crashes before the process has notified the manager that it's done and the job includes a `killed` callback or a `from` attribute that is not `ignore`, the submitter is notified of the crash.
 
-##### Work Supervisor
+#### Work Supervisor
 
 All running jobs on the vnode are killed, and their submitters are notified as described above ... ***unless*** the supervisor is killed because its associated manager has died, in which case there's nobody to send the notifications.
 
 If the manager is still running, its queued work will be dispatched when the supervisor is automatically restarted.
 
-##### Manager
+#### Manager
 
-Without a doubt, this is the most complex process, but should still be pretty tolerant of ugly jobs. Because it monitors all of its running work, loss of this process triggers shutdown of its work supervisor, and by extension all running jobs under it.
+Without a doubt, this is the process with the most to lose if a nasty job were to take it down, so it's designed to be as tolerant of such ugliness as it can be. Because it monitors all of its running work, loss of this process triggers shutdown of its work supervisor, and by extension all running jobs under it.
 
 It will be restarted automatically with its original configuration if it crashes, but all queued and running work on the vnode would be lost.
 
-##### VNode Supervisor
+#### VNode Supervisor
 
 Probably the simplest process in the tree, so it's highly unlikely to crash, but if it did the effect would be the same as a Manager crash. Like the manager, it will be restarted automatically with its original configuration if it crashes, but all queued and running work on the vnode would be lost.
 
-##### Service
+#### Service
 
-While this process maintains a lot of state, it's basically a cache so it's able to fully repopulate itself by crawling the supervision tree when it's automatically restarted by its controlling supervisor.
+While this process maintains a lot of state, it's basically a cache so it's able to fully repopulate itself by crawling an existing supervision tree if it's automatically restarted by its controlling supervisor.
 
 A restart _could_ cause an error to propagate out from an external manager operation, probably as a `noproc` error, but it's not clear that there's sufficient reason to protect against that, as it should be a pretty robust process.
 
-##### Core Supervisor
+#### Jobs Supervisor
 
 It's all dead and gone, so sorry, sucks to be you. On the upside, if this process goes away it's probably because the `riak_core` application is itself restarting, or is so thoroughly hosed you're better off without it.
 
