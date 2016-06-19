@@ -26,7 +26,6 @@
     export_all,
     {parse_transform,   pulse_instrument},
     {pulse_replace_module, [
-        {gen_fsm,       pulse_gen_fsm},
         {gen_server,    pulse_gen_server},
         {supervisor,    pulse_supervisor}
     ]}
@@ -43,29 +42,29 @@
 -type node_type()   ::  atom().
 -type node_id()     ::  {node_type(), partition()}.
 
--ifdef(namespaced_types).
--define(DictT,      dict:dict()).
--define(OrdDictT,   orddict:orddict()).
--else.
--define(DictT,      dict()).
--define(OrdDictT,   orddict()).
--endif.
--define(ProcIdPat,  {_, {_, _}}).
+%% These types are used internally between cooperating modules.
+-define(NODE_SUP_TAG,   'node_sup').
+-define(NODE_MGR_TAG,   'node_mgr').
+-define(WORK_SUP_TAG,   'work_sup').
 
--define(NODE_JOB_MGR_STARTUP_TIMEOUT,    8000).
+-type proc_type()   ::  ?NODE_SUP_TAG | ?NODE_MGR_TAG | ?WORK_SUP_TAG .
+-type proc_id()     ::  {proc_type(), node_id()}.
 
-%% These shutdown timeouts should always be in descending order.
--define(CORE_SVC_SHUTDOWN_TIMEOUT,      28000).
--define(NODE_JOB_SUP_SHUTDOWN_TIMEOUT,  26000).
--define(NODE_JOB_MGR_SHUTDOWN_TIMEOUT,  24000).
--define(NODE_JOB_RUN_SHUTDOWN_TIMEOUT,  22000).
+-type node_sup_id() ::  {?NODE_SUP_TAG, node_id()}.
+-type node_mgr_id() ::  {?NODE_MGR_TAG, node_id()}.
+-type work_sup_id() ::  {?WORK_SUP_TAG, node_id()}.
 
--define(NODE_SUP_ID(VNodeID),   {node_sup, VNodeID}).
--define(NODE_MGR_ID(VNodeID),   {node_mgr, VNodeID}).
--define(WORK_SUP_ID(VNodeID),   {work_sup, VNodeID}).
+%% Allow a pretty long time for a node to start. It shouldn't take anywhere
+%% near this long unless the system is really bogged down.
+-define(NODE_STARTUP_TIMEOUT,       12000).
 
--type node_sup_id() ::  ?NODE_SUP_ID(node_id()).
--type node_mgr_id() ::  ?NODE_MGR_ID(node_id()).
--type work_sup_id() ::  ?WORK_SUP_ID(node_id()).
+%% Shutdown timeouts should always be in descending order as listed here.
+-define(JOBS_SVC_SHUTDOWN_TIMEOUT,  28000).
+-define(NODE_SUP_SHUTDOWN_TIMEOUT,  26000).
+-define(NODE_MGR_SHUTDOWN_TIMEOUT,  24000).
+-define(NODE_RUN_SHUTDOWN_TIMEOUT,  22000).
 
--type job_proc_id() ::  node_sup_id() | node_mgr_id() | work_sup_id().
+-define(NODE_SUP_ID(VNodeID),   {?NODE_SUP_TAG, VNodeID}).
+-define(NODE_MGR_ID(VNodeID),   {?NODE_MGR_TAG, VNodeID}).
+-define(WORK_SUP_ID(VNodeID),   {?WORK_SUP_TAG, VNodeID}).
+

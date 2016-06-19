@@ -17,6 +17,7 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
+
 -module(riak_core_job_sup).
 -behaviour(supervisor).
 
@@ -89,11 +90,11 @@ start_link(NodeSupId, MgrConfig, DummyJob) ->
 %%
 %% Returns {ok, pid()} if either started successfully or already running.
 %%
-start_node(CoreSup, VNodeID, MgrConfig, DummyJob) ->
+start_node(JobsSup, VNodeID, MgrConfig, DummyJob) ->
     NodeSupId = ?NODE_SUP_ID(VNodeID),
-    case supervisor:start_child(CoreSup, {NodeSupId,
+    case supervisor:start_child(JobsSup, {NodeSupId,
             {?MODULE, start_link, [NodeSupId, MgrConfig, DummyJob]},
-            permanent, 25000, supervisor, [?MODULE]}) of
+            permanent, ?NODE_SUP_SHUTDOWN_TIMEOUT, supervisor, [?MODULE]}) of
         {ok, _} = Ret ->
             Ret;
         {error, {already_started, NodeSupPid}} ->
@@ -108,12 +109,12 @@ start_node(CoreSup, VNodeID, MgrConfig, DummyJob) ->
 %%
 %% Returns {ok, pid()} if either started successfully or already running.
 %%
-stop_node(CoreSup, VNodeID) ->
+stop_node(JobsSup, VNodeID) ->
     NodeSupId = ?NODE_SUP_ID(VNodeID),
-    case supervisor:terminate_child(CoreSup, NodeSupId) of
+    case supervisor:terminate_child(JobsSup, NodeSupId) of
         ok ->
             % If this doesn't return 'ok', something's badly FU'd somewhere.
-            supervisor:delete_child(CoreSup, NodeSupId);
+            supervisor:delete_child(JobsSup, NodeSupId);
         {error, not_found} ->
             ok;
         {error, _} = Error ->
@@ -137,11 +138,11 @@ init({?NODE_SUP_ID(VNodeID) = Id, MgrConfig, DummyJob}) ->
     {ok, {{rest_for_one, 30, 60}, [
         {NodeMgrId,
             {riak_core_job_mgr, start_link, [NodeMgrId, MgrConfig, DummyJob]},
-            permanent, ?NODE_JOB_MGR_SHUTDOWN_TIMEOUT,
+            permanent, ?NODE_MGR_SHUTDOWN_TIMEOUT,
             worker, [riak_core_job_mgr]},
         {WorkSupId,
             {?MODULE, start_link, [WorkSupId]},
-            permanent, ?NODE_JOB_SUP_SHUTDOWN_TIMEOUT,
+            permanent, ?NODE_SUP_SHUTDOWN_TIMEOUT,
             supervisor, [?MODULE]}
     ]}};
 
@@ -150,15 +151,15 @@ init(?WORK_SUP_ID(VNodeID) = Id) ->
     riak_core_job_svc:register(Id, erlang:self()),
     {ok, {{simple_one_for_one, 30, 60}, [
         {vnode_job, {riak_core_job_run, start_link, [VNodeID]},
-            temporary, ?NODE_JOB_RUN_SHUTDOWN_TIMEOUT,
+            temporary, ?NODE_RUN_SHUTDOWN_TIMEOUT,
             worker, [riak_core_job_run]}
     ]}};
 
 %% Singleton top-level supervisor
 init(?MODULE) ->
-    CoreSup = erlang:self(),
+    JobsSup = erlang:self(),
     {ok, {{one_for_one, 30, 60}, [
-        {riak_core_job_svc, {riak_core_job_svc, start_link, [CoreSup]},
-            permanent, ?CORE_SVC_SHUTDOWN_TIMEOUT,
+        {riak_core_job_svc, {riak_core_job_svc, start_link, [JobsSup]},
+            permanent, ?JOBS_SVC_SHUTDOWN_TIMEOUT,
             worker, [riak_core_job_svc]}
     ]}}.

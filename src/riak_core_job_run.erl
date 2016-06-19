@@ -17,6 +17,7 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
+
 -module(riak_core_job_run).
 
 % Public API
