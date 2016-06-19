@@ -32,6 +32,12 @@
     * [VNode Supervisor](#vnode-supervisor)
     * [Service](#service)
     * [Jobs Supervisor](#jobs-supervisor)
+* [More to Come](#more-to-come)
+  * [Known Remaining Work](#known-remaining-work)
+    * [Tests](#tests)
+    * [Shutdown Handling](#shutdown-handling)
+    * [Integration](#integration)
+* [Comments Are Encouraged!](#comments-are-encouraged)
 
 ## Overview
 
@@ -291,4 +297,29 @@ A restart _could_ cause an error to propagate out from an external manager opera
 
 It's all dead and gone, so sorry, sucks to be you. On the upside, if this process goes away it's probably because the `riak_core` application is itself restarting, or is so thoroughly hosed you're better off without it.
 
-### More to come?
+## More to Come
+
+### Known Remaining Work
+
+#### Tests
+
+Yeah, tests would probably be good to have.  Wanna write 'em?
+
+#### Shutdown Handling
+
+At present, there's pretty much no shutdown handling beyond the default behavior in a tree of supervisors and gen_servers.
+
+Graceful shutdown would be a Good Thing, but making it all work is a higher priority.
+
+#### Integration
+
+Known packages that need to be fully switched over to the new API include:
+
+* `riak_core` (obviously).
+* `riak_kv`
+* `riak_search`
+
+***PLEASE add what you know about to the list!***
+
+## Comments Are Encouraged!
+
