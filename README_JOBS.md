@@ -12,6 +12,13 @@
 ## Contents
 
 * [Overview](#overview)
+  * [Notational Conventions](#notational-conventions)
+  * [Terminology](#terminology)
+    * [VNodeID](#vnodeid)
+    * [vnode](#vnode)
+    * [Unit of Work (UoW)](#unit-of-work-uow)
+    * [Job](#job)
+  * [Rationale](#rationale)
   * [API Status](#api-status)
     * [Worker Pool](#worker-pool)
     * [Job Management](#job-management)
@@ -35,19 +42,72 @@
 * [More to Come](#more-to-come)
   * [Known Remaining Work](#known-remaining-work)
     * [Tests](#tests)
-    * [Shutdown Handling](#shutdown-handling)
+    * [Messages Messages Messages](#messages-messages-messages)
+      * [Shutdown Handling](#shutdown-handling)
     * [Integration](#integration)
 * [Comments Are Encouraged!](#comments-are-encouraged)
 
 ## Overview
 
-Starting with version 2.3, Riak Core uses an entirely new Job Management API designed to provide the following benefits:
+Starting with version 2.3, Riak Core uses an entirely new Job Management API.
+This document attempts to make sense of it.
+
+### Notational Conventions
+
+_\[Text Like This]_ describes features/functionality that are/is slated for inclusion, but possibly not in the first release.
+
+_**Text Like This**_ introduces a term with an explicitly defined meaning.
+
+> Text Like This provides commentary that (hopefully) clarifies something about the preceeding text.
+
+### Terminology
+
+To avoid confusion, it's worth noting a few key words and concepts.
+I've reverted to my spec-writing persona for this section in an attemp to make it precise and normative, as the rest of this document may not make sense if you're not clear on how the following terms are used.
+
+#### VNodeID
+
+Within the scope of the Job Management API, a _**VNodeID**_ is the identifier of a logical information set, comprised of a _Type_ and a _Partition_ in a tuple of the form `{Type, Partition}`.
+_Type_ conotes a particular behavior, while _Partition_ is treated as a distinct index into a list of information sets to which the _Type_ behavior applies.  
+Two different _Partitions_ of the same _Type_ are assumed not to refer to the same information set, but beyond that _Type_ and _Partition_ are generally opaque.
+There's more about the structure requirements and semantics of _**VNodeID**s_ in the section [About VNodeIDs](#about-vnodeids).
+
+#### vnode
+
+A _**vnode**_ is an Erlang process implementing the [`riak_core_vnode`](src/riak_core_vnode.erl) behavior.
+Logically, a _**vnode**_ operates on an information set that can be identified by a _**VNodeID**_, but the _**vnode**_ may or may not identify itself as such.
+Specifically, whatever identifiers may be used to specify a _**vnode**_ process are orthogonal to the _**VNodeID**_ that the Job Management API uses to identify the logical information set it operates upon.
+
+The information set operated on by the _**vnode**_ process created by `riak_core_vnode:start_link(Mod, Index, ...)` is referred to in the Job Management API by the _**VNodeID**_ `{Mod, Index}`, but there does not necessarily have to exist a _**vnode**_ process for each _**VNodeID**_, either on the local Erlang node or anywhere in the distributed system of which it is a part.
+> In Riak as it currently works there will be a _**vnode**_ process for each _**VNodeID**_, but the system would allow creation of job managers for _**VNodeID**s_ that don't correspond to any _**vnode**_.
+
+#### Unit of Work (UoW)
+
+A _**Unit of Work**_, also referred to as _**UoW**_, is a function, or list of functions, to be applied to the information set denoted by a particular _**VNodeID**_.
+Because a _**vnode**_ correlates to a single _**VNodeID**_, and _**vnode**s_ are a central concept in `riak_core`, the job management system includes functionality for a _**UoW**_ to access the _**vnode**_ process matching its _**VNodeID**_, if one exists.
+
+The `riak_core_job:work()` type represents a _**UoW**_ in the Job Management API. There is no status associated with a `riak_core_job:work()` object; it represents simply the operations to be executed, not where, how, or when.
+
+#### Job
+
+A _**Job**_ is a wrapper around a _**UoW**_ that correlates it across all of the informations sets (identified by _**VNodeID**s_) against which its _**UoW**_ is executed.
+A _**Job**_ has a globally unique identifier and an assortment of attributes, such as a _Class_ that may be used for accepting/rejecting the _**Job**_, _\[ from whence it originated,]_ and status about whether and where it's been queued, executed, completed, killed, crashed, or cancelled.
+
+The `riak_core_job:job()` type represents a _**Job**_ in the Job Management API.
+
+### Rationale
+
+The new API replaces the [Worker Pool](#worker-pool), and is designed to provide the following benefits:
 
 * Visibility into what jobs are queued and running.
-* Filtering of jobs to be executed.
+* Correlation of jobs across vnodes _\[and back to their originating client]_.
 * Management of queued and running jobs.
-* Correlation of jobs across vnodes.
+  * _\[Dynamically]_ configurable filtering of jobs to be executed.
+  * _\[Dynamically]_ configurable job concurency.
+  * _\[Dynamically]_ configurable job queue limits.
 * Every job runs in a pristine process environment.
+  * The previous (deprecated) Worker Pool implementation, based on [poolboy](git://github.com/basho/poolboy), re-used existing processes for running UoWs.
+Not only is this not _The Erlang Way_, but it leaves open the possibility that the process environment in which a UoW is running may have been poluted in some relevant way by a previous UoW that ran in it.
 
 ### API Status
 
@@ -55,14 +115,14 @@ Starting with version 2.3, Riak Core uses an entirely new Job Management API des
 
 * This API is currently supported as a facade over the Job Management API.
 * The existing API behavior is outwardly unchanged, but is **deprecated**.
-* The [`riak_core_vnode_worker_pool`](src/riak_core_vnode_worker_pool.erl) and [`riak_core_vnode_worker`](src/riak_core_vnode_worker_pool.erl) modules in `riak_core`, and related `riak_xx_worker` modules implementing the `riak_core_vnode_worker` behavior in other components of Riak, ***will be removed*** in version 3.0.
+* The [`riak_core_vnode_worker_pool`](src/riak_core_vnode_worker_pool.erl) and [`riak_core_vnode_worker`](src/riak_core_vnode_worker_pool.erl) modules in `riak_core`, and related `riak_xx_worker` modules implementing the `riak_core_vnode_worker` behavior in other components of Riak, _**will be removed**_ in version 3.0.
 
 #### Job Management
 
 * This API is introduced on the `feature-riak-2559` branch of affected Basho GitHub repositories.
 * Until the API is merged onto the main 2.3 branch it should not be considered to be stabilized.
   * The `riak_core` job management implementation should be stable shortly after this file is visible, even if the API is not.
-* Some API operations documented here ***may not*** be available in the implementation yet, as the strategy is to document them first for review.
+* Some API operations documented here _**may not**_ be available in the implementation yet, as the strategy is to document them first for review.
 
 ## How To Use It
 
@@ -73,7 +133,7 @@ A Job is an encapsulation of a unit of work, has a unique identifier, and can be
 
 A job is an object of type `riak_core_job:job()` and is created by invoking `riak_core_job:job([Properties])`. A minimal, though not very useful, job might be created as follows:
 
-```
+``` erlang
 MyJob = riak_core_job:job([
     {work,  riak_core_job:work([
         {run,   {fun({VNodeID, Manager}) ->
@@ -87,21 +147,21 @@ MyJob = riak_core_job:job([
 
 To submit the job, you just tell it where to run:
 
-```
+``` erlang
 riak_core_job_mgr:submit(VNodeID, MyJob).
 ```
 
-To submit the job to a number of vnodes, you use the same function with a list of vnodes:
+_\[To submit the job to a number of vnodes, you use the same function with a list of vnodes:]_
 
-```
+``` erlang
 riak_core_job_mgr:submit([VNode1, ..., VNodeN], MyJob).
 ```
 
 > A shortcut to providing a list of VNodeIDs is to provide just the _type_ of the vnodes you want the job to run on, in which case it will be forwarded to all running nodes of that type _in the local Erlang VM_. There's more on that [below](#about-vnodeids).
 
-In both cases, the return value of `submit(...)` tells you the disposition:
+_\[In both cases, the return value of `submit(...)` tells you the disposition:]_
 
-```
+``` erlang
 case riak_core_job_mgr:submit(TargetVNodes, MyJob) of
     ok ->
         % MyJob is queued or running (or already finished)
@@ -112,9 +172,9 @@ case riak_core_job_mgr:submit(TargetVNodes, MyJob) of
 end.
 ```
 
-Note that submitting a job to multiple vnodes within an Erlang VM gives the appearance of being transactional, in that the job must be accepted by all nodes in order to run, and if any node rejects the job it doesn't run on any of them. However, the `Reason` reported will be the first rejection received and may not accurately reflect the responses you'd get from
+_\[Note that submitting a job to multiple vnodes within an Erlang VM gives the appearance of being transactional, in that the job must be accepted by all nodes in order to run, and if any node rejects the job it doesn't run on any of them. However, the `Reason` reported will be the first rejection received and may not accurately reflect the responses you'd get from:]_
 
-```
+``` erlang
 [riak_core_job_mgr:submit(N, MyJob) || N <- MyVNodes].
 ```
 
@@ -128,12 +188,12 @@ The Job Management API uses the concept of a `VNodeID`, not the _Pid_ of a job m
 
 A `VNodeID` is a unique identifier aligned with the `riak_core_vnode` model, specified (indirectly) as:
 
-```
+``` erlang
 -type node_type()   :: atom().
 -type node_id()     :: {node_type(), integer()}.
 ```
 
-The elements are expected to be `{module(), non_neg_integer()}`, but aside from dialyzer warnings almost any 2-tuple whose first element is an atom will work (it ***is*** matched in the code as a 2-tuple starting with an atom, but as of this writing the type of the second element is not checked, _though that could change!_) - a `VNodeID` of `{deep_thought, 42}` would work just fine, `{'Dent', "Arthur"}` _might_ work, and `{answer, 7.5, 42}` certainly would not.
+The elements are expected to be `{module(), non_neg_integer()}`, but aside from dialyzer warnings almost any 2-tuple whose first element is an atom will work (it _**is**_ matched in the code as a 2-tuple starting with an atom, but as of this writing the type of the second element is not checked, _though that could change!_) - a `VNodeID` of `{deep_thought, 42}` would work just fine, `{'Dent', "Arthur"}` _might_ work, and `{answer, 7.5, 42}` certainly would not.
 
 VNodeIDs represent a grouping such that all vnodes with the same first element in their ID are assumed to be operating on the same type of vnode. This allows a single configuration to be used to start multiple VNodeIDs, and a job to be submitted to all vnodes of a type.
 
@@ -143,7 +203,7 @@ The `riak_core_job_svc` module exposes functions to start and stop per-vnode job
 
 Starting and stopping vnode managers is accomplished with the following interfaces:
 
-```
+``` erlang
 -type timeout() :: non_neg_integer() | 'infinity'.
 -type config()  :: [
     {node_job_accept, {module(), atom(), [term()]} | {fun(), [term()]}}
@@ -176,7 +236,7 @@ _**Note:** Starting a manager without a configuration **is not** the same as sta
 
 Additionally, some of the following interfaces _may_ be included if they are determined to have value:
 
-```
+``` erlang
 -spec start_nodes(VNodes) -> Result when
         VNodes  :: node_type() | [node_id()],
         Result  :: ok | {error, term()}.
@@ -199,13 +259,13 @@ Additionally, some of the following interfaces _may_ be included if they are det
 
 ### More About Jobs
 
-Unlike some of the other modules, the Job object is pretty stable at this point, and even has decent documentation, so refer to the @doc comment for `job/1` in the [source](src/riak_core_job.erl) for details until I get around to polishing up the description here.
+Unlike some of the other modules, the Job object is pretty stable at this point, and even has decent documentation, so refer to the \@doc comment for `job/1` in the [source](src/riak_core_job.erl) for details until I get around to polishing up the description here.
 
 ### Managing Jobs
 
 The [introductory description](#how-to-use-it) tells you most of what you need to know about submitting jobs to be executed - it really is that simple - so for the time being I'll just provide the submission API specification in the `riak_core_job_mgr` module:
 
-```
+``` erlang
 -spec submit(Where, Job) -> Result when
         Where   :: node_type() | node_id() | [node_id()],
         Result  :: ok | {error, Reason},
@@ -273,7 +333,7 @@ If the unit of work crashes before the process has notified the manager that it'
 
 #### Work Supervisor
 
-All running jobs on the vnode are killed, and their submitters are notified as described above ... ***unless*** the supervisor is killed because its associated manager has died, in which case there's nobody to send the notifications.
+All running jobs on the vnode are killed, and their submitters are notified as described above ... _**unless**_ the supervisor is killed because its associated manager has died, in which case there's nobody to send the notifications.
 
 If the manager is still running, its queued work will be dispatched when the supervisor is automatically restarted.
 
@@ -305,11 +365,19 @@ It's all dead and gone, so sorry, sucks to be you. On the upside, if this proces
 
 Yeah, tests would probably be good to have.  Wanna write 'em?
 
-#### Shutdown Handling
+#### Messages Messages Messages
+
+The core messages within modules _should_ all be aligned (though they still need a thorough review by another set of eyes).
+
+The basic pattern is that an API function _**F**_ sends a tuple whose first element is **'F'** and whose remaining elements are _**F**'s_ (non-routing) arguments. Those are the easy ones, though, and there are plenty where the pattern gets more complex.
+
+The messages and parameters to callbacks need _at least_ better documentation, and I'm pretty sure the _job killed_ callback isn't fully plumbed through in the manager - more to review there.
+
+##### Shutdown Handling
 
 At present, there's pretty much no shutdown handling beyond the default behavior in a tree of supervisors and gen_servers.
 
-Graceful shutdown would be a Good Thing, but making it all work is a higher priority.
+Graceful shutdown would be a Good Thing, but making it all work while it's running is a higher priority.
 
 #### Integration
 
@@ -319,7 +387,6 @@ Known packages that need to be fully switched over to the new API include:
 * `riak_kv`
 * `riak_search`
 
-***PLEASE add what you know about to the list!***
+_**PLEASE add what you know about to the list!**_
 
 ## Comments Are Encouraged!
-
