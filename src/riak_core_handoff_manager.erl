@@ -164,7 +164,7 @@ handle_call({get_exclusions, Module}, _From, State=#state{excl=Excl}) ->
     {reply, {ok, Reply}, State};
 handle_call({add_outbound,Type,Mod,SrcIdx,TargetIdx,Node,Pid,Opts},_From,
             State=#state{handoffs=HS}) ->
-    case send_handoff(Type,{Mod,SrcIdx,TargetIdx},Node,Pid,HS,Opts) of
+    case send_handoff(Type,{Mod,SrcIdx,TargetIdx},Node,Pid,HS,none,none,Opts) of
         {ok,Handoff=#handoff_status{transport_pid=Sender}} ->
             HS2 = HS ++ [Handoff],
             {reply, {ok,Sender}, State#state{handoffs=HS2}};
@@ -262,13 +262,12 @@ handle_cast({status_update, ModSrcTgt, StatsUpdate}, State=#state{handoffs=HS}) 
     end;
 
 handle_cast({send_handoff, Type, Mod, {Src, Target}, ReqOrigin,
-             {FilterMod, FilterFun}=FMF},
+             {_FilterMod, _FilterFun}=FMF},
             State=#state{handoffs=HS}) ->
-    Filter = FilterMod:FilterFun(Target),
     %% TODO: make a record?
     {ok, VNode} = riak_core_vnode_manager:get_vnode_pid(Src, Mod),
     case send_handoff(Type, {Mod, Src, Target}, ReqOrigin, VNode, HS,
-                      {Filter, FMF}, ReqOrigin, []) of
+                      FMF, ReqOrigin, []) of
         {ok, Handoff} ->
             HS2 = HS ++ [Handoff],
             {noreply, State#state{handoffs=HS2}};
@@ -465,23 +464,20 @@ handoff_concurrency_limit_reached () ->
     ActiveSenders=proplists:get_value(active,Senders),
     get_concurrency_limit() =< (ActiveReceivers + ActiveSenders).
 
-send_handoff(HOType, ModSrcTarget, Node, Pid, HS,Opts) ->
-    send_handoff(HOType, ModSrcTarget, Node, Pid, HS, {none, none}, none, Opts).
-
 %% @private
 %%
 %% @doc Start a handoff process for the given `Mod' from
-%%      `Src'/`VNode' to `Target'/`Node' using the given `Filter'
-%%      function which is a predicate applied to the key.  The
+%%      `Src'/`VNode' to `Target'/`Node' using the given predicate filter
+%%      returned by `FilterModFun' when applied on the `Target'.  The
 %%      `Origin' is the node this request originated from so a reply
 %%      can't be sent on completion.
 -spec send_handoff(ho_type(), {module(), index(), index()}, node(),
                    pid(), list(),
-                   {predicate() | none, {module(), atom()} | none}, node(), [{atom(), term()}]) ->
+                   {module(), atom()} | none, node(), [{atom(), term()}]) ->
                           {ok, handoff_status()}
                               | {error, max_concurrency}
                               | {false, handoff_status()}.
-send_handoff(HOType, {Mod, Src, Target}, Node, Vnode, HS, {Filter, FilterModFun}, Origin, Opts) ->
+send_handoff(HOType, {Mod, Src, Target}, Node, Vnode, HS, FilterModFun, Origin, Opts) ->
     case handoff_concurrency_limit_reached() of
         true ->
             {error, max_concurrency};
@@ -507,7 +503,10 @@ send_handoff(HOType, {Mod, Src, Target}, Node, Vnode, HS, {Filter, FilterModFun}
                     BaseOpts = [{src_partition, Src}, {target_partition, Target}],
                     case HOType of
                         repair ->
-                            HOFilter = Filter,
+                            HOFilter = case FilterModFun of
+                                           {FilterMod, FilterFun} -> FilterMod:FilterFun(Target);
+                                           none                   -> none
+                                       end,
                             HOAcc0 = undefined,
                             HONotSentFun = undefined;
                         resize ->
