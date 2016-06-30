@@ -51,7 +51,7 @@
 -include("riak_core_vnode.hrl").
 
 %% ===================================================================
-%% Vnode Jobs handled by riak_core_job_mgr
+%% Vnode Jobs handled by riak_core_job_service
 %% ===================================================================
 
 %% Fields without defaults are REQUIRED, even though the language can't
@@ -64,7 +64,7 @@
 
     %% Currently unimplemented, but here so we don't need to define a new
     %% version of the record when (or if) it is ...
-    prio    = ?VNODE_JOB_PRIO_DEFAULT   :: priority(),
+    prio    = ?JOB_PRIO_DEFAULT   :: priority(),
 
     %% If supplied, the 'cid' is presumed to mean something to the
     %% originator of the work, and is included as an element in the 'gid'.
@@ -84,15 +84,15 @@
 
 %%
 %% The basic idea is that the specification of a unit of work is 3 functions:
-%% init, run, and fini. 'init' receives a tuple with two elements, the vnode
-%% id and manager, followed by its arguments and returns a context, which is
+%% init, run, and fini. 'init' receives a tuple with two elements, the scope
+%% id and service, followed by its arguments and returns a context, which is
 %% provided to 'run' as its first argument, followed by its arguments. The
 %% pattern is repeated with 'fini', whose result is
 %% TODO: [how] is fini's result handled?
 %%
 %% We can't properly specify the types, but if we could they'd look something
 %% like this:
-%%  init_fun()  :: fun(({node_id(), pid()}, arg1(), ..., argN()) -> context1().
+%%  init_fun()  :: fun(({scope_id(), pid()}, arg1(), ..., argN()) -> context1().
 %%  run_fun()   :: fun((context1(), arg1(), ..., argN()) -> context2().
 %%  fini_fun()  :: fun((context2(), arg1(), ..., argN()) -> result().
 %% In short, the arity of a function 'F' is one more than length(Args).
@@ -111,7 +111,7 @@
 -type func()        :: {module(), atom(), [term()]} | {fun(), [term()]}.
 -type id()          :: term().
 -type job()         :: #riak_core_job_v1{}.
--type priority()    :: ?VNODE_JOB_PRIO_MIN..?VNODE_JOB_PRIO_MAX.
+-type priority()    :: ?JOB_PRIO_MIN..?JOB_PRIO_MAX.
 -type stat()        :: {atom(), term()}.
 -type time()        :: erlang:timestamp().
 -type unspec()      :: 'anon'.
@@ -265,7 +265,7 @@ dummy() ->
     job([
         {class, 'dummy'},
         {cid,   'dummy'},
-        {prio,  ?VNODE_JOB_PRIO_MIN},
+        {prio,  ?JOB_PRIO_MIN},
         {work,  #riak_core_work_v1{}}
     ]).
 
@@ -420,8 +420,8 @@ jobp([{from, From} | Props], Job)
     jobp(Props, Job#riak_core_job_v1{from = From});
 jobp([{prio, Prio} | Props], Job)
         when erlang:is_integer(Prio)
-        andalso Prio >= ?VNODE_JOB_PRIO_MIN
-        andalso Prio =< ?VNODE_JOB_PRIO_MAX ->
+        andalso Prio >= ?JOB_PRIO_MIN
+        andalso Prio =< ?JOB_PRIO_MAX ->
     jobp(Props, Job#riak_core_job_v1{prio = Prio});
 jobp([{iid, ID} | Props], Job) ->
     jobp(Props, Job#riak_core_job_v1{iid = ID});

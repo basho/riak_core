@@ -56,19 +56,17 @@
 
 -type handoff_dest() :: {riak_core_handoff_manager:ho_type(), {partition(), node()}}.
 
-%% Default per-node job concurrency.
--define(VNODE_JOB_DFLT_CONCUR,  10).
+%% Default per-scope job concurrency.
+-define(JOB_SVC_DEFAULT_CONCUR, 10).
 
-%% If per-node maximum queue length is not configured, it defaults to the
+%% If per-scope maximum queue length is not configured, it defaults to the
 %% concurrency value multiplied by this number.
--define(VNODE_JOB_DFLT_QUEMULT,  3).
+-define(JOB_SVC_DEFAULT_QUEMULT, 3).
 
-%%
 %% Values for riak_core_job:priority(), whose type is defined as
-%%  ?VNODE_JOB_PRIO_MIN .. ?VNODE_JOB_PRIO_MAX
-%%
--define(VNODE_JOB_PRIO_MIN,      0).
--define(VNODE_JOB_PRIO_MAX,     99).
--define(VNODE_JOB_PRIO_DEFAULT, 50).
--define(VNODE_JOB_PRIO_LOW,     25).
--define(VNODE_JOB_PRIO_HIGH,    75).
+%%  ?JOB_PRIO_MIN .. ?JOB_PRIO_MAX
+-define(JOB_PRIO_MIN,            0).
+-define(JOB_PRIO_MAX,           99).
+-define(JOB_PRIO_DEFAULT,       50).
+-define(JOB_PRIO_LOW,           25).
+-define(JOB_PRIO_HIGH,          75).

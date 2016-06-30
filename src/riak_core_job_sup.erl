@@ -24,33 +24,37 @@
 %% @doc Processes in the job management supervision tree.
 %%
 %% Each of this module's init/1 functions represents a supervisor level in
-%% the supervision tree. The top level is singleton, and the rest two are
-%% per-vnode.
+%% the supervision tree. The top level is a singleton, and the rest are
+%% per-scope.
 %%
 %% Top level supervisor
-%%  Start:  ?MODULE:start_link()
-%%  Child:  Request service
-%%      Start:  riak_core_job_svc:start_link(Parent)
-%%  Child:  Per vnode supervisor
-%%      Start:  ?MODULE:start_link(?NODE_SUP_ID(VNodeID), ...)
-%%      Child:  Job manager
-%%          Start:  riak_core_job_mgr:start_link(?NODE_MGR_ID(VNodeID), ...)
+%%  Start:  riak_core_job_sup:start_link()
+%%  Child:  Request manager
+%%      Start:  riak_core_job_manager:start_link(Parent)
+%%  Child:  Per scope supervisor
+%%      Start:  riak_core_job_sup:start_link(?SCOPE_SUP_ID(ScopeID),...)
+%%      Child:  Per-scope job service
+%%          Start:  riak_core_job_service:start_link(?SCOPE_SVC_ID(ScopeID),...)
 %%      Child:  Work supervisor
-%%          Start:  ?MODULE:start_link(?WORK_SUP_ID(VNodeID))
+%%          Start:  riak_core_job_sup:start_link(?WORK_SUP_ID(ScopeID))
 %%          Child:  Work runner
-%%              Start:  riak_core_job_run:start_link(VNodeID, ...)
+%%              Start:  riak_core_job_runner:start_link(ScopeID, ...)
 %%
 
 % Public API
 -export([start_link/0]).
 
 % Private API
--export([start_link/1, start_link/3, start_node/4, stop_node/2]).
+-export([start_link/1, start_link/3, start_scope/4, stop_scope/2]).
 
 % supervisor callbacks
 -export([init/1]).
 
 -include("riak_core_job_internal.hrl").
+
+% type shorthand
+-type config()  ::  riak_core_job_service:config().
+-type dummy()   ::  riak_core_job:job().
 
 %% ===================================================================
 %% Public API
@@ -69,52 +73,51 @@ start_link() ->
 
 -spec start_link(work_sup_id()) -> {ok, pid()}.
 %%
-%% @doc Start a per-node work supervisor.
+%% @doc Start a per-scope work supervisor.
 %%
 start_link(WorkSupId) ->
     supervisor:start_link(?MODULE, WorkSupId).
 
--spec start_link(node_sup_id(), riak_core_job_mgr:config(), riak_core_job:job())
+-spec start_link(scope_sup_id(), config(), dummy())
         -> {ok, pid()} | {error, term()}.
 %%
-%% @doc Start a per-node service supervisor.
+%% @doc Start a per-scope service supervisor.
 %%
-start_link(NodeSupId, MgrConfig, DummyJob) ->
-    supervisor:start_link(?MODULE, {NodeSupId, MgrConfig, DummyJob}).
+start_link(ScopeSupId, SvcConfig, DummyJob) ->
+    supervisor:start_link(?MODULE, {ScopeSupId, SvcConfig, DummyJob}).
 
--spec start_node(pid(), node_id(),
-        riak_core_job_mgr:config(), riak_core_job:job())
+-spec start_scope(pid(), scope_id(), config(), dummy())
         -> {ok, pid()} | {error, term()}.
 %%
-%% @doc Start a per-node service supervisor.
+%% @doc Start a per-scope supervision tree.
 %%
 %% Returns {ok, pid()} if either started successfully or already running.
 %%
-start_node(JobsSup, VNodeID, MgrConfig, DummyJob) ->
-    NodeSupId = ?NODE_SUP_ID(VNodeID),
-    case supervisor:start_child(JobsSup, {NodeSupId,
-            {?MODULE, start_link, [NodeSupId, MgrConfig, DummyJob]},
-            permanent, ?NODE_SUP_SHUTDOWN_TIMEOUT, supervisor, [?MODULE]}) of
+start_scope(JobsSup, ScopeID, SvcConfig, DummyJob) ->
+    ScopeSupId = ?SCOPE_SUP_ID(ScopeID),
+    case supervisor:start_child(JobsSup, {ScopeSupId,
+            {?MODULE, start_link, [ScopeSupId, SvcConfig, DummyJob]},
+            permanent, ?SCOPE_SUP_SHUTDOWN_TIMEOUT, supervisor, [?MODULE]}) of
         {ok, _} = Ret ->
             Ret;
-        {error, {already_started, NodeSupPid}} ->
-            {ok, NodeSupPid};
+        {error, {already_started, ScopeSupPid}} ->
+            {ok, ScopeSupPid};
         {error, _} = Error ->
             Error
     end.
 
--spec stop_node(pid(), node_id()) -> ok | {error, term()}.
+-spec stop_scope(pid(), scope_id()) -> ok | {error, term()}.
 %%
-%% @doc Start a per-node service supervisor.
+%% @doc Stop a per-scope supervision tree.
 %%
 %% Returns {ok, pid()} if either started successfully or already running.
 %%
-stop_node(JobsSup, VNodeID) ->
-    NodeSupId = ?NODE_SUP_ID(VNodeID),
-    case supervisor:terminate_child(JobsSup, NodeSupId) of
+stop_scope(JobsSup, ScopeID) ->
+    ScopeSupId = ?SCOPE_SUP_ID(ScopeID),
+    case supervisor:terminate_child(JobsSup, ScopeSupId) of
         ok ->
-            % If this doesn't return 'ok', something's badly FU'd somewhere.
-            supervisor:delete_child(JobsSup, NodeSupId);
+            % If this doesn't return 'ok', something's badly hosed somewhere.
+            supervisor:delete_child(JobsSup, ScopeSupId);
         {error, not_found} ->
             ok;
         {error, _} = Error ->
@@ -125,41 +128,48 @@ stop_node(JobsSup, VNodeID) ->
 %% Callbacks
 %% ===================================================================
 
-% The restart frequency is set to handle a job being submitted to all vnodes
-% that crashes each manager process that receives it. That REALLY shouldn't
-% happen, but since we don't know here how many vnodes could end up running
-% on this node we kinda punt for now.
+-spec init(?MODULE | {scope_sup_id(), config(), dummy()} | work_sup_id())
+        -> 'ignore' | {'ok', {
+                {supervisor:strategy(), pos_integer(), pos_integer()},
+                [supervisor:child_spec()] }}.
+%
+% The restart frequency is set to handle the case of an evil job being
+% submitted to all scopes that somehow causes each service that receives it
+% to crash. That REALLY shouldn't happen, but since we don't know here how
+% many scopes could end up running on this node we kinda punt for now.
 % TODO: should we try to do something intelligent based on ring size?
-
-init({?NODE_SUP_ID(VNodeID) = Id, MgrConfig, DummyJob}) ->
-    riak_core_job_svc:register(Id, erlang:self()),
-    NodeMgrId = ?NODE_MGR_ID(VNodeID),
-    WorkSupId = ?WORK_SUP_ID(VNodeID),
+%
+init({?SCOPE_SUP_ID(ScopeID) = Id, SvcConfig, DummyJob}) ->
+    riak_core_job_manager:register(Id, erlang:self()),
+    ScopeSvcId = ?SCOPE_SVC_ID(ScopeID),
+    WorkSupId = ?WORK_SUP_ID(ScopeID),
     {ok, {{rest_for_one, 30, 60}, [
-        {NodeMgrId,
-            {riak_core_job_mgr, start_link, [NodeMgrId, MgrConfig, DummyJob]},
-            permanent, ?NODE_MGR_SHUTDOWN_TIMEOUT,
-            worker, [riak_core_job_mgr]},
+        {ScopeSvcId,
+            {riak_core_job_service, start_link,
+                [ScopeSvcId, SvcConfig, DummyJob]},
+            permanent, ?SCOPE_SVC_SHUTDOWN_TIMEOUT,
+            worker, [riak_core_job_service]},
         {WorkSupId,
             {?MODULE, start_link, [WorkSupId]},
-            permanent, ?NODE_SUP_SHUTDOWN_TIMEOUT,
+            permanent, ?SCOPE_SUP_SHUTDOWN_TIMEOUT,
             supervisor, [?MODULE]}
     ]}};
 
-%% Per-node worker supervisor
-init(?WORK_SUP_ID(VNodeID) = Id) ->
-    riak_core_job_svc:register(Id, erlang:self()),
+%% Per-scope worker supervisor
+init(?WORK_SUP_ID(ScopeID) = Id) ->
+    riak_core_job_manager:register(Id, erlang:self()),
     {ok, {{simple_one_for_one, 30, 60}, [
-        {vnode_job, {riak_core_job_run, start_link, [VNodeID]},
-            temporary, ?NODE_RUN_SHUTDOWN_TIMEOUT,
-            worker, [riak_core_job_run]}
+        {vnode_job, {riak_core_job_runner, start_link, [ScopeID]},
+            temporary, ?WORK_RUN_SHUTDOWN_TIMEOUT,
+            worker, [riak_core_job_runner]}
     ]}};
 
 %% Singleton top-level supervisor
 init(?MODULE) ->
     JobsSup = erlang:self(),
     {ok, {{one_for_one, 30, 60}, [
-        {riak_core_job_svc, {riak_core_job_svc, start_link, [JobsSup]},
-            permanent, ?JOBS_SVC_SHUTDOWN_TIMEOUT,
-            worker, [riak_core_job_svc]}
+        {riak_core_job_manager,
+            {riak_core_job_manager, start_link, [JobsSup]},
+            permanent, ?JOBS_MGR_SHUTDOWN_TIMEOUT,
+            worker, [riak_core_job_manager]}
     ]}}.

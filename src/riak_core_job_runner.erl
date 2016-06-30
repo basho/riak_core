@@ -18,7 +18,7 @@
 %%
 %% -------------------------------------------------------------------
 
--module(riak_core_job_run).
+-module(riak_core_job_runner).
 
 % Public API
 -export([start_link/1, run/4]).
@@ -32,16 +32,16 @@
 %% API functions
 %% ===================================================================
 
--spec start_link(node_id()) -> {ok, pid()}.
+-spec start_link(scope_id()) -> {ok, pid()}.
 %% @doc Start a new process linked to the calling supervisor.
-start_link(VNodeID) ->
-    {ok, erlang:spawn_link(?MODULE, runner, [VNodeID])}.
+start_link(ScopeID) ->
+    {ok, erlang:spawn_link(?MODULE, runner, [ScopeID])}.
 
 -spec run(pid(), pid(), reference(), riak_core_job:work()) -> ok.
 %% @doc Tell the specified runner to start the unit of work.
-%% The specified reference is passed in callbacks to the manager.
-run(Runner, Mgr, Ref, Work) ->
-    Runner ! {start, Mgr, Ref, Work, erlang:self()},
+%% The specified reference is passed in callbacks to the scope service.
+run(Runner, Svc, Ref, Work) ->
+    Runner ! {start, Svc, Ref, Work, erlang:self()},
     receive
         {started, Ref} ->
             ok
@@ -51,21 +51,21 @@ run(Runner, Mgr, Ref, Work) ->
 %% Process
 %% ===================================================================
 
--spec runner(node_id()) -> ok | no_return().
+-spec runner(scope_id()) -> ok | no_return().
 %% @doc Process entry point.
-runner(VNodeID) ->
-    {Mgr, Ref, Work} = receive
-        {start, M, R, W, Starter} ->
+runner(ScopeID) ->
+    {Svc, Ref, Work} = receive
+        {start, S, R, W, Starter} ->
             Starter ! {started, R},
-            {M, R, W}
+            {S, R, W}
     end,
-    riak_core_job_mgr:starting(Mgr, Ref),
-    Ctx1 = invoke(VNodeID, riak_core_job:get(init, Work)),
-    riak_core_job_mgr:running(Mgr, Ref),
+    riak_core_job_service:starting(Svc, Ref),
+    Ctx1 = invoke(ScopeID, riak_core_job:get(init, Work)),
+    riak_core_job_service:running(Svc, Ref),
     Ctx2 = invoke(Ctx1, riak_core_job:get(run, Work)),
-    riak_core_job_mgr:cleanup(Mgr, Ref),
+    riak_core_job_service:cleanup(Svc, Ref),
     Ret = invoke(Ctx2, riak_core_job:get(fini, Work)),
-    riak_core_job_mgr:done(Mgr, Ref, Ret),
+    riak_core_job_service:done(Svc, Ref, Ret),
     ok.
 
 -spec invoke(term(), {module(), atom(), [term()]} | {fun(), [term()]})

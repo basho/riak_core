@@ -18,22 +18,22 @@
 %%
 %% -------------------------------------------------------------------
 
--module(riak_core_job_svc).
+-module(riak_core_job_manager).
 -behaviour(gen_server).
 
 % Public API
 -export([
     group/1, group/2,
-    job_mgr/1,
+    job_svc/1,
     lookup/1,
-    start_node/1, start_node/2,
-    stop_node/1, stop_node/2
+    start_scope/1, start_scope/2,
+    stop_scope/1, stop_scope/2
 ]).
 
 % Public types
 -export_type([
-    node_id/0,
-    node_type/0
+    scope_id/0,
+    scope_type/0
 ]).
 
 % Private API
@@ -89,8 +89,8 @@
 -spec pdict_demonitor(pdict()) -> 'ok'.
 -spec pdict_erase(prec() | proc_id() | reference(), pdict()) -> pdict().
 -spec pdict_find(proc_id() | reference(), pdict()) -> prec() | 'false'.
--spec pdict_group(node_id(), pdict()) -> [prec()].
--spec pdict_group(proc_type(), node_type(), pdict()) -> [prec()].
+-spec pdict_group(scope_id(), pdict()) -> [prec()].
+-spec pdict_group(proc_type(), scope_type(), pdict()) -> [prec()].
 -spec pdict_store(prec(), pdict()) -> pdict().
 -spec pdict_store(proc_id(), pid(), pdict()) -> pdict().
 %
@@ -98,8 +98,8 @@
 %
 -record(prec,   {
     ptype   ::  proc_type(),
-    ntype   ::  node_type(),
-    nid     ::  node_id(),
+    ntype   ::  scope_type(),
+    nid     ::  scope_id(),
     pid     ::  pid(),
     mon     ::  reference()
 }).
@@ -107,18 +107,18 @@
 
 %
 % Thankfully, the configuration dictionary is a simple mapping from
-%   node_type() => riak_core_job_mgr:config()
+%   node_type() => riak_core_job_service:config()
 % It's presumably pretty small and stable, so it's just a list for now.
 % In OTP-18+ it may become a map ... or not.
 %
--type cdict()   ::  [{node_type(), riak_core_job_mgr:config()}].
+-type cdict()   ::  [{scope_type(), riak_core_job_service:config()}].
 
 -record(state, {
     jobs_sup                ::  pid(),
     svc_name                ::  atom(),
     cdict   = []            ::  cdict(),
     pdict   = pdict_new()   ::  pdict(),
-    % passed to each job manager on startup to test their accept callback
+    % passed to each job service on startup to test their accept callback
     dummy   = riak_core_job:dummy() ::  riak_core_job:job()
 }).
 -type state()   ::  #state{}.
@@ -127,7 +127,7 @@
 %% Public API
 %% ===================================================================
 
--spec start_node(node_id()) -> 'ok' | {'error', term()}.
+-spec start_scope(scope_id()) -> 'ok' | {'error', term()}.
 %%
 %% @doc Add a per-node tree to the top-level supervisor.
 %%
@@ -148,11 +148,11 @@
 %% `{error, noproc}' - The service is not available, probably meaning
 %% riak_core is hosed and this is the least of your problems.
 %%
-start_node({Type, _} = VNodeID) when erlang:is_atom(Type) ->
+start_scope({Type, _} = ScopeID) when erlang:is_atom(Type) ->
     gen_server:call(?SERVICE_NAME,
-        {'start_node', VNodeID}, ?NODE_STARTUP_TIMEOUT).
+        {'start_scope', ScopeID}, ?SCOPE_SVC_STARTUP_TIMEOUT).
 
--spec start_node(node_id(), riak_core_job_mgr:config())
+-spec start_scope(scope_id(), riak_core_job_service:config())
         -> 'ok' | {'error', term()}.
 %%
 %% @doc Add a per-node tree to the top-level supervisor.
@@ -167,22 +167,22 @@ start_node({Type, _} = VNodeID) when erlang:is_atom(Type) ->
 %% `{error, noproc}' - The service is not available, probably meaning
 %% riak_core is hosed and this is the least of your problems.
 %%
-start_node({Type, _} = VNodeID, Config)
+start_scope({Type, _} = ScopeID, Config)
         when erlang:is_atom(Type) andalso erlang:is_list(Config) ->
     gen_server:call(?SERVICE_NAME,
-        {'start_node', VNodeID, Config}, ?NODE_STARTUP_TIMEOUT).
+        {'start_scope', ScopeID, Config}, ?SCOPE_SVC_STARTUP_TIMEOUT).
 
--spec stop_node(node_id()) -> 'ok'.
+-spec stop_scope(scope_id()) -> 'ok'.
 %%
 %% @doc Shut down the per-node tree asynchronously.
 %%
 %% Signals the per-node tree to shut down and returns 'ok' immediately.
-%% To wait for the shutdown to complete, use stop_node/2.
+%% To wait for the shutdown to complete, use stop_scope/2.
 %%
-stop_node({Type, _} = VNodeID) when erlang:is_atom(Type) ->
-    gen_server:cast(?SERVICE_NAME, {'stop_node', VNodeID}).
+stop_scope({Type, _} = ScopeID) when erlang:is_atom(Type) ->
+    gen_server:cast(?SERVICE_NAME, {'stop_scope', ScopeID}).
 
--spec stop_node(node_id(), non_neg_integer() | 'infinity')
+-spec stop_scope(scope_id(), non_neg_integer() | 'infinity')
         -> 'ok' | {'error', term()}.
 %%
 %% @doc Shut down the per-node tree semi-synchronously.
@@ -203,70 +203,72 @@ stop_node({Type, _} = VNodeID) when erlang:is_atom(Type) ->
 %%
 %% If Timeout is zero, the function returns immediately, with 'ok' indicating
 %% the tree wasn't running, or {error, timeout} indicating the shutdown was
-%% initiated as if by stop_node/1.
+%% initiated as if by stop_scope/1.
 %%
 %% If Timeout is 'infinity' the function waits indefinitely for the tree to
 %% shut down. However, internal shutdown timeouts in the supervisors should
 %% cause the tree to shut down in under a minute.
 %%
-stop_node({Type, _} = VNodeID, Timeout)
+stop_scope({Type, _} = ScopeID, Timeout)
         when erlang:is_atom(Type) andalso (Timeout =:= 'infinity'
         orelse (erlang:is_integer(Timeout) andalso Timeout >= 0)) ->
     case erlang:whereis(?SERVICE_NAME) of
-        undefined ->
-            {error, noproc};
+        'undefined' ->
+            {'error', 'noproc'};
         Svc ->
-            NodeSupId = ?NODE_SUP_ID(VNodeID),
+            NodeSupId = ?SCOPE_SUP_ID(ScopeID),
             case gen_server:call(Svc, {'lookup', NodeSupId}) of
-                undefined ->
-                    ok;
+                'undefined' ->
+                    'ok';
                 Sup ->
-                    Ref = erlang:monitor(process, Sup),
-                    gen_server:cast(Svc, {'stop_node', VNodeID}),
+                    % use a monitor and cast to avoid the possibility of a
+                    % late response munging up the caller's mailbox handling
+                    Ref = erlang:monitor('process', Sup),
+                    gen_server:cast(Svc, {'stop_scope', ScopeID}),
                     receive
                         {'DOWN', Ref, _, Sup, _} ->
-                            ok
+                            'ok'
                     after
                         Timeout ->
-                            _ = erlang:demonitor(Ref, [flush]),
-                            {error, timeout}
+                            _ = erlang:demonitor(Ref, ['flush']),
+                            {'error', 'timeout'}
                     end
             end
     end.
 
--spec job_mgr(node_mgr_id() | node_id()) -> pid().
+-spec job_svc(scope_svc_id() | scope_id()) -> pid() | {'error', term()}.
 %%
-%% @doc So much like start_node/1 that it may not be worth keeping it.
+%% @doc So much like start_scope/1 that it may not be worth keeping it.
 %%
-job_mgr(?NODE_MGR_ID({Type, _}) = MgrId) when erlang:is_atom(Type) ->
+job_svc(?SCOPE_SVC_ID({Type, _}) = SvcId) when erlang:is_atom(Type) ->
     case gen_server:call(?SERVICE_NAME,
-            {'job_mgr', MgrId}, ?NODE_STARTUP_TIMEOUT) of
+            {'job_svc', SvcId}, ?SCOPE_SVC_STARTUP_TIMEOUT) of
         'lookup' ->
-            lookup(MgrId);
+            lookup(SvcId);
         Ret ->
             Ret
     end;
-job_mgr({Type, _} = VNodeID) when erlang:is_atom(Type) ->
-    job_mgr(?NODE_MGR_ID(VNodeID)).
+job_svc({Type, _} = ScopeID) when erlang:is_atom(Type) ->
+    job_svc(?SCOPE_SVC_ID(ScopeID)).
 
--spec lookup(proc_id()) -> pid() | 'undefined'.
+-spec lookup(proc_id()) -> pid() | 'undefined' | {'error', term()}.
 %%
 %% @doc Find the pid of the specified process.
 %%
-%% Unlike job_mgr/1, this NEVER starts the process.
+%% Unlike job_svc/1, this NEVER starts the process.
 %%
 lookup({PType, {NType, _}} = Id)
         when erlang:is_atom(PType) andalso erlang:is_atom(NType) ->
     gen_server:call(?SERVICE_NAME, {'lookup', Id}).
 
--spec group(node_id()) -> [{proc_id(), pid()}].
+-spec group(scope_id()) -> [{proc_id(), pid()}].
 %%
 %% @doc Find the running (non-runner) processes for a vnode.
 %%
-group({NType, _} = VNodeID) when erlang:is_atom(NType) ->
-    gen_server:call(?SERVICE_NAME, {'group', VNodeID}).
+group({NType, _} = ScopeID) when erlang:is_atom(NType) ->
+    gen_server:call(?SERVICE_NAME, {'group', ScopeID}).
 
--spec group(proc_type(), node_type()) -> [{proc_id(), pid()}].
+-spec group(proc_type(), scope_type()) -> [{proc_id(), pid()}].
 %%
 %% @doc Find the running processes of a specified type for a vnode type.
 %%
@@ -288,12 +290,12 @@ register({PType, {NType, _}} = Id, Pid) when erlang:is_pid(Pid)
 -spec start_link(pid()) -> {ok, pid()}.
 start_link(JobsSup) ->
     SvcName = ?SERVICE_NAME,
-    gen_server:start_link({local, SvcName}, ?MODULE, {JobsSup, SvcName}).
+    gen_server:start_link({local, SvcName}, ?MODULE, {JobsSup, SvcName}, []).
 
--spec submit_mult(node_type() | [node_id()], riak_core_job_mgr:job())
+-spec submit_mult(scope_type() | [scope_id()], riak_core_job:job())
         -> ok | {error, term()}.
 %
-% This function is for use by riak_core_job_mgr:submit/2 ONLY!
+% This function is for use by riak_core_job_service:submit/2 ONLY!
 %
 % The operation has to be coordinated from a process other than the jobs
 % service because the service, and managers, need to continue handling the
@@ -319,10 +321,11 @@ submit_mult(Selector, _) ->
 
 -spec init({pid(), atom()}) -> {ok, state()}.
 init({JobsSup, SvcName}) ->
+    erlang:process_flag(trap_exit, true),
     % At startup, crawl the supervision tree to populate the state. The only
     % time this will find anything is if this service crashed and is being
-    % restarted by the supervisor, which shouldn't be happening, but we do want
-    % to recover if it does.
+    % restarted by the supervisor, which shouldn't be happening, but we do
+    % want to recover if it does.
     % We can't call which_children/1 on the supervisor here, because we're
     % (presumably) already in a synchronous operation in the supervisor so the
     % call wouldn't be handled until after we return. Instead, plant a special
@@ -330,10 +333,10 @@ init({JobsSup, SvcName}) ->
     % Since our own server isn't initialized yet, use an async cast, as a
     % synchronous call would wedge for the same reason the one to the
     % supervisor would.
-    gen_server:cast(erlang:self(), init),
+    ?cast('init'),
     {ok, #state{jobs_sup = JobsSup, svc_name = SvcName}}.
 
--spec handle_call(term(), pid(), state()) -> {reply, term(), state()}.
+-spec handle_call(term(), {pid(), term()}, state()) -> {reply, term(), state()}.
 %
 % lookup(proc_id()) -> pid() | 'undefined'
 %
@@ -347,10 +350,10 @@ handle_call({'lookup', Id}, _, #state{pdict = D} = State) ->
 %
 % group(node_id()) -> [{proc_id(), pid()}]
 %
-handle_call({'group', VNodeID}, _, #state{pdict = D} = State) ->
+handle_call({'group', ScopeID}, _, #state{pdict = D} = State) ->
     Ret = [{{T, {N, I}}, P}
             || #prec{ptype = T, ntype = N, nid = I, pid = P}
-                <- pdict_group(VNodeID, D)],
+                <- pdict_group(ScopeID, D)],
     {reply, Ret, State};
 %
 % group(proc_type(), node_type()) -> [{proc_id(), pid()}]
@@ -361,11 +364,11 @@ handle_call({'group', PType, NType}, _, #state{pdict = D} = State) ->
                 <- pdict_group(PType, NType, D)],
     {reply, Ret, State};
 %
-% job_mgr(node_mgr_id()) -> pid()
+% job_svc(node_mgr_id()) -> pid()
 %
-handle_call({'job_mgr', ?NODE_MGR_ID({T, _} = VNodeID) = MgrId}, _,
+handle_call({'job_svc', ?SCOPE_SVC_ID({T, _} = ScopeID) = SvcId}, _,
         #state{jobs_sup = S, pdict = D, cdict = C, dummy = J} = State) ->
-    case pdict_find(MgrId, D) of
+    case pdict_find(SvcId, D) of
         #prec{pid = Pid} ->
             {reply, Pid, State};
         _ ->
@@ -375,9 +378,9 @@ handle_call({'job_mgr', ?NODE_MGR_ID({T, _} = VNodeID) = MgrId}, _,
                 {_, Cfg} ->
                     Cfg
             end,
-            case riak_core_job_sup:start_node(S, VNodeID, Config, J) of
+            case riak_core_job_sup:start_scope(S, ScopeID, Config, J) of
                 {ok, _} ->
-                    % There's a 'register' message with the manager's pid in
+                    % There's a 'register' message with the service's pid in
                     % our inbox right now, but we can't get to it cleanly from
                     % here, so tell the calling process to look it up.
                     {reply, 'lookup', State};
@@ -388,17 +391,17 @@ handle_call({'job_mgr', ?NODE_MGR_ID({T, _} = VNodeID) = MgrId}, _,
 %
 % submit_mult(node_type() | [node_id()], job()) -> ok | {error, term()}
 %
-handle_call(Msg, From, State)
+handle_call(Msg, {Client, _}, State)
         when erlang:is_tuple(Msg)
         andalso erlang:tuple_size(Msg) > 0
         andalso erlang:element(1, Msg) =:= 'submit_mult' ->
-    multi_server(Msg, From, State);
+    multi_server(Msg, Client, State);
 %
-% start_node(node_id()) -> 'ok' | {'error', term()}
+% start_scope(node_id()) -> 'ok' | {'error', term()}
 %
-handle_call({'start_node', {T, _} = VNodeID}, _,
+handle_call({'start_scope', {T, _} = ScopeID}, _,
         #state{jobs_sup = S, pdict = D, cdict = C, dummy = J} = State) ->
-    case pdict_find(?NODE_MGR_ID(VNodeID), D) of
+    case pdict_find(?SCOPE_SVC_ID(ScopeID), D) of
         #prec{} ->
             {reply, 'ok', State};
         _ ->
@@ -408,7 +411,7 @@ handle_call({'start_node', {T, _} = VNodeID}, _,
                 {_, Cfg} ->
                     Cfg
             end,
-            case riak_core_job_sup:start_node(S, VNodeID, Config, J) of
+            case riak_core_job_sup:start_scope(S, ScopeID, Config, J) of
                 {ok, _} ->
                     {reply, 'ok', State};
                 {error, _} = Err ->
@@ -416,19 +419,19 @@ handle_call({'start_node', {T, _} = VNodeID}, _,
             end
     end;
 %
-% start_node(node_id(), riak_core_job_mgr:config()) -> 'ok' | {'error', term()}
+% start_scope(node_id(), riak_core_job_service:config()) -> 'ok' | {'error', term()}
 %
-handle_call({'start_node', {T, _} = VNodeID, Config}, _,
+handle_call({'start_scope', {T, _} = ScopeID, Config}, _,
         #state{jobs_sup = S, pdict = D, cdict = C, dummy = J} = State) ->
-    case pdict_find(?NODE_MGR_ID(VNodeID), D) of
+    case pdict_find(?SCOPE_SVC_ID(ScopeID), D) of
         #prec{} ->
             {reply, 'ok', State};
         _ ->
-            case riak_core_job_sup:start_node(S, VNodeID, Config, J) of
+            case riak_core_job_sup:start_scope(S, ScopeID, Config, J) of
                 {ok, _} ->
                     case lists:keyfind(T, 1, C) of
                         false ->
-                            {reply, 'ok', State#state{cdict = [Config | C]}};
+                            {reply, 'ok', State#state{cdict = [{T, Config} | C]}};
 
                         % TODO: Is this the best way to handle this?
                         % We want the latest successful config in the cache,
@@ -438,11 +441,11 @@ handle_call({'start_node', {T, _} = VNodeID, Config}, _,
                         % Assuming the config was created by the same code per
                         % node type, the order of the elements is likely the
                         % same, so just compare the object as a whole.
-                        Config ->
+                        {_, Config} ->
                             {reply, 'ok', State};
                         _ ->
                             {reply, 'ok', State#state{
-                                cdict = lists:keystore(T, 1, C, Config)}}
+                                cdict = lists:keystore(T, 1, C, {T, Config})}}
                     end;
                 {error, _} = Err ->
                     {reply, Err, State}
@@ -469,15 +472,15 @@ handle_cast(Msg, State)
 % register(work_sup_id(), pid()) -> 'ok'
 % the per-node work supervisor gets special handling
 %
-handle_cast({'register', ?WORK_SUP_ID(VNodeID) = Id, Sup}, StateIn) ->
+handle_cast({'register', ?WORK_SUP_ID(ScopeID) = Id, Sup}, StateIn) ->
     State = StateIn#state{pdict = pdict_store(Id, Sup, StateIn#state.pdict)},
-    case pdict_find(?NODE_MGR_ID(VNodeID), State#state.pdict) of
-        #prec{pid = Mgr} ->
-            _ = riak_core_job_mgr:register(Mgr, Id, Sup),
+    case pdict_find(?SCOPE_SVC_ID(ScopeID), State#state.pdict) of
+        #prec{pid = Svc} ->
+            _ = riak_core_job_service:register(Svc, Id, Sup),
             {noreply, State};
         _ ->
             % in case things are getting scheduled weird, retry a few times
-            _ = gen_server:cast(erlang:self(), {'retry_work_reg', 5, Sup}),
+            _ = ?cast({'retry_work_reg', 5, Sup}),
             {noreply, State}
     end;
 %
@@ -486,23 +489,22 @@ handle_cast({'register', ?WORK_SUP_ID(VNodeID) = Id, Sup}, StateIn) ->
 handle_cast({'register', Id, Pid}, #state{pdict = D} = State) ->
     {noreply, State#state{pdict = pdict_store(Id, Pid, D)}};
 %
-% special message to retry registering a work supervisor with its manager
+% special message to retry registering a work supervisor with its service
 % confirm the supervisor's pid to make sure it's still registered itself
 %
-handle_cast({'retry_work_reg', Count, ?WORK_SUP_ID(VNodeID) = Id, Sup},
+handle_cast({'retry_work_reg', Count, ?WORK_SUP_ID(ScopeID) = Id, Sup},
         #state{svc_name = N, pdict = D} = State) ->
     case pdict_find(Id, D) of
         #prec{pid = Sup} ->
-            case pdict_find(?NODE_MGR_ID(VNodeID), D) of
-                #prec{pid = Mgr} ->
-                    _ = riak_core_job_mgr:register(Mgr, Id, Sup),
+            case pdict_find(?SCOPE_SVC_ID(ScopeID), D) of
+                #prec{pid = Svc} ->
+                    _ = riak_core_job_service:register(Svc, Id, Sup),
                     {noreply, State};
                 _ ->
                     C = (Count - 1),
                     case C > 0 of
                         true ->
-                            _ = gen_server:cast(
-                                    erlang:self(), {'retry_work_reg', C, Sup}),
+                            _ = ?cast({'retry_work_reg', C, Sup}),
                             {noreply, State};
                         _ ->
                             _ = lager:error(
@@ -514,16 +516,16 @@ handle_cast({'retry_work_reg', Count, ?WORK_SUP_ID(VNodeID) = Id, Sup},
             {noreply, State}
     end;
 %
-% stop_node(node_id()) -> 'ok'
+% stop_scope(node_id()) -> 'ok'
 %
-handle_cast({'stop_node', VNodeID},
+handle_cast({'stop_scope', ScopeID},
         #state{svc_name = N, jobs_sup = S} = State) ->
-    case riak_core_job_sup:stop_node(S, VNodeID) of
+    case riak_core_job_sup:stop_scope(S, ScopeID) of
         ok ->
             {noreply, State};
         {error, Err} ->
             _ = lager:error(
-                    "~p service error ~p stopping node ~p", [N, Err, VNodeID]),
+                    "~p service error ~p stopping node ~p", [N, Err, ScopeID]),
             {noreply, State}
     end;
 %
@@ -579,19 +581,26 @@ code_change(_, State, _) ->
 %% Internal
 %% ===================================================================
 
-absorb_sup_tree([{riak_core_job_svc, _, _, _} | Rest], Dicts) ->
+-spec absorb_sup_tree(
+    [{term(), pid() | 'undefined', 'worker' | 'supervisor', [module()]}],
+    {cdict(), pdict()})
+        -> {cdict(), pdict()}.
+%
+% Called indirectly by init/1 to repopulate state on restart.
+%
+absorb_sup_tree([{riak_core_job_manager, _, _, _} | Rest], Dicts) ->
     absorb_sup_tree(Rest, Dicts);
 
 absorb_sup_tree([{_, Ch, _, _} | Rest], Dicts) when not erlang:is_pid(Ch) ->
     absorb_sup_tree(Rest, Dicts);
 
-absorb_sup_tree([{?NODE_MGR_ID({N, _}) = Id, Pid, _, _} | Rest], {CDIn, PD}) ->
+absorb_sup_tree([{?SCOPE_SVC_ID({N, _}) = Id, Pid, _, _} | Rest], {CDIn, PD}) ->
     % See if we can grab a config we don't already have. There's no intelligent
     % way to get the latest one in the current situation, so take the first of
     % each type.
     CD = case lists:keyfind(N, 1, CDIn) of
         false ->
-            case riak_core_job_mgr:config(Pid) of
+            case riak_core_job_service:config(Pid) of
                 [_|_] = Config ->
                     [{N, Config} | CDIn];
                 _ ->
@@ -608,7 +617,7 @@ absorb_sup_tree([{?WORK_SUP_ID(_) = Id, Pid, _, _} | Rest], {CD, PD}) ->
     % that through the public API.
     absorb_sup_tree(Rest, {CD, pdict_store(Id, Pid, PD)});
 
-absorb_sup_tree([{Id, Pid, supervisor, _} | Rest], {CD, PD}) ->
+absorb_sup_tree([{Id, Pid, 'supervisor', _} | Rest], {CD, PD}) ->
     absorb_sup_tree(Rest, absorb_sup_tree(
         supervisor:which_children(Pid), {CD, pdict_store(Id, Pid, PD)}));
 
@@ -664,7 +673,7 @@ multi_server({Tag, Ref, _Where, _Job}, Client, State) ->
     % from the synchronous call.
     %
     Result = {error, not_implemented},
-    _ = gen_server:cast(erlang:self(), {Tag, Ref, Client, 'result', Result}),
+    _ = ?cast({Tag, Ref, Client, 'result', Result}),
     %
     % give the client back what it expects
     %
