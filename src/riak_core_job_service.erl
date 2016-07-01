@@ -33,6 +33,7 @@
     cbfunc/0,
     config/0,
     scope_id/0,
+    scope_index/0,
     scope_type/0,
     paccept/0,
     pconcur/0,
@@ -112,7 +113,7 @@
 }).
 -type mon() :: #mon{}.
 
--define(DefaultAccept,  {?MODULE, accept_any, []}).
+-define(DefaultAccept,  {?MODULE, 'accept_any', []}).
 -define(DefaultConcur,  ?JOB_SVC_DEFAULT_CONCUR).
 
 %% MUST keep queue/quelen and monitors/running in sync!
@@ -147,7 +148,7 @@
 %% Public API
 %% ===================================================================
 
--spec config(pid()) -> config() | {error, term()}.
+-spec config(pid()) -> config() | {'error', term()}.
 %%
 %% @doc Return the configuration the scope's service was started with.
 %%
@@ -165,10 +166,10 @@ config({NType, _} = ScopeID) when erlang:is_atom(NType) ->
         Svc when erlang:is_pid(Svc) ->
             gen_server:call(Svc, 'config');
         _ ->
-            {error, noproc}
+            {'error', 'noproc'}
     end.
 
--spec stats(scope_id() | pid()) -> [{atom(), term()}] | {error, term()}.
+-spec stats(scope_id() | pid()) -> [{atom(), term()}] | {'error', term()}.
 %%
 %% @doc Return statistics from the specified scope's service.
 %%
@@ -179,32 +180,32 @@ stats({NType, _} = ScopeID) when erlang:is_atom(NType) ->
         Svc when erlang:is_pid(Svc) ->
             gen_server:call(Svc, 'stats');
         _ ->
-            {error, noproc}
+            {'error', 'noproc'}
     end.
 
 -spec submit(pid() | scope_id() | scope_type() | [scope_id()], job())
-        -> ok | {error, term()}.
+        -> ok | {'error', term()}.
 %%
 %% @doc Submit a job to run on the specified scope(s).
 %%
 submit(Svc, Job) when erlang:is_pid(Svc) ->
     case riak_core_job:version(Job) of
-        {job, _} ->
+        {'job', _} ->
             gen_server:call(Svc, {'submit', Job});
         _ ->
-            erlang:error(badarg, [Job])
+            erlang:error('badarg', [Job])
     end;
 submit({NType, _} = ScopeID, Job) when erlang:is_atom(NType) ->
     case riak_core_job:version(Job) of
-        {job, _} ->
+        {'job', _} ->
             case riak_core_job_manager:job_svc(ScopeID) of
                 Svc when erlang:is_pid(Svc) ->
                     gen_server:call(Svc, {'submit', Job});
-                {error, _} = Error ->
+                {'error', _} = Error ->
                     Error
             end;
         _ ->
-            erlang:error(badarg, [Job])
+            erlang:error('badarg', [Job])
     end;
 submit(Multi, Job) ->
     riak_core_job_manager:submit_mult(Multi, Job).
@@ -235,14 +236,15 @@ shutdown(Svc, Timeout) when erlang:is_pid(Svc)
         andalso erlang:is_integer(Timeout) andalso Timeout >= 0 ->
     gen_server:cast(Svc, {'shutdown', Timeout}).
 
--spec start_link(scope_id(), config(), job()) -> {ok, pid()} | {error, term()}.
+-spec start_link(scope_svc_id(), config(), job())
+        -> {'ok', pid()} | {'error', term()}.
 %%
 %% @doc Start a new process linked to the calling process.
 %%
 start_link(?SCOPE_SVC_ID(_) = Id, Config, DummyJob) ->
     gen_server:start_link(?MODULE, {Id, Config, DummyJob}, []).
 
--spec register(pid(), work_sup_id(), pid()) -> ok.
+-spec register(pid(), work_sup_id(), pid()) -> 'ok'.
 %%
 %% @doc Notify the server where to find its worker supervisor.
 %%
@@ -252,21 +254,21 @@ start_link(?SCOPE_SVC_ID(_) = Id, Config, DummyJob) ->
 register(Svc, ?WORK_SUP_ID(_) = Id, Sup) ->
     gen_server:cast(Svc, {'register', Id, Sup}).
 
--spec starting(pid(), reference()) -> ok.
+-spec starting(pid(), reference()) -> 'ok'.
 %%
 %% @doc Callback for the job runner indicating the job's UOW is being started.
 %%
 starting(Svc, JobRef) ->
     update_job(Svc, JobRef, 'started').
 
--spec running(pid(), reference()) -> ok.
+-spec running(pid(), reference()) -> 'ok'.
 %%
 %% @doc Callback for the job runner indicating the job's UOW is being run.
 %%
 running(Svc, JobRef) ->
     update_job(Svc, JobRef, 'running').
 
--spec cleanup(pid(), reference()) -> ok.
+-spec cleanup(pid(), reference()) -> 'ok'.
 %%
 %% @doc Callback for the job runner indicating the job's UOW is being cleaned up.
 %%
@@ -284,7 +286,7 @@ done(Svc, JobRef, Result) ->
 %% gen_server callbacks
 %% ===================================================================
 
--spec init({scope_id(), config(), job()})
+-spec init({scope_svc_id(), config(), job()})
         -> {'ok', state()} | {'stop', {'error', term()}}.
 init({?SCOPE_SVC_ID(ScopeID) = Id, Config, DummyJob}) ->
     case init_state(#state{scope_id = ScopeID, config = Config}, DummyJob) of
@@ -299,7 +301,7 @@ init({?SCOPE_SVC_ID(ScopeID) = Id, Config, DummyJob}) ->
 -spec handle_call(term(), {pid(), term()}, state())
         -> {'reply', term(), state()}.
 %
-% submit(node_id() | pid(), job()) -> ok | {error, term()}.
+% submit(node_id() | pid(), job()) -> ok | {'error', term()}.
 %
 handle_call({'submit', _}, _, #state{shutdown = 'true', stats = S} = State) ->
     {'reply', {'error', ?JOB_ERR_SHUTTING_DOWN},
@@ -329,7 +331,7 @@ handle_call({'submit', Job}, _, #state{
             {'reply', Error, State#state{stats = ?inc_stat('accept_errors', S)}}
     end;
 %
-% stats(node_id() | pid()) -> [{atom(), term()}] | {error, term()}.
+% stats(node_id() | pid()) -> [{atom(), term()}] | {'error', term()}.
 %
 handle_call('stats', _, State) ->
     Result = [
@@ -347,7 +349,7 @@ handle_call('stats', _, State) ->
         | ?stats_list(State#state.stats)],
     {'reply', Result, State};
 %
-% config(pid()) -> config() | {error, term()}.
+% config(pid()) -> config() | {'error', term()}.
 %
 handle_call('config', _, #state{config = Config} = State) ->
     {'reply', Config, State};
@@ -419,8 +421,9 @@ handle_cast({'shutdown' = Why, 0}, State) ->
 handle_cast({'shutdown', 'infinity'}, State) ->
     dequeue(State#state{shutdown = 'true'});
 handle_cast({'shutdown', Timeout}, State) ->
-    erlang:send_after(Timeout, erlang:self(), 'shutdown_timeout'),
-    dequeue(State#state{shutdown = 'true'});
+    {'ok', _} = timer:apply_after(Timeout,
+        'gen_server', 'cast', [erlang:self(), {'shutdown', 0}]),
+    handle_cast({'shutdown', 'infinity'}, State);
 %
 % unrecognized message
 %
@@ -460,17 +463,12 @@ handle_info({'DOWN', Ref, _, Pid, Info}, #state{
             {'noreply', State#state{stats = ?inc_stat('update_errors', S)}}
     end;
 %
-% shutdown timeout has elapsed
-%
-handle_info('shutdown_timeout', State) ->
-    handle_cast({'shutdown', 0}, State);
-%
 % unrecognized message
 %
 handle_info(Message, #state{scope_id = ScopeID, stats = S} = State) ->
     _ = lager:error(
             "~p job service received unhandled info: ~p", [ScopeID, Message]),
-    {noreply, State#state{stats = ?inc_stat('unhandled', S)}}.
+    {'noreply', State#state{stats = ?inc_stat('unhandled', S)}}.
 
 -spec terminate(term(), state()) -> ok.
 %
@@ -485,12 +483,12 @@ terminate(_, State) ->
     _ = discard(State, ?JOB_ERR_SHUTTING_DOWN),
     'ok'.
 
--spec code_change(term(), state(), term()) -> {ok, state()}.
+-spec code_change(term(), state(), term()) -> {'ok', state()}.
 %
 % at present we don't care, so just carry on
 %
 code_change(_, State, _) ->
-    {ok, State}.
+    {'ok', State}.
 
 %% ===================================================================
 %% Internal
@@ -500,9 +498,9 @@ code_change(_, State, _) ->
 accept_job(Job, #state{scope_id = ScopeID, accept = Accept}) ->
     invoke(Accept, [ScopeID, Job]).
 
--spec accept_any(scope_id(), job()) -> true.
+-spec accept_any(scope_id(), job()) -> 'true'.
 accept_any(_, _) ->
-    true.
+    'true'.
 
 -spec dequeue(state()) -> {'noreply' | 'stop', state()}.
 %% Dequeue and dispatch at most one job. If there are more jobs waiting, ensure
@@ -568,11 +566,11 @@ queue_job(Job, #state{queue = Q, quelen = L, stats = S} = State) ->
 %% have been performed beforehand - NONE are performed here!
 start_job(Job, #state{
         work_sup = W, monitors = M, running = R, stats = S} = State) ->
-    {ok, Pid} = supervisor:start_child(W, []),
+    {'ok', Pid} = supervisor:start_child(W, []),
     Mon = erlang:monitor('process', Pid),
     Rec = #mon{pid = Pid, mon = Mon, job = Job},
-    ok = riak_core_job_runner:run(
-        Pid, erlang:self(), Mon, riak_core_job:get(work, Job)),
+    'ok' = riak_core_job_runner:run(
+        Pid, erlang:self(), Mon, riak_core_job:get('work', Job)),
     ?validate(State#state{
         monitors = [Rec | M], running = (R + 1),
         stats = ?inc_stat('dispatched', S)}).
@@ -601,16 +599,16 @@ update_job(Svc, JobRef, Key, Info) ->
     gen_server:cast(Svc,
         {JobRef, 'update', Key, riak_core_job:timestamp(), Info}).
 
--spec init_state(state(), job()) -> state() | {error, term()}.
+-spec init_state(state(), job()) -> state() | {'error', term()}.
 init_state(State, Dummy) ->
     % field order matters!
-    init_state([accept, concur, maxque], Dummy, State).
+    init_state(['accept', 'concur', 'maxque'], Dummy, State).
 
--spec init_state([atom()], job(), state()) -> state() | {error, term()}.
-init_state([accept | Fields], Dummy,
+-spec init_state([atom()], job(), state()) -> state() | {'error', term()}.
+init_state(['accept' | Fields], Dummy,
         #state{config = Config, scope_id = ScopeID} = State) ->
-    case proplists:get_value(job_svc_accept_func, Config) of
-        undefined ->
+    case proplists:get_value('job_svc_accept_func', Config) of
+        'undefined' ->
             init_state(Fields, Dummy, State#state{accept = ?DefaultAccept});
         {Mod, Func, Args} = Accept
                 when erlang:is_atom(Mod)
@@ -620,59 +618,61 @@ init_state([accept | Fields], Dummy,
             case erlang:function_exported(Mod, Func, Arity) of
                 true ->
                     case init_test_accept(Accept, ScopeID, Dummy) of
-                        ok ->
+                        'ok' ->
                             init_state(Fields, Dummy,
                                 State#state{accept = Accept});
                         Error ->
                             Error
                     end;
                 _ ->
-                    {error, {job_svc_accept_func, {undef, {Mod, Func, Arity}}}}
+                    {'error',
+                        {'job_svc_accept_func', {'undef', {Mod, Func, Arity}}}}
             end;
         {Fun, Args} = Accept
                 when erlang:is_function(Fun)
                 andalso erlang:is_list(Args) ->
             Arity = (erlang:length(Args) + 2),
-            case erlang:fun_info(Fun, arity) of
+            case erlang:fun_info(Fun, 'arity') of
                 {_, Arity} ->
                     case init_test_accept(Accept, ScopeID, Dummy) of
-                        ok ->
+                        'ok' ->
                             init_state(Fields, Dummy,
                                 State#state{accept = Accept});
                         Error ->
                             Error
                     end;
                 _ ->
-                    {error, {job_svc_accept_func, {badarity, {Fun, Arity}}}}
+                    {'error',
+                        {'job_svc_accept_func', {'badarity', {Fun, Arity}}}}
             end;
         Spec ->
-            {error, {job_svc_accept_func, {badarg, Spec}}}
+            {'error', {'job_svc_accept_func', {'badarg', Spec}}}
     end;
-init_state([concur | Fields], Dummy, #state{config = Config} = State) ->
-    case proplists:get_value(job_svc_concurrency_limit, Config) of
-        undefined ->
+init_state(['concur' | Fields], Dummy, #state{config = Config} = State) ->
+    case proplists:get_value('job_svc_concurrency_limit', Config) of
+        'undefined' ->
             init_state(Fields, Dummy,
                 State#state{concur = ?JOB_SVC_DEFAULT_CONCUR});
         Concur when erlang:is_integer(Concur) andalso Concur > 0 ->
             init_state(Fields, Dummy, State#state{concur = Concur});
         BadArg ->
-            {error, {job_svc_concurrency_limit, {badarg, BadArg}}}
+            {'error', {'job_svc_concurrency_limit', {'badarg', BadArg}}}
     end;
-init_state([maxque | Fields], Dummy,
+init_state(['maxque' | Fields], Dummy,
         #state{config = Config, concur = Concur} = State) ->
-    case proplists:get_value(job_svc_queue_limit, Config) of
-        undefined ->
+    case proplists:get_value('job_svc_queue_limit', Config) of
+        'undefined' ->
             init_state(Fields, Dummy,
                 State#state{maxque = (Concur * ?JOB_SVC_DEFAULT_QUEMULT)});
         MaxQue when erlang:is_integer(MaxQue) andalso MaxQue >= 0 ->
             init_state(Fields, Dummy, State#state{maxque = MaxQue});
         BadArg ->
-            {error, {job_svc_queue_limit, {badarg, BadArg}}}
+            {'error', {'job_svc_queue_limit', {'badarg', BadArg}}}
     end;
 init_state([], _, State) ->
     State.
 
--spec init_test_accept(cbfunc(), scope_id(), job()) -> 'ok' | {error, term()}.
+-spec init_test_accept(cbfunc(), scope_id(), job()) -> 'ok' | {'error', term()}.
 init_test_accept(Accept, ScopeID, Job) ->
     try
         case invoke(Accept, [ScopeID, Job]) of
@@ -698,37 +698,36 @@ invoke({Fun, Args}, Prepend) ->
 -spec validate(state()) -> state() | no_return().
 validate(State) ->
     QL = erlang:length(State#state.queue),
-    R1 = case QL /= State#state.quelen of
-        true ->
-            [{quelen, QL, State#state.quelen}];
-        _ ->
+    R1 = if
+        QL /= State#state.quelen ->
+            [{'quelen', QL, State#state.quelen}];
+        ?else ->
             []
     end,
-    R2 = case QL > State#state.maxque of
-        true ->
-            [{maxque, QL, State#state.maxque} | R1];
-        _ ->
+    R2 = if
+        QL > State#state.maxque ->
+            [{'maxque', QL, State#state.maxque} | R1];
+        ?else ->
             R1
     end,
     ML = erlang:length(State#state.monitors),
-    R3 = case ML /= State#state.running of
-        true ->
-            [{running, ML, State#state.running} | R2];
-        _ ->
+    R3 = if
+        ML /= State#state.running ->
+            [{'running', ML, State#state.running} | R2];
+        ?else ->
             R2
     end,
-    R4 = case ML > State#state.concur of
-        true ->
-            [{concur, ML, State#state.concur} | R3];
-        _ ->
-            R1
+    R4 = if
+        ML > State#state.concur ->
+            [{'concur', ML, State#state.concur} | R3];
+        ?else ->
+            R3
     end,
     case R4 of
         [] ->
             State;
         Err ->
             lager:error("Inconsistent state: ~p", State),
-            erlang:error({invalid_state, Err}, [State])
+            erlang:error({'invalid_state', Err}, [State])
     end.
 -endif.
-

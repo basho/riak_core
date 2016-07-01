@@ -358,7 +358,7 @@ The messages and parameters to callbacks need _at least_ better documentation, a
 
 #### Shutdown Handling
 
-Shutting down a per-scope tree _should_ be well behaved and orderly when initiated through `riak_core_job_manager:stop_scope/1`, but shutdown through the standard supervisor behavior, is abrupt and some originators may not receive notifications that their jobs were killed.
+Shutting down a per-scope tree _should_ be reasonably well behaved and orderly when initiated through  `riak_core_job_service:shutdown/2`, but shutdown through the standard supervisor behavior (or `riak_core_job_manager:stop_scope/2`) is abrupt and some originators may not receive notifications that their jobs were killed.
 
 Graceful shutdown in all cases would be a Good Thing, but making it all work while it's running is a higher priority.
 

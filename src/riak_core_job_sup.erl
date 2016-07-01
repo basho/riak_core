@@ -60,7 +60,7 @@
 %% Public API
 %% ===================================================================
 
--spec start_link() -> {ok, pid()}.
+-spec start_link() -> {'ok', pid()}.
 %%
 %% @doc Creates the singleton top-level supervisor.
 %%
@@ -71,7 +71,7 @@ start_link() ->
 %% Private API
 %% ===================================================================
 
--spec start_link(work_sup_id()) -> {ok, pid()}.
+-spec start_link(work_sup_id()) -> {'ok', pid()}.
 %%
 %% @doc Start a per-scope work supervisor.
 %%
@@ -79,7 +79,7 @@ start_link(WorkSupId) ->
     supervisor:start_link(?MODULE, WorkSupId).
 
 -spec start_link(scope_sup_id(), config(), dummy())
-        -> {ok, pid()} | {error, term()}.
+        -> {'ok', pid()} | {'error', term()}.
 %%
 %% @doc Start a per-scope service supervisor.
 %%
@@ -87,40 +87,40 @@ start_link(ScopeSupId, SvcConfig, DummyJob) ->
     supervisor:start_link(?MODULE, {ScopeSupId, SvcConfig, DummyJob}).
 
 -spec start_scope(pid(), scope_id(), config(), dummy())
-        -> {ok, pid()} | {error, term()}.
+        -> {'ok', pid()} | {'error', term()}.
 %%
 %% @doc Start a per-scope supervision tree.
 %%
-%% Returns {ok, pid()} if either started successfully or already running.
+%% Returns {'ok', pid()} if either started successfully or already running.
 %%
 start_scope(JobsSup, ScopeID, SvcConfig, DummyJob) ->
     ScopeSupId = ?SCOPE_SUP_ID(ScopeID),
-    case supervisor:start_child(JobsSup, {ScopeSupId,
-            {?MODULE, start_link, [ScopeSupId, SvcConfig, DummyJob]},
-            permanent, ?SCOPE_SUP_SHUTDOWN_TIMEOUT, supervisor, [?MODULE]}) of
-        {ok, _} = Ret ->
+    case supervisor:start_child(JobsSup, {ScopeSupId, {?MODULE, 'start_link',
+            [ScopeSupId, SvcConfig, DummyJob]}, 'permanent',
+            ?SCOPE_SUP_SHUTDOWN_TIMEOUT, 'supervisor', [?MODULE]}) of
+        {'ok', _} = Ret ->
             Ret;
-        {error, {already_started, ScopeSupPid}} ->
-            {ok, ScopeSupPid};
-        {error, _} = Error ->
+        {'error', {'already_started', ScopeSupPid}} ->
+            {'ok', ScopeSupPid};
+        {'error', _} = Error ->
             Error
     end.
 
--spec stop_scope(pid(), scope_id()) -> ok | {error, term()}.
+-spec stop_scope(pid(), scope_id()) -> 'ok' | {'error', term()}.
 %%
 %% @doc Stop a per-scope supervision tree.
 %%
-%% Returns {ok, pid()} if either started successfully or already running.
+%% Returns {'ok', pid()} if either started successfully or already running.
 %%
 stop_scope(JobsSup, ScopeID) ->
     ScopeSupId = ?SCOPE_SUP_ID(ScopeID),
     case supervisor:terminate_child(JobsSup, ScopeSupId) of
-        ok ->
+        'ok' ->
             % If this doesn't return 'ok', something's badly hosed somewhere.
             supervisor:delete_child(JobsSup, ScopeSupId);
-        {error, not_found} ->
-            ok;
-        {error, _} = Error ->
+        {'error', 'not_found'} ->
+            'ok';
+        {'error', _} = Error ->
             Error
     end.
 
@@ -143,33 +143,33 @@ init({?SCOPE_SUP_ID(ScopeID) = Id, SvcConfig, DummyJob}) ->
     riak_core_job_manager:register(Id, erlang:self()),
     ScopeSvcId = ?SCOPE_SVC_ID(ScopeID),
     WorkSupId = ?WORK_SUP_ID(ScopeID),
-    {ok, {{rest_for_one, 30, 60}, [
+    {'ok', {{'rest_for_one', 30, 60}, [
         {ScopeSvcId,
-            {riak_core_job_service, start_link,
+            {'riak_core_job_service', 'start_link',
                 [ScopeSvcId, SvcConfig, DummyJob]},
-            permanent, ?SCOPE_SVC_SHUTDOWN_TIMEOUT,
-            worker, [riak_core_job_service]},
+            'permanent', ?SCOPE_SVC_SHUTDOWN_TIMEOUT,
+            'worker', ['riak_core_job_service']},
         {WorkSupId,
-            {?MODULE, start_link, [WorkSupId]},
-            permanent, ?SCOPE_SUP_SHUTDOWN_TIMEOUT,
-            supervisor, [?MODULE]}
+            {?MODULE, 'start_link', [WorkSupId]},
+            'permanent', ?SCOPE_SUP_SHUTDOWN_TIMEOUT,
+            'supervisor', [?MODULE]}
     ]}};
 
 %% Per-scope worker supervisor
 init(?WORK_SUP_ID(ScopeID) = Id) ->
     riak_core_job_manager:register(Id, erlang:self()),
-    {ok, {{simple_one_for_one, 30, 60}, [
-        {scope_job, {riak_core_job_runner, start_link, [ScopeID]},
-            temporary, ?WORK_RUN_SHUTDOWN_TIMEOUT,
-            worker, [riak_core_job_runner]}
+    {'ok', {{'simple_one_for_one', 30, 60}, [
+        {'scope_job', {'riak_core_job_runner', 'start_link', [ScopeID]},
+            'temporary', ?WORK_RUN_SHUTDOWN_TIMEOUT,
+            'worker', ['riak_core_job_runner']}
     ]}};
 
 %% Singleton top-level supervisor
 init(?MODULE) ->
     JobsSup = erlang:self(),
-    {ok, {{one_for_one, 30, 60}, [
-        {riak_core_job_manager,
-            {riak_core_job_manager, start_link, [JobsSup]},
-            permanent, ?JOBS_MGR_SHUTDOWN_TIMEOUT,
-            worker, [riak_core_job_manager]}
+    {'ok', {{'one_for_one', 30, 60}, [
+        {'riak_core_job_manager',
+            {'riak_core_job_manager', 'start_link', [JobsSup]},
+            'permanent', ?JOBS_MGR_SHUTDOWN_TIMEOUT,
+            'worker', ['riak_core_job_manager']}
     ]}}.

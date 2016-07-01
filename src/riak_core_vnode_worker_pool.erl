@@ -133,6 +133,7 @@ start_link(WMod, PoolSize, VNodeIndex, WArgs, WProps) ->
     gen_server:start_link(?MODULE,
         {WMod, PoolSize, VNodeIndex, WArgs, WProps}, []).
 
+-spec stop(facade(), term()) -> 'ok'.
 stop(Srv, Reason) ->
     gen_server:cast(Srv, {'stop', Reason}).
 
@@ -251,7 +252,7 @@ handle_call({'work', Work, Origin}, _, #state{scope_id = ScopeID, svc_pid = Svc,
         {'killed',  {?MODULE, 'job_killed', [Own, Origin, Ref, Work]}}
     ],
     Job = riak_core_job:job(Jin),
-    case riak_core_job_service:submit(Svc, Job) of
+    Ret = case riak_core_job_service:submit(Svc, Job) of
         'ok' ->
             JR = #jobrec{ref = Ref, gid = riak_core_job:get('gid', Job)},
             {'reply', 'ok', State#state{jobs = [JR | JRs]}};
@@ -263,6 +264,13 @@ handle_call({'work', Work, Origin}, _, #state{scope_id = ScopeID, svc_pid = Svc,
             {'reply', {'error', 'vnode_rejected'}, State};
         {'error', _} = Error ->
             {'reply', Error, State}
+    end,
+    case Ret of
+        {_, {'error', _} = Reply, _} ->
+            riak_core_vnode:reply(Origin, Reply),
+            Ret;
+        _ ->
+            Ret
     end.
 
 -spec handle_cast(term(), state())
@@ -287,28 +295,28 @@ handle_cast({'done', Ref}, #state{
 handle_cast({'done', Ref}, #state{jobs = Jobs} = State) ->
     {'noreply', State#state{jobs = lists:keydelete(Ref, #jobrec.ref, Jobs)}};
 %
-% shutdown_pool(facade(), non_neg_integer() | 'infinity')
-% this is the initial shutdown message, so tell the job service to shut down
-%
-handle_cast({'shutdown', Timeout}, #state{
-        shutdown = 'false', scope_id = ScopeID} = State) ->
-    _ = riak_core_job_manager:stop_scope(ScopeID),
-    case Timeout of
-        'infinity' ->
-            'ok';
-        0 ->
-            ?cast({'shutdown', 0});
-        _ ->
-            erlang:send_after(Timeout, erlang:self(), 'shutdown_timeout')
-    end,
-    {'noreply', State#state{shutdown = 'true', svc_pid = 'undefined'}};
-%
-% out of time
-% not much we can do here - there must be jobs remaining or this would have
-% matched the general "shutdown while empty" head above, but the service has
-% already been told to stop and our time has come
+% There are multiple ways to receive this, but they all have the same result
+% - it's time to go.
 %
 handle_cast({'shutdown' = Why, 0}, State) ->
+    {'stop', Why, State};
+%
+% shutdown_pool(facade(), non_neg_integer() | 'infinity')
+% This is the initial shutdown message, so tell the job service to shut down
+% asynchronously.
+%
+handle_cast({'shutdown', 'infinity'}, #state{
+        shutdown = 'false', scope_id = ScopeID} = State) ->
+    _ = riak_core_job_manager:stop_scope_async(ScopeID),
+    {'noreply', State#state{shutdown = 'true', svc_pid = 'undefined'}};
+handle_cast({'shutdown', Timeout}, #state{shutdown = 'false'} = State) ->
+    {'ok', _} = timer:apply_after(Timeout,
+        'gen_server', 'cast', [erlang:self(), {'shutdown', 0}]),
+    handle_cast({'shutdown', 'infinity'}, State);
+%
+% stop/2
+%
+handle_cast({'stop', Why}, State) ->
     {'stop', Why, State};
 %
 % unrecognized message
@@ -319,21 +327,18 @@ handle_cast(_Msg, State) ->
 -spec handle_info(term(), state())
         -> {'noreply', state()} | {'stop', term(), state()}.
 %
-% shutdown timeout has elapsed
-%
-handle_info('shutdown_timeout', State) ->
-    handle_cast({'shutdown', 0}, State);
-%
 % our job service went down, let's hope it was because we asked it to ...
 %
 handle_info({'DOWN', Ref, _, _, _}, #state{
         shutdown = 'true', svc_mon = Ref} = State) ->
-    handle_cast({'shutdown', 0}, State#state{svc_mon = 'undefined'});
-handle_info({'DOWN', Ref, _, _, Info}, #state{
-        scope_id = ScopeID, svc_mon = Ref} = State) ->
-    _ = lager:error("~p worker pool job service crashed: ~p", [ScopeID, Info]),
     handle_cast({'shutdown', 0}, State#state{
-        shutdown = 'true', svc_mon = 'undefined'});
+        svc_mon = 'undefined', svc_pid = 'undefined'});
+handle_info({'DOWN', Ref, _, Pid, Info}, #state{
+        scope_id = ScopeID, svc_mon = Ref} = State) ->
+    _ = lager:error(
+            "~p worker pool job service ~p crashed: ~p", [ScopeID, Pid, Info]),
+    {'stop', {'job_service_crashed', Info}, State#state{
+        shutdown = 'true', svc_mon = 'undefined', svc_pid = 'undefined'}};
 %
 % no matter what arrives, if we've been asked to shut down and don't have any
 % jobs running, let handle_cast clean up and leave

@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013-2016 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -18,9 +18,14 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc Test riak_core_vnode_worker_pool's interaction with poolboy
-%% under PULSE. This requires that riak_core, poolboy, and this module
-%% be compiled with the 'PULSE' macro defined.
+%% @doc Kept only for regression testing and anything that may point to it.
+%%
+%% This test was originally to confirm riak_core_vnode_worker_pool's
+%% interaction with poolboy didn't deadlock. With poolboy no longer in the
+%% picture, it's probably moot, but it'd be interesting if it ever failed.
+%%
+%% This requires that riak_core and this module be compiled with the 'PULSE'
+%% macro defined.
 -module(worker_pool_pulse).
 
 -behaviour(riak_core_vnode_worker).
@@ -104,14 +109,16 @@ all_work_gets_done(PoolSize, WorkList) ->
     {ok, Pool} = riak_core_vnode_worker_pool:start_link(
                    ?MODULE, PoolSize, 10, false, []),
 
+    Seq = lists:seq(1, erlang:length(WorkList)),
     %% send all the work
     [ riak_core_vnode_worker_pool:handle_work(
         Pool, W, {raw, N, self()})
-      || {N, W} <- lists:zip(lists:seq(1, length(WorkList)), WorkList) ],
+      || {N, W} <- lists:zip(Seq, WorkList) ],
 
     %% wait for all the work
-    Results = [ receive {N, _} -> ok end
-                || N <- lists:seq(1, length(WorkList)) ],
+    Results = [ receive {N, _} -> ok end || N <- Seq ],
+
+    erlang:unlink(Pool),
     riak_core_vnode_worker_pool:stop(Pool, normal),
 
     %% check that we got a response for every piece of work
@@ -122,12 +129,16 @@ all_work_gets_done(PoolSize, WorkList) ->
 pool_test_() ->
     {setup,
         fun() ->
-                error_logger:tty(false),
-                pulse:start()
+            error_logger:tty(false),
+            pulse:start(),
+            {ok, Sup} = riak_core_job_sup:start_link(),
+            Sup
         end,
-        fun(_) ->
-                pulse:stop(),
-                error_logger:tty(true)
+        fun(Sup) ->
+            erlang:unlink(Sup),
+            erlang:exit(Sup, 'shutdown'),
+            pulse:stop(),
+            error_logger:tty(true)
         end,
         [
          %% not necessary to run both tests here, but why not anyway?

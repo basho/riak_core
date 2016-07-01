@@ -40,7 +40,8 @@
 
 %% These types are exported by one or more modules.
 -type scope_type()  ::  atom().
--type scope_id()    ::  {scope_type(), partition()}.
+-type scope_index() ::  partition().
+-type scope_id()    ::  {scope_type(), scope_index()}.
 
 %% These types are used internally between cooperating modules.
 -define(SCOPE_SUP_TAG,  'scope_sup').
@@ -63,6 +64,9 @@
 -define(SCOPE_SUP_SHUTDOWN_TIMEOUT, 26000).
 -define(SCOPE_SVC_SHUTDOWN_TIMEOUT, 24000).
 -define(WORK_RUN_SHUTDOWN_TIMEOUT,  22000).
+
+%% How long stop_scope/1 waits for the scope to shut down.
+-define(STOP_SCOPE_TIMEOUT,     (?SCOPE_SUP_SHUTDOWN_TIMEOUT + 1000)).
 
 -define(SCOPE_SUP_ID(ScopeID),  {?SCOPE_SUP_TAG,  ScopeID}).
 -define(SCOPE_SVC_ID(ScopeID),  {?SCOPE_SVC_TAG,  ScopeID}).
