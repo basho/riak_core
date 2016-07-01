@@ -159,7 +159,7 @@ init({?SCOPE_SUP_ID(ScopeID) = Id, SvcConfig, DummyJob}) ->
 init(?WORK_SUP_ID(ScopeID) = Id) ->
     riak_core_job_manager:register(Id, erlang:self()),
     {ok, {{simple_one_for_one, 30, 60}, [
-        {vnode_job, {riak_core_job_runner, start_link, [ScopeID]},
+        {scope_job, {riak_core_job_runner, start_link, [ScopeID]},
             temporary, ?WORK_RUN_SHUTDOWN_TIMEOUT,
             worker, [riak_core_job_runner]}
     ]}};

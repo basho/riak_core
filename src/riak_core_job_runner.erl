@@ -60,7 +60,7 @@ runner(ScopeID) ->
             {S, R, W}
     end,
     riak_core_job_service:starting(Svc, Ref),
-    Ctx1 = invoke(ScopeID, riak_core_job:get(init, Work)),
+    Ctx1 = invoke({ScopeID, Svc}, riak_core_job:get(init, Work)),
     riak_core_job_service:running(Svc, Ref),
     Ctx2 = invoke(Ctx1, riak_core_job:get(run, Work)),
     riak_core_job_service:cleanup(Svc, Ref),

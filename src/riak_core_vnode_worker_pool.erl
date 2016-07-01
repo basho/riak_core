@@ -143,24 +143,24 @@ stop(Srv, Reason) ->
 -spec job_killed(term(), facade(), sender(), reference(), workrec()) -> 'ok'.
 %
 % riak_core_job:job.killed callback
+% The old worker pool wasn't very informative, so map things to the couple of
+% messages it could send.
 %
 job_killed(_, Owner, 'ignore', Ref, _) ->
     gen_server:cast(Owner, {'done', Ref});
-job_killed({?JOB_ERR_CRASHED, Info} = Reason, Owner, Origin, Ref, Work) ->
+job_killed({?JOB_ERR_CANCELED, ?JOB_ERR_SHUTTING_DOWN}
+        = Reason, Owner, Origin, Ref, Work) ->
+    riak_core_vnode:reply(Origin, {'error', 'vnode_shutdown'}),
+    job_killed(Reason, Owner, 'ignore', Ref, Work);
+job_killed({_, Info} = Reason, Owner, Origin, Ref, Work) ->
     riak_core_vnode:reply(Origin, {'error', {'worker_crash', Info, Work}}),
     job_killed(Reason, Owner, 'ignore', Ref, Work);
-job_killed({?JOB_ERR_KILLED, Info} = Reason, Owner, Origin, Ref, Work) ->
-    riak_core_vnode:reply(Origin, {'error', {'worker_killed', Info, Work}}),
-    job_killed(Reason, Owner, 'ignore', Ref, Work);
-job_killed({?JOB_ERR_CANCELED, Info} = Reason, Owner, Origin, Ref, Work) ->
-    riak_core_vnode:reply(Origin, {'error', {'worker_canceled', Info, Work}}),
-    job_killed(Reason, Owner, 'ignore', Ref, Work);
 job_killed(Reason, Owner, Origin, Ref, Work) ->
-    riak_core_vnode:reply(Origin, {'error', Reason}),
+    riak_core_vnode:reply(Origin, {'error', {'worker_crash', Reason, Work}}),
     job_killed(Reason, Owner, 'ignore', Ref, Work).
 
--spec work_init({scope_id(), job_svc()},
-                facade(), reference(), wmodule(), term(), term())
+-spec work_init(
+    {scope_id(), job_svc()}, facade(), reference(), wmodule(), term(), term())
         -> context().
 %
 % riak_core_job:job.work.init callback
@@ -238,8 +238,8 @@ handle_call({'work', Work, Origin}, _, #state{scope_id = ScopeID, svc_pid = Svc,
     Own = erlang:self(),
     Ref = erlang:make_ref(),
     Wrk = riak_core_job:work([
-        {'init',  {?MODULE, 'work_init',  [Own, Ref, Mod, Arg, Prp, Origin]}},
-        {'run',   {?MODULE, 'work_run',   [Work]}},
+        {'init',  {?MODULE, 'work_init',  [Own, Ref, Mod, Arg, Prp]}},
+        {'run',   {?MODULE, 'work_run',   [Work, Origin]}},
         {'fini',  {?MODULE, 'work_fini',  []}}
     ]),
     Jin = [
@@ -257,9 +257,9 @@ handle_call({'work', Work, Origin}, _, #state{scope_id = ScopeID, svc_pid = Svc,
             {'reply', 'ok', State#state{jobs = [JR | JRs]}};
         {'error', ?JOB_ERR_SHUTTING_DOWN} ->
             {'reply', {'error', 'vnode_shutdown'}, State};
-        {'error', ?JOB_ERR_QUEUE_OVERFLOW} ->
+        {'error', ?JOB_ERR_QUEUE_OVERFLOW}  ->
             {'reply', {'error', 'vnode_overload'}, State};
-        {'error', ?JOB_ERR_REJECTED} ->
+        {'error', ?JOB_ERR_REJECTED}  ->
             {'reply', {'error', 'vnode_rejected'}, State};
         {'error', _} = Error ->
             {'reply', Error, State}

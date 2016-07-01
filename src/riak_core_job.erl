@@ -26,6 +26,7 @@
     get/2,
     job/1,
     passthrough/1,
+    reply/2,
     runnable/1,
     timestamp/0,
     update/2, update/3,
@@ -59,7 +60,7 @@
 -record(riak_core_job_v1, {
     %% The work, its 'class' (for management grouping), and where it's from.
     class   = 'anon'                    :: unspec() | class(),
-    from    = 'ignore'                  :: sender(),
+    from    = 'ignore'                  :: sender() | pid(),
     work                                :: work(),
 
     %% Currently unimplemented, but here so we don't need to define a new
@@ -102,9 +103,9 @@
 %% formed but otherwise useless.
 %%
 -record(riak_core_work_v1, {
-    init  = {?MODULE, passthrough, []}  :: func(),
-    run   = {?MODULE, passthrough, []}  :: func(),
-    fini  = {?MODULE, passthrough, []}  :: func()
+    init  = {?MODULE, 'passthrough', []}  :: func(),
+    run   = {?MODULE, 'passthrough', []}  :: func(),
+    fini  = {?MODULE, 'passthrough', []}  :: func()
 }).
 
 -type class()       :: unspec() | atom().
@@ -129,21 +130,21 @@
 %%
 %% @doc Return the value of the specified record field.
 %%
-get(cid,    #riak_core_job_v1{cid = Val}) -> Val;
-get(class,  #riak_core_job_v1{class = Val}) -> Val;
-get(from,   #riak_core_job_v1{from = Val}) -> Val;
-get(gid,    #riak_core_job_v1{gid = Val}) -> Val;
-get(iid,    #riak_core_job_v1{iid = Val}) -> Val;
-get(killed, #riak_core_job_v1{killed = Val}) -> Val;
-get(label,  #riak_core_job_v1{class = Class, gid = GID}) -> {Class, GID};
-get(prio,   #riak_core_job_v1{prio = Val}) -> Val;
-get(stats,  #riak_core_job_v1{stats = Val}) -> Val;
-get(work,   #riak_core_job_v1{work = Val}) -> Val;
-get(fini,   #riak_core_work_v1{fini = Val}) -> Val;
-get(init,   #riak_core_work_v1{init = Val}) -> Val;
-get(run,    #riak_core_work_v1{run = Val}) -> Val;
+get('cid',      #riak_core_job_v1{cid = Val}) -> Val;
+get('class',    #riak_core_job_v1{class = Val}) -> Val;
+get('from',     #riak_core_job_v1{from = Val}) -> Val;
+get('gid',      #riak_core_job_v1{gid = Val}) -> Val;
+get('iid',      #riak_core_job_v1{iid = Val}) -> Val;
+get('killed',   #riak_core_job_v1{killed = Val}) -> Val;
+get('label',    #riak_core_job_v1{class = Class, gid = GID}) -> {Class, GID};
+get('prio',     #riak_core_job_v1{prio = Val}) -> Val;
+get('stats',    #riak_core_job_v1{stats = Val}) -> Val;
+get('work',     #riak_core_job_v1{work = Val}) -> Val;
+get('fini',     #riak_core_work_v1{fini = Val}) -> Val;
+get('init',     #riak_core_work_v1{init = Val}) -> Val;
+get('run',      #riak_core_work_v1{run = Val}) -> Val;
 get(Field, Record) ->
-    erlang:error(badarg, [Field, Record]).
+    erlang:error('badarg', [Field, Record]).
 
 -spec job([{atom(), term()}]) -> job() | no_return().
 %%
@@ -157,10 +158,15 @@ get(Field, Record) ->
 %%
 %% {'class', atom()} - The job's class; default is 'anon'.
 %%
-%% {'from', sender()} - The job's originator; default is 'ignore'.
+%% {'from', sender() | pid()} - The job's originator; default is 'ignore'.
+%% Warning: Because there are so many valid representations of the sender()
+%% type in riak_core (and because there appear to be formats in use that are
+%% not covered by the type specification at all), it's not feasible to fully
+%% check them when the job is created, so exceptions from reply/2 are possible
+%% if you try to roll your own.
 %%
-%% {'cid', term()} - A client job identifier. This field is incorporated in
-%% the job's global ID; defaults to 'anon'.
+%% {'cid', term()} - A client job identifier; default is 'anon'.
+%% This field is incorporated into the job's global ID.
 %%
 %% {'prio', priority()} - The job's priority (currently ignored).
 %%
@@ -176,33 +182,33 @@ get(Field, Record) ->
 job(Props) ->
     InitTS = ?CUR_TIMESTAMP,
     %% 'work' is the only required field
-    {Work, PW} = case lists:keytake(work, 1, Props) of
-        {value, {_, W}, NewPW} when erlang:is_record(W, riak_core_work_v1) ->
+    {Work, PW} = case lists:keytake('work', 1, Props) of
+        {'value', {_, W}, NewPW} when erlang:is_record(W, riak_core_work_v1) ->
             {W, NewPW};
         _ ->
-            erlang:error(badarg, [Props])
+            erlang:error('badarg', [Props])
     end,
     %% 'cid' and 'module' get special handling because they're used in 'gid'
-    {CID, PC} = case lists:keytake(cid, 1, PW) of
-        {value, {_, C}, NewPC} ->
+    {CID, PC} = case lists:keytake('cid', 1, PW) of
+        {'value', {_, C}, NewPC} ->
             {C, NewPC};
-        false ->
+        'false' ->
             {'anon', PW}
     end,
-    {Mod, PM} = case lists:keytake(module, 1, PC) of
-        {value, {_, M}, NewPM} ->
+    {Mod, PM} = case lists:keytake('module', 1, PC) of
+        {'value', {_, M}, NewPM} ->
             {M, NewPM};
-        false ->
+        'false' ->
             {?MODULE, PC}
     end,
     %% An earlier 'created' is allowed to accommodate passing through when
     %% the job was created by the client.
     %% Allow a little wiggle room for clock skew between hosts, but default to
     %% when this operation was called if it's too far in the future.
-    {TS, PT} = case lists:keytake(created, 1, PM) of
+    {TS, PT} = case lists:keytake('created', 1, PM) of
         {value, {_, T}, NewPT} ->
             case timer:now_diff(InitTS, T) < ?MAX_INIT_SKEW_uSECS of
-                true ->
+                'true' ->
                     {T, NewPT};
                 _ ->
                     {InitTS, PM}
@@ -214,10 +220,10 @@ job(Props) ->
         gid = ?UNIQUE_ID(Mod, CID),
         cid = CID,
         work = Work,
-        stats = [{created, TS}]
+        stats = [{'created', TS}]
     }).
 
--spec work([{init | run | fini, func()}]) -> work() | no_return().
+-spec work([{'init' | 'run' | 'fini', func()}]) -> work() | no_return().
 %%
 %% @doc Create and initialize a new unit of work.
 %%
@@ -227,7 +233,7 @@ job(Props) ->
 %%
 %% The function types can't be properly specified with their unknown arities,
 %% but if they could they'd look something like this:
-%%  init_fun()  :: fun(({node_id(), pid()}, arg1(), ..., argN()) -> context1().
+%%  init_fun()  :: fun(({scope_id(), pid()}, arg1(), ..., argN()) -> context1().
 %%  run_fun()   :: fun((context1(), arg1(), ..., argN()) -> context2().
 %%  fini_fun()  :: fun((context2(), arg1(), ..., argN()) -> result().
 %% In short, the arity of each specified function is one more than length(Args).
@@ -244,16 +250,16 @@ job(Props) ->
 %%
 work([_|_] = Props) ->
     case lists:any(fun work_check/1, Props) of
-        true ->
-            I = workp(init, Props),
-            R = workp(run,  Props),
-            F = workp(fini, Props),
+        'true' ->
+            I = workp('init', Props),
+            R = workp('run',  Props),
+            F = workp('fini', Props),
             #riak_core_work_v1{init = I, run = R, fini = F};
         _ ->
-            erlang:error(badarg, [Props])
+            erlang:error('badarg', [Props])
     end;
 work(Input) ->
-    erlang:error(badarg, [Input]).
+    erlang:error('badarg', [Input]).
 
 -spec dummy() -> job().
 %%
@@ -263,10 +269,10 @@ work(Input) ->
 %%
 dummy() ->
     job([
-        {class, 'dummy'},
-        {cid,   'dummy'},
-        {prio,  ?JOB_PRIO_MIN},
-        {work,  #riak_core_work_v1{}}
+        {'class',   'dummy'},
+        {'cid',     'dummy'},
+        {'prio',    ?JOB_PRIO_MIN},
+        {'work',    #riak_core_work_v1{}}
     ]).
 
 -spec cap(atom(), job() | work()) -> job() | work() | no_return().
@@ -276,12 +282,12 @@ dummy() ->
 %% If necessary, the object is re-created at a lower version that is no higher
 %% than the specified version.
 %%
-cap(v1, Object) when erlang:is_record(Object, riak_core_job_v1) ->
+cap('v1', Object) when erlang:is_record(Object, riak_core_job_v1) ->
     Object;
-cap(v1, Object) when erlang:is_record(Object, riak_core_work_v1) ->
+cap('v1', Object) when erlang:is_record(Object, riak_core_work_v1) ->
     Object;
 cap(Ver, Object) ->
-    erlang:error(badarg, [Ver, Object]).
+    erlang:error('badarg', [Ver, Object]).
 
 -spec passthrough(term()) -> term().
 %%
@@ -293,7 +299,28 @@ cap(Ver, Object) ->
 passthrough(Arg) ->
     Arg.
 
--spec runnable(job() | work() | func()) -> true | {error, term()}.
+-spec reply(job() | sender() | pid(), term()) -> term() | no_return().
+%%
+%% @doc Sends the specified Message to a Job's 'from' field.
+%%
+%% The Message is returned regardless of success of the operation, as if by
+%% the `!` operator, but is always sent unreliably, so delivery is NOT assured,
+%% though non-blocking behavior is.
+%%
+%% If the 'from' field's value is 'ignore' the message is simply returned.
+%%
+reply(#riak_core_job_v1{from = From}, Msg) ->
+    reply(From, Msg);
+reply('ignore', Msg) ->
+    Msg;
+reply(From, Msg) when erlang:is_pid(From) ->
+    _ = erlang:send(From, Msg, [noconnect, nosuspend]),
+    Msg;
+reply(From, Msg) when erlang:is_tuple(From) ->
+    _ = riak_core_vnode:reply(From, Msg),
+    Msg.
+
+-spec runnable(job() | work() | func()) -> 'true' | {'error', term()}.
 %%
 %% @doc Checks whether the specified Job/Work/Function object can be run locally.
 %%
@@ -320,9 +347,9 @@ runnable({Fun, Args})
     NArgs = (erlang:length(Args) + 1),
     case erlang:fun_info(Fun, arity) of
         {_, NArgs} ->
-            true;
+            'true';
         {_, Arity} ->
-            {error, {arity_mismatch, {Fun, Arity}, NArgs}}
+            {'error', {'arity_mismatch', {Fun, Arity}, NArgs}}
     end;
 runnable({Mod, Func, Args})
         when erlang:is_atom(Mod)
@@ -333,21 +360,21 @@ runnable({Mod, Func, Args})
     % us to provide some information about what wasn't found.
     Arity = (erlang:length(Args) + 1),
     case code:which(Mod) of
-        non_existing ->
+        'non_existing' ->
             {error, {no_module, {Mod, Func, Arity}}};
         _ ->
             case lists:member({Func, Arity}, Mod:module_info(exports)) of
-                true ->
-                    true;
+                'true' ->
+                    'true';
                 _ ->
-                    {error, {no_function, {Mod, Func, Arity}}}
+                    {'error', {'no_function', {Mod, Func, Arity}}}
             end
     end;
 runnable(#riak_core_work_v1{init = I, run = R, fini = F}) ->
     case runnable(I) of
         true ->
             case runnable(R) of
-                true ->
+                'true' ->
                     runnable(F);
                 RR ->
                     RR
@@ -355,17 +382,17 @@ runnable(#riak_core_work_v1{init = I, run = R, fini = F}) ->
         RI ->
             RI
     end;
-runnable(#riak_core_job_v1{work = Work, killed = undefined}) ->
+runnable(#riak_core_job_v1{work = Work, killed = 'undefined'}) ->
     runnable(Work);
 runnable(#riak_core_job_v1{work = Work, killed = Killed}) ->
     case runnable(Work) of
-        true ->
+        'true' ->
             runnable(Killed);
         Err ->
             Err
     end;
 runnable(Object) ->
-    erlang:error(badarg, [Object]).
+    erlang:error('badarg', [Object]).
 
 -spec timestamp() -> time().
 timestamp() ->
@@ -390,20 +417,20 @@ update(Stat, Value, #riak_core_job_v1{stats = Stats} = Job) ->
 %% @doc Return the version atoms supported by the module, in descending order.
 %%
 versions() ->
-    [v1].
+    ['v1'].
 
--spec version(term()) -> {atom(), atom()} | undefined.
+-spec version(term()) -> {atom(), atom()} | 'undefined'.
 %%
 %% @doc Return the type and version atom of the specified Job/Work object.
 %%
 %% If the object is not a recognized record format 'undefined' is returned.
 %%
 version(Object) when erlang:is_record(Object, riak_core_job_v1) ->
-    {job, v1};
+    {'job', 'v1'};
 version(Object) when erlang:is_record(Object, riak_core_work_v1) ->
-    {work, v1};
+    {'work', 'v1'};
 version(_) ->
-    undefined.
+    'undefined'.
 
 %% ===================================================================
 %% Internal
@@ -411,45 +438,46 @@ version(_) ->
 
 jobp([], Job) ->
     Job;
-jobp([{class, Class} | Props], Job)
+jobp([{'class', Class} | Props], Job)
         when erlang:is_atom(Class) ->
     jobp(Props, Job#riak_core_job_v1{class = Class});
-jobp([{from, From} | Props], Job)
-        when erlang:is_tuple(From)
+jobp([{'from', From} | Props], Job)
+        when erlang:is_pid(From)
+        orelse erlang:is_tuple(From)
         orelse From =:= 'ignored' ->
     jobp(Props, Job#riak_core_job_v1{from = From});
-jobp([{prio, Prio} | Props], Job)
+jobp([{'prio', Prio} | Props], Job)
         when erlang:is_integer(Prio)
         andalso Prio >= ?JOB_PRIO_MIN
         andalso Prio =< ?JOB_PRIO_MAX ->
     jobp(Props, Job#riak_core_job_v1{prio = Prio});
-jobp([{iid, ID} | Props], Job) ->
+jobp([{'iid', ID} | Props], Job) ->
     jobp(Props, Job#riak_core_job_v1{iid = ID});
-jobp([{killed, {Mod, Func, Args} = CB} | Props], Job)
+jobp([{'killed', {Mod, Func, Args} = CB} | Props], Job)
         when erlang:is_atom(Mod)
         andalso erlang:is_atom(Func)
         andalso erlang:is_list(Args) ->
     jobp(Props, Job#riak_core_job_v1{killed = CB});
-jobp([{killed, {Fun, Args} = CB} | Props], Job)
+jobp([{'killed', {Fun, Args} = CB} | Props], Job)
         when erlang:is_function(Fun)
         andalso erlang:is_list(Args) ->
     jobp(Props, Job#riak_core_job_v1{killed = CB});
 jobp([Prop | _], _) ->
-    erlang:error(badarg, [Prop]).
+    erlang:error('badarg', [Prop]).
 
-work_check({init, _}) ->
-    true;
-work_check({run, _}) ->
-    true;
-work_check({fini, _}) ->
-    true;
+work_check({'init', _}) ->
+    'true';
+work_check({'run', _}) ->
+    'true';
+work_check({'fini', _}) ->
+    'true';
 work_check(_) ->
-    false.
+    'false'.
 
 workp(Key, Props) ->
     case lists:keyfind(Key, 1, Props) of
-        false ->
-            {?MODULE, passthrough, []};
+        'false' ->
+            {?MODULE, 'passthrough', []};
         {_, {Mod, Func, Args} = F}
                 when erlang:is_atom(Mod)
                 andalso erlang:is_atom(Func)
@@ -460,5 +488,5 @@ workp(Key, Props) ->
                 andalso erlang:is_list(Args) ->
             F;
         Bad ->
-            erlang:error(badarg, [Bad])
+            erlang:error('badarg', [Bad])
     end.
