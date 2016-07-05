@@ -36,8 +36,6 @@
     name/1,
     n_val/1, get_value/2]).
 
--export_type([bucket/0]).
-
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -53,8 +51,6 @@
 -export_type([property/0, properties/0, bucket/0, nval_set/0]).
 
 -define(METADATA_PREFIX, {core, buckets}).
-
--type bucket() :: binary() | {riak_core_bucket_type:bucket_type(), binary()}.
 
 %% @doc Add a list of defaults to global list of defaults for new
 %%      buckets.  If any item is in Items is already set in the
