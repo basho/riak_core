@@ -92,24 +92,25 @@
 -include("riak_core_bucket_type.hrl").
 
 -export([defaults/0,
-         defaults/1,
-         create/2,
-         status/1,
-         activate/1,
-         update/2,
-         get/1,
-         reset/1,
-         iterator/0,
-         itr_next/1,
-         itr_done/1,
-         itr_value/1,
-         itr_close/1,
-         property_hash/2,
-         property_hash/3]).
+    defaults/1,
+    create/2,
+    status/1,
+    activate/1,
+    update/2,
+    get/1,
+    reset/1,
+    fold/2,
+    iterator/0,
+    itr_next/1,
+    itr_done/1,
+    itr_value/1,
+    itr_close/1,
+    property_hash/2,
+    property_hash/3, all_n/0]).
 
 -export_type([bucket_type/0]).
 -type bucket_type()       :: binary().
--type bucket_type_props() :: [{term(), term()}].
+-type bucket_type_props() :: riak_core_bucket:properties().
 
 -define(IF_CAPABLE(X, E), case riak_core_capability:get({riak_core, bucket_types}) of
                               true -> X;
@@ -213,6 +214,55 @@ get(BucketType) when is_binary(BucketType) ->
 -spec reset(bucket_type()) -> ok | {error, term()}.
 reset(BucketType) ->
     update(BucketType, defaults()).
+
+%% @doc iterate over bucket types and find any active buckets.
+-spec all_n() -> riak_core_bucket:nval_set().
+all_n() ->
+    riak_core_bucket_type:fold(fun bucket_type_prop_nval_fold/2, ordsets:new()).
+
+%% @private
+-spec bucket_type_prop_nval_fold({bucket_type(), riak_core_bucket:properties()},
+        riak_core_bucket:nval_set()) -> riak_core_bucket:nval_set().
+bucket_type_prop_nval_fold({_BType, BProps}, Accum) ->
+    case riak_core_bucket:get_value(active, BProps) of
+        true ->
+            bucket_prop_nval_fold(BProps, Accum);
+        _ ->
+            Accum
+    end.
+
+-spec bucket_prop_nval_fold(riak_core_bucket:properties(), riak_core_bucket:nval_set()) ->
+    riak_core_bucket:nval_set().
+bucket_prop_nval_fold(BProps, Accum) ->
+    case riak_core_bucket:get_value(n_val, BProps) of
+        undefined ->
+            Accum;
+        NVal ->
+            ordsets:add_element(NVal, Accum)
+    end.
+
+%% @doc Fold over all bucket types, storing result in accumulator
+-spec fold(fun(({bucket_type(), bucket_type_props()}, any()) -> any()),
+           Accumulator::any()) ->
+    any().
+fold(Fun, Accum) ->
+    fold(iterator(), Fun, Accum).
+
+-spec fold(
+    riak_core_metadata:iterator(),
+    fun(({bucket_type(), bucket_type_props()}, any()) -> any()),
+    any()
+) ->
+    any().
+fold(It, Fun, Accum) ->
+    case riak_core_bucket_type:itr_done(It) of
+        true ->
+            riak_core_bucket_type:itr_close(It),
+            Accum;
+        _ ->
+            NewAccum = Fun(itr_value(It), Accum),
+            fold(riak_core_bucket_type:itr_next(It), Fun, NewAccum)
+    end.
 
 %% @doc Return an iterator that can be used to walk through all existing bucket types
 %% and their properties
