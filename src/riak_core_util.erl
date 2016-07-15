@@ -67,7 +67,8 @@
          make_fold_req/4,
          make_newest_fold_req/1,
          proxy_spawn/1,
-         proxy/2
+         proxy/2,
+         job_type_enabled/1
         ]).
 
 -include("riak_core_vnode.hrl").
@@ -702,6 +703,15 @@ proxy(Parent, Fun) ->
             Parent ! {proxy_reply, MRef, Result};
         {'DOWN', _, _, _, _} ->
             ok
+    end.
+
+-spec job_type_enabled(atom()) -> boolean().
+job_type_enabled(Type) ->
+    case application:get_env(riak_core, enabled_job_types) of
+        undefined ->
+            true;
+        {ok, EnabledJobTypes} ->
+            lists:member(Type, EnabledJobTypes)
     end.
 
 %% ===================================================================
