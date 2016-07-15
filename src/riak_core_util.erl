@@ -710,6 +710,8 @@ job_type_enabled(Type) ->
     case application:get_env(riak_core, enabled_job_types) of
         undefined ->
             true;
+        {ok, undefined} ->
+            true;
         {ok, EnabledJobTypes} ->
             lists:member(Type, EnabledJobTypes)
     end.
