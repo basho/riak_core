@@ -1,8 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_core: Core Riak Application
-%%
-%% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -68,7 +66,7 @@
          make_newest_fold_req/1,
          proxy_spawn/1,
          proxy/2,
-         job_type_enabled/1
+         job_class_enabled/1
         ]).
 
 -include("riak_core_vnode.hrl").
@@ -705,15 +703,20 @@ proxy(Parent, Fun) ->
             ok
     end.
 
--spec job_type_enabled(atom()) -> boolean().
-job_type_enabled(Type) ->
-    case application:get_env(riak_core, enabled_job_types) of
+-spec job_class_enabled(atom()) -> boolean().
+%% @doc Internal private API for async job accept/reject.
+%% WARNING:
+%%  This function may not remain in this form, or at all, and it would be a
+%%  mistake to assume it'll be here once the Jobs API is live!
+%% @deprecated  Likely to be refactored in v2.3.
+job_class_enabled(Class) ->
+    case app_helper:get_env(riak_core, job_accept_class) of
         undefined ->
             true;
-        {ok, undefined} ->
-            true;
-        {ok, EnabledJobTypes} ->
-            lists:member(Type, EnabledJobTypes)
+        [] ->
+            false;
+        [_|_] = EnabledClasses ->
+            lists:member(Class, EnabledClasses)
     end.
 
 %% ===================================================================
