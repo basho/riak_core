@@ -49,7 +49,7 @@
     register/3,
     running/2,
     shutdown/2,
-    start_link/3,
+    start_link/2,
     starting/2
 ]).
 
@@ -69,20 +69,20 @@
 
 %% The 'accept' callback is invoked as if by
 %%
-%%  accept(node_id(), job(), Arg1 .. ArgN) -> boolean()
+%%  accept(Arg1 ... ArgN, scope_id(), job()) -> boolean()
 %%
 %% As such, the arity of the supplied function must be 2 + length(Args).
 %% If provided, the callback is invoked with riak_core_job:dummy() during
 %% service initialization, and startup fails if the result is anything other
 %% than a boolean().
 %% If this property is not provided, all jobs are accepted.
--type paccept() ::  {'job_svc_accept_func', cbfunc()}.
+-type paccept() ::  {?JOB_SVC_ACCEPT_FUNC,  cbfunc()}.
 
 %% Defaults to ?JOB_SVC_DEFAULT_CONCUR.
--type pconcur() ::  {'job_svc_concurrency_limit', pos_integer()}.
+-type pconcur() ::  {?JOB_SVC_CONCUR_LIMIT, pos_integer()}.
 
-%% Defaults to job_svc_concurrency_limit * ?JOB_SVC_DEFAULT_QUEMULT.
--type pquemax() ::  {'job_svc_queue_limit', non_neg_integer()}.
+%% Defaults to ?JOB_SVC_CONCUR_LIMIT * ?JOB_SVC_DEFAULT_QUEMULT.
+-type pquemax() ::  {?JOB_SVC_QUEUE_LIMIT,  non_neg_integer()}.
 
 -type prop()    ::  paccept() | pconcur() | pquemax().
 -type config()  ::  [prop()].
@@ -147,8 +147,12 @@
 %% ===================================================================
 %% Public API
 %% ===================================================================
+%
+% Where these use riak_core_job_manager:lookup/1 we just match on the ScopeID
+% being a 2-tuple because the lookup validates the fields itself.
+%
 
--spec config(pid()) -> config() | {'error', term()}.
+-spec config(scope_id() | pid()) -> config() | {'error', term()}.
 %%
 %% @doc Return the configuration the scope's service was started with.
 %%
@@ -161,12 +165,14 @@
 %%
 config(Svc) when erlang:is_pid(Svc) ->
     gen_server:call(Svc, 'config');
-config({NType, _} = ScopeID) when erlang:is_atom(NType) ->
+config({_, _} = ScopeID) ->
     case riak_core_job_manager:lookup(?SCOPE_SVC_ID(ScopeID)) of
-        Svc when erlang:is_pid(Svc) ->
-            gen_server:call(Svc, 'config');
-        _ ->
-            {'error', 'noproc'}
+        'undefined' ->
+            {'error', 'noproc'};
+        {'error', _} = Error ->
+            Error;
+        Pid ->
+            config(Pid)
     end.
 
 -spec stats(scope_id() | pid()) -> [{atom(), term()}] | {'error', term()}.
@@ -175,12 +181,14 @@ config({NType, _} = ScopeID) when erlang:is_atom(NType) ->
 %%
 stats(Svc) when erlang:is_pid(Svc) ->
     gen_server:call(Svc, 'stats');
-stats({NType, _} = ScopeID) when erlang:is_atom(NType) ->
+stats({_, _} = ScopeID) ->
     case riak_core_job_manager:lookup(?SCOPE_SVC_ID(ScopeID)) of
-        Svc when erlang:is_pid(Svc) ->
-            gen_server:call(Svc, 'stats');
-        _ ->
-            {'error', 'noproc'}
+        'undefined' ->
+            {'error', 'noproc'};
+        {'error', _} = Error ->
+            Error;
+        Pid ->
+            stats(Pid)
     end.
 
 -spec submit(pid() | scope_id() | scope_type() | [scope_id()], job())
@@ -195,17 +203,14 @@ submit(Svc, Job) when erlang:is_pid(Svc) ->
         _ ->
             erlang:error('badarg', [Job])
     end;
-submit({NType, _} = ScopeID, Job) when erlang:is_atom(NType) ->
-    case riak_core_job:version(Job) of
-        {'job', _} ->
-            case riak_core_job_manager:job_svc(ScopeID) of
-                Svc when erlang:is_pid(Svc) ->
-                    gen_server:call(Svc, {'submit', Job});
-                {'error', _} = Error ->
-                    Error
-            end;
-        _ ->
-            erlang:error('badarg', [Job])
+submit({_, _} = ScopeID, Job) ->
+    case riak_core_job_manager:lookup(?SCOPE_SVC_ID(ScopeID)) of
+        'undefined' ->
+            {'error', 'noproc'};
+        {'error', _} = Error ->
+            Error;
+        Pid ->
+            submit(Pid, Job)
     end;
 submit(Multi, Job) ->
     riak_core_job_manager:submit_mult(Multi, Job).
@@ -236,13 +241,13 @@ shutdown(Svc, Timeout) when erlang:is_pid(Svc)
         andalso erlang:is_integer(Timeout) andalso Timeout >= 0 ->
     gen_server:cast(Svc, {'shutdown', Timeout}).
 
--spec start_link(scope_svc_id(), config(), job())
+-spec start_link(scope_svc_id(), config())
         -> {'ok', pid()} | {'error', term()}.
 %%
 %% @doc Start a new process linked to the calling process.
 %%
-start_link(?SCOPE_SVC_ID(_) = Id, Config, DummyJob) ->
-    gen_server:start_link(?MODULE, {Id, Config, DummyJob}, []).
+start_link(?SCOPE_SVC_ID(_) = ProcID, Config) ->
+    gen_server:start_link(?MODULE, {ProcID, Config}, []).
 
 -spec register(pid(), work_sup_id(), pid()) -> 'ok'.
 %%
@@ -251,33 +256,33 @@ start_link(?SCOPE_SVC_ID(_) = Id, Config, DummyJob) ->
 %% This is being called from the riak_core_job_manager, so it can't call into
 %% it to look up the service, hence the direct call to the Pid.
 %%
-register(Svc, ?WORK_SUP_ID(_) = Id, Sup) ->
-    gen_server:cast(Svc, {'register', Id, Sup}).
+register(Svc, ?WORK_SUP_ID(_) = ProcID, Sup) ->
+    gen_server:cast(Svc, {'register', ProcID, Sup}).
 
 -spec starting(pid(), reference()) -> 'ok'.
 %%
-%% @doc Callback for the job runner indicating the job's UOW is being started.
+%% @doc Callback for the job runner indicating the UOW is being started.
 %%
 starting(Svc, JobRef) ->
     update_job(Svc, JobRef, 'started').
 
 -spec running(pid(), reference()) -> 'ok'.
 %%
-%% @doc Callback for the job runner indicating the job's UOW is being run.
+%% @doc Callback for the job runner indicating the UOW is being run.
 %%
 running(Svc, JobRef) ->
     update_job(Svc, JobRef, 'running').
 
 -spec cleanup(pid(), reference()) -> 'ok'.
 %%
-%% @doc Callback for the job runner indicating the job's UOW is being cleaned up.
+%% @doc Callback for the job runner indicating the UOW is being cleaned up.
 %%
 cleanup(Svc, JobRef) ->
     update_job(Svc, JobRef, 'cleanup').
 
 -spec done(pid(), reference(), term()) -> 'ok'.
 %%
-%% @doc Callback for the job runner indicating the job's UOW is finished.
+%% @doc Callback for the job runner indicating the UOW is finished.
 %%
 done(Svc, JobRef, Result) ->
     update_job(Svc, JobRef, 'done', Result).
@@ -286,13 +291,13 @@ done(Svc, JobRef, Result) ->
 %% gen_server callbacks
 %% ===================================================================
 
--spec init({scope_svc_id(), config(), job()})
+-spec init({scope_svc_id(), config()})
         -> {'ok', state()} | {'stop', {'error', term()}}.
-init({?SCOPE_SVC_ID(ScopeID) = Id, Config, DummyJob}) ->
-    case init_state(#state{scope_id = ScopeID, config = Config}, DummyJob) of
+init({?SCOPE_SVC_ID(ScopeID) = ProcID, Config}) ->
+    case init_state(#state{scope_id = ScopeID, config = Config}) of
         #state{} = State ->
             _ = erlang:process_flag('trap_exit', 'true'),
-            _ = riak_core_job_manager:register(Id, erlang:self()),
+            _ = riak_core_job_manager:register(ProcID, erlang:self()),
             {'ok', State};
         Error ->
             {'stop', Error}
@@ -303,35 +308,39 @@ init({?SCOPE_SVC_ID(ScopeID) = Id, Config, DummyJob}) ->
 %
 % submit(node_id() | pid(), job()) -> ok | {'error', term()}.
 %
-handle_call({'submit', _}, _, #state{shutdown = 'true', stats = S} = State) ->
+handle_call({'submit', _}, _,
+        #state{shutdown = 'true', stats = Stats} = State) ->
     {'reply', {'error', ?JOB_ERR_SHUTTING_DOWN},
-        State#state{stats = ?inc_stat('rejected_shutdown', S)}};
-handle_call({'submit', _}, _, #state{
-        quelen = L, maxque = M, stats = S} = State) when L >= M ->
+        State#state{stats = ?inc_stat('rejected_shutdown', Stats)}};
+handle_call({'submit', _}, _,
+        #state{quelen = QLen, maxque = MaxQ, stats = Stats} = State)
+        when QLen >= MaxQ ->
     {'reply', {'error', ?JOB_ERR_QUEUE_OVERFLOW},
-        State#state{stats = ?inc_stat('rejected_overflow', S)}};
-handle_call({'submit', Job}, _, #state{
-        concur = C, running = R, stats = S} = State) ->
+        State#state{stats = ?inc_stat('rejected_overflow', Stats)}};
+handle_call({'submit', Job}, _,
+        #state{concur = Concur, running = Running, stats = Stats} = State) ->
     case riak_core_job:runnable(Job) of
         'true' ->
             case accept_job(Job, State) of
                 'true' ->
-                    NewState = State#state{stats = ?inc_stat('accepted', S)},
+                    NewState = State#state{
+                        stats = ?inc_stat('accepted', Stats)},
                     if
-                        R < C ->
+                        Running < Concur ->
                             {'reply', 'ok', start_job(Job, NewState)};
                         ?else ->
                             {'reply', 'ok', queue_job(Job, NewState)}
                     end;
                 'false' ->
                     {'reply', {'error', ?JOB_ERR_REJECTED},
-                        State#state{stats = ?inc_stat('rejected', S)}}
+                        State#state{stats = ?inc_stat('rejected', Stats)}}
             end;
         Error ->
-            {'reply', Error, State#state{stats = ?inc_stat('accept_errors', S)}}
+            {'reply', Error,
+                State#state{stats = ?inc_stat('accept_errors', Stats)}}
     end;
 %
-% stats(node_id() | pid()) -> [{atom(), term()}] | {'error', term()}.
+% stats(scope_id() | pid()) -> [{atom(), term()}] | {'error', term()}.
 %
 handle_call('stats', _, State) ->
     Result = [
@@ -356,12 +365,12 @@ handle_call('config', _, #state{config = Config} = State) ->
 %
 % unrecognized message
 %
-handle_call(Message, From, #state{scope_id = ScopeID, stats = S} = State) ->
-    _ = lager:error(
-            "~p job service received unhandled call from ~p: ~p",
+handle_call(Message, From,
+        #state{scope_id = ScopeID, stats = Stats} = State) ->
+    _ = lager:error("~p job service received unhandled call from ~p: ~p",
             [ScopeID, From, Message]),
     {'reply', {'error', {'badarg', Message}},
-        State#state{stats = ?inc_stat('unhandled', S)}}.
+        State#state{stats = ?inc_stat('unhandled', Stats)}}.
 
 -spec handle_cast(term(), state())
         -> {'noreply', state()} | {'stop', term(), state()}.
@@ -373,27 +382,28 @@ handle_cast('dequeue', State) ->
 %
 % status update from a running job
 %
-handle_cast({Ref, 'update', 'done' = Stat, _TS, Result}, #state{
-        scope_id = ScopeID, running = R, monitors = M, stats = S} = State) ->
+handle_cast({Ref, 'update', 'done' = Stat, _TS, Result},
+        #state{scope_id = ScopeID, running = Running,
+            monitors = Mons, stats = Stats} = State) ->
     _ = erlang:demonitor(Ref, ['flush']),
-    case lists:keytake(Ref, #mon.mon, M) of
-        {'value', _, NewM} ->
+    case lists:keytake(Ref, #mon.mon, Mons) of
+        {'value', _, NewMons} ->
             dequeue(?validate(State#state{
-                monitors = NewM, running = (R - 1),
-                stats = ?inc_stat('finished', S)}));
+                monitors = NewMons, running = (Running - 1),
+                stats = ?inc_stat('finished', Stats)}));
         _ ->
             _ = lager:error(
                     "~p job service received completion message ~p:~p "
                     "for unknown job ref ~p", [ScopeID, Stat, Result, Ref]),
-            {'noreply', State#state{stats = ?inc_stat('update_errors', S)}}
+            {'noreply', State#state{stats = ?inc_stat('update_errors', Stats)}}
     end;
-handle_cast({Ref, 'update', Stat, TS}, #state{
-        scope_id = ScopeID, monitors = M} = State) ->
-    case lists:keyfind(Ref, #mon.mon, M) of
+handle_cast({Ref, 'update', Stat, TS},
+        #state{scope_id = ScopeID, monitors = Mons} = State) ->
+    case lists:keyfind(Ref, #mon.mon, Mons) of
         #mon{job = Job} = Rec ->
-            New = Rec#mon{job = riak_core_job:update(Stat, TS, Job)},
+            NewRec = Rec#mon{job = riak_core_job:update(Stat, TS, Job)},
             {'noreply', ?validate(State#state{
-                monitors = lists:keystore(Ref, #mon.mon, M, New)})};
+                monitors = lists:keystore(Ref, #mon.mon, Mons, NewRec)})};
         _ ->
             _ = lager:error(
                     "~p job service received ~p update for unknown job ref ~p",
@@ -427,10 +437,10 @@ handle_cast({'shutdown', Timeout}, State) ->
 %
 % unrecognized message
 %
-handle_cast(Message, #state{scope_id = ScopeID, stats = S} = State) ->
+handle_cast(Message, #state{scope_id = ScopeID, stats = Stats} = State) ->
     _ = lager:error(
             "~p job service received unhandled cast: ~p", [ScopeID, Message]),
-    {'noreply', State#state{stats = ?inc_stat('unhandled', S)}}.
+    {'noreply', State#state{stats = ?inc_stat('unhandled', Stats)}}.
 
 -spec handle_info(term(), state())
         -> {'noreply', state()} | {'stop', term(), state()}.
@@ -449,34 +459,33 @@ handle_info({'DOWN', _, _, Sup, Info},
 % and caused the monitor to be released and flushed, so the only way we get
 % this is an exit before completion.
 %
-handle_info({'DOWN', Ref, _, Pid, Info}, #state{
-        scope_id = ScopeID, running = R, monitors = M, stats = S} = State) ->
-    case lists:keytake(Ref, #mon.mon, M) of
-        {'value', #mon{pid = Pid, job = Job}, NewM} ->
+handle_info({'DOWN', Ref, _, Pid, Info}, #state{scope_id = ScopeID,
+        running = Running, monitors = Mons, stats = Stats} = State) ->
+    case lists:keytake(Ref, #mon.mon, Mons) of
+        {'value', #mon{pid = Pid, job = Job}, NewMons} ->
             _ = discard(Job, {?JOB_ERR_CRASHED, Info}),
-            dequeue(?validate(State#state{monitors = NewM, running = (R - 1),
-                stats = ?inc_stat('crashed', S)}));
+            dequeue(?validate(State#state{monitors = NewMons,
+                running = (Running - 1), stats = ?inc_stat('crashed', Stats)}));
         _ ->
             _ = lager:error(
                     "~p job service received 'DOWN' message "
                     "for unrecognized process ~p", [ScopeID, Pid]),
-            {'noreply', State#state{stats = ?inc_stat('update_errors', S)}}
+            {'noreply', State#state{stats = ?inc_stat('update_errors', Stats)}}
     end;
 %
 % unrecognized message
 %
-handle_info(Message, #state{scope_id = ScopeID, stats = S} = State) ->
+handle_info(Message, #state{scope_id = ScopeID, stats = Stats} = State) ->
     _ = lager:error(
             "~p job service received unhandled info: ~p", [ScopeID, Message]),
-    {'noreply', State#state{stats = ?inc_stat('unhandled', S)}}.
+    {'noreply', State#state{stats = ?inc_stat('unhandled', Stats)}}.
 
 -spec terminate(term(), state()) -> ok.
 %
 % no matter why we're terminating, de-monitor everything we're watching
 %
 terminate('inconsistent', #state{scope_id = ScopeID} = State) ->
-    _ = lager:error(
-            "~p job service terminated due to inconsistent state: ~p",
+    _ = lager:error("~p job service terminated due to inconsistent state: ~p",
             [ScopeID, State]),
     terminate('shutdown', State);
 terminate(_, State) ->
@@ -496,7 +505,7 @@ code_change(_, State, _) ->
 
 -spec accept_job(job(), state()) -> boolean().
 accept_job(Job, #state{scope_id = ScopeID, accept = Accept}) ->
-    invoke(Accept, [ScopeID, Job]).
+    riak_core_job:invoke(Accept, [ScopeID, Job]).
 
 -spec accept_any(scope_id(), job()) -> 'true'.
 accept_any(_, _) ->
@@ -509,17 +518,19 @@ dequeue(#state{shutdown = 'true', quelen = 0, running = 0} = State) ->
     {'stop', State};
 dequeue(#state{quelen = 0} = State) ->
     {'noreply', State};
-dequeue(#state{shutdown = 'true', queue = [Job | Q], quelen = L} = State) ->
+dequeue(#state{
+        shutdown = 'true', queue = [Job | Jobs], quelen = QLen} = State) ->
     _ = discard(Job, {?JOB_ERR_CANCELED, ?JOB_ERR_SHUTTING_DOWN}),
     {'noreply', maybe_dequeue(
-        ?validate(State#state{queue = Q, quelen = (L - 1)}))};
-dequeue(#state{concur = C, running = R} = State) when R >= C ->
+        ?validate(State#state{queue = Jobs, quelen = (QLen - 1)}))};
+dequeue(#state{concur = Concur, running = Running} = State)
+        when Running >= Concur ->
     {'noreply', State};
 dequeue(#state{work_sup = 'undefined'} = State) ->
     {'noreply', maybe_dequeue(State)};
-dequeue(#state{queue = [Job | Q], quelen = L} = State) ->
+dequeue(#state{queue = [Job | Jobs], quelen = QLen} = State) ->
     {'noreply', maybe_dequeue(start_job(Job,
-        ?validate(State#state{queue = Q, quelen = (L - 1)})))}.
+        ?validate(State#state{queue = Jobs, quelen = (QLen - 1)})))}.
 
 -spec discard(job() | mon() | [job()] | [mon()] | state(), term()) -> term().
 %% Disposes of the job(s) in the specified item and returns the Why parameter
@@ -528,9 +539,9 @@ discard([], Why) ->
     Why;
 discard([Elem | Elems], Why) ->
     discard(Elems, discard(Elem, Why));
-discard(#state{queue = Q, monitors = M}, Why) ->
-    _ = discard(Q, {?JOB_ERR_CANCELED,  Why}),
-    _ = discard(M, {?JOB_ERR_KILLED,    Why}),
+discard(#state{queue = Queue, monitors = Mons}, Why) ->
+    _ = discard(Queue,  {?JOB_ERR_CANCELED,  Why}),
+    _ = discard(Mons,   {?JOB_ERR_KILLED,    Why}),
     Why;
 discard(#mon{pid = Pid, mon = Ref, job = Job}, Why) ->
     _ = erlang:demonitor(Ref, ['flush']),
@@ -542,7 +553,7 @@ discard(Job, Why) ->
             _ = riak_core_job:reply(Job, {'error', Why});
         Killed ->
             try
-                _ = invoke(Killed, [Why])
+                _ = riak_core_job:invoke(Killed, [Why])
             catch
                 Class:What ->
                     _ = lager:error("Job ~p 'killed' failure: ~p:~p",
@@ -555,25 +566,25 @@ discard(Job, Why) ->
 -spec queue_job(job(), state()) -> state().
 %% Queue the specified Job. This assumes ALL checks have been performed
 %% beforehand - NONE are performed here!
-queue_job(Job, #state{queue = Q, quelen = L, stats = S} = State) ->
+queue_job(Job, #state{queue = Queue, quelen = QLen, stats = Stats} = State) ->
     maybe_dequeue(?validate(State#state{
-        queue   = Q ++ [riak_core_job:update('queued', Job)],
-        quelen  = (L + 1),
-        stats   = ?inc_stat('queued', S)})).
+        queue   = Queue ++ [riak_core_job:update('queued', Job)],
+        quelen  = (QLen + 1),
+        stats   = ?inc_stat('queued', Stats)})).
 
 -spec start_job(job(), state()) -> state().
 %% Dispatch the specified Job on a runner process. This assumes ALL checks
 %% have been performed beforehand - NONE are performed here!
-start_job(Job, #state{
-        work_sup = W, monitors = M, running = R, stats = S} = State) ->
-    {'ok', Pid} = supervisor:start_child(W, []),
+start_job(Job, #state{work_sup = WSup,
+        monitors = Mons, running = Running, stats = Stats} = State) ->
+    {'ok', Pid} = supervisor:start_child(WSup, []),
     Mon = erlang:monitor('process', Pid),
     Rec = #mon{pid = Pid, mon = Mon, job = Job},
     'ok' = riak_core_job_runner:run(
         Pid, erlang:self(), Mon, riak_core_job:get('work', Job)),
     ?validate(State#state{
-        monitors = [Rec | M], running = (R + 1),
-        stats = ?inc_stat('dispatched', S)}).
+        monitors = [Rec | Mons], running = (Running + 1),
+        stats = ?inc_stat('dispatched', Stats)}).
 
 -spec maybe_dequeue(state()) -> state().
 %% If there are queued jobs make sure there's a message in our inbox to get to
@@ -582,8 +593,8 @@ maybe_dequeue(#state{dqpending = 'true'} = State) ->
     State;
 maybe_dequeue(#state{quelen = 0} = State) ->
     State;
-maybe_dequeue(#state{
-        shutdown = 'false', concur = C, running = R} = State) when R >= C ->
+maybe_dequeue(#state{shutdown = 'false', concur = Concur,
+        running = Running} = State) when Running >= Concur ->
     State;
 maybe_dequeue(State) ->
     ?cast('dequeue'),
@@ -599,17 +610,17 @@ update_job(Svc, JobRef, Key, Info) ->
     gen_server:cast(Svc,
         {JobRef, 'update', Key, riak_core_job:timestamp(), Info}).
 
--spec init_state(state(), job()) -> state() | {'error', term()}.
-init_state(State, Dummy) ->
+-spec init_state(state()) -> state() | {'error', term()}.
+init_state(State) ->
     % field order matters!
-    init_state(['accept', 'concur', 'maxque'], Dummy, State).
+    init_state(['accept', 'concur', 'maxque'], State).
 
--spec init_state([atom()], job(), state()) -> state() | {'error', term()}.
-init_state(['accept' | Fields], Dummy,
+-spec init_state([atom()], state()) -> state() | {'error', term()}.
+init_state(['accept' | Fields],
         #state{config = Config, scope_id = ScopeID} = State) ->
-    case proplists:get_value('job_svc_accept_func', Config) of
+    case proplists:get_value(?JOB_SVC_ACCEPT_FUNC, Config) of
         'undefined' ->
-            init_state(Fields, Dummy, State#state{accept = ?DefaultAccept});
+            init_state(Fields, State#state{accept = ?DefaultAccept});
         {Mod, Func, Args} = Accept
                 when erlang:is_atom(Mod)
                 andalso erlang:is_atom(Func)
@@ -617,16 +628,15 @@ init_state(['accept' | Fields], Dummy,
             Arity = (erlang:length(Args) + 2),
             case erlang:function_exported(Mod, Func, Arity) of
                 true ->
-                    case init_test_accept(Accept, ScopeID, Dummy) of
+                    case init_test_accept(Accept, ScopeID) of
                         'ok' ->
-                            init_state(Fields, Dummy,
-                                State#state{accept = Accept});
+                            init_state(Fields, State#state{accept = Accept});
                         Error ->
                             Error
                     end;
                 _ ->
                     {'error',
-                        {'job_svc_accept_func', {'undef', {Mod, Func, Arity}}}}
+                        {?JOB_SVC_ACCEPT_FUNC, {'undef', {Mod, Func, Arity}}}}
             end;
         {Fun, Args} = Accept
                 when erlang:is_function(Fun)
@@ -634,65 +644,57 @@ init_state(['accept' | Fields], Dummy,
             Arity = (erlang:length(Args) + 2),
             case erlang:fun_info(Fun, 'arity') of
                 {_, Arity} ->
-                    case init_test_accept(Accept, ScopeID, Dummy) of
+                    case init_test_accept(Accept, ScopeID) of
                         'ok' ->
-                            init_state(Fields, Dummy,
-                                State#state{accept = Accept});
+                            init_state(Fields, State#state{accept = Accept});
                         Error ->
                             Error
                     end;
                 _ ->
                     {'error',
-                        {'job_svc_accept_func', {'badarity', {Fun, Arity}}}}
+                        {?JOB_SVC_ACCEPT_FUNC, {'badarity', {Fun, Arity}}}}
             end;
         Spec ->
-            {'error', {'job_svc_accept_func', {'badarg', Spec}}}
+            {'error', {?JOB_SVC_ACCEPT_FUNC, {'badarg', Spec}}}
     end;
-init_state(['concur' | Fields], Dummy, #state{config = Config} = State) ->
-    case proplists:get_value('job_svc_concurrency_limit', Config) of
+init_state(['concur' | Fields], #state{config = Config} = State) ->
+    case proplists:get_value(?JOB_SVC_CONCUR_LIMIT, Config) of
         'undefined' ->
-            init_state(Fields, Dummy,
-                State#state{concur = ?JOB_SVC_DEFAULT_CONCUR});
+            init_state(Fields, State#state{concur = ?JOB_SVC_DEFAULT_CONCUR});
         Concur when erlang:is_integer(Concur) andalso Concur > 0 ->
-            init_state(Fields, Dummy, State#state{concur = Concur});
+            init_state(Fields, State#state{concur = Concur});
         BadArg ->
-            {'error', {'job_svc_concurrency_limit', {'badarg', BadArg}}}
+            {'error', {?JOB_SVC_CONCUR_LIMIT, {'badarg', BadArg}}}
     end;
-init_state(['maxque' | Fields], Dummy,
+init_state(['maxque' | Fields],
         #state{config = Config, concur = Concur} = State) ->
-    case proplists:get_value('job_svc_queue_limit', Config) of
+    case proplists:get_value(?JOB_SVC_QUEUE_LIMIT, Config) of
         'undefined' ->
-            init_state(Fields, Dummy,
+            init_state(Fields,
                 State#state{maxque = (Concur * ?JOB_SVC_DEFAULT_QUEMULT)});
         MaxQue when erlang:is_integer(MaxQue) andalso MaxQue >= 0 ->
-            init_state(Fields, Dummy, State#state{maxque = MaxQue});
+            init_state(Fields, State#state{maxque = MaxQue});
         BadArg ->
-            {'error', {'job_svc_queue_limit', {'badarg', BadArg}}}
+            {'error', {?JOB_SVC_QUEUE_LIMIT, {'badarg', BadArg}}}
     end;
-init_state([], _, State) ->
+init_state([], State) ->
     State.
 
--spec init_test_accept(cbfunc(), scope_id(), job()) -> 'ok' | {'error', term()}.
-init_test_accept(Accept, ScopeID, Job) ->
+-spec init_test_accept(cbfunc(), scope_id()) -> 'ok' | {'error', term()}.
+init_test_accept(Accept, ScopeID) ->
     try
-        case invoke(Accept, [ScopeID, Job]) of
+        case riak_core_job:invoke(Accept, [ScopeID, riak_core_job:dummy()]) of
             'true' ->
                 'ok';
             'false' ->
                 'ok';
             Other ->
-                {'error', {'job_svc_accept_func', {'badmatch', Other}}}
+                {'error', {?JOB_SVC_ACCEPT_FUNC, {'badmatch', Other}}}
         end
     catch
         Class:What ->
-            {'error', {'job_svc_accept_func', {Class, What}}}
+            {'error', {?JOB_SVC_ACCEPT_FUNC, {Class, What}}}
     end.
-
--spec invoke(cbfunc(), list()) -> term() | no_return().
-invoke({Mod, Func, Args}, Prepend) ->
-    erlang:apply(Mod, Func, Prepend ++ Args);
-invoke({Fun, Args}, Prepend) ->
-    erlang:apply(Fun, Prepend ++ Args).
 
 -ifdef(VALIDATE_STATE).
 -spec validate(state()) -> state() | no_return().

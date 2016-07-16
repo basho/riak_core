@@ -75,14 +75,13 @@
 %
 -type facade()  ::  pid().      % riak_core_vnode_worker_pool process
 -type job_svc() ::  pid().      % riak_core_job_service process
-%%-type worker()  ::  pid().      % riak_core_job_runner process
 -type wmodule() ::  module().   % implements riak_core_vnode_worker
 -type wstate()  ::  term().     % riak_core_vnode_worker state
 -type workrec() ::  tuple().    % riak_core_vnode_worker work object
 
 -record(jobrec, {
     ref         ::  reference(),
-    gid         ::  riak_core_job:id()
+    gid         ::  riak_core_job:gid()
 }).
 -type jobrec()  ::  #jobrec{}.
 
@@ -141,33 +140,33 @@ stop(Srv, Reason) ->
 %% Private API
 %% ===================================================================
 
--spec job_killed(term(), facade(), sender(), reference(), workrec()) -> 'ok'.
+-spec job_killed(facade(), sender(), reference(), workrec(), term()) -> 'ok'.
 %
 % riak_core_job:job.killed callback
 % The old worker pool wasn't very informative, so map things to the couple of
 % messages it could send.
 %
-job_killed(_, Owner, 'ignore', Ref, _) ->
+job_killed(Owner, 'ignore', Ref, _, _) ->
     gen_server:cast(Owner, {'done', Ref});
-job_killed({?JOB_ERR_CANCELED, ?JOB_ERR_SHUTTING_DOWN}
-        = Reason, Owner, Origin, Ref, Work) ->
+job_killed(Owner, Origin, Ref, Work,
+        {?JOB_ERR_CANCELED, ?JOB_ERR_SHUTTING_DOWN} = Reason) ->
     riak_core_vnode:reply(Origin, {'error', 'vnode_shutdown'}),
-    job_killed(Reason, Owner, 'ignore', Ref, Work);
-job_killed({_, Info} = Reason, Owner, Origin, Ref, Work) ->
+    job_killed(Owner, 'ignore', Ref, Work, Reason);
+job_killed(Owner, Origin, Ref, Work, {_, Info} = Reason) ->
     riak_core_vnode:reply(Origin, {'error', {'worker_crash', Info, Work}}),
-    job_killed(Reason, Owner, 'ignore', Ref, Work);
-job_killed(Reason, Owner, Origin, Ref, Work) ->
+    job_killed(Owner, 'ignore', Ref, Work, Reason);
+job_killed(Owner, Origin, Ref, Work, Reason) ->
     riak_core_vnode:reply(Origin, {'error', {'worker_crash', Reason, Work}}),
-    job_killed(Reason, Owner, 'ignore', Ref, Work).
+    job_killed(Owner, 'ignore', Ref, Work, Reason).
 
--spec work_init(
-    {scope_id(), job_svc()}, facade(), reference(), wmodule(), term(), term())
+-spec work_init(facade(), reference(),
+        wmodule(), term(), term(), {scope_id(), job_svc()})
         -> context().
 %
 % riak_core_job:job.work.init callback
 %
-work_init({{_, VNodeIndex} = ScopeID, ScopeSvc},
-        Owner, OwnerRef, WMod, WArgs, WProps) ->
+work_init(Owner, OwnerRef, WMod, WArgs, WProps,
+        {{_, VNodeIndex} = ScopeID, ScopeSvc}) ->
     {'ok', WState} = WMod:init_worker(VNodeIndex, WArgs, WProps),
     #context{
         scope_id    = ScopeID,
@@ -177,26 +176,26 @@ work_init({{_, VNodeIndex} = ScopeID, ScopeSvc},
         wref        = OwnerRef,
         state       = WState }.
 
--spec work_run(context(), tuple(), sender()) -> context().
+-spec work_run(tuple(), sender(), context()) -> context().
 %
 % riak_core_job:job.work.run callback
 %
-work_run(#context{wmod = M, state = S} = Context, Work, Origin) ->
-    State = case M:handle_work(Work, Origin, S) of
-        {'reply', Reply, NewState} ->
+work_run(Work, Origin, #context{wmod = WMod, state = WStateIn} = Context) ->
+    WState = case WMod:handle_work(Work, Origin, WStateIn) of
+        {'reply', Reply, NewWState} ->
             riak_core_vnode:reply(Origin, Reply),
-            NewState;
-        {'noreply', NewState} ->
-            NewState
+            NewWState;
+        {'noreply', NewWState} ->
+            NewWState
     end,
-    Context#context{state = State}.
+    Context#context{state = WState}.
 
 -spec work_fini(context()) -> term().
 %
 % riak_core_job:job.work.fini callback
 %
-work_fini(#context{owner = O, wref = R}) ->
-    gen_server:cast(O, {'done', R}).
+work_fini(#context{owner = Owner, wref = WRef}) ->
+    gen_server:cast(Owner, {'done', WRef}).
 
 %% ===================================================================
 %% gen_server callbacks
@@ -206,7 +205,7 @@ work_fini(#context{owner = O, wref = R}) ->
         -> {'ok', state()} | {'stop', term()}.
 init({WMod, PoolSize, VNodeIndex, WArgs, WProps}) ->
     ScopeID = {WMod, VNodeIndex},
-    Config  = [{'job_svc_concurrency_limit', PoolSize}],
+    Config  = [{?JOB_SVC_CONCUR_LIMIT, PoolSize}],
     case riak_core_job_manager:start_scope(ScopeID, Config) of
         'ok' ->
             case riak_core_job_manager:lookup(?SCOPE_SVC_ID(ScopeID)) of

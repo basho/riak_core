@@ -55,18 +55,3 @@
 -define(FOLD_REQ, #riak_core_fold_req_v2).
 
 -type handoff_dest() :: {riak_core_handoff_manager:ho_type(), {partition(), node()}}.
-
-%% Default per-scope job concurrency.
--define(JOB_SVC_DEFAULT_CONCUR, 10).
-
-%% If per-scope maximum queue length is not configured, it defaults to the
-%% concurrency value multiplied by this number.
--define(JOB_SVC_DEFAULT_QUEMULT, 3).
-
-%% Values for riak_core_job:priority(), whose type is defined as
-%%  ?JOB_PRIO_MIN .. ?JOB_PRIO_MAX
--define(JOB_PRIO_MIN,            0).
--define(JOB_PRIO_MAX,           99).
--define(JOB_PRIO_DEFAULT,       50).
--define(JOB_PRIO_LOW,           25).
--define(JOB_PRIO_HIGH,          75).

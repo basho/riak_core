@@ -33,15 +33,20 @@
 %% ===================================================================
 
 -spec start_link(scope_id()) -> {'ok', pid()}.
+%%
 %% @doc Start a new process linked to the calling supervisor.
+%%
 start_link(ScopeID) ->
-    {ok, erlang:spawn_link(?MODULE, 'runner', [ScopeID])}.
+    {'ok', proc_lib:spawn_link(?MODULE, 'runner', [ScopeID])}.
 
 -spec run(pid(), pid(), reference(), riak_core_job:work()) -> 'ok'.
+%%
 %% @doc Tell the specified runner to start the unit of work.
+%%
 %% The specified reference is passed in callbacks to the scope service.
+%%
 run(Runner, Svc, Ref, Work) ->
-    Runner ! {'start', Svc, Ref, Work, erlang:self()},
+    Runner ! {'start', {Svc, Ref, Work}, erlang:self()},
     receive
         {'started', Ref} ->
             'ok'
@@ -52,25 +57,26 @@ run(Runner, Svc, Ref, Work) ->
 %% ===================================================================
 
 -spec runner(scope_id()) -> 'ok' | no_return().
+%%
 %% @doc Process entry point.
+%%
 runner(ScopeID) ->
     {Svc, Ref, Work} = receive
-        {'start', S, R, W, Starter} ->
-            Starter ! {'started', R},
-            {S, R, W}
+        {'start', {_, RefIn, _} = SRW, Starter} ->
+            Starter ! {'started', RefIn},
+            SRW
     end,
     riak_core_job_service:starting(Svc, Ref),
-    Ctx1 = invoke({ScopeID, Svc}, riak_core_job:get('init', Work)),
-    riak_core_job_service:running(Svc, Ref),
-    Ctx2 = invoke(Ctx1, riak_core_job:get('run', Work)),
-    riak_core_job_service:cleanup(Svc, Ref),
-    Ret = invoke(Ctx2, riak_core_job:get('fini', Work)),
-    riak_core_job_service:done(Svc, Ref, Ret),
-    ok.
+    Ctx1 = riak_core_job:invoke(
+        riak_core_job:get('init', Work), [{ScopeID, Svc}]),
 
--spec invoke(term(), {module(), atom(), [term()]} | {fun(), [term()]})
-        -> term() | no_return().
-invoke(First, {Mod, Func, Args}) ->
-    erlang:apply(Mod, Func, [First | Args]);
-invoke(First, {Func, Args}) ->
-    erlang:apply(Func, [First | Args]).
+    riak_core_job_service:running(Svc, Ref),
+    Ctx2 = riak_core_job:invoke(
+        riak_core_job:get('run', Work), [Ctx1]),
+
+    riak_core_job_service:cleanup(Svc, Ref),
+    Ret = riak_core_job:invoke(
+        riak_core_job:get('fini', Work), [Ctx2]),
+
+    riak_core_job_service:done(Svc, Ref, Ret),
+    'ok'.

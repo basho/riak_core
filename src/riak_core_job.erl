@@ -21,9 +21,11 @@
 -module(riak_core_job).
 
 -export([
+    assign/2,
     cap/2,
     dummy/0,
     get/2,
+    invoke/1, invoke/2,
     job/1,
     passthrough/1,
     reply/2,
@@ -35,9 +37,11 @@
 ]).
 
 -export_type([
+    cid/0,
     class/0,
     func/0,
-    id/0,
+    gid/0,
+    iid/0,
     job/0,
     priority/0,
     stat/0,
@@ -46,10 +50,7 @@
     work/0
 ]).
 
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
--include("riak_core_vnode.hrl").
+-include("riak_core_job_internal.hrl").
 
 %% ===================================================================
 %% Vnode Jobs handled by riak_core_job_service
@@ -61,7 +62,7 @@
     %% The work, its 'class' (for management grouping), and where it's from.
     class   = 'anon'                    :: unspec() | class(),
     from    = 'ignore'                  :: sender() | pid(),
-    work                                :: work(),
+    work                                :: work() | '$unassigned',
 
     %% Currently unimplemented, but here so we don't need to define a new
     %% version of the record when (or if) it is ...
@@ -71,9 +72,9 @@
     %% originator of the work, and is included as an element in the 'gid'.
     %% If supplied, 'iid' is an internal tracking ID that means something to
     %% the originator and is carried around untouched.
-    gid                                 :: id(),
-    cid     = 'anon'                    :: unspec() | id(),
-    iid     = 'anon'                    :: unspec() | id(),
+    gid                                 :: gid(),
+    cid     = 'anon'                    :: unspec() | cid(),
+    iid     = 'anon'                    :: unspec() | iid(),
 
     %% Optional callback to be invoked if the job is killed or cancelled.
     killed  = 'undefined'               :: 'undefined' | func(),
@@ -82,20 +83,21 @@
     %% transition timestamps.
     stats   = []                        :: [stat()]
 }).
+-type job()     :: #riak_core_job_v1{}.
 
 %%
 %% The basic idea is that the specification of a unit of work is 3 functions:
-%% init, run, and fini. 'init' receives a tuple with two elements, the scope
-%% id and service, followed by its arguments and returns a context, which is
-%% provided to 'run' as its first argument, followed by its arguments. The
+%% init, run, and fini. 'init' receives its arguments followed by a tuple with
+%% two elements, the scope id and service, and returns a context, which is
+%% provided to 'run' as its last parameter, following its arguments. The
 %% pattern is repeated with 'fini', whose result is
 %% TODO: [how] is fini's result handled?
 %%
 %% We can't properly specify the types, but if we could they'd look something
 %% like this:
-%%  init_fun()  :: fun(({scope_id(), pid()}, arg1(), ..., argN()) -> context1().
-%%  run_fun()   :: fun((context1(), arg1(), ..., argN()) -> context2().
-%%  fini_fun()  :: fun((context2(), arg1(), ..., argN()) -> result().
+%%  init_fun()  :: fun((arg1() ... argN(), {scope_id(), pid()}) -> context1().
+%%  run_fun()   :: fun((arg1() ... argN(), context1()) -> context2().
+%%  fini_fun()  :: fun((arg1() ... argN(), context2()) -> result().
 %% In short, the arity of a function 'F' is one more than length(Args).
 %%
 %% A work object's defaults are such that each unspecified function simply
@@ -107,20 +109,36 @@
     run   = {?MODULE, 'passthrough', []}  :: func(),
     fini  = {?MODULE, 'passthrough', []}  :: func()
 }).
+-type work()    :: #riak_core_work_v1{}.
 
--type class()       :: unspec() | atom().
--type func()        :: {module(), atom(), [term()]} | {fun(), [term()]}.
--type id()          :: term().
--type job()         :: #riak_core_job_v1{}.
+-type cid()         :: term().
+-type class()       :: atom().
+-type func()        :: {module(), atom(), list()} | {fun(), list()}.
+-type gid()         :: {module(), cid(), uid()}.
+-type iid()         :: term().
 -type priority()    :: ?JOB_PRIO_MIN..?JOB_PRIO_MAX.
 -type stat()        :: {atom(), term()}.
 -type time()        :: erlang:timestamp().
+-type uid()         :: {node(), time(), reference()} | <<_:128>>.
 -type unspec()      :: 'anon'.
--type work()        :: #riak_core_work_v1{}.
 
 -define(MAX_INIT_SKEW_uSECS,    1500000).
--define(UNIQUE_ID(Mod, CID),    {CID, Mod, erlang:node(), erlang:make_ref()}).
 -define(CUR_TIMESTAMP,          os:timestamp()).
+
+% This should be unique across a cluster. If/when proper UUIDs are readily
+% available in riak_core we should consider using them instead, though there
+% may be CS value in this structure's information.
+-define(NEW_UID,    {erlang:node(), ?CUR_TIMESTAMP, erlang:make_ref()}).
+
+% A global id includes the id provided by the client for correlation.
+-define(NEW_GID(Mod, CID, UID), {CID, Mod, UID}).
+
+% Arbitrary valid UUID constant from www.uuidgenerator.net because we want v1
+% for guaranteed uniqueness and most OS generators don't use a MAC.
+-define(DUMMY_JOB_UID,          <<16#2086f0fa48f611e6beb89e71128cae77:128>>).
+
+-define(GLOBAL_ID(Mod, CID),    ?NEW_GID(Mod, CID, ?NEW_UID)).
+-define(DUMMY_JOB_ID,           ?NEW_GID(?MODULE, 'dummy', ?DUMMY_JOB_UID)).
 
 %% ===================================================================
 %% Public API
@@ -150,11 +168,15 @@ get(Field, Record) ->
 %%
 %% @doc Create and initialize a new job record.
 %%
+%% A Job can be created without a unit of work, to allow "filling in the blanks"
+%% at a later point in its traversal of the cluster. Work can only be assigned
+%% ONCE, either during initialization here or with assign/2 at a later time.
+%% Obviously, a unit of work must be assigned before the Job is runnable.
+%%
 %% The provided property list includes Key/Value tuples with which to
 %% initialize the object. The following tuples are recognized:
 %%
-%% {'work', Work} - Work is an object of the type returned by the work/1
-%% function. This initializer is REQUIRED!
+%% {'work', Work} - Work is an object of the type returned by work/1.
 %%
 %% {'class', atom()} - The job's class; default is 'anon'.
 %%
@@ -176,28 +198,33 @@ get(Field, Record) ->
 %% {'killed', func()} - A function, with arguments, to be called if the job
 %% is killed, cancelled, or crashed. The function may be specified as {M, F, A}
 %% or {F, A}; the default is 'undefined'.
-%% The function will be invoked with a Reason term prepended to the specified
+%% The function will be invoked with a Reason term appended to the specified
 %% Args list, so the arity of the function must be one more than length(A).
+%%
+%% @see {@link assign/2}
 %%
 job(Props) ->
     InitTS = ?CUR_TIMESTAMP,
-    %% 'work' is the only required field
+    %% 'work' can only be assigned once
     {Work, PW} = case lists:keytake('work', 1, Props) of
-        {'value', {_, W}, NewPW} when erlang:is_record(W, riak_core_work_v1) ->
-            {W, NewPW};
-        _ ->
-            erlang:error('badarg', [Props])
+        'false' ->
+            {'$unassigned', Props};
+        {'value', {_, WorkVal}, NewPW}
+                when erlang:is_record(WorkVal, riak_core_work_v1) ->
+            {WorkVal, NewPW};
+        {'value', Spec, _} ->
+            erlang:error('badarg', [Spec])
     end,
     %% 'cid' and 'module' get special handling because they're used in 'gid'
     {CID, PC} = case lists:keytake('cid', 1, PW) of
-        {'value', {_, C}, NewPC} ->
-            {C, NewPC};
+        {'value', {_, CidVal}, NewPC} ->
+            {CidVal, NewPC};
         'false' ->
             {'anon', PW}
     end,
     {Mod, PM} = case lists:keytake('module', 1, PC) of
-        {'value', {_, M}, NewPM} ->
-            {M, NewPM};
+        {'value', {_, ModVal}, NewPM} ->
+            {ModVal, NewPM};
         'false' ->
             {?MODULE, PC}
     end,
@@ -206,10 +233,10 @@ job(Props) ->
     %% Allow a little wiggle room for clock skew between hosts, but default to
     %% when this operation was called if it's too far in the future.
     {TS, PT} = case lists:keytake('created', 1, PM) of
-        {value, {_, T}, NewPT} ->
-            case timer:now_diff(InitTS, T) < ?MAX_INIT_SKEW_uSECS of
+        {value, {_, TsVal}, NewPT} ->
+            case timer:now_diff(InitTS, TsVal) < ?MAX_INIT_SKEW_uSECS of
                 'true' ->
-                    {T, NewPT};
+                    {TsVal, NewPT};
                 _ ->
                     {InitTS, PM}
             end;
@@ -217,9 +244,9 @@ job(Props) ->
             {InitTS, PM}
     end,
     jobp(PT, #riak_core_job_v1{
-        gid = ?UNIQUE_ID(Mod, CID),
-        cid = CID,
-        work = Work,
+        gid   = ?GLOBAL_ID(Mod, CID),
+        cid   = CID,
+        work  = Work,
         stats = [{'created', TS}]
     }).
 
@@ -249,31 +276,50 @@ job(Props) ->
 %% property list includes irrelevant values.
 %%
 work([_|_] = Props) ->
-    case lists:any(fun work_check/1, Props) of
+    case work_check(Props) of
         'true' ->
-            I = workp('init', Props),
-            R = workp('run',  Props),
-            F = workp('fini', Props),
-            #riak_core_work_v1{init = I, run = R, fini = F};
+            #riak_core_work_v1{
+                init  = workp('init', Props),
+                run   = workp('run',  Props),
+                fini  = workp('fini', Props) };
         _ ->
             erlang:error('badarg', [Props])
     end;
 work(Input) ->
     erlang:error('badarg', [Input]).
 
+-spec assign(job(), work()) -> job() | no_return().
+%%
+%% @doc Assigns a unit of work to the specified Job.
+%%
+%% A 'badarg' error is raised if the Job already contains a unit of work.
+%%
+%% @see {@link job/1}
+%%
+assign(#riak_core_job_v1{work = '$unassigned'} = Job, Work)
+        when erlang:is_record(Work, riak_core_work_v1) ->
+    Job#riak_core_job_v1{work = Work};
+assign(Job, Work) ->
+    erlang:error('badarg', [Job, Work]).
+
 -spec dummy() -> job().
 %%
 %% @doc Returns a valid Job object for testing/validation.
 %%
 %% The returned instance's 'work' element does nothing.
+%% Every element of the returned Job is constant across nodes and time,
+%% including the global ID (which should never appear anywhere else).
+%% The implementation strategy allows the returned value to effectively be a
+%% static constant, so it's a cheap call that doesn't create multiple instances.
 %%
 dummy() ->
-    job([
-        {'class',   'dummy'},
-        {'cid',     'dummy'},
-        {'prio',    ?JOB_PRIO_MIN},
-        {'work',    #riak_core_work_v1{}}
-    ]).
+    #riak_core_job_v1{
+        class   = 'dummy',
+        cid     = 'dummy',
+        gid     = ?DUMMY_JOB_ID,
+        prio    = ?JOB_PRIO_MIN,
+        work    = #riak_core_work_v1{}
+    }.
 
 -spec cap(atom(), job() | work()) -> job() | work() | no_return().
 %%
@@ -288,6 +334,33 @@ cap('v1', Object) when erlang:is_record(Object, riak_core_work_v1) ->
     Object;
 cap(Ver, Object) ->
     erlang:error('badarg', [Ver, Object]).
+
+-spec invoke(func()) -> term().
+%%
+%% @doc Invokes the specified function.
+%%
+%% Accepts functions as specified throughout the jobs API.
+%%
+invoke({Fun, FunArgs})
+        when erlang:is_function(Fun) andalso erlang:is_list(FunArgs) ->
+    erlang:apply(Fun, FunArgs);
+invoke({Mod, Func, FunArgs}) when erlang:is_atom(Mod)
+        andalso erlang:is_atom(Func) andalso erlang:is_list(FunArgs) ->
+    erlang:apply(Mod, Func, FunArgs).
+
+-spec invoke(func(), [term()]) -> term().
+%%
+%% @doc Invokes the specified function with appended arguments.
+%%
+%% Accepts functions as specified throughout the jobs API.
+%%
+invoke({Fun, FunArgs}, AddArgs) when erlang:is_function(Fun)
+        andalso erlang:is_list(FunArgs) andalso erlang:is_list(AddArgs) ->
+    erlang:apply(Fun, FunArgs ++ AddArgs);
+invoke({Mod, Func, FunArgs}, AddArgs)
+        when erlang:is_atom(Mod) andalso erlang:is_atom(Func)
+        andalso erlang:is_list(FunArgs) andalso erlang:is_list(AddArgs) ->
+    erlang:apply(Mod, Func, FunArgs ++ AddArgs).
 
 -spec passthrough(term()) -> term().
 %%
@@ -314,7 +387,7 @@ reply(#riak_core_job_v1{from = From}, Msg) ->
 reply('ignore', Msg) ->
     Msg;
 reply(From, Msg) when erlang:is_pid(From) ->
-    _ = erlang:send(From, Msg, [noconnect, nosuspend]),
+    _ = erlang:send(From, Msg, ['noconnect', 'nosuspend']),
     Msg;
 reply(From, Msg) when erlang:is_tuple(From) ->
     _ = riak_core_vnode:reply(From, Msg),
@@ -332,6 +405,8 @@ reply(From, Msg) when erlang:is_tuple(From) ->
 %% Following are some (though possibly not all) of the errors that may be
 %% reported:
 %%
+%% {'error', 'no_work'} - No unit of work has been assigned to the Job yet.
+%%
 %% {'error', {'no_module', {Module, Function, Arity}}} - The specified Module
 %% is not present in the system.
 %%
@@ -342,10 +417,13 @@ reply(From, Msg) when erlang:is_tuple(From) ->
 %% Function accepts Arity arguments, but the specification would call it with
 %% Expected arguments.
 %%
+%% @see {@link assign/2}
+%% @see {@link job/1}
+%%
 runnable({Fun, Args})
         when erlang:is_function(Fun) andalso erlang:is_list(Args) ->
     NArgs = (erlang:length(Args) + 1),
-    case erlang:fun_info(Fun, arity) of
+    case erlang:fun_info(Fun, 'arity') of
         {_, NArgs} ->
             'true';
         {_, Arity} ->
@@ -361,21 +439,21 @@ runnable({Mod, Func, Args})
     Arity = (erlang:length(Args) + 1),
     case code:which(Mod) of
         'non_existing' ->
-            {error, {no_module, {Mod, Func, Arity}}};
+            {'error', {'no_module', {Mod, Func, Arity}}};
         _ ->
-            case lists:member({Func, Arity}, Mod:module_info(exports)) of
+            case lists:member({Func, Arity}, Mod:module_info('exports')) of
                 'true' ->
                     'true';
                 _ ->
                     {'error', {'no_function', {Mod, Func, Arity}}}
             end
     end;
-runnable(#riak_core_work_v1{init = I, run = R, fini = F}) ->
-    case runnable(I) of
+runnable(#riak_core_work_v1{init = Init, run = Run, fini = Fini}) ->
+    case runnable(Init) of
         true ->
-            case runnable(R) of
+            case runnable(Run) of
                 'true' ->
-                    runnable(F);
+                    runnable(Fini);
                 RR ->
                     RR
             end;
@@ -391,6 +469,8 @@ runnable(#riak_core_job_v1{work = Work, killed = Killed}) ->
         Err ->
             Err
     end;
+runnable('$unassigned') ->
+    {'error', 'no_work'};
 runnable(Object) ->
     erlang:error('badarg', [Object]).
 
@@ -465,28 +545,30 @@ jobp([{'killed', {Fun, Args} = CB} | Props], Job)
 jobp([Prop | _], _) ->
     erlang:error('badarg', [Prop]).
 
-work_check({'init', _}) ->
+work_check([{'init', _} | _]) ->
     'true';
-work_check({'run', _}) ->
+work_check([{'run', _} | _]) ->
     'true';
-work_check({'fini', _}) ->
+work_check([{'fini', _} | _]) ->
     'true';
-work_check(_) ->
+work_check([_ | Props]) ->
+    work_check(Props);
+work_check([]) ->
     'false'.
 
 workp(Key, Props) ->
     case lists:keyfind(Key, 1, Props) of
         'false' ->
             {?MODULE, 'passthrough', []};
-        {_, {Mod, Func, Args} = F}
+        {_, {Mod, Func, Args} = MFA}
                 when erlang:is_atom(Mod)
                 andalso erlang:is_atom(Func)
                 andalso erlang:is_list(Args) ->
-            F;
-        {_, {Fun, Args} = F}
+            MFA;
+        {_, {Fun, Args} = FA}
                 when erlang:is_function(Fun)
                 andalso erlang:is_list(Args) ->
-            F;
+            FA;
         Bad ->
             erlang:error('badarg', [Bad])
     end.

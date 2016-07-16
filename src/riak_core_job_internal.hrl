@@ -37,6 +37,7 @@
 -endif.
 
 -include("riak_core_vnode.hrl").
+-include("riak_core_job.hrl").
 
 %% These types are exported by one or more modules.
 -type scope_type()  ::  atom().
@@ -83,7 +84,7 @@
 %% Specific terms that get mapped between the worker pool facade and the new
 %% API services.
 %% When we're sure they're stable, it may be worth moving (some of) these to
-%% riak_core_vnode.hrl.
+%% riak_core_job.hrl.
 -define(JOB_ERR_CANCELED,       'canceled').
 -define(JOB_ERR_CRASHED,        'crashed').
 -define(JOB_ERR_KILLED,         'killed').

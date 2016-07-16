@@ -45,7 +45,7 @@
 -export([start_link/0]).
 
 % Private API
--export([start_link/1, start_link/3, start_scope/4, stop_scope/2]).
+-export([start_link/1, start_link/2, start_scope/3, stop_scope/2]).
 
 % supervisor callbacks
 -export([init/1]).
@@ -54,7 +54,6 @@
 
 % type shorthand
 -type config()  ::  riak_core_job_service:config().
--type dummy()   ::  riak_core_job:job().
 
 %% ===================================================================
 %% Public API
@@ -78,25 +77,25 @@ start_link() ->
 start_link(WorkSupId) ->
     supervisor:start_link(?MODULE, WorkSupId).
 
--spec start_link(scope_sup_id(), config(), dummy())
+-spec start_link(scope_sup_id(), config())
         -> {'ok', pid()} | {'error', term()}.
 %%
 %% @doc Start a per-scope service supervisor.
 %%
-start_link(ScopeSupId, SvcConfig, DummyJob) ->
-    supervisor:start_link(?MODULE, {ScopeSupId, SvcConfig, DummyJob}).
+start_link(ScopeSupId, SvcConfig) ->
+    supervisor:start_link(?MODULE, {ScopeSupId, SvcConfig}).
 
--spec start_scope(pid(), scope_id(), config(), dummy())
+-spec start_scope(pid(), scope_id(), config())
         -> {'ok', pid()} | {'error', term()}.
 %%
 %% @doc Start a per-scope supervision tree.
 %%
 %% Returns {'ok', pid()} if either started successfully or already running.
 %%
-start_scope(JobsSup, ScopeID, SvcConfig, DummyJob) ->
+start_scope(JobsSup, ScopeID, SvcConfig) ->
     ScopeSupId = ?SCOPE_SUP_ID(ScopeID),
-    case supervisor:start_child(JobsSup, {ScopeSupId, {?MODULE, 'start_link',
-            [ScopeSupId, SvcConfig, DummyJob]}, 'permanent',
+    case supervisor:start_child(JobsSup, {ScopeSupId,
+            {?MODULE, 'start_link', [ScopeSupId, SvcConfig]}, 'permanent',
             ?SCOPE_SUP_SHUTDOWN_TIMEOUT, 'supervisor', [?MODULE]}) of
         {'ok', _} = Ret ->
             Ret;
@@ -109,8 +108,6 @@ start_scope(JobsSup, ScopeID, SvcConfig, DummyJob) ->
 -spec stop_scope(pid(), scope_id()) -> 'ok' | {'error', term()}.
 %%
 %% @doc Stop a per-scope supervision tree.
-%%
-%% Returns {'ok', pid()} if either started successfully or already running.
 %%
 stop_scope(JobsSup, ScopeID) ->
     ScopeSupId = ?SCOPE_SUP_ID(ScopeID),
@@ -128,7 +125,7 @@ stop_scope(JobsSup, ScopeID) ->
 %% Callbacks
 %% ===================================================================
 
--spec init(?MODULE | {scope_sup_id(), config(), dummy()} | work_sup_id())
+-spec init(?MODULE | {scope_sup_id(), config()} | work_sup_id())
         -> 'ignore' | {'ok', {
                 {supervisor:strategy(), pos_integer(), pos_integer()},
                 [supervisor:child_spec()] }}.
@@ -139,14 +136,13 @@ stop_scope(JobsSup, ScopeID) ->
 % many scopes could end up running on this node we kinda punt for now.
 % TODO: should we try to do something intelligent based on ring size?
 %
-init({?SCOPE_SUP_ID(ScopeID) = Id, SvcConfig, DummyJob}) ->
+init({?SCOPE_SUP_ID(ScopeID) = Id, SvcConfig}) ->
     riak_core_job_manager:register(Id, erlang:self()),
     ScopeSvcId = ?SCOPE_SVC_ID(ScopeID),
     WorkSupId = ?WORK_SUP_ID(ScopeID),
     {'ok', {{'rest_for_one', 30, 60}, [
         {ScopeSvcId,
-            {'riak_core_job_service', 'start_link',
-                [ScopeSvcId, SvcConfig, DummyJob]},
+            {'riak_core_job_service', 'start_link', [ScopeSvcId, SvcConfig]},
             'permanent', ?SCOPE_SVC_SHUTDOWN_TIMEOUT,
             'worker', ['riak_core_job_service']},
         {WorkSupId,
