@@ -83,7 +83,7 @@
 {validator,
   "valid_ipaddr",
   "must be a valid IP address",
-  fun(AddrString) -> 
+  fun(AddrString) ->
     case inet_parse:address(AddrString) of
       {ok, _} -> true;
       {error, _} -> false
@@ -200,3 +200,45 @@
     {datatype, {duration, ms}},
     hidden
 ]}.
+
+%% Async Job Management
+%%
+%% This is a translation for mappings that appear in other schema files.
+%% Mappings are from "async.enable.$class" to "riak_core.job_accept_class"
+%% with required attributes [merge, {datatype, flag}]. Other attributes, such
+%% as 'hidden' or {default, X} are fine, as they're not seen here. Job classes
+%% that should be enabled by default should have a {default, on} attribute, as
+%% the runtime filter only defaults to accept when no values have been enabled
+%% from any schema file.
+%%
+%% Example:
+%%  {mapping, "async.enable.some_thing", "riak_core.job_accept_class", [
+%%      merge,
+%%      {datatype, flag},
+%%      {default, on},
+%%      hidden
+%%  ]}.
+%%  {mapping, "async.enable.other_thing", "riak_core.job_accept_class", [
+%%      merge,
+%%      {datatype, flag},
+%%      {default, off},
+%%      hidden
+%%  ]}.
+%% Results in:
+%%  {riak_core, [
+%%      ...
+%%      {job_accept_class, [some_thing]}
+%%      ...
+%%  ]}.
+%%
+{translation,
+ "riak_core.job_accept_class",
+ fun(Conf) ->
+    Fold = fun({"async.enable." ++ Tag, on}, Result) ->
+            [erlang:list_to_atom(Tag) | Result];
+        (_, Result) ->
+            Result
+    end,
+    lists:foldl(Fold, [],
+        cuttlefish_variable:filter_by_prefix("async.enable.", Conf))
+ end}.
