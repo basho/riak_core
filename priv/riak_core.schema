@@ -234,11 +234,11 @@
 {translation,
  "riak_core.job_accept_class",
  fun(Conf) ->
-    Fold = fun({"async.enable." ++ Tag, on}, Result) ->
+    Fold = fun({["async", "enable", Tag], true}, Result) ->
             [erlang:list_to_atom(Tag) | Result];
         (_, Result) ->
             Result
     end,
-    lists:foldl(Fold, [],
-        cuttlefish_variable:filter_by_prefix("async.enable.", Conf))
+    lists:sort(lists:foldl(Fold, [],
+        cuttlefish_variable:filter_by_prefix(["async", "enable"], Conf)))
  end}.
