@@ -713,9 +713,7 @@ job_class_enabled(Class) ->
     case app_helper:get_env(riak_core, job_accept_class) of
         undefined ->
             true;
-        [] ->
-            false;
-        [_|_] = EnabledClasses ->
+        EnabledClasses ->
             lists:member(Class, EnabledClasses)
     end.
 
