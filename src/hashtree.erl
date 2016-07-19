@@ -1492,10 +1492,10 @@ fake_close(State) ->
 %% LevelDB store that is used by `compare', therefore isolating the
 %% compare from newer/concurrent insertions into the tree.
 level_snapshot_test() ->
-    application:get_env(riak_core, hashtree_backend, eleveldb),
+    application:set_env(riak_core, hashtree_backend, eleveldb),
     snapshot_t().
 rocks_snapshot_test() ->
-    application:get_env(riak_core, hashtree_backend, erocksdb),
+    application:set_env(riak_core, hashtree_backend, erocksdb),
     snapshot_t().
 
 snapshot_t() ->
@@ -1513,10 +1513,10 @@ snapshot_t() ->
     ok.
 
 level_delta_test() ->
-    application:get_env(riak_core, hashtree_backend, eleveldb),
+    application:set_env(riak_core, hashtree_backend, eleveldb),
     delta_t().
 rocks_delta_test() ->
-    application:get_env(riak_core, hashtree_backend, erocksdb),
+    application:set_env(riak_core, hashtree_backend, erocksdb),
     delta_t().
 
 delta_t() ->
@@ -1531,10 +1531,10 @@ delta_t() ->
     ok.
 
 level_delete_without_update_test() ->
-    application:get_env(riak_core, hashtree_backend, eleveldb),
+    application:set_env(riak_core, hashtree_backend, eleveldb),
     delete_without_update_t().
 rocks_delete_without_update_test() ->
-    application:get_env(riak_core, hashtree_backend, erocksdb),
+    application:set_env(riak_core, hashtree_backend, erocksdb),
     delete_without_update_t().
 
 delete_without_update_t() ->
@@ -1567,11 +1567,11 @@ delete_without_update_t() ->
     ?assertEqual([{missing, <<"k">>}], Diff2).
 
 level_opened_closed_test() ->
-    application:get_env(riak_core, hashtree_backend, eleveldb),
+    application:set_env(riak_core, hashtree_backend, eleveldb),
     opened_closed_t().
 
 rocks_opened_closed_test() ->
-    application:get_env(riak_core, hashtree_backend, erocksdb),
+    application:set_env(riak_core, hashtree_backend, erocksdb),
     opened_closed_t().
 
 opened_closed_t() ->
