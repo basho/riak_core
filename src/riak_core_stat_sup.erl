@@ -47,7 +47,7 @@ start_link() ->
 
 init([]) ->
     Children = lists:flatten(
-                 [?CHILD(folsom_sup, supervisor),
+                 [
                   ?CHILD(riak_core_stats_sup, supervisor)
                  ]),
 
