@@ -1,3 +1,4 @@
+{"1.1.0",
 [{<<"basho_stats">>,{pkg,<<"basho_stats">>,<<"1.0.3">>},0},
  {<<"bear">>,{pkg,<<"bear">>,<<"0.8.3">>},2},
  {<<"blume">>,{pkg,<<"blume">>,<<"0.1.0">>},0},
@@ -5,7 +6,7 @@
  {<<"clique">>,{pkg,<<"clique">>,<<"3.0.1">>},0},
  {<<"cuttlefish">>,{pkg,<<"cuttlefish">>,<<"2.0.7">>},0},
  {<<"edown">>,{pkg,<<"edown">>,<<"0.7.0">>},0},
- {<<"eleveldb">>,{pkg,<<"eleveldb">>,<<"2.1.3">>},0},
+ {<<"eleveldb">>,{pkg,<<"eleveldb">>,<<"2.2.19">>},0},
  {<<"erocksdb">>,{pkg,<<"erocksdb">>,<<"0.4.1">>},0},
  {<<"exometer_core">>,{pkg,<<"basho_exometer_core">>,<<"1.0.0">>},0},
  {<<"folsom">>,{pkg,<<"folsom">>,<<"0.8.3">>},1},
@@ -17,4 +18,27 @@
  {<<"poolboy">>,{pkg,<<"basho_poolboy">>,<<"0.8.1-p3">>},0},
  {<<"riak_ensemble">>,{pkg,<<"riak_ensemble">>,<<"2.1.3">>},0},
  {<<"riak_sysmon">>,{pkg,<<"riak_sysmon">>,<<"2.1.2">>},0},
- {<<"setup">>,{pkg,<<"setup">>,<<"1.7.0">>},1}].
+ {<<"setup">>,{pkg,<<"setup">>,<<"1.7.0">>},1}]}.
+[
+{pkg_hash,[
+ {<<"basho_stats">>, <<"7E1174151509C64FCC1934120ED32295E14F84DAAE7F84926BA2C8D3700D146C">>},
+ {<<"bear">>, <<"866002127A97932720A0D475D8582C98EC5FB78DB3A18DFE7EAF91594D9024B8">>},
+ {<<"blume">>, <<"62DDA46B43E24D4B8D5407B8F6DDB78EBD2A8CDC84D9BC822CDDAEF6F402F3EB">>},
+ {<<"chash">>, <<"AB209E4985C7BEDBA6E9F7B1412586A42EBCD0CB3B29CDCF2605EC605FD1A7DF">>},
+ {<<"clique">>, <<"8C88F2349C7C550D3A2F44E63C30128782B724B0987084370A120700C3EA7564">>},
+ {<<"cuttlefish">>, <<"67F007E7564F1C81066DCCB86A6453DA051E937C8685984B888BFF92682CB6AD">>},
+ {<<"edown">>, <<"6803599606B10F8E328D6D60C44CD16244CD2429908894C415FCE4211C3BFEFD">>},
+ {<<"eleveldb">>, <<"81339BEB68DA0A5CDFF8662D5F4E8089B83530A7B8238D3F63B734A4D4C8040D">>},
+ {<<"erocksdb">>, <<"59A3258B1460D0E64F7575D912D9AF86FA5AA56729ABFF18E4D3E4FD4A5E01E0">>},
+ {<<"exometer_core">>, <<"BB4BEB19673AE97AE50742AD48E90973BAA07F2F122E811AE63ADF166C2F6FF2">>},
+ {<<"folsom">>, <<"71CFF146152FA95E6092E62119F9DC96888660111E7B61853C8FDCF80598A4E0">>},
+ {<<"getopt">>, <<"B17556DB683000BA50370B16C0619DF1337E7AF7ECBF7D64FBF8D1D6BCE3109B">>},
+ {<<"goldrush">>, <<"349A351D17C71C2FDAA18A6C2697562ABE136FEC945F147B381F0CF313160228">>},
+ {<<"lager">>, <<"25DC81BC3659B62F5AB9BD073E97DDD894FC4C242019FCCEF96F3889D7366C97">>},
+ {<<"parse_trans">>, <<"3F5F7B402928FB9FD200C891E635DE909045D1EFAC40CE3F924D3892898F85EB">>},
+ {<<"pbkdf2">>, <<"11C23279FDED5C0027AB3996CFAE77805521D7EF4BABDE2BD7EC04A9086CF499">>},
+ {<<"poolboy">>, <<"EBA815CD24871C37BF0538221D3E12EE14DC015CA5DCA74696E579E53F0FF9D5">>},
+ {<<"riak_ensemble">>, <<"5029BD5B87D37B5E7ED702CDE3ACC1AC4ACAAA82B6DFE234C2BF98A9D7CC95E9">>},
+ {<<"riak_sysmon">>, <<"24F804606D65DE1F020138F5E6E3E17BE4C5A41567D5170306378253E3705BAE">>},
+ {<<"setup">>, <<"15DF8E57C6DF9755E22BFB1AEF0C640BD97E9889396FDFB2A85A5536A9043674">>}]}
+].
