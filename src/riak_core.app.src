@@ -1,6 +1,6 @@
 {application,riak_core,
     [{description,"Riak Core"},
-     {vsn,"2.2.5+p1"},
+     {vsn,"2.2.6"},
      {modules,[]},
      {registered,[]},
      {included_applications,[riak_ensemble,chash]},
