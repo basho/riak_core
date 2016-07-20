@@ -3,7 +3,7 @@
      {vsn,"2.2.5+p1"},
      {modules,[]},
      {registered,[]},
-     {included_applications,[folsom,riak_ensemble,chash]},
+     {included_applications,[riak_ensemble,chash]},
      {applications,
          [kernel,stdlib,lager,sasl,crypto,riak_sysmon,os_mon,basho_stats,
           eleveldb,erocksdb,pbkdf2,poolboy,exometer_core,clique,folsom]},
