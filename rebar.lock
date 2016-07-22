@@ -8,7 +8,7 @@
  {<<"edown">>,{pkg,<<"edown">>,<<"0.7.0">>},0},
  {<<"eleveldb">>,{pkg,<<"eleveldb">>,<<"2.2.19">>},0},
  {<<"erocksdb">>,{pkg,<<"erocksdb">>,<<"0.4.1">>},0},
- {<<"exometer_core">>,{pkg,<<"basho_exometer_core">>,<<"1.0.0">>},0},
+ {<<"exometer_core">>,{pkg,<<"basho_exometer_core">>,<<"1.0.1">>},0},
  {<<"folsom">>,{pkg,<<"folsom">>,<<"0.8.3">>},0},
  {<<"getopt">>,{pkg,<<"getopt">>,<<"0.8.2">>},1},
  {<<"goldrush">>,{pkg,<<"goldrush">>,<<"0.1.7">>},0},
