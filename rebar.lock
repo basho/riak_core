@@ -16,7 +16,7 @@
  {<<"parse_trans">>,{pkg,<<"parse_trans">>,<<"2.9.0">>},1},
  {<<"pbkdf2">>,{pkg,<<"pbkdf2">>,<<"2.0.0">>},0},
  {<<"poolboy">>,{pkg,<<"basho_poolboy">>,<<"0.8.1-p3">>},0},
- {<<"riak_ensemble">>,{pkg,<<"riak_ensemble">>,<<"2.1.3">>},0},
+ {<<"riak_ensemble">>,{pkg,<<"riak_ensemble_ng">>,<<"2.2.0">>},0},
  {<<"riak_sysmon">>,{pkg,<<"riak_sysmon">>,<<"2.1.2">>},0},
  {<<"setup">>,{pkg,<<"setup">>,<<"1.7.0">>},1}]}.
 [
