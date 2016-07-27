@@ -755,7 +755,7 @@ timezone([]) ->
                                 [{default, "not configured"}]),
     io:format("~s~n", [TZ]);
 timezone([TZString]) ->
-    TZ = jam:process(jam_iso8601:parse_tz(TZString)),
+    TZ = jam:compile(jam_iso8601:parse_tz(TZString)),
     attempt_set_timezone(jam:is_valid(TZ), TZ, TZString).
 
 attempt_set_timezone(false, _TZ, String) ->
@@ -766,7 +766,7 @@ attempt_set_timezone(true, TZ, _String) ->
     riak_core_metadata:put({riak_core, timezone}, string,
                            NewString),
     riak_core_metadata:put({riak_core, timezone}, seconds,
-                           jam:tz_offset(TZ)),
+                           jam:tz_to_seconds(TZ)),
     io:format("Success, timezone is now configured to '~s'~n",
               [NewString]).
 
