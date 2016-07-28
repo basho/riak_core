@@ -31,7 +31,8 @@
          print_users/1, print_user/1, print_sources/1,
          print_groups/1, print_group/1, print_grants/1,
          security_enable/1, security_disable/1, security_status/1, ciphers/1,
-	 stat_show/1, stat_info/1, stat_enable/1, stat_disable/1, stat_reset/1]).
+         timezone/1,
+         stat_show/1, stat_info/1, stat_enable/1, stat_disable/1, stat_reset/1]).
 
 %% New CLI API
 -export([command/1]).
@@ -751,6 +752,27 @@ commit_staged([]) ->
                       "may have changed, please verify the~n"
                       "plan and try to commit again~n")
     end.
+
+timezone([]) ->
+    TZ = riak_core_metadata:get({riak_core, timezone}, string,
+                                [{default, "not configured"}]),
+    io:format("~s~n", [TZ]);
+timezone([TZString]) ->
+    TZ = jam:compile(jam_iso8601:parse_tz(TZString)),
+    attempt_set_timezone(jam:is_valid(TZ), TZ, TZString).
+
+attempt_set_timezone(false, _TZ, String) ->
+    io:format("Failed, unrecognized timezone string '~s'~n",
+              [String]);
+attempt_set_timezone(true, TZ, _String) ->
+    NewString = jam_iso8601:to_string(TZ, [{z, false}]),
+    riak_core_metadata:put({riak_core, timezone}, string,
+                           NewString),
+    riak_core_metadata:put({riak_core, timezone}, seconds,
+                           jam:tz_to_seconds(TZ)),
+    io:format("Success, timezone is now configured to '~s'~n",
+              [NewString]).
+
 
 transfer_limit([]) ->
     {Limits, Down} =
