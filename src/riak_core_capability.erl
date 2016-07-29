@@ -373,7 +373,7 @@ add_node2(Node, Capabilities, State) ->
 %% is not declared. We must remove it from our local copy of its supported modes
 %% so that the default value can be used.
 filter_removed_caps(Node, Capabilities, State1) ->
-    {NodeSupported, _Removed} = lists:partition(
+    NodeSupported = lists:filter(
         fun({CapName, _}) ->
             lists:keymember(CapName, 1, Capabilities)
         end, get_supported(Node, State1)),
