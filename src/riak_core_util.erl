@@ -66,7 +66,9 @@
          make_newest_fold_req/1,
          proxy_spawn/1,
          proxy/2,
-         job_class_enabled/1
+         job_class_enabled/1,
+         job_class_disabled_message/2,
+         report_job_request_disposition/6
         ]).
 
 -include("riak_core_vnode.hrl").
@@ -716,6 +718,34 @@ job_class_enabled(Class) ->
         EnabledClasses ->
             lists:member(Class, EnabledClasses)
     end.
+
+-spec job_class_disabled_message(atom(), atom()) -> binary() | string().
+%% @doc The error message to be returned to a client for a disabled job class.
+%% WARNING:
+%%  This function may not remain in this form once the Jobs API is live!
+%% @deprecated  Likely to be refactored in v2.3.
+job_class_disabled_message(binary, Class) ->
+    ClassBin = erlang:atom_to_binary(Class, latin1),
+    <<"Operation '", ClassBin/binary, "' is not enabled">>;
+job_class_disabled_message(text, Class) ->
+    ClassStr = erlang:atom_to_list(Class),
+    lists:flatten(["Operation '", ClassStr, "' is not enabled"]).
+
+-spec report_job_request_disposition(
+    boolean(), atom(), module(), atom(), pos_integer(), term())
+        -> ok | {error, term()}.
+%% @doc Report/record the disposition of an async job request with debug info.
+%% Logs an appropriate message and reports to appropriate recipients.
+%% This function is likely to be extended to accept a Job as well as a Class
+%% when the Jobs API is live.
+report_job_request_disposition(true, Class, Mod, Func, Line, Client) ->
+    lager:log(info,
+        [{pid, erlang:self()}, {module, Mod}, {function, Func}, {line, Line}],
+        "Request '~s' accepted from ~p", [Class, Client]);
+report_job_request_disposition(false, Class, Mod, Func, Line, Client) ->
+    lager:log(warning,
+        [{pid, erlang:self()}, {module, Mod}, {function, Func}, {line, Line}],
+        "Request '~s' disabled from ~p", [Class, Client]).
 
 %% ===================================================================
 %% EUnit tests
