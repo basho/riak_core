@@ -246,7 +246,7 @@
             [{erlang:list_to_atom(Mod), erlang:list_to_atom(Op)} | Result];
         ({[_, _, _, _], false}, Result) ->
             Result;
-        ([_, _, _, _] = Setting, _) ->
+        ({[_, _, _, _], _} = Setting, _) ->
             cuttlefish:invalid(io_lib:format("~p", [Setting]));
         (_, Result) ->
             Result
