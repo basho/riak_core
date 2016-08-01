@@ -21,7 +21,8 @@
 ]}.
 
 %% ring_size validators
-{validator, "ring_size_max", "2048 and larger are supported, but considered advanced config",
+{validator, "ring_size_max",
+ "2048 and larger are supported, but considered advanced config",
  fun(Size) ->
   Size =< 1024
  end}.
@@ -204,30 +205,36 @@
 %% Async Job Management
 %%
 %% This is a translation for mappings that appear in other schema files.
-%% Mappings are from "async.enable.$class" to "riak_core.job_accept_class"
-%% with required attributes [merge, {datatype, flag}]. Other attributes, such
-%% as 'hidden' or {default, X} are fine, as they're not seen here. Job classes
-%% that should be enabled by default should have a {default, on} attribute, as
-%% the runtime filter only defaults to accept when no values have been enabled
-%% from any schema file.
+%% Mappings are from "cluster.job.$namespace.$operation"* to
+%% "riak_core.job_accept_class" with required attributes
+%%  [merge, {datatype, {flag, enabled, disabled}}].**
+%% *  Mappings are only performed on elements with exactly the number of
+%%    segments shown - any other number of elements, even with a matching
+%%    prefix, is ignored.
+%% ** The 'datatype' should be 'flag', and 'enabled'/'disabled' are our
+%%    conventions, but any OnFlag/OffFlag pair can be used as long as they map
+%%    to boolean values.
+%% Other attributes, such as 'hidden' or {default, X} are fine, since they
+%% don't make it down the stack to here.
+%% Job classes that should be enabled by default MUST have a {default, enabled}
+%% attribute, as the runtime filter only defaults to accept when no values have
+%% been set from ANY schema file.
 %%
 %% Example:
-%%  {mapping, "async.enable.some_thing", "riak_core.job_accept_class", [
+%%  {mapping, "cluster.job.harry.fold", "riak_core.job_accept_class", [
 %%      merge,
-%%      {datatype, flag},
-%%      {default, on},
-%%      hidden
+%%      {datatype, {flag, enabled, disabled}},
+%%      {default, enabled}
 %%  ]}.
-%%  {mapping, "async.enable.other_thing", "riak_core.job_accept_class", [
+%%  {mapping, "cluster.job.alice.list", "riak_core.job_accept_class", [
 %%      merge,
-%%      {datatype, flag},
-%%      {default, off},
-%%      hidden
+%%      {datatype, {flag, enabled, disabled}},
+%%      {default, disabled}
 %%  ]}.
 %% Results in:
 %%  {riak_core, [
 %%      ...
-%%      {job_accept_class, [some_thing]}
+%%      {job_accept_class, [{harry, fold}]}
 %%      ...
 %%  ]}.
 %%
@@ -235,13 +242,15 @@
  "riak_core.job_accept_class",
  fun(Conf) ->
     Fold =
-     fun({["async", "enable", Tag], true}, Result) ->
-            [erlang:list_to_atom(Tag) | Result];
-        ({["async", "enable", _], false}, Result) ->
+     fun({[_, _, Mod, Op], true}, Result) ->
+            [{erlang:list_to_atom(Mod), erlang:list_to_atom(Op)} | Result];
+        ({[_, _, _, _], false}, Result) ->
             Result;
-        (Setting, _) ->
-            cuttlefish:invalid(io_lib:format("~p", [Setting]))
+        ([_, _, _, _] = Setting, _) ->
+            cuttlefish:invalid(io_lib:format("~p", [Setting]));
+        (_, Result) ->
+            Result
     end,
     lists:sort(lists:foldl(Fold, [],
-        cuttlefish_variable:filter_by_prefix(["async", "enable"], Conf)))
+        cuttlefish_variable:filter_by_prefix(["cluster", "job"], Conf)))
  end}.
