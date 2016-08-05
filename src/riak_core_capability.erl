@@ -349,7 +349,11 @@ remove_members(Ring, State=#state{supported=Supported}) ->
 %% to determine capabilities through RPC to the node. If RPC fails, use
 %% default values. However, unresolved nodes will be marked as such and RPC
 %% re-attempted at the next server tick.
-add_node(Node, [], State=#state{unknown=Unknown}) ->
+add_node(Node, Capabilities, State1) ->
+    State2 = add_node2(Node, Capabilities, State1),
+    filter_removed_caps(Node, Capabilities, State2).
+
+add_node2(Node, [], State=#state{unknown=Unknown}) ->
     {Capabilities, Resolved} = query_capabilities(Node, State),
     Unknown2 = case Resolved of
                    true ->
@@ -359,8 +363,22 @@ add_node(Node, [], State=#state{unknown=Unknown}) ->
                end,
     State2 = State#state{unknown=Unknown2},
     add_node_capabilities(Node, Capabilities, State2);
-add_node(Node, Capabilities, State) ->
+add_node2(Node, Capabilities, State) ->
     add_node_capabilities(Node, Capabilities, State).
+
+%% Remove supported capabilities for a node where it no longer appears in the
+%% rings capabilities for the node.
+%%
+%% This can occur when another node downgrades to a version where the capability
+%% is not declared. We must remove it from our local copy of its supported modes
+%% so that the default value can be used.
+filter_removed_caps(Node, Capabilities, State1) ->
+    NodeSupported = lists:filter(
+        fun({CapName, _}) ->
+            lists:keymember(CapName, 1, Capabilities)
+        end, get_supported(Node, State1)),
+    Supported = orddict:store(Node, NodeSupported, State1#state.supported),
+    State1#state{ supported = Supported }.
 
 add_node_capabilities(Node, Capabilities, State) ->
     lists:foldl(fun({Capability, Supported}, StateAcc) ->
