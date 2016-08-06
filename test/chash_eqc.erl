@@ -34,7 +34,7 @@
 -define(TEST_ITERATIONS, 50).
 -define(QC_OUT(P),
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
--define(RINGTOP, trunc(math:pow(2,160)-1)).  % SHA-1 space
+-define(RINGTOP, trunc(math:pow(2,160))).  % SHA-1 space
 
 -export([check/0,
          test/0,
