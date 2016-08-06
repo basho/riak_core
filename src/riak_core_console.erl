@@ -782,9 +782,6 @@ transfer_limit([]) ->
                           io:format("(offline)    ~p~n", [Node])
                   end, Down),
     io:format("~79..-s~n", [""]),
-    io:format("Note: You can change transfer limits with "
-              "'riak-admin transfer_limit <limit>'~n"
-              "      and 'riak-admin transfer_limit <node> <limit>'~n"),
     ok;
 transfer_limit([LimitStr]) ->
     {Valid, Limit} = check_limit(LimitStr),
