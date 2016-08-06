@@ -48,6 +48,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+-type change() :: [{node(), action()}].
+
 -type action() :: leave
                 | remove
                 | {replace, node()}
@@ -62,7 +64,7 @@
 -record(state, {
           last_ring_id,
           %% The set of staged cluster changes
-          changes :: [{node(), action()}],
+          changes :: [change()],
 
           %% Ring computed during the last planning stage based on
           %% applying a set of staged cluster changes. When commiting
@@ -92,7 +94,7 @@ start_link() ->
 %%      modifications that correspond to each resulting cluster transition
 %%      (eg. the initial transition that applies the staged changes, and
 %%      any additional transitions triggered by later rebalancing).
--spec plan() -> {error, term()} | {ok, [action()], [ring_transition()]}.
+-spec plan() -> {error, term()} | {ok, [change()], [ring_transition()]}.
 plan() ->
     gen_server:call(claimant(), plan, infinity).
 
