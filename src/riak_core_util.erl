@@ -715,6 +715,8 @@ proxy(Parent, Fun) ->
 -spec enable_job_class(atom(), atom()) -> ok | {error, term()}.
 %% @doc Enables the specified Application/Operation job class.
 %% This is the public API for use via RPC.
+%% WARNING: This function is not suitable for parallel execution with itself
+%% or its complement disable_job_class/2.
 enable_job_class(Application, Operation)
         when erlang:is_atom(Application) andalso erlang:is_atom(Operation) ->
     enable_job_class({Application, Operation});
@@ -724,6 +726,8 @@ enable_job_class(Application, Operation) ->
 -spec disable_job_class(atom(), atom()) -> ok | {error, term()}.
 %% @doc Disables the specified Application/Operation job class.
 %% This is the public API for use via RPC.
+%% WARNING: This function is not suitable for parallel execution with itself
+%% or its complement enable_job_class/2.
 disable_job_class(Application, Operation)
         when erlang:is_atom(Application) andalso erlang:is_atom(Operation) ->
     disable_job_class({Application, Operation});
@@ -739,7 +743,7 @@ job_class_enabled(Application, Operation)
 job_class_enabled(Application, Operation) ->
     {error, {badarg, {Application, Operation}}}.
 
--spec enable_job_class(term()) -> ok | {error, term()}.
+-spec enable_job_class(Class :: term()) -> ok | {error, term()}.
 %% @doc Internal API to enable the specified job class.
 %% WARNING:
 %% * This function may not remain in this form once the Jobs API is live!
@@ -759,7 +763,7 @@ enable_job_class(Class) ->
             application:set_env(riak_core, job_accept_class, [Class])
     end.
 
--spec disable_job_class(term()) -> ok | {error, term()}.
+-spec disable_job_class(Class :: term()) -> ok | {error, term()}.
 %% @doc Internal API to disable the specified job class.
 %% WARNING:
 %% * This function may not remain in this form once the Jobs API is live!
@@ -779,7 +783,7 @@ disable_job_class(Class) ->
             ok
     end.
 
--spec job_class_enabled(term()) -> boolean().
+-spec job_class_enabled(Class :: term()) -> boolean().
 %% @doc Internal API to determine whether to accept/reject a job.
 %% WARNING:
 %% * This function may not remain in this form once the Jobs API is live!
@@ -803,7 +807,8 @@ job_class_enabled(Class) ->
             false
     end.
 
--spec job_class_disabled_message(atom(), term()) -> binary() | string().
+-spec job_class_disabled_message(ReturnType :: atom(), Class :: term())
+        -> binary() | string().
 %% @doc The error message to be returned to a client for a disabled job class.
 %% WARNING:
 %% * This function is likely to be extended to accept a Job as well as a Class
@@ -813,14 +818,26 @@ job_class_disabled_message(binary, Class) ->
 job_class_disabled_message(text, Class) ->
     lists:flatten(io_lib:format("Operation '~p' is not enabled", [Class])).
 
--spec report_job_request_disposition(
-    boolean(), term(), module(), atom(), pos_integer(), term())
+-spec report_job_request_disposition(Accepted :: boolean(), Class :: term(),
+    Mod :: module(), Func :: atom(), Line :: pos_integer(), Client :: term())
         -> ok | {error, term()}.
 %% @doc Report/record the disposition of an async job request.
+%%
 %% Logs an appropriate message and reports to whoever needs to know.
 %% WARNING:
 %% * This function is likely to be extended to accept a Job as well as a Class
 %%   when the Jobs API is live.
+%%
+%% Parameters:
+%%  * Accepted - Whether the specified job Class is enabled.
+%%  * Class - The Class of the job, by convention {Application, Operation}.
+%%  * Mod/Func/Line - The Module, function, and source line number,
+%%    respectively, that will be reported as the source of the call.
+%%  * Client - Any term indicating the originator of the request.
+%%    By convention, when meaningful client identification information is not
+%%    available, Client is an atom representing the protocol through which the
+%%    request was received.
+%%
 report_job_request_disposition(true, Class, Mod, Func, Line, Client) ->
     lager:log(info,
         [{pid, erlang:self()}, {module, Mod}, {function, Func}, {line, Line}],
