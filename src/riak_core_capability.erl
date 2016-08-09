@@ -103,7 +103,11 @@
                 last_ring_id :: term(),
                 supported :: [{node(), [{capability(), [mode()]}]}],
                 unknown :: [node()],
-                negotiated :: [{capability(), mode()}]
+                negotiated :: [{capability(), mode()}],
+                rpc_fn =
+                    fun(Node, App, Var) ->
+                        riak_core_util:safe_rpc(Node, application, get_env, [App, Var])
+                    end
                }).
 
 -define(ETS, riak_capability_ets).
@@ -362,11 +366,7 @@ remove_members(Ring, State=#state{supported=Supported}) ->
 %% to determine capabilities through RPC to the node. If RPC fails, use
 %% default values. However, unresolved nodes will be marked as such and RPC
 %% re-attempted at the next server tick.
-add_node(Node, Capabilities, State1) ->
-    State2 = add_node2(Node, Capabilities, State1),
-    filter_removed_caps(Node, Capabilities, State2).
-
-add_node2(Node, [], State=#state{unknown=Unknown}) ->
+add_node(Node, [], State=#state{unknown=Unknown}) ->
     {Capabilities, Resolved} = query_capabilities(Node, State),
     Unknown2 = case Resolved of
                    true ->
@@ -376,8 +376,9 @@ add_node2(Node, [], State=#state{unknown=Unknown}) ->
                end,
     State2 = State#state{unknown=Unknown2},
     add_node_capabilities(Node, Capabilities, State2);
-add_node2(Node, Capabilities, State) ->
-    add_node_capabilities(Node, Capabilities, State).
+add_node(Node, Capabilities, State1) ->
+    State2 = add_node_capabilities(Node, Capabilities, State1),
+    filter_removed_caps(Node, Capabilities, State2).
 
 %% Remove supported capabilities for a node where it no longer appears in the
 %% rings capabilities for the node.
@@ -608,14 +609,16 @@ get_supported_from_ring(Ring) ->
          end
      end || Member <- Members].
 
+
 %% Determine capabilities of legacy nodes based on app.config settings and
 %% the provided app-var -> mode mapping associated with capabilities when
 %% registered.
-query_capabilities(Node, State=#state{registered=Registered}) ->
+query_capabilities(Node, State=#state{ rpc_fn = RPCFn, registered=Registered}) ->
     %% Only query results we do not already have local knowledge of
     Known = dict:from_list(get_supported(Node, State)),
     lists:mapfoldl(fun({Capability, Info}, ResolvedAcc) ->
                            {Resv, Cap} = query_capability(Node,
+                                                          RPCFn,
                                                           Known,
                                                           Capability,
                                                           Info#capability.default,
@@ -623,20 +626,20 @@ query_capabilities(Node, State=#state{registered=Registered}) ->
                            {Cap, ResolvedAcc and Resv}
                    end, true, Registered).
 
-query_capability(Node, Known, Capability, DefaultSup, LegacyVar) ->
+query_capability(Node, RPCFn, Known, Capability, DefaultSup, LegacyVar) ->
     case dict:find(Capability, Known) of
         {ok, Supported} ->
             {true, {Capability, Supported}};
         error ->
-            query_capability(Node, Capability, DefaultSup, LegacyVar)
+            query_capability(Node, RPCFn, Capability, DefaultSup, LegacyVar)
     end.
 
-query_capability(_, Capability, DefaultSup, undefined) ->
+query_capability(_, _, Capability, DefaultSup, undefined) ->
     Default = {Capability, [DefaultSup]},
     {true, Default};
-query_capability(Node, Capability, DefaultSup, {App, Var, Map}) ->
+query_capability(Node, RPCFn, Capability, DefaultSup, {App, Var, Map}) ->
     Default = {Capability, [DefaultSup]},
-    Result = riak_core_util:safe_rpc(Node, application, get_env, [App, Var]),
+    Result = RPCFn(Node,App, Var),
     case Result of
         {badrpc, _} ->
             {false, Default};
@@ -659,3 +662,125 @@ load_registered() ->
         undefined -> [];
         {ok, Caps} -> Caps
     end.
+
+%% ===================================================================
+%% EUnit tests
+%% ===================================================================
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+-define(CAP, {riak_core, cap}).
+-define(OTHER_CAP, {riak_core, other_cap}).
+-define(NO_OVERRIDES, [{riak_core, []}]).
+
+use_preferred_when_only_node_test() ->
+    S1 = init_state([]),
+    S2 = register_capability(node1, ?CAP, capability_info([x,a,c,y], y, []), S1),
+    S3 = negotiate_capabilities(node1, ?NO_OVERRIDES, S2),
+    ?assertEqual([{?CAP, x}], S3#state.negotiated).
+
+%% both nodes have the same capability, choose the most preferred cap that they
+%% both support
+negotiate_with_other_node_test() ->
+    S1 = init_state([]),
+    S2 = register_capability(node1, ?CAP, capability_info([x,a,c,y], y, undefined), S1),
+    S3 = add_node(node2, [{?CAP, [a,b,c,y]}], S2),
+    S4 = negotiate_capabilities(node1, ?NO_OVERRIDES, S3),
+    ?assertEqual([{?CAP, a}], S4#state.negotiated).
+
+%% when the other node does not have a registered capability, use the default
+%% value instead of the preferred
+use_default_when_other_node_does_not_have_cap_test() ->
+    S1 = init_state([]),
+    S2 = register_capability(node1, ?CAP, capability_info([x,a,c,y], y, undefined), S1),
+    S3 = add_node(node2, [{?OTHER_CAP, [a,b,c,y]}], S2),
+    S4 = negotiate_capabilities(node1, ?NO_OVERRIDES, S3),
+    ?assertEqual([{?CAP, y}], S4#state.negotiated).
+
+%% when the other node does not have any registered capabilities, use the
+%% default value instead of the preferred.
+use_default_when_other_node_missing_cap_with_empty_caps_test() ->
+    NoCaps = [],
+    S1 = init_state([]),
+    S2 = register_capability(node1, ?CAP, capability_info([x,a,c,y], y, undefined), S1),
+    S3 = add_node(node2, NoCaps, S2),
+    S4 = negotiate_capabilities(node1, ?NO_OVERRIDES, S3),
+    ?assertEqual([{?CAP, y}], S4#state.negotiated).
+
+%% two nodes agree on a cap the third hasn't registered it so the default is
+%% used
+use_default_when_just_one_other_node_does_not_have_cap_test() ->
+    S1 = init_state([]),
+    S2 = register_capability(node1, ?CAP, capability_info([x,a,c,y], y, undefined), S1),
+    S3 = add_node(node2, [{?OTHER_CAP, [a,b,c,y]}], S2),
+    S4 = add_node(node3, [{?CAP, [x,a,c,y]}], S3),
+    S5 = negotiate_capabilities(node1, ?NO_OVERRIDES, S4),
+    ?assertEqual([{?CAP, y}], S5#state.negotiated).
+
+%% add a node with the registered cap, agreeing on the modes, then add it again
+%% with the cap removed, the default value should be used.
+revert_to_default_value_when_other_node_removes_cap_test() ->
+    S1 = init_state([]),
+    S2 = register_capability(node1, ?CAP, capability_info([x,a,c,y], y, undefined), S1),
+    S3 = add_node(node2, [{?CAP, [x,a,c,y]}, {?OTHER_CAP, [a,b,c,y]}], S2),
+    S4 = negotiate_capabilities(node1, ?NO_OVERRIDES, S3),
+    S5 = add_node(node2, [{?OTHER_CAP, [a,b,c,y]}], S4),
+    S6 = negotiate_capabilities(node1, ?NO_OVERRIDES, S5),
+    ?assertEqual([{?CAP, y}], S6#state.negotiated).
+
+%% when a legacy mapping is specified and node2 does not specify caps then use
+%% the rpc_fn call into the other nodes riak_core application env configuration.
+%% This is stubbed and always returns mapping_key, mapping_key is the key to `a`
+%% in the legacy mapping which is a supported mode in node1 and so is the
+%% negotiated capability value.
+use_legacy_mapping_when_specified_and_node_has_no_caps_test() ->
+    S1 = init_state([]),
+    S2 = S1#state{ rpc_fn = fun(node2, riak_core, cap) -> {ok, mapping_key} end },
+    S3 = register_capability(node1, ?CAP, capability_info([x,a,c,y], y, {riak_core, cap, [{mapping_key, a}]}), S2),
+    S4 = add_node(node2, [], S3),
+    S5 = negotiate_capabilities(node1, ?NO_OVERRIDES, S4),
+    ?assertEqual([{?CAP, a}], S5#state.negotiated).
+
+%% when the other node has capabilities, then the legacy mapping is not used.
+%% the rpc stub throws an error to assert that it is not even called.
+legacy_mapping_not_used_when_node2_has_caps_even_when_specified_test() ->
+    S1 = init_state([]),
+    S2 = S1#state{ rpc_fn = fun(node2, riak_core, cap) -> error(never_called) end },
+    S3 = register_capability(node1, ?CAP, capability_info([x,a,c,y], y, {riak_core, cap, [{mapping_key, a}]}), S2),
+    S4 = add_node(node2, [{?CAP, [c,y]}], S3),
+    S5 = negotiate_capabilities(node1, ?NO_OVERRIDES, S4),
+    ?assertEqual([{?CAP, c}], S5#state.negotiated).
+
+%%
+basic_test() ->
+    Cap = {riak_core, test},
+    S1 = init_state([]),
+
+    S2 = register_capability(node1,
+                             Cap,
+                             capability_info([x,a,c,y], y, []),
+                             S1),
+    S3 = add_node_capabilities(node2,
+                               [{Cap, [a,b,c,y]}],
+                               S2),
+    S4 = negotiate_capabilities(node1, [{riak_core, []}], S3),
+    ?assertEqual([{Cap, a}], S4#state.negotiated),
+
+    S5 = negotiate_capabilities(node1,
+                                [{riak_core, [{test, [{prefer, c}]}]}],
+                                S4),
+    ?assertEqual([{Cap, c}], S5#state.negotiated),
+
+    S6 = add_node_capabilities(node3,
+                               [{Cap, [b]}],
+                               S5),
+    S7 = negotiate_capabilities(node1, [{riak_core, []}], S6),
+    ?assertEqual([{Cap, y}], S7#state.negotiated),
+
+    S8 = negotiate_capabilities(node1,
+                                [{riak_core, [{test, [{use, x}]}]}],
+                                S7),
+    ?assertEqual([{Cap, x}], S8#state.negotiated),
+    ok.
+
+-endif.
