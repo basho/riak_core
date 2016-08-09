@@ -103,11 +103,7 @@
                 last_ring_id :: term(),
                 supported :: [{node(), [{capability(), [mode()]}]}],
                 unknown :: [node()],
-                negotiated :: [{capability(), mode()}],
-                rpc_fn =
-                    fun(Node, App, Var) ->
-                        riak_core_util:safe_rpc(Node, application, get_env, [App, Var])
-                    end
+                negotiated :: [{capability(), mode()}]
                }).
 
 -define(ETS, riak_capability_ets).
@@ -613,12 +609,11 @@ get_supported_from_ring(Ring) ->
 %% Determine capabilities of legacy nodes based on app.config settings and
 %% the provided app-var -> mode mapping associated with capabilities when
 %% registered.
-query_capabilities(Node, State=#state{ rpc_fn = RPCFn, registered=Registered}) ->
+query_capabilities(Node, State=#state{registered=Registered}) ->
     %% Only query results we do not already have local knowledge of
     Known = dict:from_list(get_supported(Node, State)),
     lists:mapfoldl(fun({Capability, Info}, ResolvedAcc) ->
                            {Resv, Cap} = query_capability(Node,
-                                                          RPCFn,
                                                           Known,
                                                           Capability,
                                                           Info#capability.default,
@@ -626,20 +621,20 @@ query_capabilities(Node, State=#state{ rpc_fn = RPCFn, registered=Registered}) -
                            {Cap, ResolvedAcc and Resv}
                    end, true, Registered).
 
-query_capability(Node, RPCFn, Known, Capability, DefaultSup, LegacyVar) ->
+query_capability(Node, Known, Capability, DefaultSup, LegacyVar) ->
     case dict:find(Capability, Known) of
         {ok, Supported} ->
             {true, {Capability, Supported}};
         error ->
-            query_capability(Node, RPCFn, Capability, DefaultSup, LegacyVar)
+            query_capability(Node, Capability, DefaultSup, LegacyVar)
     end.
 
-query_capability(_, _, Capability, DefaultSup, undefined) ->
+query_capability(_, Capability, DefaultSup, undefined) ->
     Default = {Capability, [DefaultSup]},
     {true, Default};
-query_capability(Node, RPCFn, Capability, DefaultSup, {App, Var, Map}) ->
+query_capability(Node, Capability, DefaultSup, {App, Var, Map}) ->
     Default = {Capability, [DefaultSup]},
-    Result = RPCFn(Node,App, Var),
+    Result = riak_core_util:safe_rpc(Node, application, get_env, [App, Var]),
     case Result of
         {badrpc, _} ->
             {false, Default};
@@ -735,21 +730,26 @@ revert_to_default_value_when_other_node_removes_cap_test() ->
 %% negotiated capability value.
 use_legacy_mapping_when_specified_and_node_has_no_caps_test() ->
     S1 = init_state([]),
-    S2 = S1#state{ rpc_fn = fun(node2, riak_core, cap) -> {ok, mapping_key} end },
-    S3 = register_capability(node1, ?CAP, capability_info([x,a,c,y], y, {riak_core, cap, [{mapping_key, a}]}), S2),
-    S4 = add_node(node2, [], S3),
-    S5 = negotiate_capabilities(node1, ?NO_OVERRIDES, S4),
-    ?assertEqual([{?CAP, a}], S5#state.negotiated).
+    meck:new(riak_core_util, [passthrough]),
+    meck:expect(riak_core_util, safe_rpc, fun(node2, application, get_env, [riak_core, cap]) -> {ok, mapping_key} end),
+    S2 = register_capability(node1, ?CAP, capability_info([x,a,c,y], y, {riak_core, cap, [{mapping_key, a}]}), S1),
+    S3 = add_node(node2, [], S2),
+    S4 = negotiate_capabilities(node1, ?NO_OVERRIDES, S3),
+    ?assertEqual([{?CAP, a}], S4#state.negotiated),
+    ?assert(meck:validate(riak_core_util)),
+    meck:unload(riak_core_util).
 
 %% when the other node has capabilities, then the legacy mapping is not used.
-%% the rpc stub throws an error to assert that it is not even called.
+%% assert that riak_core_util:safe_rpc is not called.
 legacy_mapping_not_used_when_node2_has_caps_even_when_specified_test() ->
     S1 = init_state([]),
-    S2 = S1#state{ rpc_fn = fun(node2, riak_core, cap) -> error(never_called) end },
-    S3 = register_capability(node1, ?CAP, capability_info([x,a,c,y], y, {riak_core, cap, [{mapping_key, a}]}), S2),
-    S4 = add_node(node2, [{?CAP, [c,y]}], S3),
-    S5 = negotiate_capabilities(node1, ?NO_OVERRIDES, S4),
-    ?assertEqual([{?CAP, c}], S5#state.negotiated).
+    meck:new(riak_core_util, [passthrough]),
+    S2 = register_capability(node1, ?CAP, capability_info([x,a,c,y], y, {riak_core, cap, [{mapping_key, a}]}), S1),
+    S3 = add_node(node2, [{?CAP, [c,y]}], S2),
+    S4 = negotiate_capabilities(node1, ?NO_OVERRIDES, S3),
+    ?assertEqual([{?CAP, c}], S4#state.negotiated),
+    ?assert(not meck:called(riak_core_util, safe_rpc, ['_', '_', '_', '_'])),
+    meck:unload(riak_core_util).
 
 %%
 basic_test() ->
