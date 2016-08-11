@@ -55,9 +55,9 @@ register_enable_disable_commands() ->
 
 register_cli_cfg() ->
     lists:foreach(fun(K) ->
-                          clique:register_config(K, fun handoff_cfg_change_callback/3)
+                          clique:register_config(K, fun handoff_cfg_change_callback/2)
                   end, [["handoff", "inbound"], ["handoff", "outbound"]]),
-    clique:register_config(["transfer_limit"], fun set_transfer_limit/3).
+    clique:register_config(["transfer_limit"], fun set_transfer_limit/2).
 
 register_config_whitelist() ->
     ok = clique:register_config_whitelist(["transfer_limit",
@@ -190,48 +190,19 @@ handoff_change_enabled_setting(EnOrDis, Direction, []) ->
     riak_core_handoff_manager:handoff_change_enabled_setting(EnOrDis, Direction),
     [clique_status:text("Handoff setting successfully updated")].
 
-handoff_cfg_change_callback(["handoff", Cmd], "off", _Flags) ->
+handoff_cfg_change_callback(["handoff", Cmd], "off") ->
     case Cmd of
         "inbound" ->
-            riak_core_handoff_manager:kill_handoffs_in_direction(inbound);
+            riak_core_handoff_manager:kill_handoffs_in_direction(inbound),
+            "Inbound handoffs terminated";
         "outbound" ->
-            riak_core_handoff_manager:kill_handoffs_in_direction(outbound)
+            riak_core_handoff_manager:kill_handoffs_in_direction(outbound),
+            "Outbound handoffs terminated"
     end;
-handoff_cfg_change_callback(_, _, _) ->
-    ok.
+handoff_cfg_change_callback(_, _) ->
+    "".
 
-set_transfer_limit(["transfer_limit"], LimitStr, Flags) ->
+set_transfer_limit(["transfer_limit"], LimitStr) ->
     Limit = list_to_integer(LimitStr),
-    F = fun lists:keyfind/3,
-    case {F(node, 1, Flags), F(all, 1, Flags)} of
-        {false, false} ->
-            riak_core_handoff_manager:set_concurrency(Limit),
-            io:format("Set transfer limit for ~p to ~b~n", [node(), Limit]);
-        _ ->
-            set_transfer_limit(Limit, Flags)
-    end.
-
-set_transfer_limit(Limit, Flags) ->
-    case lists:keyfind(node, 1, Flags) of
-        {node, Node} ->
-            set_node_transfer_limit(Node, Limit);
-        false->
-            set_transfer_limit(Limit)
-    end.
-
-set_transfer_limit(Limit) ->
-    {_, _Down} = riak_core_util:rpc_every_member_ann(riak_core_handoff_manager,
-                                                     set_concurrency,
-                                                     [Limit],
-                                                     10000),
-    ok.
-
-set_node_transfer_limit(Node, Limit) ->
-    case riak_core_util:safe_rpc(Node, riak_core_handoff_manager, set_concurrency, [Limit]) of
-        {badrpc, _} ->
-            %% Errors are automatically reported by clique
-            ok;
-        _ ->
-            io:format("Set transfer limit for ~p to ~b~n", [Node, Limit])
-    end,
-    ok.
+    riak_core_handoff_manager:set_concurrency(Limit),
+    "".
