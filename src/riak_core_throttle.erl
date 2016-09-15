@@ -269,11 +269,13 @@ throttle(AppName, Key) ->
 
 maybe_throttle(Key, undefined, _False) ->
     error({badkey, Key});
+maybe_throttle(_Key, _Time, false) ->
+    0;
+maybe_throttle(_Key, 0, _Enabled) ->
+    0;
 maybe_throttle(_Key, Time, true) ->
     ?SLEEP(Time),
-    Time;
-maybe_throttle(_Key, _Time, false) ->
-    0.
+    Time.
 
 -spec get_throttle(app_name(), activity_key()) -> throttle_time() | undefined.
 get_throttle(AppName, Key) ->
