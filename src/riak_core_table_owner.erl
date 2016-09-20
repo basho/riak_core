@@ -56,7 +56,9 @@
 
 %% Unfortunately the `ets' module does not define a type for options, but we
 %% can at least insist on a list.
--type ets_options() :: [].
+-type ets_options() :: list().
+-type ets_table() :: ets:tab().
+-type create_table_result() :: {ok, ets_table()} | {error, Reason::term()}.
 
 %%%===================================================================
 %%% API
@@ -70,7 +72,7 @@ start_link() ->
 %% Since the table will be owned by the `riak_core_table_owner' process, it
 %% should be created with the `public' option so that other processes can read
 %% and write data in the table.
--spec create_table(Name::atom(), Options::ets_options()) -> ets:tid().
+-spec create_table(Name::atom(), Options::ets_options()) -> create_table_result().
 create_table(Name, Options) ->
     gen_server:call(?MODULE, {create_table, Name, Options}).
 
@@ -79,7 +81,7 @@ create_table(Name, Options) ->
 %% Since the table will be owned by the `riak_core_table_owner' process, it
 %% should be created with the `public' option so that other processes can read
 %% and write data in the table.
--spec maybe_create_table(Name::atom(), Options::ets_options()) -> ets:tid().
+-spec maybe_create_table(Name::atom(), Options::ets_options()) -> create_table_result().
 maybe_create_table(Name, Options) ->
     gen_server:call(?MODULE, {maybe_create_table, Name, Options}).
 

@@ -79,9 +79,14 @@
 %% @doc Initialize the throttling subsystem. Should be called just once during
 %% startup, although calling multiple times will not have any negative
 %% consequences.
+-spec init() -> ok.
 init() ->
-    {ok, ?ETS_TABLE_NAME} = riak_core_table_owner:maybe_create_table(?ETS_TABLE_NAME,
-                                                                     ?ETS_TABLE_OPTIONS).
+    case riak_core_table_owner:maybe_create_table(?ETS_TABLE_NAME, ?ETS_TABLE_OPTIONS) of
+        {ok, ?ETS_TABLE_NAME} ->
+            ok;
+        {error, Reason} ->
+            throw({"Failed to create ETS table for riak_core_throttle", Reason})
+    end.
 
 %% @doc Sets the throttle for the activity identified by `AppName' and `Key' to
 %% the specified `Time'.
