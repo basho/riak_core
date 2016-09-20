@@ -105,6 +105,8 @@ start(_StartType, _StartArgs) ->
             riak_core_cli_registry:register_node_finder(),
             riak_core_cli_registry:register_cli(),
 
+            riak_core_throttle:init(),
+
             {ok, Pid};
         {error, Reason} ->
             {error, Reason}
