@@ -43,6 +43,7 @@
          disable_throttle/2,
          enable_throttle/2,
          is_throttle_enabled/2,
+         init/0,
          init/4,
          set_limits/3,
          get_limits/2,
@@ -66,11 +67,21 @@
 
 -export_type([activity_key/0, throttle_time/0, load_factor/0, limits/0]).
 
+-define(ETS_TABLE_NAME, riak_core_throttles).
+-define(ETS_TABLE_OPTIONS, [set, named_table, public]).
+
 -define(THROTTLE_KEY(Key), list_to_atom("throttle_" ++ atom_to_list(Key))).
 -define(THROTTLE_LIMITS_KEY(Key),
         list_to_atom("throttle_limits_" ++ atom_to_list(Key))).
 -define(THROTTLE_ENABLED_KEY(Key),
         list_to_atom("throttle_enabled_" ++ atom_to_list(Key))).
+
+%% @doc Initialize the throttling subsystem. Should be called just once during
+%% startup, although calling multiple times will not have any negative
+%% consequences.
+init() ->
+    {ok, ?ETS_TABLE_NAME} = riak_core_table_owner:maybe_create_table(?ETS_TABLE_NAME,
+                                                                     ?ETS_TABLE_OPTIONS).
 
 %% @doc Sets the throttle for the activity identified by `AppName' and `Key' to
 %% the specified `Time'.
@@ -82,32 +93,32 @@ set_throttle(AppName, Key, Time) when Time >= 0 ->
 %% @private
 %% Actually set the throttle, but don't log anything.
 do_set_throttle(AppName, Key, Time) when Time >= 0 ->
-    application:set_env(AppName, ?THROTTLE_KEY(Key), Time).
+    set_value(AppName, ?THROTTLE_KEY(Key), Time).
 
 %% @doc Clears the throttle for the activity identified by `AppName' and `Key'.
 -spec clear_throttle(app_name(), activity_key()) -> ok.
 clear_throttle(AppName, Key) ->
-    application:unset_env(AppName, ?THROTTLE_KEY(Key)).
+    unset_value(AppName, ?THROTTLE_KEY(Key)).
 
 %% @doc Disables the throttle for the activity identified by `AppName' and
 %% `Key'.
 -spec disable_throttle(app_name(), activity_key()) -> ok.
 disable_throttle(AppName, Key) ->
     lager:info("Disabling throttle for ~p/~p.", [AppName, Key]),
-    application:set_env(AppName, ?THROTTLE_ENABLED_KEY(Key), false).
+    set_value(AppName, ?THROTTLE_ENABLED_KEY(Key), false).
 
 %% @doc Enables the throttle for the activity identified by `AppName' and
 %% `Key'.
 -spec enable_throttle(app_name(), activity_key()) -> ok.
 enable_throttle(AppName, Key) ->
     lager:info("Enabling throttle for ~p/~p.", [AppName, Key]),
-    application:set_env(AppName, ?THROTTLE_ENABLED_KEY(Key), true).
+    set_value(AppName, ?THROTTLE_ENABLED_KEY(Key), true).
 
 %% @doc Returns `true' if the throttle for the activity identified by `AppName'
 %% and `Key' is enabled, `false' otherwise.
 -spec is_throttle_enabled(app_name(), activity_key()) -> boolean().
 is_throttle_enabled(AppName, Key) ->
-    application:get_env(AppName, ?THROTTLE_ENABLED_KEY(Key), true).
+    get_value(AppName, ?THROTTLE_ENABLED_KEY(Key), true).
 
 %% @doc Initializes the throttle for the activity identified by `AppName' and
 %% `Key' using configuration values found in the application environment for
@@ -145,15 +156,13 @@ init(AppName, Key,
 -spec set_limits(app_name(), activity_key(), limits()) -> ok | no_return().
 set_limits(AppName, Key, Limits) ->
     ok = validate_limits(AppName, Key, Limits),
-    application:set_env(AppName,
-                        ?THROTTLE_LIMITS_KEY(Key),
-                        lists:sort(Limits)).
+    set_value(AppName, ?THROTTLE_LIMITS_KEY(Key), lists:sort(Limits)).
 
 %% @doc Returns the limits for the activity identified by `AppName' and `Key'
 %% if defined, otherwise returns `undefined'.
 -spec get_limits(app_name(), activity_key()) -> limits() | undefined.
 get_limits(AppName, Key) ->
-    case application:get_env(AppName, ?THROTTLE_LIMITS_KEY(Key)) of
+    case get_value(AppName, ?THROTTLE_LIMITS_KEY(Key)) of
         {ok, Limits} ->
             Limits;
         _ ->
@@ -163,7 +172,7 @@ get_limits(AppName, Key) ->
 %% @doc Clears the limits for the activity identified by `AppName' and `Key'.
 -spec clear_limits(app_name(), activity_key()) -> ok.
 clear_limits(AppName, Key) ->
-    application:unset_env(AppName, ?THROTTLE_LIMITS_KEY(Key)).
+    unset_value(AppName, ?THROTTLE_LIMITS_KEY(Key)).
 
 %% @doc Returns a fun that used in Cuttlefish translations to translate from
 %% configuration items of the form:
@@ -269,15 +278,17 @@ throttle(AppName, Key) ->
 
 maybe_throttle(Key, undefined, _False) ->
     error({badkey, Key});
+maybe_throttle(_Key, _Time, false) ->
+    0;
+maybe_throttle(_Key, 0, true) ->
+    0;
 maybe_throttle(_Key, Time, true) ->
     ?SLEEP(Time),
-    Time;
-maybe_throttle(_Key, _Time, false) ->
-    0.
+    Time.
 
 -spec get_throttle(app_name(), activity_key()) -> throttle_time() | undefined.
 get_throttle(AppName, Key) ->
-    application:get_env(AppName, ?THROTTLE_KEY(Key), undefined).
+    get_value(AppName, ?THROTTLE_KEY(Key), undefined).
 
 -spec get_throttle_for_load(app_name(), activity_key(), load_factor()) ->
     throttle_time() | undefined.
@@ -355,4 +366,28 @@ maybe_log_throttle_change(AppName, Key, NewValue, Reason) ->
         false ->
             lager:info("Changing throttle for ~p/~p from ~p to ~p based on ~ts",
                        [AppName, Key, OldValue, NewValue, Reason])
+    end.
+
+set_value(AppName, Key, Value) ->
+    true = ets:insert(?ETS_TABLE_NAME, {{AppName, Key}, Value}),
+    ok.
+
+unset_value(AppName, Key) ->
+    true = ets:delete(?ETS_TABLE_NAME, {AppName, Key}),
+    ok.
+
+get_value(AppName, Key) ->
+    case ets:lookup(?ETS_TABLE_NAME, {AppName, Key}) of
+        [] ->
+            {error, undefined};
+        [{{AppName, Key}, Value}] ->
+            {ok, Value}
+    end.
+
+get_value(AppName, Key, Default) ->
+    case get_value(AppName, Key) of
+        {ok, Value} ->
+            Value;
+        _ ->
+            Default
     end.

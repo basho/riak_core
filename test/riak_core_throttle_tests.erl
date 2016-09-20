@@ -33,6 +33,8 @@ clear_throttles(ActivityKeys) ->
                   ActivityKeys).
 
 throttle_test_() ->
+    riak_core_table_owner:start_link(),
+    riak_core_throttle:init(),
     {foreach,
      fun activity_keys/0,
      fun clear_throttles/1,
@@ -50,11 +52,13 @@ test_throttle_badkey([Key|_]) ->
     [?_assertError({badkey, Key}, riak_core_throttle:throttle(?APP_NAME, Key)),
      ?_assertEqual(undefined, riak_core_throttle:get_throttle(?APP_NAME, Key))].
 
-test_set_throttle([Key1, Key2|_]) ->
+test_set_throttle([Key1, Key2, Key3|_]) ->
     ok = riak_core_throttle:set_throttle(?APP_NAME, Key1, 42),
+    ok = riak_core_throttle:set_throttle(?APP_NAME, Key2, 0),
     [?_assertEqual(42, riak_core_throttle:throttle(?APP_NAME, Key1)),
      ?_assertEqual(42, riak_core_throttle:get_throttle(?APP_NAME, Key1)),
-     ?_assertError({badkey, Key2}, riak_core_throttle:throttle(?APP_NAME, Key2))].
+     ?_assertEqual(0, riak_core_throttle:throttle(?APP_NAME, Key2)),
+     ?_assertError({badkey, Key3}, riak_core_throttle:throttle(?APP_NAME, Key3))].
 
 test_throttle_disable([Key1, Key2, Key3|_]) ->
     ok = riak_core_throttle:set_throttle(?APP_NAME, Key1, 42),
