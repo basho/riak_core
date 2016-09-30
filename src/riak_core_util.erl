@@ -839,7 +839,7 @@ job_class_disabled_message(text, Class) ->
 %%    request was received.
 %%
 report_job_request_disposition(true, Class, Mod, Func, Line, Client) ->
-    lager:log(info,
+    lager:log(debug,
         [{pid, erlang:self()}, {module, Mod}, {function, Func}, {line, Line}],
         "Request '~p' accepted from ~p", [Class, Client]);
 report_job_request_disposition(false, Class, Mod, Func, Line, Client) ->
