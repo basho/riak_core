@@ -1,8 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% riak_core: Core Riak Application
-%%
-%% Copyright (c) 2007-2013 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -67,7 +65,15 @@
          make_fold_req/4,
          make_newest_fold_req/1,
          proxy_spawn/1,
-         proxy/2
+         proxy/2,
+         enable_job_class/1,
+         enable_job_class/2,
+         disable_job_class/1,
+         disable_job_class/2,
+         job_class_enabled/1,
+         job_class_enabled/2,
+         job_class_disabled_message/2,
+         report_job_request_disposition/6
         ]).
 
 -include("riak_core_vnode.hrl").
@@ -452,7 +458,8 @@ pmap_collect_rest(Pending, Done) ->
 %%      'rex' process is not running on the remote node. This is safe in
 %%      the sense that it won't crash the calling process if the rex
 %%      process is down.
--spec safe_rpc(Node :: node(), Module :: atom(), Function :: atom(), Args :: [any()]) -> {'badrpc', any()} | any().
+-spec safe_rpc(Node :: node(), Module :: atom(), Function :: atom(),
+        Args :: [any()]) -> {'badrpc', any()} | any().
 safe_rpc(Node, Module, Function, Args) ->
     try rpc:call(Node, Module, Function, Args) of
         Result ->
@@ -466,7 +473,8 @@ safe_rpc(Node, Module, Function, Args) ->
 %%      'rex' process is not running on the remote node. This is safe in
 %%      the sense that it won't crash the calling process if the rex
 %%      process is down.
--spec safe_rpc(Node :: node(), Module :: atom(), Function :: atom(), Args :: [any()], Timeout :: timeout()) -> {'badrpc', any()} | any().
+-spec safe_rpc(Node :: node(), Module :: atom(), Function :: atom(),
+        Args :: [any()], Timeout :: timeout()) -> {'badrpc', any()} | any().
 safe_rpc(Node, Module, Function, Args, Timeout) ->
     try rpc:call(Node, Module, Function, Args, Timeout) of
         Result ->
@@ -703,6 +711,141 @@ proxy(Parent, Fun) ->
         {'DOWN', _, _, _, _} ->
             ok
     end.
+
+-spec enable_job_class(atom(), atom()) -> ok | {error, term()}.
+%% @doc Enables the specified Application/Operation job class.
+%% This is the public API for use via RPC.
+%% WARNING: This function is not suitable for parallel execution with itself
+%% or its complement disable_job_class/2.
+enable_job_class(Application, Operation)
+        when erlang:is_atom(Application) andalso erlang:is_atom(Operation) ->
+    enable_job_class({Application, Operation});
+enable_job_class(Application, Operation) ->
+    {error, {badarg, {Application, Operation}}}.
+
+-spec disable_job_class(atom(), atom()) -> ok | {error, term()}.
+%% @doc Disables the specified Application/Operation job class.
+%% This is the public API for use via RPC.
+%% WARNING: This function is not suitable for parallel execution with itself
+%% or its complement enable_job_class/2.
+disable_job_class(Application, Operation)
+        when erlang:is_atom(Application) andalso erlang:is_atom(Operation) ->
+    disable_job_class({Application, Operation});
+disable_job_class(Application, Operation) ->
+    {error, {badarg, {Application, Operation}}}.
+
+-spec job_class_enabled(atom(), atom()) -> boolean() | {error, term()}.
+%% @doc Reports whether the specified Application/Operation job class is enabled.
+%% This is the public API for use via RPC.
+job_class_enabled(Application, Operation)
+        when erlang:is_atom(Application) andalso erlang:is_atom(Operation) ->
+    job_class_enabled({Application, Operation});
+job_class_enabled(Application, Operation) ->
+    {error, {badarg, {Application, Operation}}}.
+
+-spec enable_job_class(Class :: term()) -> ok | {error, term()}.
+%% @doc Internal API to enable the specified job class.
+%% WARNING:
+%% * This function may not remain in this form once the Jobs API is live!
+%% * Parameter types ARE NOT validated by the same rules as the public API!
+%% You are STRONGLY advised to use enable_job_class/2.
+enable_job_class(Class) ->
+    case app_helper:get_env(riak_core, job_accept_class) of
+        [_|_] = EnabledClasses ->
+            case lists:member(Class, EnabledClasses) of
+                true ->
+                    ok;
+                _ ->
+                    application:set_env(
+                        riak_core, job_accept_class, [Class | EnabledClasses])
+            end;
+        _ ->
+            application:set_env(riak_core, job_accept_class, [Class])
+    end.
+
+-spec disable_job_class(Class :: term()) -> ok | {error, term()}.
+%% @doc Internal API to disable the specified job class.
+%% WARNING:
+%% * This function may not remain in this form once the Jobs API is live!
+%% * Parameter types ARE NOT validated by the same rules as the public API!
+%% You are STRONGLY advised to use disable_job_class/2.
+disable_job_class(Class) ->
+    case app_helper:get_env(riak_core, job_accept_class) of
+        [_|_] = EnabledClasses ->
+            case lists:member(Class, EnabledClasses) of
+                false ->
+                    ok;
+                _ ->
+                    application:set_env(riak_core, job_accept_class,
+                        lists:delete(Class, EnabledClasses))
+            end;
+        _ ->
+            ok
+    end.
+
+-spec job_class_enabled(Class :: term()) -> boolean().
+%% @doc Internal API to determine whether to accept/reject a job.
+%% WARNING:
+%% * This function may not remain in this form once the Jobs API is live!
+%% * Parameter types ARE NOT validated by the same rules as the public API!
+%% You are STRONGLY advised to use job_class_enabled/2.
+job_class_enabled(Class) ->
+    case app_helper:get_env(riak_core, job_accept_class) of
+        undefined ->
+            true;
+        [] ->
+            false;
+        [_|_] = EnabledClasses ->
+            lists:member(Class, EnabledClasses);
+        Other ->
+            % Don't crash if it's not a list - that should never be the case,
+            % but since the value *can* be manipulated externally be more
+            % accommodating. If someone mucks it up, nothing's going to be
+            % allowed, but give them a chance to catch on instead of crashing.
+            _ = lager:error(
+                "riak_core.job_accept_class is not a list: ~p", [Other]),
+            false
+    end.
+
+-spec job_class_disabled_message(ReturnType :: atom(), Class :: term())
+        -> binary() | string().
+%% @doc The error message to be returned to a client for a disabled job class.
+%% WARNING:
+%% * This function is likely to be extended to accept a Job as well as a Class
+%%   when the Jobs API is live.
+job_class_disabled_message(binary, Class) ->
+    erlang:list_to_binary(job_class_disabled_message(text, Class));
+job_class_disabled_message(text, Class) ->
+    lists:flatten(io_lib:format("Operation '~p' is not enabled", [Class])).
+
+-spec report_job_request_disposition(Accepted :: boolean(), Class :: term(),
+    Mod :: module(), Func :: atom(), Line :: pos_integer(), Client :: term())
+        -> ok | {error, term()}.
+%% @doc Report/record the disposition of an async job request.
+%%
+%% Logs an appropriate message and reports to whoever needs to know.
+%% WARNING:
+%% * This function is likely to be extended to accept a Job as well as a Class
+%%   when the Jobs API is live.
+%%
+%% Parameters:
+%%  * Accepted - Whether the specified job Class is enabled.
+%%  * Class - The Class of the job, by convention {Application, Operation}.
+%%  * Mod/Func/Line - The Module, function, and source line number,
+%%    respectively, that will be reported as the source of the call.
+%%  * Client - Any term indicating the originator of the request.
+%%    By convention, when meaningful client identification information is not
+%%    available, Client is an atom representing the protocol through which the
+%%    request was received.
+%%
+report_job_request_disposition(true, Class, Mod, Func, Line, Client) ->
+    lager:log(debug,
+        [{pid, erlang:self()}, {module, Mod}, {function, Func}, {line, Line}],
+        "Request '~p' accepted from ~p", [Class, Client]);
+report_job_request_disposition(false, Class, Mod, Func, Line, Client) ->
+    lager:log(warning,
+        [{pid, erlang:self()}, {module, Mod}, {function, Func}, {line, Line}],
+        "Request '~p' disabled from ~p", [Class, Client]).
 
 %% ===================================================================
 %% EUnit tests
