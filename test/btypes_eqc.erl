@@ -41,7 +41,7 @@
          }).
 
 btypes_test_() -> {
-        timeout, 60,
+        timeout, 120,
         ?_test(?assert(
             eqc:quickcheck(?QC_OUT(eqc:numtests(100, prop_btype_invariant())))))
     }.
