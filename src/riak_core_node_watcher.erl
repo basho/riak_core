@@ -147,7 +147,12 @@ services() ->
     gen_server:call(?MODULE, services, infinity).
 
 services(Node) ->
-    internal_get_services(Node).
+    case check_node_valid(Node) of
+        true ->
+            internal_get_services(Node);
+        _ ->
+            invalid_node
+    end.
 
 nodes(Service) ->
     internal_get_nodes(Service).
@@ -361,6 +366,11 @@ code_change(_OldVsn, State, _Extra) ->
 %% ====================================================================
 %% Internal functions
 %% ====================================================================
+
+check_node_valid(Node) ->
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
+    Members = riak_core_ring:all_members(Ring),
+    lists:member(Node, Members).
 
 update_avsn(State) ->
     State#state { avsn = State#state.avsn + 1 }.
