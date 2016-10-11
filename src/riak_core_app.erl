@@ -64,7 +64,7 @@ start(_StartType, _StartArgs) ->
 
     %% add these defaults now to supplement the set that may have been
     %% configured in app.config
-    riak_core_bucket:append_bucket_defaults(riak_core_bucket_type:defaults()),
+    riak_core_bucket:append_bucket_defaults(riak_core_bucket_type:defaults(default_type)),
 
     %% Spin up the supervisor; prune ring files as necessary
     case riak_core_sup:start_link() of
@@ -104,6 +104,8 @@ start(_StartType, _StartArgs) ->
             riak_core_cli_registry:load_schema(),
             riak_core_cli_registry:register_node_finder(),
             riak_core_cli_registry:register_cli(),
+
+            riak_core_throttle:init(),
 
             {ok, Pid};
         {error, Reason} ->

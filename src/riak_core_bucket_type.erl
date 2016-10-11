@@ -92,23 +92,25 @@
 -include("riak_core_bucket_type.hrl").
 
 -export([defaults/0,
-         create/2,
-         status/1,
-         activate/1,
-         update/2,
-         get/1,
-         reset/1,
-         iterator/0,
-         itr_next/1,
-         itr_done/1,
-         itr_value/1,
-         itr_close/1,
-         property_hash/2,
-         property_hash/3]).
+    defaults/1,
+    create/2,
+    status/1,
+    activate/1,
+    update/2,
+    get/1,
+    reset/1,
+    fold/2,
+    iterator/0,
+    itr_next/1,
+    itr_done/1,
+    itr_value/1,
+    itr_close/1,
+    property_hash/2,
+    property_hash/3, all_n/0]).
 
 -export_type([bucket_type/0]).
 -type bucket_type()       :: binary().
--type bucket_type_props() :: [{term(), term()}].
+-type bucket_type_props() :: riak_core_bucket:properties().
 
 -define(IF_CAPABLE(X, E), case riak_core_capability:get({riak_core, bucket_types}) of
                               true -> X;
@@ -118,6 +120,28 @@
 %% @doc The hardcoded defaults for all bucket types.
 -spec defaults() -> bucket_type_props().
 defaults() ->
+    custom_type_defaults().
+
+%% @doc The hardcoded defaults for the legacy, default bucket
+%% type. These find their way into the `default_bucket_props'
+%% environment variable
+-spec defaults(default_type) -> bucket_type_props().
+defaults(default_type) ->
+    default_type_defaults().
+
+default_type_defaults() ->
+    common_defaults() ++
+        [{dvv_enabled, false},
+         {allow_mult, false}].
+
+custom_type_defaults() ->
+    common_defaults() ++
+        %% @HACK dvv is a riak_kv only thing, yet there is nowhere else
+        %% to put it (except maybe fixups?)
+        [{dvv_enabled, true},
+         {allow_mult, true}].
+
+common_defaults() ->
     [{linkfun, {modfun, riak_kv_wm_link_walker, mapreduce_linkfun}},
      {old_vclock, 86400},
      {young_vclock, 20},
@@ -132,13 +156,9 @@ defaults() ->
      {basic_quorum, false},
      {notfound_ok, true},
      {n_val,3},
-     {allow_mult, true},
      {last_write_wins,false},
      {precommit, []},
      {postcommit, []},
-     %% @HACK this is a riak_kv only thing, yet there is nowhere else
-     %% to put it (except maybe fixups?)
-     {dvv_enabled, true},
      {chash_keyfun, {riak_core_util, chash_std_keyfun}}].
 
 %% @doc Create the type. The type is not activated (available to nodes) at this time. This
@@ -188,9 +208,61 @@ get(BucketType) when is_binary(BucketType) ->
 %% @doc Reset the properties of the bucket. This only affects properties that
 %% can be set using {@link update/2} and can only be performed on an active
 %% type.
+%%
+%% This is not currently hooked into `riak-admin' but can be invoked
+%% from the console.
 -spec reset(bucket_type()) -> ok | {error, term()}.
 reset(BucketType) ->
     update(BucketType, defaults()).
+
+%% @doc iterate over bucket types and find any active buckets.
+-spec all_n() -> riak_core_bucket:nval_set().
+all_n() ->
+    riak_core_bucket_type:fold(fun bucket_type_prop_nval_fold/2, ordsets:new()).
+
+%% @private
+-spec bucket_type_prop_nval_fold({bucket_type(), riak_core_bucket:properties()},
+        riak_core_bucket:nval_set()) -> riak_core_bucket:nval_set().
+bucket_type_prop_nval_fold({_BType, BProps}, Accum) ->
+    case riak_core_bucket:get_value(active, BProps) of
+        true ->
+            bucket_prop_nval_fold(BProps, Accum);
+        _ ->
+            Accum
+    end.
+
+-spec bucket_prop_nval_fold(riak_core_bucket:properties(), riak_core_bucket:nval_set()) ->
+    riak_core_bucket:nval_set().
+bucket_prop_nval_fold(BProps, Accum) ->
+    case riak_core_bucket:get_value(n_val, BProps) of
+        undefined ->
+            Accum;
+        NVal ->
+            ordsets:add_element(NVal, Accum)
+    end.
+
+%% @doc Fold over all bucket types, storing result in accumulator
+-spec fold(fun(({bucket_type(), bucket_type_props()}, any()) -> any()),
+           Accumulator::any()) ->
+    any().
+fold(Fun, Accum) ->
+    fold(iterator(), Fun, Accum).
+
+-spec fold(
+    riak_core_metadata:iterator(),
+    fun(({bucket_type(), bucket_type_props()}, any()) -> any()),
+    any()
+) ->
+    any().
+fold(It, Fun, Accum) ->
+    case riak_core_bucket_type:itr_done(It) of
+        true ->
+            riak_core_bucket_type:itr_close(It),
+            Accum;
+        _ ->
+            NewAccum = Fun(itr_value(It), Accum),
+            fold(riak_core_bucket_type:itr_next(It), Fun, NewAccum)
+    end.
 
 %% @doc Return an iterator that can be used to walk through all existing bucket types
 %% and their properties
