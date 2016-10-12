@@ -76,6 +76,7 @@
 
 %% API
 -export([start_link/0,
+         register/1,
          register/4,
          register/3,
          get/1,
@@ -120,6 +121,18 @@ start_link() ->
 %% default mode, and an optional mapping of how a legacy application variable
 %% maps to different modes. The order of modes in `Supported' determines the
 %% mode preference -- modes listed earlier are more preferred.
+
+%% Batch registration drops support for the legacy application
+%% variables, since all supported versions of Riak understand
+%% capabilities
+register(Capabilities) ->
+    Batch = lists:map(fun([Capability, Supported, Default]) ->
+                              {Capability,
+                               capability_info(Supported, Default, undefined)}
+                      end, Capabilities),
+    gen_server:call(?MODULE, {batch, Batch}, infinity),
+    ok.
+
 register(Capability, Supported, Default, LegacyVar) ->
     Info = capability_info(Supported, Default, LegacyVar),
     gen_server:call(?MODULE, {register, Capability, Info}, infinity),
@@ -208,14 +221,24 @@ init_state(Registered) ->
            unknown=[],
            negotiated=[]}.
 
+handle_call({batch, Capabilities}, _From, State) ->
+    Node = node(),
+    State2 = lists:foldl(fun({Cap, Info}, NextState) ->
+                                 register_capability(Node, Cap, Info, NextState)
+                         end,
+                         State, Capabilities),
+    post_registration_pipeline(State2);
 handle_call({register, Capability, Info}, _From, State) ->
     State2 = register_capability(node(), Capability, Info, State),
-    State3 = update_supported(State2),
-    State4 = renegotiate_capabilities(State3),
-    publish_supported(State4),
-    update_local_cache(State4),
-    save_registered(State4#state.registered),
-    {reply, ok, State4}.
+    post_registration_pipeline(State2).
+
+post_registration_pipeline(State) ->
+    State2 = update_supported(State),
+    State3 = renegotiate_capabilities(State2),
+    publish_supported(State3),
+    update_local_cache(State3),
+    save_registered(State3#state.registered),
+    {reply, ok, State3}.
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
