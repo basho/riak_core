@@ -21,7 +21,8 @@
 ]}.
 
 %% ring_size validators
-{validator, "ring_size_max", "2048 and larger are supported, but considered advanced config",
+{validator, "ring_size_max",
+ "2048 and larger are supported, but considered advanced config",
  fun(Size) ->
   Size =< 1024
  end}.
@@ -83,7 +84,7 @@
 {validator,
   "valid_ipaddr",
   "must be a valid IP address",
-  fun(AddrString) -> 
+  fun(AddrString) ->
     case inet_parse:address(AddrString) of
       {ok, _} -> true;
       {error, _} -> false
@@ -200,3 +201,56 @@
     {datatype, {duration, ms}},
     hidden
 ]}.
+
+%% Async Job Management
+%%
+%% This is a translation for mappings that appear in other schema files.
+%% Mappings are from "cluster.job.$namespace.$operation"* to
+%% "riak_core.job_accept_class" with required attributes
+%%  [merge, {datatype, {flag, enabled, disabled}}].**
+%% *  Mappings are only performed on elements with exactly the number of
+%%    segments shown - any other number of elements, even with a matching
+%%    prefix, is ignored.
+%% ** The 'datatype' should be 'flag', and 'enabled'/'disabled' are our
+%%    conventions, but any OnFlag/OffFlag pair can be used as long as they map
+%%    to boolean values.
+%% Other attributes, such as 'hidden' or {default, X} are fine, since they
+%% don't make it down the stack to here.
+%% Job classes that should be enabled by default MUST have a {default, enabled}
+%% attribute, as the runtime filter only defaults to accept when no values have
+%% been set from ANY schema file.
+%%
+%% Example:
+%%  {mapping, "cluster.job.harry.fold", "riak_core.job_accept_class", [
+%%      merge,
+%%      {datatype, {flag, enabled, disabled}},
+%%      {default, enabled}
+%%  ]}.
+%%  {mapping, "cluster.job.alice.list", "riak_core.job_accept_class", [
+%%      merge,
+%%      {datatype, {flag, enabled, disabled}},
+%%      {default, disabled}
+%%  ]}.
+%% Results in:
+%%  {riak_core, [
+%%      ...
+%%      {job_accept_class, [{harry, fold}]}
+%%      ...
+%%  ]}.
+%%
+{translation,
+ "riak_core.job_accept_class",
+ fun(Conf) ->
+    Fold =
+     fun({[_, _, Mod, Op], true}, Result) ->
+            [{erlang:list_to_atom(Mod), erlang:list_to_atom(Op)} | Result];
+        ({[_, _, _, _], false}, Result) ->
+            Result;
+        ({[_, _, _, _], _} = Setting, _) ->
+            cuttlefish:invalid(io_lib:format("~p", [Setting]));
+        (_, Result) ->
+            Result
+    end,
+    lists:sort(lists:foldl(Fold, [],
+        cuttlefish_variable:filter_by_prefix(["cluster", "job"], Conf)))
+ end}.

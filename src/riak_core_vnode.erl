@@ -37,6 +37,7 @@
 -export([reply/2,
          monitor/1]).
 -export([get_mod_index/1,
+         get_modstate/1,
          set_forwarding/2,
          trigger_handoff/2,
          trigger_handoff/3,
@@ -814,8 +815,8 @@ handle_sync_event(core_status, _From, StateName, State=#state{index=Index,
         end,
     {reply, {Mode, Status}, StateName, State, State#state.inactivity_timeout}.
 
-handle_info({'$vnode_proxy_ping', From, Msgs}, StateName, State) ->
-    riak_core_vnode_proxy:cast(From, {vnode_proxy_pong, self(), Msgs}),
+handle_info({'$vnode_proxy_ping', From, Ref, Msgs}, StateName, State) ->
+    riak_core_vnode_proxy:cast(From, {vnode_proxy_pong, Ref, Msgs}),
     {next_state, StateName, State, State#state.inactivity_timeout};
 
 handle_info({'EXIT', Pid, Reason},
@@ -1058,6 +1059,12 @@ mod_set_forwarding(Forward, State=#state{mod=Mod, modstate=ModState}) ->
 %% ===================================================================
 %% Test API
 %% ===================================================================
+
+%% @doc Reveal the underlying module state for testing
+-spec(get_modstate(pid()) -> {atom(), #state{}}).
+get_modstate(Pid) ->
+    {_StateName, State} = gen_fsm:sync_send_all_state_event(Pid, current_state),
+    {State#state.mod, State#state.modstate}.
 
 -ifdef(TEST).
 

@@ -32,10 +32,19 @@
 -type type_prop_name() :: binary().
 -type type_prop_val()  :: boolean().
 
+-define(QC_OUT(P),
+    eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
+
 -record(state, {
           %% a list of properties we have created
           types :: [{type_name(), type_active_status(), [{type_prop_name(), type_prop_val()}]}]
          }).
+
+btypes_test_() -> {
+        timeout, 60,
+        ?_test(?assert(
+            eqc:quickcheck(?QC_OUT(eqc:numtests(100, prop_btype_invariant())))))
+    }.
 
 run_eqc() ->
     run_eqc(100).
@@ -223,6 +232,23 @@ get_type_post(S, [TypeName], Res) ->
             good_props(Missing, Extra)
     end.
 
+%% ------ Grouped operator: fold
+
+%% @doc fold args generator
+fold_args(_S) -> [].
+
+%% @doc fold command
+fold() ->
+    ordsets:from_list(riak_core_bucket_type:fold(fun folder/2, [])).
+
+%% @doc fold callback which simply picks out the bucket type
+folder({BType, _BProps}, Accum) ->
+    [BType | Accum].
+
+%% @doc fold postcondition
+fold_post(#state{types=Types} = _S, [], Res) ->
+    eq(ordsets:from_list([BType || {BType, _Status, _BProps} <- Types]), Res).
+
 %% ------ test helpers
 
 expected_status(TypeName, S) ->
@@ -307,6 +333,7 @@ weight(_S, create_type) -> 3;
 weight(_S, activate_type) -> 3;
 weight(_S, type_status) -> 1;
 weight(_S, get_type) -> 1;
+weight(_S, fold) -> 1;
 weight(_S, _Cmd) -> 1.
 
 %% @doc the property
