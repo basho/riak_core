@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2012 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2012-2015 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -100,7 +100,6 @@
 %% ``local_compare/2'' and ``do_remote/1'' for examples (-ifdef(TEST) only).
 
 -module(hashtree).
-
 -export([new/0,
          new/2,
          new/3,
@@ -124,8 +123,15 @@
          levels/1,
          segments/1,
          width/1,
-         mem_levels/1]).
+         mem_levels/1,
+         path/1,
+         next_rebuild/1,
+         set_next_rebuild/2,
+         mark_open_empty/2,
+         mark_open_and_check/2,
+         mark_clean_close/2]).
 -export([compare2/4]).
+-export([multi_select_segment/3, safe_decode/1]).
 
 -ifdef(namespaced_types).
 -type hashtree_dict() :: dict:dict().
@@ -135,8 +141,11 @@
 -type hashtree_array() :: array().
 -endif.
 
+-define(ALL_SEGMENTS, ['*', '*']).
+-define(BIN_TO_INT(B), list_to_integer(binary_to_list(B))).
+
 -ifdef(TEST).
--export([local_compare/2]).
+-export([fake_close/1, local_compare/2, local_compare1/2]).
 -export([run_local/0,
          run_local/1,
          run_concurrent_build/0,
@@ -170,6 +179,7 @@
 -type proplist() :: proplists:proplist().
 -type orddict() :: orddict:orddict().
 -type index() :: non_neg_integer().
+-type index_n() :: {index(), pos_integer()}.
 
 -type keydiff() :: {missing | remote_missing | different, binary()}.
 
@@ -181,19 +191,23 @@
 
 -type select_fun(T) :: fun((orddict()) -> T).
 
--record(state, {id             :: tree_id_bin(),
-                index          :: index(),
-                levels         :: pos_integer(),
-                segments       :: pos_integer(),
-                width          :: pos_integer(),
-                mem_levels     :: integer(),
-                tree           :: hashtree_dict(),
-                ref            :: term(),
-                path           :: string(),
-                itr            :: term(),
-                write_buffer   :: [{put, binary(), binary()} | {delete, binary()}],
+-type next_rebuild() :: full | incremental.
+
+-record(state, {id                 :: tree_id_bin(),
+                index              :: index(),
+                levels             :: pos_integer(),
+                segments           :: pos_integer(),
+                width              :: pos_integer(),
+                mem_levels         :: integer(),
+                tree               :: hashtree_dict(),
+                ref                :: term(),
+                path               :: string(),
+                itr                :: term(),
+                next_rebuild       :: next_rebuild(),
+                write_buffer       :: [{put, binary(), binary()} |
+                                       {delete, binary()}],
                 write_buffer_count :: integer(),
-                dirty_segments :: hashtree_array()
+                dirty_segments     :: hashtree_array()
                }).
 
 -record(itr_state, {itr                :: term(),
@@ -250,6 +264,7 @@ new({Index,TreeId}, LinkedStore, Options) ->
                    mem_levels=MemLevels,
                    %% dirty_segments=gb_sets:new(),
                    dirty_segments=bitarray_new(NumSegments),
+                   next_rebuild=full,
                    write_buffer=[],
                    write_buffer_count=0,
                    tree=dict:new()},
@@ -315,6 +330,8 @@ maybe_flush_buffer(State=#state{write_buffer_count=WCount}) ->
             State
     end.
 
+flush_buffer(State=#state{write_buffer=[], write_buffer_count=0}) ->
+    State;
 flush_buffer(State=#state{write_buffer=WBuffer}) ->
     %% Write buffer is built backwards, reverse to build update list
     Updates = lists:reverse(WBuffer),
@@ -363,40 +380,151 @@ update_tree(State) ->
     update_perform(State3).
 
 -spec update_perform(hashtree()) -> hashtree().
-update_perform(State2=#state{dirty_segments=Dirty, segments=NumSegments}) ->
-    %% Segments = gb_sets:to_list(Dirty),
-    Segments = bitarray_to_list(Dirty),
+update_perform(State=#state{dirty_segments=Dirty, segments=NumSegments}) ->
+    NextRebuild = State#state.next_rebuild,
+    Segments = case NextRebuild of
+                   full ->
+                       ?ALL_SEGMENTS;
+                   incremental ->
+                       %% gb_sets:to_list(Dirty),
+                       bitarray_to_list(Dirty)
+               end,
+    State2 = maybe_clear_buckets(NextRebuild, State),
     State3 = update_tree(Segments, State2),
-    %% State3#state{dirty_segments=gb_sets:new()}.
-    State3#state{dirty_segments=bitarray_new(NumSegments)}.
+    %% State2#state{dirty_segments=gb_sets:new()}
+    State3#state{dirty_segments=bitarray_new(NumSegments),
+                 next_rebuild=incremental}.
+
+%% Clear buckets if doing a full rebuild
+maybe_clear_buckets(full, State) ->
+    clear_buckets(State);
+maybe_clear_buckets(incremental, State) ->
+    State.
+
+%% Fold over the 'live' data (outside of the snapshot), removing all
+%% bucket entries for the tree.
+clear_buckets(State=#state{id=Id, ref=Ref}) ->
+    Fun = fun({K,_V},Acc) ->
+                  try
+                      case decode_bucket(K) of
+                          {Id, _, _} ->
+                              ok = eleveldb:delete(Ref, K, []),
+                              Acc + 1;
+                          _ ->
+                              throw({break, Acc})
+                      end
+                  catch
+                      _:_ -> % not a decodable bucket
+                          throw({break, Acc})
+                  end
+          end,
+    Opts = [{start_key, encode_bucket(Id, 0, 0)}],
+    Removed = try
+%hashtree.erl:415: The call eleveldb:fold(Ref::any(),Fun::fun((_,_) -> number()),0,Opts::[{'first_key',<<_:320>>},...]) breaks the contract (db_ref(),fold_fun(),any(),read_options()) -> any()
+
+                  eleveldb:fold(Ref, Fun, 0, Opts)
+              catch
+                  {break, AccFinal} ->
+                      AccFinal
+              end,
+    lager:debug("Tree ~p cleared ~p segments.\n", [Id, Removed]),
+
+    %% Mark the tree as requiring a full rebuild (will be fixed
+    %% reset at end of update_trees) AND dump the in-memory
+    %% tree.
+    State#state{next_rebuild = full,
+                tree = dict:new()}.
+            
 
 -spec update_tree([integer()], hashtree()) -> hashtree().
 update_tree([], State) ->
     State;
-update_tree(Segments, State) ->
+update_tree(Segments, State=#state{next_rebuild=NextRebuild, width=Width,
+                                   levels=Levels}) ->
+    LastLevel = Levels,
     Hashes = orddict:from_list(hashes(State, Segments)),
-    Groups = group(Hashes, State#state.width),
-    LastLevel = State#state.levels,
-    NewState = update_levels(LastLevel, Groups, State),
-    NewState.
+    %% Paranoia to make sure all of the hash entries are updated as expected
+    lager:debug("segments ~p -> hashes ~p\n", [Segments, Hashes]),
+    case Segments == ?ALL_SEGMENTS orelse
+        length(Segments) == length(Hashes) of
+        true ->
+            Groups = group(Hashes, Width),
+            update_levels(LastLevel, Groups, State, NextRebuild);
+        false ->
+            %% At this point the hashes are no longer sufficient to update
+            %% the upper trees.  Alternative is to crash here, but that would
+            %% lose updates and is the action taken on repair anyway.
+            %% Save the customer some pain by doing that now and log.
+            %% Enable lager debug tracing with lager:trace_file(hashtree, "/tmp/ht.trace"
+            %% to get the detailed segment information.
+            lager:warning("Incremental AAE hash was unable to find all required data, "
+                          "forcing full rebuild of ~p", [State#state.path]),
+            update_perform(State#state{next_rebuild = full})
+    end.
 
 -spec rehash_tree(hashtree()) -> hashtree().
 rehash_tree(State) ->
-    State2 = snapshot(State),
-    rehash_perform(State2).
+    State2 = flush_buffer(State),
+    State3 = snapshot(State2),
+    rehash_perform(State3).
 
 -spec rehash_perform(hashtree()) -> hashtree().
 rehash_perform(State) ->
-    Hashes = orddict:from_list(hashes(State, ['*', '*'])),
+    Hashes = orddict:from_list(hashes(State, ?ALL_SEGMENTS)),
     case Hashes of
         [] ->
             State;
         _ ->
             Groups = group(Hashes, State#state.width),
             LastLevel = State#state.levels,
-            NewState = update_levels(LastLevel, Groups, State),
+            %% Always do a full rebuild on rehash
+            NewState = update_levels(LastLevel, Groups, State, full),
             NewState
     end.
+
+%% @doc Mark/clear metadata for tree-id opened/closed.
+%%      Set next_rebuild to be incremental.
+-spec mark_open_empty(index_n()|binary(), hashtree()) -> hashtree().
+mark_open_empty(TreeId, State) when is_binary(TreeId) ->
+    State1 = write_meta(TreeId, [{opened, 1}, {closed, 0}], State),
+    State1#state{next_rebuild=incremental};
+mark_open_empty(TreeId, State) ->
+    mark_open_empty(term_to_binary(TreeId), State).
+
+%% @doc Check if shutdown/closing of tree-id was clean/dirty by comparing
+%%      `closed' to `opened' metadata count for the hashtree, and,
+%%      increment opened count for hashtree-id.
+%%
+%%
+%%      If it was a clean shutdown, set `next_rebuild' to be an incremental one.
+%%      Otherwise, if it was a dirty shutdown, set `next_rebuild', instead,
+%%      to be a full one.
+-spec mark_open_and_check(index_n()|binary(), hashtree()) -> hashtree().
+mark_open_and_check(TreeId, State) when is_binary(TreeId) ->
+    MetaTerm = read_meta_term(TreeId, [], State),
+    OpenedCnt = proplists:get_value(opened, MetaTerm, 0),
+    ClosedCnt = proplists:get_value(closed, MetaTerm, -1),
+    _ = write_meta(TreeId, lists:keystore(opened, 1, MetaTerm,
+                                          {opened, OpenedCnt + 1}), State),
+    case ClosedCnt =/= OpenedCnt orelse State#state.mem_levels > 0 of
+        true ->
+            State#state{next_rebuild = full};
+        false ->
+            State#state{next_rebuild = incremental}
+    end;
+mark_open_and_check(TreeId, State) ->
+    mark_open_and_check(term_to_binary(TreeId), State).
+
+%% @doc Call on a clean-close to update the meta for a tree-id's `closed' count
+%%      to match the current `opened' count, which is checked on new/reopen.
+-spec mark_clean_close(index_n()|binary(), hashtree()) -> hashtree().
+mark_clean_close(TreeId, State) when is_binary(TreeId) ->
+    MetaTerm = read_meta_term(TreeId, [], State),
+    OpenedCnt = proplists:get_value(opened, MetaTerm, 0),
+    _ = write_meta(TreeId, lists:keystore(closed, 1, MetaTerm,
+                                          {closed, OpenedCnt}), State);
+mark_clean_close(TreeId, State) ->
+    mark_clean_close(term_to_binary(TreeId), State).
 
 -spec top_hash(hashtree()) -> [] | [{0, binary()}].
 top_hash(State) ->
@@ -421,14 +549,29 @@ width(#state{width=W}) ->
 mem_levels(#state{mem_levels=M}) ->
     M.
 
+-spec path(hashtree()) -> string().
+path(#state{path=P}) ->
+    P.
+
+-spec next_rebuild(hashtree()) -> next_rebuild().
+next_rebuild(#state{next_rebuild=NextRebuild}) ->
+    NextRebuild.
+
+-spec set_next_rebuild(hashtree(), next_rebuild()) -> hashtree().
+set_next_rebuild(Tree, NextRebuild) ->
+    Tree#state{next_rebuild = NextRebuild}.
+
 %% Note: meta is currently a one per file thing, even if there are multiple
 %%       trees per file. This is intentional. If we want per tree metadata
 %%       this will need to be added as a separate thing.
--spec write_meta(binary(), binary(), hashtree()) -> hashtree().
+-spec write_meta(binary(), binary()|term(), hashtree()) -> hashtree().
 write_meta(Key, Value, State) when is_binary(Key) and is_binary(Value) ->
     HKey = encode_meta(Key),
     ok = eleveldb:put(State#state.ref, HKey, Value, []),
-    State.
+    State;
+write_meta(Key, Value0, State) when is_binary(Key) ->
+    Value = term_to_binary(Value0),
+    write_meta(Key, Value, State).
 
 -spec read_meta(binary(), hashtree()) -> {ok, binary()} | undefined.
 read_meta(Key, State) when is_binary(Key) ->
@@ -438,6 +581,15 @@ read_meta(Key, State) when is_binary(Key) ->
             {ok, Value};
         _ ->
             undefined
+    end.
+
+-spec read_meta_term(binary(), term(), hashtree()) -> term().
+read_meta_term(Key, Default, State) when is_binary(Key) ->
+    case read_meta(Key, State) of
+        {ok, Value} ->
+            binary_to_term(Value);
+        _ ->
+            Default
     end.
 
 %% @doc
@@ -517,6 +669,7 @@ esha_update(Ctx, Bin) ->
 
 esha_final(Ctx) ->
     crypto:sha_final(Ctx).
+
 -endif.
 
 -spec set_bucket(integer(), integer(), any(), hashtree()) -> hashtree().
@@ -526,6 +679,15 @@ set_bucket(Level, Bucket, Val, State) ->
             set_memory_bucket(Level, Bucket, Val, State);
         false ->
             set_disk_bucket(Level, Bucket, Val, State)
+    end.
+
+-spec del_bucket(integer(), integer(), hashtree()) -> hashtree().
+del_bucket(Level, Bucket, State) ->
+    case Level =< State#state.mem_levels of
+        true ->
+            del_memory_bucket(Level, Bucket, State);
+        false ->
+            del_disk_bucket(Level, Bucket, State)
     end.
 
 -spec new_segment_store(proplist(), hashtree()) -> hashtree().
@@ -567,7 +729,9 @@ new_segment_store(Opts, State) ->
 share_segment_store(State, #state{ref=Ref, path=Path}) ->
     State#state{ref=Ref, path=Path}.
 
--spec hash(term()) -> binary().
+-spec hash(term()) -> empty | binary().
+hash([]) ->
+    empty;
 hash(X) ->
     %% erlang:phash2(X).
     sha(term_to_binary(X)).
@@ -598,23 +762,61 @@ get_env(Key, Default) ->
 
 -spec update_levels(integer(),
                     [{integer(), [{integer(), binary()}]}],
-                    hashtree()) -> hashtree().
-update_levels(0, _, State) ->
+                    hashtree(), next_rebuild()) -> hashtree().
+update_levels(0, _, State, _) ->
     State;
-update_levels(Level, Groups, State) ->
-    {NewState, NewBuckets} =
-        lists:foldl(fun({Bucket, NewHashes}, {StateAcc, BucketsAcc}) ->
-                            Hashes1 = get_bucket(Level, Bucket, StateAcc),
-                            Hashes2 = orddict:from_list(NewHashes),
-                            Hashes3 = orddict:merge(fun(_, _, New) -> New end,
-                                                    Hashes1,
-                                                    Hashes2),
-                            StateAcc2 = set_bucket(Level, Bucket, Hashes3, StateAcc),
-                            NewBucket = {Bucket, hash(Hashes3)},
-                            {StateAcc2, [NewBucket | BucketsAcc]}
-                    end, {State, []}, Groups),
+update_levels(Level, Groups, State, Type) ->
+    {_, _, NewState, NewBuckets} = rebuild_fold(Level, Groups, State, Type),
+    lager:debug("level ~p hashes ~w\n", [Level, NewBuckets]),
     Groups2 = group(NewBuckets, State#state.width),
-    update_levels(Level - 1, Groups2, NewState).
+    update_levels(Level - 1, Groups2, NewState, Type).
+
+-spec rebuild_fold(integer(),
+                   [{integer(), [{integer(), binary()}]}], hashtree(),
+                   next_rebuild()) -> {integer(), next_rebuild(),
+                                      hashtree(), [{integer(), binary()}]}.
+rebuild_fold(Level, Groups, State, Type) ->
+    lists:foldl(fun rebuild_folder/2, {Level, Type, State, []}, Groups).
+
+rebuild_folder({Bucket, NewHashes}, {Level, Type, StateAcc, BucketsAcc}) ->
+    Hashes = case Type of
+                 full ->
+                     orddict:from_list(NewHashes);
+                 incremental ->
+                     Hashes1 = get_bucket(Level, Bucket,
+                                          StateAcc),
+                     Hashes2 = orddict:from_list(NewHashes),
+                     orddict:merge(
+                       fun(_, _, New) -> New end,
+                       Hashes1,
+                       Hashes2)
+             end,
+    %% All of the segments that make up this bucket, trim any
+    %% newly emptied hashes (likely result of deletion)
+    PopHashes = [{S, H} || {S, H} <- Hashes, H /= [], H /= empty],
+
+    case PopHashes of
+        [] ->
+            %% No more hash entries, if a full rebuild then disk
+            %% already clear.  If not, remove the empty bucket.
+            StateAcc2 = case Type of
+                            full ->
+                                StateAcc;
+                            incremental ->
+                                del_bucket(Level, Bucket, StateAcc)
+                        end,
+            %% Although not written to disk, propagate hash up to next level
+            %% to mark which entries of the tree need updating.
+            NewBucket = {Bucket, []},
+            {Level, Type, StateAcc2, [NewBucket | BucketsAcc]};
+        _ ->
+            %% Otherwise, at least one hash entry present, update
+            %% and propagate
+            StateAcc2 = set_bucket(Level, Bucket, Hashes, StateAcc),
+            NewBucket = {Bucket, hash(PopHashes)},
+            {Level, Type, StateAcc2, [NewBucket | BucketsAcc]}
+    end.
+
 
 %% Takes a list of bucket-hash entries from level X and groups them together
 %% into groups representing entries at parent level X-1.
@@ -628,6 +830,8 @@ update_levels(Level, Groups, State) ->
 %%
 -spec group([{integer(), binary()}], pos_integer())
            -> [{integer(), [{integer(), binary()}]}].
+group([], _) ->
+    [];
 group(L, Width) ->
     {FirstId, _} = hd(L),
     FirstBucket = FirstId div Width,
@@ -657,6 +861,11 @@ set_memory_bucket(Level, Bucket, Val, State) ->
     Tree = dict:store({Level, Bucket}, Val, State#state.tree),
     State#state{tree=Tree}.
 
+-spec del_memory_bucket(integer(), integer(), hashtree()) -> hashtree().
+del_memory_bucket(Level, Bucket, State) ->
+    Tree = dict:erase({Level, Bucket}, State#state.tree),
+    State#state{tree=Tree}.
+
 -spec get_disk_bucket(integer(), integer(), hashtree()) -> any().
 get_disk_bucket(Level, Bucket, #state{id=Id, ref=Ref}) ->
     HKey = encode_bucket(Id, Level, Bucket),
@@ -672,6 +881,11 @@ set_disk_bucket(Level, Bucket, Val, State=#state{id=Id, ref=Ref}) ->
     HKey = encode_bucket(Id, Level, Bucket),
     Bin = term_to_binary(Val),
     ok = eleveldb:put(Ref, HKey, Bin, []),
+    State.
+
+del_disk_bucket(Level, Bucket, State = #state{id = Id, ref = Ref}) ->
+    HKey = encode_bucket(Id, Level, Bucket),
+    ok = eleveldb:delete(Ref, HKey, []),
     State.
 
 -spec encode_id(binary() | non_neg_integer()) -> tree_id_bin().
@@ -709,6 +923,11 @@ decode(Bin) ->
 encode_bucket(TreeId, Level, Bucket) ->
     <<$b,TreeId:22/binary,$b,Level:64/integer,Bucket:64/integer>>.
 
+-spec decode_bucket(bucket_bin()) -> {tree_id_bin(), integer(), integer()}.
+decode_bucket(Bin) ->
+    <<$b,TreeId:22/binary,$b,Level:64/integer,Bucket:64/integer>> = Bin,
+    {TreeId, Level, Bucket}.
+
 -spec encode_meta(binary()) -> meta_bin().
 encode_meta(Key) ->
     <<$m,Key/binary>>.
@@ -741,11 +960,26 @@ multi_select_segment(#state{id=Id, itr=Itr}, Segments, F) ->
                _ ->
                    encode(Id, First, <<>>)
            end,
-    IS2 = iterate(iterator_move(Itr, Seek), IS1),
-    #itr_state{current_segment=LastSegment,
+    IS2 = try
+              iterate(iterator_move(Itr, Seek), IS1)
+          after
+              %% Always call prefetch stop to ensure the iterator
+              %% is safe to use in the compare.  Requires
+              %% eleveldb > 2.0.16 or this may segv/hang.
+              _ = iterator_move(Itr, prefetch_stop)
+          end,
+    #itr_state{remaining_segments = LeftOver,
+               current_segment=LastSegment,
                segment_acc=LastAcc,
                final_acc=FA} = IS2,
-    Result = [{LastSegment, F(LastAcc)} | FA],
+
+    %% iterate completes without processing the last entries in the state.  Compute
+    %% the final visited segment, and add calls to the F([]) for all of the segments
+    %% that do not exist at the end of the file (due to deleting the last entry in the
+    %% segment).
+    Result = [{LeftSeg, F([])} || LeftSeg <- lists:reverse(LeftOver),
+                  LeftSeg =/= '*'] ++
+    [{LastSegment, F(LastAcc)} | FA],
     case Result of
         [{'*', _}] ->
             %% Handle wildcard select when all segments are empty
@@ -767,8 +1001,31 @@ iterator_move(Itr, Seek) ->
 
 -spec iterate({'error','invalid_iterator'} | {'ok',binary(),binary()},
               #itr_state{}) -> #itr_state{}.
-iterate({error, invalid_iterator}, IS=#itr_state{}) ->
+
+%% Ended up at an invalid_iterator likely due to encountering a missing dirty
+%% segment - e.g. segment dirty, but removed last entries for it
+iterate({error, invalid_iterator}, IS=#itr_state{current_segment='*'}) ->
     IS;
+iterate({error, invalid_iterator}, IS=#itr_state{itr=Itr,
+                                                 id=Id,
+                                                 current_segment=CurSeg,
+                                                 remaining_segments=Segments,
+                                                 acc_fun=F,
+                                                 segment_acc=Acc,
+                                                 final_acc=FinalAcc}) ->
+    case Segments of
+        [] ->
+            IS;
+        ['*'] ->
+            IS;
+        [NextSeg | Remaining] ->
+            Seek = encode(Id, NextSeg, <<>>),
+            IS2 = IS#itr_state{current_segment=NextSeg,
+                               remaining_segments=Remaining,
+                               segment_acc=[],
+                               final_acc=[{CurSeg, F(Acc)} | FinalAcc]},
+            iterate(iterator_move(Itr, Seek), IS2)
+    end;
 iterate({ok, K, V}, IS=#itr_state{itr=Itr,
                                   id=Id,
                                   current_segment=CurSeg,
@@ -809,21 +1066,17 @@ iterate({ok, K, V}, IS=#itr_state{itr=Itr,
                                final_acc=[{Segment, F(Acc)} | FinalAcc],
                                prefetch=true},
             iterate(iterator_move(Itr, prefetch), IS2);
-        {Id, NextSeg, [NextSeg|Remaining], _} ->
-            %% A previous prefetch_stop left us at the start of the
-            %% next interesting segment.
-            IS2 = IS#itr_state{current_segment=NextSeg,
-                               remaining_segments=Remaining,
-                               segment_acc=[{K,V}],
-                               prefetch=true},
-            iterate(iterator_move(Itr, prefetch), IS2);
-        {Id, _, [_NextSeg | _Remaining], true} ->
+        {Id, _, [NextSeg | Remaining], true} ->
             %% Pointing at uninteresting segment, but need to halt the
-            %% prefetch to ensure the interator can be reused
-            IS2 = IS#itr_state{segment_acc=[],
+            %% prefetch to ensure the iterator can be reused
+            IS2 = IS#itr_state{current_segment=NextSeg,
+                               segment_acc=[],
+                               remaining_segments=Remaining,
                                final_acc=[{Segment, F(Acc)} | FinalAcc],
-                               prefetch=false},
-            iterate(iterator_move(Itr, prefetch_stop), IS2);
+                               prefetch=true}, % will be after second move
+            _ = iterator_move(Itr, prefetch_stop), % ignore the pre-fetch,
+            Seek = encode(Id, NextSeg, <<>>),      % and risk wasting a reseek
+            iterate(iterator_move(Itr, Seek), IS2);% to get to the next segment
         {Id, _, [NextSeg | Remaining], false} ->
             %% Pointing at uninteresting segment, seek to next interesting one
             Seek = encode(Id, NextSeg, <<>>),
@@ -874,8 +1127,11 @@ exchange_level(Level, Buckets, Local, Remote, _Opts) ->
     lists:flatmap(fun(Bucket) ->
                           A = Local(get_bucket, {Level, Bucket}),
                           B = Remote(get_bucket, {Level, Bucket}),
-                          Delta = riak_ensemble_util:orddict_delta(lists:keysort(1, A),
+                          Delta = riak_core_util:orddict_delta(lists:keysort(1, A),
                                                                    lists:keysort(1, B)),
+              lager:debug("Exchange Level ~p Bucket ~p\nA=~p\nB=~p\nD=~p\n",
+                      [Level, Bucket, A, B, Delta]),
+
                           Diffs = Delta,
                           [BK || {BK, _} <- Diffs]
                   end, Buckets).
@@ -885,8 +1141,10 @@ exchange_final(_Level, Segments, Local, Remote, AccFun, Acc0, _Opts) ->
     lists:foldl(fun(Segment, Acc) ->
                         A = Local(key_hashes, Segment),
                         B = Remote(key_hashes, Segment),
-                        Delta = riak_ensemble_util:orddict_delta(lists:keysort(1, A),
+                        Delta = riak_core_util:orddict_delta(lists:keysort(1, A),
                                                                  lists:keysort(1, B)),
+            lager:debug("Exchange Final\nA=~p\nB=~p\nD=~p\n",
+                    [A, B, Delta]),
                         Keys = [begin
                                     {_Id, Segment, Key} = decode(KBin),
                                     Type = key_diff_type(Diff),
@@ -908,6 +1166,8 @@ compare(Level, Bucket, Tree, Remote, AccFun, KeyAcc) ->
     Inter = ordsets:intersection(ordsets:from_list(HL1),
                                  ordsets:from_list(HL2)),
     Diff = ordsets:subtract(Union, Inter),
+    lager:debug("Tree ~p level ~p bucket ~p\nL=~p\nR=~p\nD=\n",
+        [Tree, Level, Bucket, HL1, HL2, Diff]),
     KeyAcc3 =
         lists:foldl(fun({Bucket2, _}, KeyAcc2) ->
                             compare(Level+1, Bucket2, Tree, Remote, AccFun, KeyAcc2)
@@ -920,7 +1180,9 @@ compare_segments(Segment, Tree=#state{id=Id}, Remote) ->
     KeyHashes2 = Remote(key_hashes, Segment),
     HL1 = orddict:from_list(KeyHashes1),
     HL2 = orddict:from_list(KeyHashes2),
-    Delta = orddict_delta(HL1, HL2),
+    Delta = riak_core_util:orddict_delta(HL1, HL2),
+    lager:debug("Tree ~p segment ~p diff ~p\n",
+                [Tree, Segment, Delta]),
     Keys = [begin
                 {Id, Segment, Key} = decode(KBin),
                 Type = key_diff_type(Diff),
@@ -934,30 +1196,6 @@ key_diff_type({_, '$none'}) ->
     remote_missing;
 key_diff_type(_) ->
     different.
-
-orddict_delta(D1, D2) ->
-    orddict_delta(D1, D2, []).
-
-orddict_delta([{K1,V1}|D1], [{K2,_}=E2|D2], Acc) when K1 < K2 ->
-    Acc2 = [{K1,{V1,'$none'}} | Acc],
-    orddict_delta(D1, [E2|D2], Acc2);
-orddict_delta([{K1,_}=E1|D1], [{K2,V2}|D2], Acc) when K1 > K2 ->
-    Acc2 = [{K2,{'$none',V2}} | Acc],
-    orddict_delta([E1|D1], D2, Acc2);
-orddict_delta([{K1,V1}|D1], [{_K2,V2}|D2], Acc) -> %K1 == K2
-    case V1 of
-        V2 ->
-            orddict_delta(D1, D2, Acc);
-        _ ->
-            Acc2 = [{K1,{V1,V2}} | Acc],
-            orddict_delta(D1, D2, Acc2)
-    end;
-orddict_delta([], D2, Acc) ->
-    L = [{K2,{'$none',V2}} || {K2,V2} <- D2],
-    L ++ Acc;
-orddict_delta(D1, [], Acc) ->
-    L = [{K1,{V1,'$none'}} || {K1,V1} <- D1],
-    L ++ Acc.
 
 %%%===================================================================
 %%% bitarray
@@ -1131,8 +1369,8 @@ message_loop(Tree, Msgs, Bytes) ->
             Size = byte_size(term_to_binary(Reply)),
             message_loop(Tree, Msgs+1, Bytes+Size);
         done ->
-            io:format("Exchanged messages: ~b~n", [Msgs]),
-            io:format("Exchanged bytes:    ~b~n", [Bytes]),
+            %% io:format("Exchanged messages: ~b~n", [Msgs]),
+            %% io:format("Exchanged bytes:    ~b~n", [Bytes]),
             ok
     end.
 
@@ -1180,6 +1418,23 @@ local_compare(T1, T2) ->
              end,
     compare2(T1, Remote, AccFun, []).
 
+-spec local_compare1(hashtree(), hashtree()) -> [keydiff()].
+local_compare1(T1, T2) ->
+    Remote = fun(get_bucket, {L, B}) ->
+        get_bucket(L, B, T2);
+        (start_exchange_level, {_Level, _Buckets}) ->
+            ok;
+        (start_exchange_segments, _Segments) ->
+            ok;
+        (key_hashes, Segment) ->
+            [{_, KeyHashes2}] = key_hashes(T2, Segment),
+            KeyHashes2
+             end,
+    AccFun = fun(Keys, KeyAcc) ->
+        Keys ++ KeyAcc
+             end,
+    compare(T1, Remote, AccFun, []).
+
 -spec compare(hashtree(), remote_fun()) -> [keydiff()].
 compare(Tree, Remote) ->
     compare(Tree, Remote, fun(Keys, KeyAcc) ->
@@ -1189,6 +1444,11 @@ compare(Tree, Remote) ->
 -spec compare(hashtree(), remote_fun(), acc_fun(X)) -> X.
 compare(Tree, Remote, AccFun) ->
     compare(Tree, Remote, AccFun, []).
+
+-spec fake_close(hashtree()) -> hashtree().
+fake_close(State) ->
+    catch eleveldb:close(State#state.ref),
+    State.
 
 %% Verify that `update_tree/1' generates a snapshot of the underlying
 %% LevelDB store that is used by `compare', therefore isolating the
@@ -1217,6 +1477,106 @@ delta_test() ->
     Diff2 = local_compare(T2, T1),
     ?assertEqual([{missing, <<"1">>}, {remote_missing, <<"2">>}], Diff2),
     ok.
+
+delete_without_update_test() ->
+    A1 = new({0,0},[{segment_path, "t1"}]),
+    A2 = insert(<<"k">>, <<1234:32>>, A1),
+    A3 = update_tree(A2),
+
+    B1 = new({0,0},[{segment_path, "t2"}]),
+    B2 = insert(<<"k">>, <<1234:32>>, B1),
+    B3 = update_tree(B2),
+
+    Diff = local_compare(A3, B3),
+
+    C1 = delete(<<"k">>, A3),
+    C2 = rehash_tree(C1),
+    C3 = flush_buffer(C2),
+    close(C3),
+
+    AA1 = new({0,0},[{segment_path, "t1"}]),
+    AA2 = update_tree(AA1),
+    Diff2 = local_compare(AA2, B3),
+
+    close(B3),
+    close(AA2),
+    destroy(C3),
+    destroy(B3),
+    destroy(AA2),
+
+    ?assertEqual([], Diff),
+    ?assertEqual([{missing, <<"k">>}], Diff2).
+
+opened_closed_test() ->
+    TreeId0 = {0,0},
+    TreeId1 = term_to_binary({0,0}),
+    A1 = new(TreeId0, [{segment_path, "t1000"}]),
+    A2 = mark_open_and_check(TreeId0, A1),
+    A3 = insert(<<"totes">>, <<1234:32>>, A2),
+    A4 = update_tree(A3),
+
+    B1 = new(TreeId0, [{segment_path, "t2000"}]),
+    B2 = mark_open_empty(TreeId0, B1),
+    B3 = insert(<<"totes">>, <<1234:32>>, B2),
+    B4 = update_tree(B3),
+
+    StatusA4 = {proplists:get_value(opened, read_meta_term(TreeId1, [], A4)),
+                proplists:get_value(closed, read_meta_term(TreeId1, [], A4))},
+    StatusB4 = {proplists:get_value(opened, read_meta_term(TreeId1, [], B4)),
+                proplists:get_value(closed, read_meta_term(TreeId1, [], B4))},
+
+    A5 = set_next_rebuild(A4, incremental),
+    A6 = mark_clean_close(TreeId0, A5),
+    StatusA6 = {proplists:get_value(opened, read_meta_term(TreeId1, [], A6)),
+                proplists:get_value(closed, read_meta_term(TreeId1, [], A6))},
+
+    close(A6),
+    close(B4),
+
+    AA1 = new(TreeId0, [{segment_path, "t1000"}]),
+    AA2 = mark_open_and_check(TreeId0, AA1),
+    AA3 = update_tree(AA2),
+    StatusAA3 = {proplists:get_value(opened, read_meta_term(TreeId1, [], AA3)),
+                 proplists:get_value(closed, read_meta_term(TreeId1, [], AA3))},
+
+    fake_close(AA3),
+
+    AAA1 = new(TreeId0,[{segment_path, "t1000"}]),
+    AAA2 = mark_open_and_check(TreeId0, AAA1),
+    StatusAAA2 = {proplists:get_value(opened, read_meta_term(TreeId1, [], AAA2)),
+                  proplists:get_value(closed, read_meta_term(TreeId1, [], AAA2))},
+
+    AAA3 = mark_clean_close(TreeId0, AAA2),
+    close(AAA3),
+
+    AAAA1 = new({0,0},[{segment_path, "t1000"}]),
+    AAAA2 = mark_open_and_check(TreeId0, AAAA1),
+    StatusAAAA2 = {proplists:get_value(opened, read_meta_term(TreeId1, [], AAAA2)),
+                   proplists:get_value(closed, read_meta_term(TreeId1, [], AAAA2))},
+
+    AAAA3 = mark_clean_close(TreeId0, AAAA2),
+    StatusAAAA3 = {proplists:get_value(opened, read_meta_term(TreeId1, [], AAAA3)),
+                   proplists:get_value(closed, read_meta_term(TreeId1, [], AAAA3))},
+    close(AAAA3),
+    destroy(B3),
+    destroy(A6),
+    destroy(AA3),
+    destroy(AAA3),
+    destroy(AAAA3),
+
+    ?assertEqual({1,undefined}, StatusA4),
+    ?assertEqual({1,0}, StatusB4),
+    ?assertEqual(full, A2#state.next_rebuild),
+    ?assertEqual(incremental, B2#state.next_rebuild),
+    ?assertEqual(incremental, A5#state.next_rebuild),
+    ?assertEqual({1,1}, StatusA6),
+    ?assertEqual({2,1}, StatusAA3),
+    ?assertEqual(incremental, AA2#state.next_rebuild),
+    ?assertEqual({3,1}, StatusAAA2),
+    ?assertEqual(full, AAA1#state.next_rebuild),
+    ?assertEqual({4,3}, StatusAAAA2),
+    ?assertEqual({4,4}, StatusAAAA3).
+
 -endif.
 
 %%%===================================================================
