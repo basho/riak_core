@@ -432,7 +432,7 @@ clear_buckets(State=#state{id=Id, ref=Ref}) ->
                           throw({break, Acc})
                   end
           end,
-    Opts = [{first_key, encode_bucket(Id, 0, 0)}],
+    Opts = [{start_key, encode_bucket(Id, 0, 0)}],
     Removed = try
 %hashtree.erl:415: The call eleveldb:fold(Ref::any(),Fun::fun((_,_) -> number()),0,Opts::[{'first_key',<<_:320>>},...]) breaks the contract (db_ref(),fold_fun(),any(),read_options()) -> any()
 
