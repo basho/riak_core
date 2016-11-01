@@ -1,3 +1,13 @@
+# Riak's Partitioning Scheme
+
+## Introduction
+
+When diving into the depths of Riak Core into topics such as handoff and coverage plans, it is important to understand the differences between partitions and vnodes, and how objects are placed around the cluster.
+
+This document is far from a comprehensive look at those topics, but it provides a starting point for further exploration through examples of inspecting a running Riak instance.
+
+## Partitioning Logic Illustrated
+
 Let's say for the sake of argument that a key we store in Riak maps to a hash value just above 0. Where does it get stored and how do we represent that in our coverage plans?
 
 Our vnodes are uniquely identified via a hash value which is a multiple of the partition size in this cluster. With a ring size of 8, our vnode identifiers will be:
@@ -52,6 +62,8 @@ Now let's look at where a Riak object lands. If we want to stash an object with 
 
 Thus, an object whose bucket + key map to any key space will be mapped to the partition (and vnode) responsible for the **next** key space.
 
+## Preference Lists
+
 Once we've identified the first vnode that should store that value, we can look at the preflist (as determined by the `n_val`) to determine the other vnodes. Assuming the cluster is fully functional, this will be the next two primary vnodes.
 
 ```erlang
@@ -80,7 +92,9 @@ If we assume that all values are stored with 3 copies, the map of vnode index va
 * 6 -> [3, 4, 5]
 * 7 -> [4, 5, 6]
 
-However, coverage plans are represented differently.
+## Coverage Plans
+
+Coverage plans are represented differently.
 
 Coverage plans are represented internally as a list of vnode identifiers and a list of filters.
 
@@ -122,4 +136,3 @@ Compare that to the structure we saw earlier: `[{1,[0,6,7]},{3,[1,2]},{6,[3,4,5]
 How did `[1,2]` become `[2,3]`?
 
 This off-by-one situation arises traces back to the fact that an object is stored in the key space above the one to which it maps.
-
