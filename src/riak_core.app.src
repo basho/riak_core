@@ -6,7 +6,7 @@
      {included_applications,[riak_ensemble,chash]},
      {applications,
          [kernel,stdlib,lager,sasl,crypto,riak_sysmon,os_mon,basho_stats,
-          eleveldb,erocksdb,pbkdf2,poolboy,exometer_core,clique,folsom]},
+          eleveldb,pbkdf2,poolboy,exometer_core,clique,folsom]},
      {mod,{riak_core_app,[]}},
      {env,
          [{cluster_name,"default"},
