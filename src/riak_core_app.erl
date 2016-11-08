@@ -92,6 +92,8 @@ start_riak_core_sup() ->
             ok = init_cli_registry(),
             ok = riak_core_throttle:init(),
 
+            riak_core_throttle:init(),
+
             {ok, Pid};
         {error, Reason} ->
             {error, Reason}
