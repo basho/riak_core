@@ -27,12 +27,28 @@
 -export_type([context/0]).
 
 %% API
--export([authenticate/3, add_user/2, alter_user/2, del_user/1,
-         add_group/2, alter_group/2, del_group/1,
-         add_source/4, del_source/2,
-         add_grant/3, add_revoke/3, check_permission/2, check_permissions/2,
-         get_username/1, is_enabled/0, enable/0, disable/0, status/0,
-         get_ciphers/0, set_ciphers/1, print_ciphers/0]).
+-export([add_grant/3,
+         add_group/2,
+         add_revoke/3,
+         add_source/4,
+         add_user/2,
+         alter_group/2,
+         alter_user/2,
+         authenticate/3,
+         check_permission/2,
+         check_permissions/2,
+         del_group/1,
+         del_source/2,
+         del_user/1,
+         disable/0,
+         enable/0,
+         find_by_metadata/2,
+         get_ciphers/0,
+         get_username/1,
+         is_enabled/0,
+         print_ciphers/0,
+         set_ciphers/1,
+         status/0]).
 
 -define(DEFAULT_CIPHER_LIST,
 "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256"
@@ -82,6 +98,28 @@
 -type bucket() :: {binary(), binary()} | binary().
 -type permission() :: {string()} | {string(), bucket()}.
 -type userlist() :: all | [string()].
+-type username() :: string().
+-type metadata_key() :: string().
+-type metadata_value() :: term().
+-type options() :: [{metadata_key(), metadata_value()}].
+
+-spec find_by_metadata(metadata_key(), metadata_value()) -> [{username(), options()}].
+find_by_metadata(Key, Value) ->
+    riak_core_metadata:fold(
+      fun({_Username, [?TOMBSTONE]}, Acc) ->
+              Acc;
+         ({Username, [Options]}, Acc) ->
+              case lists:member({Key, Value}, Options) of
+                  true ->
+                      [{Username, Options}|Acc];
+                  false ->
+                      Acc
+              end;
+         (_, Acc) ->
+              Acc
+      end,
+      [],
+      {<<"security">>, <<"users">>}).
 
 prettyprint_users([all], _) ->
     "all";
@@ -106,7 +144,7 @@ print_sources(Sources) ->
                   atom_to_list(Source), io_lib:format("~p", [Options])] ||
             {Users, CIDR, Source, Options} <- GS]).
 
--spec print_user(Username :: string()) ->
+-spec print_user(username()) ->
     ok | {error, term()}.
 print_user(User) ->
     Name = name2bin(User),
@@ -483,14 +521,14 @@ authenticate(Username, Password, ConnInfo) ->
             end
     end.
 
--spec add_user(Username :: string(), Options :: [{string(), term()}]) ->
+-spec add_user(username(), options()) ->
     ok | {error, term()}.
 add_user(Username, Options) ->
     add_role(name2bin(Username), Options,
              fun user_exists/1,
              {<<"security">>, <<"users">>}).
 
--spec add_group(Groupname :: string(), Options :: [{string(), term()}]) ->
+-spec add_group(Groupname :: string(), options()) ->
     ok | {error, term()}.
 add_group(Groupname, Options) ->
     add_role(name2bin(Groupname), Options, fun group_exists/1,
@@ -526,7 +564,7 @@ add_role(Name, Options, ExistenceFun, Prefix) ->
     end.
 
 
--spec alter_user(Username :: string(), Options :: [{string(), term()}]) ->
+-spec alter_user(username(), options()) ->
     ok | {error, term()}.
 alter_user("all", _Options) ->
     {error, reserved_name};
@@ -549,7 +587,7 @@ alter_user(Username, Options) ->
             end
     end.
 
--spec alter_group(Groupname :: string(), Options :: [{string(), term()}]) ->
+-spec alter_group(Groupname :: string(), options()) ->
     ok | {error, term()}.
 alter_group("all", _Options) ->
     {error, reserved_name};
@@ -572,7 +610,7 @@ alter_group(Groupname, Options) ->
             end
     end.
 
--spec del_user(Username :: string()) ->
+-spec del_user(username()) ->
     ok | {error, term()}.
 del_user("all") ->
     {error, reserved_name};
@@ -709,7 +747,7 @@ add_revoke(RoleList, Bucket, Revokes) ->
 
 -spec add_source(userlist(), CIDR :: {inet:ip_address(), non_neg_integer()},
                  Source :: atom(),
-                 Options :: [{string(), term()}]) -> ok | {error, term()}.
+                 options()) -> ok | {error, term()}.
 add_source(all, CIDR, Source, Options) ->
     %% all is always valid
 
