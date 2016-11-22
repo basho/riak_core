@@ -242,6 +242,21 @@ bucket_key({_Type, _Name}=Bucket) ->
 bucket_key(Name) ->
     {bucket, Name}.
 
+%% @doc Fold over all buckets belonging to the given bucket type. The
+%% provided fold function should accept three arguments: The bucket
+%% name, bucket properties, and accumulator and return a new
+%% accumulator value.
+-spec fold_type(bucket_type(), fun((Bucket :: binary(), properties(), Acc) -> Acc), Acc) -> Acc.
+fold_type(Type, F, Acc0) ->
+    riak_core_metadata:fold(fun ({{_, Bucket}, Props}, Acc)
+                                  when is_binary(Bucket) andalso is_list(Props) ->
+                                    F(Bucket, Props, Acc);
+                                (_, Acc) ->
+                                    Acc
+                            end, Acc0, ?METADATA_PREFIX,
+                            [{resolver, fun riak_core_bucket_props:resolve/2},
+                             {match, {Type, '_'}}]).
+
 %% ===================================================================
 %% EUnit tests
 %% ===================================================================
