@@ -42,7 +42,7 @@
          del_user/1,
          disable/0,
          enable/0,
-         find_by_metadata/2,
+         find_user_by_metadata/2,
          get_ciphers/0,
          get_username/1,
          is_enabled/0,
@@ -103,8 +103,8 @@
 -type metadata_value() :: term().
 -type options() :: [{metadata_key(), metadata_value()}].
 
--spec find_by_metadata(metadata_key(), metadata_value()) -> [{username(), options()}].
-find_by_metadata(Key, Value) ->
+-spec find_user_by_metadata(metadata_key(), metadata_value()) -> [{username(), options()}].
+find_user_by_metadata(Key, Value) ->
     riak_core_metadata:fold(
       fun({_Username, [?TOMBSTONE]}, Acc) ->
               Acc;

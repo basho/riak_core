@@ -39,7 +39,7 @@ security_test_() ->
              stop_manager(S)
      end,
      [
-      {timeout, 60, { "find_by_metadata", fun test_find_by_metadata/0 }},
+      {timeout, 60, { "find_user_by_metadata", fun test_find_user_by_metadata/0 }},
       {timeout, 60, { "trust auth works",
                       fun() ->
                               ?assertMatch({error, _}, riak_core_security:authenticate(<<"user">>, <<"password">>,
@@ -245,13 +245,13 @@ security_test_() ->
                      end}}
     ]}.
 
-test_find_by_metadata() ->
+test_find_user_by_metadata() ->
     ok = riak_core_security:add_user("jorge", [{"occupation", "librarian"}]),
     ok = riak_core_security:add_user("paul", [{"occupation", "programmer"}]),
     ok = riak_core_security:add_user("jason", [{"occupation", "programmer"}]),
     ?assertMatch([{<<"jorge">>, _Options}],
-                 riak_core_security:find_by_metadata("occupation", "librarian")),
+                 riak_core_security:find_user_by_metadata("occupation", "librarian")),
     ok = riak_core_security:del_user("jorge"),
-    ?assertMatch([], riak_core_security:find_by_metadata("occupation", "librarian")).
+    ?assertMatch([], riak_core_security:find_user_by_metadata("occupation", "librarian")).
 
 -endif.
