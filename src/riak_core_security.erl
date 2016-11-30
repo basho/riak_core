@@ -98,12 +98,11 @@
 -type bucket() :: {binary(), binary()} | binary().
 -type permission() :: {string()} | {string(), bucket()}.
 -type userlist() :: all | [string()].
--type username() :: string().
 -type metadata_key() :: string().
 -type metadata_value() :: term().
 -type options() :: [{metadata_key(), metadata_value()}].
 
--spec find_user_by_metadata(metadata_key(), metadata_value()) -> [{username(), options()}].
+-spec find_user_by_metadata(metadata_key(), metadata_value()) -> [{Username :: string(), options()}].
 find_user_by_metadata(Key, Value) ->
     riak_core_metadata:fold(
       fun({_Username, [?TOMBSTONE]}, Acc) ->
@@ -144,7 +143,7 @@ print_sources(Sources) ->
                   atom_to_list(Source), io_lib:format("~p", [Options])] ||
             {Users, CIDR, Source, Options} <- GS]).
 
--spec print_user(username()) ->
+-spec print_user(Username :: string()) ->
     ok | {error, term()}.
 print_user(User) ->
     Name = name2bin(User),
@@ -521,7 +520,7 @@ authenticate(Username, Password, ConnInfo) ->
             end
     end.
 
--spec add_user(username(), options()) ->
+-spec add_user(Username :: string(), options()) ->
     ok | {error, term()}.
 add_user(Username, Options) ->
     add_role(name2bin(Username), Options,
@@ -564,7 +563,7 @@ add_role(Name, Options, ExistenceFun, Prefix) ->
     end.
 
 
--spec alter_user(username(), options()) ->
+-spec alter_user(Username :: string(), options()) ->
     ok | {error, term()}.
 alter_user("all", _Options) ->
     {error, reserved_name};
@@ -610,7 +609,7 @@ alter_group(Groupname, Options) ->
             end
     end.
 
--spec del_user(username()) ->
+-spec del_user(Username :: string()) ->
     ok | {error, term()}.
 del_user("all") ->
     {error, reserved_name};
