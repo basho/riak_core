@@ -105,20 +105,20 @@
 -spec find_user_by_metadata(metadata_key(), metadata_value()) -> [{Username :: string(), options()}].
 find_user_by_metadata(Key, Value) ->
     riak_core_metadata:fold(
-      fun({_Username, [?TOMBSTONE]}, Acc) ->
-              Acc;
-         ({Username, [Options]}, Acc) ->
-              case lists:member({Key, Value}, Options) of
-                  true ->
-                      [{Username, Options}|Acc];
-                  false ->
-                      Acc
-              end;
-         (_, Acc) ->
-              Acc
-      end,
-      [],
-      {<<"security">>, <<"users">>}).
+        fun(User, Acc) -> accumulate_if_user_matches_metadata(Key, Value, User, Acc) end,
+        [],
+        {<<"security">>, <<"users">>},
+        [{resolver, lww}, {default, []}]).
+
+accumulate_if_user_matches_metadata(Key, Value, {_Username, Options} = User, Acc) ->
+    case lists:member({Key, Value}, Options) of
+        true ->
+            [User|Acc];
+        false ->
+            Acc
+    end;
+accumulate_if_user_matches_metadata(_Key, _Value, _User, Acc) ->
+    Acc.
 
 prettyprint_users([all], _) ->
     "all";
