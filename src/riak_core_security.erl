@@ -42,7 +42,7 @@
          del_user/1,
          disable/0,
          enable/0,
-         find_user_by_metadata/2,
+         find_one_user_by_metadata/2,
          get_ciphers/0,
          get_username/1,
          is_enabled/0,
@@ -102,23 +102,21 @@
 -type metadata_value() :: term().
 -type options() :: [{metadata_key(), metadata_value()}].
 
--spec find_user_by_metadata(metadata_key(), metadata_value()) -> [{Username :: string(), options()}].
-find_user_by_metadata(Key, Value) ->
+-spec find_one_user_by_metadata(metadata_key(), metadata_value()) -> {Username :: string(), options()} | {error, not_found}.
+find_one_user_by_metadata(Key, Value) ->
     riak_core_metadata:fold(
-        fun(User, Acc) -> accumulate_if_user_matches_metadata(Key, Value, User, Acc) end,
-        [],
-        {<<"security">>, <<"users">>},
-        [{resolver, lww}, {default, []}]).
+      fun(User, _Acc) -> return_if_user_matches_metadata(Key, Value, User) end,
+      [],
+      {<<"security">>, <<"users">>},
+      [{resolver, lww}, {default, []}]).
 
-accumulate_if_user_matches_metadata(Key, Value, {_Username, Options} = User, Acc) ->
+return_if_user_matches_metadata(Key, Value, {_Username, Options} = User) ->
     case lists:member({Key, Value}, Options) of
         true ->
-            [User|Acc];
+            throw({break, User});
         false ->
-            Acc
-    end;
-accumulate_if_user_matches_metadata(_Key, _Value, _User, Acc) ->
-    Acc.
+            {error, not_found}
+    end.
 
 prettyprint_users([all], _) ->
     "all";
