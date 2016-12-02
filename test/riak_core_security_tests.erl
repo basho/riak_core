@@ -39,6 +39,7 @@ security_test_() ->
              stop_manager(S)
      end,
      [
+      {timeout, 60, { "find_one_user_by_metadata", fun test_find_one_user_by_metadata/0 }},
       {timeout, 60, { "trust auth works",
                       fun() ->
                               ?assertMatch({error, _}, riak_core_security:authenticate(<<"user">>, <<"password">>,
@@ -243,5 +244,12 @@ security_test_() ->
                              ok
                      end}}
     ]}.
+
+test_find_one_user_by_metadata() ->
+    ok = riak_core_security:add_user("paul", [{"key_and_value", "match"}]),
+    ?assertMatch({<<"paul">>, _Options},
+                 riak_core_security:find_one_user_by_metadata("key_and_value", "match")),
+    ?assertMatch({error, not_found},
+             riak_core_security:find_one_user_by_metadata("no", "match")).
 
 -endif.
