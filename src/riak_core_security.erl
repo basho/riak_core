@@ -106,7 +106,7 @@
 find_one_user_by_metadata(Key, Value) ->
     riak_core_metadata:fold(
       fun(User, _Acc) -> return_if_user_matches_metadata(Key, Value, User) end,
-      [],
+      {error, not_found},
       {<<"security">>, <<"users">>},
       [{resolver, lww}, {default, []}]).
 
