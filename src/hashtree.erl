@@ -165,6 +165,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
+-define(TOMBSTONE, <<"TS">>).
+
 -define(NUM_SEGMENTS, (1024*1024)).
 -define(WIDTH, 1024).
 -define(MEM_LEVELS, 0).
@@ -298,7 +300,10 @@ destroy(State) ->
 insert(Key, ObjHash, State) ->
     insert(Key, ObjHash, State, []).
 
--spec insert(binary(), binary(), hashtree(), proplist()) -> hashtree().
+-spec insert(binary(), binary() | tombstone, hashtree(), proplist()) -> hashtree().
+insert(Key, tombstone, State, Opts) ->
+    insert(Key, ?TOMBSTONE, State, Opts);
+
 insert(Key, ObjHash, State, Opts) ->
     Hash = erlang:phash2(Key),
     Segment = Hash rem State#state.segments,
@@ -306,7 +311,6 @@ insert(Key, ObjHash, State, Opts) ->
     case should_insert(HKey, Opts, State) of
         true ->
             State2 = enqueue_action({put, HKey, ObjHash}, State),
-            %% Dirty = gb_sets:add_element(Segment, State2#state.dirty_segments),
             Dirty = bitarray_set(Segment, State2#state.dirty_segments),
             State2#state{dirty_segments=Dirty};
         false ->
@@ -1149,7 +1153,7 @@ exchange_final(_Level, Segments, Local, Remote, AccFun, Acc0, _Opts) ->
                                     {_Id, Segment, Key} = decode(KBin),
                                     Type = key_diff_type(Diff),
                                     {Type, Key}
-                                end || {KBin, Diff} <- Delta],
+                                end || {KBin, Diff} <- Delta, not tombstone_diff(Diff)],
                         AccFun(Keys, Acc)
                 end, Acc0, Segments).
 
@@ -1187,9 +1191,16 @@ compare_segments(Segment, Tree=#state{id=Id}, Remote) ->
                 {Id, Segment, Key} = decode(KBin),
                 Type = key_diff_type(Diff),
                 {Type, Key}
-            end || {KBin, Diff} <- Delta],
+            end || {KBin, Diff} <- Delta, not tombstone_diff(Diff)],
     Keys.
 
+tombstone_diff(Diff) ->
+    key_diff_type(Diff) == tombstone_diff.
+
+key_diff_type({?TOMBSTONE , _}) ->
+    tombstone_diff;
+key_diff_type({_ , ?TOMBSTONE}) ->
+    tombstone_diff;
 key_diff_type({'$none', _}) ->
     missing;
 key_diff_type({_, '$none'}) ->
