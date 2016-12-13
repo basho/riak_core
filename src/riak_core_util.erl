@@ -40,6 +40,7 @@
          safe_rpc/5,
          rpc_every_member/4,
          rpc_every_member_ann/4,
+         count/2,
          keydelete/2,
          multi_keydelete/2,
          multi_keydelete/3,
@@ -79,9 +80,12 @@
 -include("riak_core_vnode.hrl").
 
 -ifdef(TEST).
+-ifdef(EQC).
+-include_lib("eqc/include/eqc.hrl").
+-endif. %% EQC
 -include_lib("eunit/include/eunit.hrl").
 -export([counter_loop/1,incr_counter/1,decr_counter/1]).
--endif.
+-endif. %% TEST
 
 %% R14 Compatibility
 -compile({no_auto_import,[integer_to_list/2]}).
@@ -317,6 +321,18 @@ ensure_started(App) ->
 	{error, {already_started, App}} ->
 	    ok
     end.
+
+%% @doc Applies `Pred' to each element in `List', and returns a count of how many
+%% applications returned `true'.
+-spec count(fun((term()) -> boolean()), [term()]) -> non_neg_integer().
+count(Pred, List) ->
+    FoldFun = fun(E, A) ->
+                      case Pred(E) of
+                          false -> A;
+                          true -> A + 1
+                      end
+              end,
+    lists:foldl(FoldFun, 0, List).
 
 %% @doc Returns a copy of `TupleList' where the first occurrence of a tuple whose
 %% first element compares equal to `Key' is deleted, if there is such a tuple.
@@ -1083,5 +1099,14 @@ proxy_spawn_test() ->
         ok
     end.
 
--endif.
+-ifdef(EQC).
 
+count_test() ->
+    ?assert(eqc:quickcheck(prop_count_correct())).
+
+prop_count_correct() ->
+    ?FORALL(List, list(bool()),
+            count(fun(E) -> E end, List) =:= length([E || E <- List, E])).
+
+-endif. %% EQC
+-endif. %% TEST
