@@ -80,10 +80,12 @@
 -include("riak_core_vnode.hrl").
 
 -ifdef(TEST).
+-ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
+-endif. %% EQC
 -include_lib("eunit/include/eunit.hrl").
 -export([counter_loop/1,incr_counter/1,decr_counter/1]).
--endif.
+-endif. %% TEST
 
 %% R14 Compatibility
 -compile({no_auto_import,[integer_to_list/2]}).
@@ -944,13 +946,6 @@ incr_counter(CounterPid) ->
 decr_counter(CounterPid) ->
     CounterPid ! down.
 
-count_test() ->
-    ?assert(eqc:quickcheck(prop_count_correct())).
-
-prop_count_correct() ->
-    ?FORALL(List, list(bool()),
-            count(fun(E) -> E end, List) =:= length([E || E <- List, E])).
-
 multi_keydelete_test_() ->
     Languages = [{lisp, 1958},
                  {ml, 1973},
@@ -1104,5 +1099,14 @@ proxy_spawn_test() ->
         ok
     end.
 
--endif.
+-ifdef(EQC).
 
+count_test() ->
+    ?assert(eqc:quickcheck(prop_count_correct())).
+
+prop_count_correct() ->
+    ?FORALL(List, list(bool()),
+            count(fun(E) -> E end, List) =:= length([E || E <- List, E])).
+
+-endif. %% EQC
+-endif. %% TEST
