@@ -37,7 +37,7 @@
 
 -record(chashbin, {size   :: pos_integer(),
                    owners :: owners_bin(),
-                   nodes  :: tuple(node())}).
+                   nodes  :: tuple()}).
 
 -type chashbin() :: #chashbin{}.
 

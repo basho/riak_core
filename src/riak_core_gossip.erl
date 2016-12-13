@@ -2,7 +2,7 @@
 %%
 %% riak_core: Core Riak Application
 %%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2015 Basho Technologies, Inc.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -39,8 +39,7 @@
 -export ([distribute_ring/1, send_ring/1, send_ring/2, remove_from_cluster/2,
           remove_from_cluster/3, random_gossip/1,
           recursive_gossip/1, random_recursive_gossip/1, rejoin/2,
-          gossip_version/0, legacy_gossip/0, legacy_gossip/1,
-          any_legacy_gossip/2]).
+          gossip_version/0]).
 
 -include("riak_core_ring.hrl").
 
@@ -79,19 +78,6 @@ stop() ->
 
 rejoin(Node, Ring) ->
     gen_server:cast({?MODULE, Node}, {rejoin, Ring}).
-
-legacy_gossip() ->
-    false.
-
-legacy_gossip(_Node) ->
-    false.
-
-%% @doc Determine if any of the `Nodes' are using legacy gossip by querying
-%%      each node's capability directly over RPC. The proper way to check
-%%      for legacy gossip is to use {@link legacy_gossip/1}. This function
-%%      is used to support staged clustering in `riak_core_claimant'.
-any_legacy_gossip(_Ring, _Nodes) ->
-    false.
 
 %% @doc Gossip state to a random node in the ring.
 random_gossip(Ring) ->
@@ -161,16 +147,12 @@ update_gossip_version(Ring) ->
             Ring2
     end.
 
-check_legacy_gossip(_Ring, _State) ->
-    false.
-
 update_known_version(Node, {OtherRing, GVsns}) ->
     case riak_core_ring:get_member_meta(OtherRing, Node, gossip_vsn) of
         undefined ->
             case riak_core_ring:owner_node(OtherRing) of
                 Node ->
-                    %% Ring owner defaults to legacy gossip if unspecified.
-                    {OtherRing, orddict:store(Node, ?LEGACY_RING_VSN, GVsns)};
+                    {OtherRing, orddict:store(Node, ?CURRENT_RING_VSN, GVsns)};
                 _ ->
                     {OtherRing, GVsns}
             end;
@@ -210,12 +192,7 @@ handle_cast({send_ring_to, _Node}, State=#state{gossip_tokens=0}) ->
 handle_cast({send_ring_to, Node}, State) ->
     {ok, MyRing0} = riak_core_ring_manager:get_raw_ring(),
     MyRing = update_gossip_version(MyRing0),
-    GossipVsn = case gossip_version() of
-                    ?LEGACY_RING_VSN ->
-                        ?LEGACY_RING_VSN;
-                    _ ->
-                        rpc_gossip_version(MyRing, Node)
-                end,
+    GossipVsn = rpc_gossip_version(MyRing, Node),
     RingOut = riak_core_ring:downgrade(GossipVsn, MyRing),
     riak_core_ring:check_tainted(RingOut,
                                  "Error: riak_core_gossip/send_ring_to :: "
@@ -225,35 +202,21 @@ handle_cast({send_ring_to, Node}, State) ->
     {noreply, State#state{gossip_tokens=Tokens}};
 
 handle_cast({distribute_ring, Ring}, State) ->
-    RingOut = case check_legacy_gossip(Ring, State) of
-                  true ->
-                      riak_core_ring:downgrade(?LEGACY_RING_VSN, Ring);
-                  false ->
-                      Ring
-              end,
     Nodes = riak_core_ring:active_members(Ring),
-    riak_core_ring:check_tainted(RingOut,
+    riak_core_ring:check_tainted(Ring,
                                  "Error: riak_core_gossip/distribute_ring :: "
                                  "Sending tainted ring over gossip"),
-    gen_server:abcast(Nodes, ?MODULE, {reconcile_ring, RingOut}),
+    gen_server:abcast(Nodes, ?MODULE, {reconcile_ring, Ring}),
     {noreply, State};
 
 handle_cast({reconcile_ring, RingIn}, State) ->
     OtherRing = riak_core_ring:upgrade(RingIn),
     State2 = update_known_versions(OtherRing, State),
-    case check_legacy_gossip(RingIn, State2) of
-        true ->
-            LegacyRing = riak_core_ring:downgrade(?LEGACY_RING_VSN, OtherRing),
-            riak_core_gossip_legacy:handle_cast({reconcile_ring, LegacyRing},
-                                                State2),
-            {noreply, State2};
-        false ->
-            %% Compare the two rings, see if there is anything that
-            %% must be done to make them equal...
-            riak_core_stat:update(gossip_received),
-            riak_core_ring_manager:ring_trans(fun reconcile/2, [OtherRing]),
-            {noreply, State2}
-    end;
+    %% Compare the two rings, see if there is anything that
+    %% must be done to make them equal...
+    riak_core_stat:update(gossip_received),
+    riak_core_ring_manager:ring_trans(fun reconcile/2, [OtherRing]),
+    {noreply, State2};
 
 handle_cast(gossip_ring, State) ->
     % Gossip the ring to some random other node...
@@ -269,9 +232,8 @@ handle_cast({rejoin, RingIn}, State) ->
                        riak_core_ring:cluster_name(OtherRing)),
     case SameCluster of
         true ->
-            Legacy = check_legacy_gossip(Ring, State),
             OtherNode = riak_core_ring:owner_node(OtherRing),
-            case riak_core:join(Legacy, node(), OtherNode, true, true) of
+            case riak_core:join(node(), OtherNode, true, true) of
                 ok -> ok;
                 {error, Reason} ->
                     lager:error("Could not rejoin cluster: ~p", [Reason]),
@@ -311,8 +273,6 @@ schedule_next_reset() ->
     erlang:send_after(Reset, ?MODULE, reset_tokens).
 
 reconcile(Ring0, [OtherRing0]) ->
-    %% Due to rolling upgrades and legacy gossip, a ring's cluster name
-    %% may be temporarily undefined. This is eventually fixed by the claimant.
     {Ring, OtherRing} = riak_core_ring:reconcile_names(Ring0, OtherRing0),
     Node = node(),
     OtherNode = riak_core_ring:owner_node(OtherRing),

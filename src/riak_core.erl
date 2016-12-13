@@ -20,7 +20,7 @@
 %%
 %% -------------------------------------------------------------------
 -module(riak_core).
--export([stop/0, stop/1, join/1, join/5, staged_join/1, remove/1, down/1,
+-export([stop/0, stop/1, join/1, join/4, staged_join/1, remove/1, down/1,
          leave/0, remove_from_cluster/1]).
 -export([vnode_modules/0, health_check/1]).
 -export([register/1, register/2, bucket_fixups/0, bucket_validators/0]).
@@ -72,50 +72,25 @@ join(Node, Auto) when is_atom(Node) ->
 join(Node, Node, _) ->
     {error, self_join};
 join(_, Node, Auto) ->
-    join(riak_core_gossip:legacy_gossip(), node(), Node, false, Auto).
+    join(node(), Node, false, Auto).
 
-join(true, _, Node, _Rejoin, _Auto) ->
-    legacy_join(Node);
-join(false, _, Node, Rejoin, Auto) ->
+join(_, Node, Rejoin, Auto) ->
     case net_adm:ping(Node) of
         pang ->
             {error, not_reachable};
         pong ->
-            case false of
-                true ->
-                    legacy_join(Node);
-                _ ->
-                    %% Failure due to trying to join older node that
-                    %% doesn't define legacy_gossip will be handled
-                    %% in standard_join based on seeing a legacy ring.
-                    standard_join(Node, Rejoin, Auto)
-            end
+            standard_join(Node, Rejoin, Auto)
     end.
 
 get_other_ring(Node) ->
-    case riak_core_util:safe_rpc(Node, riak_core_ring_manager, get_my_ring, []) of
-        {ok, Ring} ->
-            case riak_core_ring:legacy_ring(Ring) of
-                true ->
-                    {ok, Ring};
-                false ->
-                    riak_core_util:safe_rpc(Node, riak_core_ring_manager, get_raw_ring, [])
-            end;
-        Error ->
-            Error
-    end.
+    riak_core_util:safe_rpc(Node, riak_core_ring_manager, get_raw_ring, []).
 
 standard_join(Node, Rejoin, Auto) when is_atom(Node) ->
     case net_adm:ping(Node) of
         pong ->
             case get_other_ring(Node) of
                 {ok, Ring} ->
-                    case riak_core_ring:legacy_ring(Ring) of
-                        true ->
-                            legacy_join(Node);
-                        false ->
-                            standard_join(Node, Ring, Rejoin, Auto)
-                    end;
+                    standard_join(Node, Ring, Rejoin, Auto);
                 _ ->
                     {error, unable_to_get_join_ring}
             end;
@@ -170,25 +145,6 @@ maybe_auto_join(false, _Node, Ring) ->
 maybe_auto_join(true, Node, Ring) ->
     riak_core_ring:update_member_meta(Node, Ring, Node, '$autojoin', true).
 
-legacy_join(Node) when is_atom(Node) ->
-    {ok, OurRingSize} = application:get_env(riak_core, ring_creation_size),
-    case net_adm:ping(Node) of
-        pong ->
-            case riak_core_util:safe_rpc(Node,
-                          application,
-                          get_env,
-                          [riak_core, ring_creation_size]) of
-                {ok, OurRingSize} ->
-                    riak_core_gossip:send_ring(Node, node());
-                {badrpc, rpc_process_down} ->
-                    {error, not_reachable};
-                _ ->
-                    {error, different_ring_sizes}
-            end;
-        pang ->
-            {error, not_reachable}
-    end.
-
 remove(Node) ->
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
     case {riak_core_ring:all_members(Ring),
@@ -198,12 +154,7 @@ remove(Node) ->
         {[Node], _} ->
             {error, only_member};
         _ ->
-            case riak_core_gossip:legacy_gossip() of
-                true ->
-                    legacy_remove(Node);
-                false ->
-                    standard_remove(Node)
-            end
+            standard_remove(Node)
     end.
 
 standard_remove(Node) ->
@@ -216,10 +167,6 @@ standard_remove(Node) ->
     ok.
 
 down(Node) ->
-    down(riak_core_gossip:legacy_gossip(), Node).
-down(true, _) ->
-    {error, legacy_mode};
-down(false, Node) ->
     {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
     case net_adm:ping(Node) of
         pong ->
@@ -252,12 +199,7 @@ leave() ->
         {[Node], _} ->
             {error, only_member};
         {_, valid} ->
-            case riak_core_gossip:legacy_gossip() of
-                true ->
-                    legacy_remove(Node);
-                false ->
-                    standard_leave(Node)
-            end;
+            standard_leave(Node);
         {_, _} ->
             {error, already_leaving}
     end.
@@ -275,19 +217,6 @@ standard_leave(Node) ->
 %%      by other nodes.
 remove_from_cluster(ExitingNode) when is_atom(ExitingNode) ->
     remove(ExitingNode).
-
-legacy_remove(Node) when is_atom(Node) ->
-    case catch(riak_core_gossip_legacy:remove_from_cluster(Node)) of
-        {'EXIT', {badarg, [{erlang, hd, [[]]}|_]}} ->
-            %% This is a workaround because
-            %% riak_core_gossip:remove_from_cluster doesn't check if
-            %% the result of subtracting the current node from the
-            %% cluster member list results in the empty list. When
-            %% that code gets refactored this can probably go away.
-            {error, only_member};
-        ok ->
-            ok
-    end.
 
 vnode_modules() ->
     case application:get_env(riak_core, vnode_modules) of

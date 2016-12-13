@@ -110,7 +110,8 @@ fold(Fun, Acc0, FullPrefix) ->
     fold(Fun, Acc0, FullPrefix, []).
 
 %% @doc Fold over all keys and values stored under a given prefix/subprefix. Available
-%% options are the same as those provided to iterator/2.
+%% options are the same as those provided to iterator/2. To return early, throw
+%% {break, Result} in your fold function.
 -spec fold(fun(({metadata_key(),
                  [metadata_value() | metadata_tombstone()] |
                  metadata_value() | metadata_tombstone()}, any()) -> any()),
@@ -119,12 +120,17 @@ fold(Fun, Acc0, FullPrefix) ->
            fold_opts()) -> any().
 fold(Fun, Acc0, FullPrefix, Opts) ->
     It = iterator(FullPrefix, Opts),
-    fold_it(Fun, Acc0, It).
+    try
+        fold_it(Fun, Acc0, It)
+    catch
+        {break, Result} -> Result
+    after
+        ok = itr_close(It)
+    end.
 
 fold_it(Fun, Acc, It) ->
     case itr_done(It) of
         true ->
-            ok = itr_close(It),
             Acc;
         false ->
             Next = Fun(itr_key_values(It), Acc),
