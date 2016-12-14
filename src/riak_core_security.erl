@@ -874,6 +874,11 @@ status() ->
 %% INTERNAL
 %% ============
 
+match_grants(Match, Type) ->
+    Grants = riak_core_metadata:to_list(metadata_grant_prefix(Type),
+                                        [{match, Match}]),
+    [{Key, Val} || {Key, [Val]} <- Grants, Val /= ?TOMBSTONE].
+
 metadata_grant_prefix(user) ->
     {<<"security">>, <<"usergrants">>};
 metadata_grant_prefix(group) ->
@@ -968,13 +973,9 @@ get_context(Username) when is_binary(Username) ->
 
 accumulate_grants(Role, Type) ->
     %% The 'all' grants always apply
-    All = riak_core_metadata:fold(fun({{_R, _Bucket}, [?TOMBSTONE]}, A) ->
-                                          A;
-                                     ({{_R, Bucket}, [Permissions]}, A) ->
-                                          [{{<<"group/all">>, Bucket},
-                                            Permissions}|A]
-                                  end, [], metadata_grant_prefix(group),
-                                  [{match, {all, '_'}}]),
+    All = lists:map(fun ({{_Role, Bucket}, Permissions}) ->
+                            {{<<"group/all">>, Bucket}, Permissions}
+                    end, match_grants({all, '_'}, group)),
     {Grants, _Seen} = accumulate_grants([Role], [], All, Type),
     lists:flatten(Grants).
 
@@ -986,16 +987,9 @@ accumulate_grants([Role|Roles], Seen, Acc, Type) ->
                         not lists:member(G,Seen),
                         group_exists(G)],
     {NewAcc, NewSeen} = accumulate_grants(Groups, [Role|Seen], Acc, group),
-
-    Prefix = metadata_grant_prefix(Type),
-
-    Grants = riak_core_metadata:fold(fun({{_R, _Bucket}, [?TOMBSTONE]}, A) ->
-                                             A;
-                                        ({{R, Bucket}, [Permissions]}, A) ->
-                                             [{{concat_role(Type, R), Bucket},
-                                               Permissions}|A]
-                                     end, [], Prefix,
-                                     [{match, {Role, '_'}}]),
+    Grants = lists:map(fun ({{_Role, Bucket}, Permissions}) ->
+                               {{concat_role(Type, Role), Bucket}, Permissions}
+                       end, match_grants({Role, '_'}, Type)),
     accumulate_grants(Roles, NewSeen, [Grants|NewAcc], Type).
 
 %% lookup a key in a list of key/value tuples. Like proplists:get_value but
