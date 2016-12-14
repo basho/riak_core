@@ -38,7 +38,7 @@ security_test_() ->
      fun(S) ->
              stop_manager(S)
      end,
-     [
+     [{timeout, 60, { "test_find_bucket_grants", fun test_find_bucket_grants/0 }},
       {timeout, 60, { "find_one_user_by_metadata", fun test_find_one_user_by_metadata/0 }},
       {timeout, 60, { "trust auth works",
                       fun() ->
@@ -244,6 +244,16 @@ security_test_() ->
                              ok
                      end}}
     ]}.
+
+test_find_bucket_grants() ->
+    ok = riak_core_security:add_user("testuser1", []),
+    ok = riak_core_security:add_user("testuser2", []),
+    ok = riak_core_security:add_grant(["testuser1", "testuser2"], <<"bucket">>, ["riak_kv.get"]),
+    ok = riak_core_security:add_grant(["testuser2"], <<"bucket">>, ["riak_kv.put"]),
+    Grants = riak_core_security:find_bucket_grants(<<"bucket">>, user),
+    ?assertMatch({_, ["riak_kv.get"]}, lists:keyfind("testuser1", 1, Grants)),
+    {_, Perms} = lists:keyfind("testuser2", 1, Grants),
+    ?assertEqual(lists:sort(["riak_kv.get", "riak_kv.put"]), lists:sort(Perms)).
 
 test_find_one_user_by_metadata() ->
     ok = riak_core_security:add_user("paul", [{"key_and_value", "match"}]),

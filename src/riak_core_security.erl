@@ -43,6 +43,7 @@
          disable/0,
          enable/0,
          find_one_user_by_metadata/2,
+         find_bucket_grants/2,
          get_ciphers/0,
          get_username/1,
          is_enabled/0,
@@ -117,6 +118,13 @@ return_if_user_matches_metadata(Key, Value, {_Username, Options} = User) ->
         false ->
             {error, not_found}
     end.
+
+-spec find_bucket_grants(bucket(), user | group) -> [{RoleName :: string(), [permission()]}].
+find_bucket_grants(Bucket, Type) ->
+    Grants = match_grants({'_', Bucket}, Type),
+    lists:map(fun ({{Role, _Bucket}, Permissions}) ->
+                      {bin2name(Role), Permissions}
+              end, Grants).
 
 prettyprint_users([all], _) ->
     "all";
@@ -1339,6 +1347,8 @@ role_exists(Rolename, RoleType) ->
 illegal_name_chars(Name) ->
     [Name] =/= string:tokens(Name, ?ILLEGAL).
 
+bin2name(Bin) ->
+    unicode:characters_to_list(Bin, utf8).
 
 %% Rather than introduce yet another dependency to Riak this late in
 %% the 2.0 cycle, we'll live with string:to_lower/1. It will lowercase
