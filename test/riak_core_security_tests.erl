@@ -246,14 +246,20 @@ security_test_() ->
     ]}.
 
 test_find_bucket_grants() ->
-    ok = riak_core_security:add_user("testuser1", []),
+    ok = riak_core_security:add_group("testgroup", []),
+    ok = riak_core_security:add_user("testuser1", [{groups, "testgroup"}]),
     ok = riak_core_security:add_user("testuser2", []),
     ok = riak_core_security:add_grant(["testuser1", "testuser2"], <<"bucket">>, ["riak_kv.get"]),
     ok = riak_core_security:add_grant(["testuser2"], <<"bucket">>, ["riak_kv.put"]),
+    ok = riak_core_security:add_grant(all, <<"bucket">>, ["riak_kv.get"]),
+    ok = riak_core_security:add_grant(["group/testgroup"], <<"bucket">>, ["riak_kv.put"]),
     Grants = riak_core_security:find_bucket_grants(<<"bucket">>, user),
+    GroupGrants = riak_core_security:find_bucket_grants(<<"bucket">>, group),
     ?assertMatch({_, ["riak_kv.get"]}, lists:keyfind("testuser1", 1, Grants)),
     {_, Perms} = lists:keyfind("testuser2", 1, Grants),
-    ?assertEqual(lists:sort(["riak_kv.get", "riak_kv.put"]), lists:sort(Perms)).
+    ?assertEqual(lists:sort(["riak_kv.get", "riak_kv.put"]), lists:sort(Perms)),
+    ?assertMatch({_, ["riak_kv.get"]}, lists:keyfind(all, 1, GroupGrants)),
+    ?assertMatch({_, ["riak_kv.put"]}, lists:keyfind("testgroup", 1, GroupGrants)).
 
 test_find_one_user_by_metadata() ->
     ok = riak_core_security:add_user("paul", [{"key_and_value", "match"}]),
