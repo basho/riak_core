@@ -1089,7 +1089,6 @@ validate_password_option(Pass, Options) ->
                        Options),
     {ok, NewOptions}.
 
-
 validate_permissions(Perms) ->
     KnownPermissions = app_helper:get_env(riak_core, permissions, []),
     validate_permissions(Perms, KnownPermissions).
@@ -1347,8 +1346,11 @@ role_exists(Rolename, RoleType) ->
 illegal_name_chars(Name) ->
     [Name] =/= string:tokens(Name, ?ILLEGAL).
 
-bin2name(Bin) ->
-    unicode:characters_to_list(Bin, utf8).
+bin2name(Bin) when is_binary(Bin) ->
+    unicode:characters_to_list(Bin, utf8);
+%% 'all' can be stored in a grant instead of a binary name
+bin2name(Name) when is_atom(Name) ->
+    Name.
 
 %% Rather than introduce yet another dependency to Riak this late in
 %% the 2.0 cycle, we'll live with string:to_lower/1. It will lowercase
