@@ -717,7 +717,7 @@ all_members() ->
 -spec get_remote_type_status(BucketType::binary()) ->
     {AllProps::[any()], BadNodes::[node()]}.
 get_remote_type_status(BucketType) ->
-    rpc:multicall(all_members() -- [node()],
+    rpc:multicall(all_members(),
                   riak_core_metadata,
                   get, [?BUCKET_TYPE_PREFIX, BucketType, [{default, []}]]).
 
