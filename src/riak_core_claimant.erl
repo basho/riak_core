@@ -706,7 +706,7 @@ get_type_status(BucketType, Props) ->
         false ->
             Is_ddl_compiled = is_ddl_compiled(get_remote_ddl_compiled_status(BucketType, Props)),
             is_type_ready(
-                Props, get_remote_type_status(BucketType), 
+                Props, get_type_status(BucketType), 
                 Is_ddl_compiled)
     end.
 
@@ -716,10 +716,10 @@ all_members() ->
     riak_core_ring:all_members(Ring).
 
 %% @private
--spec get_remote_type_status(BucketType::binary()) ->
+-spec get_type_status(BucketType::binary()) ->
     {AllProps::[any()], BadNodes::[node()]}.
-get_remote_type_status(BucketType) ->
-    rpc:multicall(all_members() -- [node()],
+get_type_status(BucketType) ->
+    rpc:multicall(all_members(),
                   riak_core_metadata,
                   get, [?BUCKET_TYPE_PREFIX, BucketType, [{default, []}]]).
 
