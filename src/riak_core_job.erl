@@ -20,22 +20,44 @@
 
 -module(riak_core_job).
 
+% Public API
 -export([
-    assign/2,
     cap/2,
+    cid/1,
+    class/1,
+    cleanup/1,
+    client_id/1,
     dummy/0,
-    get/2,
-    invoke/1, invoke/2,
+    from/1,
+    gid/1,
+    global_id/1,
+    iid/1,
+    iid/2,
+    internal_id/1,
+    internal_id/2,
+    invoke/1,
+    invoke/2,
     job/1,
+    killed/1,
+    label/1,
+    main/1,
     passthrough/1,
+    prio/1,
+    priority/1,
     reply/2,
     runnable/1,
+    setup/1,
+    stats/1,
     timestamp/0,
-    update/2, update/3,
-    version/1, versions/0,
-    work/1
+    update/2,
+    update/3,
+    version/1,
+    versions/0,
+    work/1,
+    work/2
 ]).
 
+% Public Types
 -export_type([
     cid/0,
     class/0,
@@ -45,6 +67,8 @@
     job/0,
     priority/0,
     stat/0,
+    stat_key/0,
+    stat_val/0,
     time/0,
     unspec/0,
     work/0
@@ -53,51 +77,54 @@
 -include("riak_core_job_internal.hrl").
 
 %% ===================================================================
-%% Vnode Jobs handled by riak_core_job_service
+%% Jobs handled by riak_core_job_manager
 %% ===================================================================
+
+-define(StatsDict,  orddict).
+-type stats()   ::  orddict_t(stat_key(), stat_val()).
 
 %% Fields without defaults are REQUIRED, even though the language can't
 %% enforce that. A record where required fields are 'undefined' is malformed.
 -record(riak_core_job_v1, {
     %% The work, its 'class' (for management grouping), and where it's from.
-    class   = 'anon'                    :: unspec() | class(),
-    from    = 'ignore'                  :: sender() | pid(),
-    work                                :: work() | '$unassigned',
+    class   = 'anon'                :: unspec() | class(),
+    from    = 'ignore'              :: sender() | pid(),
+    work    = 'undefined'           :: 'undefined' | work(),
 
     %% Currently unimplemented, but here so we don't need to define a new
     %% version of the record when (or if) it is ...
-    prio    = ?JOB_PRIO_DEFAULT   :: priority(),
+    prio    = ?JOB_PRIO_DEFAULT     :: priority(),
 
     %% If supplied, the 'cid' is presumed to mean something to the
     %% originator of the work, and is included as an element in the 'gid'.
     %% If supplied, 'iid' is an internal tracking ID that means something to
     %% the originator and is carried around untouched.
-    gid                                 :: gid(),
-    cid     = 'anon'                    :: unspec() | cid(),
-    iid     = 'anon'                    :: unspec() | iid(),
+    gid                             :: gid(),
+    cid     = 'anon'                :: unspec() | cid(),
+    iid     = 'anon'                :: unspec() | iid(),
 
     %% Optional callback to be invoked if the job is killed or cancelled.
-    killed  = 'undefined'               :: 'undefined' | func(),
+    killed  = 'undefined'           :: 'undefined' | func(),
 
     %% Keep some statistics around, including, but not limited to, state
     %% transition timestamps.
-    stats   = []                        :: [stat()]
+    stats   = ?StatsDict:new()      :: stats()
 }).
--type job()     :: #riak_core_job_v1{}.
 
 %%
-%% The basic idea is that the specification of a unit of work is 3 functions:
-%% init, run, and fini. 'init' receives its arguments followed by a tuple with
-%% two elements, the scope id and service, and returns a context, which is
-%% provided to 'run' as its last parameter, following its arguments. The
-%% pattern is repeated with 'fini', whose result is
-%% TODO: [how] is fini's result handled?
+%% The specification of a unit of work is 3 functions: Setup, Main, and Cleanup.
+%% Setup receives its arguments preceded by the name or pid of a job manager
+%% process and returns Context1.
+%% Main receives its arguments preceded by Context1 and returns Context2.
+%% Cleanup receives its arguments preceded by Context2 and returns the result
+%% of the unit of work.
+%% TODO: [how] is the unit of work's result handled?
 %%
 %% We can't properly specify the types, but if we could they'd look something
 %% like this:
-%%  init_fun()  :: fun((arg1() ... argN(), {scope_id(), pid()}) -> context1().
-%%  run_fun()   :: fun((arg1() ... argN(), context1()) -> context2().
-%%  fini_fun()  :: fun((arg1() ... argN(), context2()) -> result().
+%%  setup_fun()   :: fun((manager(), arg1() ... argN()) -> context1().
+%%  main_fun()    :: fun((context1(), arg1() ... argN()) -> context2().
+%%  cleanup_fun() :: fun((context2(), arg1() ... argN()) -> result().
 %% In short, the arity of a function 'F' is one more than length(Args).
 %%
 %% A work object's defaults are such that each unspecified function simply
@@ -105,22 +132,25 @@
 %% formed but otherwise useless.
 %%
 -record(riak_core_work_v1, {
-    init  = {?MODULE, 'passthrough', []}  :: func(),
-    run   = {?MODULE, 'passthrough', []}  :: func(),
-    fini  = {?MODULE, 'passthrough', []}  :: func()
+    setup   = {?MODULE, 'passthrough', []}  :: func(),
+    main    = {?MODULE, 'passthrough', []}  :: func(),
+    cleanup = {?MODULE, 'passthrough', []}  :: func()
 }).
--type work()    :: #riak_core_work_v1{}.
 
--type cid()         :: term().
--type class()       :: atom().
--type func()        :: {module(), atom(), list()} | {fun(), list()}.
--type gid()         :: {module(), cid(), uid()}.
--type iid()         :: term().
--type priority()    :: ?JOB_PRIO_MIN..?JOB_PRIO_MAX.
--type stat()        :: {atom(), term()}.
--type time()        :: erlang:timestamp().
--type uid()         :: {node(), time(), reference()} | <<_:128>>.
--type unspec()      :: 'anon'.
+-type cid()         ::  term().
+-type class()       ::  atom() | {atom(), atom()}.
+-type func()        ::  {module(), atom(), list()} | {fun(), list()}.
+-type gid()         ::  {module(), cid(), uid()}.
+-type iid()         ::  term().
+-type job()         ::  #riak_core_job_v1{}.
+-type priority()    ::  ?JOB_PRIO_MIN..?JOB_PRIO_MAX.
+-type stat()        ::  {stat_key(), stat_val()}.
+-type stat_key()    ::  atom() | tuple().
+-type stat_val()    ::  term().
+-type time()        ::  erlang:timestamp().
+-type uid()         ::  {node(), time(), reference()} | <<_:128>>.
+-type unspec()      ::  'anon'.
+-type work()        ::  #riak_core_work_v1{}.
 
 -define(MAX_INIT_SKEW_uSECS,    1500000).
 -define(CUR_TIMESTAMP,          os:timestamp()).
@@ -140,37 +170,161 @@
 -define(GLOBAL_ID(Mod, CID),    ?NEW_GID(Mod, CID, ?NEW_UID)).
 -define(DUMMY_JOB_ID,           ?NEW_GID(?MODULE, 'dummy', ?DUMMY_JOB_UID)).
 
+-define(is_job(Obj),    erlang:is_record(Obj, riak_core_job_v1)).
+-define(is_work(Obj),   erlang:is_record(Obj, riak_core_work_v1)).
+
 %% ===================================================================
 %% Public API
 %% ===================================================================
 
--spec get(atom(), job() | work()) -> term() | no_return().
+-spec cap(atom(), job() | work()) -> job() | work() | no_return().
 %%
-%% @doc Return the value of the specified record field.
+%% @doc Make sure a Job/Work object is understandable at the specified version.
 %%
-get('cid',      #riak_core_job_v1{cid = Val}) -> Val;
-get('class',    #riak_core_job_v1{class = Val}) -> Val;
-get('from',     #riak_core_job_v1{from = Val}) -> Val;
-get('gid',      #riak_core_job_v1{gid = Val}) -> Val;
-get('iid',      #riak_core_job_v1{iid = Val}) -> Val;
-get('killed',   #riak_core_job_v1{killed = Val}) -> Val;
-get('label',    #riak_core_job_v1{class = Class, gid = GID}) -> {Class, GID};
-get('prio',     #riak_core_job_v1{prio = Val}) -> Val;
-get('stats',    #riak_core_job_v1{stats = Val}) -> Val;
-get('work',     #riak_core_job_v1{work = Val}) -> Val;
-get('fini',     #riak_core_work_v1{fini = Val}) -> Val;
-get('init',     #riak_core_work_v1{init = Val}) -> Val;
-get('run',      #riak_core_work_v1{run = Val}) -> Val;
-get(Field, Record) ->
-    erlang:error('badarg', [Field, Record]).
+%% If necessary, the object is re-created at a lower version that is no higher
+%% than the specified version.
+%%
+cap('v1', Object) when erlang:is_record(Object, riak_core_job_v1) ->
+    Object;
+cap('v1', Object) when erlang:is_record(Object, riak_core_work_v1) ->
+    Object;
+cap(Ver, Object) ->
+    erlang:error('badarg', [Ver, Object]).
+
+-spec cid(Job :: job()) -> term().
+%%
+%% @doc Retrieves a Job's Client ID.
+%%
+cid(#riak_core_job_v1{cid = Val}) ->
+    Val.
+
+-spec class(Job :: job()) -> class().
+%%
+%% @doc Retrieves a Job's Class.
+%%
+class(#riak_core_job_v1{class = Class}) ->
+    Class.
+
+-spec cleanup(Work :: work()) -> func().
+%%
+%% @doc Retrieve Work's 'cleanup' function.
+%%
+cleanup(#riak_core_work_v1{cleanup = Func}) ->
+    Func.
+
+-spec client_id(Job :: job()) -> term().
+%%
+%% @doc Retrieves a Job's Client ID.
+%%
+client_id(Job) ->
+    cid(Job).
+
+-spec dummy() -> job().
+%%
+%% @doc Returns a valid Job object for testing/validation.
+%%
+%% The returned instance's 'work' element does nothing.
+%% Every element of the returned Job is constant across nodes and time,
+%% including the global ID (which should never appear anywhere else).
+%% The implementation strategy allows the returned value to effectively be a
+%% static constant, so it's a cheap call that doesn't create multiple instances.
+%%
+dummy() ->
+    #riak_core_job_v1{
+        class   = 'dummy',
+        cid     = 'dummy',
+        gid     = ?DUMMY_JOB_ID,
+        prio    = ?JOB_PRIO_MIN,
+        work    = #riak_core_work_v1{}
+    }.
+
+-spec from(Job :: job()) -> term().
+%%
+%% @doc Retrieves a Job's From field.
+%%
+from(#riak_core_job_v1{from = Val}) ->
+    Val.
+
+-spec gid(Job :: job()) -> term().
+%%
+%% @doc Retrieves a Job's Global ID.
+%%
+gid(#riak_core_job_v1{gid = Val}) ->
+    Val.
+
+-spec global_id(Job :: job()) -> term().
+%%
+%% @doc Retrieves a Job's Global ID.
+%%
+global_id(Job) ->
+    gid(Job).
+
+-spec iid(Job :: job()) -> term().
+%%
+%% @doc Retrieves a Job's Internal ID.
+%%
+iid(#riak_core_job_v1{iid = Val}) ->
+    Val.
+
+-spec iid(Job :: job(), IID :: term()) -> job().
+%%
+%% @doc Sets a Job's Internal ID.
+%%
+iid(#riak_core_job_v1{} = Job, IID) ->
+    Job#riak_core_job_v1{iid = IID}.
+
+-spec internal_id(Job :: job()) -> term().
+%%
+%% @doc Retrieves a Job's Internal ID.
+%%
+internal_id(Job) ->
+    iid(Job).
+
+-spec internal_id(Job :: job(), IID :: term()) -> job().
+%%
+%% @doc Sets a Job's Internal ID.
+%%
+internal_id(Job, IID) ->
+    iid(Job, IID).
+
+-spec invoke(Func :: func()) -> term().
+%%
+%% @doc Invokes the specified function.
+%%
+%% Accepts functions as specified throughout the jobs API.
+%%
+invoke({Fun, FunArgs})
+        when    erlang:is_function(Fun)
+        andalso erlang:is_list(FunArgs) ->
+    erlang:apply(Fun, FunArgs);
+invoke({Mod, Func, FunArgs})
+        when    erlang:is_atom(Mod)
+        andalso erlang:is_atom(Func)
+        andalso erlang:is_list(FunArgs) ->
+    erlang:apply(Mod, Func, FunArgs).
+
+-spec invoke(Func :: func(), AddArg :: term()) -> term().
+%%
+%% @doc Invokes the specified function with one prepended argument.
+%%
+%% Accepts functions as specified throughout the jobs API.
+%%
+invoke({Fun, FunArgs}, AddArg)
+        when    erlang:is_function(Fun)
+        andalso erlang:is_list(FunArgs) ->
+    erlang:apply(Fun, [AddArg | FunArgs]);
+invoke({Mod, Func, FunArgs}, AddArg)
+        when    erlang:is_atom(Mod)
+        andalso erlang:is_atom(Func)
+        andalso erlang:is_list(FunArgs) ->
+    erlang:apply(Mod, Func, [AddArg | FunArgs]).
 
 -spec job([{atom(), term()}]) -> job() | no_return().
 %%
-%% @doc Create and initialize a new job record.
+%% @doc Create and initialize a new job object.
 %%
-%% A Job can be created without a unit of work, to allow "filling in the blanks"
-%% at a later point in its traversal of the cluster. Work can only be assigned
-%% ONCE, either during initialization here or with assign/2 at a later time.
+%% A Job can be created without a unit of work, to allow "filling in the
+%% blanks" at a later point in its traversal of the cluster.
 %% Obviously, a unit of work must be assigned before the Job is runnable.
 %%
 %% The provided property list includes Key/Value tuples with which to
@@ -178,7 +332,7 @@ get(Field, Record) ->
 %%
 %% {'work', Work} - Work is an object of the type returned by work/1.
 %%
-%% {'class', atom()} - The job's class; default is 'anon'.
+%% {'class', atom() | {atom(), atom()}} - The job's class; default is 'anon'.
 %%
 %% {'from', sender() | pid()} - The job's originator; default is 'ignore'.
 %% Warning: Because there are so many valid representations of the sender()
@@ -198,19 +352,20 @@ get(Field, Record) ->
 %% {'killed', func()} - A function, with arguments, to be called if the job
 %% is killed, cancelled, or crashed. The function may be specified as {M, F, A}
 %% or {F, A}; the default is 'undefined'.
-%% The function will be invoked with a Reason term appended to the specified
+%% The function will be invoked with a Reason term prepended to the specified
 %% Args list, so the arity of the function must be one more than length(A).
 %%
-%% @see {@link assign/2}
+%% Unrecognized properties are ignored, so it IS NOT an error if the provided
+%% property list includes irrelevant values.
 %%
-job(Props) ->
+%% @see {@link work/2}
+%%
+job(Props) when erlang:is_list(Props) ->
     InitTS = ?CUR_TIMESTAMP,
-    %% 'work' can only be assigned once
     {Work, PW} = case lists:keytake('work', 1, Props) of
         'false' ->
-            {'$unassigned', Props};
-        {'value', {_, WorkVal}, NewPW}
-                when erlang:is_record(WorkVal, riak_core_work_v1) ->
+            {'undefined', Props};
+        {'value', {_, WorkVal}, NewPW} when ?is_work(WorkVal) ->
             {WorkVal, NewPW};
         {'value', Spec, _} ->
             erlang:error('badarg', [Spec])
@@ -248,121 +403,32 @@ job(Props) ->
         cid   = CID,
         work  = Work,
         stats = [{'created', TS}]
-    }).
-
--spec work([{'init' | 'run' | 'fini', func()}]) -> work() | no_return().
-%%
-%% @doc Create and initialize a new unit of work.
-%%
-%% One or more functions MUST be specified in the input properties - a `badarg'
-%% exception is raised if none of the keys ['init', 'run', 'fini'] are present
-%% in the input Props.
-%%
-%% The function types can't be properly specified with their unknown arities,
-%% but if they could they'd look something like this:
-%%  init_fun()  :: fun(({scope_id(), pid()}, arg1(), ..., argN()) -> context1().
-%%  run_fun()   :: fun((context1(), arg1(), ..., argN()) -> context2().
-%%  fini_fun()  :: fun((context2(), arg1(), ..., argN()) -> result().
-%% In short, the arity of each specified function is one more than length(Args).
-%%
-%% The defaults are such that each unspecified function simply returns the
-%% initial, or context, argument passed to it. As mentioned above, at least one
-%% non-default function must be provided, but functions are not fully validated
-%% until the unit of work reaches the vnode upon which it is to me executed, so
-%% it's entirely possible to create one using his function that cannot be
-%% executed, or does nothing worthwhile, at its destination.
-%%
-%% Unrecognized properties are ignored, so it IS NOT an error if the provided
-%% property list includes irrelevant values.
-%%
-work([_|_] = Props) ->
-    case work_check(Props) of
-        'true' ->
-            #riak_core_work_v1{
-                init  = workp('init', Props),
-                run   = workp('run',  Props),
-                fini  = workp('fini', Props) };
-        _ ->
-            erlang:error('badarg', [Props])
-    end;
-work(Input) ->
+    });
+job(Input) ->
     erlang:error('badarg', [Input]).
 
--spec assign(job(), work()) -> job() | no_return().
+-spec killed(Job :: job()) -> func().
 %%
-%% @doc Assigns a unit of work to the specified Job.
+%% @doc Retrieve Job's Killed function.
 %%
-%% A 'badarg' error is raised if the Job already contains a unit of work.
-%%
-%% @see {@link job/1}
-%%
-assign(#riak_core_job_v1{work = '$unassigned'} = Job, Work)
-        when erlang:is_record(Work, riak_core_work_v1) ->
-    Job#riak_core_job_v1{work = Work};
-assign(Job, Work) ->
-    erlang:error('badarg', [Job, Work]).
+killed(#riak_core_job_v1{killed = Func}) ->
+    Func.
 
--spec dummy() -> job().
+-spec label(Job :: job()) -> term().
 %%
-%% @doc Returns a valid Job object for testing/validation.
+%% @doc Retrieve Job's Label.
 %%
-%% The returned instance's 'work' element does nothing.
-%% Every element of the returned Job is constant across nodes and time,
-%% including the global ID (which should never appear anywhere else).
-%% The implementation strategy allows the returned value to effectively be a
-%% static constant, so it's a cheap call that doesn't create multiple instances.
-%%
-dummy() ->
-    #riak_core_job_v1{
-        class   = 'dummy',
-        cid     = 'dummy',
-        gid     = ?DUMMY_JOB_ID,
-        prio    = ?JOB_PRIO_MIN,
-        work    = #riak_core_work_v1{}
-    }.
+label(#riak_core_job_v1{class = Class, gid = GID})
+    -> {Class, GID}.
 
--spec cap(atom(), job() | work()) -> job() | work() | no_return().
+-spec main(Work :: work()) -> func().
 %%
-%% @doc Make sure a Job/Work object is understandable at the specified version.
+%% @doc Retrieve Work's 'main' function.
 %%
-%% If necessary, the object is re-created at a lower version that is no higher
-%% than the specified version.
-%%
-cap('v1', Object) when erlang:is_record(Object, riak_core_job_v1) ->
-    Object;
-cap('v1', Object) when erlang:is_record(Object, riak_core_work_v1) ->
-    Object;
-cap(Ver, Object) ->
-    erlang:error('badarg', [Ver, Object]).
+main(#riak_core_work_v1{main = Func}) ->
+    Func.
 
--spec invoke(func()) -> term().
-%%
-%% @doc Invokes the specified function.
-%%
-%% Accepts functions as specified throughout the jobs API.
-%%
-invoke({Fun, FunArgs})
-        when erlang:is_function(Fun) andalso erlang:is_list(FunArgs) ->
-    erlang:apply(Fun, FunArgs);
-invoke({Mod, Func, FunArgs}) when erlang:is_atom(Mod)
-        andalso erlang:is_atom(Func) andalso erlang:is_list(FunArgs) ->
-    erlang:apply(Mod, Func, FunArgs).
-
--spec invoke(func(), [term()]) -> term().
-%%
-%% @doc Invokes the specified function with appended arguments.
-%%
-%% Accepts functions as specified throughout the jobs API.
-%%
-invoke({Fun, FunArgs}, AddArgs) when erlang:is_function(Fun)
-        andalso erlang:is_list(FunArgs) andalso erlang:is_list(AddArgs) ->
-    erlang:apply(Fun, FunArgs ++ AddArgs);
-invoke({Mod, Func, FunArgs}, AddArgs)
-        when erlang:is_atom(Mod) andalso erlang:is_atom(Func)
-        andalso erlang:is_list(FunArgs) andalso erlang:is_list(AddArgs) ->
-    erlang:apply(Mod, Func, FunArgs ++ AddArgs).
-
--spec passthrough(term()) -> term().
+-spec passthrough(Arg :: term()) -> term().
 %%
 %% @doc Returns the supplied argument.
 %%
@@ -371,6 +437,20 @@ invoke({Mod, Func, FunArgs}, AddArgs)
 %%
 passthrough(Arg) ->
     Arg.
+
+-spec prio(Job :: job()) -> priority().
+%%
+%% @doc Retrieve Job's Priority.
+%%
+prio(#riak_core_job_v1{prio = Val}) ->
+    Val.
+
+-spec priority(Job :: job()) -> priority().
+%%
+%% @doc Retrieve Job's Priority.
+%%
+priority(Job) ->
+    prio(Job).
 
 -spec reply(job() | sender() | pid(), term()) -> term() | no_return().
 %%
@@ -417,8 +497,9 @@ reply(From, Msg) when erlang:is_tuple(From) ->
 %% Function accepts Arity arguments, but the specification would call it with
 %% Expected arguments.
 %%
-%% @see {@link assign/2}
 %% @see {@link job/1}
+%% @see {@link work/1}
+%% @see {@link work/2}
 %%
 runnable({Fun, Args})
         when erlang:is_function(Fun) andalso erlang:is_list(Args) ->
@@ -448,17 +529,17 @@ runnable({Mod, Func, Args})
                     {'error', {'no_function', {Mod, Func, Arity}}}
             end
     end;
-runnable(#riak_core_work_v1{init = Init, run = Run, fini = Fini}) ->
-    case runnable(Init) of
-        true ->
-            case runnable(Run) of
+runnable(#riak_core_work_v1{setup = Setup, main = Main, cleanup = Cleanup}) ->
+    case runnable(Setup) of
+        'true' ->
+            case runnable(Main) of
                 'true' ->
-                    runnable(Fini);
-                RR ->
-                    RR
+                    runnable(Cleanup);
+                MErr ->
+                    MErr
             end;
-        RI ->
-            RI
+        SErr ->
+            SErr
     end;
 runnable(#riak_core_job_v1{work = Work, killed = 'undefined'}) ->
     runnable(Work);
@@ -469,28 +550,45 @@ runnable(#riak_core_job_v1{work = Work, killed = Killed}) ->
         Err ->
             Err
     end;
-runnable('$unassigned') ->
+runnable('undefined') ->
     {'error', 'no_work'};
 runnable(Object) ->
     erlang:error('badarg', [Object]).
 
+-spec setup(Work :: work()) -> func().
+%%
+%% @doc Retrieve Work's 'setup' function.
+%%
+setup(#riak_core_work_v1{setup = Func}) ->
+    Func.
+
+-spec stats(Job :: job()) -> [stat()].
+%%
+%% @doc Retrieve Job's Statistics.
+%%
+stats(#riak_core_job_v1{stats = Stats}) ->
+    ?StatsDict:to_list(Stats).
+
 -spec timestamp() -> time().
+%%
+%% @doc Returns the current system time.
+%%
 timestamp() ->
     ?CUR_TIMESTAMP.
 
--spec update(Stat :: atom(), Job :: job()) -> job().
+-spec update(Stat :: stat_key(), Job :: job()) -> job().
 %%
 %% @doc Sets the specified statistic to the current timestamp.
 %%
 update(Stat, Job) ->
     update(Stat, ?CUR_TIMESTAMP, Job).
 
--spec update(Stat :: atom(), Value :: term(), Job :: job()) -> job().
+-spec update(Stat :: stat_key(), Value :: stat_val(), Job :: job()) -> job().
 %%
-%% @doc Sets the specified statistic to the specified value.
+%% @doc Sets the specified statistic to the supplied value.
 %%
 update(Stat, Value, #riak_core_job_v1{stats = Stats} = Job) ->
-    Job#riak_core_job_v1{stats = lists:keystore(Stat, 1, Stats, {Stat, Value})}.
+    Job#riak_core_job_v1{stats = ?StatsDict:store(Stat, Value, Stats)}.
 
 -spec versions() -> [atom()].
 %%
@@ -512,62 +610,119 @@ version(Object) when erlang:is_record(Object, riak_core_work_v1) ->
 version(_) ->
     'undefined'.
 
+-spec work(job() | [{'setup' | 'main' | 'cleanup', func()}])
+        -> work() | no_return().
+%%
+%% @doc Create a new unit of work OR retrieve a Job's unit of work.
+%%
+%% One or more functions MUST be specified in the input properties - a `badarg'
+%% exception is raised if none of the keys ['setup', 'main', 'cleanup'] are
+%% present in the input Props.
+%%
+%% The function types can't be properly specified with their unknown arities,
+%% but if they could they'd look something like this:
+%%  setup_fun()   :: fun((manager(), arg1() ... argN()) -> context1().
+%%  main_fun()    :: fun((context1(), arg1() ... argN()) -> context2().
+%%  cleanup_fun() :: fun((context2(), arg1() ... argN()) -> result().
+%% In short, the arity of each specified function is one more than length(Args).
+%%
+%% The defaults are such that each unspecified function simply returns the
+%% initial, or context, argument passed to it. As mentioned above, at least one
+%% non-default function must be provided, but functions are not fully validated
+%% until the unit of work reaches the node upon which it is to me executed, so
+%% it's entirely possible to create one using this function that cannot be
+%% executed, or does nothing worthwhile, at its destination.
+%%
+%% Unrecognized properties are ignored, so it IS NOT an error if the provided
+%% property list includes irrelevant values.
+%%
+work(#riak_core_job_v1{work = Work}) ->
+    Work;
+work([_|_] = Props) ->
+    case work_check(Props) of
+        'true' ->
+            #riak_core_work_v1{
+                setup   = workp('setup',    Props),
+                main    = workp('main',     Props),
+                cleanup = workp('cleanup',  Props) };
+        _ ->
+            erlang:error('badarg', [Props])
+    end;
+work(Input) ->
+    erlang:error('badarg', [Input]).
+
+-spec work(Job :: job(), Work :: work()) -> job().
+%%
+%% @doc Sets a Job's unit of work.
+%%
+work(#riak_core_job_v1{} = Job, Work) when ?is_work(Work) ->
+    Job#riak_core_job_v1{work = Work};
+work(Job, Work) ->
+    erlang:error('badarg', [Job, Work]).
+
 %% ===================================================================
 %% Internal
 %% ===================================================================
 
+-spec jobp(Props :: [{atom(), term()} | term()], Job :: job()) -> job().
 jobp([], Job) ->
     Job;
 jobp([{'class', Class} | Props], Job)
-        when erlang:is_atom(Class) ->
+        when    erlang:is_atom(Class) ->
+    jobp(Props, Job#riak_core_job_v1{class = Class});
+jobp([{'class', {C1, C2} = Class} | Props], Job)
+        when    erlang:is_atom(C1)
+        andalso erlang:is_atom(C2) ->
     jobp(Props, Job#riak_core_job_v1{class = Class});
 jobp([{'from', From} | Props], Job)
-        when erlang:is_pid(From)
-        orelse erlang:is_tuple(From)
-        orelse From =:= 'ignored' ->
+        when    erlang:is_pid(From)
+        orelse  erlang:is_tuple(From)
+        orelse  From =:= 'ignored' ->
     jobp(Props, Job#riak_core_job_v1{from = From});
 jobp([{'prio', Prio} | Props], Job)
-        when erlang:is_integer(Prio)
+        when    erlang:is_integer(Prio)
         andalso Prio >= ?JOB_PRIO_MIN
         andalso Prio =< ?JOB_PRIO_MAX ->
     jobp(Props, Job#riak_core_job_v1{prio = Prio});
 jobp([{'iid', ID} | Props], Job) ->
     jobp(Props, Job#riak_core_job_v1{iid = ID});
 jobp([{'killed', {Mod, Func, Args} = CB} | Props], Job)
-        when erlang:is_atom(Mod)
+        when    erlang:is_atom(Mod)
         andalso erlang:is_atom(Func)
         andalso erlang:is_list(Args) ->
     jobp(Props, Job#riak_core_job_v1{killed = CB});
 jobp([{'killed', {Fun, Args} = CB} | Props], Job)
-        when erlang:is_function(Fun)
-        andalso erlang:is_list(Args) ->
+        when    erlang:is_list(Args)
+        andalso erlang:is_function(Fun, (erlang:length(Args) + 1)) ->
     jobp(Props, Job#riak_core_job_v1{killed = CB});
-jobp([Prop | _], _) ->
-    erlang:error('badarg', [Prop]).
+jobp([_ | Props], Job) ->
+    jobp(Props, Job).
 
-work_check([{'init', _} | _]) ->
+-spec work_check(Props :: [{atom(), term()} | term()]) -> boolean().
+work_check([{'setup', _} | _]) ->
     'true';
-work_check([{'run', _} | _]) ->
+work_check([{'main', _} | _]) ->
     'true';
-work_check([{'fini', _} | _]) ->
+work_check([{'cleanup', _} | _]) ->
     'true';
 work_check([_ | Props]) ->
     work_check(Props);
 work_check([]) ->
     'false'.
 
+-spec workp(Key :: atom(), Props :: [{atom(), term()} | term()]) -> func().
 workp(Key, Props) ->
     case lists:keyfind(Key, 1, Props) of
         'false' ->
             {?MODULE, 'passthrough', []};
         {_, {Mod, Func, Args} = MFA}
-                when erlang:is_atom(Mod)
+                when    erlang:is_atom(Mod)
                 andalso erlang:is_atom(Func)
                 andalso erlang:is_list(Args) ->
             MFA;
         {_, {Fun, Args} = FA}
-                when erlang:is_function(Fun)
-                andalso erlang:is_list(Args) ->
+                when    erlang:is_list(Args)
+                andalso erlang:is_function(Fun, (erlang:length(Args) + 1)) ->
             FA;
         Bad ->
             erlang:error('badarg', [Bad])

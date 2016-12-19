@@ -49,6 +49,11 @@
                       {pool_test_,0}]}).
 -endif.
 
+% in start order, shutdown order is opposite
+% order must match that in riak:core_sup:init/1
+-define(SVC_MODS,
+    [riak_core_job_sup, riak_core_job_service, riak_core_job_manager]).
+
 %%% Worker Definition - does nothing but reply with what it is given
 
 init_worker(_VnodeIndex, Noreply, _WorkerProps) ->
@@ -131,12 +136,18 @@ pool_test_() ->
         fun() ->
             error_logger:tty(false),
             pulse:start(),
-            {ok, Sup} = riak_core_job_sup:start_link(),
-            Sup
+            lists:foldl(
+                fun(Mod, Pids) ->
+                    {ok, Pid} = Mod:start_link(),
+                    [Pid | Pids]
+                end, [], ?SVC_MODS)
         end,
-        fun(Sup) ->
-            erlang:unlink(Sup),
-            erlang:exit(Sup, 'shutdown'),
+        fun(Svcs) ->
+            lists:foreach(
+                fun(Pid) ->
+                    erlang:unlink(Pid),
+                    erlang:exit(Pid, 'shutdown')
+                end, Svcs),
             pulse:stop(),
             error_logger:tty(true)
         end,

@@ -18,952 +18,918 @@
 %%
 %% -------------------------------------------------------------------
 
+%%
+%% @doc Public Job Management API.
+%%
+%% Configuration:
+%%
+%%  Calculated :: {Val :: 'concur' | 'cores' | 'scheds', Mult :: pos_integer()}.
+%%  where Val represents a derived value:
+%%
+%%      `concur' -  The effective value of ?JOB_SVC_CONCUR_LIMIT. If it has
+%%                  not yet been evaluated, the result is calculated as if
+%%                  Val == `scheds'.
+%%
+%%      `cores'  -  The value of erlang:system_info('logical_processors').
+%%                  If the system returns anything other than a pos_integer(),
+%%                  the result is calculated as if Val == `scheds'.
+%%
+%%      `scheds' -  The value of erlang:system_info('schedulers'). This value
+%%                  is always a pos_integer(), so there's no fallback.
+%%
+%% Calculated values are determined at initialization, they ARE NOT dynamic!
+%%
+%% Application Keys:
+%%
+%% Note that keys are scoped to the application that started the Jobs
+%% components, they are NOT explicitly scoped to 'riak_core', though that's
+%% their expected use case and the default if no application is defined.
+%%
+%%  {?JOB_SVC_CONCUR_LIMIT, pos_integer() | Calculated}
+%%      Maximum number of jobs to execute concurrently.
+%%      Note that if this is initialized as {'concur', Mult} then the result
+%%      is calculated as {'scheds', Mult}.
+%%      Default: ?JOB_SVC_DEFAULT_CONCUR.
+%%
+%%  {?JOB_SVC_QUEUE_LIMIT, non_neg_integer() | Calculated}
+%%      Maximum number of jobs to queue for future execution.
+%%      Default: ?JOB_SVC_DEFAULT_QUEUE.
+%%
+%%  {?JOB_SVC_HIST_LIMIT, non_neg_integer() | Calculated}
+%%      Maximum number of completed jobs' histories to maintain.
+%%      Default: ?JOB_SVC_DEFAULT_HIST.
+%%
+%%  {?JOB_SVC_IDLE_MIN, non_neg_integer() | Calculated}
+%%      Minimum number of idle runner processes to keep available.
+%%      Idle processes are added opportunistically; the actual count at any
+%%      given instant can be lower.
+%%      Default: max(({'concur', 1} div 8), 3).
+%%
+%%  {?JOB_SVC_IDLE_MAX, non_neg_integer() | Calculated}
+%%      Maximum number of idle runner processes to keep available.
+%%      Idle processes are culled opportunistically; the actual count at any
+%%      given instant can be higher.If the specified value resolves to
+%%      < ?JOB_SVC_IDLE_MIN, then (?JOB_SVC_IDLE_MIN * 2) is used.
+%%      Default: max((?JOB_SVC_IDLE_MIN * 2), ({'scheds', 1} - 1)).
+%%
 -module(riak_core_job_manager).
 -behaviour(gen_server).
 
 % Public API
 -export([
-    group/1, group/2,
-    job_svc/1,
-    lookup/1,
-    start_scope/1, start_scope/2,
-    stop_scope/1, stop_scope/2,
-    stop_scope_async/1
+    cancel/2,
+    config/0,
+    find/1,
+    stats/0,
+    stats/1,
+    submit/1
 ]).
 
-% Public types
+% Public Types
 -export_type([
-    scope_id/0,
-    scope_index/0,
-    scope_type/0
+    cfg_concur_max/0,
+    cfg_hist_max/0,
+    cfg_queue_max/0,
+    cfg_mult/0,
+    cfg_prop/0,
+    config/0,
+    jid/0,
+    job/0,
+    stat/0,
+    stat_key/0,
+    stat_val/0
 ]).
 
 % Private API
 -export([
-    register/2,
-    start_link/1,
-    submit_mult/2
+    cleanup/2,
+    finished/3,
+    running/2,
+    starting/2
 ]).
 
-% gen_server callbacks
+% Gen_server API
 -export([
     code_change/3,
     handle_call/3,
     handle_cast/2,
     handle_info/2,
     init/1,
+    start_link/0,
     terminate/2
 ]).
 
 -include("riak_core_job_internal.hrl").
 
--define(SERVICE_NAME,   ?MODULE).
+%% ===================================================================
+%% Types
+%% ===================================================================
 
-%
-% The process dictionary is opaque to the main module code to allow for
-% finding a reasonably performant implementation strategy. It could get
-% pretty big, so it might matter.
-%
-% It needs to be searchable in some reasonably efficient manner on the
-% following keys/#prec{} fields:
-%
-%   Proc/Scope Type:    ptype + stype
-%   Process Label:      ptype + stype + sindex
-%   Scope Id:           stype + sindex
-%   Monitor Reference:  mon
-%
-% The ('ptype' + 'stype' + 'sindex'), 'pid', and 'mon' fields in #prec{} are
-% unique across the process dictionary, so any of them appearing in more than
-% one entry would be indicative of an error somewhere. Because of the cost of
-% checking for such inconsistencies, however, don't assume they'll be caught.
-%
-% The uniqueness constraint is particularly relevant in the handling of
-% Monitor References, as whenever one is removed through erasure or update
-% of the #prec{} containing it, it is demonitored. Even if the reference is
-% NOT found in the dictionary, any reference passed to pdict_erase() is
-% demonitored.
-%
-% Note that pdict_demonitor/1 leaves the process dictionary in an invalid
-% state and MUST only be used when the pdict is to be dropped or replaced in
-% its entirety!
-%
--spec pdict_new() -> pdict().
--spec pdict_demonitor(pdict()) -> 'ok'.
--spec pdict_erase(prec() | proc_id() | reference(), pdict()) -> pdict().
--spec pdict_find(proc_id() | reference(), pdict()) -> prec() | 'false'.
--spec pdict_group(scope_id(), pdict()) -> [prec()].
--spec pdict_group(proc_type(), scope_type(), pdict()) -> [prec()].
--spec pdict_store(prec(), pdict()) -> pdict().
--spec pdict_store(proc_id(), pid(), pdict()) -> pdict().
-%
-% proc_id() is {ptype, {stype, sindex}}
-%
--record(prec,   {
-    ptype       ::  proc_type(),
-    stype       ::  scope_type(),
-    sindex      ::  scope_index(),
-    pid         ::  pid(),
-    mon         ::  reference()
-}).
--type prec()    :: #prec{}.
+-define(StatsDict,  orddict).
+-type stats()   ::  orddict_t(stat_key(), stat_val()).
 
-%
-% Thankfully, the configuration dictionary is a simple mapping from
-%   scope_type() => riak_core_job_service:config()
-% It's presumably pretty small and stable, so it's just a list for now.
-% In OTP-18+ it may become a map ... or not.
-%
--type cdict()   ::  [{scope_type(), riak_core_job_service:config()}].
-
+% MUST keep hist/hcnt, que/qcnt and run/rcnt in sync!
+% They're separate to allow easy decisions based on active/queued work,
+% but obviously require close attention.
 -record(state, {
-    jobs_sup                ::  pid(),
-    svc_name                ::  atom(),
-    cdict   = []            ::  cdict(),
-    pdict   = pdict_new()   ::  pdict()
+    rmax                            ::  pos_integer(),
+    qmax                            ::  non_neg_integer(),
+    hmax                            ::  non_neg_integer(),
+    rcnt        = 0                 ::  non_neg_integer(),
+    qcnt        = 0                 ::  non_neg_integer(),
+    hcnt        = 0                 ::  non_neg_integer(),
+    pending     = 'false'           ::  boolean(),
+    shutdown    = 'false'           ::  boolean(),
+    loc         = dict:new()        ::  locs(), % jid() => jloc()
+    run         = dict:new()        ::  mons(), % rkey() => mon()
+    que         = queue:new()       ::  jque(), % jrec()
+    hist        = queue:new()       ::  jque(), % jrec()
+    stats       = ?StatsDict:new()  ::  stats() % stat_key() => stat_val()
 }).
--type state()   ::  #state{}.
+
+-type cfg_concur_max()  ::  {?JOB_SVC_CONCUR_LIMIT, pos_integer() | cfg_mult()}.
+-type cfg_hist_max()    ::  {?JOB_SVC_HIST_LIMIT, non_neg_integer() | cfg_mult()}.
+-type cfg_queue_max()   ::  {?JOB_SVC_QUEUE_LIMIT, non_neg_integer() | cfg_mult()}.
+-type cfg_mult()        ::  riak_core_job_service:cfg_mult().
+-type cfg_prop()        ::  cfg_concur_max() | cfg_hist_max() | cfg_queue_max()
+                        |   riak_core_job_service:cfg_prop().
+
+-type config()      ::  [cfg_prop()].
+-type jid()         ::  riak_core_job:gid().
+-type jloc()        ::  'queued' | 'history' | rkey().
+-type job()         ::  riak_core_job:job().
+-type jque()        ::  queue_t(jrec()).
+-type jrec()        ::  {jid(), job()}.
+-type locs()        ::  dict_t(jid(), jloc()).
+-type mon()         ::  {runner(), job()}.
+-type mons()        ::  dict_t(rkey(), mon()).
+-type rkey()        ::  reference().
+-type runner()      ::  riak_core_job_service:runner().
+-type service()     ::  atom() | pid().
+-type stat()        ::  {stat_key(), stat_val()}.
+-type stat_key()    ::  atom() | tuple().
+-type stat_val()    ::  term().
+-type state()       ::  #state{}.
+
+%
+% Implementation Notes:
+%
+%   Where feasible, decisions based on State are made with distinct function
+%   heads for efficiency and clarity.
+%
+%   Also for clarity, only State elements used for pattern matching are bound
+%   in function heads ... most of the time.
+%
+%   Operations that have to find (or worse, remove) Jobs that are in a state
+%   other than 'running' are inefficient.
+%   This is a deliberate trade-off to make advancing jobs through the
+%   'queued' -> 'running' -> 'history' states efficient.
+%
 
 %% ===================================================================
 %% Public API
 %% ===================================================================
 
--spec start_scope(scope_id()) -> 'ok' | {'error', term()}.
+-spec cancel(JobOrId :: job() | jid(), Kill :: boolean())
+        ->  {'ok', 'killed' | 'canceled' | 'history' | 'running', job()}
+            | 'false' | {'error', term()}.
 %%
-%% @doc Add a per-scope tree to the top-level supervisor.
+%% @doc Cancel, or optionally kill, the specified Job.
 %%
-%% If the scope is not already running and a scope of the same type has
-%% previously been started with a configuration specification, the new scope
-%% is started using that configuration.
+%% If Kill is `true' the job will de-queued or killed, as appropriate.
+%% If Kill is `false' the job will only be de-queued.
 %%
-%% If multiple nodes of the same type have been started with different
-%% configurations, it's unspecified which one is used to start the new scope,
-%% but you wouldn't do that - right?
+%% Returns:
 %%
-%% Possible return values are:
+%%  {`ok', `running', Job}
+%%      Only returned when Kill is `false', indicating that the Job is
+%%      currently active (and remains so).
 %%
-%% 'ok' - The scope process tree is running.
+%%  {`ok', Status, Job}
+%%      Status indicates whether the Job was `killed', `canceled' (de-queued),
+%%      or had recently `finished' running.
+%%      Note that what constitutes "recently finished" is subject to load and
+%%      history configuration.
+%%      Job is the fully-updated instance of the Job.
 %%
-%% `{error, Reason}' - An error occurred starting one of the processes.
+%%  `false'
+%%      The Job is not (or no longer) known to the Manager.
 %%
-%% `{error, noproc}' - The service is not available, probably meaning
-%% riak_core is hosed and this is the least of your problems.
-%%
-start_scope({SType, _} = ScopeID) when erlang:is_atom(SType) ->
-    gen_server:call(?SERVICE_NAME,
-        {'start_scope', ScopeID}, ?SCOPE_SVC_STARTUP_TIMEOUT).
+cancel(JobOrId, Kill) ->
+    JobId = case riak_core_job:version(JobOrId) of
+        {'job', _} ->
+            riak_core_job:gid(JobOrId);
+        _ ->
+            JobOrId
+    end,
+    gen_server:call(?JOBS_MGR_NAME, {'cancel', JobId, Kill}).
 
--spec start_scope(scope_id(), riak_core_job_service:config())
-        -> 'ok' | {'error', term()}.
+-spec find(JobOrId :: job() | jid())
+        -> {'ok', job()} | 'false' | {'error', term()}.
 %%
-%% @doc Add a per-scope tree to the top-level supervisor.
+%% @doc Return the latest instance of the specified Job.
 %%
-%% Possible return values are:
+%% `false' is returned if the Job is not (or no longer) known to the Manager.
 %%
-%% 'ok' - The scope process tree is running. If it was already running, it may
-%% be configured differently than specified in Config.
-%%
-%% `{error, Reason}' - An error occurred starting one of the processes.
-%%
-%% `{error, noproc}' - The service is not available, probably meaning
-%% riak_core is hosed and this is the least of your problems.
-%%
-start_scope({SType, _} = ScopeID, Config)
-        when erlang:is_atom(SType) andalso erlang:is_list(Config) ->
-    gen_server:call(?SERVICE_NAME,
-        {'start_scope', ScopeID, Config}, ?SCOPE_SVC_STARTUP_TIMEOUT).
+find(JobOrId) ->
+    JobId = case riak_core_job:version(JobOrId) of
+        {'job', _} ->
+            riak_core_job:gid(JobOrId);
+        _ ->
+            JobOrId
+    end,
+    gen_server:call(?JOBS_MGR_NAME, {'find', JobId}).
 
--spec stop_scope_async(scope_id()) -> 'ok'.
+-spec config() -> config() | {'error', term()}.
 %%
-%% @doc Shut down the per-scope tree asynchronously.
+%% @doc Return the current effective Jobs Management configuration.
 %%
-%% Signals the per-scope tree to shut down and returns immediately.
-%% To wait for the shutdown to complete, use stop_scope/1 or stop_scope/2.
-%%
-stop_scope_async({SType, _} = ScopeID) when erlang:is_atom(SType) ->
-    gen_server:cast(?SERVICE_NAME, {'stop_scope', ScopeID}).
+config() ->
+    gen_server:call(?JOBS_MGR_NAME, 'config').
 
--spec stop_scope(scope_id()) -> 'ok' | {'error', term()}.
+-spec stats() -> [stat()] | {'error', term()}.
 %%
-%% @doc Shut down the per-scope tree synchronously.
+%% @doc Return statistics from the Jobs Management system.
 %%
-%% This just calls stop_scope/2 with a default timeout.
-%%
-stop_scope(ScopeID) ->
-    stop_scope(ScopeID, ?STOP_SCOPE_TIMEOUT).
+stats() ->
+    gen_server:call(?JOBS_MGR_NAME, 'stats').
 
--spec stop_scope(scope_id(), non_neg_integer() | 'infinity')
-        -> 'ok' | {'error', term()}.
+-spec stats(JobOrId :: job() | jid()) -> [stat()] | 'false' | {'error', term()}.
 %%
-%% @doc Shut down the per-scope tree semi-synchronously.
+%% @doc Return statistics from the specified Job.
 %%
-%% Immediately signals the per-scope tree to shut down and waits up to Timeout
-%% milliseconds for it to complete. In all cases (unless the service itself has
-%% crashed) the shutdown runs to completion - the result only indicates whether
-%% it completes within the specified timeout.
+%% `false' is returned if the Job is not (or no longer) known to the Manager.
 %%
-%% If Timeout is greater than 32 bits, it is treated as 'infinity' due to
-%% (quite reasonable) limitations in Erlang millisecond timers.
-%% Refer to the 'receive' expression's 'after' clause or assorted timeout docs.
+stats(JobOrId) ->
+    JobId = case riak_core_job:version(JobOrId) of
+        {'job', _} ->
+            riak_core_job:gid(JobOrId);
+        _ ->
+            JobOrId
+    end,
+    gen_server:call(?JOBS_MGR_NAME, {'stats', JobId}).
+
+-spec submit(Job :: job()) -> 'ok' | {'error', term()}.
 %%
-%% Possible return values are:
+%% @doc Submit a job to run on the specified scope(s).
 %%
-%% 'ok' - The tree was not running, or shutdown completed within Timeout ms.
-%%
-%% `{error, timeout}' - The shutdown continues in the background.
-%%
-%% `{error, noproc}' - The service is not available, probably meaning
-%% riak_core is hosed and this is the least of your problems.
-%%
-%% If Timeout is zero, the function returns immediately, with 'ok' indicating
-%% the tree wasn't running, or {error, timeout} indicating the shutdown was
-%% initiated as if by stop_scope_async/1.
-%%
-%% If Timeout is 'infinity' (or greater than 32 bits) the function waits
-%% indefinitely for the tree to shut down. However, internal shutdown timeouts
-%% in the supervisors should cause the tree to shut down in well under a minute
-%% unless the system is badly screwed up.
-%%
-%% @see http://erlang.org/doc/reference_manual/expressions.html
-%%
-stop_scope(ScopeID, Timeout)
-        when erlang:is_integer(Timeout) andalso Timeout >= (1 bsl 32) ->
-    stop_scope(ScopeID, 'infinity');
-stop_scope({SType, _} = ScopeID, Timeout)
-        when erlang:is_atom(SType) andalso (Timeout =:= 'infinity'
-        orelse (erlang:is_integer(Timeout) andalso Timeout >= 0)) ->
-    % The gen_server call returns the pid of the scope's top-level supervisor
-    % after spawning a process to shut down the tree. We monitor the pid here
-    % rather than in the gen_server for two reasons:
-    % 1)  Avoid a late response landing in the caller's mailbox (assuming the
-    %     timeout exception didn't kill the caller outright), where it would be
-    %     spurious at best and possibly cause problems if it's not recognized.
-    % 2)  Avoid having to handle the state and messages in the server to
-    %     recognize when the scope has shut down and reply back to here. This
-    %     is actually a much bigger deal than the above.
-    case gen_server:call(?SERVICE_NAME, {'stop_scope', ScopeID}) of
-        {'ok', Sup} ->
-            Ref = erlang:monitor('process', Sup),
-            receive
-                {'DOWN', Ref, _, Sup, _} ->
-                    'ok'
-            after
-                Timeout ->
-                    _ = erlang:demonitor(Ref, ['flush']),
-                    {'error', 'timeout'}
-            end;
-        Reply ->
-            Reply
+submit(Job) ->
+    case riak_core_job:version(Job) of
+        {'job', _} ->
+            gen_server:call(?JOBS_MGR_NAME, {'submit', Job});
+        _ ->
+            erlang:error('badarg', [Job])
     end.
-
--spec job_svc(scope_svc_id() | scope_id()) -> pid() | {'error', term()}.
-%%
-%% @doc So much like start_scope/1 that it may not be worth keeping it.
-%%
-job_svc(?SCOPE_SVC_ID({SType, _}) = ProcID) when erlang:is_atom(SType) ->
-    case gen_server:call(?SERVICE_NAME,
-            {'job_svc', ProcID}, ?SCOPE_SVC_STARTUP_TIMEOUT) of
-        'lookup' ->
-            gen_server:call(?SERVICE_NAME, {'lookup', ProcID});
-        Ret ->
-            Ret
-    end;
-job_svc({SType, _} = ScopeID) when erlang:is_atom(SType) ->
-    job_svc(?SCOPE_SVC_ID(ScopeID)).
-
--spec lookup(proc_id()) -> pid() | 'undefined' | {'error', term()}.
-%%
-%% @doc Find the pid of the specified process.
-%%
-%% Unlike job_svc/1, this NEVER starts the process.
-%%
-lookup({PType, {SType, _}} = ProcID)
-        when erlang:is_atom(PType) andalso erlang:is_atom(SType) ->
-    gen_server:call(?SERVICE_NAME, {'lookup', ProcID}).
-
--spec group(scope_id()) -> [{proc_id(), pid()}].
-%%
-%% @doc Find the running (non-runner) processes for a scope.
-%%
-group({SType, _} = ScopeID) when erlang:is_atom(SType) ->
-    gen_server:call(?SERVICE_NAME, {'group', ScopeID}).
-
--spec group(proc_type(), scope_type()) -> [{proc_id(), pid()}].
-%%
-%% @doc Find the running processes of a specified type for a scope type.
-%%
-group(PType, SType) when erlang:is_atom(PType) andalso erlang:is_atom(SType) ->
-    gen_server:call(?SERVICE_NAME, {'group', PType, SType}).
-
--spec register(proc_id(), pid()) -> 'ok'.
-%%
-%% @doc Register the specified process.
-%%
-register({PType, {SType, _}} = ProcID, Pid) when erlang:is_pid(Pid)
-        andalso erlang:is_atom(PType) andalso erlang:is_atom(SType) ->
-    gen_server:cast(?SERVICE_NAME, {'register', ProcID, Pid}).
 
 %% ===================================================================
 %% Private API
 %% ===================================================================
 
--spec start_link(pid()) -> {'ok', pid()} | {'error', term()}.
-start_link(JobsSup) ->
-    SvcName = ?SERVICE_NAME,
-    gen_server:start_link({'local', SvcName}, ?MODULE, {JobsSup, SvcName}, []).
+-spec cleanup(Manager :: service(), Ref :: rkey()) -> 'ok'.
+%%
+%% @doc Callback for the job runner indicating the UOW is being cleaned up.
+%%
+cleanup(Manager, Ref) ->
+    update_job(Manager, Ref, 'cleanup').
 
--spec submit_mult(scope_type() | [scope_id()], riak_core_job:job())
-        -> 'ok' | {'error', term()}.
-%
-% This function is for use by riak_core_job_service:submit/2 ONLY!
-%
-% The operation has to be coordinated from a process other than the jobs
-% service because the service, and managers, need to continue handling the
-% messages that allow the prepare/commit sequence.
-%
-% All messages include a reference() used only for this operation, and the
-% pid() of the coordinating process (whoever called this).
-%
-submit_mult(Where, Job) when erlang:is_atom(Where)
-        orelse (erlang:is_list(Where) andalso erlang:length(Where) > 0) ->
-    case riak_core_job:version(Job) of
-        {'job', _} ->
-            multi_client(Where, Job);
-        _ ->
-            erlang:error('badarg', [Job])
-    end;
-submit_mult(Selector, _) ->
-    erlang:error('badarg', [Selector]).
+-spec finished(Manager :: service(), Ref :: rkey(), Result :: term()) -> 'ok'.
+%%
+%% @doc Callback for the job runner indicating the UOW is finished.
+%%
+finished(Manager, Ref, Result) ->
+    update_job(Manager, Ref, 'finished', Result).
+
+-spec running(Manager :: service(), Ref :: rkey()) -> 'ok'.
+%%
+%% @doc Callback for the job runner indicating the UOW is being run.
+%%
+running(Manager, Ref) ->
+    update_job(Manager, Ref, 'running').
+
+-spec starting(Manager :: service(), Ref :: rkey()) -> 'ok'.
+%%
+%% @doc Callback for the job runner indicating the UOW is being started.
+%%
+starting(Manager, Ref) ->
+    update_job(Manager, Ref, 'started').
 
 %% ===================================================================
-%% gen_server callbacks
+%% Gen_server API
 %% ===================================================================
 
--spec init({pid(), atom()}) -> {'ok', state()}.
-init({JobsSup, SvcName}) ->
-    erlang:process_flag('trap_exit', 'true'),
-    % At startup, crawl the supervision tree to populate the state. The only
-    % time this will find anything is if this service crashed and is being
-    % restarted by the supervisor, which shouldn't be happening, but we do
-    % want to recover if it does.
-    % We can't call which_children/1 on the supervisor here, because we're
-    % (presumably) already in a synchronous operation in the supervisor so the
-    % call wouldn't be handled until after we return. Instead, plant a special
-    % message in our own inbox to complete the initialization there.
-    % Since our own server isn't initialized yet, use an async cast, as a
-    % synchronous call would wedge for the same reason the one to the
-    % supervisor would.
-    ?cast('init'),
-    {'ok', #state{jobs_sup = JobsSup, svc_name = SvcName}}.
-
--spec handle_call(term(), {pid(), term()}, state())
-        -> {'reply', term(), state()}.
+-spec code_change(OldVsn :: term(), State :: state(), Extra :: term())
+        -> {'ok', state()}.
 %
-% lookup(proc_id()) -> pid() | 'undefined'
-%
-handle_call({'lookup', ProcID}, _, #state{pdict = Procs} = State) ->
-    case pdict_find(ProcID, Procs) of
-        #prec{pid = Pid} ->
-            {'reply', Pid, State};
-        'false' ->
-            {'reply', 'undefined', State}
-    end;
-%
-% group(scope_id()) -> [{proc_id(), pid()}]
-%
-handle_call({'group', ScopeID}, _, #state{pdict = Procs} = State) ->
-    Ret = [{{PType, ScopeID}, Pid}
-            || #prec{ptype = PType, pid = Pid}
-                <- pdict_group(ScopeID, Procs)],
-    {'reply', Ret, State};
-%
-% group(proc_type(), scope_type()) -> [{proc_id(), pid()}]
-%
-handle_call({'group', PType, SType}, _, #state{pdict = Procs} = State) ->
-    Ret = [{{PType, {SType, SIndex}}, Pid}
-            || #prec{sindex = SIndex, pid = Pid}
-                <- pdict_group(PType, SType, Procs)],
-    {'reply', Ret, State};
-%
-% job_svc(node_mgr_id()) -> pid()
-%
-handle_call({'job_svc', ?SCOPE_SVC_ID({SType, _} = ScopeID) = ProcID}, _,
-        #state{jobs_sup = Sup, pdict = Procs, cdict = Cfgs} = State) ->
-    case pdict_find(ProcID, Procs) of
-        #prec{pid = Pid} ->
-            {'reply', Pid, State};
-        _ ->
-            Config = case lists:keyfind(SType, 1, Cfgs) of
-                'false' ->
-                    [];
-                {_, Cfg} ->
-                    Cfg
-            end,
-            case riak_core_job_sup:start_scope(Sup, ScopeID, Config) of
-                {'ok', _} ->
-                    % There's a 'register' message with the service's pid in
-                    % our inbox right now, but we can't get to it cleanly from
-                    % here, so tell the calling process to look it up.
-                    {'reply', 'lookup', State};
-                {'error', _} = Err ->
-                    {'reply', Err, State}
-            end
-    end;
-%
-% submit_mult(scope_type() | [scope_id()], job()) -> ok | {error, term()}
-%
-handle_call(Msg, {Client, _}, State)
-        when erlang:is_tuple(Msg)
-        andalso erlang:tuple_size(Msg) > 0
-        andalso erlang:element(1, Msg) =:= 'submit_mult' ->
-    multi_server(Msg, Client, State);
-%
-% start_scope(scope_id()) -> 'ok' | {'error', term()}
-%
-handle_call({'start_scope', {SType, _} = ScopeID}, _,
-        #state{jobs_sup = Sup, pdict = Procs, cdict = Cfgs} = State) ->
-    case pdict_find(?SCOPE_SVC_ID(ScopeID), Procs) of
-        #prec{} ->
-            {'reply', 'ok', State};
-        _ ->
-            Config = case lists:keyfind(SType, 1, Cfgs) of
-                'false' ->
-                    [];
-                {_, Cfg} ->
-                    Cfg
-            end,
-            case riak_core_job_sup:start_scope(Sup, ScopeID, Config) of
-                {'ok', _} ->
-                    {'reply', 'ok', State};
-                {'error', _} = Err ->
-                    {'reply', Err, State}
-            end
-    end;
-%
-% start_scope(scope_id(), config()) -> 'ok' | {'error', term()}
-%
-handle_call({'start_scope', {SType, _} = ScopeID, Config}, _,
-        #state{jobs_sup = Sup, pdict = Procs, cdict = Cfgs} = State) ->
-    case pdict_find(?SCOPE_SVC_ID(ScopeID), Procs) of
-        #prec{} ->
-            {'reply', 'ok', State};
-        _ ->
-            case riak_core_job_sup:start_scope(Sup, ScopeID, Config) of
-                {ok, _} ->
-                    case lists:keyfind(SType, 1, Cfgs) of
-                        'false' ->
-                            {'reply', 'ok',
-                                State#state{cdict = [{SType, Config} | Cfgs]}};
-                        % TODO: Is this the best way to handle this?
-                        % We want the latest successful config in the cache,
-                        % but comparing them is expensive. OTOH, just blindly
-                        % doing a keystore means a list copy and state update,
-                        % which could easily be even more costly.
-                        % Assuming the config was created by the same code per
-                        % scope type, the order of the elements is likely the
-                        % same, so just compare the object as a whole.
-                        {_, Config} ->
-                            {'reply', 'ok', State};
-                        _ ->
-                            {'reply', 'ok', State#state{cdict =
-                                lists:keystore(SType, 1, Cfgs, {SType, Config})}}
-                    end;
-                {'error', _} = Err ->
-                    {'reply', Err, State}
-            end
-    end;
-%
-% stop_scope(scope_id(), Timeout) -> 'ok' | {'error', term()}
-%
-handle_call({'stop_scope', ScopeID}, _, State) ->
-    case begin_stop_scope(ScopeID, State) of
-        {{'error', 'noproc'}, NewState} ->
-            {'reply', 'ok', NewState};
-        {Reply, NewState} ->
-            {'reply', Reply, NewState}
-    end;
-%
-% unrecognized message
-%
-handle_call(Msg, From, #state{svc_name = Name} = State) ->
-    _ = lager:error("~p service received unhandled call from ~p: ~p",
-            [Name, From, Msg]),
-    {'reply', {'error', {'badarg', Msg}}, State}.
-
--spec handle_cast(term(), state()) -> {'noreply', state()}.
-%
-% submit_mult(scope_type() | [scope_id()], job()) -> ok | {error, term()}
-%
-handle_cast(Msg, State)
-        when erlang:is_tuple(Msg)
-        andalso erlang:tuple_size(Msg) > 0
-        andalso erlang:element(1, Msg) =:= 'submit_mult' ->
-    multi_server(Msg, State);
-%
-% register(work_sup_id(), pid()) -> 'ok'
-% the per-scope work supervisor gets special handling
-%
-handle_cast({'register', ?WORK_SUP_ID(ScopeID) = ProcID, Sup}, StateIn) ->
-    State = StateIn#state{pdict = pdict_store(ProcID, Sup, StateIn#state.pdict)},
-    case pdict_find(?SCOPE_SVC_ID(ScopeID), State#state.pdict) of
-        #prec{pid = Svc} ->
-            _ = riak_core_job_service:register(Svc, ProcID, Sup),
-            {'noreply', State};
-        _ ->
-            % in case things are getting scheduled weird, retry a few times
-            _ = ?cast({'retry_work_reg', 5, ProcID, Sup}),
-            {'noreply', State}
-    end;
-%
-% register(proc_id(), pid()) -> 'ok'
-%
-handle_cast({'register', ProcID, Pid}, #state{pdict = Procs} = State) ->
-    {'noreply', State#state{pdict = pdict_store(ProcID, Pid, Procs)}};
-%
-% special message to retry registering a work supervisor with its service
-% confirm the supervisor's pid to make sure it's still registered itself
-%
-handle_cast({'retry_work_reg', Count, ?WORK_SUP_ID(ScopeID) = ProcID, Sup},
-        #state{svc_name = Name, pdict = Procs} = State) ->
-    case pdict_find(ProcID, Procs) of
-        #prec{pid = Sup} ->
-            case pdict_find(?SCOPE_SVC_ID(ScopeID), Procs) of
-                #prec{pid = Svc} ->
-                    _ = riak_core_job_service:register(Svc, ProcID, Sup),
-                    {'noreply', State};
-                _ ->
-                    Next = (Count - 1),
-                    if
-                        Next > 0 ->
-                            _ = ?cast({'retry_work_reg', Next, ProcID, Sup}),
-                            {'noreply', State};
-                        ?else ->
-                            _ = lager:error("~p service stranded ~p: ~p",
-                                    [Name, ProcID, Sup]),
-                            {'noreply', State}
-                    end
-            end;
-        _ ->
-            {'noreply', State}
-    end;
-%
-% stop_scope_async(scope_id()) -> 'ok'
-%
-handle_cast({'stop_scope', ScopeID}, State) ->
-    {_, NewState} = begin_stop_scope(ScopeID, State),
-    NewState;
-%
-% placed here once by init/2 at startup - see the comment there about why
-% we'll never see this again, so it's the last pattern to handle
-%
-handle_cast('init', #state{
-        jobs_sup = Sup, pdict = Procs, cdict = Cfgs} = State) ->
-    {CD, PD} = absorb_sup_tree(supervisor:which_children(Sup), {Cfgs, Procs}),
-    {'noreply', State#state{cdict = CD, pdict = PD}};
-%
-% unrecognized message
-%
-handle_cast(Msg, #state{svc_name = Name} = State) ->
-    _ = lager:error("~p service received unhandled cast: ~p", [Name, Msg]),
-    {'noreply', State}.
-
--spec handle_info(term(), state()) -> {'noreply', state()}.
-%
-% submit_mult(scope_type() | [scope_id()], job()) -> ok | {error, term()}
-%
-handle_info(Msg, State)
-        when erlang:is_tuple(Msg)
-        andalso erlang:tuple_size(Msg) > 0
-        andalso erlang:element(1, Msg) =:= 'submit_mult' ->
-    multi_server(Msg, State);
-%
-% a monitored process exited
-%
-handle_info({'DOWN', Mon, _, _, _}, #state{pdict = Procs} = State) ->
-    {'noreply', State#state{pdict = pdict_erase(Mon, Procs)}};
-%
-% unrecognized message
-%
-handle_info(Msg, #state{svc_name = Name} = State) ->
-    _ = lager:error("~p service received unhandled info: ~p", [Name, Msg]),
-    {'noreply', State}.
-
--spec terminate(term(), state()) -> ok.
-%
-% no matter why we're terminating, de-monitor everything
-%
-terminate(_, #state{pdict = Procs}) ->
-    pdict_demonitor(Procs).
-
--spec code_change(term(), state(), term()) -> {ok, state()}.
-%
-% at present we don't care, so just carry on
+% we don't care, just carry on
 %
 code_change(_, State, _) ->
     {'ok', State}.
+
+-spec handle_call(Msg :: term(), From :: {pid(), term()}, State :: state())
+        -> {'reply', term(), state()} | {'stop', term(), term(), state()}.
+%
+% config() -> config() | {'error', term()}.
+%
+handle_call('config', _, State) ->
+    {'reply', [
+        {?JOB_SVC_CONCUR_LIMIT, State#state.rmax},
+        {?JOB_SVC_HIST_LIMIT,   State#state.hmax},
+        {?JOB_SVC_QUEUE_LIMIT,  State#state.qmax}
+    ] ++ gen_server:call(?JOBS_SVC_NAME, 'config'), State};
+%
+% cancel(JobId :: jid(), Kill :: boolean())
+%   ->  {'ok', 'killed' | 'canceled' | 'history' | 'running', Job :: job()}
+%     | 'false' | {'error', term()}.
+%
+handle_call({'cancel', JobId, Kill}, _, State) ->
+    case dict:find(JobId, State#state.loc) of
+        {'ok', Ref} when erlang:is_reference(Ref) ->
+            case dict:find(Ref, State#state.run) of
+                {'ok', {Runner, RJob}} ->
+                    case Kill of
+                        'true' ->
+                            Job = riak_core_job:update('killed', RJob),
+                            _ = notify({Ref, {Runner, Job}}, ?JOB_ERR_KILLED),
+                            {'reply', {'ok', 'killed', Job},
+                                append_history({JobId, Job}, State#state{
+                                    run = dict:erase(Ref, State#state.run),
+                                    rcnt = (State#state.rcnt - 1) })};
+                        _ ->
+                            {'reply', {'ok', 'running', RJob}, State}
+                    end;
+                _ ->
+                    RErr = {'invalid_state', ?LINE},
+                    {'stop', RErr, {'error', RErr}, State}
+            end;
+        {'ok', 'queued'} ->
+            case extract_queued(JobId, State#state.que) of
+                {QJob, Que} ->
+                    Job = riak_core_job:update('canceled', QJob),
+                    {'reply', {'ok', 'canceled', Job},
+                        append_history({JobId, Job}, State#state{
+                            que = Que,
+                            qcnt = (State#state.qcnt - 1) })};
+                'false' ->
+                    QErr = {'invalid_state', ?LINE},
+                    {'stop', QErr, {'error', QErr}, State}
+            end;
+        {'ok', 'history'} ->
+            case lists:keyfind(JobId, 1, queue:to_list(State#state.hist)) of
+                {_, HJob} ->
+                    {'ok', 'history', HJob};
+                'false' ->
+                    HErr = {'invalid_state', ?LINE},
+                    {'stop', HErr, {'error', HErr}, State}
+            end;
+        'false' ->
+            {'reply', 'false', State}
+    end;
+%
+% find(JobId :: jid()) -> {'ok', Job :: job()} | 'false' | {'error', term()}.
+%
+handle_call({'find', JobId}, _, State) ->
+    case find_job_by_id(JobId, State) of
+        {'ok', _, Job} ->
+            {'reply', {'ok', Job}, State};
+        'false' ->
+            {'reply', 'false', State};
+        {'error', What} = Error ->
+            {'stop', What, Error, State}
+    end;
+%
+% stats() -> [stat()] | {'error', term()}.
+%
+handle_call('stats', _, State) ->
+    Status = if State#state.shutdown -> 'stopping'; ?else -> 'active' end,
+    Result = [
+        {'status',  Status},
+        {'concur',  State#state.rmax},
+        {'maxque',  State#state.qmax},
+        {'maxhist', State#state.hmax},
+        {'running', State#state.rcnt},
+        {'inqueue', State#state.qcnt},
+        {'history', State#state.hcnt},
+        {'service', gen_server:call(?JOBS_SVC_NAME, 'stats')}
+        | ?StatsDict:to_list(State#state.stats) ],
+    {'reply', Result, State};
+%
+% stats(JobId :: jid()) -> [stat()] | 'false' | {'error', term()}.
+%
+handle_call({'stats', JobId}, _, State) ->
+    case find_job_by_id(JobId, State) of
+        {'ok', _, Job} ->
+            {'reply', riak_core_job:stats(Job), State};
+        'false' ->
+            {'reply', 'false', State};
+        {'error', What} = Error ->
+            {'stop', What, Error, State}
+    end;
+%
+% submit(job()) -> 'ok' | {'error', term()}.
+%
+handle_call({'submit' = Phase, Job}, From, StateIn) ->
+    case submit_job(Phase, Job, From, StateIn) of
+        {'error', Error, State} ->
+            {'stop', Error, Error, State};
+        {Result, State} ->
+            {'reply', Result, State}
+    end;
+%
+% unrecognized message
+%
+handle_call(Msg, {Who, _}, State) ->
+    _ = lager:error(
+        "~s received unhandled call from ~p: ~p", [?JOBS_MGR_NAME, Who, Msg]),
+    {'reply', {'error', {'badarg', Msg}}, inc_stat('unhandled', State)}.
+
+-spec handle_cast(Msg :: term(), State :: state())
+        -> {'noreply', state()} | {'stop', term(), state()}.
+%
+% internal 'pending' message
+%
+% State#state.pending MUST be 'true' at the time when we encounter a 'pending'
+% message - if it's not the State is invalid.
+%
+handle_cast('pending', #state{pending = Flag} = State) when Flag /= 'true' ->
+    _ = lager:error("Invalid State: ~p", [State]),
+    {'stop', 'invalid_state', State};
+handle_cast('pending', StateIn) ->
+    case pending(StateIn#state{pending = 'false'}) of
+        {'ok', State} ->
+            {'noreply', State};
+        {'shutdown', State} ->
+            {'stop', 'shutdown', State};
+        {'error', _} = Error ->
+            {'stop', Error, StateIn}
+    end;
+%
+% status update from a running (or finishing) job
+%
+% These are sent directly from the riak_core_job_service module's private
+% interface used by the riak_core_job_runner.
+%
+handle_cast({Ref, 'update', 'finished' = Stat, TS, Result},
+        #state{rmax = RMax, qcnt = QCnt, rcnt = RCnt} = State)
+        % Main case is when the queue is empty, but also accommodate dynamic
+        % reduction of the concurrency limit.
+        when QCnt =:= 0 orelse RCnt > RMax ->
+    _ = erlang:demonitor(Ref, ['flush']),
+    case dict:find(Ref, State#state.run) of
+        {ok, {Runner, Done}} ->
+            _ = riak_core_job_service:release(Runner),
+            {'noreply', append_history({riak_core_job:gid(Done),
+                riak_core_job:update('result', Result,
+                    riak_core_job:update(Stat, TS, Done))},
+                State#state{
+                    run = dict:erase(Ref, State#state.run),
+                    rcnt = (RCnt - 1),
+                    stats = inc_stat('history', State#state.stats) })};
+        _ ->
+            _ = lager:error(
+                "~s received completion message ~p:~p "
+                "for unknown job ref ~p", [?JOBS_MGR_NAME, Stat, Result, Ref]),
+            {'noreply', inc_stat('update_errors', State)}
+    end;
+handle_cast({Ref, 'update', 'finished' = Stat, TS, Result}, StateIn) ->
+    case dict:find(Ref, StateIn#state.run) of
+        {ok, {Runner, Done}} ->
+            {{'value', {JobId, Job}}, Que} = queue:out(StateIn#state.que),
+            State = append_history({JobId,
+                riak_core_job:update('result', Result,
+                    riak_core_job:update(Stat, TS, Done))},
+                StateIn#state{
+                    que = Que,
+                    qcnt = (StateIn#state.qcnt - 1),
+                    stats = inc_stat('history', StateIn#state.stats) }),
+            case start_job(Runner, Ref, Job) of
+                'ok' ->
+                    {'noreply', State#state{
+                        run = dict:store(Ref, {Runner, Job}, State#state.run),
+                        loc = dict:store(JobId, Runner, State#state.loc) }};
+                RunErr ->
+                    _ = erlang:demonitor(Ref, ['flush']),
+                    _ = riak_core_job_service:release(Runner),
+                    {'stop', RunErr, State#state{
+                        run = dict:erase(Ref, State#state.run),
+                        rcnt = (State#state.rcnt - 1),
+                        loc = dict:erase(JobId, State#state.loc) }}
+            end;
+        _ ->
+            _ = lager:error(
+                "~s received completion message ~p:~p for unknown job ref ~p",
+                [?JOBS_MGR_NAME, Stat, Result, Ref]),
+            {'noreply', inc_stat('update_errors', StateIn)}
+    end;
+handle_cast({Ref, 'update', Stat, TS}, State) ->
+    case dict:find(Ref, State#state.run) of
+        {ok, {Runner, Job}} ->
+            {'noreply', State#state{
+                run = dict:store(Ref,
+                    {Runner, riak_core_job:update(Stat, TS, Job)},
+                    State#state.run) }};
+        _ ->
+            _ = lager:error(
+                "~s received ~p update for unknown job ref ~p",
+                [?JOBS_MGR_NAME, Stat, Ref]),
+            {'noreply', inc_stat('update_errors', State)}
+    end;
+%
+% unrecognized message
+%
+handle_cast(Msg, State) ->
+    _ = lager:error("~s received unhandled cast: ~p", [?JOBS_MGR_NAME, Msg]),
+    {'noreply', inc_stat('unhandled', State)}.
+
+-spec handle_info(Msg :: term(), State :: state())
+        -> {'noreply', state()} | {'stop', term(), state()}.
+%
+% A monitored job crashed or was killed.
+% If it completed normally, a 'done' update arrived in our mailbox before this
+% and caused the monitor to be released and flushed, so the only way we get
+% this is an exit before completion.
+%
+handle_info({'DOWN', Ref, _, Pid, Info}, StateIn) ->
+    State = inc_stat('crashed', StateIn),
+    case dict:find(Ref, State#state.run) of
+        {ok, {Runner, Job}} ->
+            _ = notify(Job, {?JOB_ERR_CRASHED, Info}),
+            if Runner =:= Pid ->
+                {'noreply', append_history(
+                    {riak_core_job:gid(Job),
+                        riak_core_job:update('crashed', Job)},
+                    State#state{
+                        run = dict:erase(Ref, State#state.run),
+                        rcnt = (State#state.rcnt - 1) })};
+            ?else ->
+                _ = lager:error(
+                    "~s Ref/Runner/Pid mismatch: ~p ~p ~p",
+                    [?JOBS_MGR_NAME, Ref, Runner, Pid]),
+                {'stop', 'invalid_state', State}
+            end;
+        _ ->
+            _ = lager:error(
+                "~s received 'DOWN' message "
+                "for unrecognized process ~p", [?JOBS_MGR_NAME, Pid]),
+            {'noreply', inc_stat('update_errors', State)}
+    end;
+%
+% unrecognized message
+%
+handle_info(Msg, State) ->
+    _ = lager:error("~s received unhandled info: ~p", [?JOBS_MGR_NAME, Msg]),
+    {'noreply', inc_stat('unhandled', State)}.
+
+-spec init(?MODULE) -> {'ok', state()} | {'stop', {'error', term()}}.
+%
+% initialize from the application environment
+%
+init(?MODULE) ->
+    App = riak_core_job_service:default_app(),
+    RMax = riak_core_job_service:app_config(
+        App, ?JOB_SVC_CONCUR_LIMIT, 1, 'undefined', ?JOB_SVC_DEFAULT_CONCUR),
+    %
+    % The above does lots of good stuff for us, but we don't know if what we
+    % get back is exactly the same as what's in the application environment,
+    % so rather than reading and comparing just reset it and be done with it.
+    %
+    _ = application:set_env(App, ?JOB_SVC_CONCUR_LIMIT, RMax),
+
+    QMax = riak_core_job_service:app_config(
+        App, ?JOB_SVC_QUEUE_LIMIT, 0, RMax, ?JOB_SVC_DEFAULT_QUEUE),
+    HMax = riak_core_job_service:app_config(
+        App, ?JOB_SVC_HIST_LIMIT, 0, RMax, ?JOB_SVC_DEFAULT_HIST),
+
+    % Make sure we get shutdown signals from the supervisor
+    _ = erlang:process_flag('trap_exit', 'true'),
+
+    % Tell the riak_core_job_service server to [re]configure itself.
+    IMin = riak_core_job_service:app_config(
+        App, ?JOB_SVC_IDLE_MIN, 0, RMax, erlang:max((RMax div 8), 3)),
+    IMax = riak_core_job_service:app_config(
+        App, ?JOB_SVC_IDLE_MAX, 0, RMax,
+        erlang:max((IMin * 2), (erlang:system_info('schedulers') - 1))),
+    gen_server:cast(?JOBS_SVC_NAME, {?job_svc_cfg_token,
+        [{?JOB_SVC_IDLE_MIN, IMin}, {?JOB_SVC_IDLE_MAX, IMax}]}),
+
+    {'ok', #state{rmax = RMax, qmax = QMax, hmax = HMax}}.
+
+-spec start_link() -> {'ok', pid()}.
+%
+% start named service
+%
+start_link() ->
+    gen_server:start_link({'local', ?JOBS_MGR_NAME}, ?MODULE, ?MODULE, []).
+
+-spec terminate(Why :: term(), State :: state()) -> ok.
+%
+% no matter why we're terminating, de-monitor everything we're watching
+%
+terminate({'invalid_state', Line}, State) ->
+    _ = lager:error(
+        "~s terminated due to invalid state:~b: ~p",
+        [?JOBS_MGR_NAME, Line, State]),
+    terminate('shutdown', State);
+terminate('invalid_state', State) ->
+    _ = lager:error(
+        "~s terminated due to invalid state: ~p", [?JOBS_MGR_NAME, State]),
+    terminate('shutdown', State);
+terminate(_, State) ->
+    _ = notify(State, ?JOB_ERR_SHUTTING_DOWN),
+    'ok'.
 
 %% ===================================================================
 %% Internal
 %% ===================================================================
 
--spec absorb_sup_tree(
-    [{term(), pid() | 'undefined', 'worker' | 'supervisor', [module()]}],
-    {cdict(), pdict()})
-        -> {cdict(), pdict()}.
+-spec append_history(JRec :: jrec(), State :: state()) -> state().
 %
-% Called indirectly by init/1 to repopulate state on restart.
+% Store the specified completed Job at the end of the history list, possibly
+% triggering history pruning.
 %
-absorb_sup_tree([{'riak_core_job_manager', _, _, _} | Rest], Dicts) ->
-    absorb_sup_tree(Rest, Dicts);
+append_history({JobId, _} = JRec, State) ->
+    check_pending(State#state{
+        hist = queue:in(JRec, State#state.hist),
+        hcnt = (State#state.hcnt + 1),
+        loc = dict:store(JobId, 'history', State#state.loc) }).
 
-absorb_sup_tree([{_, Ch, _, _} | Rest], Dicts) when not erlang:is_pid(Ch) ->
-    absorb_sup_tree(Rest, Dicts);
+-spec check_pending(State :: state()) -> state().
+%
+% Ensure that there's a 'pending' message in the inbox if there's background
+% work to be done.
+%
+check_pending(#state{qcnt = 0, hmax = HM, hcnt = HC} = State) when HM >= HC ->
+    State;
+check_pending(State) ->
+    set_pending(State).
 
-absorb_sup_tree(
-        [{?SCOPE_SVC_ID({SType, _}) = ProcID, Pid, _, _} | Rest], {CDIn, PD}) ->
-    % See if we can grab a config we don't already have. There's no intelligent
-    % way to get the latest one in the current situation, so take the first of
-    % each type.
-    CD = case lists:keyfind(SType, 1, CDIn) of
+-spec extract_queued(JobId :: jid(), Queue :: jque())
+        -> {job(), jque()} | 'false'.
+%
+% Remove and return the full Job for JobId in Queue.
+%
+extract_queued(JobId, Queue) ->
+    case lists:keytake(JobId, 1, queue:to_list(Queue)) of
+        {'value', {_, Job}, QList} ->
+            {Job, queue:from_list(QList)};
         'false' ->
-            case riak_core_job_service:config(Pid) of
-                [_|_] = Config ->
-                    [{SType, Config} | CDIn];
+            'false'
+    end.
+
+-spec find_job_by_id(JobId :: jid(), State :: state())
+        -> {'ok', jloc(), job()} | 'false' | {'error', term()}.
+%
+% Find the current instance of the specified Job and its location.
+%
+% `false' is returned if the Job is not (or no longer) known to the Manager.
+%
+% I hate this function, but unrolling it was even uglier, and at least this
+% way the compiler has a shot at optimizing it.
+% By design, anything found in the #state.loc dictionary *should* be in the
+% collection it points to, which would eliminate the inner case clauses, but
+% the code's too new to make that leap.
+%
+find_job_by_id(JobId, State) ->
+    case dict:find(JobId, State#state.loc) of
+        {'ok', Ref} when erlang:is_reference(Ref) ->
+            case dict:find(Ref, State#state.run) of
+                {'ok', {_, Job}} ->
+                    {'ok', Ref, Job};
                 _ ->
-                    CDIn
+                    {'error', {'invalid_state', Ref, ?LINE}}
             end;
-        _ ->
-            CDIn
-    end,
-    absorb_sup_tree(Rest, {CD, pdict_store(ProcID, Pid, PD)});
-
-absorb_sup_tree([{?WORK_SUP_ID(_) = ProcID, Pid, _, _} | Rest], {CD, PD}) ->
-    % Don't descend into work runner supervisors. It would be preferable to
-    % be able to check the supervisor's restart strategy, but we can't get to
-    % that through the public API.
-    absorb_sup_tree(Rest, {CD, pdict_store(ProcID, Pid, PD)});
-
-absorb_sup_tree([{ProcID, Pid, 'supervisor', _} | Rest], {CD, PD}) ->
-    absorb_sup_tree(Rest, absorb_sup_tree(
-        supervisor:which_children(Pid), {CD, pdict_store(ProcID, Pid, PD)}));
-
-absorb_sup_tree([{ProcID, Pid, _, _} | Rest], {CD, PD}) ->
-    absorb_sup_tree(Rest, {CD, pdict_store(ProcID, Pid, PD)});
-
-absorb_sup_tree([], Dicts) ->
-    Dicts.
-
--spec begin_stop_scope(scope_id(), state())
-        -> {{'ok', pid()} | {'error', term()}, state()}.
-%
-% Spawns an unlinked process to stop the specified scope asynchronously.
-%
-begin_stop_scope(ScopeID, #state{jobs_sup = Sup, pdict = Procs} = State) ->
-    case pdict_find(?SCOPE_SUP_ID(ScopeID), Procs) of
-        #prec{pid = Pid} ->
-            _ = erlang:spawn('riak_core_job_sup', 'stop_scope', [Sup, ScopeID]),
-            {{'ok', Pid}, State};
+        {'ok', 'queued'} ->
+            case lists:keyfind(JobId, 1, queue:to_list(State#state.que)) of
+                {_, Job} ->
+                    {'ok', 'queued', Job};
+                'false' ->
+                    {'error', {'invalid_state', ?LINE}}
+            end;
+        {'ok', 'history'} ->
+            case lists:keyfind(JobId, 1, queue:to_list(State#state.hist)) of
+                {_, Job} ->
+                    {'ok', 'history', Job};
+                'false' ->
+                    {'error', {'invalid_state', ?LINE}}
+            end;
         'false' ->
-            {{'error', 'noproc'}, State}
+            'false'
     end.
 
+-spec inc_stat(stat_key() | [stat_key()], state()) -> state()
+        ;     (stat_key() | [stat_key()], stats()) -> stats().
 %
-% multi_client/2 and multi_server/N are tightly coupled
-% multi_client/2 executes (waits) in the originating process
-% multi_server/N executes in the servicing gen_server process
+% Increment one or more statistics counters.
 %
-% The originator will already have a monitor on the service, and will pass it
-% into multi_client/3 to include it in its receive block. The Ref is included
-% in all messages relating to this job submission.
+inc_stat(Stat, #state{stats = Stats} = State) ->
+    State#state{stats = inc_stat(Stat, Stats)};
+inc_stat(Stat, Stats) when not erlang:is_list(Stat) ->
+    ?StatsDict:update_counter(Stat, 1, Stats);
+inc_stat([Stat], Stats) ->
+    inc_stat(Stat, Stats);
+inc_stat([Stat | More], Stats) ->
+    inc_stat(More, inc_stat(Stat, Stats));
+inc_stat([], Stats) ->
+    Stats.
+
+-spec notify(
+    What    :: job() | jrec() | [{rkey(), mon()} | jrec() | job()] | mons() | state(),
+    Why     :: term())
+        -> term().
 %
-multi_client(Where, Job) ->
-    case erlang:whereis(?SERVICE_NAME) of
+% Notifies whoever may care of the premature disposal of the job(s) in What
+% and returns Why.
+% For recursive (or lists:fold) use.
+%
+notify([], Why) ->
+    Why;
+notify([Elem | Elems], Why) ->
+    notify(Elems, notify(Elem, Why));
+notify(#state{que = Que, run = Run}, Why) ->
+    _ = notify(queue:to_list(Que), {?JOB_ERR_CANCELED, Why}),
+    dict:fold(
+        fun(Ref, Rec, Reason) ->
+            notify({Ref, Rec}, Reason)
+        end, Why, Run);
+notify({Ref, {Pid, Job}}, Why) ->
+    _ = erlang:demonitor(Ref, ['flush']),
+    _ = erlang:exit(Pid, 'kill'),
+    notify(Job, Why);
+notify({_JobId, Job}, Why) ->
+    notify(Job, Why);
+notify(Job, Why) ->
+    case riak_core_job:killed(Job) of
         'undefined' ->
-            {'error', 'noproc'};
-        Svc ->
-            Mon = erlang:monitor('process', Svc),
-            Ref = erlang:make_ref(),
-            case gen_server:call(Svc, {'submit_mult', Ref, Where, Job}) of
-                Ref ->
-                    receive
-                        {'DOWN', Mon, _, Svc, Info} ->
-                            {'error', {'noproc', Info}};
-                        {Ref, Result} ->
-                            _ = erlang:demonitor(Mon, ['flush']),
-                            Result
-                    end;
-                Other ->
-                    _ = erlang:demonitor(Mon, ['flush']),
-                    Other
+            _ = riak_core_job:reply(Job, {'error', Why});
+        Killed ->
+            try
+                _ = riak_core_job:invoke(Killed, Why)
+            catch
+                Class:What ->
+                    _ = lager:error("Job ~p 'killed' failure: ~p:~p",
+                        [riak_core_job:gid(Job), Class, What]),
+                    _ = riak_core_job:reply(Job, {'error', Why})
             end
-    end.
-%
-% receives any message coming into handle_call/3 that is a tuple whose first
-% element is 'submit_mult' and returns {reply, Response, State}
-%
-multi_server({Tag, Ref, _Where, _Job}, Client, State) ->
-    %
-    % We can dispatch the prepare messages to the managers from here, but then
-    % we need to return so this process can handle the messages coming back,
-    % signal the commit or rollback, clean up, and provide the result.
-    %
-    % Even though we're just returning a simple error, the client is waiting
-    % for the reference it sent in, so we put a message in our own inbox to
-    % reply asynchronously with the error after we've successfully returned
-    % from the synchronous call.
-    %
-    Result = {'error', 'not_implemented'},
-    _ = ?cast({Tag, Ref, Client, 'result', Result}),
-    %
-    % give the client back what it expects
-    %
-    {'reply', Ref, State}.
-%
-% receives any message coming into handle_cast/2 or handle_info/2 that is a
-% tuple whose first element is 'submit_mult' and returns {noreply, State}
-%
-multi_server({_Tag, Ref, Client, 'result', Result}, State) ->
-    _ = erlang:send(Client, {Ref, Result}),
-    {'noreply', State}.
+    end,
+    Why.
 
-%%
-%% Process dictionary implementation strategies.
-%% Each must define the 'pdict()' type and pdict_xxx() functions spec'd
-%% at the top of the file.
-%%
--define(pdict_list, 'true').
-% -ifdef(namespaced_types).
-% -define(pdict_map,  true).
-% -else.
-% -define(pdict_dict, true).
-% -endif.
-
--ifdef(pdict_list).
+-spec pending(State :: state())
+        -> {'ok' | 'shutdown', state()} | {'error', term()}.
 %
-% Simple and probably slow, but that's ok until we're sure what it needs to be
-% able to do.
-% There are SO many ways this could be optimized, but it's unlikely a list is
-% the best way to manage this in the long run, so it's just a straightforward
-% recursive implementation.
-% The lists:* operations to mutate the list aren't used because they all
-% preserve the order of the list and we don't care.
-% TODO: Implement this with maps, or dicts, or ets?
+% Dequeue and dispatch at most one job. If there are more jobs waiting, ensure
+% that we'll get to them after handling whatever may already be waiting.
 %
--type pdict() :: [prec()].
-
--compile({inline, pdict_new/0}).
-pdict_new() ->
-    [].
-
-pdict_demonitor([#prec{mon = Mon} | Procs]) ->
-    _ = erlang:demonitor(Mon, ['flush']),
-    pdict_demonitor(Procs);
-pdict_demonitor([]) ->
-    'ok'.
-
-pdict_erase(#prec{mon = Mon}, Procs) ->
-    pdict_erase(Mon, Procs);
-
-pdict_erase({PType, {SType, SIndex}}, Procs) ->
-    {Rec, NewProcs} = pdict_take_key(PType, SType, SIndex, Procs, []),
-    case Rec of
-        #prec{mon = Mon} ->
-            _ = erlang:demonitor(Mon, ['flush']),
-            NewProcs;
-        'false' ->
-            NewProcs
+% When the queue's caught up to concurrency capacity, prune the history if
+% needed, one entry per iteration. Once in 'shutdown' mode, the history is
+% completely ignored.
+%
+% Implementation Notes:
+%
+%   Queued job counts of zero, one, and more have their own distinct behavior,
+%   so they get their own function heads.
+%
+%   Yes, I've checked - in the case where there's one item in the queue,
+%   queue:out/2 is still more efficient than peeking at the item and creating
+%   a new queue, because the queue implementation is optimized for the case.
+%
+pending(#state{shutdown = 'true', rcnt = 0, qcnt = 0} = State) ->
+    {'shutdown', State};
+pending(#state{shutdown = 'true', qcnt = 0} = State) ->
+    {'ok', State};
+pending(#state{shutdown = 'true', rcnt = 0, qcnt = 1} = State) ->
+    {{'value', Job}, Que} = queue:out(State#state.que),
+    _ = notify(Job, {?JOB_ERR_CANCELED, ?JOB_ERR_SHUTTING_DOWN}),
+    {'shutdown', State#state{que = Que, qcnt = 0}};
+pending(#state{shutdown = 'true'} = State) ->
+    {{'value', {JobId, Job}}, Que} = queue:out(State#state.que),
+    _ = notify(Job, {?JOB_ERR_CANCELED, ?JOB_ERR_SHUTTING_DOWN}),
+    {'ok', check_pending(State#state{
+        que = Que,
+        qcnt = (State#state.qcnt - 1),
+        loc = dict:erase(JobId, State#state.loc) })};
+pending(State) when State#state.qcnt > 0
+        andalso State#state.rcnt < State#state.rmax ->
+    case riak_core_job_service:runner() of
+        Runner when erlang:is_pid(Runner) ->
+            Ref = erlang:monitor('process', Runner),
+            {{'value', {JobId, JobIn}}, Que} = queue:out(State#state.que),
+            case start_job(Runner, Ref, JobIn) of
+                'ok' ->
+                    Job = riak_core_job:update('dispatched', JobIn),
+                    {'ok', check_pending(State#state{
+                        que = Que,
+                        qcnt = (State#state.qcnt - 1),
+                        run = dict:store(Ref, {Runner, Job}, State#state.run),
+                        rcnt = (State#state.rcnt + 1),
+                        loc = dict:store(JobId, Runner, State#state.loc),
+                        stats = inc_stat('dispatched', State#state.stats) })};
+                RunErr ->
+                    RunErr
+            end;
+        SvcErr ->
+            SvcErr
     end;
+pending(State) when State#state.hcnt > State#state.hmax ->
+    {{'value', {JobId, _}}, Hist} = queue:out(State#state.hist),
+    {'ok', check_pending(State#state{
+        hist = Hist,
+        hcnt = (State#state.hcnt - 1),
+        loc = dict:erase(JobId, State#state.loc) })};
+pending(State) ->
+    {'ok', State}.
 
-pdict_erase(Mon, Procs) ->
-    _ = erlang:demonitor(Mon, ['flush']),
-    {_, NewProcs} = pdict_take_mon(Mon, Procs, []),
-    NewProcs.
+-spec set_pending(State :: state()) -> state().
+%
+% Ensure that there's a 'pending' message in the inbox.
+%
+set_pending(#state{pending = 'false'} = State) ->
+    gen_server:cast(erlang:self(), 'pending'),
+    State#state{pending = 'true'};
+set_pending(State) ->
+    State.
 
-pdict_find({PType, {SType, SIndex}}, Procs) ->
-    pdict_find_key(PType, SType, SIndex, Procs);
+-spec start_job(Runner :: pid(), Ref :: reference(), Job :: job())
+        -> 'ok' | {'error', term()}.
+%
+% Wrapper around riak_core_job_runner:run/4 that fills in the blanks.
+%
+start_job(Runner, Ref, Job) ->
+    riak_core_job_runner:run(Runner, erlang:self(), Ref, Job).
 
-pdict_find(Mon, Procs) ->
-    pdict_find_mon(Mon, Procs).
+-spec submit_job(
+    Phase   :: atom() | {atom(), term()},
+    Job     :: job(),
+    From    :: {pid(), term()},
+    State   :: state())
+        -> {'ok' | {'error', term()}, state()} | {'error', term(), state()}.
+%
+% Accept and dispatch, or reject, the specified Job, updating statistics.
+% On entry from the external call Phase is 'submit'; other phases are internal.
+%
+submit_job('submit', _, _, #state{shutdown = 'true'} = State) ->
+    {{'error', ?JOB_ERR_SHUTTING_DOWN}, inc_stat('rejected_shutdown', State)};
+submit_job('submit', _, _, #state{qcnt = C, qmax = M} = State) when C >= M ->
+    {{'error', ?JOB_ERR_QUEUE_OVERFLOW}, inc_stat('rejected_overflow', State)};
+submit_job('submit', Job, From, State) ->
+    submit_job({'runnable', riak_core_job:runnable(Job)}, Job, From, State);
+submit_job({'runnable', 'true'}, Job, {Caller, _} = From, State) ->
+    Class   = riak_core_job:class(Job),
+    Accept  = riak_core_util:job_class_enabled(Class),
+    _ = riak_core_util:report_job_request_disposition(
+            Accept, Class, ?MODULE, 'submit_job', ?LINE, Caller),
+    submit_job(Accept, Job, From, State);
+submit_job({'runnable', Error}, _, _, State) ->
+    {Error, inc_stat('accept_errors', State)};
+submit_job('queue', JobIn, _From, State) ->
+    Job = riak_core_job:update('queued', JobIn),
+    JobId = riak_core_job:gid(Job),
+    {'ok', set_pending(State#state{
+        que = queue:in({JobId, Job}, State#state.que),
+        qcnt = (State#state.qcnt + 1),
+        loc = dict:store(JobId, 'queued', State#state.loc),
+        stats = inc_stat('queued', State#state.stats)}) };
+submit_job({'runner', Runner}, JobIn, _, State) when erlang:is_pid(Runner) ->
+    Ref = erlang:monitor('process', Runner),
+    case start_job(Runner, Ref, JobIn) of
+        'ok' ->
+            Job = riak_core_job:update('dispatched', JobIn),
+            JobId = riak_core_job:gid(Job),
+            {'ok', State#state{
+                run = dict:store(Ref, {Runner, Job}, State#state.run),
+                rcnt = (State#state.rcnt + 1),
+                loc = dict:store(JobId, Runner, State#state.loc),
+                stats = inc_stat('dispatched', State#state.stats) }};
+        Error ->
+            _ = erlang:demonitor(Ref, ['flush']),
+            _ = riak_core_job_service:release(Runner),
+            {'error', Error, inc_stat('service_errors', State)}
+    end;
+submit_job({'runner', Error}, _, _, State) ->
+    {'error', Error, inc_stat('service_errors', State)};
+submit_job('true', Job, From, #state{rcnt = C, rmax = M} = State) when C < M ->
+    submit_job(
+        {'runner', riak_core_job_service:runner()},
+        Job, From, inc_stat('accepted', State));
+submit_job('true', Job, From, State) ->
+    submit_job('queue', Job, From, inc_stat('accepted', State));
+submit_job('false', _, _, State) ->
+    {{'error', ?JOB_ERR_REJECTED}, inc_stat('rejected', State)};
+submit_job(Phase, Job, From, State) ->
+    erlang:error('badarg', [Phase, Job, From, State]).
 
--compile({inline, pdict_group/2}).
-pdict_group({SType, SIndex}, Procs) ->
-    pdict_find_scope(SType, SIndex, Procs, []).
+-spec update_job(Manager :: service(), Ref :: rkey(), Stat :: atom()) -> 'ok'.
+%
+% Update a Job's Stat with the current time.
+%
+update_job(Manager, Ref, Stat) ->
+    Update = {Ref, 'update', Stat, riak_core_job:timestamp()},
+    gen_server:cast(Manager, Update).
 
--compile({inline, pdict_group/3}).
-pdict_group(PType, SType, Procs) ->
-    pdict_find_types(PType, SType, Procs, []).
-
--compile({nowarn_unused_function, {pdict_store, 2}}).
+-spec update_job(
+    Manager :: service(), Ref :: rkey(), Stat :: atom(), Info :: term())
+        -> 'ok'.
 %
-% Add or replace the specified record.
+% Update a Job's Stat with the current time and additional Info.
 %
-pdict_store(#prec{
-        ptype = PType, stype = SType, sindex = SIndex} = Rec, Procs) ->
-    case pdict_find_key(PType, SType, SIndex, Procs) of
-        'false' ->
-            [Rec | Procs];
-        Rec ->
-            Procs;
-        _ ->
-            pdict_replace(Rec, Procs, [])
-    end.
-
-%
-% Add or replace the specified record.
-%
-pdict_store({PType, {SType, SIndex}}, Pid, Procs)
-        when erlang:is_pid(Pid) ->
-    case pdict_find_key(PType, SType, SIndex, Procs) of
-        #prec{pid = Pid} ->
-            Procs;
-        Found ->
-            Rec = #prec{
-                ptype = PType, stype = SType, sindex = SIndex, pid = Pid,
-                mon = erlang:monitor('process', Pid)},
-            if
-                Found =:= 'false' ->
-                    [Rec | Procs];
-                ?else ->
-                    pdict_replace(Rec, Procs, [])
-            end
-    end.
-
-%
-% pdict internal
-%
-% pdict_replace_* and pdict_take_* always rewrite the list, so it's best to
-% avoid calling them without being reasonably sure the record's already present
-%
-% for all of these functions, keys are always exploded before calling them
-%
-
--spec pdict_find_key(
-        proc_type(), scope_type(), scope_index(), [prec()])
-        -> prec() | 'false'.
-%
-% Find the record with the specified key fields.
-%
-pdict_find_key(PType, SType, SIndex,
-    [#prec{ptype = PType, stype = SType, sindex = SIndex} = Rec | _]) ->
-    Rec;
-pdict_find_key(PType, SType, SIndex, [_ | Procs]) ->
-    pdict_find_key(PType, SType, SIndex, Procs);
-pdict_find_key(_, _, _, []) ->
-    'false'.
-
--spec pdict_find_key(
-        proc_type(), scope_type(), scope_index(), [prec()], non_neg_integer())
-        -> {non_neg_integer(), prec()} | 'false'.
--compile({nowarn_unused_function, {pdict_find_key, 5}}).
-%
-% Find the record with the specified key fields.
-% Returns the record and the specified Count incremented by the number of
-% records preceeding it in the list, such that calling with Count == 0 and
-% passing the returned count to lists:split/2 returns the matching record as
-% the head of the second result list.
-%
-pdict_find_key(PType, SType, SIndex,
-    [#prec{ptype = PType, stype = SType, sindex = SIndex} = Rec | _], Count) ->
-    {Count, Rec};
-pdict_find_key(PType, SType, SIndex, [_ | Procs], Count) ->
-    pdict_find_key(PType, SType, SIndex, Procs, (Count + 1));
-pdict_find_key(_, _, _, [], _) ->
-    'false'.
-
--spec pdict_find_mon(reference(), [prec()]) -> prec() | 'false'.
-%
-% Find the record with the specified monitor reference.
-%
-% pdict_find_mon(Mon, [#prec{mon = Mon} = Rec | _]) ->
-%     Rec;
-% pdict_find_mon(Mon, [_ | Procs]) ->
-%     pdict_find_mon(Mon, Procs);
-% pdict_find_mon(_, []) ->
-%     'false'.
-%
-% lists:keyfind/2 is a bif, so probably faster even though it's generalized.
-%
--compile({inline, pdict_find_mon/2}).
-pdict_find_mon(Mon, Procs) ->
-    lists:keyfind(Mon, #prec.mon, Procs).
-
--spec pdict_find_scope(scope_type(), scope_index(), [prec()], [prec()])
-        -> [prec()].
-%
-% Return all records for the specified scope.
-% Call with Result == [].
-%
-pdict_find_scope(SType, SIndex,
-        [#prec{stype = SType, sindex = SIndex} = Rec | Procs], Result) ->
-    pdict_find_scope(SType, SIndex, Procs, [Rec | Result]);
-pdict_find_scope(SType, SIndex, [_ | Procs], Result) ->
-    pdict_find_scope(SType, SIndex, Procs, Result);
-pdict_find_scope(_, _, [], Result) ->
-    Result.
-
--spec pdict_find_types(proc_type(), scope_type(), [prec()], [prec()])
-        -> [prec()].
-%
-% Return all records of the specified process and scope types.
-% Call with Result == [].
-%
-pdict_find_types(PType, SType,
-        [#prec{ptype = PType, stype = SType} = Rec | Procs], Result) ->
-    pdict_find_types(PType, SType, Procs, [Rec | Result]);
-pdict_find_types(PType, SType, [_ | Procs], Result) ->
-    pdict_find_types(PType, SType, Procs, Result);
-pdict_find_types(_, _, [], Result) ->
-    Result.
-
--spec pdict_take_key(
-        proc_type(), scope_type(), scope_index(), [prec()], [prec()])
-        -> {prec() | 'false', [prec()]}.
-%
-% Remove and return the record with the specified key.
-% Call with Before == [].
-%
-pdict_take_key(PType, SType, SIndex,
-        [#prec{ptype = PType, stype = SType, sindex = SIndex} = Rec
-        | After], Before) ->
-    {Rec, Before ++ After};
-pdict_take_key(PType, SType, SIndex, [Rec | After], Before) ->
-    pdict_take_key(PType, SType, SIndex, After, [Rec | Before]);
-pdict_take_key(_, _, _, [], Before) ->
-    {'false', Before}.
-
--spec pdict_take_mon(reference(), [prec()], [prec()])
-        -> {prec() | 'false', [prec()]}.
-%
-% Remove and return the record with the specified key.
-% Call with Before == [].
-%
-pdict_take_mon(Mon, [#prec{mon = Mon} = Rec | After], Before) ->
-    {Rec, Before ++ After};
-pdict_take_mon(Mon, [Rec | After], Before) ->
-    pdict_take_mon(Mon, After, [Rec | Before]);
-pdict_take_mon(_, [], Before) ->
-    {'false', Before}.
-
--spec pdict_replace(prec(), [prec()], [prec()]) -> [prec()].
-%
-% Replaces the record whose ptype+stype+sindex equals that of the new record.
-% Call with Before == [].
-%
-pdict_replace(#prec{
-        ptype = PType, stype = SType, sindex = SIndex, mon = Mon} = NewRec,
-        [#prec{ptype = PType, stype = SType, sindex = SIndex, mon = Mon}
-        | After], Before) ->
-    % this shouldn't occur, but we don't want to demonitor in the following
-    % head if it's somehow called with an existing monitor
-    Before ++ [NewRec | After];
-pdict_replace(#prec{ptype = PType, stype = SType, sindex = SIndex} = NewRec,
-        [#prec{ptype = PType, stype = SType, sindex = SIndex, mon = Mon}
-        | After], Before) ->
-    _ = erlang:demonitor(Mon, ['flush']),
-    Before ++ [NewRec | After];
-pdict_replace(NewRec, [Rec | After], Before) ->
-    pdict_replace(NewRec, After, [Rec | Before]);
-pdict_replace(NewRec, [], Before) ->
-    [NewRec | Before].
-
--endif.
-
+update_job(Manager, Ref, Stat, Info) ->
+    Update = {Ref, 'update', Stat, riak_core_job:timestamp(), Info},
+    gen_server:cast(Manager, Update).

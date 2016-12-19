@@ -21,41 +21,40 @@
 -ifndef(riak_core_job_included).
 -define(riak_core_job_included, true).
 
-%% Jobs API Configuration keys:
 %%
-%%  {?JOB_SVC_ACCEPT_CLASS, [riak_core_job:class()]}
-%%      Whitelist of job classes to accept.
-%%      Overridden by ?JOB_SVC_ACCEPT_FUNC.
-%%      Default: all classes are accepted.
+%% Jobs API Configuration keys.
 %%
-%%  {?JOB_SVC_ACCEPT_FUNC,  riak_core_job_service:cbfunc()}
-%%      Callback invoked as if by:
-%%          accept(Arg1 ... ArgN, scope_id(), job()) -> boolean()
-%%      The arity of the supplied function must be 2 + length(Args).
-%%      Default: as determined by ?JOB_SVC_ACCEPT_CLASS.
+%% Refer to riak_core_job_manager module documentation for usage.
 %%
-%%  {?JOB_SVC_CONCUR_LIMIT, pos_integer()}
-%%      Maximum number of jobs to execute concurrently per scope.
-%%      Default: ?JOB_SVC_DEFAULT_CONCUR.
-%%
-%%  {?JOB_SVC_QUEUE_LIMIT,  non_neg_integer()}
-%%      Maximum number of jobs to queue for future execution per scope.
-%%      Default: ?JOB_SVC_CONCUR_LIMIT * ?JOB_SVC_DEFAULT_QUEMULT.
-%%
--define(JOB_SVC_ACCEPT_CLASS,   'job_accept_class').
--define(JOB_SVC_ACCEPT_FUNC,    'job_accept_func').
 -define(JOB_SVC_CONCUR_LIMIT,   'job_concurrency_limit').
+-define(JOB_SVC_HIST_LIMIT,     'job_history_limit').
+-define(JOB_SVC_IDLE_MAX,       'job_idle_max_limit').
+-define(JOB_SVC_IDLE_MIN,       'job_idle_min_limit').
 -define(JOB_SVC_QUEUE_LIMIT,    'job_queue_limit').
 
-%% Default per-scope job concurrency.
--define(JOB_SVC_DEFAULT_CONCUR, 10).
+%%
+%% Default configuration values.
+%%
+%% Notes:
+%%
+%%  It would be a mistake to set JOB_SVC_DEFAULT_CONCUR to a 'concur'
+%%  multiplier. Doing so *will* resolve to a usable value, but it's unlikely
+%%  to be what you want.
+%%
+%%  The _IDLE_ configuration keys that don't have defaults defined here do, in
+%%  fact, have defaults, but they're calculated in a manner that can't be
+%%  defined using the configuration syntax.
+%%
+%% Refer to the riak_core_job_manager module documentation for details.
+%%
+-define(JOB_SVC_DEFAULT_CONCUR, {'scheds',  6}).
+-define(JOB_SVC_DEFAULT_QUEUE,  {'concur',  3}).
+-define(JOB_SVC_DEFAULT_HIST,   {'concur',  1}).
 
-%% If per-scope maximum queue length is not configured, it defaults to the
-%% concurrency value multiplied by this number.
--define(JOB_SVC_DEFAULT_QUEMULT, 3).
-
+%%
 %% Values for riak_core_job:priority(), whose type is defined as
 %%  ?JOB_PRIO_MIN .. ?JOB_PRIO_MAX
+%%
 -define(JOB_PRIO_MIN,            0).
 -define(JOB_PRIO_MAX,           99).
 -define(JOB_PRIO_DEFAULT,       50).

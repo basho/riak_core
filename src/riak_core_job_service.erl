@@ -18,718 +18,733 @@
 %%
 %% -------------------------------------------------------------------
 
+%% @private
+%% @doc Internal Job Management Service.
+%%
+%% Processes:
+%%
+%%  Manager
+%%    * Module {@link riak_core_job_manager}
+%%    * Public API - ALL external interaction is through this module.
+%%    * Owned by the `riak_core' application supervisor.
+%%    * Calls into the Service and active Runners.
+%%
+%%  Service
+%%    * Module {@link riak_core_job_service}
+%%    * Private Runner service, called ONLY by the Manager.
+%%    * Owned by the `riak_core' application supervisor.
+%%    * Calls into the Supervisor and active/idle Runners.
+%%
+%%  Supervisor
+%%    * Module {@link riak_core_job_sup}
+%%    * Owner of Runner processes, called ONLY by the Service.
+%%    * Owned by the `riak_core' application supervisor.
+%%    * Creates and destroys Runner processes.
+%%
+%%  Runner
+%%    * Module {@link riak_core_job_runner}
+%%    * Process that actually executes submitted Jobs.
+%%    * Owned by the Supervisor.
+%%    * Lifecycle managed by the Service.
+%%    * Work submitted by the Manager.
+%%
+%% The unidirectional dependency model is strictly adhered to!
+%%
 -module(riak_core_job_service).
 -behaviour(gen_server).
 
-% Public API
--export([
-    config/1,
-    stats/1,
-    submit/2
-]).
-
-% Public types
--export_type([
-    cbfunc/0,
-    config/0,
-    scope_id/0,
-    scope_index/0,
-    scope_type/0,
-    paccept/0,
-    pconcur/0,
-    pquemax/0,
-    prop/0
-]).
-
 % Private API
 -export([
-    accept_any/2,
-    cleanup/2,
-    done/3,
-    register/3,
-    running/2,
-    shutdown/2,
-    start_link/2,
-    starting/2
+    app_config/4,
+    app_config/5,
+    config/0,
+    default_app/0,
+    resolve_config_val/3,
+    release/1,
+    runner/0,
+    stats/0
 ]).
 
-% gen_server callbacks
+% Private Types
+-export_type([
+    cfg_idle_max/0,
+    cfg_idle_min/0,
+    cfg_mult/0,
+    cfg_prop/0,
+    config/0,
+    runner/0,
+    stat/0,
+    stat_key/0,
+    stat_val/0
+]).
+
+% Gen_server API
 -export([
-    init/1,
+    code_change/3,
     handle_call/3,
     handle_cast/2,
     handle_info/2,
-    terminate/2,
-    code_change/3
+    init/1,
+    start_link/0,
+    start_link/1,
+    terminate/2
 ]).
 
 -include("riak_core_job_internal.hrl").
 
--type cbfunc()  ::  {module(), atom(), [term()]} | {fun(), [term()]}.
+%% ===================================================================
+%% Types
+%% ===================================================================
 
-%% The 'accept' callback is invoked as if by
-%%
-%%  accept(Arg1 ... ArgN, scope_id(), job()) -> boolean()
-%%
-%% As such, the arity of the supplied function must be 2 + length(Args).
-%% If provided, the callback is invoked with riak_core_job:dummy() during
-%% service initialization, and startup fails if the result is anything other
-%% than a boolean().
-%% If this property is not provided, all jobs are accepted.
--type paccept() ::  {?JOB_SVC_ACCEPT_FUNC,  cbfunc()}.
+-define(StatsDict,  orddict).
+-type stats()   ::  orddict_t(stat_key(), stat_val()).
 
-%% Defaults to ?JOB_SVC_DEFAULT_CONCUR.
--type pconcur() ::  {?JOB_SVC_CONCUR_LIMIT, pos_integer()}.
-
-%% Defaults to ?JOB_SVC_CONCUR_LIMIT * ?JOB_SVC_DEFAULT_QUEMULT.
--type pquemax() ::  {?JOB_SVC_QUEUE_LIMIT,  non_neg_integer()}.
-
--type prop()    ::  paccept() | pconcur() | pquemax().
--type config()  ::  [prop()].
-
-%% If defined, the State is validated before return whenever it's co-dependent
-%% fields are changed.
-%% The validation code is conditional on whether this macro is defined, not
-%% its value.
-%% This is fairly heavyweight, and should NOT be defined in production builds.
--define(VALIDATE_STATE, true).
-
-%% In case we want to change the type of dict used for stats. Unlikely, but ...
--define(StatsDict,  dict).
--ifdef(namespaced_types).
--type stats()   ::  dict:dict().
--else.
--type stats()   ::  dict().
--endif.
-
--define(inc_stat(Stat, Stats),  ?StatsDict:update_counter(Stat, 1, Stats)).
--define(stats_list(Stats),      ?StatsDict:to_list(Stats)).
-
--type job() :: riak_core_job:job().
--record(mon, {
-    pid     ::  pid(),
-    mon     ::  reference(),
-    job     ::  job()
-}).
--type mon() :: #mon{}.
-
--define(DefaultAccept,  {?MODULE, 'accept_any', []}).
--define(DefaultConcur,  ?JOB_SVC_DEFAULT_CONCUR).
-
-%% MUST keep queue/quelen and monitors/running in sync!
-%% They're separate to allow easy decisions based on active/queued work,
-%% but obviously require close attention.
 -record(state, {
-    work_sup    = 'undefined'       ::  pid() | 'undefined',
-    scope_id    = {?MODULE, 0}      ::  scope_id(),
-    vnode       = 'undefined'       ::  pid() | 'undefined',
-    config      = []                ::  config(),
-    accept      = ?DefaultAccept    ::  cbfunc(),
-    concur      = ?DefaultConcur    ::  pos_integer(),
-    maxque      = 0                 ::  non_neg_integer(),
-    dqpending   = 'false'           ::  boolean(),
-    queue       = []                ::  [job()],
-    quelen      = 0                 ::  non_neg_integer(),
-    running     = 0                 ::  non_neg_integer(),
-    monitors    = []                ::  [mon()],
-    pending     = []                ::  [{reference(), job()}],
+    rcnt        = 0                 ::  non_neg_integer(),
+    icnt        = 0                 ::  non_neg_integer(),
+    imin        = 0                 ::  non_neg_integer(),
+    imax        = 0                 ::  non_neg_integer(),
+    pending     = 'false'           ::  boolean(),
     shutdown    = 'false'           ::  boolean(),
-    stats       = ?StatsDict:new()  ::  stats()
+    loc         = dict:new()        ::  locs(), % rkey() => rloc()
+    busy        = []                ::  busy(), % rrec()
+    idle        = queue:new()       ::  idle(), % rrec()
+    stats       = ?StatsDict:new()  ::  stats() % stat_key() => stat_val()
 }).
--type state()   ::  #state{}.
 
--ifdef(VALIDATE_STATE).
--define(validate(State),  validate(State)).
--else.
--define(validate(State),  State).
--endif.
+-type cfg_idle_max()    ::  {?JOB_SVC_IDLE_MAX, non_neg_integer() | cfg_mult()}.
+-type cfg_idle_min()    ::  {?JOB_SVC_IDLE_MIN, non_neg_integer() | cfg_mult()}.
 
-%% ===================================================================
-%% Public API
-%% ===================================================================
-%
-% Where these use riak_core_job_manager:lookup/1 we just match on the ScopeID
-% being a 2-tuple because the lookup validates the fields itself.
-%
-
--spec config(scope_id() | pid()) -> config() | {'error', term()}.
-%%
-%% @doc Return the configuration the scope's service was started with.
-%%
-%% This is mainly so the riak_core_job_manager can repopulate its cache from a
-%% running supervision tree after a restart. It matters that this is the input
-%% configuration and not the result of applying defaults to come up with what's
-%% running.
-%%
-%% The actual running configuration is reported by stats/1.
-%%
-config(Svc) when erlang:is_pid(Svc) ->
-    gen_server:call(Svc, 'config');
-config({_, _} = ScopeID) ->
-    case riak_core_job_manager:lookup(?SCOPE_SVC_ID(ScopeID)) of
-        'undefined' ->
-            {'error', 'noproc'};
-        {'error', _} = Error ->
-            Error;
-        Pid ->
-            config(Pid)
-    end.
-
--spec stats(scope_id() | pid()) -> [{atom(), term()}] | {'error', term()}.
-%%
-%% @doc Return statistics from the specified scope's service.
-%%
-stats(Svc) when erlang:is_pid(Svc) ->
-    gen_server:call(Svc, 'stats');
-stats({_, _} = ScopeID) ->
-    case riak_core_job_manager:lookup(?SCOPE_SVC_ID(ScopeID)) of
-        'undefined' ->
-            {'error', 'noproc'};
-        {'error', _} = Error ->
-            Error;
-        Pid ->
-            stats(Pid)
-    end.
-
--spec submit(pid() | scope_id() | scope_type() | [scope_id()], job())
-        -> ok | {'error', term()}.
-%%
-%% @doc Submit a job to run on the specified scope(s).
-%%
-submit(Svc, Job) when erlang:is_pid(Svc) ->
-    case riak_core_job:version(Job) of
-        {'job', _} ->
-            gen_server:call(Svc, {'submit', Job});
-        _ ->
-            erlang:error('badarg', [Job])
-    end;
-submit({_, _} = ScopeID, Job) ->
-    case riak_core_job_manager:lookup(?SCOPE_SVC_ID(ScopeID)) of
-        'undefined' ->
-            {'error', 'noproc'};
-        {'error', _} = Error ->
-            Error;
-        Pid ->
-            submit(Pid, Job)
-    end;
-submit(Multi, Job) ->
-    riak_core_job_manager:submit_mult(Multi, Job).
+-type cfg_mult()    ::  {'concur' | 'cores' | 'scheds', pos_integer()}.
+-type cfg_prop()    ::  cfg_idle_max() | cfg_idle_min().
+-type config()      ::  [cfg_prop()].
+-type idle()        ::  queue_t(rrec()).
+-type locs()        ::  dict_t(rkey(), rloc()).
+-type busy()        ::  [rrec()].
+-type rkey()        ::  reference().
+-type rloc()        ::  'idle' | 'busy'.
+-type rrec()        ::  {rkey(), runner()}.
+-type runner()      ::  pid().
+-type stat()        ::  {stat_key(), stat_val()}.
+-type stat_key()    ::  atom() | tuple().
+-type stat_val()    ::  term().
+-type state()       ::  #state{}.
 
 %% ===================================================================
 %% Private API
 %% ===================================================================
 
--spec shutdown(pid(), non_neg_integer() | 'infinity') -> ok.
+-spec app_config(
+    Key     :: atom(),
+    Min     :: non_neg_integer(),
+    Concur  :: pos_integer(),
+    Default :: non_neg_integer() | cfg_mult())
+        -> non_neg_integer() | {'error', atom(), term()}.
 %%
-%% @doc Tell the service to shut down within Timeout milliseconds.
+%% @doc Returns the configured value for Key in the default application scope.
 %%
-%% There's no facility here to notify the caller when the shutdown is
-%% completed. If the caller wants to be notified when the shutdown completes,
-%% they should monitor the service's Pid BEFORE calling this function.
+%% @see {@link app_config/5}
 %%
-%% Note that the service is normally part of a supervision tree that will
-%% restart it when it exits for any reason. To shut it down properly, the
-%% shutdown should be initiated by the controlling manager's stop_scope/1
-%% function.
-%%
-shutdown(Svc, Timeout)
-        when erlang:is_integer(Timeout) andalso Timeout >= (1 bsl 32) ->
-    shutdown(Svc, 'infinity');
-shutdown(Svc, 'infinity' = Timeout) when erlang:is_pid(Svc) ->
-    gen_server:cast(Svc, {'shutdown', Timeout});
-shutdown(Svc, Timeout) when erlang:is_pid(Svc)
-        andalso erlang:is_integer(Timeout) andalso Timeout >= 0 ->
-    gen_server:cast(Svc, {'shutdown', Timeout}).
+app_config(Key, Min, Cur, Def) ->
+    app_config(default_app(), Key, Min, Cur, Def).
 
--spec start_link(scope_svc_id(), config())
-        -> {'ok', pid()} | {'error', term()}.
+-spec app_config(
+    AppName     :: atom(),
+    KeyOrVal    :: atom(),
+    Min         :: non_neg_integer(),
+    Concur      :: pos_integer(),
+    Default     :: non_neg_integer() | cfg_mult())
+        -> non_neg_integer() | {'error', atom(), term()}.
 %%
-%% @doc Start a new process linked to the calling process.
+%% @doc Returns the configured value for Key in the specified application scope.
 %%
-start_link(?SCOPE_SVC_ID(_) = ProcID, Config) ->
-    gen_server:start_link(?MODULE, {ProcID, Config}, []).
+%% Min is for a specification validity guard and is intended only to verify
+%% non_neg_integer() vs pos_integer(). It is NOT applied when a multiplier
+%% (such as 'scheds') is configured, as their values must always be
+%% pos_integer().
+%%
+%% Multipliers are handled as described in the riak_core_job_manager module
+%% documentation. Because the 'concur' multiplier receives special handling,
+%% its value must be supplied by the caller.
+%%
+%% Default (and ONLY Default) is allowed be a multiplier.
+%%
+%% Parameters are validated strictly and a 'badarg' error is raised if any
+%% depart from the function specification.
+%% Also note that Default MUST resolve to be >= Min to pass validation.
+%%
+app_config(App, Key, Min, Cur, Def) when erlang:is_atom(Key)
+        andalso erlang:is_integer(Min) andalso Min >= 0 ->
+    %
+    % We handle defaults explicitly rather than with application:get_env/3
+    % because we behave differently based on whether a value comes from the
+    % app configuration or defaults. This also allows us to use configuration
+    % in the scope of the current application - admittedly not a big deal,
+    % but it keeps things a little more portable by not hard-coding the app
+    % name.
+    %
+    case application:get_env(App, Key) of
+        'undefined' ->
+            case resolve_config_val(Min, Def, Cur) of
+                Num1 when erlang:is_integer(Num1) ->
+                    Num1;
+                Bad1 ->
+                    Args1 = case Bad1 of
+                        'einval' ->
+                            [App, Key, Def, Min];
+                        _ ->
+                            [App, Key, Def]
+                    end,
+                    erlang:error(Bad1, Args1)
+            end;
+        {'ok', Val} ->
+            case resolve_config_val(Min, Val, Cur) of
+                Num2 when erlang:is_integer(Num2) ->
+                    Num2;
+                Bad2 ->
+                    case resolve_config_val(Min, Def, Cur) of
+                        Num3 when erlang:is_integer(Num3) ->
+                            Msg = case Bad2 of
+                                'einval' ->
+                                    "out of range";
+                                'enotsup' ->
+                                    "not supported";
+                                'badarg' ->
+                                    "invalid"
+                            end,
+                            _ = lager:warning(
+                                "~s.~s: ~s: ~p, using default ~b",
+                                [App, Key, Msg, Val, Num3]),
+                            Num3;
+                        Bad3 ->
+                            Args3 = case Bad3 of
+                                'einval' ->
+                                    [App, Key, Def, Min];
+                                _ ->
+                                    [App, Key, Def]
+                            end,
+                            erlang:error(Bad3, Args3)
+                    end
+            end
+    end;
+app_config(App, Key, Min, Cur, Def) ->
+    erlang:error('badarg', [App, Key, Min, Cur, Def]).
 
--spec register(pid(), work_sup_id(), pid()) -> 'ok'.
+-spec config() -> config() | {'error', term()}.
 %%
-%% @doc Notify the server where to find its worker supervisor.
+%% @doc Return the current effective Jobs Management configuration.
 %%
-%% This is being called from the riak_core_job_manager, so it can't call into
-%% it to look up the service, hence the direct call to the Pid.
-%%
-register(Svc, ?WORK_SUP_ID(_) = ProcID, Sup) ->
-    gen_server:cast(Svc, {'register', ProcID, Sup}).
+config() ->
+    gen_server:call(?JOBS_SVC_NAME, 'config').
 
--spec starting(pid(), reference()) -> 'ok'.
+-spec default_app() -> atom().
 %%
-%% @doc Callback for the job runner indicating the UOW is being started.
+%% @doc Returns the current or default application name.
 %%
-starting(Svc, JobRef) ->
-    update_job(Svc, JobRef, 'started').
-
--spec running(pid(), reference()) -> 'ok'.
-%%
-%% @doc Callback for the job runner indicating the UOW is being run.
-%%
-running(Svc, JobRef) ->
-    update_job(Svc, JobRef, 'running').
-
--spec cleanup(pid(), reference()) -> 'ok'.
-%%
-%% @doc Callback for the job runner indicating the UOW is being cleaned up.
-%%
-cleanup(Svc, JobRef) ->
-    update_job(Svc, JobRef, 'cleanup').
-
--spec done(pid(), reference(), term()) -> 'ok'.
-%%
-%% @doc Callback for the job runner indicating the UOW is finished.
-%%
-done(Svc, JobRef, Result) ->
-    update_job(Svc, JobRef, 'done', Result).
-
-%% ===================================================================
-%% gen_server callbacks
-%% ===================================================================
-
--spec init({scope_svc_id(), config()})
-        -> {'ok', state()} | {'stop', {'error', term()}}.
-init({?SCOPE_SVC_ID(ScopeID) = ProcID, Config}) ->
-    case init_state(#state{scope_id = ScopeID, config = Config}) of
-        #state{} = State ->
-            _ = erlang:process_flag('trap_exit', 'true'),
-            _ = riak_core_job_manager:register(ProcID, erlang:self()),
-            {'ok', State};
-        Error ->
-            {'stop', Error}
+default_app() ->
+    case application:get_application() of
+        'undefined' ->
+            'riak_core';
+        {'ok', AppName} ->
+            AppName
     end.
 
--spec handle_call(term(), {pid(), term()}, state())
-        -> {'reply', term(), state()}.
-%
-% submit(node_id() | pid(), job()) -> ok | {'error', term()}.
-%
-handle_call({'submit', _}, _,
-        #state{shutdown = 'true', stats = Stats} = State) ->
-    {'reply', {'error', ?JOB_ERR_SHUTTING_DOWN},
-        State#state{stats = ?inc_stat('rejected_shutdown', Stats)}};
-handle_call({'submit', _}, _,
-        #state{quelen = QLen, maxque = MaxQ, stats = Stats} = State)
-        when QLen >= MaxQ ->
-    {'reply', {'error', ?JOB_ERR_QUEUE_OVERFLOW},
-        State#state{stats = ?inc_stat('rejected_overflow', Stats)}};
-handle_call({'submit', Job}, _,
-        #state{concur = Concur, running = Running, stats = Stats} = State) ->
-    case riak_core_job:runnable(Job) of
-        'true' ->
-            case accept_job(Job, State) of
-                'true' ->
-                    NewState = State#state{
-                        stats = ?inc_stat('accepted', Stats)},
-                    if
-                        Running < Concur ->
-                            {'reply', 'ok', start_job(Job, NewState)};
-                        ?else ->
-                            {'reply', 'ok', queue_job(Job, NewState)}
-                    end;
-                'false' ->
-                    {'reply', {'error', ?JOB_ERR_REJECTED},
-                        State#state{stats = ?inc_stat('rejected', Stats)}}
-            end;
-        Error ->
-            {'reply', Error,
-                State#state{stats = ?inc_stat('accept_errors', Stats)}}
-    end;
-%
-% stats(scope_id() | pid()) -> [{atom(), term()}] | {'error', term()}.
-%
-handle_call('stats', _, State) ->
-    Result = [
-        {'status',  if
-                        State#state.shutdown ->
-                            'stopping';
-                        ?else ->
-                            'active'
-                    end},
-        {'concur',  State#state.concur},
-        {'maxque',  State#state.maxque},
-        {'running', State#state.running},
-        {'inqueue', State#state.quelen},
-        {'pending', erlang:length(State#state.pending)}
-        | ?stats_list(State#state.stats)],
-    {'reply', Result, State};
-%
-% config(pid()) -> config() | {'error', term()}.
-%
-handle_call('config', _, #state{config = Config} = State) ->
-    {'reply', Config, State};
-%
-% unrecognized message
-%
-handle_call(Message, From,
-        #state{scope_id = ScopeID, stats = Stats} = State) ->
-    _ = lager:error("~p job service received unhandled call from ~p: ~p",
-            [ScopeID, From, Message]),
-    {'reply', {'error', {'badarg', Message}},
-        State#state{stats = ?inc_stat('unhandled', Stats)}}.
-
--spec handle_cast(term(), state())
-        -> {'noreply', state()} | {'stop', term(), state()}.
-%
-% internal deque message
-%
-handle_cast('dequeue', State) ->
-    dequeue(State);
-%
-% status update from a running job
-%
-handle_cast({Ref, 'update', 'done' = Stat, _TS, Result},
-        #state{scope_id = ScopeID, running = Running,
-            monitors = Mons, stats = Stats} = State) ->
-    _ = erlang:demonitor(Ref, ['flush']),
-    case lists:keytake(Ref, #mon.mon, Mons) of
-        {'value', _, NewMons} ->
-            dequeue(?validate(State#state{
-                monitors = NewMons, running = (Running - 1),
-                stats = ?inc_stat('finished', Stats)}));
+-spec resolve_config_val(
+    Min :: non_neg_integer(),
+    Val :: non_neg_integer() | cfg_mult(),
+    Cur :: pos_integer())
+        -> 'einval' | 'badarg' | non_neg_integer().
+%%
+%% @doc Returns the computed and/or validated value of Val.
+%%
+%% Val may be either an integer or a multiplier tuple.
+%%
+%% Multipliers are handled as described in the riak_core_job_manager module
+%% documentation.
+%%
+%% Once a multiplier has been computed, processing continues as if the result
+%% was provided as the Val parameter.
+%%
+%% If Val is an integer >= Min, it is returned.
+%% Otherwise, one of the following atoms is returned:
+%%
+%%  'einval'  - The value is not acceptable, usually because Val < Min.
+%%
+%%  'badarg' -  Some parameter, when needed, doesn't adhere to the function
+%%              specification. Evaluation is lazy, so a result other than
+%%              'badarg' does NOT mean all parameters were valid.
+%%
+resolve_config_val(_, {_, Mlt}, _)
+        when not (erlang:is_integer(Mlt) andalso Mlt > 0) ->
+    'badarg';
+resolve_config_val(Min, {'concur', Mlt}, 'undefined' = Cur) ->
+    resolve_config_val(Min, {'scheds', Mlt}, Cur);
+resolve_config_val(Min, {'concur', Mlt}, Cur)
+        when erlang:is_integer(Cur) andalso Cur > 0 ->
+    resolve_config_val(Min, (Mlt * Cur), Cur);
+resolve_config_val(Min, {'cores', Mlt}, Cur) ->
+    case erlang:system_info('logical_processors') of
+        Cores when erlang:is_integer(Cores) andalso Cores > 0 ->
+            resolve_config_val(Min, (Mlt * Cores), Cur);
         _ ->
-            _ = lager:error(
-                    "~p job service received completion message ~p:~p "
-                    "for unknown job ref ~p", [ScopeID, Stat, Result, Ref]),
-            {'noreply', State#state{stats = ?inc_stat('update_errors', Stats)}}
+            resolve_config_val(Min, {'scheds', Mlt}, Cur)
     end;
-handle_cast({Ref, 'update', Stat, TS},
-        #state{scope_id = ScopeID, monitors = Mons} = State) ->
-    case lists:keyfind(Ref, #mon.mon, Mons) of
-        #mon{job = Job} = Rec ->
-            NewRec = Rec#mon{job = riak_core_job:update(Stat, TS, Job)},
-            {'noreply', ?validate(State#state{
-                monitors = lists:keystore(Ref, #mon.mon, Mons, NewRec)})};
-        _ ->
-            _ = lager:error(
-                    "~p job service received ~p update for unknown job ref ~p",
-                    [ScopeID, Stat, Ref]),
-            {'noreply', State}
-    end;
-%
-% register(WorkSupId)
-%
-handle_cast({'register', ?WORK_SUP_ID(_), Sup}, #state{quelen = 0} = State) ->
-    _ = erlang:monitor('process', Sup),
-    {'noreply', State#state{work_sup = Sup}};
-handle_cast({'register', ?WORK_SUP_ID(_), Sup}, State) ->
-    _ = erlang:monitor('process', Sup),
-    dequeue(State#state{work_sup = Sup});
-%
-% shutdown(Timeout)
-%
-handle_cast({'shutdown' = Why, _}, #state{quelen = 0, running = 0} = State) ->
-    {'stop', Why, State#state{shutdown = 'true'}};
-handle_cast({'shutdown' = Why, 0}, State) ->
-    _ = discard(State, ?JOB_ERR_SHUTTING_DOWN),
-    {'stop', Why, State#state{shutdown = 'true',
-        queue = [], quelen = 0, monitors = [], running = 0}};
-handle_cast({'shutdown', 'infinity'}, State) ->
-    dequeue(State#state{shutdown = 'true'});
-handle_cast({'shutdown', Timeout}, State) ->
-    {'ok', _} = timer:apply_after(Timeout,
-        'gen_server', 'cast', [erlang:self(), {'shutdown', 0}]),
-    handle_cast({'shutdown', 'infinity'}, State);
-%
-% unrecognized message
-%
-handle_cast(Message, #state{scope_id = ScopeID, stats = Stats} = State) ->
-    _ = lager:error(
-            "~p job service received unhandled cast: ~p", [ScopeID, Message]),
-    {'noreply', State#state{stats = ?inc_stat('unhandled', Stats)}}.
+resolve_config_val(Min, {'scheds', Mlt}, Cur) ->
+    resolve_config_val(Min, (Mlt * erlang:system_info('schedulers')), Cur);
+resolve_config_val(Min, Val, _)
+        when not (erlang:is_integer(Val)
+        andalso erlang:is_integer(Min) andalso Min >= 0) ->
+    'badarg';
+resolve_config_val(Min, Val, _) when Val >= Min ->
+    Val;
+resolve_config_val(_, _, _) ->
+    'einval'.
 
--spec handle_info(term(), state())
-        -> {'noreply', state()} | {'stop', term(), state()}.
-%
-% Our work supervisor exited - not good at all.
-% When the supervisor went down, it took all of the running jobs with it, so
-% we'll get 'DOWN' messages from each of them - no need to handle them here.
-%
-handle_info({'DOWN', _, _, Sup, Info},
-        #state{work_sup = Sup, scope_id = ScopeID} = State) ->
-    _ = lager:error("~p work supervisor ~p exited: ~p", [ScopeID, Sup, Info]),
-    {'noreply', State#state{work_sup = 'undefined'}};
-%
-% A monitored job crashed or was killed.
-% If it completed normally, a 'done' update arrived in our mailbox before this
-% and caused the monitor to be released and flushed, so the only way we get
-% this is an exit before completion.
-%
-handle_info({'DOWN', Ref, _, Pid, Info}, #state{scope_id = ScopeID,
-        running = Running, monitors = Mons, stats = Stats} = State) ->
-    case lists:keytake(Ref, #mon.mon, Mons) of
-        {'value', #mon{pid = Pid, job = Job}, NewMons} ->
-            _ = discard(Job, {?JOB_ERR_CRASHED, Info}),
-            dequeue(?validate(State#state{monitors = NewMons,
-                running = (Running - 1), stats = ?inc_stat('crashed', Stats)}));
-        _ ->
-            _ = lager:error(
-                    "~p job service received 'DOWN' message "
-                    "for unrecognized process ~p", [ScopeID, Pid]),
-            {'noreply', State#state{stats = ?inc_stat('update_errors', Stats)}}
-    end;
-%
-% unrecognized message
-%
-handle_info(Message, #state{scope_id = ScopeID, stats = Stats} = State) ->
-    _ = lager:error(
-            "~p job service received unhandled info: ~p", [ScopeID, Message]),
-    {'noreply', State#state{stats = ?inc_stat('unhandled', Stats)}}.
+-spec release(Runner :: runner()) -> 'ok'.
+%%
+%% @doc Release use of a Runner process.
+%%
+release(Runner) ->
+    gen_server:cast(?JOBS_SVC_NAME, {'release', Runner}).
 
--spec terminate(term(), state()) -> ok.
-%
-% no matter why we're terminating, de-monitor everything we're watching
-%
-terminate('inconsistent', #state{scope_id = ScopeID} = State) ->
-    _ = lager:error("~p job service terminated due to inconsistent state: ~p",
-            [ScopeID, State]),
-    terminate('shutdown', State);
-terminate(_, State) ->
-    _ = discard(State, ?JOB_ERR_SHUTTING_DOWN),
-    'ok'.
+-spec runner() -> runner() | {'error', term()}.
+%%
+%% @doc Acquire use of a Runner process.
+%%
+runner() ->
+    gen_server:call(?JOBS_SVC_NAME, 'runner').
 
--spec code_change(term(), state(), term()) -> {'ok', state()}.
+-spec stats() -> [stat()] | {'error', term()}.
+%%
+%% @doc Return statistics from the Jobs Management system.
+%%
+stats() ->
+    gen_server:call(?JOBS_SVC_NAME, 'stats').
+
+%% ===================================================================
+%% Gen_server API
+%% ===================================================================
+
+-spec code_change(OldVsn :: term(), State :: state(), Extra :: term())
+        -> {'ok', state()}.
 %
-% at present we don't care, so just carry on
+% we don't care, just carry on
 %
 code_change(_, State, _) ->
     {'ok', State}.
+
+-spec handle_call(Msg :: term(), From :: {pid(), term()}, State :: state())
+        -> {'reply', term(), state()} | {'stop', term(), term(), state()}.
+%
+% config() -> config() | {'error', term()}.
+%
+handle_call('config', _, State) ->
+    {'reply', [
+        {?JOB_SVC_IDLE_MIN, State#state.imin},
+        {?JOB_SVC_IDLE_MAX, State#state.imax}
+    ], State};
+%
+% runner() -> runner() | {'error', term()}.
+%
+handle_call('runner', _, #state{icnt = 0} = StateIn) ->
+    case runner('busy', StateIn) of
+        {'ok', {_, Runner}, State} ->
+            {'reply', Runner, check_pending(State)};
+        {'error', Error, State} ->
+            {'stop', {'error', Error}, State}
+    end;
+handle_call('runner', _, State) ->
+    {{'value', {Ref, Runner} = RRec}, Idle} = queue:out(State#state.idle),
+    {'reply', Runner, check_pending(State#state{
+        idle = Idle,
+        icnt = (State#state.icnt - 1),
+        busy = [RRec | State#state.busy],
+        rcnt = (State#state.rcnt + 1),
+        loc = dict:store(Ref, 'busy', State#state.loc) })};
+%
+% stats() -> [stat()] | {'error', term()}.
+%
+handle_call('stats', _, State) ->
+    Status = if State#state.shutdown -> 'stopping'; ?else -> 'active' end,
+    Result = [
+        {'status',  Status},
+        {'busy',    State#state.rcnt},
+        {'idle',    State#state.icnt},
+        {'maxidle', State#state.imax},
+        {'minidle', State#state.imin}
+        | ?StatsDict:to_list(State#state.stats) ],
+    {'reply', Result, State};
+%
+% unrecognized message
+%
+handle_call(Msg, {Who, _}, State) ->
+    _ = lager:error(
+        "~s received unhandled call from ~p: ~p", [?JOBS_SVC_NAME, Who, Msg]),
+    {'reply', {'error', {'badarg', Msg}}, inc_stat('unhandled', State)}.
+
+-spec handle_cast(Msg :: term(), State :: state())
+        -> {'noreply', state()} | {'stop', term(), state()}.
+%
+% release(Runner :: runner()) -> 'ok'.
+%
+handle_cast({'release', Runner}, State) when erlang:is_pid(Runner) ->
+    case lists:keytake(Runner, 2, State#state.busy) of
+        {'value', {Ref, _} = RRec, Busy} ->
+            {'noreply', check_pending(State#state{
+                busy = Busy,
+                rcnt = (State#state.rcnt - 1),
+                idle = queue:in(RRec, State#state.idle),
+                icnt = (State#state.icnt + 1),
+                loc = dict:store(Ref, 'idle', State#state.loc) })};
+        'false' ->
+            _ = lager:warning(
+                "~s received 'release' for unknown process ~p",
+                [?JOBS_SVC_NAME, Runner]),
+            {'noreply', inc_stat({'unknown_proc', ?LINE}, State)}
+    end;
+%
+% internal 'pending' message
+%
+% State#state.pending MUST be 'true' at the time when we encounter a 'pending'
+% message - if it's not the State is invalid.
+%
+handle_cast('pending', #state{pending = Flag} = State) when Flag /= 'true' ->
+    _ = lager:error("Invalid State: ~p", [State]),
+    {'stop', 'invalid_state', State};
+handle_cast('pending', StateIn) ->
+    pending(StateIn#state{pending = 'false'});
+%
+% configuration message
+%
+handle_cast({?job_svc_cfg_token, Config}, State) when erlang:is_list(Config) ->
+    {NeedCMin, CfgMin} = case proplists:get_value(?JOB_SVC_IDLE_MIN, Config) of
+        'undefined' ->
+            {'false', State#state.imin};
+        {'concur', _} = MinVal ->
+            {'true', MinVal};
+        MinVal ->
+            {'false', MinVal}
+    end,
+    {NeedCur, CfgMax} = case proplists:get_value(?JOB_SVC_IDLE_MAX, Config) of
+        'undefined' ->
+            {NeedCMin, State#state.imax};
+        {'concur', _} = MaxVal ->
+            {'true', MaxVal};
+        MaxVal ->
+            {NeedCMin, MaxVal}
+    end,
+    Concur = if
+        NeedCur ->
+            case proplists:get_value(?JOB_SVC_CONCUR_LIMIT, Config) of
+                'undefined' ->
+                    app_config(
+                        ?JOB_SVC_CONCUR_LIMIT, 1,
+                        'undefined', ?JOB_SVC_DEFAULT_CONCUR);
+                CfgCur ->
+                    resolve_config_val(1, CfgCur, 'undefined')
+            end;
+        ?else ->
+            'undefined'
+    end,
+    IMin = resolve_config_val(0, CfgMin, Concur),
+    IVal = resolve_config_val(0, CfgMax, Concur),
+    if
+        erlang:is_integer(IMin) andalso erlang:is_integer(IVal) ->
+            IMax = if
+                IMin > IVal ->
+                    INew = (IMin * 2),
+                    _ = lager:warning("~s:~b > ~s:~b, adjusted to ~b,~b", [
+                            ?JOB_SVC_IDLE_MIN, IMin,
+                            ?JOB_SVC_IDLE_MAX, IVal, IMin, INew ]),
+                    INew;
+                ?else ->
+                    IVal
+            end,
+            if
+                IMin =/= State#state.imin orelse IMax =/= State#state.imax ->
+                    _ = lager:info("Updating ~s,~s from ~b,~b to ~b,~b", [
+                        ?JOB_SVC_IDLE_MIN, ?JOB_SVC_IDLE_MAX,
+                        State#state.imin, State#state.imax, IMin, IMax ]),
+                    {'noreply', check_pending(
+                        State#state{imin = IMin, imax = IMax})};
+                ?else ->
+                    {'noreply', State}
+            end;
+        ?else ->
+            _ = lager:warning("Ignoring invalid configuration: ~s:~b, ~s:~b",
+                [?JOB_SVC_IDLE_MIN, IMin, ?JOB_SVC_IDLE_MAX, IVal]),
+            {'noreply', State}
+    end;
+%
+% unrecognized message
+%
+handle_cast(Msg, State) ->
+    _ = lager:error("~s received unhandled cast: ~p", [?JOBS_SVC_NAME, Msg]),
+    {'noreply', inc_stat('unhandled', State)}.
+
+-spec handle_info(Msg :: term(), State :: state())
+        -> {'noreply', state()} | {'stop', term(), state()}.
+%
+% A monitored runner crashed or was killed.
+%
+handle_info({'DOWN', Ref, _, Pid, Info}, StateIn) ->
+    case remove(Ref, StateIn) of
+
+        {_, {Ref, Pid}, State} ->
+            {'noreply', inc_stat('crashed', State)};
+
+        {'false', 'undefined', State} ->
+            % With luck it was just a spurious message, though that's unlikely.
+            _ = lager:error("~s received 'DOWN' message from "
+            "unrecognized process ~p: ~p", [?JOBS_SVC_NAME, Pid, Info]),
+            {'noreply', inc_stat({'unknown_proc', ?LINE}, State)};
+
+        % Any other result is probably a programming error :(
+
+        {_, {Ref, Runner}, State} ->
+            _ = lager:error("~s Ref/Runner/Pid mismatch: ~p ~p ~p",
+                [?JOBS_SVC_NAME, Ref, Runner, Pid]),
+            {'stop', 'invalid_state', State};
+
+        {Where, What, State} ->
+            _ = lager:error("~s:remove/2: ~p ~p ~p",
+                [?JOBS_SVC_NAME, Where, What, State]),
+            {'stop', 'invalid_state', State}
+    end;
+
+%
+% unrecognized message
+%
+handle_info(Msg, State) ->
+    _ = lager:error("~s received unhandled info: ~p", [?JOBS_SVC_NAME, Msg]),
+    {'noreply', inc_stat('unhandled', State)}.
+
+-spec init(?MODULE) -> {'ok', state()} | {'stop', {'error', term()}}.
+%
+% initialize from the application environment
+%
+init(?MODULE) ->
+    {'ok', #state{}}.
+
+-spec start_link() -> {'ok', pid()}.
+%
+% Start the named service with the default configuration.
+%
+% The default configuration may not be ideal, but it'll work.
+%
+start_link() ->
+    gen_server:start_link({'local', ?JOBS_SVC_NAME}, ?MODULE, ?MODULE, []).
+
+-spec start_link(Config :: list()) -> {'ok', pid()}.
+%
+% Start the named service with the specified configuration.
+%
+% Unrecognized configuration elements are ignored.
+%
+start_link(Config) ->
+    {'ok', Pid} = Ret = start_link(),
+    gen_server:cast(Pid, {?job_svc_cfg_token, Config}),
+    Ret.
+
+-spec terminate(Why :: term(), State :: state()) -> ok.
+%
+% No matter why we're terminating, demonitor all of our runners and send each
+% an appropriate exit message. Idle processes should stop immediately, since
+% they should be waiting in a receive. Active jobs will take until they finish
+% their work to see our message, so do them first, but they may well be killed
+% more forcefully by the supervisor, which is presumably stopping, too.
+%
+terminate('invalid_state', State) ->
+    _ = lager:error(
+        "~s terminated due to invalid state: ~p", [?JOBS_SVC_NAME, State]),
+    terminate('shutdown', State);
+terminate(Why, State) ->
+    Clean = fun({Ref, Pid}) ->
+        _ = erlang:demonitor(Ref, ['flush']),
+        erlang:exit(Why, Pid)
+    end,
+    lists:foreach(Clean, State#state.busy),
+    lists:foreach(Clean, queue:to_list(State#state.idle)).
 
 %% ===================================================================
 %% Internal
 %% ===================================================================
 
--spec accept_job(job(), state()) -> boolean().
-accept_job(Job, #state{scope_id = ScopeID, accept = Accept}) ->
-    riak_core_job:invoke(Accept, [ScopeID, Job]).
+-spec check_pending(State :: state()) -> state().
+%
+% Ensure that there's a 'pending' message in the inbox if there's background
+% work to be done.
+%
+check_pending(#state{icnt = ICnt, imin = IMin, imax = IMax} = State)
+        when ICnt >= IMin andalso IMax >= ICnt ->
+    State;
+check_pending(State) ->
+    set_pending(State).
 
--spec accept_any(scope_id(), job()) -> 'true'.
-accept_any(_, _) ->
-    'true'.
+-spec inc_stat(stat_key() | [stat_key()], state()) -> state()
+        ;     (stat_key() | [stat_key()], stats()) -> stats().
+%
+% Increment one or more statistics counters.
+%
+inc_stat(Stat, #state{stats = Stats} = State) ->
+    State#state{stats = inc_stat(Stat, Stats)};
+inc_stat(Stat, Stats) when not erlang:is_list(Stat) ->
+    ?StatsDict:update_counter(Stat, 1, Stats);
+inc_stat([Stat], Stats) ->
+    inc_stat(Stat, Stats);
+inc_stat([Stat | More], Stats) ->
+    inc_stat(More, inc_stat(Stat, Stats));
+inc_stat([], Stats) ->
+    Stats.
 
--spec dequeue(state()) -> {'noreply' | 'stop', state()}.
-%% Dequeue and dispatch at most one job. If there are more jobs waiting, ensure
-%% that we'll get to them after handling whatever may already be waiting.
-dequeue(#state{shutdown = 'true', quelen = 0, running = 0} = State) ->
-    {'stop', State};
-dequeue(#state{quelen = 0} = State) ->
-    {'noreply', State};
-dequeue(#state{
-        shutdown = 'true', queue = [Job | Jobs], quelen = QLen} = State) ->
-    _ = discard(Job, {?JOB_ERR_CANCELED, ?JOB_ERR_SHUTTING_DOWN}),
-    {'noreply', maybe_dequeue(
-        ?validate(State#state{queue = Jobs, quelen = (QLen - 1)}))};
-dequeue(#state{concur = Concur, running = Running} = State)
-        when Running >= Concur ->
-    {'noreply', State};
-dequeue(#state{work_sup = 'undefined'} = State) ->
-    {'noreply', maybe_dequeue(State)};
-dequeue(#state{queue = [Job | Jobs], quelen = QLen} = State) ->
-    {'noreply', maybe_dequeue(start_job(Job,
-        ?validate(State#state{queue = Jobs, quelen = (QLen - 1)})))}.
-
--spec discard(job() | mon() | [job()] | [mon()] | state(), term()) -> term().
-%% Disposes of the job(s) in the specified item and returns the Why parameter
-%% for recursive (or lists:fold) use.
-discard([], Why) ->
-    Why;
-discard([Elem | Elems], Why) ->
-    discard(Elems, discard(Elem, Why));
-discard(#state{queue = Queue, monitors = Mons}, Why) ->
-    _ = discard(Queue,  {?JOB_ERR_CANCELED,  Why}),
-    _ = discard(Mons,   {?JOB_ERR_KILLED,    Why}),
-    Why;
-discard(#mon{pid = Pid, mon = Ref, job = Job}, Why) ->
+-spec pending(State :: state())
+        ->  {'noreply', state()}
+        |   {'stop', 'shutdown' | {'error', term()}, state()}.
+%
+% Perform background tasks, one operation per invocation. If there are more
+% operations to be done, ensure that there's a 'pending' message in the inbox
+% on completion.
+%
+% Result is as specified for gen_server:handle_cast/2.
+%
+pending(#state{shutdown = 'true', rcnt = 0, icnt = 0} = State) ->
+    {'stop', 'shutdown', State};
+pending(#state{icnt = ICnt} = State)
+        when   (ICnt > State#state.imax)
+        orelse (ICnt > 0 andalso State#state.shutdown =:= 'true') ->
+    {{'value', {Ref, Runner}}, Idle} = queue:out(State#state.idle),
     _ = erlang:demonitor(Ref, ['flush']),
-    _ = erlang:exit(Pid, 'kill'),
-    discard(Job, Why);
-discard(Job, Why) ->
-    case riak_core_job:get('killed', Job) of
-        'undefined' ->
-            _ = riak_core_job:reply(Job, {'error', Why});
-        Killed ->
-            try
-                _ = riak_core_job:invoke(Killed, [Why])
-            catch
-                Class:What ->
-                    _ = lager:error("Job ~p 'killed' failure: ~p:~p",
-                            [riak_core_job:get('gid', Job), Class, What]),
-                    _ = riak_core_job:reply(Job, {'error', Why})
+    _ = erlang:exit(Runner, 'normal'),
+    {'noreply', check_pending(State#state{idle = Idle, icnt = (ICnt - 1)})};
+pending(#state{shutdown = 'false', icnt = ICnt} = StateIn)
+        when ICnt < StateIn#state.imin ->
+    case runner('idle', StateIn) of
+        {'ok', _, State} ->
+            {'noreply', check_pending(State)};
+        {'error', Error, State} ->
+            {'stop', {'error', Error}, State}
+    end;
+pending(State) ->
+    {'noreply', State}.
+
+-spec remove(RefOrRunner :: rkey() | runner(), State :: state())
+        -> {rloc() | 'false', rrec() | 'undefined', state()}.
+%
+% Finds the referenced Runner and removes it from the State.
+%
+% Errors are not reported per-se, but they can can be identified by elements
+% in the result tuple:
+%
+% {Where, What, State}
+%
+%   Where is 'busy', 'idle', or 'false', indicating the record was found in
+%   the indicated container, or was not found ... sort of *
+%
+%   What is ether a {Ref, Runner} pair or 'undefined', indicating that we
+%   couldn't find a record of the process ... sort of *
+%
+%   State is, of course, the updated state, and it may have changed in *any*
+%   of the result scenarios.
+%
+% If Where is 'false' and What is a {Ref, Runner} pair, or if Where is NOT
+% 'false' and What is 'undefined', it indicates inconsistency in the State
+% and the smart thing to do is to log the situation and exit the process.
+%
+% TODO: Should we search other containers to identify inconsistencies?
+%
+% * The "sort of" comments are because there are some cases of inconsistency
+%   that will not be identified in the current implementation.
+%
+remove(Ref, StateIn) when erlang:is_reference(Ref) ->
+    case dict:find(Ref, StateIn#state.loc) of
+        {ok, Where} ->
+            State = StateIn#state{loc = dict:erase(Ref, StateIn#state.loc)},
+            case Where of
+                'busy' ->
+                    case lists:keytake(Ref, 1, State#state.busy) of
+                        {'value', BRec, Busy} ->
+                            {Where, BRec, State#state{
+                                busy = Busy,
+                                rcnt = (State#state.rcnt - 1) }};
+                        _ ->
+                            {Where, 'undefined',
+                                inc_stat({'missing_busy', ?LINE}, State)}
+                    end;
+                'idle' ->
+                    IL = queue:to_list(State#state.idle),
+                    case lists:keytake(Ref, 1, IL) of
+                        {'value', IRec, Idle} ->
+                            {Where, IRec, State#state{
+                                idle = queue:from_list(Idle),
+                                icnt = (State#state.icnt - 1) }};
+                        _ ->
+                            {Where, 'undefined',
+                                inc_stat({'missing_idle', ?LINE}, State)}
+                    end;
+                _ ->
+                    {Where, 'undefined', State}
+            end;
+        _ ->
+            {'false', 'undefined', StateIn}
+    end;
+remove(Runner, State) when erlang:is_pid(Runner) ->
+    case lists:keytake(Runner, 2, State#state.busy) of
+        {'value', {BRef, _} = BRec, Busy} ->
+            {'busy', BRec, State#state{
+                busy = Busy,
+                rcnt = (State#state.rcnt - 1),
+                loc = dict:erase(BRef, State#state.loc) }};
+        _ ->
+            IL = queue:to_list(State#state.idle),
+            case lists:keytake(Runner, 2, IL) of
+                {'value', {IRef, _} = IRec, Idle} ->
+                    {'idle', IRec, State#state{
+                        idle = queue:from_list(Idle),
+                        icnt = (State#state.icnt - 1),
+                        loc = dict:erase(IRef, State#state.loc) }};
+                _ ->
+                    {'false', 'undefined', State}
             end
-    end,
-    Why.
-
--spec queue_job(job(), state()) -> state().
-%% Queue the specified Job. This assumes ALL checks have been performed
-%% beforehand - NONE are performed here!
-queue_job(Job, #state{queue = Queue, quelen = QLen, stats = Stats} = State) ->
-    maybe_dequeue(?validate(State#state{
-        queue   = Queue ++ [riak_core_job:update('queued', Job)],
-        quelen  = (QLen + 1),
-        stats   = ?inc_stat('queued', Stats)})).
-
--spec start_job(job(), state()) -> state().
-%% Dispatch the specified Job on a runner process. This assumes ALL checks
-%% have been performed beforehand - NONE are performed here!
-start_job(Job, #state{work_sup = WSup,
-        monitors = Mons, running = Running, stats = Stats} = State) ->
-    {'ok', Pid} = supervisor:start_child(WSup, []),
-    Mon = erlang:monitor('process', Pid),
-    Rec = #mon{pid = Pid, mon = Mon, job = Job},
-    'ok' = riak_core_job_runner:run(
-        Pid, erlang:self(), Mon, riak_core_job:get('work', Job)),
-    ?validate(State#state{
-        monitors = [Rec | Mons], running = (Running + 1),
-        stats = ?inc_stat('dispatched', Stats)}).
-
--spec maybe_dequeue(state()) -> state().
-%% If there are queued jobs make sure there's a message in our inbox to get to
-%% them after handling whatever may already be waiting.
-maybe_dequeue(#state{dqpending = 'true'} = State) ->
-    State;
-maybe_dequeue(#state{quelen = 0} = State) ->
-    State;
-maybe_dequeue(#state{shutdown = 'false', concur = Concur,
-        running = Running} = State) when Running >= Concur ->
-    State;
-maybe_dequeue(State) ->
-    ?cast('dequeue'),
-    State#state{dqpending = 'true'}.
-
--spec update_job(pid(), reference(), atom()) -> 'ok'.
-update_job(Svc, JobRef, Key) ->
-    gen_server:cast(Svc,
-        {JobRef, 'update', Key, riak_core_job:timestamp()}).
-
--spec update_job(pid(), reference(), atom(), term()) -> 'ok'.
-update_job(Svc, JobRef, Key, Info) ->
-    gen_server:cast(Svc,
-        {JobRef, 'update', Key, riak_core_job:timestamp(), Info}).
-
--spec init_state(state()) -> state() | {'error', term()}.
-init_state(State) ->
-    % field order matters!
-    init_state(['accept', 'concur', 'maxque'], State).
-
--spec init_state([atom()], state()) -> state() | {'error', term()}.
-init_state(['accept' | Fields],
-        #state{config = Config, scope_id = ScopeID} = State) ->
-    case proplists:get_value(?JOB_SVC_ACCEPT_FUNC, Config) of
-        'undefined' ->
-            init_state(Fields, State#state{accept = ?DefaultAccept});
-        {Mod, Func, Args} = Accept
-                when erlang:is_atom(Mod)
-                andalso erlang:is_atom(Func)
-                andalso erlang:is_list(Args) ->
-            Arity = (erlang:length(Args) + 2),
-            case erlang:function_exported(Mod, Func, Arity) of
-                true ->
-                    case init_test_accept(Accept, ScopeID) of
-                        'ok' ->
-                            init_state(Fields, State#state{accept = Accept});
-                        Error ->
-                            Error
-                    end;
-                _ ->
-                    {'error',
-                        {?JOB_SVC_ACCEPT_FUNC, {'undef', {Mod, Func, Arity}}}}
-            end;
-        {Fun, Args} = Accept
-                when erlang:is_function(Fun)
-                andalso erlang:is_list(Args) ->
-            Arity = (erlang:length(Args) + 2),
-            case erlang:fun_info(Fun, 'arity') of
-                {_, Arity} ->
-                    case init_test_accept(Accept, ScopeID) of
-                        'ok' ->
-                            init_state(Fields, State#state{accept = Accept});
-                        Error ->
-                            Error
-                    end;
-                _ ->
-                    {'error',
-                        {?JOB_SVC_ACCEPT_FUNC, {'badarity', {Fun, Arity}}}}
-            end;
-        Spec ->
-            {'error', {?JOB_SVC_ACCEPT_FUNC, {'badarg', Spec}}}
     end;
-init_state(['concur' | Fields], #state{config = Config} = State) ->
-    case proplists:get_value(?JOB_SVC_CONCUR_LIMIT, Config) of
-        'undefined' ->
-            init_state(Fields, State#state{concur = ?JOB_SVC_DEFAULT_CONCUR});
-        Concur when erlang:is_integer(Concur) andalso Concur > 0 ->
-            init_state(Fields, State#state{concur = Concur});
-        BadArg ->
-            {'error', {?JOB_SVC_CONCUR_LIMIT, {'badarg', BadArg}}}
-    end;
-init_state(['maxque' | Fields],
-        #state{config = Config, concur = Concur} = State) ->
-    case proplists:get_value(?JOB_SVC_QUEUE_LIMIT, Config) of
-        'undefined' ->
-            init_state(Fields,
-                State#state{maxque = (Concur * ?JOB_SVC_DEFAULT_QUEMULT)});
-        MaxQue when erlang:is_integer(MaxQue) andalso MaxQue >= 0 ->
-            init_state(Fields, State#state{maxque = MaxQue});
-        BadArg ->
-            {'error', {?JOB_SVC_QUEUE_LIMIT, {'badarg', BadArg}}}
-    end;
-init_state([], State) ->
+remove(Arg, _) ->
+    erlang:error('badarg', [Arg]).
+
+-spec runner(Where :: rloc(), State :: state())
+        -> {'ok', rrec(), state()} | {'error', term(), state()}.
+%
+% Creates a new Runner process and stores it in the specified location.
+%
+runner(Where, StateIn) when Where =:= 'busy' orelse Where =:= 'idle' ->
+    case supervisor:start_child(?WORK_SUP_NAME, []) of
+        {'ok', Runner} when erlang:is_pid(Runner) ->
+            Ref = erlang:monitor('process', Runner),
+            RRec = {Ref, Runner},
+            State = StateIn#state{
+                loc = dict:store(Ref, Where, StateIn#state.loc),
+                stats = inc_stat('created', StateIn#state.stats) },
+            StateOut = case Where of
+                'busy' ->
+                    State#state{
+                        busy = [RRec | State#state.busy],
+                        rcnt = (State#state.rcnt + 1)};
+                'idle' ->
+                    State#state{
+                        idle = queue:in(RRec, State#state.idle),
+                        icnt = (State#state.icnt + 1)}
+            end,
+            {'ok', RRec, StateOut};
+        {'error', Error} ->
+            _ = lager:error("Error creating runner: ~p", [Error]),
+            {'error', Error, inc_stat('service_errors', StateIn)}
+    end.
+
+-spec set_pending(State :: state()) -> state().
+%
+% Ensure that there's a 'pending' message in the inbox.
+%
+set_pending(#state{pending = 'false'} = State) ->
+    gen_server:cast(erlang:self(), 'pending'),
+    State#state{pending = 'true'};
+set_pending(State) ->
     State.
 
--spec init_test_accept(cbfunc(), scope_id()) -> 'ok' | {'error', term()}.
-init_test_accept(Accept, ScopeID) ->
-    try
-        case riak_core_job:invoke(Accept, [ScopeID, riak_core_job:dummy()]) of
-            'true' ->
-                'ok';
-            'false' ->
-                'ok';
-            Other ->
-                {'error', {?JOB_SVC_ACCEPT_FUNC, {'badmatch', Other}}}
-        end
-    catch
-        Class:What ->
-            {'error', {?JOB_SVC_ACCEPT_FUNC, {Class, What}}}
-    end.
-
--ifdef(VALIDATE_STATE).
--spec validate(state()) -> state() | no_return().
-validate(State) ->
-    QL = erlang:length(State#state.queue),
-    R1 = if
-        QL /= State#state.quelen ->
-            [{'quelen', QL, State#state.quelen}];
-        ?else ->
-            []
-    end,
-    R2 = if
-        QL > State#state.maxque ->
-            [{'maxque', QL, State#state.maxque} | R1];
-        ?else ->
-            R1
-    end,
-    ML = erlang:length(State#state.monitors),
-    R3 = if
-        ML /= State#state.running ->
-            [{'running', ML, State#state.running} | R2];
-        ?else ->
-            R2
-    end,
-    R4 = if
-        ML > State#state.concur ->
-            [{'concur', ML, State#state.concur} | R3];
-        ?else ->
-            R3
-    end,
-    case R4 of
-        [] ->
-            State;
-        Err ->
-            lager:error("Inconsistent state: ~p", State),
-            erlang:error({'invalid_state', Err}, [State])
-    end.
--endif.

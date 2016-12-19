@@ -18,6 +18,9 @@
 %%
 %% -------------------------------------------------------------------
 
+-ifndef(riak_core_job_internal_included).
+-define(riak_core_job_internal_included, true).
+
 %% Macros shared among the processes in the job supervision tree.
 %% There is NOTHING in this file that should be used outside those processes!
 
@@ -36,49 +39,35 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--include("riak_core_vnode.hrl").
--include("riak_core_job.hrl").
+-include_lib("riak_core_vnode.hrl").
+-include_lib("riak_core_job.hrl").
 
-%% These types are exported by one or more modules.
--type scope_type()  ::  atom().
--type scope_index() ::  partition().
--type scope_id()    ::  {scope_type(), scope_index()}.
+-ifdef(namespaced_types).
+-type dict_t(K,V)       ::  dict:dict(K, V).
+-type orddict_t(K,V)    ::  orddict:orddict(K, V).
+-type queue_t(T)        ::  queue:queue(T).
+-else.
+-type dict_t(_,_)       ::  dict().
+-type orddict_t(_,_)    ::  orddict:orddict().
+-type queue_t(_)        ::  queue().
+-endif.
 
-%% These types are used internally between cooperating modules.
--define(SCOPE_SUP_TAG,  'scope_sup').
--define(SCOPE_SVC_TAG,  'scope_svc').
--define(WORK_SUP_TAG,   'work_sup').
+-define(JOBS_MGR_NAME,  'riak_core_job_manager').
+-define(JOBS_SVC_NAME,  'riak_core_job_service').
+-define(WORK_SUP_NAME,  'riak_core_job_sup').
 
--type proc_type()   ::  ?SCOPE_SUP_TAG | ?SCOPE_SVC_TAG | ?WORK_SUP_TAG .
--type proc_id()     ::  {proc_type(), scope_id()}.
-
--type scope_sup_id()::  {?SCOPE_SUP_TAG,  scope_id()}.
--type scope_svc_id()::  {?SCOPE_SVC_TAG,  scope_id()}.
--type work_sup_id() ::  {?WORK_SUP_TAG,   scope_id()}.
-
-%% Allow a pretty long time for a scope to start. It shouldn't take anywhere
-%% near this long unless the system is really bogged down.
--define(SCOPE_SVC_STARTUP_TIMEOUT,  12000).
-
-%% Shutdown timeouts should always be in descending order as listed here.
--define(JOBS_MGR_SHUTDOWN_TIMEOUT,  28000).
--define(SCOPE_SUP_SHUTDOWN_TIMEOUT, 26000).
--define(SCOPE_SVC_SHUTDOWN_TIMEOUT, 24000).
--define(WORK_RUN_SHUTDOWN_TIMEOUT,  22000).
-
-%% How long stop_scope/1 waits for the scope to shut down.
--define(STOP_SCOPE_TIMEOUT,     (?SCOPE_SUP_SHUTDOWN_TIMEOUT + 1000)).
-
--define(SCOPE_SUP_ID(ScopeID),  {?SCOPE_SUP_TAG,  ScopeID}).
--define(SCOPE_SVC_ID(ScopeID),  {?SCOPE_SVC_TAG,  ScopeID}).
--define(WORK_SUP_ID(ScopeID),   {?WORK_SUP_TAG,   ScopeID}).
+%% Shutdown timeouts should always be in ascending order as listed here.
+-define(WORK_RUN_SHUTDOWN_TIMEOUT,  15000).
+-define(JOBS_SUP_SHUTDOWN_TIMEOUT,  (?WORK_RUN_SHUTDOWN_TIMEOUT + 1500)).
+-define(JOBS_SVC_SHUTDOWN_TIMEOUT,  (?JOBS_SUP_SHUTDOWN_TIMEOUT + 1500)).
+-define(JOBS_MGR_SHUTDOWN_TIMEOUT,  (?JOBS_SVC_SHUTDOWN_TIMEOUT + 1500)).
 
 %% I don't dare expose this globally, but in the job management stuff allow
 %% something resembling sane if/else syntax.
 -define(else,   'true').
 
-%% The servers including this file all implement gen_server, so this is a
-%% shortcut to stuff an asynchronous message into their own message queue.
+%% The servers including this file implement gen_server, so this is a shortcut
+%% to stuff an asynchronous message into their own message queue.
 -define(cast(Msg),  gen_server:cast(erlang:self(), Msg)).
 
 %% Specific terms that get mapped between the worker pool facade and the new
@@ -91,3 +80,8 @@
 -define(JOB_ERR_REJECTED,       'job_rejected').
 -define(JOB_ERR_QUEUE_OVERFLOW, 'job_queue_full').
 -define(JOB_ERR_SHUTTING_DOWN,  'scope_shutdown').
+
+% Internal magic token - stay away!
+-define(job_svc_cfg_token,      '$config$611007$').
+
+-endif. % riak_core_job_internal_included

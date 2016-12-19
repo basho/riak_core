@@ -204,6 +204,98 @@
 
 %% Async Job Management
 %%
+%% The setting schema used by all of the 'job_*_limit' allows the value to be
+%% either an integer >= 0 or one of the following calculated values.
+%%
+%% WARNING: Cuttlefish does not currently support this syntax! Settings
+%% here can only be integers until the cuttlefish schema is extended.
+%%
+%% {Token, Multiplier} where Token is an atom and Multiplier is an integer > 0.
+%%
+%% The following Tokens are recognized:
+%%
+%% 'concur' The effective value of 'job_concurrency_limit', which is the first
+%%          of the async jobs limits calculated at startup. If it has NOT yet
+%%          been evaluated (such as when 'job_concurrency_limit' itself is
+%%          being initialized), the value of 'scheds' (below) is used.
+%%
+%% 'cores'  The number of logical CPUs reported by the Erlang VM. If that
+%%          number is unknown to the VM, the value of 'scheds' (below) is
+%%          used.
+%%
+%% 'scheds' The number of configured (though not necessarily active) Erlang VM
+%%          schedulers. Unlike the other multipliers, this value is always
+%%          known at all phases of initialization.
+%%
+%% Note that the fallbacks to 'scheds' do not generate warnings.
+
+%% @doc Maximum number of async jobs to execute concurrently.
+%% The default is calculated at runtime as 6 per VM scheduler.
+%% If this setting resolves to zero, async jobs are disabled.
+{mapping, "job_concurrency_limit", "riak_core.job_concurrency_limit", [
+    {datatype, integer},
+    {commented, 48},
+    {validators, ["job_limit_value"]}
+]}.
+
+%% @doc Maximum number of jobs that can be queued for future execution.
+%% The default is calculated at runtime as 3 x 'job_concurrency_limit'.
+%% If this setting resolves to zero, queueing is disabled.
+%% @see job_concurrency_limit
+{mapping, "job_queue_limit", "riak_core.job_queue_limit", [
+    {datatype, integer},
+    {commented, 144},
+    {validators, ["job_limit_value"]}
+]}.
+
+%% @doc The number of completed jobs that are kept for access to their
+%% completion status.
+%% The default is calculated at runtime as 1 x 'job_concurrency_limit'.
+%% If this setting resolves to zero, job history is not maintained.
+%% @see job_concurrency_limit
+{mapping, "job_history_limit", "riak_core.job_history_limit", [
+    {datatype, integer},
+    {commented, 48},
+    {validators, ["job_limit_value"]}
+]}.
+
+%% @doc The minimum number of async job processes that are kept alive.
+%% This is a soft boundary that is maintained opportunistically.
+%% The default is calculated at runtime as the higher of 3 or
+%% 'job_concurrency_limit' / 8.
+%% @see job_concurrency_limit
+%% @see job_idle_max_limit
+{mapping, "job_idle_min_limit", "riak_core.job_idle_min_limit", [
+    {datatype, integer},
+    {commented, 6},
+    {validators, ["job_limit_value"]}
+]}.
+
+%% @doc The maximum number of async job processes that are kept alive.
+%% This is a soft boundary that is maintained opportunistically.
+%% The default is calculated at runtime as the higher of 2 x
+%% 'job_idle_min_limit' or <VM schedulers> - 1.
+%% @see job_concurrency_limit
+%% @see job_idle_min_limit
+{mapping, "job_idle_max_limit", "riak_core.job_idle_max_limit", [
+    {datatype, integer},
+    {commented, 12},
+    {validators, ["job_limit_value"]}
+]}.
+
+{validator,
+ "job_limit_value",
+ "Jobs limits must be non-negative integers or proper multipliers",
+ fun({Key, Val}) ->
+        (Key == concur orelse Key == cores orelse Key == scheds)
+        andalso is_integer(Val) andalso Val > 0;
+    (Value) ->
+        is_integer(Value) andalso Value >= 0
+ end
+}.
+
+%% Async Job Management
+%%
 %% This is a translation for mappings that appear in other schema files.
 %% Mappings are from "cluster.job.$namespace.$operation"* to
 %% "riak_core.job_accept_class" with required attributes

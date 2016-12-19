@@ -25,6 +25,8 @@
 -behaviour(supervisor).
 
 -include("riak_core_bg_manager.hrl").
+-include("riak_core_job_internal.hrl").
+-include("riak_core_sup_internal.hrl").
 
 %% API
 -export([start_link/0]).
@@ -32,11 +34,6 @@
 
 %% Supervisor callbacks
 -export([init/1]).
-
-%% Helper macro for declaring children of supervisor
--define(CHILD(I, Type, Timeout, Args), {I, {I, start_link, Args}, permanent, Timeout, Type, [I]}).
--define(CHILD(I, Type, Timeout), ?CHILD(I, Type, Timeout, [])).
--define(CHILD(I, Type), ?CHILD(I, Type, 5000)).
 
 %% ===================================================================
 %% API functions
@@ -54,34 +51,32 @@ init([]) ->
 
     {ok, Root} = application:get_env(riak_core, platform_data_dir),
 
-    EnsembleSup = {riak_ensemble_sup,
-                   {riak_ensemble_sup, start_link, [Root]},
-                   permanent, 30000, supervisor, [riak_ensemble_sup]},
-
-    Children = lists:flatten(
-                 [?CHILD(riak_core_bg_manager, worker),
-                  ?CHILD(riak_core_sysmon_minder, worker),
-                  ?CHILD(riak_core_vnode_sup, supervisor, 305000),
-                  ?CHILD(riak_core_eventhandler_sup, supervisor),
-                  [?CHILD(riak_core_dist_mon, worker) || DistMonEnabled],
-                  ?CHILD(riak_core_handoff_sup, supervisor),
-                  ?CHILD(riak_core_ring_events, worker),
-                  ?CHILD(riak_core_ring_manager, worker),
-                  ?CHILD(riak_core_metadata_manager, worker),
-                  ?CHILD(riak_core_metadata_hashtree, worker),
-                  ?CHILD(riak_core_broadcast, worker),
-                  ?CHILD(riak_core_vnode_proxy_sup, supervisor),
-                  ?CHILD(riak_core_node_watcher_events, worker),
-                  ?CHILD(riak_core_node_watcher, worker),
-                  ?CHILD(riak_core_vnode_manager, worker),
-                  ?CHILD(riak_core_capability, worker),
-                  ?CHILD(riak_core_gossip, worker),
-                  ?CHILD(riak_core_claimant, worker),
-                  ?CHILD(riak_core_table_owner, worker),
-                  ?CHILD(riak_core_stat_sup, supervisor),
-                  [EnsembleSup || ensembles_enabled()],
-                  ?CHILD(riak_core_job_sup, supervisor)
-                 ]),
+    Children = lists:flatten([
+        ?CHILD(riak_core_bg_manager, worker),
+        ?CHILD(riak_core_sysmon_minder, worker),
+        ?CHILD(riak_core_vnode_sup, supervisor, 305000),
+        ?CHILD(riak_core_eventhandler_sup, supervisor),
+        [?CHILD(riak_core_dist_mon, worker) || DistMonEnabled],
+        ?CHILD(riak_core_handoff_sup, supervisor),
+        ?CHILD(riak_core_ring_events, worker),
+        ?CHILD(riak_core_ring_manager, worker),
+        ?CHILD(riak_core_metadata_manager, worker),
+        ?CHILD(riak_core_metadata_hashtree, worker),
+        ?CHILD(riak_core_broadcast, worker),
+        ?CHILD(riak_core_vnode_proxy_sup, supervisor),
+        ?CHILD(riak_core_node_watcher_events, worker),
+        ?CHILD(riak_core_node_watcher, worker),
+        ?CHILD(riak_core_vnode_manager, worker),
+        ?CHILD(riak_core_capability, worker),
+        ?CHILD(riak_core_gossip, worker),
+        ?CHILD(riak_core_claimant, worker),
+        ?CHILD(riak_core_table_owner, worker),
+        ?CHILD(riak_core_stat_sup, supervisor),
+        ?CHILD(riak_core_job_sup, supervisor, ?JOBS_SUP_SHUTDOWN_TIMEOUT),
+        ?CHILD(riak_core_job_service, worker, ?JOBS_SVC_SHUTDOWN_TIMEOUT),
+        ?CHILD(riak_core_job_manager, worker, ?JOBS_MGR_SHUTDOWN_TIMEOUT),
+        [?CHILD(riak_ensemble_sup, supervisor, 30000, [Root]) || ensembles_enabled()]
+    ]),
 
     {ok, {{one_for_one, 10, 10}, Children}}.
 

@@ -18,103 +18,67 @@
 %%
 %% -------------------------------------------------------------------
 
+%% @private
+%% @doc Internal Job Runner Supervisor.
+%%
+%% Refer to the {@link riak_core_job_service} module for the process model.
+%%
 -module(riak_core_job_sup).
 -behaviour(supervisor).
 
-%% @doc Processes in the job management supervision tree.
-%%
-%% Each of this module's init/1 functions represents a supervisor level in
-%% the supervision tree. The top level is a singleton, and the rest are
-%% per-scope.
-%%
-%% Top level supervisor
-%%  Start:  riak_core_job_sup:start_link()
-%%  Child:  Request manager
-%%      Start:  riak_core_job_manager:start_link(Parent)
-%%  Child:  Per scope supervisor
-%%      Start:  riak_core_job_sup:start_link(?SCOPE_SUP_ID(ScopeID),...)
-%%      Child:  Per-scope job service
-%%          Start:  riak_core_job_service:start_link(?SCOPE_SVC_ID(ScopeID),...)
-%%      Child:  Work supervisor
-%%          Start:  riak_core_job_sup:start_link(?WORK_SUP_ID(ScopeID))
-%%          Child:  Work runner
-%%              Start:  riak_core_job_runner:start_link(ScopeID, ...)
-%%
-
-% Public API
--export([start_link/0]).
-
 % Private API
--export([start_link/1, start_link/2, start_scope/3, stop_scope/2]).
+-export([
+    start_runner/0,
+    stop_runner/1
+]).
 
-% supervisor callbacks
--export([init/1]).
+% Supervisor API
+-export([
+    init/1,
+    start_link/0
+]).
+
+-ifdef(TEST).
+-export([
+    start_test_sup/0,
+    stop_test_sup/1
+]).
+-endif.
 
 -include("riak_core_job_internal.hrl").
+-include("riak_core_sup_internal.hrl").
 
-% type shorthand
--type config()  ::  riak_core_job_service:config().
-
-%% ===================================================================
-%% Public API
-%% ===================================================================
-
--spec start_link() -> {'ok', pid()}.
-%%
-%% @doc Creates the singleton top-level supervisor.
-%%
-start_link() ->
-    supervisor:start_link(?MODULE, ?MODULE).
+-define(RUNNER_SUP,
+    {{'simple_one_for_one', 30, 60}, [
+        {'job_runner',
+            {'riak_core_job_runner', 'start_link', []},
+            'temporary', ?WORK_RUN_SHUTDOWN_TIMEOUT,
+            'worker', ['riak_core_job_runner']} ]}).
 
 %% ===================================================================
 %% Private API
 %% ===================================================================
 
--spec start_link(work_sup_id()) -> {'ok', pid()}.
+-spec start_runner() -> {'ok', pid()} | {'error', term()}.
+%% @private
+%% @doc Start a new job runner process.
 %%
-%% @doc Start a per-scope work supervisor.
-%%
-start_link(WorkSupId) ->
-    supervisor:start_link(?MODULE, WorkSupId).
-
--spec start_link(scope_sup_id(), config())
-        -> {'ok', pid()} | {'error', term()}.
-%%
-%% @doc Start a per-scope service supervisor.
-%%
-start_link(ScopeSupId, SvcConfig) ->
-    supervisor:start_link(?MODULE, {ScopeSupId, SvcConfig}).
-
--spec start_scope(pid(), scope_id(), config())
-        -> {'ok', pid()} | {'error', term()}.
-%%
-%% @doc Start a per-scope supervision tree.
-%%
-%% Returns {'ok', pid()} if either started successfully or already running.
-%%
-start_scope(JobsSup, ScopeID, SvcConfig) ->
-    ScopeSupId = ?SCOPE_SUP_ID(ScopeID),
-    case supervisor:start_child(JobsSup, {ScopeSupId,
-            {?MODULE, 'start_link', [ScopeSupId, SvcConfig]}, 'permanent',
-            ?SCOPE_SUP_SHUTDOWN_TIMEOUT, 'supervisor', [?MODULE]}) of
+start_runner() ->
+    case supervisor:start_child(?MODULE, []) of
         {'ok', _} = Ret ->
             Ret;
-        {'error', {'already_started', ScopeSupPid}} ->
-            {'ok', ScopeSupPid};
         {'error', _} = Error ->
             Error
     end.
 
--spec stop_scope(pid(), scope_id()) -> 'ok' | {'error', term()}.
+-spec stop_runner(Runner :: pid()) -> 'ok' | {'error', term()}.
+%% @private
+%% @doc Stop a job runner process.
 %%
-%% @doc Stop a per-scope supervision tree.
-%%
-stop_scope(JobsSup, ScopeID) ->
-    ScopeSupId = ?SCOPE_SUP_ID(ScopeID),
-    case supervisor:terminate_child(JobsSup, ScopeSupId) of
+stop_runner(Runner) ->
+    case supervisor:terminate_child(?MODULE, Runner) of
         'ok' ->
-            % If this doesn't return 'ok', something's badly hosed somewhere.
-            supervisor:delete_child(JobsSup, ScopeSupId);
+            'ok';
         {'error', 'not_found'} ->
             'ok';
         {'error', _} = Error ->
@@ -122,50 +86,71 @@ stop_scope(JobsSup, ScopeID) ->
     end.
 
 %% ===================================================================
-%% Callbacks
+%% Supervisor API
 %% ===================================================================
 
--spec init(?MODULE | {scope_sup_id(), config()} | work_sup_id())
-        -> 'ignore' | {'ok', {
-                {supervisor:strategy(), pos_integer(), pos_integer()},
-                [supervisor:child_spec()] }}.
-%
-% The restart frequency is set to handle the case of an evil job being
-% submitted to all scopes that somehow causes each service that receives it
-% to crash. That REALLY shouldn't happen, but since we don't know here how
-% many scopes could end up running on this node we kinda punt for now.
-% TODO: should we try to do something intelligent based on ring size?
-%
-init({?SCOPE_SUP_ID(ScopeID) = Id, SvcConfig}) ->
-    riak_core_job_manager:register(Id, erlang:self()),
-    ScopeSvcId = ?SCOPE_SVC_ID(ScopeID),
-    WorkSupId = ?WORK_SUP_ID(ScopeID),
-    {'ok', {{'rest_for_one', 30, 60}, [
-        {ScopeSvcId,
-            {'riak_core_job_service', 'start_link', [ScopeSvcId, SvcConfig]},
-            'permanent', ?SCOPE_SVC_SHUTDOWN_TIMEOUT,
-            'worker', ['riak_core_job_service']},
-        {WorkSupId,
-            {?MODULE, 'start_link', [WorkSupId]},
-            'permanent', ?SCOPE_SUP_SHUTDOWN_TIMEOUT,
-            'supervisor', [?MODULE]}
-    ]}};
+-spec start_link() -> {'ok', pid()}.
+%% @private
+%% @doc Creates the singleton job runner supervisor.
+%%
+start_link() ->
+    supervisor:start_link({'local', ?WORK_SUP_NAME}, ?MODULE, ?MODULE).
 
-%% Per-scope worker supervisor
-init(?WORK_SUP_ID(ScopeID) = Id) ->
-    riak_core_job_manager:register(Id, erlang:self()),
-    {'ok', {{'simple_one_for_one', 30, 60}, [
-        {'scope_job', {'riak_core_job_runner', 'start_link', [ScopeID]},
-            'temporary', ?WORK_RUN_SHUTDOWN_TIMEOUT,
-            'worker', ['riak_core_job_runner']}
-    ]}};
+-spec init(atom())
+        -> {'ok', {
+            {supervisor:strategy(), pos_integer(), pos_integer()},
+            [supervisor:child_spec()] }}.
+%% @private
+%% @doc Initializes the job runner supervisor.
+%%
+-ifdef(TEST).
 
-%% Singleton top-level supervisor
+init('riak_core_job_test_sup') ->
+    Children = [
+        % Verbatim copy of the relevant specs from riak_core_sup:init/1.
+        ?CHILD(riak_core_job_sup, supervisor, ?JOBS_SUP_SHUTDOWN_TIMEOUT),
+        ?CHILD(riak_core_job_service, worker, ?JOBS_SVC_SHUTDOWN_TIMEOUT),
+        ?CHILD(riak_core_job_manager, worker, ?JOBS_MGR_SHUTDOWN_TIMEOUT)
+    ],
+    {ok, {{one_for_one, 10, 10}, Children}};
+
 init(?MODULE) ->
-    JobsSup = erlang:self(),
-    {'ok', {{'one_for_one', 30, 60}, [
-        {'riak_core_job_manager',
-            {'riak_core_job_manager', 'start_link', [JobsSup]},
-            'permanent', ?JOBS_MGR_SHUTDOWN_TIMEOUT,
-            'worker', ['riak_core_job_manager']}
-    ]}}.
+    {'ok', ?RUNNER_SUP}.
+
+-else.
+
+init(?MODULE) ->
+    {'ok', ?RUNNER_SUP}.
+
+-endif.
+
+%% ===================================================================
+%% Test API
+%% ===================================================================
+
+-ifdef(TEST).
+
+-spec start_test_sup() -> {'ok', pid()}.
+%% @private
+%% @doc Starts a supervisor containing the job services for testing.
+%%
+start_test_sup() ->
+    supervisor:start_link(?MODULE, 'riak_core_job_test_sup').
+
+-spec stop_test_sup(pid()) -> 'ok' | {'error', term()}.
+%% @private
+%% @doc Stops a supervisor created by {@link start_test_sup/0} synchronously.
+%%
+stop_test_sup(Pid) ->
+    Mon = erlang:monitor('process', Pid),
+    _ = erlang:unlink(Pid),
+    _ = erlang:exit(Pid, 'shutdown'),
+    receive
+        {'DOWN', Mon, _, _, _} ->
+            'ok'
+    after
+        (?JOBS_MGR_SHUTDOWN_TIMEOUT + 500) ->
+            {'error', 'timeout'}
+    end.
+
+-endif.

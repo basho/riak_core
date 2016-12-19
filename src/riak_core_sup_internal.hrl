@@ -18,19 +18,13 @@
 %%
 %% -------------------------------------------------------------------
 
--module(riak_core_vnode_worker).
+-ifndef(riak_core_sup_internal_included).
+-define(riak_core_sup_internal_included, true).
 
-%% @doc This module is deprecated and will be removed in v3!
-%% @see ../README_JOBS.md
-%% @deprecated Use module {@link riak_core_job_manager}.
--deprecated(module).
+%% Helper macros for declaring supervisor children.
+-define(CHILD(Mod, Type, Timeout, Args),
+    {Mod, {Mod, start_link, Args}, permanent, Timeout, Type, [Mod]}).
+-define(CHILD(Mod, Type, Timeout), ?CHILD(Mod, Type, Timeout, [])).
+-define(CHILD(Mod, Type), ?CHILD(Mod, Type, 5000)).
 
--include("riak_core_vnode.hrl").
-
-%% init_worker(VNodeIndex, WorkerArgs, WorkerProps) -> {ok, WorkerState}.
--callback init_worker(partition(), [term()], [atom() | {atom(), term()}])
-        -> {ok, term()}.
-
-%% handle_work(WorkSpec, Sender, WorkerState) -> Response.
--callback handle_work(tuple(), sender(), term())
-        -> {reply, term(), term()} | {noreply, term()}.
+-endif. % riak_core_sup_internal_included
