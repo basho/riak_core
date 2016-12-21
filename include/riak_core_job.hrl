@@ -61,4 +61,16 @@
 -define(JOB_PRIO_LOW,           25).
 -define(JOB_PRIO_HIGH,          75).
 
+%%
+%% As close as is reasonable to a definitive guard for global IDs.
+%%
+-define(is_job_gid(Term),   erlang:is_tuple(Term)
+    andalso erlang:tuple_size(Term) =:= 3
+    andalso erlang:is_atom(erlang:element(1, Term))
+    andalso ((erlang:is_tuple(erlang:element(3, Term))
+            andalso erlang:tuple_size(erlang:element(3, Term)) =:= 3)
+        orelse  (erlang:is_binary(erlang:element(3, Term))
+            andalso erlang:bit_size(erlang:element(3, Term)) =:= 128))
+).
+
 -endif. % riak_core_job_included

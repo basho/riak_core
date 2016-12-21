@@ -52,9 +52,9 @@
 -type queue_t(_)        ::  queue().
 -endif.
 
--define(JOBS_MGR_NAME,  'riak_core_job_manager').
--define(JOBS_SVC_NAME,  'riak_core_job_service').
--define(WORK_SUP_NAME,  'riak_core_job_sup').
+-define(JOBS_MGR_NAME,  riak_core_job_manager).
+-define(JOBS_SVC_NAME,  riak_core_job_service).
+-define(WORK_SUP_NAME,  riak_core_job_sup).
 
 %% Shutdown timeouts should always be in ascending order as listed here.
 -define(WORK_RUN_SHUTDOWN_TIMEOUT,  15000).
@@ -74,12 +74,15 @@
 %% API services.
 %% When we're sure they're stable, it may be worth moving (some of) these to
 %% riak_core_job.hrl.
--define(JOB_ERR_CANCELED,       'canceled').
--define(JOB_ERR_CRASHED,        'crashed').
--define(JOB_ERR_KILLED,         'killed').
--define(JOB_ERR_REJECTED,       'job_rejected').
--define(JOB_ERR_QUEUE_OVERFLOW, 'job_queue_full').
--define(JOB_ERR_SHUTTING_DOWN,  'scope_shutdown').
+-define(JOB_ERR_CANCELED,       canceled).
+-define(JOB_ERR_CRASHED,        crashed).
+-define(JOB_ERR_KILLED,         killed).
+-define(JOB_ERR_REJECTED,       job_rejected).
+-define(JOB_ERR_QUEUE_OVERFLOW, job_queue_full).
+-define(JOB_ERR_SHUTTING_DOWN,  service_shutdown).
+
+-define(UNMATCHED_ARGS(Args),
+    erlang:error({unmatched, {?MODULE, ?LINE}, Args})).
 
 % Internal magic token - stay away!
 -define(job_svc_cfg_token,      '$config$611007$').

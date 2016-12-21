@@ -161,7 +161,7 @@
 -define(NEW_UID,    {erlang:node(), ?CUR_TIMESTAMP, erlang:make_ref()}).
 
 % A global id includes the id provided by the client for correlation.
--define(NEW_GID(Mod, CID, UID), {CID, Mod, UID}).
+-define(NEW_GID(Mod, CID, UID), {Mod, CID, UID}).
 
 % Arbitrary valid UUID constant from www.uuidgenerator.net because we want v1
 % for guaranteed uniqueness and most OS generators don't use a MAC.
@@ -340,6 +340,10 @@ invoke({Mod, Func, FunArgs}, AddArg)
 %% not covered by the type specification at all), it's not feasible to fully
 %% check them when the job is created, so exceptions from reply/2 are possible
 %% if you try to roll your own.
+%% This field is only used if the job crashes or is canceled AND `killed' is
+%% not set or raises an error on invocation, in which case a message in the
+%% form `{error, Job, Why}' is sent to it - if you set this field, be prepared
+%% to receive that message.
 %%
 %% {'cid', term()} - A client job identifier; default is 'anon'.
 %% This field is incorporated into the job's global ID.
@@ -727,3 +731,25 @@ workp(Key, Props) ->
         Bad ->
             erlang:error('badarg', [Bad])
     end.
+
+%% ===================================================================
+%% Internal
+%% ===================================================================
+
+-ifdef(TEST).
+
+gid_guard_test() ->
+    Dummy = dummy(),
+    DummyId = gid(Dummy),
+    DummyIdOk = ?is_job_gid(DummyId),
+    ?assert(DummyIdOk),
+    Job = job([
+        {cid, {test, ?LINE}},
+        {work, work(Dummy)}
+    ]),
+    JobId = gid(Job),
+    ?debugVal(JobId),
+    JobIdOk = ?is_job_gid(JobId),
+    ?assert(JobIdOk).
+
+-endif.

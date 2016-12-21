@@ -22,7 +22,12 @@
 
 -include("../src/riak_core_job_internal.hrl").
 
+%% ===================================================================
+%% Tests
+%% ===================================================================
+
 supervisor_test() ->
+    ?assertEqual('ok', jobs_test_util:set_config([])),
     TestRet = riak_core_job_sup:start_test_sup(),
     ?assertMatch({'ok', P} when is_pid(P), TestRet),
     {'ok', TestSup} = TestRet,
@@ -30,6 +35,11 @@ supervisor_test() ->
     ?assertMatch(P when is_pid(P), erlang:whereis(?JOBS_MGR_NAME)),
     ?assertMatch(P when is_pid(P), erlang:whereis(?JOBS_SVC_NAME)),
     ?assertMatch(P when is_pid(P), erlang:whereis(?WORK_SUP_NAME)),
+
+    % The supervisor configuration seems to linger in the VM's ETS even after
+    % the process itself is killed, so we can't confirm the proper results
+    % from supervisor:count_children/1 as previous tests may have polluted
+    % the table.
 
     ?assertEqual('ok', riak_core_job_sup:stop_test_sup(TestSup)),
 
@@ -40,6 +50,7 @@ supervisor_test() ->
     'ok'.
 
 default_conf_test() ->
+    ?assertEqual('ok', jobs_test_util:set_config([])),
     {'ok', TestSup} = riak_core_job_sup:start_test_sup(),
 
     Conf = riak_core_job_manager:config(),
@@ -61,10 +72,10 @@ default_conf_test() ->
 conf_test() ->
     Props = [
         {?JOB_SVC_CONCUR_LIMIT, {'scheds', 2}},
-        {?JOB_SVC_QUEUE_LIMIT, {'concur', 4}},
-        {?JOB_SVC_HIST_LIMIT, {'cores', 7}}
+        {?JOB_SVC_QUEUE_LIMIT,  {'concur', 4}},
+        {?JOB_SVC_HIST_LIMIT,   {'cores', 7}}
     ],
-    ?assertEqual('ok', conf(Props)),
+    ?assertEqual('ok', jobs_test_util:set_config(Props)),
     {'ok', TestSup} = riak_core_job_sup:start_test_sup(),
 
     Conf = riak_core_job_manager:config(),
@@ -94,57 +105,85 @@ submit_test() ->
         {?JOB_SVC_CONCUR_LIMIT, 3},
         {?JOB_SVC_QUEUE_LIMIT,  9}
     ],
-    ?assertEqual('ok', conf(Props)),
+    ?assertEqual('ok', jobs_test_util:set_config(Props)),
     {'ok', TestSup} = riak_core_job_sup:start_test_sup(),
 
-    Jobs = create_jobs(11),
+    Jobs = jobs_test_util:create_jobs(11),
     [?assertEqual('ok', riak_core_job_manager:submit(J)) || J <- Jobs],
 
-    [begin
-        JID = riak_core_job:cid(J),
-        Ret = receive
-            {?MODULE, 'work_cleanup', JID} ->
-                JID
-        after
-            2000 ->
-                'timeout'
-        end,
-        ?assertEqual(JID, Ret)
-    end || J <- Jobs],
+    jobs_test_util:wait_for_jobs(Jobs),
 
     riak_core_job_sup:stop_test_sup(TestSup).
 
+queue_reject_test() ->
+    Props = [
+        {?JOB_SVC_CONCUR_LIMIT, 2},
+        {?JOB_SVC_QUEUE_LIMIT,  3}
+    ],
+    ?assertEqual('ok', jobs_test_util:set_config(Props)),
+    {'ok', TestSup} = riak_core_job_sup:start_test_sup(),
 
-conf(Props) ->
-    App = riak_core_job_service:default_app(),
-    [application:set_env(App, K, V) || {K, V} <- Props],
-    'ok'.
+    AllJobs = jobs_test_util:create_jobs(11, 7, 7, 7),
+    % the first 5 should be accepted, the rest rejected
+    {AccJobs, RejJobs} =  lists:split(5, AllJobs),
+    AccRets = [riak_core_job_manager:submit(J) || J <- AccJobs],
+    RejRets = [riak_core_job_manager:submit(J) || J <- RejJobs],
 
-create_jobs(Count) ->
-    [create_job(ID) || ID <- lists:seq(1, Count)].
+    [?assertEqual('ok', R) || R <- AccRets],
+    [?assertEqual({'error', 'job_queue_full'}, R) || R <- RejRets],
 
-create_job(ID) ->
-    riak_core_job:job([
-        {'module',  ?MODULE},
-        {'class',   {?MODULE, 'test'}},
-        {'cid',     ID},
-        {'work',    riak_core_job:work([
-            {'setup',   {fun work_setup/3,    [erlang:self(), ID]}},
-            {'main',    {fun work_main/1,     []}},
-            {'cleanup', {fun work_cleanup/1,  []}}
-        ])}
-    ]).
+    jobs_test_util:wait_for_jobs(AccJobs),
 
-work_setup(_Manager, Caller, ID) ->
-    Caller ! {?MODULE, 'work_setup', ID},
-    {Caller, ID}.
+    riak_core_job_sup:stop_test_sup(TestSup).
 
-work_main({Caller, ID} = Context) ->
-    Caller ! {?MODULE, 'work_main', ID},
-    ok = timer:sleep(7),
-    Context.
+class_reject_test() ->
+    ?assertEqual('ok', jobs_test_util:set_config([])),
+    {'ok', TestSup} = riak_core_job_sup:start_test_sup(),
 
-work_cleanup({Caller, ID}) ->
-    Caller ! {?MODULE, 'work_cleanup', ID},
-    ID.
+    [Job1, Job2] = jobs_test_util:create_jobs(2),
+
+    % The job enable/disable system has a quirk - if the list is undefined and
+    % you disable a class it doesn't reset it to an empty list (as it probably
+    % should), leaving everything enabled, so make sure it's got at least one
+    % unrelated class in it.
+    FillClass = riak_core_job:class(riak_core_job:dummy()),
+    JobsClass = riak_core_job:class(Job1),
+    riak_core_util:enable_job_class(FillClass),
+
+    riak_core_util:enable_job_class(JobsClass),
+    ?assertEqual('ok', riak_core_job_manager:submit(Job1)),
+
+    riak_core_util:disable_job_class(JobsClass),
+    ?assertEqual({'error', 'job_rejected'}, riak_core_job_manager:submit(Job2)),
+
+    % Clear out the list so we don't interfere with other tests.
+    application:unset_env('riak_core', 'job_accept_class'),
+
+    jobs_test_util:wait_for_job(Job1),
+
+    riak_core_job_sup:stop_test_sup(TestSup).
+
+history_test() ->
+    Props = [
+        {?JOB_SVC_CONCUR_LIMIT, 1},
+        {?JOB_SVC_QUEUE_LIMIT,  1},
+        {?JOB_SVC_HIST_LIMIT,   3}
+    ],
+    ?assertEqual('ok', jobs_test_util:set_config(Props)),
+    {'ok', TestSup} = riak_core_job_sup:start_test_sup(),
+
+    [Job1, Job2, Job3] = Jobs = jobs_test_util:create_jobs(3, 7, 7, 7),
+
+    ?assertEqual(
+        ['ok', 'ok', {'error', 'job_queue_full'}],
+        [riak_core_job_manager:submit(J) || J <- Jobs]),
+
+    jobs_test_util:wait_for_jobs([Job1, Job2]),
+
+    ?assertMatch([_|_], riak_core_job_manager:stats()),
+    ?assertMatch([_|_], riak_core_job_manager:stats(Job1)),
+    ?assertMatch([_|_], riak_core_job_manager:stats(Job2)),
+    ?assertEqual(false, riak_core_job_manager:stats(Job3)),
+
+    riak_core_job_sup:stop_test_sup(TestSup).
 

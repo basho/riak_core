@@ -24,7 +24,7 @@
 % behaviour callbacks
 -export([init_worker/3, handle_work/3]).
 
--include_lib("eunit/include/eunit.hrl").
+-include("../src/riak_core_job_internal.hrl").
 
 -define(P1_CONCURRENCY,  3).
 -define(P1_PARTITION,   13).
@@ -58,6 +58,18 @@ receive_result(N) ->
     end.
 
 test_worker_pool(Partition, PoolSize, Arg) ->
+    % The original worker pool had an unlimited queue length and PoolSize
+    % worker processes. There's no way to replicate that static configuration,
+    % but try to get somewhere close to it.
+    % Settings are in the jobs manager configuration, since they have no
+    % actual effect in the pool facade itself.
+    Props = [
+        {?JOB_SVC_CONCUR_LIMIT, PoolSize},
+        {?JOB_SVC_QUEUE_LIMIT,  10000},
+        {?JOB_SVC_IDLE_MIN,     0},
+        {?JOB_SVC_IDLE_MAX,     PoolSize}
+    ],
+    ?assertEqual('ok', jobs_test_util:set_config(Props)),
     {'ok', TestSup} = riak_core_job_sup:start_test_sup(),
     {'ok', Pool} = riak_core_vnode_worker_pool:start_link(
                         ?MODULE, PoolSize, Partition, Arg, []),
