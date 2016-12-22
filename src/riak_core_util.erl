@@ -1027,10 +1027,11 @@ bounded_pmap_test_() ->
 make_fold_req_test_() ->
     {setup,
      fun() ->
+             meck:unload(),
              meck:new(riak_core_capability, [passthrough])
      end,
      fun(_) ->
-             meck:unload(riak_core_capability)
+             ok
      end,
      [
       fun() ->

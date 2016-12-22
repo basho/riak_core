@@ -35,10 +35,6 @@
 %% Field debugging
 -export([get_tab/0]).
 
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
-
 -record(idxrec, {key, idx, mod, pid, monref}).
 -record(monrec, {monref, key}).
 

@@ -52,12 +52,16 @@ simple_test_() ->
     {setup,
      fun setup_simple/0,
      fun(OldVars) ->
-             riak_core_ring_manager:stop(),
-	     application:stop(exometer),
-	     application:stop(lager),
-	     application:stop(goldrush),
-             [ok = application:set_env(riak_core, K, V) || {K,V} <- OldVars],
-             ok
+         unlink(whereis(riak_core_ring_manager)),
+         RingEventsPid = whereis(riak_core_ring_events),
+         unlink(RingEventsPid),
+         riak_core_ring_manager:stop(),
+         riak_core_test_util:stop_pid(RingEventsPid),
+         application:stop(exometer),
+         application:stop(lager),
+         application:stop(goldrush),
+         [ok = application:set_env(riak_core, K, V) || {K,V} <- OldVars],
+         ok
      end,
      {timeout, 600,
       ?_assertEqual(true, quickcheck(?QC_OUT(numtests(100, prop_simple()))))}}.

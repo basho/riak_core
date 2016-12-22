@@ -28,14 +28,19 @@
 -export([setup_mockring1/0,
          fake_ring/2,
          stop_pid/1,
-         wait_for_pid/1]).
+         wait_for_pid/1, stop_pid/2]).
 -include_lib("eunit/include/eunit.hrl").
 
 stop_pid(Other) when not is_pid(Other) ->
     ok;
 stop_pid(Pid) ->
+    stop_pid(Pid, kill).
+
+stop_pid(Other, _ExitType) when not is_pid(Other) ->
+    ok;
+stop_pid(Pid, ExitType) ->
     unlink(Pid),
-    exit(Pid, shutdown),
+    exit(Pid, ExitType),
     ok = wait_for_pid(Pid).
 
 wait_for_pid(Pid) ->
