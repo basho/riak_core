@@ -20,77 +20,113 @@
 %% -------------------------------------------------------------------
 {application, riak_core,
 [
-  {description, "Riak Core"},
-  {vsn, git},
-  {modules, []},
-  {registered, []},
-  {included_applications, [folsom, riak_ensemble]},
-  {applications, [
-                  kernel,
-                  stdlib,
-                  lager,
-                  sasl,
-                  crypto,
-                  riak_sysmon,
-                  os_mon,
-                  basho_stats,
-                  eleveldb,
-                  pbkdf2,
-                  exometer_core,
-                  clique
-                 ]},
-  {mod, {riak_core_app, []}},
-  {env, [
-         %% Cluster name
-         {cluster_name, "default"},
+    {description, "Riak Core"},
+    {vsn, "git"},
+    {modules, []},
+    {registered, [
+        riak_core_bg_manager,
+        riak_core_broadcast,
+        riak_core_capability,
+        riak_core_claimant,
+        riak_core_dist_mon,
+        riak_core_eventhandler_sup,
+        riak_core_gossip,
+        riak_core_handoff_listener_sup,
+        riak_core_handoff_manager,
+        riak_core_handoff_receiver_sup,
+        riak_core_handoff_sender_sup,
+        riak_core_handoff_sup,
+        riak_core_job_manager,
+        riak_core_job_service,
+        riak_core_job_sup,
+        riak_core_metadata_hashtree,
+        riak_core_metadata_manager,
+        riak_core_node_watcher,
+        riak_core_node_watcher_events,
+        riak_core_ring_events,
+        riak_core_ring_manager,
+        riak_core_stat,
+        riak_core_stat_cache,
+        riak_core_stat_calc_sup,
+        riak_core_stat_sup,
+        riak_core_stats_sup,
+        riak_core_sup,
+        riak_core_sysmon_minder,
+        riak_core_table_owner,
+        riak_core_tcp_mon,
+        riak_core_tracer,
+        riak_core_vnode_manager,
+        riak_core_vnode_master,
+        riak_core_vnode_proxy_sup,
+        riak_core_vnode_sup
+    ]},
+    {included_applications, [folsom, riak_ensemble]},
+    {applications, [
+        kernel,
+        stdlib,
+        lager,
+        sasl,
+        crypto,
+        riak_sysmon,
+        os_mon,
+        basho_stats,
+        eleveldb,
+        pbkdf2,
+        exometer_core,
+        clique
+    ]},
+    {mod, {riak_core_app, []}},
+    {env, [
+        %% Cluster name
+        {cluster_name, "default"},
 
-         %% Default location for ring, cluster and other data files
-         {platform_data_dir, "data"},
+        %% Default location for ring, cluster and other data files
+        {platform_data_dir, "data"},
 
-         %% Default ring creation size.  Make sure it is a power of 2,
-         %% e.g. 16, 32, 64, 128, 256, 512 etc
-         {ring_creation_size, 64},
+        %% Default ring creation size.  Make sure it is a power of 2,
+        %% e.g. 16, 32, 64, 128, 256, 512 etc
+        {ring_creation_size, 64},
 
-         %% Default gossip interval (milliseconds)
-         {gossip_interval, 60000},
+        %% Default gossip interval (milliseconds)
+        {gossip_interval, 60000},
 
-         %% Target N value
-         {target_n_val, 4},
+        %% Target N value
+        {target_n_val, 4},
 
-         %% Default claims functions
-         {wants_claim_fun, {riak_core_claim, default_wants_claim}},
-         {choose_claim_fun, {riak_core_claim, default_choose_claim}},
+        %% Default claims functions
+        {wants_claim_fun, {riak_core_claim, default_wants_claim}},
+        {choose_claim_fun, {riak_core_claim, default_choose_claim}},
 
-         %% Vnode inactivity timeout (how often to check if fallback vnodes
-         %% should return their data) in ms.
-         {vnode_inactivity_timeout, 60000},
+        %% Vnode inactivity timeout (how often to check if fallback vnodes
+        %% should return their data) in ms.
+        {vnode_inactivity_timeout, 60000},
 
-         %% Number of VNodes allowed to do handoff concurrently.
-         {handoff_concurrency, 2},
+        %% Number of VNodes allowed to do handoff concurrently.
+        {handoff_concurrency, 2},
 
-         %% Disable Nagle on HTTP sockets
-         {disable_http_nagle, true},
+        %% Disable Nagle on HTTP sockets
+        {disable_http_nagle, true},
 
-         %% Handoff IP/port
-         {handoff_port, 8099},
-         {handoff_ip, "0.0.0.0"},
+        %% Handoff IP/port
+        {handoff_port, 8099},
+        {handoff_ip, "0.0.0.0"},
 
-         %% Disterl buffer sizes in bytes.
-         %% These sizes (3*128*1024 & 6*128*1024) were
-         %% derived from a limited amount of testing in a
-         %% 10GE environment, and may need tuning for your
-         %% network and workload. In particular they're likely
-         %% too small to be optimal for larger object sizes.
-         {dist_send_buf_size, 393216},
-         {dist_recv_buf_size, 786432},
+        %% Disterl buffer sizes in bytes.
+        %% These sizes (3*128*1024 & 6*128*1024) were
+        %% derived from a limited amount of testing in a
+        %% 10GE environment, and may need tuning for your
+        %% network and workload. In particular they're likely
+        %% too small to be optimal for larger object sizes.
+        {dist_send_buf_size, 393216},
+        {dist_recv_buf_size, 786432},
 
-	 %% Exometer defaults
-	 {exometer_defaults,
-	  [
-	   {['_'], histogram, [{options,
-				[{histogram_module, exometer_slot_slide},
-				 {keep_high, 500}]}
-			    ]}
-	  ]}
-        ]}
- ]}.
+        %% Exometer defaults
+        {exometer_defaults,
+            [
+                {['_'], histogram, [{options,
+                    [{histogram_module, exometer_slot_slide},
+                        {keep_high, 500}]}
+                ]}
+            ]}
+    ]}
+]}.

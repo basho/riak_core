@@ -18,11 +18,12 @@
 %%
 %% -------------------------------------------------------------------
 
--module(riak_core_vnode_worker).
-
+%%
 %% @doc This module is deprecated and will be removed in v3!
-%% @see ../README_JOBS.md
+%%
 %% @deprecated Use module {@link riak_core_job_manager}.
+%%
+-module(riak_core_vnode_worker).
 -deprecated(module).
 
 -include("riak_core_vnode.hrl").

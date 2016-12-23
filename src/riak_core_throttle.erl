@@ -247,7 +247,7 @@ get_throttles(Conf, ConfigPrefix, TierNames, LoadFactorMeasure) ->
 %% @doc <p>Sets the throttle for the activity identified by `AppName' and `Key'
 %% to a value determined by consulting the limits for the activity. The
 %% throttle value is the value associated with the largest
-%% load factor <= `LoadFactor'.
+%% load factor that is less than or equal to `LoadFactor'.
 %% Normally the `LoadFactor' will be a number representing the current level
 %% of load for the activity, but it is also allowed to pass an atom or a tuple
 %% as the `LoadFactor'. This can be used when a numeric value cannot be

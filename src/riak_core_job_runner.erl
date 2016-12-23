@@ -18,10 +18,16 @@
 %%
 %% -------------------------------------------------------------------
 
+%% @private
+%% @doc Internal Job Runner Process.
+%%
+%% These processes are started and owned ONLY by the riak_core_job_sup
+%% supervisor.
+%%
 -module(riak_core_job_runner).
 
-% Public API
--export([start_link/0, run/4]).
+% Private API
+-export([start_link/0, run/3]).
 
 % Spawned Function
 -export([handle_event/0]).
@@ -29,11 +35,11 @@
 -include("riak_core_job_internal.hrl").
 
 %% ===================================================================
-%% API functions
+%% Private API
 %% ===================================================================
 
 -spec start_link() -> {'ok', pid()}.
-%%
+%% @private
 %% @doc Start a new process linked to the calling supervisor.
 %%
 start_link() ->
@@ -41,21 +47,20 @@ start_link() ->
 
 -spec run(
     Runner  :: pid(),
-    Manager :: atom() | pid(),
-    Ref     :: reference(),
+    MgrKey  :: riak_core_job_manager:mgr_key(),
     Job     :: riak_core_job:job())
         -> 'ok' | {'error', term()}.
-%%
+%% @private
 %% @doc Tell the specified runner to start the unit of work.
 %%
 %% The specified reference is passed in callbacks to the jobs service.
 %%
-run(Runner, Manager, Ref, Job) ->
-    Msg = {'start', erlang:self(), Manager, Ref, Job},
+run(Runner, MgrKey, Job) ->
+    Msg = {'start', erlang:self(), MgrKey, Job},
     case erlang:is_process_alive(Runner) of
         'true' ->
             _ = erlang:send(Runner, Msg),
-            receive {'started', Ref} ->
+            receive {'started', MgrKey} ->
                 'ok'
             after 9999 ->
                 {'error', 'timeout'}
@@ -69,18 +74,18 @@ run(Runner, Manager, Ref, Job) ->
 %% ===================================================================
 
 -spec handle_event() -> no_return().
-%
-% Check pending events and report whether to continue running or exit.
-%
+%% @private
+%% @doc Check pending events and continue running or exit.
+%%
 handle_event() ->
     _ = erlang:erase(),
     _ = erlang:process_flag('trap_exit', 'true'),
     receive
         {'EXIT', _, Reason} ->
             erlang:exit(Reason);
-        {'start', Starter, Manager, Ref, Job} ->
-            _ = erlang:send(Starter, {'started', Ref}),
-            run(Manager, Ref, Job)
+        {'start', Starter, MgrKey, Job} ->
+            _ = erlang:send(Starter, {'started', MgrKey}),
+            run(MgrKey, Job)
     end,
     handle_event().
 
@@ -89,19 +94,18 @@ handle_event() ->
 %% ===================================================================
 
 -spec run(
-    Manager :: atom() | pid(),
-    Ref     :: reference(),
+    MgrKey  :: riak_core_job_manager:mgr_key(),
     Job     :: riak_core_job:job())
         -> 'ok'.
-%%
-%% @doc Run one unit of work.
-%%
-run(Manager, Ref, Job) ->
+%
+% Run one unit of work.
+%
+run(MgrKey, Job) ->
     Work = riak_core_job:work(Job),
-    riak_core_job_manager:starting(Manager, Ref),
-    Ret1 = riak_core_job:invoke(riak_core_job:setup(Work), Manager),
-    riak_core_job_manager:running(Manager, Ref),
+    riak_core_job_manager:starting(MgrKey),
+    Ret1 = riak_core_job:invoke(riak_core_job:setup(Work), MgrKey),
+    riak_core_job_manager:running(MgrKey),
     Ret2 = riak_core_job:invoke(riak_core_job:main(Work), Ret1),
-    riak_core_job_manager:cleanup(Manager, Ref),
+    riak_core_job_manager:cleanup(MgrKey),
     Ret3 = riak_core_job:invoke(riak_core_job:cleanup(Work), Ret2),
-    riak_core_job_manager:finished(Manager, Ref, Ret3).
+    riak_core_job_manager:finished(MgrKey, Ret3).

@@ -21,8 +21,8 @@
 -ifndef(riak_core_job_internal_included).
 -define(riak_core_job_internal_included, true).
 
-%% Macros shared among the processes in the job supervision tree.
-%% There is NOTHING in this file that should be used outside those processes!
+%% Macros shared among the processes in the async job management modules.
+%% There is little, if anything, here that should be used outside those modules!
 
 -ifdef(PULSE).
 -compile([
@@ -39,17 +39,23 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--include_lib("riak_core_vnode.hrl").
--include_lib("riak_core_job.hrl").
+-include("riak_core_vnode.hrl").
+-include("riak_core_job.hrl").
 
 -ifdef(namespaced_types).
--type dict_t(K,V)       ::  dict:dict(K, V).
--type orddict_t(K,V)    ::  orddict:orddict(K, V).
--type queue_t(T)        ::  queue:queue(T).
+-define(dict_t(K,V),    dict:dict(K, V)).
+-define(orddict_t(K,V), orddict:orddict(K, V)).
+-define(queue_t(T),     queue:queue(T)).
 -else.
--type dict_t(_,_)       ::  dict().
--type orddict_t(_,_)    ::  orddict:orddict().
--type queue_t(_)        ::  queue().
+-define(dict_t(K,V),    dict()).
+-define(orddict_t(K,V), orddict:orddict()).
+-define(queue_t(T),     queue()).
+-endif.
+
+-ifdef(edoc).
+-define(opaque, -opaque).
+-else.
+-define(opaque, -type).
 -endif.
 
 -define(JOBS_MGR_NAME,  riak_core_job_manager).
@@ -65,6 +71,9 @@
 %% I don't dare expose this globally, but in the job management stuff allow
 %% something resembling sane if/else syntax.
 -define(else,   'true').
+
+%% This is just handy to have around because it's used a lot.
+-define(is_non_neg_int(Term),   erlang:is_integer(Term) andalso Term >= 0).
 
 %% The servers including this file implement gen_server, so this is a shortcut
 %% to stuff an asynchronous message into their own message queue.

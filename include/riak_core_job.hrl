@@ -25,12 +25,14 @@
 %% Jobs API Configuration keys.
 %%
 %% Refer to riak_core_job_manager module documentation for usage.
+%% Keep these in sync with the above module documentation, where they're
+%% hard-coded for EDoc.
 %%
--define(JOB_SVC_CONCUR_LIMIT,   'job_concurrency_limit').
--define(JOB_SVC_HIST_LIMIT,     'job_history_limit').
--define(JOB_SVC_IDLE_MAX,       'job_idle_max_limit').
--define(JOB_SVC_IDLE_MIN,       'job_idle_min_limit').
--define(JOB_SVC_QUEUE_LIMIT,    'job_queue_limit').
+-define(JOB_SVC_CONCUR_LIMIT,   job_concurrency_limit).
+-define(JOB_SVC_HIST_LIMIT,     job_history_limit).
+-define(JOB_SVC_IDLE_MAX,       job_idle_max_limit).
+-define(JOB_SVC_IDLE_MIN,       job_idle_min_limit).
+-define(JOB_SVC_QUEUE_LIMIT,    job_queue_limit).
 
 %%
 %% Default configuration values.
@@ -46,10 +48,12 @@
 %%  defined using the configuration syntax.
 %%
 %% Refer to the riak_core_job_manager module documentation for details.
+%% Keep these in sync with the above module documentation, where they're
+%% hard-coded for EDoc.
 %%
--define(JOB_SVC_DEFAULT_CONCUR, {'scheds',  6}).
--define(JOB_SVC_DEFAULT_QUEUE,  {'concur',  3}).
--define(JOB_SVC_DEFAULT_HIST,   {'concur',  1}).
+-define(JOB_SVC_DEFAULT_CONCUR, {scheds,  6}).
+-define(JOB_SVC_DEFAULT_QUEUE,  {concur,  3}).
+-define(JOB_SVC_DEFAULT_HIST,   {concur,  1}).
 
 %%
 %% Values for riak_core_job:priority(), whose type is defined as

@@ -21,56 +21,59 @@
 %%
 %% @doc Public Job Management API.
 %%
-%% Configuration:
+%% Note:    All configuration keys, and their simple defaults, are defined as
+%%          macros in riak_core_job.hrl for use in code.
 %%
-%%  Calculated :: {Val :: 'concur' | 'cores' | 'scheds', Mult :: pos_integer()}.
+%% ===Configuration:===
+%%
+%%  Calculated :: {Val :: `concur' | `cores' | `scheds', Mult :: pos_integer()}.
 %%  where Val represents a derived value:
 %%
-%%      `concur' -  The effective value of ?JOB_SVC_CONCUR_LIMIT. If it has
+%%      `concur' -  The effective value of `job_concurrency_limit'. If it has
 %%                  not yet been evaluated, the result is calculated as if
 %%                  Val == `scheds'.
 %%
-%%      `cores'  -  The value of erlang:system_info('logical_processors').
+%%      `cores'  -  The value of `erlang:system_info(logical_processors)'.
 %%                  If the system returns anything other than a pos_integer(),
 %%                  the result is calculated as if Val == `scheds'.
 %%
-%%      `scheds' -  The value of erlang:system_info('schedulers'). This value
+%%      `scheds' -  The value of `erlang:system_info(schedulers)'. This value
 %%                  is always a pos_integer(), so there's no fallback.
 %%
 %% Calculated values are determined at initialization, they ARE NOT dynamic!
 %%
-%% Application Keys:
+%% ===Application Keys:===
 %%
 %% Note that keys are scoped to the application that started the Jobs
-%% components, they are NOT explicitly scoped to 'riak_core', though that's
+%% components, they are NOT explicitly scoped to `riak_core', though that's
 %% their expected use case and the default if no application is defined.
 %%
-%%  {?JOB_SVC_CONCUR_LIMIT, pos_integer() | Calculated}
+%%  {`job_concurrency_limit', pos_integer() | Calculated}
 %%      Maximum number of jobs to execute concurrently.
 %%      Note that if this is initialized as {'concur', Mult} then the result
 %%      is calculated as {'scheds', Mult}.
-%%      Default: ?JOB_SVC_DEFAULT_CONCUR.
+%%      Default: {`scheds', 6}.
 %%
-%%  {?JOB_SVC_QUEUE_LIMIT, non_neg_integer() | Calculated}
+%%  {`job_queue_limit', non_neg_integer() | Calculated}
 %%      Maximum number of jobs to queue for future execution.
-%%      Default: ?JOB_SVC_DEFAULT_QUEUE.
+%%      Default: {`concur', 3}.
 %%
-%%  {?JOB_SVC_HIST_LIMIT, non_neg_integer() | Calculated}
+%%  {`job_history_limit', non_neg_integer() | Calculated}
 %%      Maximum number of completed jobs' histories to maintain.
-%%      Default: ?JOB_SVC_DEFAULT_HIST.
+%%      Default: {`concur', 1}.
 %%
-%%  {?JOB_SVC_IDLE_MIN, non_neg_integer() | Calculated}
+%%  {`job_idle_min_limit', non_neg_integer() | Calculated}
 %%      Minimum number of idle runner processes to keep available.
 %%      Idle processes are added opportunistically; the actual count at any
 %%      given instant can be lower.
-%%      Default: max(({'concur', 1} div 8), 3).
+%%      Default: min({`concur', 1}, max(({`concur', 1} div 8), 3)).
 %%
-%%  {?JOB_SVC_IDLE_MAX, non_neg_integer() | Calculated}
+%%  {`job_idle_max_limit', non_neg_integer() | Calculated}
 %%      Maximum number of idle runner processes to keep available.
 %%      Idle processes are culled opportunistically; the actual count at any
-%%      given instant can be higher.If the specified value resolves to
-%%      < ?JOB_SVC_IDLE_MIN, then (?JOB_SVC_IDLE_MIN * 2) is used.
-%%      Default: max((?JOB_SVC_IDLE_MIN * 2), ({'scheds', 1} - 1)).
+%%      given instant can be higher. If the specified value resolves to
+%%      less than `job_idle_min_limit', then (`job_idle_min_limit' * 2) is used.
+%%      Default: max((`job_idle_min_limit' * 2), ({`scheds', 1} - 1)).
 %%
 -module(riak_core_job_manager).
 -behaviour(gen_server).
@@ -80,6 +83,7 @@
     cancel/2,
     config/0,
     find/1,
+    reconfigure/0,
     stats/0,
     stats/1,
     submit/1
@@ -93,19 +97,23 @@
     cfg_mult/0,
     cfg_prop/0,
     config/0,
-    jid/0,
-    job/0,
+    mgr_key/0,
     stat/0,
     stat_key/0,
     stat_val/0
 ]).
 
-% Private API
+% Work Callback API
 -export([
-    cleanup/2,
-    finished/3,
-    running/2,
-    starting/2
+    running_job/1
+]).
+
+% Runner Callback API
+-export([
+    cleanup/1,
+    finished/2,
+    running/1,
+    starting/1
 ]).
 
 % Gen_server API
@@ -122,11 +130,30 @@
 -include("riak_core_job_internal.hrl").
 
 %% ===================================================================
-%% Types
+%% Internal Types
 %% ===================================================================
 
+%
+% WARNING: This file has entries in dialyzer.ignore-warnings
+%
+% Edits may change matching patterns or necessity - be sure to check/update
+% if you're working in that area.
+%
+% The dialyzer attribute below turns off the warning starting in OTP-18, but
+% check occasionally to see if it still matters - it's an erroneous warning
+% from dialyzer that may be fixed in a newer release, as the types are
+% suitably tagged.
+%
+-dialyzer({no_opaque, c_erase/2}).
+
 -define(StatsDict,  orddict).
--type stats()   ::  orddict_t(stat_key(), stat_val()).
+-type stats()   ::  ?orddict_t(stat_key(), stat_val()).
+
+% mgr_key() opaque type
+-record(mgrkey, {
+    mgr     ::  pid(),  % manager process
+    key     ::  rkey()  % reference into the 'run' dictionary
+}).
 
 % JobId/Job pair, always kept together
 -record(jrec, {
@@ -149,28 +176,25 @@
 % Job queue of JobId/Job pairs
 -record(jq, {
     c   = 0             ::  non_neg_integer(),      % count
-    d   = queue:new()   ::  queue_t(jrec())         % data
+    d   = queue:new()   ::  ?queue_t(jrec())        % data
 }).
 
 % 'location' dictionary, JobId => location atom or ref
 % count is not maintained
 -record(ld, {
-    d   = dict:new()    ::  dict_t(jid(), jloc())   % data
+    d   = dict:new()    ::  ?dict_t(jid(), jloc())  % data
 }).
 
 % 'running' dictionary, RunnerRef => full record
 -record(rd, {
     c   = 0             ::  non_neg_integer(),      % count
-    d   = dict:new()    ::  dict_t(rkey(), rrec())  % data
+    d   = dict:new()    ::  ?dict_t(rkey(), rrec()) % data
 }).
 
 -record(state, {
     rmax                            ::  pos_integer(),
     qmax                            ::  non_neg_integer(),
     hmax                            ::  non_neg_integer(),
-    rcnt        = 0                 ::  non_neg_integer(),
-    qcnt        = 0                 ::  non_neg_integer(),
-    hcnt        = 0                 ::  non_neg_integer(),
     pending     = false             ::  boolean(),
     shutdown    = false             ::  boolean(),
     loc         = #ld{}             ::  ldict(),    % jid() => jloc()
@@ -180,16 +204,8 @@
     stats       = ?StatsDict:new()  ::  stats()     % stat_key() => stat_val()
 }).
 
--type cfg_concur_max()  ::  {?JOB_SVC_CONCUR_LIMIT, pos_integer() | cfg_mult()}.
--type cfg_hist_max()    ::  {?JOB_SVC_HIST_LIMIT, non_neg_integer() | cfg_mult()}.
--type cfg_queue_max()   ::  {?JOB_SVC_QUEUE_LIMIT, non_neg_integer() | cfg_mult()}.
--type cfg_mult()        ::  riak_core_job_service:cfg_mult().
--type cfg_prop()        ::  cfg_concur_max() | cfg_hist_max() | cfg_queue_max()
-                        |   riak_core_job_service:cfg_prop().
-
 -type ckey()        ::  jid() | rkey().
 -type coll()        ::  jque() | ldict() | rdict().
--type config()      ::  [cfg_prop()].
 -type crec()        ::  jrec() | rrec() | {jid(), jloc()}.
 -type jid()         ::  riak_core_job:gid().
 -type jloc()        ::  queue | history | rkey().
@@ -202,36 +218,47 @@
 -type rrec()        ::  #rrec{}.
 -type rref()        ::  #rref{}.
 -type runner()      ::  riak_core_job_service:runner().
--type service()     ::  atom() | pid().
--type stat()        ::  {stat_key(), stat_val()}.
--type stat_key()    ::  atom() | tuple().
--type stat_val()    ::  term().
 -type state()       ::  #state{}.
 
 -define(is_job_loc(Term),   erlang:is_reference(Term)
         orelse Term =:= queue orelse Term =:= history).
-%
-% Implementation Notes:
-%
-%   Where feasible, decisions based on State are made with distinct function
-%   heads for efficiency and clarity.
-%
-%   Also for clarity, only State elements used for pattern matching are bound
-%   in function heads ... most of the time.
-%
-%   Operations that have to find (or worse, remove) Jobs that are in a state
-%   other than 'running' are inefficient.
-%   This is a deliberate trade-off to make advancing jobs through the
-%   'queued' -> 'running' -> 'history' states efficient.
-%
+
+%% ===================================================================
+%% Public Types
+%% ===================================================================
+
+-type cfg_concur_max() :: {?JOB_SVC_CONCUR_LIMIT, pos_integer() | cfg_mult()}.
+-type cfg_hist_max()  :: {?JOB_SVC_HIST_LIMIT, non_neg_integer() | cfg_mult()}.
+-type cfg_queue_max() :: {?JOB_SVC_QUEUE_LIMIT, non_neg_integer() | cfg_mult()}.
+-type cfg_mult()    ::  riak_core_job_service:cfg_mult().
+-type cfg_prop()    ::  cfg_concur_max() | cfg_hist_max() | cfg_queue_max()
+                    |   riak_core_job_service:cfg_prop().
+
+-type config() :: [cfg_prop()].
+%% Job Manager configuration.
+
+?opaque mgr_key() :: #mgrkey{}.
+%% An object used by running Jobs' UoWs to refer back to their state in their
+%% owning Manager.
+
+-type stat() :: {stat_key(), stat_val()}.
+%% A single statistic.
+
+-type stat_key() :: atom() | tuple().
+%% The Key by which a statistic is referenced.
+
+-type stat_val() :: term().
+%% The value of a statistic.
 
 %% ===================================================================
 %% Public API
 %% ===================================================================
 
--spec cancel(JobOrId :: job() | jid(), Kill :: boolean())
-        ->  {ok, killed | canceled | history, job()}
-            | {error, running, job()} | false | {error, term()}.
+-spec cancel(
+    JobOrId :: riak_core_job:job() | riak_core_job:gid(),
+    Kill    :: boolean())
+        ->  {ok, killed | canceled | history, riak_core_job:job()}
+            | {error, running, riak_core_job:job()} | false | {error, term()}.
 %%
 %% @doc Cancel, or optionally kill, the specified Job.
 %%
@@ -263,8 +290,15 @@ cancel(JobOrId, Kill) ->
     end,
     gen_server:call(?JOBS_MGR_NAME, {cancel, JobId, Kill}).
 
--spec find(JobOrId :: job() | jid())
-        -> {ok, job()} | false | {error, term()}.
+-spec config() -> config() | {error, term()}.
+%%
+%% @doc Return the current effective Jobs Management configuration.
+%%
+config() ->
+    gen_server:call(?JOBS_MGR_NAME, config).
+
+-spec find(JobOrId :: riak_core_job:job() | riak_core_job:gid())
+        -> {ok, riak_core_job:job()} | false | {error, term()}.
 %%
 %% @doc Return the latest instance of the specified Job.
 %%
@@ -279,12 +313,12 @@ find(JobOrId) ->
     end,
     gen_server:call(?JOBS_MGR_NAME, {find, JobId}).
 
--spec config() -> config() | {error, term()}.
+-spec reconfigure() -> ok.
 %%
-%% @doc Return the current effective Jobs Management configuration.
+%% @doc Re-read application environment configuration and adjust accordingly.
 %%
-config() ->
-    gen_server:call(?JOBS_MGR_NAME, config).
+reconfigure() ->
+    gen_server:cast(?JOBS_MGR_NAME, ?job_svc_cfg_token).
 
 -spec stats() -> [stat()] | {error, term()}.
 %%
@@ -293,7 +327,8 @@ config() ->
 stats() ->
     gen_server:call(?JOBS_MGR_NAME, stats).
 
--spec stats(JobOrId :: job() | jid()) -> [stat()] | false | {error, term()}.
+-spec stats(JobOrId :: riak_core_job:job() | riak_core_job:gid())
+        -> [riak_core_job:stat()] | false | {error, term()}.
 %%
 %% @doc Return statistics from the specified Job.
 %%
@@ -308,9 +343,9 @@ stats(JobOrId) ->
     end,
     gen_server:call(?JOBS_MGR_NAME, {stats, JobId}).
 
--spec submit(Job :: job()) -> ok | {error, term()}.
+-spec submit(Job :: riak_core_job:job()) -> ok | {error, term()}.
 %%
-%% @doc Submit a job to run on the specified scope(s).
+%% @doc Submit a Job to be run.
 %%
 submit(Job) ->
     case riak_core_job:version(Job) of
@@ -321,36 +356,50 @@ submit(Job) ->
     end.
 
 %% ===================================================================
-%% Private API
+%% Work Callback API
 %% ===================================================================
 
--spec cleanup(Manager :: service(), Ref :: rkey()) -> ok.
+-spec running_job(MgrKey :: mgr_key()) -> riak_core_job:job() | {error, term()}.
 %%
+%% @doc Returns the running Job associated with MgrKey.
+%%
+%% This function should only be invoked by a UoW while it's running.
+%% In any other case, it returns `{error, not_running}'.
+%%
+running_job(#mgrkey{mgr = Mgr, key = Key}) ->
+    gen_server:call(Mgr, {running_job, Key}).
+
+%% ===================================================================
+%% Runner Callback API
+%% ===================================================================
+
+-spec cleanup(MgrKey :: mgr_key()) -> ok.
+%% @private
 %% @doc Callback for the job runner indicating the UOW is being cleaned up.
 %%
-cleanup(Manager, Ref) ->
-    update_job(Manager, Ref, cleanup).
+cleanup(MgrKey) ->
+    update_job(MgrKey, cleanup).
 
--spec finished(Manager :: service(), Ref :: rkey(), Result :: term()) -> ok.
-%%
+-spec finished(MgrKey :: mgr_key(), Result :: term()) -> ok.
+%% @private
 %% @doc Callback for the job runner indicating the UOW is finished.
 %%
-finished(Manager, Ref, Result) ->
-    update_job(Manager, Ref, finished, Result).
+finished(MgrKey, Result) ->
+    update_job(MgrKey, finished, Result).
 
--spec running(Manager :: service(), Ref :: rkey()) -> ok.
-%%
+-spec running(MgrKey :: mgr_key()) -> ok.
+%% @private
 %% @doc Callback for the job runner indicating the UOW is being run.
 %%
-running(Manager, Ref) ->
-    update_job(Manager, Ref, running).
+running(MgrKey) ->
+    update_job(MgrKey, running).
 
--spec starting(Manager :: service(), Ref :: rkey()) -> ok.
-%%
+-spec starting(MgrKey :: mgr_key()) -> ok.
+%% @private
 %% @doc Callback for the job runner indicating the UOW is being started.
 %%
-starting(Manager, Ref) ->
-    update_job(Manager, Ref, started).
+starting(MgrKey) ->
+    update_job(MgrKey, started).
 
 %% ===================================================================
 %% Gen_server API
@@ -358,7 +407,7 @@ starting(Manager, Ref) ->
 
 -spec code_change(OldVsn :: term(), State :: state(), Extra :: term())
         -> {ok, state()}.
-%
+%% @private
 % we don't care, just carry on
 %
 code_change(_, State, _) ->
@@ -366,6 +415,8 @@ code_change(_, State, _) ->
 
 -spec handle_call(Msg :: term(), From :: {pid(), term()}, State :: state())
         -> {reply, term(), state()} | {stop, term(), term(), state()}.
+%% @private
+%% @end
 %
 % config() -> config() | {error, term()}.
 %
@@ -432,9 +483,17 @@ handle_call({find, JobId}, _, State) ->
         {ok, _, #jrec{job = Job}} ->
             {reply, {ok, Job}, State};
         false ->
-            {reply, false, State};
-        {error, What} = Error ->
-            {stop, What, Error, State}
+            {reply, false, State}
+    end;
+%
+% running_job(MgrKey :: mgr_key()) -> riak_core_job:job() | {'error', term()}.
+%
+handle_call({running_job, Key}, _, State) ->
+    case c_find(Key, State#state.run) of
+        #rrec{jrec = #jrec{job = Job}} ->
+            {reply, Job, State};
+        false ->
+            {reply, {error, not_running}, State}
     end;
 %
 % stats() -> [stat()] | {'error', term()}.
@@ -446,9 +505,9 @@ handle_call(stats, _, State) ->
         {concur,    State#state.rmax},
         {maxque,    State#state.qmax},
         {maxhist,   State#state.hmax},
-        {running,   State#state.rcnt},
-        {inqueue,   State#state.qcnt},
-        {history,   State#state.hcnt},
+        {running,   State#state.run#rd.c},
+        {inqueue,   State#state.que#jq.c},
+        {history,   State#state.hist#jq.c},
         {service,   gen_server:call(?JOBS_SVC_NAME, stats)}
         | ?StatsDict:to_list(State#state.stats) ],
     {reply, Result, State};
@@ -460,12 +519,10 @@ handle_call({stats, JobId}, _, State) ->
         {ok, _, #jrec{job = Job}} ->
             {reply, riak_core_job:stats(Job), State};
         false ->
-            {reply, false, State};
-        {error, What} = Error ->
-            {stop, What, Error, State}
+            {reply, false, State}
     end;
 %
-% submit(job()) -> 'ok' | {'error', term()}.
+% submit(Job :: job()) -> 'ok' | {'error', term()}.
 %
 handle_call({submit = Phase, Job}, From, StateIn) ->
     case submit_job(Phase, Job, From, StateIn) of
@@ -484,6 +541,8 @@ handle_call(Msg, {Who, _}, State) ->
 
 -spec handle_cast(Msg :: term(), State :: state())
         -> {noreply, state()} | {stop, term(), state()}.
+%% @private
+%% @end
 %
 % internal 'pending' message
 %
@@ -501,40 +560,23 @@ handle_cast(pending, StateIn) ->
         {shutdown, State} ->
             {stop, shutdown, State};
         {{error, _} = Error, State} ->
-            {stop, Error, State};
-        {error, _} = Error ->
-            {stop, Error, StateIn}
+            {stop, Error, State}
     end;
 %
-% status update from a running (or finishing) job
+% update_job(MgrKey :: mgr_key(), Stat :: atom(), Info :: term()) -> ok.
 %
-% These are sent directly from the riak_core_job_service module's private
-% interface used by the riak_core_job_runner.
-%
-handle_cast({Ref, update, finished = Stat, TS, Result}, State)
-        when    State#state.que#jq.c =:= 0
-        orelse  State#state.que#rd.c > State#state.rmax ->
-    % The queue is empty or our concurrency limit's been reduced - either way
-    % we have no current use for this Runner.
+handle_cast({Ref, update, finished = Stat, TS, Result}, State) ->
     case c_remove(Ref, State#state.run) of
         {#rrec{rref = RRef, jrec = JRec}, Run} ->
             State1 = State#state{run = Run},
-            State2 = case release_runner(RRef) of
-                ok ->
-                    State1;
-                {error, What} ->
-                    _ = lager:error(
-                        "~s received error ~p releasing runner ~p",
-                        [?JOBS_MGR_NAME, What, Result, RRef]),
-                    inc_stat(service_errors, State1)
-            end,
+            _ = release_runner(RRef),
             Job = riak_core_job:update(
                 result, Result, riak_core_job:update(Stat, TS, JRec#jrec.job)),
-            case advance(JRec#jrec{job = Job}, history, State2) of
-                {ok, State3} ->
-                    {noreply, State3};
-                {{error, Error}, State3} ->
-                    {stop, Error, State3}
+            case advance(JRec#jrec{job = Job}, history, State1) of
+                {ok, State2} ->
+                    {noreply, State2};
+                {{error, Error}, State2} ->
+                    {stop, Error, State2}
             end;
         {false, _} ->
             _ = lager:error(
@@ -542,30 +584,9 @@ handle_cast({Ref, update, finished = Stat, TS, Result}, State)
                 [?JOBS_MGR_NAME, Stat, Result, Ref]),
             {noreply, inc_stat(update_errors, State)}
     end;
-
-handle_cast({Ref, update, finished = Stat, TS, Result}, State) ->
-    case c_find(Ref, State#state.run) of
-        #rrec{rref = RRef, jrec = JRec} ->
-            Job = riak_core_job:update(
-                result, Result, riak_core_job:update(Stat, TS, JRec#jrec.job)),
-            case advance(JRec#jrec{job = Job}, history, State) of
-                {ok, State1} ->
-                    case advance(queue, RRef, State1) of
-                        {ok, State2} ->
-                            {noreply, State2};
-                        {{error, Error}, State2} ->
-                            {stop, Error, State2}
-                    end;
-                {{error, Error}, State1} ->
-                    {stop, Error, State1}
-            end;
-        false ->
-            _ = lager:error(
-                "~s received completion message ~p:~p for unknown job ref ~p",
-                [?JOBS_MGR_NAME, Stat, Result, Ref]),
-            {noreply, inc_stat(update_errors, State)}
-    end;
-
+%
+% update_job(MgrKey :: mgr_key(), Stat :: stat_key()) -> ok.
+%
 handle_cast({Ref, update, Stat, TS}, State) ->
     case c_find(Ref, State#state.run) of
         #rrec{jrec = JRec} = RRec ->
@@ -579,6 +600,32 @@ handle_cast({Ref, update, Stat, TS}, State) ->
             {noreply, inc_stat(update_errors, State)}
     end;
 %
+% configuration message
+%
+handle_cast(?job_svc_cfg_token,
+        #state{rmax = RMax, qmax = QMax, hmax = HMax} = State) ->
+
+    % Tell the riak_core_job_service server to [re]configure itself too, right
+    % away, so it can get a jump on possibly cranking up available runners.
+    gen_server:cast(?JOBS_SVC_NAME, ?job_svc_cfg_token),
+
+    % Update the settings in the application environment.
+    App     = riak_core_job_service:default_app(),
+    Concur  = app_config(App, ?JOB_SVC_CONCUR_LIMIT),
+    QueMax  = app_config(App, ?JOB_SVC_QUEUE_LIMIT),
+    HistMax = app_config(App, ?JOB_SVC_HIST_LIMIT),
+
+    if
+        Concur /= RMax orelse QueMax /= QMax orelse HistMax /= HMax ->
+            _ = lager:info(
+                "Updating configuration from {~b, ~b, ~b} to {~b, ~b, ~b}",
+                [RMax, QMax, HMax, Concur, QueMax, HistMax]),
+            {noreply, check_pending(
+                State#state{rmax = Concur, qmax = QueMax, hmax = HistMax})};
+        ?else ->
+            {noreply, State}
+    end;
+%
 % unrecognized message
 %
 handle_cast(Msg, State) ->
@@ -587,6 +634,8 @@ handle_cast(Msg, State) ->
 
 -spec handle_info(Msg :: term(), State :: state())
         -> {noreply, state()} | {stop, term(), state()}.
+%% @private
+%% @end
 %
 % A monitored job crashed or was killed.
 % If it completed normally, a 'done' update arrived in our mailbox before this
@@ -614,7 +663,7 @@ handle_info({'DOWN', Ref, _, Pid, Info}, StateIn) ->
                 {{error, Error}, State} ->
                     {stop, Error, State}
             end;
-        false ->
+        {false, _} ->
             _ = lager:error(
                 "~s received 'DOWN' message for unrecognized process ~p",
                 [?JOBS_MGR_NAME, Pid]),
@@ -628,40 +677,25 @@ handle_info(Msg, State) ->
     {noreply, inc_stat(unhandled, State)}.
 
 -spec init(?MODULE) -> {ok, state()} | {stop, {error, term()}}.
+%% @private
 %
 % initialize from the application environment
 %
 init(?MODULE) ->
-    App = riak_core_job_service:default_app(),
-    RMax = riak_core_job_service:app_config(
-        App, ?JOB_SVC_CONCUR_LIMIT, 1, undefined, ?JOB_SVC_DEFAULT_CONCUR),
-    %
-    % The above does lots of good stuff for us, but we don't know if what we
-    % get back is exactly the same as what's in the application environment,
-    % so rather than reading and comparing just reset it and be done with it.
-    %
-    _ = application:set_env(App, ?JOB_SVC_CONCUR_LIMIT, RMax),
-
-    QMax = riak_core_job_service:app_config(
-        App, ?JOB_SVC_QUEUE_LIMIT, 0, RMax, ?JOB_SVC_DEFAULT_QUEUE),
-    HMax = riak_core_job_service:app_config(
-        App, ?JOB_SVC_HIST_LIMIT, 0, RMax, ?JOB_SVC_DEFAULT_HIST),
 
     % Make sure we get shutdown signals from the supervisor
     _ = erlang:process_flag(trap_exit, true),
 
-    % Tell the riak_core_job_service server to [re]configure itself.
-    IMin = riak_core_job_service:app_config(
-        App, ?JOB_SVC_IDLE_MIN, 0, RMax, erlang:max((RMax div 8), 3)),
-    IMax = riak_core_job_service:app_config(
-        App, ?JOB_SVC_IDLE_MAX, 0, RMax,
-        erlang:max((IMin * 2), (erlang:system_info(schedulers) - 1))),
-    gen_server:cast(?JOBS_SVC_NAME, {?job_svc_cfg_token,
-        [{?JOB_SVC_IDLE_MIN, IMin}, {?JOB_SVC_IDLE_MAX, IMax}]}),
+    % Get/update application environment values.
+    App     = riak_core_job_service:default_app(),
+    Concur  = app_config(App, ?JOB_SVC_CONCUR_LIMIT),
+    QueMax  = app_config(App, ?JOB_SVC_QUEUE_LIMIT),
+    HistMax = app_config(App, ?JOB_SVC_HIST_LIMIT),
 
-    {ok, #state{rmax = RMax, qmax = QMax, hmax = HMax}}.
+    {ok, #state{rmax = Concur, qmax = QueMax, hmax = HistMax}}.
 
 -spec start_link() -> {ok, pid()}.
+%% @private
 %
 % start named service
 %
@@ -669,6 +703,7 @@ start_link() ->
     gen_server:start_link({local, ?JOBS_MGR_NAME}, ?MODULE, ?MODULE, []).
 
 -spec terminate(Why :: term(), State :: state()) -> ok.
+%% @private
 %
 % no matter why we're terminating, de-monitor everything we're watching
 %
@@ -677,12 +712,14 @@ terminate({invalid_state, Line}, State) ->
         "~s terminated due to invalid state:~b: ~p",
         [?JOBS_MGR_NAME, Line, State]),
     terminate(shutdown, State);
+
 terminate(invalid_state, State) ->
     _ = lager:error(
         "~s terminated due to invalid state: ~p", [?JOBS_MGR_NAME, State]),
     terminate(shutdown, State);
-terminate(_, State) ->
-    _ = notify(State, ?JOB_ERR_SHUTTING_DOWN),
+
+terminate(Why, State) ->
+    _ = notify(State, Why),
     ok.
 
 %% ===================================================================
@@ -738,10 +775,10 @@ advance(#jrec{} = JRec, queue, State) ->
         loc = c_store({JRec#jrec.id, queue}, State#state.loc),
         stats = inc_stat(queued, State#state.stats)})};
 
-advance(#jrec{}, running, State)
-        when State#state.que#rd.c >= State#state.rmax ->
-    % this is a programming error, shouldn't have gotten here with run full
-    {{error, run_overflow}, inc_stat(run_overflow, State)};
+%%advance(#jrec{}, running, State)
+%%        when State#state.que#rd.c >= State#state.rmax ->
+%%    % this is a programming error, shouldn't have gotten here with run full
+%%    {{error, run_overflow}, inc_stat(run_overflow, State)};
 
 advance(#jrec{} = JRec, running, State) ->
     case acquire_runner() of
@@ -783,6 +820,17 @@ advance(Job, Dest, State) ->
         _ ->
             ?UNMATCHED_ARGS([Job, Dest])
     end.
+
+-spec app_config(App :: atom(), Key :: atom()) -> term().
+%
+% Returns the configured value for Key in the specified application scope.
+%
+app_config(App, ?JOB_SVC_QUEUE_LIMIT = Key) ->
+    riak_core_job_service:app_config(App, Key, 0, ?JOB_SVC_DEFAULT_QUEUE);
+app_config(App, ?JOB_SVC_HIST_LIMIT = Key) ->
+    riak_core_job_service:app_config(App, Key, 0, ?JOB_SVC_DEFAULT_HIST);
+app_config(App, Key) ->
+    riak_core_job_service:app_config(App, Key).
 
 -spec check_pending(State :: state()) -> state().
 %
@@ -834,14 +882,16 @@ find_job_by_id(JobId, State) ->
 %
 inc_stat(Stat, #state{stats = Stats} = State) ->
     State#state{stats = inc_stat(Stat, Stats)};
-inc_stat(Stat, Stats) when not erlang:is_list(Stat) ->
-    ?StatsDict:update_counter(Stat, 1, Stats);
-inc_stat([Stat], Stats) ->
-    inc_stat(Stat, Stats);
-inc_stat([Stat | More], Stats) ->
-    inc_stat(More, inc_stat(Stat, Stats));
-inc_stat([], Stats) ->
-    Stats.
+inc_stat(Stat, Stats) ->
+    ?StatsDict:update_counter(Stat, 1, Stats).
+%%inc_stat(Stat, Stats) when not erlang:is_list(Stat) ->
+%%    ?StatsDict:update_counter(Stat, 1, Stats);
+%%inc_stat([Stat], Stats) ->
+%%    inc_stat(Stat, Stats);
+%%inc_stat([Stat | More], Stats) ->
+%%    inc_stat(More, inc_stat(Stat, Stats));
+%%inc_stat([], Stats) ->
+%%    Stats.
 
 -spec notify(
     What    :: jrec() | rrec() | jque() | rdict() | state(),
@@ -851,10 +901,6 @@ inc_stat([], Stats) ->
 % Notifies whoever may care of the premature disposal of the job(s) in What
 % and returns Why.
 %
-notify(Coll, Why)
-        when erlang:is_record(Coll, rd) orelse erlang:is_record(Coll, jq) ->
-    c_fold(fun notify/2, Why, Coll);
-
 notify(#state{que = Que, run = Run}, Why) ->
     _ = notify(Que, {?JOB_ERR_CANCELED, Why}),
     _ = notify(Run, {?JOB_ERR_KILLED, Why}),
@@ -878,10 +924,13 @@ notify(#jrec{id = JobId, job = Job}, Why) ->
                     _ = riak_core_job:reply(Job, {error, Job, Why})
             end
     end,
-    Why.
+    Why;
+
+notify(Coll, Why) ->
+    c_fold(fun notify/2, Why, Coll).
 
 -spec pending(State :: state())
-        -> {ok | shutdown | {error, term()}, state()} | {error, term()}.
+        -> {ok | shutdown | {error, term()}, state()}.
 %
 % Dequeue and dispatch at most one job. If there are more jobs waiting, ensure
 % that we'll get to them after handling whatever may already be waiting.
@@ -934,7 +983,7 @@ pending(State) when State#state.hist#jq.c > State#state.hmax ->
 pending(State) ->
     {ok, State}.
 
--spec release_runner(RRef :: rref()) -> ok | {error, term()}.
+-spec release_runner(RRef :: rref()) -> ok.
 %
 % De-monitors and releases a Runner.
 %
@@ -958,7 +1007,8 @@ set_pending(State) ->
 % Wrapper around riak_core_job_runner:run/4 that fills in the blanks.
 %
 start_job(Runner, Ref, Job) ->
-    riak_core_job_runner:run(Runner, erlang:self(), Ref, Job).
+    riak_core_job_runner:run(
+        Runner, #mgrkey{mgr = erlang:self(), key = Ref}, Job).
 
 -spec submit_job(
     Phase   :: atom() | {atom(), term()},
@@ -1005,28 +1055,23 @@ submit_job(true, Job, _From, State) ->
     end;
 
 submit_job(false, _, _, State) ->
-    {{error, ?JOB_ERR_REJECTED}, inc_stat(rejected, State)};
+    {{error, ?JOB_ERR_REJECTED}, inc_stat(rejected, State)}.
 
-submit_job(Phase, Job, From, _State) ->
-    ?UNMATCHED_ARGS([Phase, Job, From]).
-
--spec update_job(Manager :: service(), Ref :: rkey(), Stat :: stat_key()) -> ok.
+-spec update_job(MgrKey :: mgr_key(), Stat :: stat_key()) -> ok.
 %
 % Update a Job's Stat with the current time.
 %
-update_job(Manager, Ref, Stat) ->
-    Update = {Ref, update, Stat, riak_core_job:timestamp()},
-    gen_server:cast(Manager, Update).
+update_job(#mgrkey{mgr = Mgr, key = Key}, Stat) ->
+    Update = {Key, update, Stat, riak_core_job:timestamp()},
+    gen_server:cast(Mgr, Update).
 
--spec update_job(
-    Manager :: service(), Ref :: rkey(), Stat :: atom(), Info :: term())
-        -> ok.
+-spec update_job(MgrKey :: mgr_key(), Stat :: atom(), Info :: term()) -> ok.
 %
 % Update a Job's Stat with the current time and additional Info.
 %
-update_job(Manager, Ref, Stat, Info) ->
-    Update = {Ref, update, Stat, riak_core_job:timestamp(), Info},
-    gen_server:cast(Manager, Update).
+update_job(#mgrkey{mgr = Mgr, key = Key}, Stat, Info) ->
+    Update = {Key, update, Stat, riak_core_job:timestamp(), Info},
+    gen_server:cast(Mgr, Update).
 
 %% ===================================================================
 %% Collections
@@ -1172,15 +1217,15 @@ c_fold(Fun, Accum, Coll) ->
 %
 % Remove and return Rec from collection Coll, or false if it is not found.
 %
-c_remove({Key, Val}, #ld{} = Coll) when ?is_job_loc(Val) ->
-    c_remove(Key, Coll);
-c_remove(Key, #ld{d = D} = Coll) when ?is_job_gid(Key) ->
-    case dict:find(Key, D) of
-        {ok, Val} ->
-            {{Key, Val}, Coll#ld{d = dict:erase(Key, D)}};
-        error ->
-            {false, Coll}
-    end;
+%%c_remove({Key, Val}, #ld{} = Coll) when ?is_job_loc(Val) ->
+%%    c_remove(Key, Coll);
+%%c_remove(Key, #ld{d = D} = Coll) when ?is_job_gid(Key) ->
+%%    case dict:find(Key, D) of
+%%        {ok, Val} ->
+%%            {{Key, Val}, Coll#ld{d = dict:erase(Key, D)}};
+%%        error ->
+%%            {false, Coll}
+%%    end;
 c_remove(#rrec{}, #rd{c = 0} = Coll) ->
     {false, Coll};
 c_remove(Key, #rd{c = 0} = Coll) when erlang:is_reference(Key) ->
@@ -1247,6 +1292,4 @@ q_pop(#jq{c = 0} = Que) ->
     {false, Que};
 q_pop(#jq{c = C, d = D} = Que) ->
     {{value, Val}, New} = queue:out(D),
-    {Val, Que#jq{c = (C - 1), d = New}};
-q_pop(Que) ->
-    ?UNMATCHED_ARGS([Que]).
+    {Val, Que#jq{c = (C - 1), d = New}}.

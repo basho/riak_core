@@ -131,16 +131,16 @@ init(?MODULE) ->
 -ifdef(TEST).
 
 -spec start_test_sup() -> {'ok', pid()}.
-%% @private
-%% @doc Starts a supervisor containing the job services for testing.
-%%
+%
+% Starts a supervisor containing the job services for testing.
+%
 start_test_sup() ->
     supervisor:start_link(?MODULE, 'riak_core_job_test_sup').
 
 -spec stop_test_sup(pid()) -> 'ok' | {'error', term()}.
-%% @private
-%% @doc Stops a supervisor created by {@link start_test_sup/0} synchronously.
-%%
+%
+% Stops a supervisor created by {@link start_test_sup/0} synchronously.
+%
 stop_test_sup(Pid) ->
     Mon = erlang:monitor('process', Pid),
     _ = erlang:unlink(Pid),
