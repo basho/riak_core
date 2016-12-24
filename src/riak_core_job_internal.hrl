@@ -93,7 +93,17 @@
 -define(UNMATCHED_ARGS(Args),
     erlang:error({unmatched, {?MODULE, ?LINE}, Args})).
 
-% Internal magic token - stay away!
+% Internal magic tokens - stay away!
+% These aren't intended to offer any security, they're mainly to avoid
+% mistakes by ensuring the processes we're talking to implement the behavior
+% we expect. In some cases we're only dealing with a pid, so these give us the
+% equivalent of a way to ask "are you who I think you are?"
 -define(job_svc_cfg_token,      '$config$611007$').
+-define(job_run_ctl_token,      '$control$19276$').
+
+%% How long to wait for a 'confirm' response.
+%% Note: DON'T encapsulate the 'confirm' exchange in a function - that would
+%% kinda defeat its purpose.
+-define(CONFIRM_MSG_TIMEOUT,    666).
 
 -endif. % riak_core_job_internal_included

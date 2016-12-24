@@ -75,6 +75,18 @@
 %%      less than `job_idle_min_limit', then (`job_idle_min_limit' * 2) is used.
 %%      Default: max((`job_idle_min_limit' * 2), ({`scheds', 1} - 1)).
 %%
+%%  {`job_idle_recycle', boolean()}
+%%      Controls whether job runner processes are re-used.
+%%      By default, each job runs in a pristine process, which is strongly
+%%      recommended. However, on a heavily-loaded node there *may* be
+%%      performance benefits to re-using these processes.
+%%      When enabled, runner processes are added to the idle queue when jobs
+%%      complete rather than being destroyed.
+%%      Re-using processes implies that jobs that receive messages must be
+%%      prepared to receive and disregard messages directed at previous
+%%      occupants of the process they're running in.
+%%      Default:`false'.
+%%
 -module(riak_core_job_manager).
 -behaviour(gen_server).
 
@@ -1007,8 +1019,8 @@ set_pending(State) ->
 % Wrapper around riak_core_job_runner:run/4 that fills in the blanks.
 %
 start_job(Runner, Ref, Job) ->
-    riak_core_job_runner:run(
-        Runner, #mgrkey{mgr = erlang:self(), key = Ref}, Job).
+    riak_core_job_runner:run(Runner, ?job_run_ctl_token,
+        #mgrkey{mgr = erlang:self(), key = Ref}, Job).
 
 -spec submit_job(
     Phase   :: atom() | {atom(), term()},

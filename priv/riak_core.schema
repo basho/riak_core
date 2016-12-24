@@ -259,7 +259,8 @@
     {validators, ["job_limit_value"]}
 ]}.
 
-%% @doc The minimum number of async job processes that are kept alive.
+%% @doc The minimum number of idle async job process runners that are kept
+%% available.
 %% This is a soft boundary that is maintained opportunistically.
 %% The default is calculated at runtime as the higher of 3 or
 %% 'job_concurrency_limit' / 8.
@@ -271,7 +272,8 @@
     {validators, ["job_limit_value"]}
 ]}.
 
-%% @doc The maximum number of async job processes that are kept alive.
+%% @doc The maximum number of idle async job process runners that are kept
+%% available.
 %% This is a soft boundary that is maintained opportunistically.
 %% The default is calculated at runtime as the higher of 2 x
 %% 'job_idle_min_limit' or <VM schedulers> - 1.
@@ -281,6 +283,21 @@
     {datatype, integer},
     {commented, 12},
     {validators, ["job_limit_value"]}
+]}.
+
+%% @doc Controls whether async job runner processes are re-used.
+%% By default, each job runs in a pristine process, which is strongly
+%% recommended. However, on a heavily-loaded node there *may* be performance
+%% benefits to re-using these processes, which are added to the idle queue when
+%% jobs complete rather than being destroyed. Re-using processes implies that
+%% jobs that receive messages must be prepared to receive and disregard messages
+%% directed at previous occupants of the process they're running in.
+%% @see job_idle_min_limit
+%% @see job_idle_max_limit
+{mapping, "job_idle_recycle", "riak_core.job_idle_recycle", [
+    {datatype, flag},
+    {default, off},
+    hidden
 ]}.
 
 {validator,

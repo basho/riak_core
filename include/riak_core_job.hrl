@@ -33,6 +33,7 @@
 -define(JOB_SVC_IDLE_MAX,       job_idle_max_limit).
 -define(JOB_SVC_IDLE_MIN,       job_idle_min_limit).
 -define(JOB_SVC_QUEUE_LIMIT,    job_queue_limit).
+-define(JOB_SVC_RECYCLE,        job_idle_recycle).
 
 %%
 %% Default configuration values.
@@ -51,9 +52,10 @@
 %% Keep these in sync with the above module documentation, where they're
 %% hard-coded for EDoc.
 %%
--define(JOB_SVC_DEFAULT_CONCUR, {scheds,  6}).
--define(JOB_SVC_DEFAULT_QUEUE,  {concur,  3}).
--define(JOB_SVC_DEFAULT_HIST,   {concur,  1}).
+-define(JOB_SVC_DEFAULT_CONCUR,     {scheds, 6}).
+-define(JOB_SVC_DEFAULT_QUEUE,      {concur, 3}).
+-define(JOB_SVC_DEFAULT_HIST,       {concur, 1}).
+-define(JOB_SVC_DEFAULT_RECYCLE,    false).
 
 %%
 %% Values for riak_core_job:priority(), whose type is defined as

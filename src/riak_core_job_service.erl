@@ -116,32 +116,33 @@
 -define(StatsDict,  orddict).
 -type stats()   ::  ?orddict_t(stat_key(), stat_val()).
 
-% Make sure rcnt/busy and icnt/idle are kept in sync!
+% Idle Runner.
+-record(rrec, {
+    ref     ::  rkey(),
+    pid     ::  runner()
+}).
+
+% Make sure icnt/idle are kept in sync!
 -record(state, {
-    rcnt        = 0                 ::  non_neg_integer(),
-    icnt        = 0                 ::  non_neg_integer(),
-    imin        = 0                 ::  non_neg_integer(),
-    imax        = 0                 ::  non_neg_integer(),
-    pending     = false             ::  boolean(),
-    shutdown    = false             ::  boolean(),
-    loc         = dict:new()        ::  locs(), % rkey() => rloc()
-    busy        = []                ::  busy(), % rrec()
-    idle        = queue:new()       ::  idle(), % rrec()
-    stats       = ?StatsDict:new()  ::  stats() % stat_key() => stat_val()
+    icnt        = 0                         ::  non_neg_integer(),
+    imin        = 0                         ::  non_neg_integer(),
+    imax        = 0                         ::  non_neg_integer(),
+    recycle     = ?JOB_SVC_DEFAULT_RECYCLE  ::  boolean(),
+    pending     = false                     ::  boolean(),
+    shutdown    = false                     ::  boolean(),
+    idle        = queue:new()               ::  idle(),
+    stats       = ?StatsDict:new()          ::  stats()
 }).
 
 -type cfg_idle_max()    ::  {?JOB_SVC_IDLE_MAX, non_neg_integer() | cfg_mult()}.
 -type cfg_idle_min()    ::  {?JOB_SVC_IDLE_MIN, non_neg_integer() | cfg_mult()}.
+-type cfg_recycle()     ::  {?JOB_SVC_RECYCLE,  boolean()}.
 
 -type cfg_mult()    ::  {concur | cores | scheds, non_neg_integer()}.
--type cfg_prop()    ::  cfg_idle_max() | cfg_idle_min().
+-type cfg_prop()    ::  cfg_idle_max() | cfg_idle_min() | cfg_recycle().
 -type config()      ::  [cfg_prop()].
--type idle()        ::  ?queue_t(rrec()).
--type locs()        ::  ?dict_t(rkey(), rloc()).
--type busy()        ::  [rrec()].
+-type idle()        ::  ?queue_t(#rrec{}).
 -type rkey()        ::  reference().
--type rloc()        ::  idle | busy.
--type rrec()        ::  {rkey(), runner()}.
 -type runner()      ::  pid().
 -type stat()        ::  {stat_key(), stat_val()}.
 -type stat_key()    ::  atom() | tuple().
@@ -172,13 +173,30 @@ app_config(App, ?JOB_SVC_CONCUR_LIMIT = Key) ->
 
 app_config(App, ?JOB_SVC_IDLE_MIN = Key) ->
     Cur = app_config(App, ?JOB_SVC_CONCUR_LIMIT),
-    Def = erlang:min(Cur, erlang:max(Cur div 8, 3)),
+    Def = if
+        Cur > 0 ->
+            erlang:min(Cur, erlang:max(Cur div 8, 3));
+        ?else ->
+            % Don't fire up a bunch of idle processes that'll never be used.
+            0
+    end,
     app_config(App, Key, 0, Def);
 
 app_config(App, ?JOB_SVC_IDLE_MAX = Key) ->
     Min = app_config(App, ?JOB_SVC_IDLE_MIN),
     Def = erlang:max((Min * 2), (resolve_config_val(App, {scheds, 1}) - 1)),
     app_config(App, Key, Min, Def);
+
+app_config(App, ?JOB_SVC_RECYCLE = Key) ->
+    % Special handling, it's a simple boolean().
+    case application:get_env(App, Key) of
+        {ok, Bool} when erlang:is_boolean(Bool) ->
+            Bool;
+        _ ->
+            Def = ?JOB_SVC_DEFAULT_RECYCLE,
+            _ = application:set_env(App, Key, Def),
+            Def
+    end;
 
 app_config(App, Key) ->
     app_config(App, Key, 0, 0).
@@ -322,27 +340,24 @@ code_change(_, State, _) ->
 handle_call(config, _, State) ->
     {reply, [
         {?JOB_SVC_IDLE_MIN, State#state.imin},
-        {?JOB_SVC_IDLE_MAX, State#state.imax}
+        {?JOB_SVC_IDLE_MAX, State#state.imax},
+        {?JOB_SVC_RECYCLE,  State#state.recycle}
     ], State};
 %
 % runner() -> runner() | {'error', term()}.
 %
-handle_call(runner, _, #state{icnt = 0} = StateIn) ->
-    case runner(busy, StateIn) of
-        {ok, {_, Runner}, State} ->
+handle_call(runner, _, #state{icnt = 0} = State) ->
+    case create() of
+        Runner when erlang:is_pid(Runner) ->
             {reply, Runner, check_pending(State)};
-        {error, Error, State} ->
-            {stop, {error, Error}, State}
+        {error, _} = Error ->
+            {stop, Error, inc_stat(service_errors, State)}
     end;
 
-handle_call(runner, _, State) ->
-    {{value, {Ref, Runner} = RRec}, Idle} = queue:out(State#state.idle),
-    {reply, Runner, check_pending(State#state{
-        idle = Idle,
-        icnt = (State#state.icnt - 1),
-        busy = [RRec | State#state.busy],
-        rcnt = (State#state.rcnt + 1),
-        loc = dict:store(Ref, busy, State#state.loc) })};
+handle_call(runner, _, #state{idle = IdleIn, icnt = ICnt} = State) ->
+    {{value, #rrec{ref = Ref, pid = Runner}}, Idle} = queue:out(IdleIn),
+    _ = erlang:demonitor(Ref, [flush]),
+    {reply, Runner, check_pending(State#state{idle = Idle, icnt = (ICnt - 1)})};
 %
 % stats() -> [stat()] | {'error', term()}.
 %
@@ -350,10 +365,10 @@ handle_call(stats, _, State) ->
     Status = if State#state.shutdown -> stopping; ?else -> active end,
     Result = [
         {status,    Status},
-        {busy,      State#state.rcnt},
         {idle,      State#state.icnt},
         {maxidle,   State#state.imax},
-        {minidle,   State#state.imin}
+        {minidle,   State#state.imin},
+        {recycling, State#state.recycle}
         | ?StatsDict:to_list(State#state.stats) ],
     {reply, Result, State};
 %
@@ -371,15 +386,27 @@ handle_call(Msg, {Who, _}, State) ->
 % release(Runner :: runner()) -> 'ok'.
 %
 handle_cast({release, Runner}, State) when erlang:is_pid(Runner) ->
-    case lists:keytake(Runner, 2, State#state.busy) of
-        {value, {Ref, _} = RRec, Busy} ->
-            {noreply, check_pending(State#state{
-                busy = Busy,
-                rcnt = (State#state.rcnt - 1),
-                idle = queue:in(RRec, State#state.idle),
-                icnt = (State#state.icnt + 1),
-                loc = dict:store(Ref, idle, State#state.loc) })};
-        false ->
+    % Use the Runner's private 'confirm' handler to ensure that this is,
+    % in fact, a Runner process.
+    Service = erlang:self(),
+    Nonce   = erlang:phash2(os:timestamp()),
+    Expect  = erlang:phash2({Nonce, ?job_run_ctl_token, Runner}),
+    _ = erlang:send(Runner, {confirm, Service, Nonce}),
+    receive
+        {confirm, Nonce, Expect} ->
+            if
+                State#state.recycle ->
+                    Ref = erlang:monitor(process, Runner),
+                    Rec = #rrec{ref = Ref, pid = Runner},
+                    {noreply, check_pending(State#state{
+                        idle = queue:in(Rec, State#state.idle),
+                        icnt = (State#state.icnt + 1) })};
+                ?else ->
+                    _ = riak_core_job_sup:stop_runner(Runner),
+                    {noreply, State}
+            end
+    after
+        ?CONFIRM_MSG_TIMEOUT ->
             _ = lager:warning(
                 "~s received 'release' for unknown process ~p",
                 [?JOBS_SVC_NAME, Runner]),
@@ -392,7 +419,7 @@ handle_cast({release, Runner}, State) when erlang:is_pid(Runner) ->
 % message - if it's not the State is invalid.
 %
 handle_cast(pending, #state{pending = Flag} = State) when Flag /= true ->
-    _ = lager:error("Invalid State: ~p", [State]),
+    _ = lager:error("~s:~b: invalid state: ~p", [?JOBS_SVC_NAME, ?LINE, State]),
     {stop, invalid_state, State};
 
 handle_cast(pending, State) ->
@@ -400,16 +427,19 @@ handle_cast(pending, State) ->
 %
 % configuration message
 %
-handle_cast(?job_svc_cfg_token, State) ->
-    App = default_app(),
-    IMin = app_config(App, ?JOB_SVC_IDLE_MIN),
-    IMax = app_config(App, ?JOB_SVC_IDLE_MAX),
+handle_cast(?job_svc_cfg_token,
+        #state{imin = IMin, imax = IMax, recycle = RMode} = State) ->
+    App     = default_app(),
+    IdleMin = app_config(App, ?JOB_SVC_IDLE_MIN),
+    IdleMax = app_config(App, ?JOB_SVC_IDLE_MAX),
+    Recycle = app_config(App, ?JOB_SVC_RECYCLE),
     if
-        IMin /= State#state.imin orelse IMax /= State#state.imax ->
-            _ = lager:info("Updating configuration from {~b, ~b} to {~b, ~b}",
-                [State#state.imin, State#state.imax, IMin, IMax]),
-            {noreply, check_pending(
-                State#state{imin = IMin, imax = IMax})};
+        IdleMin /= IMin orelse IdleMax /= IMax orelse Recycle /= RMode ->
+            _ = lager:info(
+                "Updating configuration from {~b, ~b, ~s} to {~b, ~b, ~s}",
+                [IMin, IMax, RMode, IdleMin, IdleMax, Recycle]),
+            {noreply, check_pending(State#state{
+                imin = IdleMin, imax = IdleMax, recycle = Recycle})};
         ?else ->
             {noreply, State}
     end;
@@ -424,33 +454,34 @@ handle_cast(Msg, State) ->
         -> {noreply, state()} | {stop, term(), state()}.
 %% @private
 %
-% A monitored runner crashed or was killed.
+% An idle runner crashed or was killed.
+% It's ok for this to be an inefficient operation, because it *really*
+% shouldn't ever happen.
 %
-handle_info({'DOWN', Ref, _, Pid, Info}, StateIn) ->
-    case remove(Ref, StateIn) of
+handle_info({'DOWN', Ref, _, Pid, Info}, #state{icnt = ICnt} = State) ->
+    List = queue:to_list(State#state.idle),
+    case lists:keytake(Ref, #rrec.ref, List) of
+        {value, #rrec{pid = Pid}, Idle} ->
+            _ = lager:warning(
+                "~s received 'DOWN' message from idle runner ~p: ~p",
+                [?JOBS_SVC_NAME, Pid, Info]),
+            {noreply, inc_stat(crashed, check_pending(State#state{
+                idle = queue:from_list(Idle), icnt = (ICnt - 1)}))};
 
-        {_, {Ref, Pid}, State} ->
-            {noreply, inc_stat(crashed, State)};
+        {value, #rrec{pid = Runner}, Idle} ->
+            _ = lager:error("~s:~b: Ref/Runner/Pid mismatch: ~p ~p ~p",
+                [?JOBS_SVC_NAME, ?LINE, Ref, Runner, Pid]),
+            % Even though it's bad, it still needs to be removed from the
+            % queue so terminate/2 doesn't have to wrestle with it.
+            {stop, invalid_state, State#state{
+                idle = queue:from_list(Idle), icnt = (ICnt - 1)}};
 
-        {false, undefined, State} ->
+        false ->
             % With luck it was just a spurious message, though that's unlikely.
             _ = lager:error("~s received 'DOWN' message from "
             "unrecognized process ~p: ~p", [?JOBS_SVC_NAME, Pid, Info]),
-            {noreply, inc_stat({unknown_proc, ?LINE}, State)};
-
-        % Any other result is probably a programming error :(
-
-        {_, {Ref, Runner}, State} ->
-            _ = lager:error("~s Ref/Runner/Pid mismatch: ~p ~p ~p",
-                [?JOBS_SVC_NAME, Ref, Runner, Pid]),
-            {stop, invalid_state, State};
-
-        {Where, What, State} ->
-            _ = lager:error("~s:remove/2: ~p ~p ~p",
-                [?JOBS_SVC_NAME, Where, What, State]),
-            {stop, invalid_state, State}
+            {noreply, inc_stat({unknown_proc, ?LINE}, State)}
     end;
-
 %
 % unrecognized message
 %
@@ -467,7 +498,8 @@ init(?MODULE) ->
     App = default_app(),
     {ok, #state{
         imin = app_config(App, ?JOB_SVC_IDLE_MIN),
-        imax = app_config(App, ?JOB_SVC_IDLE_MAX)
+        imax = app_config(App, ?JOB_SVC_IDLE_MAX),
+        recycle = app_config(App, ?JOB_SVC_RECYCLE)
     }}.
 
 -spec start_link() -> {ok, pid()}.
@@ -481,24 +513,19 @@ start_link() ->
 -spec terminate(Why :: term(), State :: state()) -> ok.
 %% @private
 %
-% No matter why we're terminating, demonitor all of our runners and send each
-% an appropriate exit message. Idle processes should stop immediately, since
-% they should be waiting in a receive. Active jobs will take until they finish
-% their work to see our message, so do them first, but they may well be killed
-% more forcefully by the supervisor, which is presumably stopping, too.
+% No matter why we're terminating, de-monitor all of our idle runners and send
+% each an appropriate exit message - they should all stop immediately.
 %
 terminate(invalid_state, State) ->
     _ = lager:error(
         "~s terminated due to invalid state: ~p", [?JOBS_SVC_NAME, State]),
     terminate(shutdown, State);
 
+terminate(_, #state{icnt = 0}) ->
+    ok;
+
 terminate(Why, State) ->
-    Clean = fun({Ref, Pid}) ->
-        _ = erlang:demonitor(Ref, [flush]),
-        erlang:exit(Why, Pid)
-    end,
-    lists:foreach(Clean, State#state.busy),
-    lists:foreach(Clean, queue:to_list(State#state.idle)).
+    terminate(Why, cull_idle(State)).
 
 %% ===================================================================
 %% Internal
@@ -514,6 +541,32 @@ check_pending(#state{icnt = ICnt, imin = IMin, imax = IMax} = State)
     State;
 check_pending(State) ->
     set_pending(State).
+
+-spec create() -> runner() | {error, term()}.
+%
+% Creates a new Runner process.
+%
+create() ->
+    case riak_core_job_sup:start_runner() of
+        {ok, Runner} when erlang:is_pid(Runner) ->
+            Runner;
+        {error, What} = Error ->
+            _ = lager:error(
+                "~s: error creating runner: ~p", [?JOBS_SVC_NAME, What]),
+            Error
+    end.
+
+-spec cull_idle(State :: state()) -> state().
+%
+% Removes and de-monitors the Runner at the head of the idle queue.
+%
+cull_idle(#state{icnt = 0} = State) ->
+    State;
+cull_idle(#state{idle = IdleIn, icnt = ICnt} = State) ->
+    {{value, #rrec{ref = Ref, pid = Runner}}, Idle} = queue:out(IdleIn),
+    _ = erlang:demonitor(Ref, [flush]),
+    _ = riak_core_job_sup:stop_runner(Runner),
+    inc_stat(culled, State#state{idle = Idle, icnt = (ICnt - 1)}).
 
 -spec inc_stat(stat_key() | [stat_key()], state()) -> state()
         ;     (stat_key() | [stat_key()], stats()) -> stats().
@@ -543,107 +596,25 @@ inc_stat(Stat, Stats) ->
 %
 % Result is as specified for gen_server:handle_cast/2.
 %
-pending(#state{shutdown = true, rcnt = 0, icnt = 0} = State) ->
+pending(#state{shutdown = true} = State) ->
     {stop, shutdown, State};
-pending(#state{icnt = ICnt} = State)
-        when   (ICnt > State#state.imax)
-        orelse (ICnt > 0 andalso State#state.shutdown =:= true) ->
-    {{value, {Ref, Runner}}, Idle} = queue:out(State#state.idle),
-    _ = erlang:demonitor(Ref, [flush]),
-    _ = erlang:exit(Runner, normal),
-    {noreply, check_pending(State#state{idle = Idle, icnt = (ICnt - 1)})};
-pending(#state{shutdown = false, icnt = ICnt} = StateIn)
-        when ICnt < StateIn#state.imin ->
-    case runner(idle, StateIn) of
-        {ok, _, State} ->
-            {noreply, check_pending(State)};
-        {error, Error, State} ->
-            {stop, {error, Error}, State}
+
+pending(#state{icnt = ICnt, imax = IMax} = State) when ICnt > IMax ->
+    {noreply, check_pending(cull_idle(State))};
+
+pending(#state{icnt = ICnt, imin = IMin} = State) when ICnt < IMin ->
+    case create() of
+        Runner when erlang:is_pid(Runner) ->
+            Ref = erlang:monitor(process, Runner),
+            Rec = #rrec{ref = Ref, pid = Runner},
+            {noreply, check_pending(State#state{
+                idle = queue:in(Rec, State#state.idle), icnt = (ICnt + 1) })};
+        {error, _} = Error ->
+            {stop, Error, inc_stat(service_errors, State)}
     end;
+
 pending(State) ->
     {noreply, State}.
-
--spec remove(RefOrRunner :: rkey() | runner(), State :: state())
-        -> {rloc() | false, rrec() | undefined, state()}.
-%
-% Finds the referenced Runner and removes it from the State.
-%
-% Errors are not reported per-se, but they can can be identified by elements
-% in the result tuple:
-%
-% {Where, What, State}
-%
-%   Where is 'busy', 'idle', or 'false', indicating the record was found in
-%   the indicated container, or was not found ... sort of *
-%
-%   What is ether a {Ref, Runner} pair or 'undefined', indicating that we
-%   couldn't find a record of the process ... sort of *
-%
-%   State is, of course, the updated state, and it may have changed in *any*
-%   of the result scenarios.
-%
-% If Where is 'false' and What is a {Ref, Runner} pair, or if Where is NOT
-% 'false' and What is 'undefined', it indicates inconsistency in the State
-% and the smart thing to do is to log the situation and exit the process.
-%
-% TODO: Should we search other containers to identify inconsistencies?
-%
-% * The "sort of" comments are because there are some cases of inconsistency
-%   that will not be identified in the current implementation.
-%
-remove(Ref, StateIn) when erlang:is_reference(Ref) ->
-    case dict:find(Ref, StateIn#state.loc) of
-        {ok, Where} ->
-            State = StateIn#state{loc = dict:erase(Ref, StateIn#state.loc)},
-            case Where of
-                busy ->
-                    case lists:keytake(Ref, 1, State#state.busy) of
-                        {value, BRec, Busy} ->
-                            {Where, BRec, State#state{
-                                busy = Busy,
-                                rcnt = (State#state.rcnt - 1) }};
-                        _ ->
-                            {Where, undefined,
-                                inc_stat({missing_busy, ?LINE}, State)}
-                    end;
-                idle ->
-                    IL = queue:to_list(State#state.idle),
-                    case lists:keytake(Ref, 1, IL) of
-                        {value, IRec, Idle} ->
-                            {Where, IRec, State#state{
-                                idle = queue:from_list(Idle),
-                                icnt = (State#state.icnt - 1) }};
-                        _ ->
-                            {Where, undefined,
-                                inc_stat({missing_idle, ?LINE}, State)}
-                    end;
-                _ ->
-                    {Where, undefined, State}
-            end;
-        _ ->
-            {false, undefined, StateIn}
-    end;
-remove(Runner, State) when erlang:is_pid(Runner) ->
-    case lists:keytake(Runner, 2, State#state.busy) of
-        {value, {BRef, _} = BRec, Busy} ->
-            {busy, BRec, State#state{
-                busy = Busy,
-                rcnt = (State#state.rcnt - 1),
-                loc = dict:erase(BRef, State#state.loc) }};
-        _ ->
-            IL = queue:to_list(State#state.idle),
-            case lists:keytake(Runner, 2, IL) of
-                {value, {IRef, _} = IRec, Idle} ->
-                    {idle, IRec, State#state{
-                        idle = queue:from_list(Idle),
-                        icnt = (State#state.icnt - 1),
-                        loc = dict:erase(IRef, State#state.loc) }};
-                _ ->
-                    {false, undefined, State}
-            end
-    end;
-remove(Arg, _) ->
-    erlang:error(badarg, [Arg]).
 
 -spec resolve_config_val(App :: atom(), Val :: non_neg_integer() | cfg_mult())
         -> einval | non_neg_integer().
@@ -660,8 +631,10 @@ remove(Arg, _) ->
 %
 resolve_config_val(_App, Val) when ?is_non_neg_int(Val) ->
     Val;
+
 resolve_config_val(App, {concur, Mlt}) when ?is_non_neg_int(Mlt) ->
     (app_config(App, ?JOB_SVC_CONCUR_LIMIT) * Mlt);
+
 resolve_config_val(App, {cores, Mlt}) when ?is_non_neg_int(Mlt) ->
     case erlang:system_info(logical_processors) of
         Cores when ?is_non_neg_int(Cores) ->
@@ -669,39 +642,12 @@ resolve_config_val(App, {cores, Mlt}) when ?is_non_neg_int(Mlt) ->
         _ ->
             resolve_config_val(App, {scheds, Mlt})
     end;
+
 resolve_config_val(_App, {scheds, Mlt}) when ?is_non_neg_int(Mlt) ->
     (erlang:system_info(schedulers) * Mlt);
+
 resolve_config_val(_, _) ->
     einval.
-
--spec runner(Where :: rloc(), State :: state())
-        -> {ok, rrec(), state()} | {error, term(), state()}.
-%
-% Creates a new Runner process and stores it in the specified location.
-%
-runner(Where, StateIn) when Where =:= busy orelse Where =:= idle ->
-    case supervisor:start_child(?WORK_SUP_NAME, []) of
-        {ok, Runner} when erlang:is_pid(Runner) ->
-            Ref = erlang:monitor(process, Runner),
-            RRec = {Ref, Runner},
-            State = StateIn#state{
-                loc = dict:store(Ref, Where, StateIn#state.loc),
-                stats = inc_stat(created, StateIn#state.stats) },
-            StateOut = case Where of
-                busy ->
-                    State#state{
-                        busy = [RRec | State#state.busy],
-                        rcnt = (State#state.rcnt + 1)};
-                idle ->
-                    State#state{
-                        idle = queue:in(RRec, State#state.idle),
-                        icnt = (State#state.icnt + 1)}
-            end,
-            {ok, RRec, StateOut};
-        {error, Error} ->
-            _ = lager:error("Error creating runner: ~p", [Error]),
-            {error, Error, inc_stat(service_errors, StateIn)}
-    end.
 
 -spec set_pending(State :: state()) -> state().
 %
@@ -712,4 +658,3 @@ set_pending(#state{pending = false} = State) ->
     State#state{pending = true};
 set_pending(State) ->
     State.
-

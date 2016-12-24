@@ -27,78 +27,147 @@
 -module(riak_core_job_runner).
 
 % Private API
--export([start_link/0, run/3]).
+-export([start_link/1, run/4]).
 
 % Spawned Function
--export([handle_event/0]).
+-export([runner/2]).
 
 -include("riak_core_job_internal.hrl").
+
+%% ===================================================================
+%% Internal State
+%% ===================================================================
+
+-define(MAX_SPURIOUS,   3).
+
+% Support the runner's token being distinct from the globally-defined constant.
+-record(state, {
+    token                   ::  term(),
+    recycled    = false     ::  boolean(),
+    spurious    = 0         ::  non_neg_integer()
+}).
+-type state()   ::  #state{}.
 
 %% ===================================================================
 %% Private API
 %% ===================================================================
 
--spec start_link() -> {'ok', pid()}.
+-spec start_link(Token :: term()) -> {'ok', pid()}.
 %% @private
-%% @doc Start a new process linked to the calling supervisor.
+%% @doc Start a new Runner linked to the calling process.
 %%
-start_link() ->
-    {'ok', proc_lib:spawn_link(?MODULE, 'handle_event', [])}.
+start_link(?job_run_ctl_token = Token) ->
+    {'ok', proc_lib:spawn_link(
+        ?MODULE, runner, [?job_run_ctl_token, #state{token = Token}])}.
 
 -spec run(
     Runner  :: pid(),
+    Token   :: term(),
     MgrKey  :: riak_core_job_manager:mgr_key(),
     Job     :: riak_core_job:job())
         -> 'ok' | {'error', term()}.
 %% @private
-%% @doc Tell the specified runner to start the unit of work.
+%% @doc Tell the specified Runner to start the Job's Unit of Work.
 %%
-%% The specified reference is passed in callbacks to the jobs service.
+%% The specified MgrKey is passed in callbacks to the Jobs Manager.
 %%
-run(Runner, MgrKey, Job) ->
-    Msg = {'start', erlang:self(), MgrKey, Job},
+run(Runner, ?job_run_ctl_token = Token, MgrKey, Job) ->
+    Msg = {start, erlang:self(), Token, MgrKey, Job},
     case erlang:is_process_alive(Runner) of
-        'true' ->
+        true ->
             _ = erlang:send(Runner, Msg),
-            receive {'started', MgrKey} ->
-                'ok'
+            receive {started, Token, MgrKey} ->
+                ok
             after 9999 ->
-                {'error', 'timeout'}
+                {error, timeout}
             end;
         _ ->
-            {'error', 'noproc'}
+            {error, noproc}
     end.
 
 %% ===================================================================
 %% Process
 %% ===================================================================
 
--spec handle_event() -> no_return().
+-spec runner(Token :: term(), State :: state()) -> no_return().
 %% @private
-%% @doc Check pending events and continue running or exit.
+%% @doc Process entry.
 %%
-handle_event() ->
-    _ = erlang:erase(),
-    _ = erlang:process_flag('trap_exit', 'true'),
-    receive
-        {'EXIT', _, Reason} ->
-            erlang:exit(Reason);
-        {'start', Starter, MgrKey, Job} ->
-            _ = erlang:send(Starter, {'started', MgrKey}),
-            run(MgrKey, Job)
-    end,
-    handle_event().
+runner(?job_run_ctl_token, State) ->
+    run_loop(State).
 
 %% ===================================================================
 %% Internal
 %% ===================================================================
+
+-spec run_loop(State :: state()) -> no_return().
+%
+% Main loop, once per Job.
+%
+run_loop(#state{recycled = true} = State) ->
+    _ = erlang:process_flag(trap_exit, true),
+    _ = erlang:erase(),
+    handle_event(State);
+
+run_loop(State) ->
+    _ = erlang:process_flag(trap_exit, true),
+    handle_event(State).
+
+-spec handle_event(State :: state()) -> no_return().
+%
+% Check pending events and continue running or exit.
+%
+handle_event(State) when State#state.spurious > ?MAX_SPURIOUS ->
+    erlang:exit(spurious);
+
+handle_event(#state{token = Token} = State) ->
+    receive
+        {'EXIT', _, Reason} ->
+            erlang:exit(Reason);
+
+        {start, Starter, Token, MgrKey, Job} ->
+            _ = erlang:send(Starter, {started, Token, MgrKey}),
+            run(MgrKey, Job),
+            run_loop(State#state{recycled = true});
+
+        {confirm, Service, Nonce} ->
+            % Allow closely-coupled processes that know the secret handshake
+            % to confirm that this is a runner.
+            Hash = erlang:phash2({Nonce, Token, erlang:self()}),
+            _ = erlang:send(Service, {confirm, Nonce, Hash}),
+            handle_event(State);
+
+        Other ->
+            handle_event(Other, State)
+    end.
+
+-spec handle_event(Message :: term(), State :: state()) -> no_return().
+%
+% This is almost certainly a straggler directed at a previous UoW running
+% on this process, which is, of course, the downside of recycling Runners.
+% We wouldn't be recycling, though, if load wasn't an issue, so discard
+% it and continue ... but keep a count.
+%
+handle_event(Spurious, #state{recycled = true} = State) ->
+    _ = lager:warning(
+        "Runner ~p received spurious message ~p",
+        [erlang:self(), Spurious]),
+    handle_event(State#state{spurious = (State#state.spurious + 1)});
+%
+% This is a freshly started process, so it's not just some spurious noise.
+%
+handle_event(Unknown, _State) ->
+    _ = lager:error(
+        "Runner ~p exiting due to unrecognized message ~p",
+        [erlang:self(), Unknown]),
+    erlang:exit(shutdown).
 
 -spec run(
     MgrKey  :: riak_core_job_manager:mgr_key(),
     Job     :: riak_core_job:job())
         -> 'ok'.
 %
-% Run one unit of work.
+% Run one Unit of Work.
 %
 run(MgrKey, Job) ->
     Work = riak_core_job:work(Job),

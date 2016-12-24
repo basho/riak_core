@@ -83,6 +83,13 @@
     work/0
 ]).
 
+-ifdef(TEST).
+-export([
+    test_func/2,
+    test_func/3
+]).
+-endif.
+
 -include("riak_core_job_internal.hrl").
 
 %% ===================================================================
@@ -809,9 +816,61 @@ gid_guard_test() ->
         {cid, {test, ?LINE}},
         {work, work(Dummy)}
     ]),
-    JobId = gid(Job),
-    ?debugVal(JobId),
+    JobId = global_id(Job),
     JobIdOk = ?is_job_gid(JobId),
     ?assert(JobIdOk).
+
+id_test() ->
+    DummyJob = dummy(),
+    DummyWork = work(DummyJob),
+    DummyGId = gid(DummyJob),
+
+    CId = {erlang:phash2(os:timestamp()), erlang:phash2(erlang:self())},
+    Mod = 'Some@nonexistant$thing',
+    Job = job([
+        {module,    Mod},
+        {cid,       CId},
+        {work,      DummyWork}
+    ]),
+    GId = gid(Job),
+
+    ?assertMatch({_, _, _}, GId),
+    {GIdMod, GIdCId, GIdUId} = GId,
+    ?assertEqual(Mod, GIdMod),
+    ?assertEqual(CId, GIdCId),
+    ?assertMatch({_, _, _}, GIdUId),
+
+    ?assertMatch({_, _, _}, DummyGId),
+    ?assertMatch(<<_:128>>, element(3, DummyGId)),
+    ?assertEqual(?MODULE, element(1, DummyGId)),
+    ?assertEqual(dummy, element(2, DummyGId)),
+    ?assertEqual(?DUMMY_JOB_UID, element(3, DummyGId)),
+
+    ?assertEqual(CId, client_id(Job)),
+    ?assertEqual(GId, global_id(Job)),
+
+    ?assertEqual(anon, iid(DummyJob)),
+    ?assertEqual(anon, internal_id(Job)),
+
+    AltIId = [some, other, stuff],
+    AltJob = internal_id(Job, AltIId),
+    ?assertEqual(AltIId, internal_id(AltJob)).
+
+runnable_test() ->
+    Bogus = 'No$Such-Name...We-Hope',
+    Fun1 = fun(Arg) -> Arg end,
+    ?assertEqual(true, runnable({?MODULE, test_func, [2]})),
+    ?assertEqual(true, runnable({?MODULE, test_func, [2, 3]})),
+    ?assertMatch({error, _}, runnable({?MODULE, test_func, [2, 3, 4]})),
+    ?assertMatch({error, _}, runnable({Bogus, test_func, []})),
+    ?assertMatch({error, _}, runnable({?MODULE, Bogus, []})),
+    ?assertEqual(true, runnable({Fun1, []})),
+    ?assertMatch({error, _}, runnable({Fun1, [2]})).
+
+test_func(Arg1, _) ->
+    Arg1.
+
+test_func(Error, _, _) ->
+    erlang:error(Error).
 
 -endif.
