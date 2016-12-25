@@ -21,71 +21,21 @@
 %%
 %% @doc Public Job Management API.
 %%
-%% Note:    All configuration keys, and their simple defaults, are defined as
-%%          macros in riak_core_job.hrl for use in code.
+%% Recognized configuration settings in the application environment:
 %%
-%% ===Configuration:===
+%% <ul>
+%%  <li>{@link cfg_concur_max()}</li>
+%%  <li>{@link cfg_queue_max()}</li>
+%%  <li>{@link cfg_hist_max()}</li>
+%%  <li>{@link riak_core_job_service:cfg_idle_min()}</li>
+%%  <li>{@link riak_core_job_service:cfg_idle_max()}</li>
+%%  <li>{@link riak_core_job_service:cfg_recycle()}</li>
+%% </ul>
 %%
-%%  Calculated :: {Val :: `concur' | `cores' | `scheds', Mult :: pos_integer()}.
-%%  where Val represents a derived value:
+%% These configuration keys and their defaults are defined as macros in
+%% `riak_core_job.hrl'.
 %%
-%%      `concur' -  The effective value of `job_concurrency_limit'. If it has
-%%                  not yet been evaluated, the result is calculated as if
-%%                  Val == `scheds'.
-%%
-%%      `cores'  -  The value of `erlang:system_info(logical_processors)'.
-%%                  If the system returns anything other than a pos_integer(),
-%%                  the result is calculated as if Val == `scheds'.
-%%
-%%      `scheds' -  The value of `erlang:system_info(schedulers)'. This value
-%%                  is always a pos_integer(), so there's no fallback.
-%%
-%% Calculated values are determined at initialization, they ARE NOT dynamic!
-%%
-%% ===Application Keys:===
-%%
-%% Note that keys are scoped to the application that started the Jobs
-%% components, they are NOT explicitly scoped to `riak_core', though that's
-%% their expected use case and the default if no application is defined.
-%%
-%%  {`job_concurrency_limit', pos_integer() | Calculated}
-%%      Maximum number of jobs to execute concurrently.
-%%      Note that if this is initialized as {'concur', Mult} then the result
-%%      is calculated as {'scheds', Mult}.
-%%      Default: {`scheds', 6}.
-%%
-%%  {`job_queue_limit', non_neg_integer() | Calculated}
-%%      Maximum number of jobs to queue for future execution.
-%%      Default: {`concur', 3}.
-%%
-%%  {`job_history_limit', non_neg_integer() | Calculated}
-%%      Maximum number of completed jobs' histories to maintain.
-%%      Default: {`concur', 1}.
-%%
-%%  {`job_idle_min_limit', non_neg_integer() | Calculated}
-%%      Minimum number of idle runner processes to keep available.
-%%      Idle processes are added opportunistically; the actual count at any
-%%      given instant can be lower.
-%%      Default: min({`concur', 1}, max(({`concur', 1} div 8), 3)).
-%%
-%%  {`job_idle_max_limit', non_neg_integer() | Calculated}
-%%      Maximum number of idle runner processes to keep available.
-%%      Idle processes are culled opportunistically; the actual count at any
-%%      given instant can be higher. If the specified value resolves to
-%%      less than `job_idle_min_limit', then (`job_idle_min_limit' * 2) is used.
-%%      Default: max((`job_idle_min_limit' * 2), ({`scheds', 1} - 1)).
-%%
-%%  {`job_idle_recycle', boolean()}
-%%      Controls whether job runner processes are re-used.
-%%      By default, each job runs in a pristine process, which is strongly
-%%      recommended. However, on a heavily-loaded node there *may* be
-%%      performance benefits to re-using these processes.
-%%      When enabled, runner processes are added to the idle queue when jobs
-%%      complete rather than being destroyed.
-%%      Re-using processes implies that jobs that receive messages must be
-%%      prepared to receive and disregard messages directed at previous
-%%      occupants of the process they're running in.
-%%      Default:`false'.
+%% Dynamic reconfiguration is supported by the {@link reconfigure/0} function.
 %%
 -module(riak_core_job_manager).
 -behaviour(gen_server).
@@ -239,28 +189,54 @@
 %% Public Types
 %% ===================================================================
 
--type cfg_concur_max() :: {?JOB_SVC_CONCUR_LIMIT, pos_integer() | cfg_mult()}.
+-type cfg_concur_max() :: riak_core_job_service:cfg_concur_max().
+%% Maximum number of jobs to execute concurrently.
+%%
+%% Scoped to the application returned by
+%% {@link riak_core_job_service:default_app/0}.
+%%
+%% Default: <code>{scheds, 6}</code>.
+
 -type cfg_hist_max()  :: {?JOB_SVC_HIST_LIMIT, non_neg_integer() | cfg_mult()}.
+%% Maximum number of completed jobs' histories to maintain.
+%%
+%% Scoped to the application returned by
+%% {@link riak_core_job_service:default_app/0}.
+%%
+%% Default: <code>{concur, 1}</code>.
+
 -type cfg_queue_max() :: {?JOB_SVC_QUEUE_LIMIT, non_neg_integer() | cfg_mult()}.
--type cfg_mult()    ::  riak_core_job_service:cfg_mult().
--type cfg_prop()    ::  cfg_concur_max() | cfg_hist_max() | cfg_queue_max()
-                    |   riak_core_job_service:cfg_prop().
+%% Maximum number of jobs to queue for future execution.
+%%
+%% Scoped to the application returned by
+%% {@link riak_core_job_service:default_app/0}.
+%%
+%% Default: <code>{concur, 3}</code>.
+
+-type cfg_mult() :: riak_core_job_service:cfg_mult().
+
+-type cfg_prop() :: cfg_concur_max() | cfg_hist_max() | cfg_queue_max()
+                  | riak_core_job_service:cfg_prop().
+%% Any of the configuration properties returned by {@link config/0}.
 
 -type config() :: [cfg_prop()].
-%% Job Manager configuration.
+%% All of the configuration properties returned by {@link config/0}.
 
 ?opaque mgr_key() :: #mgrkey{}.
-%% An object used by running Jobs' UoWs to refer back to their state in their
-%% owning Manager.
+%% An object used by running Jobs' UoWs to refer back to their state in the
+%% Manager running them.
 
 -type stat() :: {stat_key(), stat_val()}.
 %% A single statistic.
+%% <i>Most</i> Service statistics are integral counters in the form
+%% <code>{<i>Key</i>, <i>Count</i> :: non_neg_integer()}</code>.
 
 -type stat_key() :: atom() | tuple().
 %% The Key by which a statistic is referenced.
+%% <i>Most</i> statistics keys are simple, single-word atoms.
 
 -type stat_val() :: term().
-%% The value of a statistic.
+%% The value of a statistic, most often an integral count greater than zero.
 
 %% ===================================================================
 %% Public API
@@ -274,24 +250,26 @@
 %%
 %% @doc Cancel, or optionally kill, the specified Job.
 %%
-%% If Kill is `true' the job will de-queued or killed, as appropriate.
-%% If Kill is `false' the job will only be de-queued.
+%% If <i>Kill</i> is `true' the job will de-queued or killed, as appropriate.
+%% If <i>Kill</i> is `false' the job will only be de-queued.
 %%
 %% Returns:
+%% <dl>
+%%  <dt><code>{ok, <i>Status</i>, <i>Job</i>}</code></dt>
+%%  <dd>Status indicates whether the Job was `killed', `canceled' (de-queued),
+%%      or had recently `finished' running.</dd>
+%%  <dd>Note that what constitutes "recently finished" is subject to load and
+%%      history configuration.</dd>
+%%  <dd><i>Job</i> is the current instance of <i>JobOrId</i>.</dd>
 %%
-%%  {`error', `running', Job}
-%%      Only returned when Kill is `false', indicating that the Job is
-%%      currently active (and remains so).
+%%  <dt><code>{error, running, <i>Job</i>}</code></dt>
+%%  <dd>Only returned when <i>Kill</i> is `false', indicating that <i>Job</i>
+%%      is currently active (and remains so).</dd>
+%%  <dd><i>Job</i> is the current instance of <i>JobOrId</i>.</dd>
 %%
-%%  {`ok', Status, Job}
-%%      Status indicates whether the Job was `killed', `canceled' (de-queued),
-%%      or had recently `finished' running.
-%%      Note that what constitutes "recently finished" is subject to load and
-%%      history configuration.
-%%      Job is the fully-updated instance of the Job.
-%%
-%%  `false'
-%%      The Job is not (or no longer) known to the Manager.
+%%  <dt><code>false</code></dt>
+%%  <dd><i>JobOrId</i> is not, or is no longer, known to the Manager.</dd>
+%% </dl>
 %%
 cancel(JobOrId, Kill) ->
     JobId = case riak_core_job:version(JobOrId) of
@@ -314,7 +292,7 @@ config() ->
 %%
 %% @doc Return the latest instance of the specified Job.
 %%
-%% `false' is returned if the Job is not (or no longer) known to the Manager.
+%% `false' is returned if the Job is not, or is no longer, known to the Manager.
 %%
 find(JobOrId) ->
     JobId = case riak_core_job:version(JobOrId) of
@@ -344,7 +322,7 @@ stats() ->
 %%
 %% @doc Return statistics from the specified Job.
 %%
-%% `false' is returned if the Job is not (or no longer) known to the Manager.
+%% `false' is returned if the Job is not, or is no longer, known to the Manager.
 %%
 stats(JobOrId) ->
     JobId = case riak_core_job:version(JobOrId) of
@@ -358,6 +336,31 @@ stats(JobOrId) ->
 -spec submit(Job :: riak_core_job:job()) -> ok | {error, term()}.
 %%
 %% @doc Submit a Job to be run.
+%%
+%% Some (though possibly not all) of the results that may be returned are:
+%%
+%% <dl>
+%%  <dt><code>ok</code></dt>
+%%  <dd>The Job was accepted and is either running or queued to run.</dd>
+%%
+%%  <dt><code>{error, service_shutdown}</code></dt>
+%%  <dd>The service is shutting down; no further Jobs will be accepted.</dd>
+%%
+%%  <dt><code>{error, job_queue_full}</code></dt>
+%%  <dd>The service is running its maximum number of Jobs, and has queued its
+%%      maximum number of Jobs. This <i>should</i> be a transient error.</dd>
+%%
+%%  <dt><code>{error, job_rejected}</code></dt>
+%%  <dd>The Job was rejected by <i>[the equivalent of]</i>
+%%      {@link riak_core_util:job_class_enabled/2}.</dd>
+%%
+%%  <dt><code>{error, <i>Error</i> :: term()}</code></dt>
+%%  <dd>Most likely the Job is not runnable and <i>Error</i> came from
+%%      {@link riak_core_job:runnable/1}.</dd>
+%% </dl>
+%%
+%% Other errors are possible from various system components, but should be rare
+%% and relatively obvious.
 %%
 submit(Job) ->
     case riak_core_job:version(Job) of

@@ -23,6 +23,11 @@
 %% {@link job(). Job} objects for use withing the Riak Core Async Jobs
 %% Subsystem.
 %%
+%% A Job is a wrapper around a logical unit of work (UoW) that can be executed
+%% independently on multiple physical and/or virtual nodes in a cluster. All of
+%% the executions of a given job are correlatable through the job's globally
+%% unique identifier.
+%%
 %% @see job/1
 %% @see work/1
 %% @see riak_core_job_manager
@@ -80,6 +85,8 @@
     stat_key/0,
     stat_val/0,
     time/0,
+    unspec/0,
+    version/0,
     work/0
 ]).
 
@@ -99,6 +106,8 @@
 -define(StatsDict,  orddict).
 -type stats()   ::  ?orddict_t(stat_key(), stat_val()).
 
+-define(UNSPEC, anon).
+
 %%
 %% Fields without defaults are REQUIRED, even though the language can't
 %% enforce that - though functions here that create instances do.
@@ -106,7 +115,7 @@
 %%
 -record(riak_core_job_v1, {
     %% The work, its 'class' (for management grouping), and where it's from.
-    class   = anon              :: unspec() | class(),
+    class   = ?UNSPEC           :: unspec() | class(),
     from    = ignore            :: sender() | pid(),
     work    = undefined         :: undefined | work(),
 
@@ -119,8 +128,8 @@
     %% If supplied, 'iid' is an internal tracking ID that means something to
     %% the originator and is carried around untouched.
     gid                         :: gid(),
-    cid     = anon              :: unspec() | cid(),
-    iid     = anon              :: unspec() | iid(),
+    cid     = ?UNSPEC           :: unspec() | cid(),
+    iid     = ?UNSPEC           :: unspec() | iid(),
 
     %% Optional callback to be invoked if the job is killed or cancelled.
     killed  = undefined         :: undefined | func(),
@@ -143,7 +152,6 @@
 
 -type uid()         ::  uuid() | {node(), time(), reference()}.
 -type uuid()        ::  <<_:128>>.
--type unspec()      ::  anon.
 
 -define(MAX_INIT_SKEW_uSECS,    1500000).
 -define(CUR_TIMESTAMP,          os:timestamp()).
@@ -173,9 +181,11 @@
 
 -type cid() :: term().
 %% A Client ID provided when a Job is created (and immutable thereafter).
-%% NOTE that this does NOT identify a client, at least as far as the jobs
-%% system is concerned - the value is entirely opaque from the perspective of
-%% the containing job.
+%%
+%% <em>Note:</em> This does <i>NOT</i> identify a client, at least as far as
+%% the jobs system is concerned - the value is entirely opaque from the
+%% perspective of the containing job.
+%%
 %% This element is incorporated into the {@link gid()} type.
 
 -type class() :: atom() | {atom(), atom()}.
@@ -189,8 +199,8 @@
 %% A callback function.
 
 ?opaque gid() :: {module(), cid(), uid()}.
-%% A Job's Global ID, which is unique at least across a cluster. Values of this
-%% type are created with their associated Job and are immutable.
+%% A Job's Global ID, which is unique at least across a cluster.
+%% Values of this type are created with their associated Job and are immutable.
 
 -type iid() :: term().
 %% An updatable opaque Internal ID within a Job for any use handlers of the
@@ -200,20 +210,32 @@
 %% The type returned by {@link job/1}.
 
 -type priority() :: ?JOB_PRIO_MIN..?JOB_PRIO_MAX.
-%% Job priority.
+%% Job priority. Lower numbers have lower priority.
+%%
+%% <em>Note:</em> The current implementation ignores priorities, though they
+%% are validated if provided.
 
 -type stat() :: {stat_key(), stat_val()}.
 %% A single statistic.
+%% <i>Most</i> Job statistics are in the form
+%% <code>{<i>Key</i>, {@link time()}}</code>.
 
 -type stat_key() :: atom() | tuple().
 %% The Key by which a statistic is referenced.
+%% <i>Most</i> statistics keys are simple, single-word atoms.
 
 -type stat_val() :: term().
-%% The value of a statistic.
+%% The value of a statistic, most often a {@link time(). timestamp}.
 
 -type time() :: erlang:timestamp().
 %% The type returned by the {@link timestamp/1} function, and embedded in
 %% statistics updated with the {@link update/2} function.
+
+-type unspec() :: ?UNSPEC.
+%% The value of <i>most</i> unspecified fields in a {@link job()}.
+
+-type version() :: v1.
+%% A supported object version.
 
 ?opaque work() :: #riak_core_work_v1{}.
 %% The type returned by {@link work/1}.
@@ -234,12 +256,16 @@ cap(v1, Object) when erlang:is_record(Object, riak_core_job_v1) ->
 cap(v1, Object) when erlang:is_record(Object, riak_core_work_v1) ->
     Object.
 
--spec cid(Job :: job()) -> cid().
+-spec cid(Job :: job() | gid()) -> cid().
 %%
 %% @doc Retrieves a Job's Client ID.
 %%
-cid(#riak_core_job_v1{cid = Val}) ->
-    Val.
+%% Note that the Client ID can be extracted from a Global ID as well.
+%%
+cid(#riak_core_job_v1{cid = CId}) ->
+    CId;
+cid(GId) when ?is_job_gid(GId) ->
+    erlang:element(2, GId).
 
 -spec class(Job :: job()) -> class().
 %%
@@ -255,7 +281,7 @@ class(#riak_core_job_v1{class = Class}) ->
 cleanup(#riak_core_work_v1{cleanup = Func}) ->
     Func.
 
--spec client_id(Job :: job()) -> cid().
+-spec client_id(Job :: job() | gid()) -> cid().
 %%
 %% @equiv cid(Job)
 %%
@@ -267,10 +293,14 @@ client_id(Job) ->
 %% @doc Returns a valid Job object for testing/validation.
 %%
 %% The returned instance's `work' element does nothing.
+%%
 %% Every element of the returned Job is constant across nodes and time,
-%% including the {@link gid(). Global ID}, which can never appear anywhere else.
+%% including the {@link gid(). Global ID}, which can never appear anywhere
+%% else.
+%%
 %% The implementation strategy allows the returned value to effectively be a
-%% static constant, so it's a cheap call that doesn't create multiple instances.
+%% static constant, so it's a cheap call that doesn't create multiple
+%% instances.
 %%
 dummy() ->
     #riak_core_job_v1{
@@ -366,45 +396,74 @@ invoke({Mod, Func, FunArgs}, AddArg)
 %%
 %% @doc Create and initialize a new job object.
 %%
-%% A Job can be created without a unit of work, to allow "filling in the
+%% A Job can be created without a unit of work (UoW), to allow "filling in the
 %% blanks" at a later point in its traversal of the cluster.
-%% Obviously, a unit of work must be assigned before the Job is runnable.
+%%
+%% Obviously, a UoW must be assigned before the Job is
+%% {@link runnable/1. runnable}.
 %%
 %% The provided property list includes Key/Value tuples with which to
 %% initialize the object. The following tuples are recognized:
 %%
-%% {`work', Work} - Work is an object of the type returned by {@link work/2}.
+%% <dl>
+%%  <dt><code>{work, <i>Work</i> :: {@link work()}}</code></dt>
+%%  <dd>The Job's UoW; <i>Work</i> is an object of the type returned by
+%%      {@link work/1}.</dd>
 %%
-%% {`class', class()} - The job's class; default is `anon'.
+%%  <dt><code>{class, <i>Class</i> :: {@link class()}}</code></dt>
+%%  <dd>The Job's <i>Class</i>; default is {@link unspec()}.</dd>
 %%
-%% {`from', sender() | pid()} - The job's originator; default is `ignore'.
-%% Used by the {@link reply/2} function, which itself is only called by the job
-%% management system if the job crashes or is canceled AND `killed' is unset
-%% (or raises an error on invocation), in which case a message in the form
-%% `{error, Job, Why}' is sent to it - if you set this field, be prepared
-%% to receive that message.
+%%  <dt><code>{from, <i>From</i> :: {@link from()}}</code></dt>
+%%  <dd>The Job's originator; default is `ignore'.</dd>
+%%  <dd>Used by the {@link reply/2} function, which itself is only called by
+%%      the job management system if the job crashes or is canceled <i>and</i>
+%%      `killed' is unset (or raises an error on invocation). In that case
+%%      a message in the form
+%%      <code>{error, <i>Job</i> :: job(), <i>Why</i> :: term()}</code> is sent
+%%      to it - if you set this field, be prepared to receive that message.</dd>
+%%  <dd><em>Warning:</em> Because there are so many valid representations of
+%%      the {@link sender()} type in riak_core (and because there appear to be
+%%      formats in use that are not covered by the type specification at all),
+%%      it's not feasible to fully check them when the job is created, so
+%%      exceptions from {@link reply/2} are possible if you try to roll your
+%%      own.</dd>
 %%
-%% Warning: Because there are so many valid representations of the sender()
-%% type in riak_core (and because there appear to be formats in use that are
-%% not covered by the type specification at all), it's not feasible to fully
-%% check them when the job is created, so exceptions from reply/2 are possible
-%% if you try to roll your own.
+%%  <dt><code>{cid, <i>ClientID</i> :: {@link cid()}}</code></dt>
+%%  <dd>The Job's client-assigned identifier; default is {@link unspec()}.</dd>
+%%  <dd>This field is incorporated into the Job's {@link gid(). Global ID}.</dd>
 %%
-%% {`cid', cid()} - A client job identifier; default is `anon'.
-%% This field is incorporated into the job's global ID.
+%%  <dt><code>{created, <i>Created</i> :: {@link time()}}</code></dt>
+%%  <dd>Sets the Job's `created' statistic to the specified timestamp; default
+%%      is the current time as returned by {@link timestamp/0}.</dd>
+%%  <dd>This statistic can be set to a time in the past to incorporate knowledge
+%%      the originator has about the true provenance of the Job.</dd>
+%%  <dd>Some clock skew is accepted, but if an attempt is made to set the value
+%%      more than approximately 1.5 seconds into the future (according to the
+%%      local clock) then the default is silently used.</dd>
+%%  <dd><i>Note that because this is a statistic, not a distinct field in the
+%%      Job structure, it can be updated (without the clock skew constraints),
+%%      though doing so is not recommended.</i></dd>
 %%
-%% {`prio', priority()} - The job's priority (currently ignored).
+%%  <dt><code>{prio, <i>Priority</i> :: {@link priority()}}</code></dt>
+%%  <dd>The Job's priority; currently ignored.</dd>
 %%
-%% {`iid', iid()} - Any identifier the originator wants to save in the job.
-%% This field is ignored by all job handling operations; defaults to `anon'.
+%%  <dt><code>{iid, <i>InternalID</i> :: {@link iid()}}</code></dt>
+%%  <dd>Any identifier the originator wants to save in the Job;
+%%      default is {@link unspec()}.</dd>
+%%  <dd>This field is ignored by all job handling operations and can be changed
+%%      with {@link internal_id/2}.</dd>
 %%
-%% {`killed', func()} - A function, with arguments, to be called if the job
-%% is killed, cancelled, or crashed. The function may be specified as {M, F, A}
-%% or {F, A}; the default is `undefined'.
-%% The function will be invoked with a Reason term prepended to the specified
-%% Args list, so the arity of the function must be one more than length(A).
+%%  <dt><code>{killed, <i>Killed</i> :: {@link func()}}</code></dt>
+%%  <dd>A function, with arguments, to be called if the job crashes or is
+%%      killed or canceled. The function may be specified as
+%%      <code>{<i>Mod</i>, <i>Func</i>, <i>Args</i>}</code> or
+%%      <code>{<i>Fun</i>, <i>Args</i>}</code>; the default is `undefined'.</dd>
+%%  <dd>The function will be invoked with a <i>Reason</i> term prepended to the
+%%      specified <i>Args</i> list, so the arity of the function must be one
+%%      more than <code>length(<i>Args</i>)</code>.</dd>
+%% </dl>
 %%
-%% Unrecognized properties are ignored, so it IS NOT an error if the provided
+%% Unrecognized properties are ignored, so it is not an error if the provided
 %% property list includes irrelevant values.
 %%
 %% @see work/2
@@ -424,7 +483,7 @@ job(Props) when erlang:is_list(Props) ->
         {value, {_, CidVal}, NewPC} ->
             {CidVal, NewPC};
         false ->
-            {anon, PW}
+            {?UNSPEC, PW}
     end,
     {Mod, PM} = case lists:keytake(module, 1, PC) of
         {value, {_, ModVal}, NewPM} ->
@@ -529,27 +588,37 @@ reply(From, Msg) when erlang:is_tuple(From) ->
 -spec runnable(JobWorkFunc :: job() | work() | func())
         -> true | {error, term()}.
 %%
-%% @doc Checks whether the specified JobWorkFunc object can be run locally.
+%% @doc Checks whether the specified <i>JobWorkFunc</i> can be run locally.
 %%
-%% The order of tests is NOT specified, and the result of the first test that
-%% fails is returned. If all tests pass, `true' is returned, which does not
-%% guarantee that the object will run successfully, only that it can be invoked
-%% in the local environment.
+%% The order of tests is <i>NOT</i> specified, and the result of the first test
+%% that fails is returned. If all tests pass, `true' is returned, which does
+%% not guarantee that the object will run successfully, only that it can be
+%% invoked in the local environment.
 %%
 %% Following are some (though possibly not all) of the errors that may be
 %% reported:
 %%
-%% {`error', `no_work'} - No unit of work has been assigned to the Job yet.
+%% <dl>
+%%  <dt><code>{error, no_work}</code></dt>
+%%  <dd>Input is a {@link job(). Job} to which no UoW has been assigned.</dd>
 %%
-%% {`error', {`no_module', {Module, Function, Arity}}} - The specified Module
-%% is not present in the system.
+%%  <dt><code>{error, {no_module,
+%%      {<i>Module</i>, <i>Function</i>, <i>Arity</i>}}}</code></dt>
+%%  <dd>The specified <i>Module</i> is not present in the system.</dd>
 %%
-%% {`error', {`no_function', {Module, Function, Arity}}} - The specified Module
-%% does not export Function/Arity.
+%%  <dt><code>{error, {no_function,
+%%      {<i>Module</i>, <i>Function</i>, <i>Arity</i>}}}</code></dt>
+%%  <dd>The specified <i>Module</i> does not export <i>Function/Arity</i>.</dd>
 %%
-%% {`error', {`arity_mismatch', {Function, Arity}, Expected}} - The specified
-%% Function accepts Arity arguments, but the specification would call it with
-%% Expected arguments.
+%%  <dt><code>{error, {arity_mismatch,
+%%      {<i>Function</i>, <i>Arity</i>}, <i>Expected</i>}}</code></dt>
+%%  <dd>The specified <i>Function</i> accepts <i>Arity</i> arguments, but the
+%%      system would call it with <i>Expected</i> arguments.</dd>
+%% </dl>
+%%
+%% <i>Note:</i> Errors do <i>NOTt</i> indicate which function within a Job or
+%% UoW did not pass validation - one more reason to prefer MFA specifications
+%% over closures.
 %%
 %% @see job/1
 %% @see work/1
@@ -630,7 +699,8 @@ timestamp() ->
 
 -spec update(Stat :: stat_key(), Job :: job()) -> job().
 %%
-%% @doc Sets the specified statistic to the current timestamp.
+%% @doc Sets the specified statistic to the current
+%% {@link timestamp/0. timestamp}.
 %%
 update(Stat, Job) ->
     update(Stat, ?CUR_TIMESTAMP, Job).
@@ -642,16 +712,16 @@ update(Stat, Job) ->
 update(Stat, Value, #riak_core_job_v1{stats = Stats} = Job) ->
     Job#riak_core_job_v1{stats = ?StatsDict:store(Stat, Value, Stats)}.
 
--spec versions() -> [atom()].
+-spec versions() -> [version()].
 %%
 %% @doc Return the version atoms supported by the module, in descending order.
 %%
 versions() ->
     [v1].
 
--spec version(Object :: term()) -> {atom(), atom()} | undefined.
+-spec version(Object :: term()) -> {job | work, version()} | undefined.
 %%
-%% @doc Return the type and version atom of the specified Job/Work object.
+%% @doc Return the type and version of the specified Job/Work object.
 %%
 %% If the object is not a recognized record format `undefined' is returned.
 %%
@@ -662,44 +732,63 @@ version(Object) when erlang:is_record(Object, riak_core_work_v1) ->
 version(_) ->
     undefined.
 
--spec work(Props :: [{setup | main | cleanup, func()} | term()]) -> work()
-        ; (Job :: job()) -> work() | undefined .
+-spec work(JobOrProps :: job() | [{setup | main | cleanup, func()} | term()])
+        -> work() | undefined.
 %%
-%% @doc Create a new unit of work OR retrieve a Job's unit of work.
+%% @doc Create a new UoW <i>OR</i> retrieve a Job's UoW.
 %%
-%% The specification of a unit of work consists of three functions, specified
-%% as the vallues associated with the following keys in the input proplist:
+%% The specification of a UoW consists of three functions, any (but not all) of
+%% which may be excluded.
 %%
-%%  `setup' - the Setup function receives its arguments preceded by a
-%%  riak_core_job_manager:mgr_rec() up the running Job in the Manager, and
-%%  returns Context1.
-%%  If the remaining functions need to call their Manager, then Setup should
-%%  store the Manager and Key in the context that it returns for propagation.
+%% <i>This model has been chosen to allow sharing common functions across UoWs
+%% in an effort to avoid large, opaque closures - use it wisely.</i>
 %%
-%%  `main' - the Main function receives its arguments preceded by Context1 and
-%%  returns Context2.
-%%  This function is assumed to perform the bulk of the work.
+%% The functions are specified as follows in the input proplist:
 %%
-%%  `cleanup' - the Cleanup function receives its arguments preceded by
-%%  Context2 and returns the result of the unit of work, which is stored as
-%%  a statistic in the Job under the key `result'.
+%% <dl>
+%%  <dt><code>{setup, <i>Setup</i> :: func()}</code></dt>
+%%  <dd>The <i>Setup</i> function receives its arguments preceded by a
+%%      {@link riak_core_job_manager:mgr_key(). MgrKey} and returns
+%%      <i>Context1</i>.</dd>
+%%  <dd>If the remaining functions need to access the current state of the
+%%      running Job, then <i>Setup</i> should store <i>MgrKey</i> in the
+%%      <i>Context1</i> that it returns for propagation.</dd>
+%%
+%%  <dt><code>{main, <i>Main</i> :: func()}</code></dt>
+%%  <dd>The <i>Main</i> function receives its arguments preceded by
+%%      <i>Context1</i> and returns <i>Context2</i>.</dd>
+%%  <dd>This function is assumed to perform the bulk of the work.</dd>
+%%
+%%  <dt><code>{cleanup, <i>Cleanup</i> :: func()}</code></dt>
+%%  <dd>The <i>Cleanup</i> function receives its arguments preceded by
+%%      <i>Context2</i> and returns the <i>Result</i> of the UoW.</dd>
+%%  <dd>If the enclosing Job is executed by the {@link riak_core_job_manager}
+%%      then <i>Result</i> is stored as a statistic in the Job under the key
+%%      `result'.</dd>
+%% </dl>
 %%
 %% Because the argument lists are variable, the function types can't be fully
 %% specified, but if we could they'd look something like this:
 %%
-%%  setup_fun()   :: fun((mgr_rec(), Arg1 ... ArgN) -> context1()).
+%%  <code>setup_fun() :: fun((<i>MgrKey</i>, <i>Arg1</i>...<i>ArgN</i>)
+%%      -> <i>Context1</i>).</code>
 %%
-%%  main_fun()    :: fun((context1(), Arg1 ... ArgN) -> context2()).
+%%  <code>main_fun() :: fun((<i>Context1</i>, <i>Arg1</i>...<i>ArgN</i>)
+%%      -> <i>Context2</i>).</code>
 %%
-%%  cleanup_fun() :: fun((context2(), Arg1 ... ArgN) -> result()).
+%%  <code>cleanup_fun() :: fun((<i>Context2</i>, <i>Arg1</i>...<i>ArgN</i>)
+%%      -> <i>Result</i>).</code>
 %%
 %% In short, the arity of each of the functions is one more than the length
-%% of the arguments list its initialized with.
+%% of the arguments list it's initialized with.
+%%
+%% <i>Note:</i> While the specifications above are of closures, providing
+%% functions as MFA tuples is preferred for visibility and debugging.
 %%
 %% A work object's defaults are such that each unspecified function simply
-%% returns the argument passed to it, however one or more functions MUST be
-%% specified in the input properties - a `badarg' error is raised if none of
-%% the keys [`setup', `main', `cleanup'] are present in the input proplist.
+%% returns the argument passed to it, however one or more functions <i>MUST</i>
+%% be specified in the input properties. A `badarg' error is raised if none of
+%% the keys `setup', `main', or `cleanup' are present in the input proplist.
 %%
 %% Depending how and where they're specified, functions may not be fully
 %% validated until the unit of work reaches the Manager upon which it is to
@@ -707,8 +796,8 @@ version(_) ->
 %% function that cannot be executed, or does nothing worthwhile, at its
 %% destination.
 %%
-%% Unrecognized properties are ignored, so it IS NOT an error if the input
-%% list contains irrelevant values.
+%% Unrecognized properties are ignored, so it is not an error if the provided
+%% property list includes irrelevant values.
 %%
 %% @see job/1
 %% @see riak_core_job_manager:get_job/1
@@ -847,10 +936,11 @@ id_test() ->
     ?assertEqual(?DUMMY_JOB_UID, element(3, DummyGId)),
 
     ?assertEqual(CId, client_id(Job)),
+    ?assertEqual(CId, client_id(GId)),
     ?assertEqual(GId, global_id(Job)),
 
-    ?assertEqual(anon, iid(DummyJob)),
-    ?assertEqual(anon, internal_id(Job)),
+    ?assertEqual(?UNSPEC, iid(DummyJob)),
+    ?assertEqual(?UNSPEC, internal_id(Job)),
 
     AltIId = [some, other, stuff],
     AltJob = internal_id(Job, AltIId),

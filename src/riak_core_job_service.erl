@@ -18,54 +18,69 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @private
+%%
 %% @doc Internal Job Management Service.
 %%
-%% Processes:
+%% This module has no generally-useful public API, but it does recognize some
+%% configuration settings in the application environment:
 %%
-%%  ===Manager===
+%% <ul>
+%%  <li>{@link cfg_idle_min()}</li>
+%%  <li>{@link cfg_idle_max()}</li>
+%%  <li>{@link cfg_recycle()}</li>
+%% </ul>
 %%
-%%    * Module {@link riak_core_job_manager}
+%% These configuration keys are defined as macros in `riak_core_job.hrl'.
 %%
-%%    * Public API - ALL external interaction is through this module.
+%% <hr />
+%% <i>The following provides information about the processes that make up the
+%% Job Management subsystem and is for implementation reference only.</i>
 %%
-%%    * Owned by the `riak_core' application supervisor.
+%% ===Manager===
+%% <ul>
+%%  <li>Module {@link riak_core_job_manager}.</li>
+%%  <li>Public API
+%%      - <i>ALL</i> external interaction is through this module.</li>
+%%  <li>Owned by the
+%%      {@link riak_core_sup. riak_core application supervisor}.</li>
+%%  <li>Calls into the {@link riak_core_job_service. Service}
+%%      and active {@link riak_core_job_runner. Runners}.</li>
+%%  <li>Receives calls from active {@link riak_core_job_runner. Runners}
+%%      and {@link riak_core_job. Jobs}</li>
+%% </ul>
 %%
-%%    * Calls into the Service and active Runners.
+%% ===Service===
+%% <ul>
+%%  <li>Module {@link riak_core_job_service}.</li>
+%%  <li>Private Runner service, called <i>ONLY</i> by the
+%%      {@link riak_core_job_manager. Manager}.</li>
+%%  <li>Owned by the
+%%      {@link riak_core_sup. riak_core application supervisor}.</li>
+%%  <li>Calls into the {@link riak_core_job_sup. Supervisor}
+%%      and idle {@link riak_core_job_runner. Runners}.</li>
+%% </ul>
 %%
-%%  ===Service===
+%% ===Supervisor===
+%% <ul>
+%%  <li>Module {@link riak_core_job_sup}.</li>
+%%  <li>Owner of {@link riak_core_job_runner. Runner} processes, called
+%%      <i>ONLY</i> by the {@link riak_core_job_service. Service}.</li>
+%%  <li>Owned by the
+%%      {@link riak_core_sup. riak_core application supervisor}.</li>
+%%  <li>Creates and destroys {@link riak_core_job_runner. Runner}
+%%      processes.</li>
+%% </ul>
 %%
-%%    * Module {@link riak_core_job_service}
-%%
-%%    * Private Runner service, called ONLY by the Manager.
-%%
-%%    * Owned by the `riak_core' application supervisor.
-%%
-%%    * Calls into the Supervisor and active/idle Runners.
-%%
-%%  ===Supervisor===
-%%
-%%    * Module {@link riak_core_job_sup}
-%%
-%%    * Owner of Runner processes, called ONLY by the Service.
-%%
-%%    * Owned by the `riak_core' application supervisor.
-%%
-%%    * Creates and destroys Runner processes.
-%%
-%%  ===Runner===
-%%
-%%    * Module {@link riak_core_job_runner}
-%%
-%%    * Process that actually executes submitted Jobs.
-%%
-%%    * Owned by the Supervisor.
-%%
-%%    * Lifecycle managed by the Service.
-%%
-%%    * Work submitted by the Manager.
-%%
-%% The unidirectional dependency model is strictly adhered to!
+%% ===Runner===
+%% <ul>
+%%  <li>Module {@link riak_core_job_runner}.</li>
+%%  <li>Process that actually executes submitted
+%%      {@link riak_core_job. Jobs}.</li>
+%%  <li>Owned by the {@link riak_core_job_sup. Supervisor}.</li>
+%%  <li>Lifecycle managed by the {@link riak_core_job_service. Service}.</li>
+%%  <li>Work submitted by, and status updated to, the
+%%      {@link riak_core_job_manager. Manager}.</li>
+%% </ul>
 %%
 -module(riak_core_job_service).
 -behaviour(gen_server).
@@ -85,9 +100,11 @@
 
 % Private Types
 -export_type([
+    cfg_concur_max/0,
     cfg_idle_max/0,
     cfg_idle_min/0,
     cfg_mult/0,
+    cfg_recycle/0,
     cfg_prop/0,
     config/0,
     runner/0,
@@ -110,7 +127,7 @@
 -include("riak_core_job_internal.hrl").
 
 %% ===================================================================
-%% Types
+%% Internal Types
 %% ===================================================================
 
 -define(StatsDict,  orddict).
@@ -134,20 +151,110 @@
     stats       = ?StatsDict:new()          ::  stats()
 }).
 
--type cfg_idle_max()    ::  {?JOB_SVC_IDLE_MAX, non_neg_integer() | cfg_mult()}.
--type cfg_idle_min()    ::  {?JOB_SVC_IDLE_MIN, non_neg_integer() | cfg_mult()}.
--type cfg_recycle()     ::  {?JOB_SVC_RECYCLE,  boolean()}.
-
--type cfg_mult()    ::  {concur | cores | scheds, non_neg_integer()}.
--type cfg_prop()    ::  cfg_idle_max() | cfg_idle_min() | cfg_recycle().
--type config()      ::  [cfg_prop()].
 -type idle()        ::  ?queue_t(#rrec{}).
 -type rkey()        ::  reference().
 -type runner()      ::  pid().
--type stat()        ::  {stat_key(), stat_val()}.
--type stat_key()    ::  atom() | tuple().
--type stat_val()    ::  term().
 -type state()       ::  #state{}.
+
+%% ===================================================================
+%% Public Types
+%% ===================================================================
+
+-type cfg_concur_max() :: {?JOB_SVC_CONCUR_LIMIT, pos_integer() | cfg_mult()}.
+%% Maximum number of jobs to execute concurrently.
+%%
+%% This service doesn't use this value directly, but other configuration values
+%% are calculated relative to it.
+%%
+%% Scoped to the application returned by {@link default_app/0}.
+%%
+%% Default: <code>{scheds, 6}</code>.
+
+-type cfg_idle_max() :: {?JOB_SVC_IDLE_MAX, non_neg_integer() | cfg_mult()}.
+%% Maximum number of idle runner processes to keep available.
+%%
+%% Idle processes are culled opportunistically; the actual count at any given
+%% instant can be higher.
+%%
+%% Scoped to the application returned by {@link default_app/0}.
+%%
+%% Default: <code>max(({@link cfg_idle_min()} * 2), ({scheds, 1} - 1))</code>.
+
+-type cfg_idle_min() :: {?JOB_SVC_IDLE_MIN, non_neg_integer() | cfg_mult()}.
+%% Minimum number of idle runner processes to keep available.
+%%
+%% Idle processes are added opportunistically; the actual count at any given
+%% instant can be lower.
+%%
+%% Scoped to the application returned by {@link default_app/0}.
+%%
+%% Default: <code>min({concur, 1}, max(({concur, 1} div 8), 3))</code>.
+
+-type cfg_mult() :: {concur | cores | scheds, non_neg_integer()}.
+%% A configuration value calculated by multiplying a system or configuration
+%% value represented by <i>Token</i> (the first element of the tuple) by an
+%% immediate non-negative integral <i>Multiplier</i> (the second element).
+%%
+%% Recognized <i>Tokens</i> are:
+%% <dl>
+%%  <dt>`concur'</dt>
+%%  <dd>The effective value of {@link cfg_concur_max()}. If that value itself
+%%      is being calculated, the result is calculated as if the <i>Token</i>
+%%      is `scheds'.</dd>
+%%
+%%  <dt>`cores'</dt>
+%%  <dd>The value of `erlang:system_info(logical_processors)'. If the system
+%%      returns anything other than an integer greater than zero (as it may on
+%%      some platforms), the result is calculated as if the <i>Token</i>
+%%      is `scheds'.</dd>
+%%
+%%  <dt>`scheds'</dt>
+%%  <dd>The value of `erlang:system_info(schedulers)'. This value is always an
+%%      integer greater than zero, so there's no fallback.</dd>
+%% </dl>
+%%
+%% Calculated values are determined at initialization, they ARE NOT dynamic!
+
+-type cfg_prop() :: cfg_idle_max() | cfg_idle_min() | cfg_recycle().
+%% Any of the configuration properties returned by {@link config/0}.
+
+-type cfg_recycle() :: {?JOB_SVC_RECYCLE,  boolean()}.
+%% Controls whether job runner processes are re-used.
+%%
+%% By default, recycling is disabled and each job runs in a pristine process,
+%% which is strongly recommended.
+%% However, on a heavily-loaded node there <i>may</i> be performance benefits
+%% to re-using these processes, as long as the trade-offs are understood.
+%%
+%% When recycling is enabled, runner processes are cleaned up as best as they
+%% can be and added to the idle queue when jobs complete, rather than being
+%% destroyed.
+%%
+%% Recycled runners are placed at the end of the queue, and discard
+%% unrecognized messages until they are re-used, in hopes that straggler
+%% messages will get to them while they're still idle, but still ...<br />
+%% <em>... Re-using processes implies that jobs that receive messages
+%% <i>MUST</i> be prepared to receive and disregard messages directed at
+%% previous occupants of the process they're running in!</em>
+%%
+%% Scoped to the application returned by {@link default_app/0}.
+%%
+%% Default: `false'.
+
+-type config() :: [cfg_prop()].
+%% All of the configuration properties returned by {@link config/0}.
+
+-type stat() :: {stat_key(), stat_val()}.
+%% A single statistic.
+%% <i>Most</i> Service statistics are integral counters in the form
+%% <code>{<i>Key</i>, <i>Count</i> :: non_neg_integer()}</code>.
+
+-type stat_key() :: atom() | tuple().
+%% The Key by which a statistic is referenced.
+%% <i>Most</i> statistics keys are simple, single-word atoms.
+
+-type stat_val() :: term().
+%% The value of a statistic, most often an integral count greater than zero.
 
 %% ===================================================================
 %% Private API
@@ -205,7 +312,7 @@ app_config(App, Key) ->
     Key :: atom(),
     Min :: non_neg_integer(),
     Def :: non_neg_integer() | cfg_mult()) -> term().
-%%
+%% @private
 %% @doc Returns the configured or default value for Key in the default
 %%      application scope.
 %%
@@ -219,7 +326,7 @@ app_config(Key, Min, Def) ->
     Key :: atom(),
     Min :: non_neg_integer(),
     Def :: non_neg_integer() | cfg_mult()) -> term().
-%%
+%% @private
 %% @doc Returns the configured or default value for Key in the specified
 %%      application scope.
 %%
@@ -280,14 +387,17 @@ app_config(App, Key, Min, Def) ->
 
 -spec config() -> config() | {error, term()}.
 %%
-%% @doc Return the current effective Jobs Management configuration.
+%% @doc Returns the current effective configuration of this service.
 %%
 config() ->
     gen_server:call(?JOBS_SVC_NAME, config).
 
 -spec default_app() -> atom().
 %%
-%% @doc Returns the current or default application name.
+%% @doc Returns the current application name, or `riak_core' if running outside
+%% of any application.
+%%
+%% All configuration is scoped to this application name.
 %%
 default_app() ->
     case application:get_application() of
@@ -313,7 +423,7 @@ runner() ->
 
 -spec stats() -> [stat()] | {error, term()}.
 %%
-%% @doc Return statistics from the Jobs Management system.
+%% @doc Returns statistics from this service.
 %%
 stats() ->
     gen_server:call(?JOBS_SVC_NAME, stats).
