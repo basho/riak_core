@@ -31,6 +31,10 @@
          wait_for_pid/1, stop_pid/2]).
 -include_lib("eunit/include/eunit.hrl").
 
+stop_pid(undefined) ->
+    ok;
+stop_pid(Name) when is_atom(Name) ->
+    stop_pid(whereis(Name));
 stop_pid(Other) when not is_pid(Other) ->
     ok;
 stop_pid(Pid) ->

@@ -677,27 +677,37 @@ set_my_ring_test() ->
     cleanup_ets(test).
 
 refresh_my_ring_test() ->
-    setup_ets(test),
-    Core_Settings = [{ring_creation_size, 4},
-                     {ring_state_dir, "/tmp"},
-                     {cluster_name, "test"}],
-    [begin
-         put({?MODULE,AppKey}, app_helper:get_env(riak_core, AppKey)),
-         ok = application:set_env(riak_core, AppKey, Val)
-     end || {AppKey, Val} <- Core_Settings],
-    riak_core_ring_events:start_link(),
-    riak_core_ring_manager:start_link(test),
-    riak_core_vnode_sup:start_link(),
-    riak_core_vnode_master:start_link(riak_core_vnode),
-    riak_core_test_util:setup_mockring1(),
-    ?assertEqual(ok, riak_core_ring_manager:refresh_my_ring()),
-    riak_core_ring_manager:stop(),
-    %% Cleanup the ring file created for this test
-    {ok, RingFile} = find_latest_ringfile(),
-    file:delete(RingFile),
-    [ok = application:set_env(riak_core, AppKey, get({?MODULE, AppKey}))
-     || {AppKey, _Val} <- Core_Settings],
-    ok.
+    {spawn, fun() ->
+        setup_ets(test),
+        Core_Settings = [{ring_creation_size, 4},
+                         {ring_state_dir, "/tmp"},
+                         {cluster_name, "test"}],
+        [begin
+             put({?MODULE,AppKey}, app_helper:get_env(riak_core, AppKey)),
+             ok = application:set_env(riak_core, AppKey, Val)
+         end || {AppKey, Val} <- Core_Settings],
+        stop_core_processes(),
+        riak_core_ring_events:start_link(),
+        riak_core_ring_manager:start_link(test),
+        riak_core_vnode_sup:start_link(),
+        riak_core_vnode_master:start_link(riak_core_vnode),
+        riak_core_test_util:setup_mockring1(),
+        ?assertEqual(ok, riak_core_ring_manager:refresh_my_ring()),
+        stop_core_processes(),
+        %% Cleanup the ring file created for this test
+        {ok, RingFile} = find_latest_ringfile(),
+        file:delete(RingFile),
+        [ok = application:set_env(riak_core, AppKey, get({?MODULE, AppKey}))
+         || {AppKey, _Val} <- Core_Settings],
+        ok
+    end
+    }.
+
+stop_core_processes() ->
+    riak_core_test_util:stop_pid(riak_core_ring_events),
+    riak_core_test_util:stop_pid(riak_core_ring_manager),
+    riak_core_test_util:stop_pid(riak_core_vnode_sup),
+    riak_core_test_util:stop_pid(riak_core_vnode_master).
 
 -define(TEST_RINGDIR, "ring_manager_eunit").
 -define(TEST_RINGFILE, (?TEST_RINGDIR ++ "/test.ring")).

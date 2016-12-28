@@ -90,10 +90,11 @@ setup_simple() ->
 stop_servers(_Pid) ->
     %% Make sure VMaster is killed before sup as start_vnode is a cast
     %% and there may be a pending request to start the vnode.
-    riak_core_test_util:stop_pid(whereis(mock_vnode_master)),
-    riak_core_test_util:stop_pid(whereis(riak_core_vnode_manager)),
-    riak_core_test_util:stop_pid(whereis(riak_core_ring_events)),
-    riak_core_test_util:stop_pid(whereis(riak_core_vnode_sup)),
+    riak_core_test_util:stop_pid(mock_vnode_master),
+    riak_core_test_util:stop_pid(riak_core_vnode_manager),
+    riak_core_test_util:stop_pid(riak_core_ring_events),
+    riak_core_test_util:stop_pid(riak_core_vnode_sup),
+    riak_core_test_util:stop_pid(riak_core_ring_manager),
     application:stop(exometer),
     application:stop(lager),
     application:stop(goldrush).
