@@ -67,6 +67,10 @@ simple_test_() ->
       ?_assertEqual(true, quickcheck(?QC_OUT(numtests(100, prop_simple()))))}}.
 
 setup_simple() ->
+    %% call `meck:unload' here because there are other tests that have
+    %% meck'ed things we use, and they an break us if eunit doesn't tear
+    %% them down fast enough.
+    meck:unload(),
     error_logger:tty(false),
     application:set_env(sasl, sasl_error_logger, {file, "core_vnode_eqc_sasl.log"}),
     error_logger:logfile({open, "core_vnode_eqc.log"}),
