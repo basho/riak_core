@@ -52,11 +52,9 @@ simple_test_() ->
     {setup,
      fun setup_simple/0,
      fun(OldVars) ->
-         unlink(whereis(riak_core_ring_manager)),
-         RingEventsPid = whereis(riak_core_ring_events),
-         unlink(RingEventsPid),
+         riak_core_test_util:unlink_named_process(riak_core_ring_manager),
          riak_core_ring_manager:stop(),
-         riak_core_test_util:stop_pid(RingEventsPid),
+         riak_core_test_util:stop_pid(riak_core_ring_events),
          application:stop(exometer),
          application:stop(lager),
          application:stop(goldrush),
@@ -361,9 +359,9 @@ start_servers() ->
 stop_servers() ->
     %% Make sure VMaster is killed before sup as start_vnode is a cast
     %% and there may be a pending request to start the vnode.
-    stop_pid(whereis(mock_vnode_master)),
-    stop_pid(whereis(riak_core_vnode_manager)),
-    stop_pid(whereis(riak_core_vnode_sup)).
+    riak_core_test_util:stop_pid(mock_vnode_master),
+    riak_core_test_util:stop_pid(riak_core_vnode_manager),
+    riak_core_test_util:stop_pid(riak_core_vnode_sup).
 
 restart_master() ->
     %% Call get status to make sure the riak_core_vnode_master
@@ -371,25 +369,8 @@ restart_master() ->
     %% commands like neverreply are not cast on to the vnode and the
     %% counters are not updated correctly.
     sys:get_status(mock_vnode_master),
-    stop_pid(whereis(mock_vnode_master)),
+    riak_core_test_util:stop_pid(mock_vnode_master),
     {ok, _VMaster} = riak_core_vnode_master:start_link(mock_vnode).
-
-stop_pid(undefined) ->
-    ok;
-stop_pid(Pid) ->
-    unlink(Pid),
-    exit(Pid, kill), %% Don't wait for graceful shutdown
-    ok = wait_for_pid(Pid).
-
-wait_for_pid(Pid) ->
-    Mref = erlang:monitor(process, Pid),
-    receive
-        {'DOWN',Mref,process,_,_} ->
-            ok
-    after
-        5000 ->
-            {error, didnotexit}
-    end.
 
 %% Async work collector process - collect all messages until work requested
 async_work_proc(AsyncWork, Crashes) ->

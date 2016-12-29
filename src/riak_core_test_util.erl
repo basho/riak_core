@@ -28,7 +28,9 @@
 -export([setup_mockring1/0,
          fake_ring/2,
          stop_pid/1,
-         wait_for_pid/1, stop_pid/2]).
+         wait_for_pid/1,
+         stop_pid/2,
+         unlink_named_process/1]).
 -include_lib("eunit/include/eunit.hrl").
 
 stop_pid(undefined) ->
@@ -57,6 +59,9 @@ wait_for_pid(Pid) ->
             {error, didnotexit}
     end.
 
+
+unlink_named_process(Name) when is_atom(Name) ->
+    unlink(whereis(Name)).
 
 setup_mockring1() ->
     % requires a running riak_core_ring_manager, in test-mode is ok

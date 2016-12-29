@@ -1,20 +1,35 @@
-%%%-------------------------------------------------------------------
-%%% @author doug
-%%% @copyright (C) 2016, <COMPANY>
-%%% @doc
-%%%
-%%% @end
-%%% Created : 23. Dec 2016 8:37 AM
-%%%-------------------------------------------------------------------
+%% -------------------------------------------------------------------
+%%
+%% Copyright (c) 2007-2016 Basho Technologies, Inc.
+%%
+%% This file is provided to you under the Apache License,
+%% Version 2.0 (the "License"); you may not use this file
+%% except in compliance with the License.  You may obtain
+%% a copy of the License at
+%%
+%%   http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing,
+%% software distributed under the License is distributed on an
+%% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+%% KIND, either express or implied.  See the License for the
+%% specific language governing permissions and limitations
+%% under the License.
+%%
+%% -------------------------------------------------------------------
+
 -module(bucket_eqc_utils).
--author("doug").
 
 %% API
--export([per_test_setup/2, setup_cleanup/0]).
+-export([per_test_setup/2]).
 
 
 per_test_setup(DefaultBucketProps, TestFun) ->
     try
+        meck:new(riak_core_capability, []),
+        meck:expect(riak_core_capability, get,
+                    fun({riak_core, bucket_types}) -> true;
+                       (X) -> meck:passthrough([X]) end),
         os:cmd("rm -rf ./meta_temp"),
         riak_core_test_util:stop_pid(whereis(riak_core_ring_events)),
         riak_core_test_util:stop_pid(whereis(riak_core_ring_manager)),
@@ -42,15 +57,6 @@ per_test_setup(DefaultBucketProps, TestFun) ->
         riak_core_test_util:stop_pid(RingEvents),
         Results
     after
-        os:cmd("rm -rf ./meta_temp")
-    end.
-
-setup_cleanup() ->
-    meck:unload(),
-    meck:new(riak_core_capability, []),
-    meck:expect(riak_core_capability, get,
-                fun({riak_core, bucket_types}) -> true;
-                   (X) -> meck:passthrough([X]) end),
-    fun() ->
-        ok
+        os:cmd("rm -rf ./meta_temp"),
+        meck:unload()
     end.

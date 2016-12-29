@@ -84,11 +84,17 @@
          ring_trans/2,
          run_fixups/3,
          set_cluster_name/1,
-         stop/0,
          is_stable_ring/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
         terminate/2, code_change/3]).
+
+-ifdef(TEST).
+
+-export([stop/0]).
+
+-endif.
+
 
 -record(state, {
         mode,
@@ -318,10 +324,15 @@ prune_ringfiles() ->
             end
     end.
 
-
+-ifdef(TEST).
 %% @private (only used for test instances)
 stop() ->
-    gen_server:cast(?MODULE, stop).
+    try
+        gen_server:call(?MODULE, stop)
+    catch
+        exit:{noproc, _} -> ok
+    end.
+-endif.
 
 
 %% ===================================================================
@@ -406,10 +417,10 @@ handle_call({set_cluster_name, Name}, _From, State=#state{raw_ring=Ring}) ->
     {reply, ok, State2};
 handle_call(is_stable_ring, _From, State) ->
     {IsStable, _DeltaMS} = is_stable_ring(State),
-    {reply, IsStable, State}.
+    {reply, IsStable, State};
 
-handle_cast(stop, State) ->
-    {stop,normal,State};
+handle_call(stop, _From, State) ->
+    {stop,normal, ok, State}.
 
 handle_cast({refresh_my_ring, ClusterName}, State) ->
     {ok, Ring} = get_my_ring(),

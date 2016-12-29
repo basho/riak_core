@@ -33,7 +33,7 @@
 -type type_prop_val()  :: boolean().
 
 -define(QC_OUT(P),
-    eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
+        eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 
 -record(state, {
           %% a list of properties we have created
@@ -41,10 +41,10 @@
          }).
 
 btypes_test_() -> {
-        timeout, 60,
-        ?_test(?assert(
-            eqc:quickcheck(?QC_OUT(eqc:numtests(100, prop_btype_invariant())))))
-    }.
+              timeout, 60,
+              ?_test(?assert(
+                        eqc:quickcheck(?QC_OUT(eqc:numtests(100, prop_btype_invariant())))))
+             }.
 
 run_eqc() ->
     run_eqc(100).
@@ -338,18 +338,18 @@ weight(_S, _Cmd) -> 1.
 
 %% @doc the property
 prop_btype_invariant() ->
-	    ?SETUP(
-            fun bucket_eqc_utils:setup_cleanup/0,
-        ?FORALL(Cmds, commands(?MODULE),
-                aggregate(command_names(Cmds),
-                          ?TRAPEXIT(
-                             begin
-                                 {H, S, Res} = bucket_eqc_utils:per_test_setup([], fun() ->
-                                    run_commands(?MODULE,Cmds)
+    ?FORALL(Cmds, commands(?MODULE),
+            aggregate(command_names(Cmds),
+                      ?TRAPEXIT(
+                         begin
+                             {H, S, Res} =
+                                 bucket_eqc_utils:per_test_setup([],
+                                     fun() ->
+                                             run_commands(?MODULE,Cmds)
                                      end),
                              pretty_commands(?MODULE, Cmds, {H, S, Res},
                                              Res == ok)
-                             end
-                          )))).
+                         end
+                        ))).
 
 -endif.

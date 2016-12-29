@@ -56,7 +56,7 @@ prop_main() ->
                     {ok, Pid} = riak_core_node_watcher:start_link(),
 
                     %% Internal call to the node watcher to override default broadcast mechanism
-                    gen_server:call(riak_core_node_watcher, {set_bcast_mod, ?MODULE, on_broadcast}),
+                    riak_core_node_watcher:set_broadcast_module(?MODULE, on_broadcast),
 
                     %% Run the test
                     {_H, _S, Res} = run_commands(?MODULE, Cmds),
@@ -81,9 +81,9 @@ setup_cleanup() ->
     application:load(riak_core),
     application:set_env(riak_core, gossip_interval, 250),
     application:set_env(riak_core, ring_creation_size, 8),
-    RingEventHandlerSup = maybe_start_link(riak_core_eventhandler_sup),
-    RingEvents = maybe_start_link(riak_core_ring_events),
-    NodeWatcherEvents = maybe_start_link(riak_core_node_watcher_events),
+    RingEventHandlerSup = ensure_started(riak_core_eventhandler_sup),
+    RingEvents = ensure_started(riak_core_ring_events),
+    NodeWatcherEvents = ensure_started(riak_core_node_watcher_events),
     meck:new(mod_health, [non_strict, no_link]),
     fun() ->
         unlink(RingEventHandlerSup),
@@ -94,7 +94,7 @@ setup_cleanup() ->
         riak_core_test_util:stop_pid(NodeWatcherEvents)
     end.
 
-maybe_start_link(Mod) ->
+ensure_started(Mod) ->
     case Mod:start_link() of
         {ok, Pid} -> Pid;
         {error, {already_started, Pid}} -> Pid

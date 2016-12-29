@@ -231,25 +231,24 @@ bucket_prop_value() ->
 %%
 
 prop_buckets() ->
-    ?SETUP(
-        fun bucket_eqc_utils:setup_cleanup/0,
-        ?FORALL(Cmds, commands(?MODULE),
-            aggregate(command_names(Cmds),
-                ?TRAPEXIT(
-                    begin
-                        {H, S, Res} =  bucket_eqc_utils:per_test_setup(?DEFAULT_BPROPS, fun() ->
-                            run_commands(?MODULE, Cmds)
-                        end),
-                        pretty_commands(
-                            ?MODULE, Cmds,
-                            {H, S, Res},
-                            aggregate(
-                                command_names(Cmds),
-                                Res == ok
-                            )
+    ?FORALL(Cmds, commands(?MODULE),
+        aggregate(command_names(Cmds),
+            ?TRAPEXIT(
+                begin
+                    {H, S, Res} =
+                    bucket_eqc_utils:per_test_setup(?DEFAULT_BPROPS,
+                                                    fun() ->
+                                                        run_commands(?MODULE, Cmds)
+                                                    end),
+                    pretty_commands(
+                        ?MODULE, Cmds,
+                        {H, S, Res},
+                        aggregate(
+                            command_names(Cmds),
+                            Res == ok
                         )
-                    end
-                )
+                    )
+                end
             )
         )
     ).

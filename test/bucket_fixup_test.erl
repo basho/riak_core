@@ -82,7 +82,7 @@ load_test_() ->
      fun(_) ->
              process_flag(trap_exit, true),
              catch application:stop(riak_core),
-             unlink(whereis(riak_core_ring_manager)),
+             riak_core_test_util:unlink_named_process(riak_core_ring_manager),
              catch(riak_core_ring_manager:stop()),
              riak_core_test_util:stop_pid(whereis(riak_core_ring_events), shutdown),
              application:unset_env(riak_core, bucket_fixups),
