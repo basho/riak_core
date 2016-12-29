@@ -1043,10 +1043,11 @@ bounded_pmap_test_() ->
 make_fold_req_test_() ->
     {setup,
      fun() ->
+             meck:unload(),
              meck:new(riak_core_capability, [passthrough])
      end,
      fun(_) ->
-             meck:unload(riak_core_capability)
+             ok
      end,
      [
       fun() ->
@@ -1065,7 +1066,7 @@ make_fold_req_test_() ->
                        end,
 
               meck:expect(riak_core_capability, get,
-                          fun(_, _) -> v1 end),
+                          fun({riak_core, fold_req_version}, _) -> v1 end),
               F_1         = make_fold_req(F_1),
               F_1         = make_fold_req(F_2),
               F_1         = make_fold_req(FoldFun, Acc0),
@@ -1073,12 +1074,16 @@ make_fold_req_test_() ->
               ok = Newest(),
 
               meck:expect(riak_core_capability, get,
-                          fun(_, _) -> v2 end),
+                          fun({riak_core, fold_req_version}, _) -> v2 end),
               F_2_default = make_fold_req(F_1),
               F_2         = make_fold_req(F_2),
               F_2_default = make_fold_req(FoldFun, Acc0),
               F_2         = make_fold_req(FoldFun, Acc0, Forw, Opts),
-              ok = Newest()
+              ok = Newest(),
+              %% It seems you could unload `meck' in the test teardown,
+              %% but that sometimes causes the eunit process to crash.
+              %% Instead, unload at end of test.
+              meck:unload()
       end
      ]
     }.
