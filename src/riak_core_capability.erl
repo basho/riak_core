@@ -109,6 +109,13 @@
 -define(ETS, riak_capability_ets).
 -define(CAPS, '$riak_capabilities').
 
+-ifdef(TEST).
+-compile(export_all).
+-type state() :: #state{}.
+-export_type([state/0]).
+
+-endif.
+
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -156,6 +163,12 @@ get(Capability, Default) ->
         _:_ ->
             Default
     end.
+
+-ifdef(TEST).
+%% @doc Exported for testing - takes opaque state record and returns negotiated
+get_negotiated(State) ->
+    State#state.negotiated.
+-endif.
 
 %% @doc Return a list of all negotiated capabilities
 all() ->
@@ -628,41 +641,3 @@ load_registered() ->
         undefined -> [];
         {ok, Caps} -> Caps
     end.
-
-%% ===================================================================
-%% EUnit tests
-%% ===================================================================
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
-
-basic_test() ->
-    S1 = init_state([]),
-
-    S2 = register_capability(n1, 
-                             {riak_core, test},
-                             capability_info([x,a,c,y], y, []),
-                             S1),
-    S3 = add_node_capabilities(n2,
-                               [{{riak_core, test}, [a,b,c,y]}],
-                               S2),
-    S4 = negotiate_capabilities(n1, [{riak_core, []}], S3),
-    ?assertEqual([{{riak_core, test}, a}], S4#state.negotiated),
-
-    S5 = negotiate_capabilities(n1,
-                                [{riak_core, [{test, [{prefer, c}]}]}],
-                                S4),
-    ?assertEqual([{{riak_core, test}, c}], S5#state.negotiated),
-
-    S6 = add_node_capabilities(n3,
-                               [{{riak_core, test}, [b]}],
-                               S5),
-    S7 = negotiate_capabilities(n1, [{riak_core, []}], S6),
-    ?assertEqual([{{riak_core, test}, y}], S7#state.negotiated),
-
-    S8 = negotiate_capabilities(n1,
-                                [{riak_core, [{test, [{use, x}]}]}],
-                                S7),
-    ?assertEqual([{{riak_core, test}, x}], S8#state.negotiated),
-    ok.
-
--endif.
