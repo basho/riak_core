@@ -63,7 +63,7 @@
 bprops_test_() -> {
         timeout, 60,
         ?_test(?assert(
-            eqc:quickcheck(?QC_OUT(eqc:numtests(100, prop_buckets())))))
+            eqc:quickcheck(?QC_OUT(eqc:testing_time(50, prop_buckets())))))
     }.
 
 %%
