@@ -42,6 +42,7 @@
          del_user/1,
          disable/0,
          enable/0,
+         find_user/1,
          find_one_user_by_metadata/2,
          find_bucket_grants/2,
          get_ciphers/0,
@@ -102,6 +103,15 @@
 -type metadata_key() :: string().
 -type metadata_value() :: term().
 -type options() :: [{metadata_key(), metadata_value()}].
+
+-spec find_user(Username :: string()) -> options() | {error, not_found}.
+find_user(Username) ->
+    case user_details(name2bin(Username)) of
+        undefined ->
+            {error, not_found};
+        Options ->
+            Options
+    end.
 
 -spec find_one_user_by_metadata(metadata_key(), metadata_value()) -> {Username :: string(), options()} | {error, not_found}.
 find_one_user_by_metadata(Key, Value) ->
