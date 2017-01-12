@@ -1421,6 +1421,7 @@ legacy_reconcile(MyNodeName, StateA, StateB) ->
         vclock:merge([StateA#chstate.vclock,
                 StateB#chstate.vclock])),
     CHRing = chash:merge_rings(StateA#chstate.chring,StateB#chstate.chring),
+    log_ring_result(CHRing),
     Meta = merge_meta({StateA#chstate.nodename, StateA#chstate.meta}, {StateB#chstate.nodename, StateB#chstate.meta}),
     #chstate{nodename=MyNodeName,
              vclock=VClock,
@@ -1443,14 +1444,33 @@ internal_ring_changed(Node, CState0) ->
 
 %% @private
 merge_meta({N1,M1}, {N2,M2}) ->
-    dict:merge(fun(_,D1,D2) -> pick_val({N1,D1}, {N2,D2}) end, M1, M2).
+    Meta = dict:merge(fun(_,D1,D2) -> pick_val({N1,D1}, {N2,D2}) end, M1, M2),
+    log_meta_merge(M1, M2, Meta),
+    Meta.
 
 %% @private
 pick_val({N1,M1}, {N2,M2}) ->
     case {M1#meta_entry.lastmod, N1} > {M2#meta_entry.lastmod, N2} of
         true -> M1;
         false -> M2
-    end.                   
+    end.
+
+%% @private
+%% Log ring metadata input and result for debug purposes
+log_meta_merge(M1, M2, Meta) ->
+    lager:debug("Meta A: ~p", [M1]),
+    lager:debug("Meta B: ~p", [M2]),
+    lager:debug("Meta result: ~p", [Meta]).
+
+%% @private
+%% Log result of a ring reconcile. In the case of ring churn,
+%% subsequent log messages will allow us to track ring versions.
+%% Handle legacy rings as well.
+log_ring_result(#chstate_v2{vclock=V,members=Members,next=Next}) ->
+    lager:debug("Updated ring vclock: ~p, Members: ~p, Next: ~p", 
+        [V, Members, Next]);
+log_ring_result(Ring) ->
+    lager:debug("Ring: ~p", [Ring]).
 
 %% @private
 internal_reconcile(State, OtherState) ->
@@ -1508,7 +1528,9 @@ reconcile_divergent(VNode, StateA, StateB) ->
     Members = reconcile_members(StateA, StateB),
     Meta = merge_meta({StateA?CHSTATE.nodename, StateA?CHSTATE.meta}, {StateB?CHSTATE.nodename, StateB?CHSTATE.meta}),
     NewState = reconcile_ring(StateA, StateB, get_members(Members)),
-    NewState?CHSTATE{vclock=VClock, members=Members, meta=Meta}.
+    NewState1 = NewState?CHSTATE{vclock=VClock, members=Members, meta=Meta},
+    log_ring_result(NewState1),
+    NewState1.
 
 %% @private
 %% @doc Merge two members list using status vector clocks when possible,
