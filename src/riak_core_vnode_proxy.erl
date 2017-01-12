@@ -279,6 +279,8 @@ handle_overload(Msg, #state{mod=Mod, index=Index}) ->
     case Msg of
         {'$gen_event', ?VNODE_REQ{sender=Sender, request=Request}} ->
             catch(Mod:handle_overload_command(Request, Sender, Index));
+        {'$gen_all_state_event', ?VNODE_REQ{sender=Sender, request=Request}} ->
+            catch(Mod:handle_overload_command(Request, Sender, Index));
         {'$gen_event', ?COVERAGE_REQ{sender=Sender, request=Request}} ->
             catch(Mod:handle_overload_command(Request, Sender, Index));
         _ ->
