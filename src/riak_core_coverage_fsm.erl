@@ -104,7 +104,7 @@
 
 -record(state, {coverage_vnodes :: [{non_neg_integer(), node()}],
                 mod :: atom(),
-                mod_state :: tuple(),
+                mod_state :: mod_state(),
                 n_val :: pos_integer(),
                 node_check_service :: module(),
                 vnode_selector :: vnode_selector(),

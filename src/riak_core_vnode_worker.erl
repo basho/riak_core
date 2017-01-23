@@ -33,16 +33,18 @@
                                  {gen_server, pulse_gen_server}]}).
 -endif.
 
+-type mod_state() :: term().
+
 -record(state, {
         module :: atom(),
-        modstate :: any()
+        modstate :: mod_state()
     }).
 
 -callback init_worker(partition(), Args :: term(), Props :: [{atom(), term()}]) ->
-    {ok, State :: term()}.
--callback handle_work(Work :: term(), sender(), State :: term()) ->
-    {reply, Reply :: term(), State :: term()} |
-    {noreply, State :: term()}.
+    {ok, mod_state()}.
+-callback handle_work(Work :: term(), sender(), mod_state()) ->
+    {reply, Reply :: term(), mod_state()} |
+    {noreply, mod_state()}.
 
 start_link(Args) ->
     WorkerMod = proplists:get_value(worker_callback_mod, Args),
