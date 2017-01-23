@@ -194,7 +194,7 @@ simple_shuffle(L, N) ->
     lists:sublist(simple_shuffle(L), 1, N).
 simple_shuffle(L) ->
     N = 1000 * length(L),
-    L2 = [{random:uniform(N), E} || E <- L],
+    L2 = [{riak_core_rand:uniform(N), E} || E <- L],
     {_, L3} = lists:unzip(lists:keysort(1, L2)),
     L3.
 
@@ -231,5 +231,5 @@ scalable_case(Bloom, Size, FalseRate) ->
 bloom_test() ->
     scalable_case(sbf(1000, 0.2), 1000, 0.2),
     ok.
-    
+
 -endif.

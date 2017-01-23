@@ -103,7 +103,6 @@
 -type from() :: {atom(), req_id(), pid()}.
 -type pvc() :: all | pos_integer().
 -type request() :: tuple().
--type vnode_selector() :: all | allup.
 -type index() :: chash:index_as_int().
 
 -record(state, {coverage_vnodes :: [{non_neg_integer(), node()}],

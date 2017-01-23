@@ -94,30 +94,42 @@ setup_simple() ->
 test(N) ->
     quickcheck(numtests(N, prop_simple())).
 
+eqc_setup() ->
+    OldVars = setup_simple(),
+    fun() ->
+            riak_core_ring_manager:stop(),
+            application:stop(exometer),
+            application:stop(lager),
+            application:stop(goldrush),
+            [ok = application:set_env(riak_core, K, V) || {K,V} <- OldVars],
+            ok
+    end.
+
 prop_simple() ->
-    ?FORALL(Cmds, commands(?MODULE, {setup, initial_state_data()}),
-            aggregate(command_names(Cmds),
-                      begin
-                          {H,{_SN,S},Res} = run_commands(?MODULE, Cmds),
-                          timer:sleep(500), %% Adjust this to make shutdown sensitive stuff pass/fail
-                          %% Do a sync operation on all the started vnodes
-                          %% to ensure any of the noreply commands have executed before
-                          %% stopping.
-                          get_all_counters(S#qcst.started),
-                          stop_servers(),
-                          %% Check results
-                          ?WHENFAIL(
+    ?SETUP(fun eqc_setup/0,
+           ?FORALL(Cmds, commands(?MODULE, {setup, initial_state_data()}),
+                   aggregate(command_names(Cmds),
                              begin
-                                 io:format(user, "History: ~p\n", [H]),
-                                 io:format(user, "State: ~p\n", [S]),
-                                 io:format(user, "Result: ~p\n", [Res])
-                             end,
-                             conjunction([{res, equals(Res, ok)},
-                                          {async,
-                                           equals(lists:sort(async_work(S#qcst.asyncdone_pid)),
-                                                  lists:sort(filter_work(S#qcst.async_work,
-                                                      S#qcst.asyncdone_pid)))}]))
-                      end)).
+                                 {H,{_SN,S},Res} = run_commands(?MODULE, Cmds),
+                                 timer:sleep(500), %% Adjust this to make shutdown sensitive stuff pass/fail
+                                 %% Do a sync operation on all the started vnodes
+                                 %% to ensure any of the noreply commands have executed before
+                                 %% stopping.
+                                 get_all_counters(S#qcst.started),
+                                 stop_servers(),
+                                 %% Check results
+                                 ?WHENFAIL(
+                                    begin
+                                        io:format(user, "History: ~p\n", [H]),
+                                        io:format(user, "State: ~p\n", [S]),
+                                        io:format(user, "Result: ~p\n", [Res])
+                                    end,
+                                    conjunction([{res, equals(Res, ok)},
+                                                 {async,
+                                                  equals(lists:sort(async_work(S#qcst.asyncdone_pid)),
+                                                         lists:sort(filter_work(S#qcst.async_work,
+                                                                                S#qcst.asyncdone_pid)))}]))
+                             end))).
 
 active_index(#qcst{started=Started}) ->
     elements(Started).
@@ -196,14 +208,14 @@ next_state_data(_From,_To,S=#qcst{counters=Counters,
   when Func =:= asyncnoreply; Func =:= asyncreply; Func =:= asynccrash ->
     NewWork = [{Idx, R} || {Idx, _N} <- Preflist],
     S2=S#qcst{async_work=Work ++ NewWork,
-           counters=lists:foldl(fun({I, _N}, C) ->
-                                        orddict:update_counter(I, 1, C)
-                                end, Counters, Preflist)},
+              counters=lists:foldl(fun({I, _N}, C) ->
+                                           orddict:update_counter(I, 1, C)
+                                   end, Counters, Preflist)},
     %% io:format(user, "S2=~p\n", [S2]),
     S2;
 next_state_data(_From,_To,S,_R,_C) ->
     S.
-%
+                                                %
 
 setup(S) ->
     [{setup,   {call,?MODULE,enable_async,[gen_async_pool()]}},
@@ -392,10 +404,10 @@ async_work_proc(AsyncWork, Crashes) ->
 
 %% Request async work completed
 async_work(undefined) ->
-%%    io:format(user, "Did not get as far as setting up async worker\n", []),
+    %%    io:format(user, "Did not get as far as setting up async worker\n", []),
     [];
 async_work(Pid) ->
-%%    io:format(user, "Getting async work from ~p\n", [Pid]),
+    %%    io:format(user, "Getting async work from ~p\n", [Pid]),
     Pid ! {get, self()},
     receive
         {work, Work} ->
@@ -407,10 +419,10 @@ async_work(Pid) ->
 
 %% Request async work crashes
 async_crashes(undefined) ->
-%%    io:format(user, "Did not get as far as setting up async worker\n", []),
+    %%    io:format(user, "Did not get as far as setting up async worker\n", []),
     [];
 async_crashes(Pid) ->
-%%    io:format(user, "Getting async crashes from ~p\n", [Pid]),
+    %%    io:format(user, "Getting async crashes from ~p\n", [Pid]),
     Pid ! {crashes, self()},
     receive
         {crashes, Crashes} ->
@@ -432,15 +444,15 @@ filter_work(Work, Pid) ->
             exit(Pid, kill)
     end,
     lists:filter(fun({_Index, {_Reply, Tag}}=WorkItem) ->
-                case lists:member(Tag, CrashRefs) of
-                    true ->
-                        %% this isn't quite straightforward as a request can
-                        %% apparently go to multiple vnodes. We have to make
-                        %% sure we're only removing crashes from vnodes that
-                        %% didn't reply
-                        lists:member(WorkItem, CompletedWork);
-                    _ -> true
-                end
-        end, Work).
+                         case lists:member(Tag, CrashRefs) of
+                             true ->
+                                 %% this isn't quite straightforward as a request can
+                                 %% apparently go to multiple vnodes. We have to make
+                                 %% sure we're only removing crashes from vnodes that
+                                 %% didn't reply
+                                 lists:member(WorkItem, CompletedWork);
+                             _ -> true
+                         end
+                 end, Work).
 
 -endif.

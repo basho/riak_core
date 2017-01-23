@@ -314,12 +314,12 @@ props() ->
     fault_rate(1, 10, ?LET(Props, list(prop()), fault([immutable_core_prop() | Props], Props))).
 
 prop() ->
-    {prop_name(), prop_value()}.
+    {a_prop_name(), a_prop_value()}.
 
-prop_name() ->
+a_prop_name() ->
     binary(10).
 
-prop_value() ->
+a_prop_value() ->
     bool().
 
 immutable_core_prop() ->
