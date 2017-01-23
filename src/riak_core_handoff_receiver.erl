@@ -30,15 +30,15 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--record(state, {sock :: port(),
+-record(state, {sock :: port() | undefined,
                 peer :: term(),
                 ssl_opts :: [] | list(),
                 tcp_mod :: atom(),
                 recv_timeout_len :: non_neg_integer(),
                 vnode_timeout_len :: non_neg_integer(),
-                partition :: non_neg_integer(),
+                partition :: non_neg_integer() | undefined,
                 vnode_mod = riak_kv_vnode:: module(),
-                vnode :: pid(),
+                vnode :: pid() | undefined,
                 count = 0 :: non_neg_integer()}).
 
 %% set the TCP receive timeout to five minutes to be conservative.

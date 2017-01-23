@@ -11,7 +11,7 @@
 -type keyspaces() :: [{partition(), [partition()]}].
 
 -record(riak_vnode_req_v1, {
-          index :: partition(),
+          index :: partition() | undefined,
           sender=ignore :: sender(),
           request :: vnode_req()}).
 

@@ -29,8 +29,8 @@
 
 -record(state, {mod                    :: atom(),
                 index                  :: partition(),
-                vnode_pid              :: pid(),
-                vnode_mref             :: reference(),
+                vnode_pid              :: pid() | undefined,
+                vnode_mref             :: reference() | undefined,
                 check_mailbox          :: non_neg_integer(),
                 check_threshold        :: pos_integer() | undefined,
                 check_counter          :: non_neg_integer(),

@@ -76,7 +76,7 @@
                 vnode_pid,
                 vnode,
                 built,
-                expired :: boolean(),
+                expired :: boolean() | undefined,
                 lock :: undefined | reference(),
                 path,
                 build_time,

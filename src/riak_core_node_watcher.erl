@@ -62,7 +62,7 @@
 -record(health_check, { state = 'waiting' :: 'waiting' | 'checking' | 'suspend',
                         callback :: {atom(), atom(), [any()]},
                         service_pid :: pid(),
-                        checking_pid :: pid(),
+                        checking_pid :: pid() | undefined,
                         health_failures = 0 :: non_neg_integer(),
                         callback_failures = 0 :: non_neg_integer(),
                         interval_tref,

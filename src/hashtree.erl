@@ -195,22 +195,21 @@
 
 -type next_rebuild() :: full | incremental.
 
-
--record(state, {id                 :: tree_id_bin(),
-                index              :: index(),
-                levels             :: pos_integer(),
-                segments           :: pos_integer(),
-                width              :: pos_integer(),
-                mem_levels         :: integer(),
-                tree               :: hashtree_dict(),
-                ref                :: term(),
-                path               :: string(),
-                itr                :: term(),
-                next_rebuild       :: next_rebuild(),
-                write_buffer       :: [{put, binary(), binary()} |
+-record(state, {id                 :: undefined | tree_id_bin(),
+                index              :: undefined | index(),
+                levels             :: undefined | pos_integer(),
+                segments           :: undefined | pos_integer(),
+                width              :: undefined | pos_integer(),
+                mem_levels         :: undefined | integer(),
+                tree               :: undefined | hashtree_dict(),
+                ref                :: undefined | term(),
+                path               :: undefined | string(),
+                itr                :: undefined | term(),
+                next_rebuild       :: undefined | next_rebuild(),
+                write_buffer       :: undefined | [{put, binary(), binary()} |
                                        {delete, binary()}],
-                write_buffer_count :: integer(),
-                dirty_segments     :: hashtree_array()
+                write_buffer_count :: undefined | integer(),
+                dirty_segments     :: undefined | hashtree_array()
                }).
 
 -record(itr_state, {itr                :: term(),
@@ -423,7 +422,7 @@ clear_buckets(State=#state{id=Id, ref=Ref}) ->
                           throw({break, Acc})
                   end
           end,
-    Opts = [{start_key, encode_bucket(Id, 0, 0)}],
+    Opts = [{first_key, encode_bucket(Id, 0, 0)}],
     Removed = try
 %hashtree.erl:415: The call eleveldb:fold(Ref::any(),Fun::fun((_,_) -> number()),0,Opts::[{'first_key',<<_:320>>},...]) breaks the contract (db_ref(),fold_fun(),any(),read_options()) -> any()
 
@@ -439,7 +438,6 @@ clear_buckets(State=#state{id=Id, ref=Ref}) ->
     %% tree.
     State#state{next_rebuild = full,
                 tree = dict:new()}.
-            
 
 -spec update_tree([integer()], hashtree()) -> hashtree().
 update_tree([], State) ->

@@ -55,13 +55,13 @@
           %% Initially trees rooted at each node are the same.
           %% Portions of that tree belonging to this node are
           %% shared in this set.
-          common_eagers :: ordsets:ordset(nodename()),
+          common_eagers :: ordsets:ordset(nodename()) | undefined,
 
           %% Initially trees rooted at each node share the same lazy links.
           %% Typically this set will contain a single element. However, it may
           %% contain more in large clusters and may be empty for clusters with
           %% less than three nodes.
-          common_lazys  :: ordsets:ordset(nodename()),
+          common_lazys  :: ordsets:ordset(nodename()) | undefined,
 
           %% A mapping of sender node (root of each broadcast tree)
           %% to this node's portion of the tree. Elements are
@@ -69,14 +69,14 @@
           %% propogate to this node. Nodes that are never the
           %% root of a message will never have a key added to
           %% `eager_sets'
-          eager_sets    :: [{nodename(), ordsets:ordset(nodename())}],
+          eager_sets    :: [{nodename(), ordsets:ordset(nodename())}] | undefined,
 
           %% A Mapping of sender node (root of each spanning tree)
           %% to this node's set of lazy peers. Elements are added
           %% to this structure as messages rooted at a node
           %% propogate to this node. Nodes that are never the root
           %% of a message will never have a key added to `lazy_sets'
-          lazy_sets     :: [{nodename(), ordsets:ordset(nodename())}],
+          lazy_sets     :: [{nodename(), ordsets:ordset(nodename())}] | undefined,
 
           %% Lazy messages that have not been acked. Messages are added to
           %% this set when a node is sent a lazy message (or when it should be
@@ -94,7 +94,7 @@
 
           %% Set of all known members. Used to determine
           %% which members have joined and left during a membership update
-          all_members   :: ordsets:ordset(nodename())
+          all_members   :: ordsets:ordset(nodename()) | undefined
          }).
 
 %%%===================================================================

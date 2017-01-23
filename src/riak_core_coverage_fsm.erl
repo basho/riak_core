@@ -105,7 +105,7 @@
 -type request() :: tuple().
 -type index() :: chash:index_as_int().
 
--record(state, {coverage_vnodes :: [{non_neg_integer(), node()}],
+-record(state, {coverage_vnodes :: [{non_neg_integer(), node()}] | undefined,
                 mod :: atom(),
                 mod_state :: mod_state(),
                 n_val :: pos_integer(),
@@ -117,7 +117,7 @@
                 pvc :: all | pos_integer(), % primary vnode coverage
                 request :: tuple(),
                 req_id :: req_id(),
-                required_responses :: pos_integer(),
+                required_responses=1 :: pos_integer(),
                 response_count=0 :: non_neg_integer(),
                 timeout :: timeout(),
                 vnode_master :: atom(),

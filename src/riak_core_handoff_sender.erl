@@ -63,12 +63,12 @@
           item_queue_byte_size :: non_neg_integer(),
 
           acksync_threshold    :: non_neg_integer(),
-          acksync_timer        :: timer:tref(),
+          acksync_timer        :: timer:tref() | undefined,
 
           type                 :: ho_type(),
 
           notsent_acc          :: term(),
-          notsent_fun          :: function()
+          notsent_fun          :: function() | undefined
         }).
 
 %%%===================================================================

@@ -144,21 +144,20 @@
 
 -define(CHSTATE, #chstate_v2).
 -record(chstate_v2, {
-    nodename :: term(),          % the Node responsible for this chstate
-    vclock   :: vclock:vclock() | undefined, % for this chstate object, entries are
-                                 % {Node, Ctr}
-    chring   :: chash:chash(),   % chash ring of {IndexAsInt, Node} mappings
-    meta     :: riak_core_dict() | undefined,
-                                 % dict of cluster-wide other data (primarily
-                                 % bucket N-value, etc)
-
-    clustername :: {term(), term()},
-    next     :: [{integer(), term(), term(), [module()], awaiting | complete}],
-    members  :: [{node(), {member_status(), vclock:vclock(), [{atom(), term()}]}}],
-    claimant :: term(),
-    seen     :: [{term(), vclock:vclock()}],
-    rvsn     :: vclock:vclock()
-}).
+          nodename :: term(),          % the Node responsible for this chstate
+          vclock   :: vclock:vclock() | undefined, % for this chstate object, entries are
+                                                % {Node, Ctr}
+          chring   :: chash:chash() | undefined,   % chash ring of {IndexAsInt, Node} mappings
+          meta     :: riak_core_dict() | undefined,
+                                                % dict of cluster-wide other data (primarily
+                                                % bucket N-value, etc)
+          clustername :: {term(), term()} | undefined,
+          next     :: [{integer(), term(), term(), [module()], awaiting | complete}],
+          members  :: [{node(), {member_status(), vclock:vclock(), [{atom(), term()}]}}] | undefined,
+          claimant :: term(),
+          seen     :: [{term(), vclock:vclock()}] | undefined,
+          rvsn     :: vclock:vclock() | undefined
+         }).
 
 %% Legacy chstate
 -record(chstate, {

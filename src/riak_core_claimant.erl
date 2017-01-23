@@ -68,7 +68,7 @@
           %% applying a set of staged cluster changes. When commiting
           %% changes, the computed ring must match the previous planned
           %% ring to be allowed.
-          next_ring :: riak_core_ring(),
+          next_ring :: riak_core_ring() | undefined,
 
           %% Random number seed passed to remove_node to ensure the
           %% current randomized remove algorithm is deterministic

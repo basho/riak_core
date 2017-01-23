@@ -47,9 +47,15 @@ seed() ->
 %% We are a bit tricky here, while random:seed did return the **prior** seed
 %% rand:seed will return the **new** seed. We can work around this by first
 %% getting the exported seed then using this instead.
-seed(Seed) ->
+-spec seed({integer(),integer(),integer()} | rand:export_state()) ->
+    rand:export_state() | undefined.
+seed({_, _, _} = Seed) ->
     Old = rand:export_seed(),
     _New = rand:seed(?ALGO, Seed),
+    Old;
+seed(Seed) ->
+    Old = rand:export_seed(),
+    _New = rand:seed(Seed),
     Old.
 
 rand_bytes(Size) ->

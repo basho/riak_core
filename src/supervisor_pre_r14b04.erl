@@ -82,7 +82,7 @@
 -record(state, {name,
     strategy               :: strategy(),
     children = []          :: [child_rec()],
-    dynamics               :: riak_core_dict() | riak_core_set(),
+    dynamics               :: riak_core_dict() | riak_core_set() | undefined,
     intensity              :: non_neg_integer(),
     period                 :: pos_integer(),
     restarts = [],

@@ -155,11 +155,11 @@
           modstate :: term(),
           forward :: node() | [{integer(), node()}],
           handoff_target=none :: none | {integer(), node()},
-          handoff_pid :: pid(),
-          handoff_type :: riak_core_handoff_manager:ho_type(),
+          handoff_pid :: pid() | undefined,
+          handoff_type :: riak_core_handoff_manager:ho_type() | undefined,
           pool_pid :: pid() | undefined,
           pool_config :: tuple() | undefined,
-          manager_event_timer :: reference(),
+          manager_event_timer :: reference() | undefined,
           inactivity_timeout :: non_neg_integer()
          }).
 

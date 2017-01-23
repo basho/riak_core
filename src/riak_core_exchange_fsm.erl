@@ -41,10 +41,10 @@
                 remote      :: vnode(),
                 index_n     :: index_n(),
                 local_tree  :: pid(),
-                remote_tree :: pid(),
+                remote_tree :: pid() | undefined,
                 built       :: non_neg_integer(),
-                timer       :: reference(),
-                timeout     :: pos_integer(),
+                timer       :: reference() | undefined,
+                timeout     :: pos_integer() | undefined,
                 vnode       :: atom(),
                 service     :: atom()
                }).
