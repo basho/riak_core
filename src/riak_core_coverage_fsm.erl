@@ -135,6 +135,14 @@
       NodeCheckService :: module(),
       VNodeMaster :: atom(),
       Timeout :: pos_integer(),
+      CoveragePlanRet :: atom()
+                       | fun((riak_core_coverage_plan:vnode_selector(),
+                              pos_integer(),
+                              pos_integer(),
+                              riak_core_coverage_plan:req_id(),
+                              atom(), term()) ->
+                                    {error, term()} |
+                                    riak_core_coverage_plan:coverage_plan()),
       ModState :: tuple()
     }.
 
