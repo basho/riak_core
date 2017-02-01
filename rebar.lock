@@ -4,7 +4,7 @@
  {<<"blume">>,{pkg,<<"blume">>,<<"0.1.0">>},0},
  {<<"chash">>,{pkg,<<"chash">>,<<"0.1.2">>},0},
  {<<"clique">>,{pkg,<<"clique">>,<<"0.3.6">>},0},
- {<<"cuttlefish">>,{pkg,<<"cuttlefish">>,<<"2.0.8">>},0},
+ {<<"cuttlefish">>,{pkg,<<"cuttlefish">>,<<"2.0.11">>},0},
  {<<"edown">>,{pkg,<<"edown">>,<<"0.7.0">>},0},
  {<<"eleveldb">>,{pkg,<<"eleveldb">>,<<"2.2.20">>},0},
  {<<"exometer_core">>,{pkg,<<"basho_exometer_core">>,<<"1.0.2">>},0},
@@ -16,7 +16,7 @@
  {<<"parse_trans">>,{pkg,<<"parse_trans">>,<<"2.9.0">>},1},
  {<<"pbkdf2">>,{pkg,<<"pbkdf2">>,<<"2.0.0">>},0},
  {<<"poolboy">>,{pkg,<<"basho_poolboy">>,<<"0.8.2">>},0},
- {<<"riak_ensemble">>,{pkg,<<"riak_ensemble_ng">>,<<"2.2.0">>},0},
+ {<<"riak_ensemble">>,{pkg,<<"riak_ensemble_ng">>,<<"2.4.0">>},0},
  {<<"riak_sysmon">>,{pkg,<<"riak_sysmon">>,<<"2.1.3">>},0},
  {<<"setup">>,{pkg,<<"setup">>,<<"1.7.0">>},1}]}.
 [
@@ -26,7 +26,7 @@
  {<<"blume">>, <<"62DDA46B43E24D4B8D5407B8F6DDB78EBD2A8CDC84D9BC822CDDAEF6F402F3EB">>},
  {<<"chash">>, <<"AF02484F2640C653C4B9A8557A14CA0704989DBEDB27E7CCBC442F1903A3BCA7">>},
  {<<"clique">>, <<"1A7EB99DF038CC3C76686A67CA41D0F5F6A2F0F5D9863FE091EB8C35600EF80F">>},
- {<<"cuttlefish">>, <<"8B2AF27EF8540FCF23CFB6C037318E5C4EBB8D12A1E44F9F932B875B14005C28">>},
+ {<<"cuttlefish">>, <<"D266AC68BA801803ACE4EF3DEC0FC419F184092E1882E19F7AFC29A6D4334E6A">>},
  {<<"edown">>, <<"6803599606B10F8E328D6D60C44CD16244CD2429908894C415FCE4211C3BFEFD">>},
  {<<"eleveldb">>, <<"1FFF63A5055BBF4BF821F797EF76065882B193F5E8095F95FCD9287187773B58">>},
  {<<"exometer_core">>, <<"DC4BC9B0B47EDEE0C053B16AC5B9C692E662C7E1513FFC96F4D928BC3328D65F">>},
@@ -38,7 +38,7 @@
  {<<"parse_trans">>, <<"3F5F7B402928FB9FD200C891E635DE909045D1EFAC40CE3F924D3892898F85EB">>},
  {<<"pbkdf2">>, <<"11C23279FDED5C0027AB3996CFAE77805521D7EF4BABDE2BD7EC04A9086CF499">>},
  {<<"poolboy">>, <<"AD5524BF4B8D30EEE0E5386847B74DAD739BB6AE1893F3AF10F54D427ACC96E4">>},
- {<<"riak_ensemble">>, <<"2078B8C2D8045B05FDED98E17F2571257F8FB2059C1B9A05C2EA6AFF4D898AD5">>},
+ {<<"riak_ensemble">>, <<"6570463BF09F1200C003DE298C5D6615C418D3BF0A2DF5CAF469A9DF2558059A">>},
  {<<"riak_sysmon">>, <<"2E81AF5763336C0B136D7ECEFFBEC3540DB20D54459C9F2AE1275FEE4927FB7B">>},
  {<<"setup">>, <<"15DF8E57C6DF9755E22BFB1AEF0C640BD97E9889396FDFB2A85A5536A9043674">>}]}
 ].

@@ -207,7 +207,7 @@
                 itr                :: undefined | term(),
                 next_rebuild       :: undefined | next_rebuild(),
                 write_buffer       :: undefined | [{put, binary(), binary()} |
-                                       {delete, binary()}],
+                                                   {delete, binary()}],
                 write_buffer_count :: undefined | integer(),
                 dirty_segments     :: undefined | hashtree_array()
                }).
@@ -424,7 +424,7 @@ clear_buckets(State=#state{id=Id, ref=Ref}) ->
           end,
     Opts = [{first_key, encode_bucket(Id, 0, 0)}],
     Removed = try
-%hashtree.erl:415: The call eleveldb:fold(Ref::any(),Fun::fun((_,_) -> number()),0,Opts::[{'first_key',<<_:320>>},...]) breaks the contract (db_ref(),fold_fun(),any(),read_options()) -> any()
+                                                %hashtree.erl:415: The call eleveldb:fold(Ref::any(),Fun::fun((_,_) -> number()),0,Opts::[{'first_key',<<_:320>>},...]) breaks the contract (db_ref(),fold_fun(),any(),read_options()) -> any()
 
                   eleveldb:fold(Ref, Fun, 0, Opts)
               catch
@@ -777,7 +777,7 @@ update_levels(Level, Groups, State, Type) ->
 -spec rebuild_fold(integer(),
                    [{integer(), [{integer(), binary()}]}], hashtree(),
                    next_rebuild()) -> {integer(), next_rebuild(),
-                                      hashtree(), [{integer(), binary()}]}.
+                                       hashtree(), [{integer(), binary()}]}.
 rebuild_fold(Level, Groups, State, Type) ->
     lists:foldl(fun rebuild_folder/2, {Level, Type, State, []}, Groups).
 
@@ -981,8 +981,8 @@ multi_select_segment(#state{id=Id, itr=Itr}, Segments, F) ->
     %% that do not exist at the end of the file (due to deleting the last entry in the
     %% segment).
     Result = [{LeftSeg, F([])} || LeftSeg <- lists:reverse(LeftOver),
-                  LeftSeg =/= '*'] ++
-    [{LastSegment, F(LastAcc)} | FA],
+                                  LeftSeg =/= '*'] ++
+        [{LastSegment, F(LastAcc)} | FA],
     case Result of
         [{'*', _}] ->
             %% Handle wildcard select when all segments are empty
@@ -1138,9 +1138,9 @@ exchange_level(Level, Buckets, Local, Remote, _Opts) ->
                           A = Local(get_bucket, {Level, Bucket}),
                           B = Remote(get_bucket, {Level, Bucket}),
                           Delta = riak_core_util:orddict_delta(lists:keysort(1, A),
-                                                                   lists:keysort(1, B)),
-              lager:debug("Exchange Level ~p Bucket ~p\nA=~p\nB=~p\nD=~p\n",
-                      [Level, Bucket, A, B, Delta]),
+                                                               lists:keysort(1, B)),
+                          lager:debug("Exchange Level ~p Bucket ~p\nA=~p\nB=~p\nD=~p\n",
+                                      [Level, Bucket, A, B, Delta]),
 
                           Diffs = Delta,
                           [BK || {BK, _} <- Diffs]
@@ -1152,9 +1152,9 @@ exchange_final(_Level, Segments, Local, Remote, AccFun, Acc0, _Opts) ->
                         A = Local(key_hashes, Segment),
                         B = Remote(key_hashes, Segment),
                         Delta = riak_core_util:orddict_delta(lists:keysort(1, A),
-                                                                 lists:keysort(1, B)),
-            lager:debug("Exchange Final\nA=~p\nB=~p\nD=~p\n",
-                    [A, B, Delta]),
+                                                             lists:keysort(1, B)),
+                        lager:debug("Exchange Final\nA=~p\nB=~p\nD=~p\n",
+                                    [A, B, Delta]),
                         Keys = [begin
                                     {_Id, Segment, Key} = decode(KBin),
                                     Type = key_diff_type(Diff),
@@ -1176,8 +1176,8 @@ compare(Level, Bucket, Tree, Remote, AccFun, KeyAcc) ->
     Inter = ordsets:intersection(ordsets:from_list(HL1),
                                  ordsets:from_list(HL2)),
     Diff = ordsets:subtract(Union, Inter),
-    lager:debug("Tree ~p level ~p bucket ~p\nL=~p\nR=~p\nD=\n",
-        [Tree, Level, Bucket, HL1, HL2, Diff]),
+    lager:debug("Tree ~p level ~p bucket ~p\nL=~p\nR=~p\nD=~p\n",
+                [Tree, Level, Bucket, HL1, HL2, Diff]),
     KeyAcc3 =
         lists:foldl(fun({Bucket2, _}, KeyAcc2) ->
                             compare(Level+1, Bucket2, Tree, Remote, AccFun, KeyAcc2)
@@ -1449,17 +1449,17 @@ local_compare(T1, T2) ->
 -spec local_compare1(hashtree(), hashtree()) -> [keydiff()].
 local_compare1(T1, T2) ->
     Remote = fun(get_bucket, {L, B}) ->
-        get_bucket(L, B, T2);
-        (start_exchange_level, {_Level, _Buckets}) ->
-            ok;
-        (start_exchange_segments, _Segments) ->
-            ok;
-        (key_hashes, Segment) ->
-            [{_, KeyHashes2}] = key_hashes(T2, Segment),
-            KeyHashes2
+                     get_bucket(L, B, T2);
+                (start_exchange_level, {_Level, _Buckets}) ->
+                     ok;
+                (start_exchange_segments, _Segments) ->
+                     ok;
+                (key_hashes, Segment) ->
+                     [{_, KeyHashes2}] = key_hashes(T2, Segment),
+                     KeyHashes2
              end,
     AccFun = fun(Keys, KeyAcc) ->
-        Keys ++ KeyAcc
+                     Keys ++ KeyAcc
              end,
     compare(T1, Remote, AccFun, []).
 
@@ -1624,15 +1624,15 @@ prop_sha() ->
     %% NOTE: Generating 1MB (1024 * 1024) size binaries is incredibly slow
     %% with EQC and was using over 2GB of memory
     ?FORALL({Size, NumChunks}, {choose(1, 1024), choose(1, 16)},
-                    ?FORALL(Bin, binary(Size),
-                            begin
-                                %% we need at least one chunk,
-                                %% and then we divide the binary size
-                                %% into the number of chunks (as a natural
-                                %% number)
-                                ChunkSize = max(1, (Size div NumChunks)),
-                                sha(ChunkSize, Bin) =:= esha(Bin)
-                            end)).
+            ?FORALL(Bin, binary(Size),
+                    begin
+                        %% we need at least one chunk,
+                        %% and then we divide the binary size
+                        %% into the number of chunks (as a natural
+                        %% number)
+                        ChunkSize = max(1, (Size div NumChunks)),
+                        sha(ChunkSize, Bin) =:= esha(Bin)
+                    end)).
 
 eqc_test_() ->
     {spawn,

@@ -4,7 +4,7 @@ The 'ng' version of riak core is a modernized version of riak core, it is entire
 
 ## Improvements and Additions
 
-* `rocksdb` backend - this version ships with a pluggable backend for the hashtree (aae and metadata) functionality, using either `leveldb` or `rocksdb`
+* R19 compatibility - This form works with R18 and R19 (lower versions should work but are not tested)
 * AAE - this version includes the Active Anti Entropy code extracted from `riak_kv` and provides a new behavior called `riak_core_aae_vnode`.
 
 # Riak Core
