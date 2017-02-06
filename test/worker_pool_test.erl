@@ -61,7 +61,9 @@ simple_worker_pool() ->
 
     %% make sure we got all the expected responses
 
-    [ ?assertEqual(true, receive_result(N)) || N <- lists:seq(1, 10)].
+    [ ?assertEqual(true, receive_result(N)) || N <- lists:seq(1, 10)],
+    unlink(Pool),
+    riak_core_vnode_worker_pool:stop(Pool, normal).
 
 simple_noreply_worker_pool() ->
     {ok, Pool} = riak_core_vnode_worker_pool:start_link(?MODULE, 3, 10, true, []),
@@ -76,7 +78,9 @@ simple_noreply_worker_pool() ->
 
     %% make sure we got all the expected responses
 
-    [ ?assertEqual(true, receive_result(N)) || N <- lists:seq(1, 10)].
+    [ ?assertEqual(true, receive_result(N)) || N <- lists:seq(1, 10)],
+    unlink(Pool),
+    riak_core_vnode_worker_pool:stop(Pool, normal).
 
 
 pool_test_() ->

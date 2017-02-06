@@ -21,6 +21,8 @@
 
 -define(APP_NAME, test_app).
 
+-export([setup/0, cleanup/1]).
+
 activity_keys() ->
     [some_activity, another_activity, yet_another_activity].
 
@@ -33,8 +35,9 @@ clear_throttles(ActivityKeys) ->
                   ActivityKeys).
 
 throttle_test_() ->
-    riak_core_table_owner:start_link(),
-    riak_core_throttle:init(),
+    {setup,
+    fun setup/0,
+    fun cleanup/1,
     {foreach,
      fun activity_keys/0,
      fun clear_throttles/1,
@@ -46,7 +49,16 @@ throttle_test_() ->
       fun test_set_throttle_by_load_actually_sets_throttle/1,
       fun test_set_limits_does_not_overwrite_current_throttle/1,
       fun test_set_limits_with_invalid_limits/1
-     ]}.
+     ]}}.
+
+setup() ->
+    {ok, TableOwner} = riak_core_table_owner:start_link(),
+    riak_core_throttle:init(),
+    TableOwner.
+
+cleanup(TableOwner) ->
+    unlink(TableOwner),
+    riak_core_test_util:stop_pid(TableOwner).
 
 test_throttle_badkey([Key|_]) ->
     [?_assertError({badkey, Key}, riak_core_throttle:throttle(?APP_NAME, Key)),
