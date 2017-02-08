@@ -124,6 +124,34 @@
 
 -callback delete(ModState::term()) -> {ok, NewModState::term()}.
 
+%% This commands are not executed inside the VNode, instead they are
+%% part of the vnode_proxy contract.
+%%
+%% The vnode_proxy will drop requests in an overload situation, when
+%% his happens one of the two handle_overload_* commands in the
+%% vnode module is called. This call happens **from the vnode peroxy**
+%%
+%% These calls are wrapped in a catch() meaning that when they don't
+%% exist they will quietly fail. However the catch is hugely expensive
+%% leading to the sitaution that when there already is a overload
+%% the vnode proxy gets even worst overloaded.
+%%
+%% This is pretty bad since the proxy is supposed to protect against
+%% exactly this overload.
+%%
+%% So yea sorry, you're going to be forced to implement them, if nothing
+%% else just nop them out.
+%%
+%% BUT DO NOT call expensive functions from them there is a special hell
+%% for people doing that! (it's called overflowing message queue hell and is
+%% really nasty!)
+-callback handle_overload_command(Request::term(), Sender::sender(),
+                                  Idx::partition()) ->
+    ok.
+
+-callback handle_overload_info(Request::term(), Idx::partition()) ->
+    ok.
+
 %% handle_exit/3 is an optional behaviour callback that can be implemented.
 %% It will be called in the case that a process that is linked to the vnode
 %% process dies and allows the module using the behaviour to take appropriate
