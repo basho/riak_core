@@ -129,7 +129,7 @@
 %%
 %% The vnode_proxy will drop requests in an overload situation, when
 %% his happens one of the two handle_overload_* commands in the
-%% vnode module is called. This call happens **from the vnode peroxy**
+%% vnode module is called. This call happens **from the vnode proxy**
 %%
 %% These calls are wrapped in a catch() meaning that when they don't
 %% exist they will quietly fail. However the catch is hugely expensive
