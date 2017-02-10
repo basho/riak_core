@@ -1,7 +1,7 @@
 -module(riak_core_info_service_process).
 
 
--export([start_link/3]).
+-export([start_link/4]).
 
 %% Application messages are sent to this process directly from
 %% NIF-land instead of other Erlang modules, so this does not
@@ -13,62 +13,73 @@
          system_get_state/1, system_replace_state/2,
          system_code_change/4]).
 
-
-
-start_link(Registration, Source, Handler) ->
- 
+start_link(Registration, Shutdown, Source, Handler) ->
     Pid = proc_lib:spawn_link(?MODULE, callback_router,
-                              [Source, Handler, self(), sys:debug_options([])]),
+                              [Shutdown, Source, Handler, self(), sys:debug_options([])]),
     
-    %% Inform the NIF where to send messages
+    %% Call the Registration function provided to let the registered syste
+    %% know the Pid of its info process
     apply_callback(Registration, [Pid]),
     {ok, Pid}.
 
-apply_callback({Mod, Fun, InitialArgs}, RestArgs) ->
-    %% Inform the NIF where to send messages
-    erlang:apply(Mod, Fun, InitialArgs ++ RestArgs).
+apply_callback(undefined, _CallSpecificArgs) ->
+    ok;
+apply_callback({Mod, Fun, StaticArgs}, CallSpecificArgs) ->
+    %% Invoke the callback, passing static + call-specific args for this call
+    erlang:apply(Mod, Fun, StaticArgs ++ CallSpecificArgs).
 
-
-
--spec callback_router(riak_core_info_service:callback(), 
-                      riak_core_info_service:callback(), 
+-spec callback_router(Shutdown::riak_core_info_service:callback(),
+                      Source::riak_core_info_service:callback(),
+                      Handler::riak_core_info_service:callback(),
                       pid(), term()) -> ok.
-callback_router(Source, Handler, Parent, Debug) ->
+callback_router(Shutdown, Source, Handler, Parent, Debug) ->
     receive
-        {get, SourceParams, HandlerContext}=Msg ->
-            Debug0 = sys:handle_debug(Debug, fun write_debug/3,
-                                      ?MODULE,
-                                      {in, Msg}),
-            Result = apply_callback(Source, SourceParams),
-            apply_callback(Handler, [{Result, SourceParams, HandlerContext}]), 
-            callback_router(Source, Handler, Parent, Debug0);
-
+        {invoke, SourceParams, HandlerContext}=Msg ->
+            handle_get_message(Debug, Msg, Source, SourceParams, Handler, HandlerContext, Parent, Shutdown);
         {system, From, Request} ->
-            %% No recursion here; `system_continue/3' will be invoked
-            %% if appropriate
-            sys:handle_system_msg(Request, From, Parent,
-                                  ?MODULE, Debug, {Source, Handler});
-
+            handle_system_message(Request, From, Parent, Debug, Source, Handler, Shutdown);
         callback_shutdown=Msg ->
-            sys:handle_debug(Debug, fun write_debug/3,
-                             ?MODULE,
-                             {in, Msg}),
-            ok;
-
+            handle_shutdown_message(Debug, Msg, Shutdown);
         Msg ->
-            Debug0 = sys:handle_debug(Debug, fun write_debug/3,
-                                      ?MODULE,
-                                      {in, Msg}),
-            callback_router(Source, Handler, Parent, Debug0)
+            handle_other_message(Debug, Msg, Source, Handler, Parent, Shutdown)
     end.
+
+handle_shutdown_message(Debug, Msg, Shutdown) ->
+    sys:handle_debug(Debug, fun write_debug/3,
+                     ?MODULE,
+                     {in, Msg}),
+    apply_callback(Shutdown, [self()]),
+    ok.
+
+handle_system_message(Request, From, Parent, Debug, Source, Handler, Shutdown) ->
+    %% No recursion here; `system_continue/3' will be invoked
+    %% if appropriate
+    sys:handle_system_msg(Request, From, Parent,
+                          ?MODULE, Debug, {Source, Handler, Shutdown}),
+    ok.
+
+handle_get_message(Debug0, Msg, Source, SourceParams, Handler, HandlerContext, Parent, Shutdown) ->
+    Debug = sys:handle_debug(Debug0, fun write_debug/3,
+                              ?MODULE,
+                              {in, Msg}),
+    Result = apply_callback(Source, SourceParams),
+    apply_callback(Handler, [{Result, SourceParams, HandlerContext}]),
+    callback_router(Source, Handler, Parent, Debug, Shutdown).
+
+handle_other_message(Debug, Msg, Source, Handler, Parent, Shutdown) ->
+    Debug0 = sys:handle_debug(Debug, fun write_debug/3,
+                              ?MODULE,
+                              {in, Msg}),
+    callback_router(Source, Handler, Parent, Debug0, Shutdown).
+
 
 %% Made visible to `standard_io' via `sys:trace(Pid, true)'
 write_debug(Device, Event, Module) ->
     io:format(Device, "~p event: ~p~n", [Module, Event]).
 
 %% System functions invoked by `sys:handle_system_msg'.
-system_continue(Parent, Debug, Fun) ->
-    callback_router(Fun, Parent, Debug).
+system_continue(Parent, Debug, {Source, Handler, Shutdown}) ->
+    callback_router(Shutdown, Source, Handler, Parent, Debug).
 
 system_terminate(Reason, _Parent, _Debug, _State) ->
     exit(Reason).

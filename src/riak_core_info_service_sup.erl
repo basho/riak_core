@@ -3,7 +3,7 @@
 -behaviour(supervisor).
 
 -export([start_link/0, 
-         start_service/3]).
+         start_service/4]).
 
 -export([init/1]).
 
@@ -12,8 +12,8 @@
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
-start_service(Registration, Source, Handler) ->
-    supervisor:start_child(?SERVER, [Registration, Source, Handler]).
+start_service(Registration, Shutdown, Source, Handler) ->
+    supervisor:start_child(?SERVER, [Registration, Shutdown, Source, Handler]).
 
 
 

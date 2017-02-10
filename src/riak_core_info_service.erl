@@ -25,22 +25,20 @@
 %%%
      
 
-
-
 -module(riak_core_info_service).
 
--export([start_service/3]).
+-export([start_service/4]).
 
 
 -type callback() :: {module(), FunName::atom(),InitialArgs::[term()]}.
 
 -export_type([callback/0]).
 
--spec start_service(Registration::callback(), Source::callback(), Handler::callback()) -> 
+-spec start_service(Registration::callback(), Shutdown::callback(), Source::callback(), Handler::callback()) ->
                            ok |
                            {error, term()}.
 
-start_service(Registration, Source, Handler) ->
-    riak_core_info_service_sup:start_service(Registration, Source, Handler).
+start_service(Registration, Shutdown, Source, Handler) ->
+    riak_core_info_service_sup:start_service(Registration, Shutdown, Source, Handler).
 
 
