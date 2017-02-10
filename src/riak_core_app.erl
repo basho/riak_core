@@ -147,7 +147,7 @@ register_capabilities() ->
       Capabilities),
     ok.
 
-
+%% TODO: This belongs in riak_kv - an issue will be created to move it, but time constraints.
 start_eleveldb_info_service() ->
     Registration = {eleveldb, set_metadata_pid, []},
     Shutdown = undefined, %%{eleveldb, metadata_service_shutdown, []}
