@@ -11,7 +11,7 @@
 %% information on these system message handlers.
 -export([system_continue/3, system_terminate/4,
          system_get_state/1, system_replace_state/2,
-         system_code_change/4]).
+         system_code_change/4, callback_router/5]).
 
 start_link(Registration, Shutdown, Source, Handler) ->
     Pid = proc_lib:spawn_link(?MODULE, callback_router,
