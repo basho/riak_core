@@ -29,7 +29,7 @@ start_link(Registration, Shutdown, Source, Handler) ->
     Pid = proc_lib:spawn_link(?MODULE, callback_router,
                               [State]),
     
-    %% Call the Registration function provided to let the registered syste
+    %% Call the Registration function provided to let the registered system
     %% know the Pid of its info process
     apply_callback(Registration, [Pid]),
     {ok, Pid}.
@@ -44,7 +44,7 @@ apply_callback({Mod, Fun, StaticArgs}, CallSpecificArgs) ->
 callback_router(#state{} = State) ->
     receive
         {invoke, SourceParams, HandlerContext}=Msg ->
-            handle_get_message(Msg, SourceParams, HandlerContext, State);
+            handle_invoke_message(Msg, SourceParams, HandlerContext, State);
         {system, From, Request} ->
             handle_system_message(Request, From, State);
         callback_shutdown=Msg ->
@@ -53,7 +53,7 @@ callback_router(#state{} = State) ->
             handle_other_message(Msg, State)
     end.
 
-handle_get_message(Msg, SourceParams, HandlerContext,
+handle_invoke_message(Msg, SourceParams, HandlerContext,
                    #state{ debug = Debug0,
                            source = Source,
                            handler = Handler }=State) ->

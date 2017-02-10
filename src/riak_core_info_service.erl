@@ -8,19 +8,19 @@
 %%%      The Handler callback() is a function that will process the messages sent out
 %%%      of the dependency when it wants information.
 %%%      The dependency MUST send messages to the info service pid of the form 
-%%%        {get, SourceParameters::[term()], HandlerContext::[term()]} 
+%%%        {invoke, SourceParameters::[term()], HandlerContext::[term()]}
 %%%      
-%%%      The information serivce originates from a need in eleveldb to know something
+%%%      The information service originates from a need in eleveldb to know something
 %%%      about bucket properties.
 %%%      For that particular problem the callback()s would look like this:
-%%%      Registration = {eleveldb, set_info_service_pid, []}
+%%%      Registration = {eleveldb, set_metadata_pid, []}
 %%%      Source = {riak_core_bucket, get_bucket, []}
-%%%      Handler = {eleveldb, process_bucket_props_request, []}
-%%%      And the process_bucket_props_request function would look like this:
-%%%      process_bucket_props_request({Props, _SourceParams, [Key]}) ->
+%%%      Handler = {eleveldb, handle_metadata_response, []}
+%%%      And the handle_metadata_response function would look like this:
+%%%      handle_metadata_response({Props, _SourceParams, [Key]}) ->
 %%%          property_cache(Key, Props).
 %%%
-%%%      set_info_service_pid(_Pid) ->
+%%%      set_metadata_pid(_Pid) ->
 %%%          erlang:nif_error({error, not_loaded}).
 %%%
      
