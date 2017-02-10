@@ -26,5 +26,5 @@ init([]) ->
 child_spec() ->
     {na,
      {riak_core_info_service_process, start_link, []},
-     temporary, 2000, worker, [riak_core_info_service_process]}.
+     permanent, 2000, worker, [riak_core_info_service_process]}.
 
