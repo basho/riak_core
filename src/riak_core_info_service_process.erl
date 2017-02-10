@@ -35,11 +35,12 @@ apply_callback({Mod, Fun, InitialArgs}, RestArgs) ->
                       pid(), term()) -> ok.
 callback_router(Source, Handler, Parent, Debug) ->
     receive
-        {get, Args}=Msg ->
+        {get, SourceParams, HandlerContext}=Msg ->
             Debug0 = sys:handle_debug(Debug, fun write_debug/3,
                                       ?MODULE,
                                       {in, Msg}),
-            apply_callback(Handler, [Source|Args]), 
+            Result = apply_callback(Source, SourceParams),
+            apply_callback(Handler, [{Result, SourceParams, HandlerContext}]), 
             callback_router(Source, Handler, Parent, Debug0);
 
         {system, From, Request} ->
