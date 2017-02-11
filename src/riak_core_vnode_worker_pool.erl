@@ -49,7 +49,7 @@
 -export([ready/2, queueing/2, ready/3, queueing/3, shutdown/2, shutdown/3]).
 
 %% API
--export([start_link/5, stop/2, shutdown_pool/2, handle_work/3]).
+-export([start_link/6, start_link/5, stop/2, shutdown_pool/2, handle_work/3]).
 
 -ifdef(PULSE).
 -compile(export_all).
@@ -65,8 +65,20 @@
         shutdown :: undefined | {pid(), reference()}
     }).
 
+-type pool_opt() ::
+        {strategy, fifo | filo}.
+
+
 start_link(WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps) ->
-    gen_fsm:start_link(?MODULE, [WorkerMod, PoolSize,  VNodeIndex, WorkerArgs, WorkerProps], []).
+    start_link(WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps, []).
+
+-spec start_link(atom(), pos_integer(), pos_integer(), term(), term(),
+                 [pool_opt()]) ->
+                        {ok, pid()}.
+
+start_link(WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps, Opts) ->
+    gen_fsm:start_link(?MODULE, [WorkerMod, PoolSize,  VNodeIndex, WorkerArgs,
+                                 WorkerProps, Opts], []).
 
 handle_work(Pid, Work, From) ->
     gen_fsm:send_event(Pid, {work, Work, From}).
@@ -78,12 +90,13 @@ stop(Pid, Reason) ->
 shutdown_pool(Pid, Wait) ->
     gen_fsm:sync_send_all_state_event(Pid, {shutdown, Wait}, infinity).
 
-init([WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps]) ->
+init([WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps, Opts]) ->
     {ok, Pid} = poolboy:start_link([{worker_module, riak_core_vnode_worker},
             {worker_args, [VNodeIndex, WorkerArgs, WorkerProps, self()]},
             {worker_callback_mod, WorkerMod},
             {size, PoolSize}, {max_overflow, 0}]),
-    State = case app_helper:get_env(riak_core, queue_worker_strategy, fifo) of
+    DfltStrategy = app_helper:get_env(riak_core, queue_worker_strategy, fifo),
+    State = case proplists:get_value(strategy, Opts, DfltStrategy) of
                 fifo ->
                      #state{
                        pool = Pid,
