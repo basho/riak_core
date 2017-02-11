@@ -709,3 +709,20 @@ end
     lists:sort(lists:foldl(Fold, [],
         cuttlefish_variable:filter_by_prefix(["cluster", "job"], Conf)))
  end}.
+
+
+%% @doc Some requests to the vnodes are handled by an asyncronous worker pool.
+%% This parameter allows for tuning this pools behaviour when it comes dealing
+%% with requests that are queued.
+%% The default (fifo) will serve requests in the order they arrive at the worker
+%% pool. The alternative is to serve the requests in the reverse order, dealing
+%% with the most recent request first.
+%% There are pro's and con's for both aproaches, it is best to test out what
+%% works best for the desired characteristics.
+%%
+%% As a very rought rule of thumb:
+%%  - fifo will lead to lower extremes
+%%  - filo will lead to lower medians/mediums
+{mapping, "worker.queue_strategy", "riak_core.queue_worker_strategy",
+ [{default, fifo},
+  {datatype, {enum, [fifo, filo]}}]}.

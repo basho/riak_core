@@ -58,9 +58,10 @@
 -endif.
 
 -record(state, {
-        queue = queue:new(),
+        queue :: queue:queue() | list(),
         pool :: pid(),
         monitors = [] :: list(),
+        queue_strategy = fifo :: fifo | filo,
         shutdown :: undefined | {pid(), reference()}
     }).
 
@@ -82,15 +83,29 @@ init([WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps]) ->
             {worker_args, [VNodeIndex, WorkerArgs, WorkerProps, self()]},
             {worker_callback_mod, WorkerMod},
             {size, PoolSize}, {max_overflow, 0}]),
-    {ok, ready, #state{pool=Pid}}.
+    State = case app_helper:get_env(riak_core, queue_worker_strategy, fifo) of
+                fifo ->
+                     #state{
+                       pool = Pid,
+                       queue = queue:new(),
+                       queue_strategy = fifo
+                      };
+                 filo ->
+                     #state{
+                       pool = Pid,
+                       queue = [],
+                       queue_strategy = filo
+                      }
+             end,
+    {ok, ready, State}.
 
 ready(_Event, _From, State) ->
     {reply, ok, ready, State}.
 
-ready({work, Work, From} = Msg, #state{pool=Pool, queue=Q, monitors=Monitors} = State) ->
+ready({work, Work, From} = Msg, #state{pool=Pool, monitors=Monitors} = State) ->
     case poolboy:checkout(Pool, false) of
         full ->
-            {next_state, queueing, State#state{queue=queue:in(Msg, Q)}};
+            {next_state, queueing, in(Msg, State)};
         Pid when is_pid(Pid) ->
             NewMonitors = monitor_worker(Pid, From, Work, Monitors),
             riak_core_vnode_worker:handle_work(Pid, Work, From),
@@ -102,8 +117,8 @@ ready(_Event, State) ->
 queueing(_Event, _From, State) ->
     {reply, ok, queueing, State}.
 
-queueing({work, _Work, _From} = Msg, #state{queue=Q} = State) ->
-    {next_state, queueing, State#state{queue=queue:in(Msg, Q)}};
+queueing({work, _Work, _From} = Msg, State) ->
+    {next_state, queueing, in(Msg, State)};
 queueing(_Event, State) ->
     {next_state, queueing, State}.
 
@@ -126,8 +141,8 @@ handle_event({checkin, Pid}, shutdown, #state{pool=Pool, monitors=Monitors0} = S
         _ ->
             {next_state, shutdown, State#state{monitors=Monitors}}
     end;
-handle_event({checkin, Worker}, _, #state{pool = Pool, queue=Q, monitors=Monitors} = State) ->
-    case queue:out(Q) of
+handle_event({checkin, Worker}, _, #state{pool = Pool, monitors=Monitors} = State) ->
+    case out(State) of
         {{value, {work, Work, From}}, Rem} ->
             %% there is outstanding work to do - instead of checking
             %% the worker back in, just hand it more work to do
@@ -140,9 +155,9 @@ handle_event({checkin, Worker}, _, #state{pool = Pool, queue=Q, monitors=Monitor
             poolboy:checkin(Pool, Worker),
             {next_state, ready, State#state{queue=Empty, monitors=NewMonitors}}
     end;
-handle_event(worker_start, StateName, #state{pool=Pool, queue=Q, monitors=Monitors}=State) ->
+handle_event(worker_start, StateName, #state{pool=Pool, monitors=Monitors}=State) ->
     %% a new worker just started - if we have work pending, try to do it
-    case queue:out(Q) of
+    case out(State) of
         {{value, {work, Work, From}}, Rem} ->
             case poolboy:checkout(Pool, false) of
                 full ->
@@ -160,10 +175,11 @@ handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
 
 handle_sync_event({stop, Reason}, _From, _StateName, State) ->
-    {stop, Reason, ok, State}; 
-handle_sync_event({shutdown, Time}, From, _StateName, #state{queue=Q,
-        monitors=Monitors} = State) ->
-    discard_queued_work(Q),
+    {stop, Reason, ok, State};
+
+handle_sync_event({shutdown, Time}, From, _StateName,
+                  #state{monitors=Monitors} = State) ->
+    discard_queued_work(State),
     case Monitors of
         [] ->
             {stop, shutdown, ok, State};
@@ -175,7 +191,7 @@ handle_sync_event({shutdown, Time}, From, _StateName, #state{queue=Q,
                     erlang:send_after(Time, self(), shutdown),
                     ok
             end,
-            {next_state, shutdown, State#state{shutdown=From, queue=queue:new()}}
+            {next_state, shutdown, State#state{shutdown=From, queue=new(State)}}
     end;
 handle_sync_event(_Event, _From, StateName, State) ->
     {reply, {error, unknown_message}, StateName, State}.
@@ -231,12 +247,32 @@ demonitor_worker(Worker, Monitors) ->
             Monitors
     end.
 
-discard_queued_work(Q) ->
-    case queue:out(Q) of
+discard_queued_work(State) ->
+    case out(State) of
         {{value, {work, _Work, From}}, Rem} ->
             riak_core_vnode:reply(From, {error, vnode_shutdown}),
-            discard_queued_work(Rem);
+            discard_queued_work(State#state{queue = Rem});
         {empty, _Empty} ->
             ok
     end.
+
+
+in(Msg, State = #state{queue_strategy = fifo, queue = Q}) ->
+    State#state{queue=queue:in(Msg, Q)};
+
+in(Msg, State = #state{queue_strategy = filo, queue = Q}) ->
+    State#state{queue=[Msg | Q]}.
+
+out(#state{queue_strategy = fifo, queue = Q}) ->
+    queue:out(Q);
+
+out(#state{queue_strategy = filo, queue = []}) ->
+    {empty, []};
+out(#state{queue_strategy = filo, queue = [Msg | Q]}) ->
+    {Msg, Q}.
+
+new(#state{queue_strategy = fifo}) ->
+    queue:new();
+new(#state{queue_strategy = filo}) ->
+    [].
 
