@@ -153,4 +153,5 @@ start_eleveldb_info_service() ->
     Shutdown = undefined, %%{eleveldb, metadata_service_shutdown, []}
     InfoSource = {riak_core_bucket, get_bucket, []},
     ResultsHandler = {eleveldb_metadata, handle_metadata_response, []},
-    riak_core_info_service:start_service(Registration, Shutdown, InfoSource, ResultsHandler).
+    {ok, _Pid} = riak_core_info_service:start_service(Registration, Shutdown, InfoSource, ResultsHandler),
+    ok.
