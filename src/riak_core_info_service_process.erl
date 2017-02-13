@@ -65,7 +65,6 @@ handle_invoke_message(Msg, SourceParams, HandlerContext,
     callback_router(State#state{debug = Debug}).
 
 handle_shutdown_message(Msg, #state{debug = Debug, shutdown = Shutdown}) ->
-    io:format(user,"handle_shutdown_message~n", []),
     sys:handle_debug(Debug, fun write_debug/3,
                      ?MODULE,
                      {in, Msg}),
