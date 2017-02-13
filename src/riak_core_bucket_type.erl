@@ -138,25 +138,24 @@ custom_type_defaults() ->
     common_defaults() ++
         %% @HACK dvv is a riak_kv only thing, yet there is nowhere else
         %% to put it (except maybe fixups?)
-        [{dvv_enabled, true},
-         {allow_mult, true}].
+        [{dvv_enabled, false},
+         {allow_mult, false}].
 
 common_defaults() ->
-    [{linkfun, {modfun, riak_kv_wm_link_walker, mapreduce_linkfun}},
-     {old_vclock, 86400},
+    [{old_vclock, 86400},
      {young_vclock, 20},
      {big_vclock, 50},
      {small_vclock, 50},
      {pr, 0},
-     {r, quorum},
-     {w, quorum},
+     {r, 1},
+     {w, 1},
      {pw, 0},
-     {dw, quorum},
-     {rw, quorum},
+     {dw, 1},
+     {rw, 1},
      {basic_quorum, false},
      {notfound_ok, true},
      {n_val,3},
-     {last_write_wins,false},
+     {last_write_wins,true},
      {precommit, []},
      {postcommit, []},
      {chash_keyfun, {riak_core_util, chash_std_keyfun}}].
