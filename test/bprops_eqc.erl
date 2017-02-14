@@ -63,7 +63,7 @@
 bprops_test_() -> {
         timeout, 60,
         ?_test(?assert(
-            eqc:quickcheck(?QC_OUT(eqc:numtests(100, prop_buckets())))))
+            eqc:quickcheck(?QC_OUT(eqc:testing_time(50, prop_buckets())))))
     }.
 
 %%
@@ -231,90 +231,26 @@ bucket_prop_value() ->
 %%
 
 prop_buckets() ->
-    ?SETUP(
-        fun setup_cleanup/0,
-        ?FORALL(Cmds, eqc_statem:commands(?MODULE),
-            aggregate(eqc_statem:command_names(Cmds),
-                ?TRAPEXIT(
-                    try
-                        %%
-                        %% setup
-                        %%
-                        os:cmd("rm -rf ./riak_core_bucket_eqc_meta"),
-                        application:set_env(riak_core, claimant_tick, 4294967295),
-                        application:set_env(riak_core, broadcast_lazy_timer, 4294967295),
-                        application:set_env(riak_core, broadcast_exchange_timer, 4294967295),
-                        application:set_env(riak_core, metadata_hashtree_timer, 4294967295),
-                        application:set_env(riak_core, default_bucket_props, ?DEFAULT_BPROPS),
-                        application:set_env(riak_core, cluster_name, "riak_core_bucket_eqc"),
-                        stop_pid(whereis(riak_core_ring_events)),
-                        stop_pid(whereis(riak_core_ring_manager)),
-                        {ok, RingEvents} = riak_core_ring_events:start_link(),
-                        {ok, _RingMgr} = riak_core_ring_manager:start_link(test),
-                        {ok, Claimant} = riak_core_claimant:start_link(),
-                        {ok, MetaMgr} = riak_core_metadata_manager:start_link([{data_dir, "./riak_core_bucket_eqc_meta"}]),
-                        {ok, Hashtree} = riak_core_metadata_hashtree:start_link("./riak_core_bucket_eqc_meta/trees"),
-                        {ok, Broadcast} = riak_core_broadcast:start_link(),
-
-                        {H, S, Res} = eqc_statem:run_commands(?MODULE, Cmds),
-
-                        %%
-                        %% shut down
-                        %%
-                        stop_pid(Broadcast),
-                        stop_pid(Hashtree),
-                        stop_pid(MetaMgr),
-                        stop_pid(Claimant),
-                        riak_core_ring_manager:stop(),
-                        stop_pid(RingEvents),
-
-                        eqc_statem:pretty_commands(
-                            ?MODULE, Cmds,
-                            {H, S, Res},
-                            eqc:aggregate(
-                                eqc_statem:command_names(Cmds),
-                                Res == ok
-                            )
+    ?FORALL(Cmds, commands(?MODULE),
+        aggregate(command_names(Cmds),
+            ?TRAPEXIT(
+                begin
+                    {H, S, Res} =
+                    bucket_eqc_utils:per_test_setup(?DEFAULT_BPROPS,
+                                                    fun() ->
+                                                        run_commands(?MODULE, Cmds)
+                                                    end),
+                    pretty_commands(
+                        ?MODULE, Cmds,
+                        {H, S, Res},
+                        aggregate(
+                            command_names(Cmds),
+                            Res == ok
                         )
-                    after
-                        os:cmd("rm -rf ./riak_core_bucket_eqc_meta")
-                    end
-                )
+                    )
+                end
             )
         )
     ).
-
-setup_cleanup() ->
-    meck:new(riak_core_capability, []),
-    meck:expect(
-        riak_core_capability, get,
-        fun({riak_core, bucket_types}) -> true;
-            (X) -> meck:passthrough([X])
-        end
-    ),
-    fun() ->
-        meck:unload(riak_core_capability)
-    end.
-
-%%
-%% internal helper functions
-%%
-
-stop_pid(Other) when not is_pid(Other) ->
-    ok;
-stop_pid(Pid) ->
-    unlink(Pid),
-    exit(Pid, shutdown),
-    ok = wait_for_pid(Pid).
-
-wait_for_pid(Pid) ->
-    Mref = erlang:monitor(process, Pid),
-    receive
-        {'DOWN', Mref, process, _, _} ->
-            ok
-    after
-        5000 ->
-            {error, didnotexit}
-    end.
 
 -endif.
