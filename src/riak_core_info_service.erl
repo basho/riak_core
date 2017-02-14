@@ -30,7 +30,7 @@
 -export([start_service/4]).
 
 
--type callback() :: {module(), FunName::atom(),InitialArgs::[term()]}.
+-type callback() :: {module(), FunName::atom(),InitialArgs::[term()]} | undefined.
 
 -export_type([callback/0]).
 

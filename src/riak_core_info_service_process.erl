@@ -57,26 +57,31 @@ handle_invoke_message(Msg, SourceParams, HandlerContext,
                    #state{ debug = Debug0,
                            source = Source,
                            handler = Handler }=State) ->
-    Debug = sys:handle_debug(Debug0, fun write_debug/3,
-                             ?MODULE,
-                             {in, Msg}),
+    Debug1 = sys:handle_debug(Debug0, fun write_debug/3,
+                              ?MODULE,
+                              {in, Msg}),
     Result = apply_callback(Source, SourceParams),
-    apply_callback(Handler, [{Result, SourceParams, HandlerContext}]),
+    Reply = {Result, SourceParams, HandlerContext},
+    apply_callback(Handler, [Reply]),
+    Debug = sys:handle_debug(Debug1, fun write_debug/3,
+                             ?MODULE,
+                             {out, Reply}),
     callback_router(State#state{debug = Debug}).
 
 handle_shutdown_message(Msg, #state{debug = Debug, shutdown = Shutdown}) ->
-    sys:handle_debug(Debug, fun write_debug/3,
+    _DebugOpts = sys:handle_debug(Debug, fun write_debug/3,
                      ?MODULE,
                      {in, Msg}),
     apply_callback(Shutdown, [self()]),
     ok.
 
+-spec handle_system_message(Request::term(), From::{pid(), Tag:: _}, State :: #state{}) ->
+    no_return().
 handle_system_message(Request, From, #state{ debug=Debug, parent = Parent } = State) ->
     %% No recursion here; `system_continue/3' will be invoked
-    %% if appropriate
+    %% if appropriate - note that this function will not "return"
     sys:handle_system_msg(Request, From, Parent,
-                          ?MODULE, Debug, State),
-    ok.
+                          ?MODULE, Debug, State).
 
 handle_other_message(Msg, #state{debug=Debug0} = State) ->
     Debug = sys:handle_debug(Debug0, fun write_debug/3,
