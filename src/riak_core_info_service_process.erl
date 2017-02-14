@@ -19,14 +19,14 @@
 %% `gen_server' implementation
 
 start_link(Registration, Shutdown, Source, ResponseHandler) ->
-    {ok, Pid} = gen_server:start_link(?MODULE, [Shutdown, Source, ResponseHandler], []),
-    apply_callback(Registration, [Pid]),
-    {ok, Pid}.
-
-init([Shutdown, Source, ResponseHandler]) ->
     State = #state{shutdown  = Shutdown,
                    source  = Source,
                    response_handler = ResponseHandler},
+    {ok, Pid} = gen_server:start_link(?MODULE, State, []),
+    apply_callback(Registration, [Pid]),
+    {ok, Pid}.
+
+init(State) ->
     {ok, State}.
 
 handle_info({invoke, SourceParams, HandlerContext}, State) ->
