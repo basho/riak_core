@@ -17,6 +17,8 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
+
+%% @see riak_core_info_service
 -module(riak_core_info_service_process).
 -behaviour(gen_server).
 
