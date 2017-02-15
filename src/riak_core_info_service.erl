@@ -18,31 +18,66 @@
 %%
 %% -------------------------------------------------------------------
 
-%%% @doc The riak_core_info_service is a way for dependencies of riak_core to sign
-%%%      themselves up to receive messages from riak_core without having to generate
-%%%      a cyclic call graph.
-%%%      The dependency needs to have a way to be told where it should send requests
-%%%      to get information out of riak_core. That is the Registration callback().
-%%%      The Source callback() is a function inside riak_core that returns the
+%%% @doc
+%%%      The `riak_core_info_service' is a way for dependencies of
+%%%      `riak_core' to be registered to receive messages from
+%%%      `riak_core' without a cyclic dependency graph.
+%%%
+%%%      == Callbacks ==
+%%%      The dependency needs to know to which pid it should send
+%%%      requests for `riak_core' data. The pid will be sent to the
+%%%      `Registration' callback.
+%%%
+%%%      The `Provider' callback is a function inside `riak_core' that returns
 %%%      information that the dependency needs.
-%%%      The Handler callback() is a function that will process the messages sent out
-%%%      of the dependency when it wants information.
-%%%      The dependency MUST send messages to the info service pid of the form
-%%%        {invoke, SourceParameters::[term()], HandlerContext::[term()]}
 %%%
-%%%      The information service originates from a need in eleveldb to know something
-%%%      about bucket properties.
-%%%      For that particular problem the callback()s would look like this:
-%%%      Registration = {eleveldb, set_metadata_pid, []}
-%%%      Source = {riak_core_bucket, get_bucket, []}
-%%%      Handler = {eleveldb, handle_metadata_response, []}
-%%%      And the handle_metadata_response function would look like this:
-%%%      handle_metadata_response({Props, _SourceParams, [Key]}) ->
-%%%          property_cache(Key, Props).
+%%%      The `Handler' callback is a function in the dependency that
+%%%      expects the reply from the `Provider'.
 %%%
-%%%      set_metadata_pid(_Pid) ->
-%%%          erlang:nif_error({error, not_loaded}).
+%%%      === Handler Parameters ===
+%%%      The arguments to `Handler' will be, in order:
+%%%      <ol><li>Each item, if any, provided in the list in the 3rd element of the registration tuple</li>
+%%%      <li>The result from `Provider' wrapped in a 3-tuple:
+%%%        <ol><li>The result</li>
+%%%            <li>The list of parameters passed to `Provider'</li>
+%%%            <li>The opaque `HandlerContext' (see {@section Request Message})</li>
+%%%        </ol></li></ol>
 %%%
+%%%
+%%%      See {@link callback()}.
+%%%
+%%%      == Request Message ==
+%%%
+%%%      To ask the `info_service' process to call the `Provider'
+%%%      function, the dependency <b>must</b> send Erlang messages
+%%%      (rather than invoke API functions) to the info service
+%%%      process (registered previously via the `Registration'
+%%%      callback) of the following form:
+%%%
+%%%        `{invoke, SourceParameters::[term()], HandlerContext::[term()]}'
+%%%
+%%%      The `HandlerContext' is a request identifier ignored by
+%%%      `riak_core', to be returned to the caller.
+%%%
+%%%      == History ==
+%%%      The information service originates from a need in `eleveldb' to retrieve
+%%%      bucket properties.
+%%%
+%%%      For that particular problem the callbacks would look like this:
+%%%  ```
+%%%  Registration = {eleveldb, set_metadata_pid, []}
+%%%  Provider = {riak_core_bucket, get_bucket, []}
+%%%  Handler = {eleveldb, handle_metadata_response, []}
+%%%  '''
+%%%
+%%%      And `handle_metadata_response/1' would look like this:
+%%%  ```
+%%%  handle_metadata_response({Props, _SourceParams, [Key]}) ->
+%%%      property_cache(Key, Props).
+%%%
+%%%  set_metadata_pid(_Pid) ->
+%%%      erlang:nif_error({error, not_loaded}).
+%%%  '''
 
 
 -module(riak_core_info_service).
@@ -51,6 +86,11 @@
 
 
 -type callback() :: {module(), FunName::atom(),InitialArgs::[term()]} | undefined.
+
+%% @type callback(). Any arguments provided during registration of
+%% `Handler' will be sent as the first parameters when the callback is
+%% invoked; the result of the `Provider' callback will be wrapped in a
+%% tuple as the last parameter. See {@section Handler Parameters}
 
 -export_type([callback/0]).
 
