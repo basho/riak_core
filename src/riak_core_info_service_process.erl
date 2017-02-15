@@ -23,7 +23,7 @@
 -behaviour(gen_server).
 
 -record(state, {
-    source = undefined :: riak_core_info_service:callback(),
+    service_provider = undefined :: riak_core_info_service:callback(),
     response_handler = undefined :: riak_core_info_service:callback(),
     shutdown = undefined :: riak_core_info_service:callback()
 }).
@@ -39,9 +39,9 @@
 
 %% `gen_server' implementation
 
-start_link(Registration, Shutdown, Source, ResponseHandler) ->
-    State = #state{shutdown  = Shutdown,
-                   source  = Source,
+start_link(Registration, Shutdown, Provider, ResponseHandler) ->
+    State = #state{shutdown = Shutdown,
+                   service_provider = Provider,
                    response_handler = ResponseHandler},
     {ok, Pid} = gen_server:start_link(?MODULE, State, []),
     apply_callback(Registration, [Pid]),
@@ -50,8 +50,8 @@ start_link(Registration, Shutdown, Source, ResponseHandler) ->
 init(State) ->
     {ok, State}.
 
-handle_info({invoke, SourceParams, HandlerContext}, State) ->
-    handle_invoke_message(SourceParams, HandlerContext, State);
+handle_info({invoke, ProviderParams, HandlerContext}, State) ->
+    handle_invoke_message(ProviderParams, HandlerContext, State);
 
 handle_info(callback_shutdown, State) ->
     handle_shutdown_message(State).
@@ -70,11 +70,11 @@ handle_cast(_Request, _State) ->
 
 %% Private
 
-handle_invoke_message(SourceParams, HandlerContext,
-                      #state{source = Source,
+handle_invoke_message(ProviderParams, HandlerContext,
+                      #state{service_provider = Provider,
                              response_handler = ResponseHandler } = State) ->
-    Result = apply_callback(Source, SourceParams),
-    Reply = {Result, SourceParams, HandlerContext},
+    Result = apply_callback(Provider, ProviderParams),
+    Reply = {Result, ProviderParams, HandlerContext},
     apply_callback(ResponseHandler, [Reply]),
     {noreply, State}.
 

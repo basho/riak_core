@@ -54,7 +54,7 @@
 %%%      process (registered previously via the `Registration'
 %%%      callback) of the following form:
 %%%
-%%%        `{invoke, SourceParameters::[term()], HandlerContext::[term()]}'
+%%%        `{invoke, ProviderParameters::[term()], HandlerContext::term()}'
 %%%
 %%%      The `HandlerContext' is a request identifier ignored by
 %%%      `riak_core', to be returned to the caller.
@@ -70,9 +70,11 @@
 %%%  Handler = {eleveldb, handle_metadata_response, []}
 %%%  '''
 %%%
-%%%      And `handle_metadata_response/1' would look like this:
+%%%      And `handle_metadata_response/1' would look like this,
+%%%      assuming `Key' was sent with the original invocation message
+%%%      as the 3rd element of the tuple:
 %%%  ```
-%%%  handle_metadata_response({Props, _SourceParams, [Key]}) ->
+%%%  handle_metadata_response({Props, _ProviderParams, Key}) ->
 %%%      property_cache(Key, Props).
 %%%
 %%%  set_metadata_pid(_Pid) ->
@@ -94,9 +96,9 @@
 
 -export_type([callback/0]).
 
--spec start_service(Registration::callback(), Shutdown::callback(), Source::callback(), Handler::callback()) ->
+-spec start_service(Registration::callback(), Shutdown::callback(), Provider::callback(), Handler::callback()) ->
                            ok |
                            {error, term()}.
 
-start_service(Registration, Shutdown, Source, Handler) ->
-    riak_core_info_service_sup:start_service(Registration, Shutdown, Source, Handler).
+start_service(Registration, Shutdown, Provider, Handler) ->
+    riak_core_info_service_sup:start_service(Registration, Shutdown, Provider, Handler).
