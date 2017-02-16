@@ -42,8 +42,10 @@
          del_user/1,
          disable/0,
          enable/0,
+         find_user/1,
          find_one_user_by_metadata/2,
          find_unique_user_by_metadata/2,
+         find_bucket_grants/2,
          get_ciphers/0,
          get_username/1,
          is_enabled/0,
@@ -103,6 +105,15 @@
 -type metadata_value() :: term().
 -type options() :: [{metadata_key(), metadata_value()}].
 
+-spec find_user(Username :: string()) -> options() | {error, not_found}.
+find_user(Username) ->
+    case user_details(name2bin(Username)) of
+        undefined ->
+            {error, not_found};
+        Options ->
+            Options
+    end.
+
 -spec find_one_user_by_metadata(metadata_key(), metadata_value()) -> {Username :: string(), options()} | {error, not_found}.
 find_one_user_by_metadata(Key, Value) ->
     riak_core_metadata:fold(
@@ -136,6 +147,13 @@ accumulate_matching_user(true, _User, _Acc) ->
     throw({break, {error, not_unique}});
 accumulate_matching_user(false, _, Acc) ->
     Acc.
+
+-spec find_bucket_grants(bucket(), user | group) -> [{RoleName :: string(), [permission()]}].
+find_bucket_grants(Bucket, Type) ->
+    Grants = match_grants({'_', Bucket}, Type),
+    lists:map(fun ({{Role, _Bucket}, Permissions}) ->
+                      {bin2name(Role), Permissions}
+              end, Grants).
 
 prettyprint_users([all], _) ->
     "all";
@@ -893,6 +911,11 @@ status() ->
 %% INTERNAL
 %% ============
 
+match_grants(Match, Type) ->
+    Grants = riak_core_metadata:to_list(metadata_grant_prefix(Type),
+                                        [{match, Match}]),
+    [{Key, Val} || {Key, [Val]} <- Grants, Val /= ?TOMBSTONE].
+
 metadata_grant_prefix(user) ->
     {<<"security">>, <<"usergrants">>};
 metadata_grant_prefix(group) ->
@@ -987,13 +1010,9 @@ get_context(Username) when is_binary(Username) ->
 
 accumulate_grants(Role, Type) ->
     %% The 'all' grants always apply
-    All = riak_core_metadata:fold(fun({{_R, _Bucket}, [?TOMBSTONE]}, A) ->
-                                          A;
-                                     ({{_R, Bucket}, [Permissions]}, A) ->
-                                          [{{<<"group/all">>, Bucket},
-                                            Permissions}|A]
-                                  end, [], metadata_grant_prefix(group),
-                                  [{match, {all, '_'}}]),
+    All = lists:map(fun ({{_Role, Bucket}, Permissions}) ->
+                            {{<<"group/all">>, Bucket}, Permissions}
+                    end, match_grants({all, '_'}, group)),
     {Grants, _Seen} = accumulate_grants([Role], [], All, Type),
     lists:flatten(Grants).
 
@@ -1005,16 +1024,9 @@ accumulate_grants([Role|Roles], Seen, Acc, Type) ->
                         not lists:member(G,Seen),
                         group_exists(G)],
     {NewAcc, NewSeen} = accumulate_grants(Groups, [Role|Seen], Acc, group),
-
-    Prefix = metadata_grant_prefix(Type),
-
-    Grants = riak_core_metadata:fold(fun({{_R, _Bucket}, [?TOMBSTONE]}, A) ->
-                                             A;
-                                        ({{R, Bucket}, [Permissions]}, A) ->
-                                             [{{concat_role(Type, R), Bucket},
-                                               Permissions}|A]
-                                     end, [], Prefix,
-                                     [{match, {Role, '_'}}]),
+    Grants = lists:map(fun ({{_Role, Bucket}, Permissions}) ->
+                               {{concat_role(Type, Role), Bucket}, Permissions}
+                       end, match_grants({Role, '_'}, Type)),
     accumulate_grants(Roles, NewSeen, [Grants|NewAcc], Type).
 
 %% lookup a key in a list of key/value tuples. Like proplists:get_value but
@@ -1105,7 +1117,6 @@ validate_password_option(Pass, Options) ->
                                      {iterations, Iterations}]},
                        Options),
     {ok, NewOptions}.
-
 
 validate_permissions(Perms) ->
     KnownPermissions = app_helper:get_env(riak_core, permissions, []),
@@ -1364,6 +1375,11 @@ role_exists(Rolename, RoleType) ->
 illegal_name_chars(Name) ->
     [Name] =/= string:tokens(Name, ?ILLEGAL).
 
+bin2name(Bin) when is_binary(Bin) ->
+    unicode:characters_to_list(Bin, utf8);
+%% 'all' can be stored in a grant instead of a binary name
+bin2name(Name) when is_atom(Name) ->
+    Name.
 
 %% Rather than introduce yet another dependency to Riak this late in
 %% the 2.0 cycle, we'll live with string:to_lower/1. It will lowercase

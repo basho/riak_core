@@ -283,7 +283,7 @@ stop_process_pre(S, [Pid]) ->
 %% @doc stop_process command
 stop_process(Pid) ->
     Pid ! die,
-    Res = wait_for_pid(Pid),
+    Res = riak_core_test_util:wait_for_pid(Pid),
     %% while not part of the test, this provides extra insurance that the
     %% background manager receives the monitor message for the failed pid
     %% (waiting for the test process to receive its monitor message is not
@@ -456,7 +456,7 @@ crash_next(S, _Value, _Args) ->
 
 %% @doc crash command
 crash() ->
-    stop_pid(whereis(riak_core_bg_manager)).
+    riak_core_test_util:stop_pid(riak_core_bg_manager).
 
 %% @doc crash command post condition
 crash_post(_S, _Args, _Res) ->
@@ -789,23 +789,6 @@ increment_token_count(Type, State=#state{tokens=Tokens}) ->
 reset_token_count(Type, State=#state{tokens=Tokens}) ->
     State#state{ tokens = lists:keystore(Type, 1, Tokens, {Type, 0}) }.
 
-stop_pid(Other) when not is_pid(Other) ->
-    ok;
-stop_pid(Pid) ->
-    unlink(Pid),
-    exit(Pid, shutdown),
-    ok = wait_for_pid(Pid).
-
-wait_for_pid(Pid) ->
-    Mref = erlang:monitor(process, Pid),
-    receive
-        {'DOWN', Mref, process, _, _} ->
-            ok
-    after
-        5000 ->
-            {error, didnotexit}
-    end.
-
 bg_manager_monitors() ->
     bg_manager_monitors(whereis(riak_core_bg_manager)).
 
@@ -819,7 +802,7 @@ prop_bgmgr() ->
             aggregate(command_names(Cmds),
                       ?TRAPEXIT(
                          begin
-                             stop_pid(whereis(riak_core_bg_manager)),
+                             riak_core_test_util:stop_pid(riak_core_bg_manager),
                              {ok, _BgMgr} = riak_core_bg_manager:start(),
                              {H, S, Res} = run_commands(?MODULE,Cmds),
                              InfoTable = ets:tab2list(?BG_INFO_ETS_TABLE),
@@ -827,8 +810,8 @@ prop_bgmgr() ->
                              Monitors = bg_manager_monitors(),
                              RunnngPids = running_procs(S),
                              %% cleanup processes not killed during test
-                             [stop_pid(Pid) || Pid <- RunnngPids],
-                             stop_pid(whereis(riak_core_bg_manager)),
+                             [riak_core_test_util:stop_pid(Pid) || Pid <- RunnngPids],
+                             riak_core_test_util:stop_pid(riak_core_bg_manager),
                              ?WHENFAIL(
                                 begin
                                     io:format("~n~nFinal State: ~n"),
@@ -864,13 +847,13 @@ prop_bgmgr_parallel() ->
             aggregate(command_names(Cmds),
                       ?TRAPEXIT(
                          begin
-                             stop_pid(whereis(riak_core_bg_manager)),
+                             riak_core_test_util:stop_pid(riak_core_bg_manager),
                              {ok, BgMgr} = riak_core_bg_manager:start(),
                              {Seq, Par, Res} = run_parallel_commands(?MODULE,Cmds),
                              InfoTable = ets:tab2list(?BG_INFO_ETS_TABLE),
                              EntryTable = ets:tab2list(?BG_ENTRY_ETS_TABLE),
                              Monitors = bg_manager_monitors(),
-                             stop_pid(BgMgr),
+                             riak_core_test_util:stop_pid(BgMgr),
                              ?WHENFAIL(
                                 begin
                                     io:format("~n~nbackground_mgr tables: ~n"),

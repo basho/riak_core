@@ -40,6 +40,7 @@
          safe_rpc/5,
          rpc_every_member/4,
          rpc_every_member_ann/4,
+         count/2,
          keydelete/2,
          multi_keydelete/2,
          multi_keydelete/3,
@@ -79,9 +80,12 @@
 -include("riak_core_vnode.hrl").
 
 -ifdef(TEST).
+-ifdef(EQC).
+-include_lib("eqc/include/eqc.hrl").
+-endif. %% EQC
 -include_lib("eunit/include/eunit.hrl").
 -export([counter_loop/1,incr_counter/1,decr_counter/1]).
--endif.
+-endif. %% TEST
 
 %% R14 Compatibility
 -compile({no_auto_import,[integer_to_list/2]}).
@@ -317,6 +321,18 @@ ensure_started(App) ->
 	{error, {already_started, App}} ->
 	    ok
     end.
+
+%% @doc Applies `Pred' to each element in `List', and returns a count of how many
+%% applications returned `true'.
+-spec count(fun((term()) -> boolean()), [term()]) -> non_neg_integer().
+count(Pred, List) ->
+    FoldFun = fun(E, A) ->
+                      case Pred(E) of
+                          false -> A;
+                          true -> A + 1
+                      end
+              end,
+    lists:foldl(FoldFun, 0, List).
 
 %% @doc Returns a copy of `TupleList' where the first occurrence of a tuple whose
 %% first element compares equal to `Key' is deleted, if there is such a tuple.
@@ -1027,10 +1043,11 @@ bounded_pmap_test_() ->
 make_fold_req_test_() ->
     {setup,
      fun() ->
+             meck:unload(),
              meck:new(riak_core_capability, [passthrough])
      end,
      fun(_) ->
-             meck:unload(riak_core_capability)
+             ok
      end,
      [
       fun() ->
@@ -1049,7 +1066,7 @@ make_fold_req_test_() ->
                        end,
 
               meck:expect(riak_core_capability, get,
-                          fun(_, _) -> v1 end),
+                          fun({riak_core, fold_req_version}, _) -> v1 end),
               F_1         = make_fold_req(F_1),
               F_1         = make_fold_req(F_2),
               F_1         = make_fold_req(FoldFun, Acc0),
@@ -1057,12 +1074,16 @@ make_fold_req_test_() ->
               ok = Newest(),
 
               meck:expect(riak_core_capability, get,
-                          fun(_, _) -> v2 end),
+                          fun({riak_core, fold_req_version}, _) -> v2 end),
               F_2_default = make_fold_req(F_1),
               F_2         = make_fold_req(F_2),
               F_2_default = make_fold_req(FoldFun, Acc0),
               F_2         = make_fold_req(FoldFun, Acc0, Forw, Opts),
-              ok = Newest()
+              ok = Newest(),
+              %% It seems you could unload `meck' in the test teardown,
+              %% but that sometimes causes the eunit process to crash.
+              %% Instead, unload at end of test.
+              meck:unload()
       end
      ]
     }.
@@ -1083,5 +1104,14 @@ proxy_spawn_test() ->
         ok
     end.
 
--endif.
+-ifdef(EQC).
 
+count_test() ->
+    ?assert(eqc:quickcheck(prop_count_correct())).
+
+prop_count_correct() ->
+    ?FORALL(List, list(bool()),
+            count(fun(E) -> E end, List) =:= length([E || E <- List, E])).
+
+-endif. %% EQC
+-endif. %% TEST
