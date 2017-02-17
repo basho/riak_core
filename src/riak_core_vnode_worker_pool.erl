@@ -282,7 +282,7 @@ out(#state{queue_strategy = fifo, queue = Q}) ->
 out(#state{queue_strategy = filo, queue = []}) ->
     {empty, []};
 out(#state{queue_strategy = filo, queue = [Msg | Q]}) ->
-    {Msg, Q}.
+    {{value, Msg}, Q}.
 
 new(#state{queue_strategy = fifo}) ->
     queue:new();
