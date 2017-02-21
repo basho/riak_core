@@ -44,6 +44,7 @@
          enable/0,
          find_user/1,
          find_one_user_by_metadata/2,
+         find_unique_user_by_metadata/2,
          find_bucket_grants/2,
          get_ciphers/0,
          get_username/1,
@@ -128,6 +129,24 @@ return_if_user_matches_metadata(Key, Value, {_Username, Options} = User) ->
         false ->
             {error, not_found}
     end.
+
+-spec find_unique_user_by_metadata(metadata_key(), metadata_value()) ->
+    {Username :: string(), options()} | {error, not_found | not_unique}.
+find_unique_user_by_metadata(Key, Value) ->
+    riak_core_metadata:fold(fun (User, Acc) -> accumulate_matching_user(Key, Value, User, Acc) end,
+                            {error, not_found},
+                            {<<"security">>, <<"users">>},
+                            [{resolver, lww}, {default, []}]).
+
+accumulate_matching_user(Key, Value, {_Username, Options} = User, Acc) ->
+    accumulate_matching_user(lists:member({Key, Value}, Options), User, Acc).
+
+accumulate_matching_user(true, User, {error, not_found}) ->
+    User;
+accumulate_matching_user(true, _User, _Acc) ->
+    throw({break, {error, not_unique}});
+accumulate_matching_user(false, _, Acc) ->
+    Acc.
 
 -spec find_bucket_grants(bucket(), user | group) -> [{RoleName :: string(), [permission()]}].
 find_bucket_grants(Bucket, Type) ->
