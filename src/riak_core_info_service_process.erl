@@ -36,6 +36,10 @@
          terminate/2,
          code_change/3]).
 
+-ifdef(TEST).
+-compile(export_all).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
 
 %% `gen_server' implementation
 
@@ -87,3 +91,30 @@ apply_callback(undefined, _CallSpecificArgs) ->
 apply_callback({Mod, Fun, StaticArgs}, CallSpecificArgs) ->
     %% Invoke the callback, passing static + call-specific args for this call
     erlang:apply(Mod, Fun, StaticArgs ++ CallSpecificArgs).
+
+-ifdef(TEST).
+callback_target() ->
+    ok.
+
+callback_target(static, dynamic) ->
+    ok.
+
+shutdown_target(Key, _Pid) ->
+    put(Key, true).
+
+callback1_test() ->
+    ?assertEqual(ok, apply_callback({?MODULE, callback_target, []}, [])).
+
+callback2_test() ->
+    ?assertEqual(ok, apply_callback({?MODULE, callback_target, [static]}, [dynamic])).
+
+shutdown_test() ->
+    Pkey = '_rcisp_test_shutdown',
+    put(Pkey, false),
+    ?assertEqual(false, get(Pkey)),
+    ?assertMatch({stop, normal, _}, handle_shutdown_message(#state{shutdown={?MODULE, shutdown_target, [Pkey]}})),
+    ?assertEqual(true, get(Pkey)),
+    put(Pkey, undefined).
+
+
+-endif.
