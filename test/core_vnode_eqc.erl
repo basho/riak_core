@@ -1,8 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% core_vnode_eqc: QuickCheck tests for riak_core_vnode code
-%%
-%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2007-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -21,8 +19,8 @@
 %% -------------------------------------------------------------------
 
 %% @doc  QuickCheck tests for riak_core_vnode code
-
 -module(core_vnode_eqc).
+
 -ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_fsm.hrl").
@@ -52,6 +50,7 @@ simple_test_() ->
     {setup,
      fun setup_simple/0,
      fun(OldVars) ->
+         riak_core_job_sup:stop_test_sup(),
          riak_core_test_util:unlink_named_process(riak_core_ring_manager),
          riak_core_ring_manager:stop(),
          riak_core_test_util:stop_pid(riak_core_ring_events),
@@ -70,6 +69,7 @@ setup_simple() ->
     %% them down fast enough.
     meck:unload(),
     error_logger:tty(false),
+    application:load(sasl),
     application:set_env(sasl, sasl_error_logger, {file, "core_vnode_eqc_sasl.log"}),
     error_logger:logfile({open, "core_vnode_eqc.log"}),
 
@@ -87,6 +87,7 @@ setup_simple() ->
     exometer:start(),
     riak_core_ring_events:start_link(),
     riak_core_ring_manager:start_link(test),
+    riak_core_job_sup:start_test_sup(),
     riak_core_vnode_proxy_sup:start_link(),
     riak_core:register([{vnode_module, mock_vnode}]),
     OldVars.

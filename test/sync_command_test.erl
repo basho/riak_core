@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2007-2011 Basho Technologies, Inc.  All Rights Reserved.
+%% Copyright (c) 2013-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -17,6 +17,7 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
+
 -module(sync_command_test).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -71,6 +72,7 @@ setup_simple() ->
     exometer:start(),
     riak_core_ring_events:start_link(),
     riak_core_ring_manager:start_link(test),
+    riak_core_job_sup:start_test_sup(),
     riak_core_vnode_proxy_sup:start_link(),
 
     {ok, _Sup} = riak_core_vnode_sup:start_link(),
@@ -94,6 +96,7 @@ stop_servers(_Pid) ->
     riak_core_test_util:stop_pid(riak_core_vnode_manager),
     riak_core_test_util:stop_pid(riak_core_ring_events),
     riak_core_test_util:stop_pid(riak_core_vnode_sup),
+    riak_core_job_sup:stop_test_sup(),
     riak_core_test_util:stop_pid(riak_core_ring_manager),
     application:stop(exometer),
     application:stop(lager),
