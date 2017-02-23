@@ -95,19 +95,6 @@
 %% Internal Types
 %% ===================================================================
 
-%%
-%% WARNING: This file has entries in dialyzer.ignore-warnings
-%%
-%% Edits may change matching patterns or necessity - be sure to check/update
-%% if you're working in that area.
-%%
-%% The dialyzer attribute below turns off the warning starting in OTP-18, but
-%% check occasionally to see if it still matters - it's an erroneous warning
-%% from dialyzer that may be fixed in a newer release, as the types are
-%% suitably tagged.
-%%
--dialyzer({no_opaque, c_erase/2}).
-
 -define(StatsDict,  orddict).
 -type stats()   ::  ?orddict_t(stat_key(), stat_val()).
 
