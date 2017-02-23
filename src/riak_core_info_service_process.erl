@@ -58,7 +58,7 @@ handle_info({invoke, ProviderParams, HandlerContext}, State) ->
     handle_invoke_message(ProviderParams, HandlerContext, State);
 
 handle_info(callback_shutdown, State) ->
-    handle_shutdown_message(State).
+    {stop, normal, State}.
 
 terminate(_Reason, State) ->
     handle_shutdown_message(State).
@@ -66,13 +66,17 @@ terminate(_Reason, State) ->
 code_change(_OldVsn, State, _Extra) ->
     State.
 
-handle_call(_Request, _From, _State) ->
-    erlang:error(not_implemented).
+handle_call(Request, _From, State) ->
+    terminate_not_implemented(Request, State).
 
-handle_cast(_Request, _State) ->
-    erlang:error(not_implemented).
+handle_cast(Request, State) ->
+    terminate_not_implemented(Request, State).
 
 %% Private
+
+terminate_not_implemented(Request, State) ->
+    lager:warning("Terminating - unknown message received: ~p", [Request]),
+    {stop, not_implemented, State}.
 
 handle_invoke_message(ProviderParams, HandlerContext,
                       #state{service_provider = Provider,
