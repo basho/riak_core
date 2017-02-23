@@ -38,8 +38,10 @@ security_test_() ->
      fun(S) ->
              stop_manager(S)
      end,
-     [{timeout, 60, { "test_find_bucket_grants", fun test_find_bucket_grants/0 }},
+     [{timeout, 60, { "find_user", fun test_find_user/0 }},
+      {timeout, 60, { "test_find_bucket_grants", fun test_find_bucket_grants/0 }},
       {timeout, 60, { "find_one_user_by_metadata", fun test_find_one_user_by_metadata/0 }},
+      {timeout, 60, { "find_unique_user_by_metadata", fun test_find_unique_user_by_metadata/0 }},
       {timeout, 60, { "trust auth works",
                       fun() ->
                               ?assertMatch({error, _}, riak_core_security:authenticate(<<"user">>, <<"password">>,
@@ -261,6 +263,12 @@ test_find_bucket_grants() ->
     ?assertMatch({_, ["riak_kv.get"]}, lists:keyfind(all, 1, GroupGrants)),
     ?assertMatch({_, ["riak_kv.put"]}, lists:keyfind("testgroup", 1, GroupGrants)).
 
+test_find_user() ->
+    Options = [{key, value}],
+    Username = "testuser",
+    ok = riak_core_security:add_user(Username, Options),
+    ?assertMatch(Options, riak_core_security:find_user(Username)).
+
 test_find_one_user_by_metadata() ->
     ok = riak_core_security:add_user("paul", [{"key_and_value", "match"}]),
     ?assertMatch({<<"paul">>, _Options},
@@ -269,3 +277,13 @@ test_find_one_user_by_metadata() ->
              riak_core_security:find_one_user_by_metadata("no", "match")).
 
 -endif.
+
+test_find_unique_user_by_metadata() ->
+    ?assertMatch({error, not_found},
+                 riak_core_security:find_unique_user_by_metadata("key", "val")),
+    ok = riak_core_security:add_user("user1", [{"key", "val"}]),
+    ?assertMatch({<<"user1">>, _Options},
+                 riak_core_security:find_unique_user_by_metadata("key", "val")),
+    ok = riak_core_security:add_user("user2", [{"key", "val"}]),
+    ?assertMatch({error, not_unique},
+                 riak_core_security:find_unique_user_by_metadata("key", "val")).
