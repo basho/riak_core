@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2016 Basho Technologies, Inc.
+%% Copyright (c) 2016-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -66,6 +66,7 @@ default_conf_test() ->
     ?assertEqual(IMin, proplists:get_value(?JOB_SVC_IDLE_MIN, Conf)),
     IMax = erlang:max((IMin * 2), (Scheds - 1)),
     ?assertEqual(IMax, proplists:get_value(?JOB_SVC_IDLE_MAX, Conf)),
+    ?assertEqual(false, proplists:get_value(?JOB_SVC_RECYCLE, Conf)),
 
     riak_core_job_sup:stop_test_sup(TestSup).
 
@@ -99,6 +100,44 @@ conf_test() ->
     ?assertEqual(IMax, proplists:get_value(?JOB_SVC_IDLE_MAX, Conf)),
 
     riak_core_job_sup:stop_test_sup(TestSup).
+
+reconf_test() ->
+    ?assertMatch({ok, P} when erlang:is_pid(P), riak_core_job_sup:start_test_sup()),
+
+    InitConf = riak_core_job_manager:config(),
+    InitRMax = proplists:get_value(?JOB_SVC_CONCUR_LIMIT, InitConf),
+    InitQMax = proplists:get_value(?JOB_SVC_QUEUE_LIMIT,  InitConf),
+    InitHMax = proplists:get_value(?JOB_SVC_HIST_LIMIT,   InitConf),
+    InitIMin = proplists:get_value(?JOB_SVC_IDLE_MIN,     InitConf),
+    InitIMax = proplists:get_value(?JOB_SVC_IDLE_MAX,     InitConf),
+
+    TestRMax = (InitRMax + 1),
+    TestQMax = (InitQMax + 1),
+    TestHMax = (InitHMax + 1),
+    TestIMin = (InitIMin + 1),
+    TestIMax = (InitIMax + 1),
+
+    ?assertEqual(ok, jobs_test_util:set_config([
+        {?JOB_SVC_CONCUR_LIMIT, TestRMax},
+        {?JOB_SVC_QUEUE_LIMIT,  TestQMax},
+        {?JOB_SVC_HIST_LIMIT,   TestHMax},
+        {?JOB_SVC_IDLE_MIN,     TestIMin},
+        {?JOB_SVC_IDLE_MAX,     TestIMax}
+    ])),
+    % make sure setting the configuration didn't make it live ...
+    ?assertEqual(lists:sort(InitConf), lists:sort(riak_core_job_manager:config())),
+
+    % ... and that making it live does
+    riak_core_job_manager:reconfigure(),
+    TestConf = riak_core_job_manager:config(),
+
+    ?assertEqual(TestRMax, proplists:get_value(?JOB_SVC_CONCUR_LIMIT, TestConf)),
+    ?assertEqual(TestQMax, proplists:get_value(?JOB_SVC_QUEUE_LIMIT,  TestConf)),
+    ?assertEqual(TestHMax, proplists:get_value(?JOB_SVC_HIST_LIMIT,   TestConf)),
+    ?assertEqual(TestIMin, proplists:get_value(?JOB_SVC_IDLE_MIN,     TestConf)),
+    ?assertEqual(TestIMax, proplists:get_value(?JOB_SVC_IDLE_MAX,     TestConf)),
+
+    riak_core_job_sup:stop_test_sup().
 
 submit_test() ->
     Props = [

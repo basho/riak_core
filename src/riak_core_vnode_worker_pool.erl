@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2007-2016 Basho Technologies, Inc.
+%% Copyright (c) 2007-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -31,7 +31,7 @@
 
 -behaviour(gen_server).
 
-% Public API
+%% Public API
 -export([
     handle_work/3,
     shutdown_pool/2,
@@ -40,14 +40,14 @@
     stop/2
 ]).
 
-% Public Types
+%% Public Types
 -export_type([
     stat/0,
     stat_key/0,
     stat_val/0
 ]).
 
-% Private API
+%% Private API
 -export([
     job_killed/4,
     work_cleanup/1,
@@ -74,7 +74,7 @@
 -define(StatsDict,  orddict).
 -type stats()   ::  ?orddict_t(stat_key(), stat_val()).
 
-% This is filled in incrementally, so it allows a lot of undefined values.
+%% This is filled in incrementally, so it allows a lot of undefined values.
 -record(ctx, {
     vnode       ::  partition(),
     pool        ::  facade() | undefined,
@@ -110,7 +110,7 @@
 %% ===================================================================
 
 -type facade() :: pid().
-% A {@link riak_core_vnode_worker_pool} process.
+%% A {@link riak_core_vnode_worker_pool} process.
 
 -type stat() :: {stat_key(), stat_val()}.
 %% A single statistic.
@@ -122,10 +122,10 @@
 %% The value of a statistic.
 
 -type wmodule() :: module().
-% Module implementing {@link riak_core_vnode_worker} behaviour.
+%% Module implementing {@link riak_core_vnode_worker} behaviour.
 
 -type workrec() :: tuple().
-% A unit of work for {@link riak_core_vnode_worker:handle_work/3}.
+%% A unit of work for {@link riak_core_vnode_worker:handle_work/3}.
 
 %% ===================================================================
 %% Public API
@@ -211,11 +211,11 @@ stop(Pool, Reason) ->
     Reason :: term(), Context :: ctx(), Origin :: sender(), Work :: tuple())
         -> ok.
 %% @private
-%
-% riak_core_job:job.killed callback
-% The old worker pool wasn't very informative, so map things to the couple of
-% messages it could send.
-%
+%%
+%% riak_core_job:job.killed callback
+%% The old worker pool wasn't very informative, so map things to the couple of
+%% messages it could send.
+%%
 job_killed(_, #ctx{pool = Owner, wref = Ref}, ignore, _) ->
     gen_server:cast(Owner, {done, Ref});
 job_killed({?JOB_ERR_CANCELED, ?JOB_ERR_SHUTTING_DOWN} = Reason,
@@ -236,9 +236,9 @@ job_killed(Reason, Context, Origin, Work) ->
     WProps  :: term())
         -> ctx().
 %% @private
-%
-% riak_core_job:job.work.setup callback
-%
+%%
+%% riak_core_job:job.work.setup callback
+%%
 work_setup(MgrKey, #ctx{vnode = VNode, wmod = WMod} = Ctx, WArgs, WProps) ->
     {ok, WState} = WMod:init_worker(VNode, WArgs, WProps),
     Ctx#ctx{mgr_key = MgrKey, state = WState}.
@@ -246,9 +246,9 @@ work_setup(MgrKey, #ctx{vnode = VNode, wmod = WMod} = Ctx, WArgs, WProps) ->
 -spec work_main(Context :: ctx(), Work :: tuple(), Origin :: sender())
         -> ctx().
 %% @private
-%
-% riak_core_job:job.work.main callback
-%
+%%
+%% riak_core_job:job.work.main callback
+%%
 work_main(#ctx{wmod = WMod, state = WStateIn} = Ctx, Work, Origin) ->
     WState = case WMod:handle_work(Work, Origin, WStateIn) of
         {reply, Reply, NewWState} ->
@@ -261,9 +261,9 @@ work_main(#ctx{wmod = WMod, state = WStateIn} = Ctx, Work, Origin) ->
 
 -spec work_cleanup(Context :: ctx()) -> term().
 %% @private
-%
-% riak_core_job:job.work.cleanup callback
-%
+%%
+%% riak_core_job:job.work.cleanup callback
+%%
 work_cleanup(#ctx{pool = Owner, wref = WRef}) ->
     gen_server:cast(Owner, {done, WRef}).
 
@@ -273,18 +273,18 @@ work_cleanup(#ctx{pool = Owner, wref = WRef}) ->
 
 -spec code_change(term(), state(), term()) -> {ok, state()}.
 %% @private
-%
-% don't care, carry on
-%
+%%
+%% don't care, carry on
+%%
 code_change(_, State, _) ->
     {ok, State}.
 
 -spec handle_call(Msg :: term(), From :: {pid(), term()}, State :: state())
         -> {reply, term(), state()}.
 %% @private
-%
-% handle_work(facade(), workrec(), sender()) -> ok | {error, term()}
-%
+%%
+%% handle_work(facade(), workrec(), sender()) -> ok | {error, term()}
+%%
 handle_call({work, _Work, Origin}, _, #state{shutdown = true} = State) ->
     riak_core_vnode:reply(Origin, {error, vnode_shutdown}),
     {reply, ok, State};
@@ -326,9 +326,9 @@ handle_call({work, Work, Origin}, _,
         _ ->
             Ret
     end;
-%
-% stats(Pool :: facade()) -> [stat()] | {error, term()}.
-%
+%%
+%% stats(Pool :: facade()) -> [stat()] | {error, term()}.
+%%
 handle_call(stats, _, State) ->
     Status = if State#state.shutdown -> stopping; ?else -> active end,
     Result = [
@@ -336,9 +336,9 @@ handle_call(stats, _, State) ->
         {jobs,    erlang:length(State#state.jobs)}
         | ?StatsDict:to_list(State#state.stats) ],
     {reply, Result, State};
-%
-% unrecognized message
-%
+%%
+%% unrecognized message
+%%
 handle_call(Msg, {Who, _}, State) ->
     _ = lager:error(
         "~s received unhandled call from ~p: ~p", [?MODULE, Who, Msg]),
@@ -347,19 +347,19 @@ handle_call(Msg, {Who, _}, State) ->
 -spec handle_cast(Msg :: term(), State :: state())
         -> {noreply, state()} | {stop, term(), state()}.
 %% @private
-%
-% no matter what arrives, if we've been asked to shut down and don't have any
-% jobs running, just leave
-%
+%%
+%% no matter what arrives, if we've been asked to shut down and don't have any
+%% jobs running, just leave
+%%
 handle_cast(_, #state{shutdown = true, jobs = []} = State) ->
     {stop, shutdown, State};
-%
-% job_killed/4
-% work_cleanup/1
-%
-% This is how our Job's worker wrapper tells us it's done.
-% Special case when shutting down and the last Job exits.
-%
+%%
+%% job_killed/4
+%% work_cleanup/1
+%%
+%% This is how our Job's worker wrapper tells us it's done.
+%% Special case when shutting down and the last Job exits.
+%%
 handle_cast({done, Ref}, #state{
         shutdown = true, jobs = [#jobrec{key = Ref}]} = State) ->
     {stop, shutdown, State#state{jobs = []}};
@@ -367,16 +367,16 @@ handle_cast({done, Ref}, #state{
 handle_cast({done, Ref}, State) ->
     {noreply, State#state{
         jobs = lists:keydelete(Ref, #jobrec.key, State#state.jobs)}};
-%
-% There are multiple ways to receive this, but they all have the same result
-% - it's time to go.
-%
+%%
+%% There are multiple ways to receive this, but they all have the same result
+%% - it's time to go.
+%%
 handle_cast({shutdown = Why, 0}, State) ->
     {stop, Why, State};
-%
-% shutdown_pool(Pool :: facade(), Timeout:: non_neg_integer() | infinity)
-% This is the initial shutdown message, so try to shut down asynchronously.
-%
+%%
+%% shutdown_pool(Pool :: facade(), Timeout:: non_neg_integer() | infinity)
+%% This is the initial shutdown message, so try to shut down asynchronously.
+%%
 handle_cast({shutdown = Why, _}, #state{jobs = []} = State) ->
     {stop, Why, State};
 
@@ -400,14 +400,14 @@ handle_cast({shutdown, Timeout}, #state{shutdown = false} = State) ->
     {ok, _} = timer:apply_after(Timeout,
         gen_server, cast, [erlang:self(), {shutdown, 0}]),
     handle_cast({shutdown, infinity}, State);
-%
-% stop/2
-%
+%%
+%% stop/2
+%%
 handle_cast({stop, Why}, State) ->
     {stop, Why, State};
-%
-% unrecognized message
-%
+%%
+%% unrecognized message
+%%
 handle_cast(Msg, State) ->
     _ = lager:error("~s received unhandled cast: ~p", [?MODULE, Msg]),
     {noreply, inc_stat(unhandled, State)}.
@@ -415,33 +415,33 @@ handle_cast(Msg, State) ->
 -spec handle_info(term(), state())
         -> {noreply, state()} | {stop, term(), state()}.
 %% @private
-%
-% no matter what arrives, if we've been asked to shut down and don't have any
-% jobs running, let handle_cast clean up and leave
-%
+%%
+%% no matter what arrives, if we've been asked to shut down and don't have any
+%% jobs running, let handle_cast clean up and leave
+%%
 handle_info(Msg, #state{shutdown = true, jobs = []} = State) ->
     handle_cast(Msg, State);
-%
-% unrecognized message
-%
+%%
+%% unrecognized message
+%%
 handle_info(Msg, State) ->
     _ = lager:error("~s received unhandled info: ~p", [?MODULE, Msg]),
     {noreply, inc_stat(unhandled, State)}.
 
 -spec init(State :: state()) -> {ok, state()} | {stop, term()}.
 %% @private
-%
-% The incoming State is almost complete, just needs our Pid.
-%
+%%
+%% The incoming State is almost complete, just needs our Pid.
+%%
 init(#state{ctx = Context} = State) ->
     {ok, State#state{ctx = Context#ctx{pool = erlang:self()}}}.
 
 -spec terminate(normal | shutdown | {shutdown, term()} | term(), state())
         -> ok.
 %% @private
-%
-% hopefully we got here via a controlled shutdown, just do the best we can ...
-%
+%%
+%% hopefully we got here via a controlled shutdown, just do the best we can ...
+%%
 terminate(_Why, #state{jobs = []}) ->
     ok;
 terminate(_Why, State) ->
@@ -456,9 +456,9 @@ terminate(_Why, State) ->
 
 -spec inc_stat(stat_key() | [stat_key()], state()) -> state()
         ;     (stat_key() | [stat_key()], stats()) -> stats().
-%
-% Increment one or more statistics counters.
-%
+%%
+%% Increment one or more statistics counters.
+%%
 inc_stat(Stat, #state{stats = Stats} = State) ->
     State#state{stats = inc_stat(Stat, Stats)};
 inc_stat(Stat, Stats) ->
@@ -474,9 +474,9 @@ inc_stat(Stat, Stats) ->
 
 -spec sync_shutdown(Pool :: facade(), Timeout :: non_neg_integer())
         -> ok | {error, term()}.
-%
-% Makes an async shutdown look synchronous.
-%
+%%
+%% Makes an async shutdown look synchronous.
+%%
 sync_shutdown(Pool, Timeout) ->
     %
     % Allow a little extra time in case the Pool has to kill a bunch of jobs.

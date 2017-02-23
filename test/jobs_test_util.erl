@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2016 Basho Technologies, Inc.
+%% Copyright (c) 2016-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -20,7 +20,7 @@
 
 -module(jobs_test_util).
 
-% Utility API
+%% Utility API
 -export([
     create_job/1,
     create_job/4,
@@ -31,13 +31,19 @@
     wait_for_jobs/1
 ]).
 
-% API Types
+%% Test Setup/Cleanup
+-export([
+    test_setup/0,
+    test_cleanup/1
+]).
+
+%% API Types
 -export_type([
     work_delay/0,
     work_id/0
 ]).
 
-% Exported Callbacks
+%% Exported Callbacks
 -export([
     job_killed/2,
     work_cleanup/1,
@@ -65,31 +71,46 @@
 -type work_id()     ::  riak_core_job:cid().    % defaults are pos_integer()
 
 %% ===================================================================
+%% Test Setup/Cleanup
+%% ===================================================================
+
+-spec test_setup() -> term().
+test_setup() ->
+    error_logger:tty(false),
+    application:load(sasl),
+    application:set_env(sasl, errlog_type, error).
+
+-spec test_cleanup(EnvState :: term()) -> any().
+test_cleanup(_EnvState) ->
+    riak_core_job_sup:stop_test_sup().
+
+%% ===================================================================
 %% Utility API
 %% ===================================================================
 
 -spec set_config(Props :: [{atom(), term()}]) -> ok.
-%
-% Sets the specified configuration values and clears any relevant ones that
-% aren't specified in Props.
-% If Props is [], the effect is that all properties take their default values
-% when the services are started.
-%
+%%
+%% Sets the specified configuration values and clears any relevant ones that
+%% aren't specified in Props.
+%% If Props is [], the effect is that all properties take their default values
+%% when the services are started.
+%%
 set_config(Props) ->
     set_config([
         ?JOB_SVC_CONCUR_LIMIT,
         ?JOB_SVC_QUEUE_LIMIT,
         ?JOB_SVC_HIST_LIMIT,
         ?JOB_SVC_IDLE_MIN,
-        ?JOB_SVC_IDLE_MAX
+        ?JOB_SVC_IDLE_MAX,
+        ?JOB_SVC_RECYCLE
     ], riak_core_job_service:default_app(), Props).
 
 -spec set_config(Keys :: [atom()], App :: atom(), Props :: [{atom(), term()}])
         -> ok.
-%
-% Sets the specified configuration values and clears any relevant ones that
-% aren't specified in Props.
-%
+%%
+%% Sets the specified configuration values and clears any relevant ones that
+%% aren't specified in Props.
+%%
 set_config([Key | Keys], App, Props) ->
     case proplists:get_value(Key, Props) of
         undefined ->
@@ -103,9 +124,9 @@ set_config([], _, _) ->
 
 -spec create_jobs(Count :: pos_integer())
         -> [riak_core_job:job()].
-%
-% Creates Count jobs with IDs 1..Count and default operation delays.
-%
+%%
+%% Creates Count jobs with IDs 1..Count and default operation delays.
+%%
 create_jobs(Count) ->
     [create_job(Id) || Id <- lists:seq(1, Count)].
 
@@ -115,18 +136,18 @@ create_jobs(Count) ->
     MainDelay   :: work_delay(),
     CleanupDelay :: work_delay())
         -> [riak_core_job:job()].
-%
-% Creates Count jobs with IDs 1..Count and the specified operation delays.
-%
+%%
+%% Creates Count jobs with IDs 1..Count and the specified operation delays.
+%%
 create_jobs(Count, SetupDelay, MainDelay, CleanupDelay) ->
     [create_job(Id, SetupDelay, MainDelay, CleanupDelay)
         || Id <- lists:seq(1, Count)].
 
 -spec create_job(Id :: work_id())
         -> riak_core_job:job().
-%
-% Creates a Job with the specified Id and default operation delays.
-%
+%%
+%% Creates a Job with the specified Id and default operation delays.
+%%
 create_job(Id) ->
     create_job(Id, 0, 7, 0).
 
@@ -136,9 +157,9 @@ create_job(Id) ->
     MainDelay   :: work_delay(),
     CleanupDelay :: work_delay())
         -> riak_core_job:job().
-%
-% Creates a Job with the specified Id and operation delays.
-%
+%%
+%% Creates a Job with the specified Id and operation delays.
+%%
 create_job(Id, SetupDelay, MainDelay, CleanupDelay) ->
     Ctx = #wc{
         id  = Id,
@@ -161,10 +182,10 @@ create_job(Id, SetupDelay, MainDelay, CleanupDelay) ->
     ]).
 
 -spec wait_for_job(Job :: riak_core_job:job()) -> term().
-%
-% Wait for the specified job to send a 'cleanup' or 'killed' message and
-% return it.
-%
+%%
+%% Wait for the specified job to send a 'cleanup' or 'killed' message and
+%% return it.
+%%
 wait_for_job(Job) ->
     JId = riak_core_job:cid(Job),
     receive
@@ -178,9 +199,9 @@ wait_for_job(Job) ->
     end.
 
 -spec wait_for_jobs(Jobs :: [riak_core_job:job()]) -> ok.
-%
-% Wait for each of the specified jobs to send a 'cleanup' or 'killed' message.
-%
+%%
+%% Wait for each of the specified jobs to send a 'cleanup' or 'killed' message.
+%%
 wait_for_jobs([Job | Jobs]) ->
     ?assertNotEqual('timeout', wait_for_job(Job)),
     wait_for_jobs(Jobs);
@@ -192,17 +213,17 @@ wait_for_jobs([]) ->
 %% ===================================================================
 
 -spec job_killed(Why :: term(), Ctx :: work_ctx()) -> ok.
-%
-% Job 'killed' callback.
-%
+%%
+%% Job 'killed' callback.
+%%
 job_killed(Why, #wc{id = Id, own = Own}) ->
     Own ! {?MODULE, 'job_killed', Id, Why},
     ok.
 
 -spec work_cleanup(Ctx :: work_ctx()) -> work_id().
-%
-% Work 'cleanup' callback.
-%
+%%
+%% Work 'cleanup' callback.
+%%
 work_cleanup(#wc{id = Id, own = Own, sd = 0}) ->
     Own ! {?MODULE, 'work_cleanup', Id},
     Id;
@@ -212,9 +233,9 @@ work_cleanup(#wc{id = Id, own = Own, sd = Delay}) ->
     Id.
 
 -spec work_main(Ctx :: work_ctx()) -> work_ctx().
-%
-% Work 'main' callback.
-%
+%%
+%% Work 'main' callback.
+%%
 work_main(#wc{id = Id, own = Own, sd = 0} = Ctx) ->
     Own ! {?MODULE, 'work_main', Id},
     Ctx;
@@ -224,9 +245,9 @@ work_main(#wc{id = Id, own = Own, sd = Delay} = Ctx) ->
     Ctx.
 
 -spec work_setup(Mgr :: atom() | pid(), Ctx :: work_ctx()) -> work_ctx().
-%
-% Work 'setup' callback.
-%
+%%
+%% Work 'setup' callback.
+%%
 work_setup(Mgr, #wc{id = Id, own = Own, sd = 0} = Ctx) ->
     Own ! {?MODULE, 'work_setup', Id},
     Ctx#wc{mgr = Mgr};

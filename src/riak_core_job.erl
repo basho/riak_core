@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2016 Basho Technologies, Inc.
+%% Copyright (c) 2016-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -28,13 +28,19 @@
 %% the executions of a given job are correlatable through the job's globally
 %% unique identifier.
 %%
+%% {@link job(). Job} and {@link work(). UoW} objects are opaque, created by
+%% the {@link job/1} and {@link work/1} factory functions from lists of
+%% attributes. Their contents are accessed through functions named (mostly)
+%% after their initialization attributes, with some semantically-named
+%% equivalents for convenience.
+%%
 %% @see job/1
 %% @see work/1
 %% @see riak_core_job_manager
 %%
 -module(riak_core_job).
 
-% Public API
+%% Public API
 -export([
     cap/2,
     cid/1,
@@ -56,6 +62,7 @@
     label/1,
     main/1,
     passthrough/1,
+    print/1,
     prio/1,
     priority/1,
     reply/2,
@@ -71,7 +78,7 @@
     work/2
 ]).
 
-% Public Types
+%% Public Types
 -export_type([
     cid/0,
     class/0,
@@ -150,23 +157,29 @@
     cleanup = {?MODULE, passthrough, []}  :: func()
 }).
 
+%% A global id includes the id provided by the client for correlation.
+%% MUST be kept in sync with the is_job_gid() macro defined in the .hrl file.
+-record(rcj_gid_v1, {
+    mod     :: module(),
+    cid     :: cid(),
+    uid     :: uid()
+}).
+
 -type uid()         ::  uuid() | {node(), time(), reference()}.
 -type uuid()        ::  <<_:128>>.
 
 -define(MAX_INIT_SKEW_uSECS,    1500000).
 -define(CUR_TIMESTAMP,          os:timestamp()).
 
-% This should be unique across a cluster. If/when proper UUIDs are readily
-% available in riak_core we should consider using them instead, though there
-% may be CS value in this structure's information.
+%% This should be unique across a cluster. If/when proper UUIDs are readily
+%% available in riak_core we should consider using them instead, though there
+%% may be CS value in this structure's information.
 -define(NEW_UID,    {erlang:node(), ?CUR_TIMESTAMP, erlang:make_ref()}).
 
-% A global id includes the id provided by the client for correlation.
-% MUST be kept in sync with the is_job_gid() macro defined in the .hrl file.
--define(NEW_GID(Mod, CID, UID), {Mod, CID, UID}).
+-define(NEW_GID(Mod, CID, UID), #rcj_gid_v1{mod = Mod, cid = CID, uid = UID}).
 
-% Arbitrary valid UUID constant from www.uuidgenerator.net because we want v1
-% for guaranteed uniqueness and most OS generators don't use a MAC.
+%% Arbitrary valid UUID constant from www.uuidgenerator.net because we want v1
+%% for guaranteed uniqueness and most OS generators don't use a MAC.
 -define(DUMMY_JOB_UID,          <<16#2086f0fa48f611e6beb89e71128cae77:128>>).
 
 -define(GLOBAL_ID(Mod, CID),    ?NEW_GID(Mod, CID, ?NEW_UID)).
@@ -198,7 +211,7 @@
 -type func() :: {module(), atom(), list()} | {fun(), list()}.
 %% A callback function.
 
-?opaque gid() :: {module(), cid(), uid()}.
+?opaque gid() :: #rcj_gid_v1{}.
 %% A Job's Global ID, which is unique at least across a cluster.
 %% Values of this type are created with their associated Job and are immutable.
 
@@ -262,10 +275,12 @@ cap(v1, Object) when erlang:is_record(Object, riak_core_work_v1) ->
 %%
 %% Note that the Client ID can be extracted from a Global ID as well.
 %%
+%% @equiv client_id(Job)
+%%
 cid(#riak_core_job_v1{cid = CId}) ->
     CId;
-cid(GId) when ?is_job_gid(GId) ->
-    erlang:element(2, GId).
+cid(#rcj_gid_v1{cid = CId}) ->
+    CId.
 
 -spec class(Job :: job()) -> class().
 %%
@@ -282,6 +297,10 @@ cleanup(#riak_core_work_v1{cleanup = Func}) ->
     Func.
 
 -spec client_id(Job :: job() | gid()) -> cid().
+%%
+%% @doc Retrieves a Job's Client ID.
+%%
+%% Note that the Client ID can be extracted from a Global ID as well.
 %%
 %% @equiv cid(Job)
 %%
@@ -322,10 +341,14 @@ from(#riak_core_job_v1{from = Val}) ->
 %%
 %% @doc Retrieves a Job's Global ID.
 %%
+%% @equiv global_id(Job)
+%%
 gid(#riak_core_job_v1{gid = Val}) ->
     Val.
 
 -spec global_id(Job :: job()) -> gid().
+%%
+%% @doc Retrieves a Job's Global ID.
 %%
 %% @equiv gid(Job)
 %%
@@ -336,6 +359,8 @@ global_id(Job) ->
 %%
 %% @doc Retrieves a Job's Internal ID.
 %%
+%% @equiv internal_id(Job)
+%%
 iid(#riak_core_job_v1{iid = Val}) ->
     Val.
 
@@ -343,10 +368,14 @@ iid(#riak_core_job_v1{iid = Val}) ->
 %%
 %% @doc Sets a Job's Internal ID.
 %%
+%% @equiv internal_id(Job, IID)
+%%
 iid(#riak_core_job_v1{} = Job, IID) ->
     Job#riak_core_job_v1{iid = IID}.
 
 -spec internal_id(Job :: job()) -> iid().
+%%
+%% @doc Retrieves a Job's Internal ID.
 %%
 %% @equiv iid(Job)
 %%
@@ -354,6 +383,8 @@ internal_id(Job) ->
     iid(Job).
 
 -spec internal_id(Job :: job(), IID :: iid()) -> job().
+%%
+%% @doc Sets a Job's Internal ID.
 %%
 %% @equiv iid(Job, IID)
 %%
@@ -464,54 +495,64 @@ invoke({Mod, Func, FunArgs}, AddArg)
 %% </dl>
 %%
 %% Unrecognized properties are ignored, so it is not an error if the provided
-%% property list includes irrelevant values.
+%% property list includes irrelevant values. Note that this also means the
+%% list may contain duplicates, and in the case that it does the first element
+%% matching each key is used.
+%%
+%% A side effect of how properties are digested is that a malformed* tuple with
+%% a matching key may be ignored, or it may raise a `badarg' error.
+%% As a general guideline, if an element of the proplist is a tuple whose first
+%% element is an atom matching a recognized key, it is strongly recommended
+%% that the tuple has exactly two elements, and that the second element is
+%% appropriate for the associated key.
+%% Given the anticipated use case(s), there's simply no justification for
+%% extended parsing - garbage in, garbage out.
+%%
+%% * What constitutes "malformed" is nebulous, just color between the lines.
 %%
 %% @see work/2
 %%
 job(Props) when erlang:is_list(Props) ->
     InitTS = ?CUR_TIMESTAMP,
-    {Work, PW} = case lists:keytake(work, 1, Props) of
-        false ->
-            {undefined, Props};
-        {value, {_, WorkVal}, NewPW} when ?is_work(WorkVal) ->
-            {WorkVal, NewPW};
-        {value, Spec, _} ->
-            erlang:error(badarg, [Spec])
-    end,
     %% 'cid' and 'module' get special handling because they're used in 'gid'
-    {CID, PC} = case lists:keytake(cid, 1, PW) of
-        {value, {_, CidVal}, NewPC} ->
-            {CidVal, NewPC};
+    CID = case lists:keyfind(cid, 1, Props) of
         false ->
-            {?UNSPEC, PW}
+            ?UNSPEC;
+        {_, CIdVal} ->
+            CIdVal;
+        BadCId ->
+            erlang:error(badarg, [BadCId])
     end,
-    {Mod, PM} = case lists:keytake(module, 1, PC) of
-        {value, {_, ModVal}, NewPM} ->
-            {ModVal, NewPM};
+    Mod = case lists:keyfind(module, 1, Props) of
         false ->
-            {?MODULE, PC}
+            ?MODULE;
+        {_, ModVal} ->
+            ModVal;
+        BadMod ->
+            erlang:error(badarg, [BadMod])
     end,
     %% An earlier 'created' is allowed to accommodate passing through when
     %% the job was created by the client.
     %% Allow a little wiggle room for clock skew between hosts, but default to
     %% when this operation was called if it's too far in the future.
-    {TS, PT} = case lists:keytake(created, 1, PM) of
-        {value, {_, TsVal}, NewPT} ->
+    TS = case lists:keyfind(created, 1, Props) of
+        false ->
+            InitTS;
+        {_, TsVal} ->
             case timer:now_diff(InitTS, TsVal) < ?MAX_INIT_SKEW_uSECS of
                 true ->
-                    {TsVal, NewPT};
+                    TsVal;
                 _ ->
-                    {InitTS, PM}
+                    InitTS
             end;
-        false ->
-            {InitTS, PM}
+        BadTS ->
+            erlang:error(badarg, [BadTS])
     end,
-    jobp(PT, #riak_core_job_v1{
+    InitJob = #riak_core_job_v1{
         gid   = ?GLOBAL_ID(Mod, CID),
         cid   = CID,
-        work  = Work,
-        stats = [{created, TS}]
-    }).
+        stats = [{created, TS}] },
+    lists:foldl(fun job_props/2, InitJob, Props).
 
 -spec killed(Job :: job()) -> func() | undefined.
 %%
@@ -520,12 +561,14 @@ job(Props) when erlang:is_list(Props) ->
 killed(#riak_core_job_v1{killed = Func}) ->
     Func.
 
--spec label(Job :: job()) -> term().
+-spec label(Job :: job()) -> string().
 %%
-%% @doc Retrieve Job's Label.
+%% @doc Retrieve Job's Label as a (somewhat) human-readable string.
 %%
-label(#riak_core_job_v1{class = Class, gid = GID})
-    -> {Class, GID}.
+label(#riak_core_job_v1{class = {C1, C2}, gid = GID}) ->
+    lists:flatten(io_lib:format("~p,~p:~s", [C1, C2, print(GID)]));
+label(#riak_core_job_v1{class = Class, gid = GID}) ->
+    lists:flatten(io_lib:format("~p:~s", [Class, print(GID)])).
 
 -spec main(Work :: work()) -> func().
 %%
@@ -544,9 +587,35 @@ main(#riak_core_work_v1{main = Func}) ->
 passthrough(Arg) ->
     Arg.
 
+-spec print(Term :: term()) -> string().
+%%
+%% @doc Returns a (somewhat) human-readable representation of Term as a string.
+%%
+%% At present, this is geared toward Global IDs, though other types may receive
+%% special handling.
+%% Types that aren't specifically recognized are formatted as if by the IO
+%% library's "~p" control sequence.
+%%
+print(#rcj_gid_v1{mod = Mod, cid = CID, uid = {Node, {_, _, Ms} = Time, Ref}}) ->
+    {{Yr, Mo, Dy}, {Hr, Mn, Sc}} = calendar:now_to_universal_time(Time),
+    lists:flatten(io_lib:format(
+        "~p/~p/~s|~4b-~2..0b-~2..0bT~2..0b:~2..0b:~2..0b.~6..0bZ|~p",
+        [Mod, CID, Node, Yr, Mo, Dy, Hr, Mn, Sc, Ms, Ref]));
+
+print(#rcj_gid_v1{mod = Mod, cid = CID, uid =
+        <<F1:32/integer, F2:16/integer, F3:16/integer, F4:16/integer, F5:48/integer>>}) ->
+    lists:flatten(io_lib:format(
+        "~p/~p/~8.16.0b-~4.16.0b-~4.16.0b-~4.16.0b-~12.16.0b",
+        [Mod, CID, F1, F2, F3, F4, F5]));
+
+print(Term) ->
+    lists:flatten(io_lib:format("~p", [Term])).
+
 -spec prio(Job :: job()) -> priority().
 %%
 %% @doc Retrieve Job's Priority.
+%%
+%% @equiv priority(Job)
 %%
 prio(#riak_core_job_v1{prio = Val}) ->
     Val.
@@ -554,6 +623,8 @@ prio(#riak_core_job_v1{prio = Val}) ->
 -spec priority(Job :: job()) -> priority().
 %%
 %% @doc Retrieve Job's Priority.
+%%
+%% @equiv prio(Job)
 %%
 priority(Job) ->
     prio(Job).
@@ -616,7 +687,7 @@ reply(From, Msg) when erlang:is_tuple(From) ->
 %%      system would call it with <i>Expected</i> arguments.</dd>
 %% </dl>
 %%
-%% <i>Note:</i> Errors do <i>NOTt</i> indicate which function within a Job or
+%% <i>Note:</i> Errors do <i>NOT</i> indicate which function within a Job or
 %% UoW did not pass validation - one more reason to prefer MFA specifications
 %% over closures.
 %%
@@ -780,7 +851,7 @@ version(_) ->
 %%      -> <i>Result</i>).</code>
 %%
 %% In short, the arity of each of the functions is one more than the length
-%% of the arguments list it's initialized with.
+%% of the argument list it's initialized with.
 %%
 %% <i>Note:</i> While the specifications above are of closures, providing
 %% functions as MFA tuples is preferred for visibility and debugging.
@@ -797,7 +868,9 @@ version(_) ->
 %% destination.
 %%
 %% Unrecognized properties are ignored, so it is not an error if the provided
-%% property list includes irrelevant values.
+%% property list includes irrelevant values. Note that this also means the
+%% list may contain duplicates, and in the case that it does the first element
+%% matching each key is used.
 %%
 %% @see job/1
 %% @see riak_core_job_manager:get_job/1
@@ -805,12 +878,12 @@ version(_) ->
 work(#riak_core_job_v1{work = Work}) ->
     Work;
 work([_|_] = Props) ->
-    case work_check(Props) of
+    case lists:any(fun work_check/1, Props) of
         true ->
             #riak_core_work_v1{
-                setup   = workp(setup,    Props),
-                main    = workp(main,     Props),
-                cleanup = workp(cleanup,  Props) };
+                setup   = work_props(setup,    Props),
+                main    = work_props(main,     Props),
+                cleanup = work_props(cleanup,  Props) };
         _ ->
             erlang:error(badarg, [Props])
     end.
@@ -826,54 +899,52 @@ work(#riak_core_job_v1{} = Job, Work) when ?is_work(Work) ->
 %% Internal
 %% ===================================================================
 
--spec jobp(Props :: [{atom(), term()} | term()], Job :: job()) -> job().
-jobp([], Job) ->
-    Job;
-jobp([{class, Class} | Props], Job)
+-spec job_props(Props :: list(), Job :: job()) -> job().
+job_props({class, Class}, #riak_core_job_v1{class = ?UNSPEC} = Job)
         when    erlang:is_atom(Class) ->
-    jobp(Props, Job#riak_core_job_v1{class = Class});
-jobp([{class, {C1, C2} = Class} | Props], Job)
+    Job#riak_core_job_v1{class = Class};
+job_props({class, {C1, C2} = Class}, #riak_core_job_v1{class = ?UNSPEC} = Job)
         when    erlang:is_atom(C1)
         andalso erlang:is_atom(C2) ->
-    jobp(Props, Job#riak_core_job_v1{class = Class});
-jobp([{from, From} | Props], Job)
+    Job#riak_core_job_v1{class = Class};
+job_props({from, From}, #riak_core_job_v1{from = ignore} = Job)
         when    erlang:is_pid(From)
-        orelse  erlang:is_tuple(From)
-        orelse  From =:= ignored ->
-    jobp(Props, Job#riak_core_job_v1{from = From});
-jobp([{prio, Prio} | Props], Job)
+        orelse  erlang:is_tuple(From) ->
+    Job#riak_core_job_v1{from = From};
+job_props({prio, Prio}, #riak_core_job_v1{prio = ?JOB_PRIO_DEFAULT} = Job)
         when    erlang:is_integer(Prio)
         andalso Prio >= ?JOB_PRIO_MIN
         andalso Prio =< ?JOB_PRIO_MAX ->
-    jobp(Props, Job#riak_core_job_v1{prio = Prio});
-jobp([{iid, ID} | Props], Job) ->
-    jobp(Props, Job#riak_core_job_v1{iid = ID});
-jobp([{killed, {Mod, Func, Args} = CB} | Props], Job)
+    Job#riak_core_job_v1{prio = Prio};
+job_props({iid, ID}, #riak_core_job_v1{iid = ?UNSPEC} = Job) ->
+    Job#riak_core_job_v1{iid = ID};
+job_props({killed, {Mod, Func, Args} = CB}, #riak_core_job_v1{killed = undefined} = Job)
         when    erlang:is_atom(Mod)
         andalso erlang:is_atom(Func)
         andalso erlang:is_list(Args) ->
-    jobp(Props, Job#riak_core_job_v1{killed = CB});
-jobp([{killed, {Fun, Args} = CB} | Props], Job)
+    Job#riak_core_job_v1{killed = CB};
+job_props({killed, {Fun, Args} = CB}, #riak_core_job_v1{killed = undefined} = Job)
         when    erlang:is_list(Args)
         andalso erlang:is_function(Fun, (erlang:length(Args) + 1)) ->
-    jobp(Props, Job#riak_core_job_v1{killed = CB});
-jobp([_ | Props], Job) ->
-    jobp(Props, Job).
+    Job#riak_core_job_v1{killed = CB};
+job_props({work, Work}, #riak_core_job_v1{work = undefined} = Job)
+        when    ?is_work(Work) ->
+    Job#riak_core_job_v1{work = Work};
+job_props(_, Job) ->
+    Job.
 
--spec work_check(Props :: [{atom(), term()} | term()]) -> boolean().
-work_check([{setup, _} | _]) ->
+-spec work_check(term()) -> boolean().
+work_check({setup, _}) ->
     true;
-work_check([{main, _} | _]) ->
+work_check({main, _}) ->
     true;
-work_check([{cleanup, _} | _]) ->
+work_check({cleanup, _}) ->
     true;
-work_check([_ | Props]) ->
-    work_check(Props);
-work_check([]) ->
+work_check(_) ->
     false.
 
--spec workp(Key :: atom(), Props :: [{atom(), term()} | term()]) -> func().
-workp(Key, Props) ->
+-spec work_props(Key :: atom(), Props :: [{atom(), term()} | term()]) -> func().
+work_props(Key, Props) ->
     case lists:keyfind(Key, 1, Props) of
         false ->
             {?MODULE, passthrough, []};
@@ -923,17 +994,17 @@ id_test() ->
     ]),
     GId = gid(Job),
 
-    ?assertMatch({_, _, _}, GId),
-    {GIdMod, GIdCId, GIdUId} = GId,
+    ?assertMatch(#rcj_gid_v1{}, GId),
+    #rcj_gid_v1{mod = GIdMod, cid = GIdCId, uid = GIdUId} = GId,
     ?assertEqual(Mod, GIdMod),
     ?assertEqual(CId, GIdCId),
     ?assertMatch({_, _, _}, GIdUId),
 
-    ?assertMatch({_, _, _}, DummyGId),
-    ?assertMatch(<<_:128>>, element(3, DummyGId)),
-    ?assertEqual(?MODULE, element(1, DummyGId)),
-    ?assertEqual(dummy, element(2, DummyGId)),
-    ?assertEqual(?DUMMY_JOB_UID, element(3, DummyGId)),
+    ?assertMatch(#rcj_gid_v1{}, DummyGId),
+    ?assertMatch(<<_:128>>, element(#rcj_gid_v1.uid, DummyGId)),
+    ?assertEqual(?MODULE, element(#rcj_gid_v1.mod, DummyGId)),
+    ?assertEqual(dummy, element(#rcj_gid_v1.cid, DummyGId)),
+    ?assertEqual(?DUMMY_JOB_UID, element(#rcj_gid_v1.uid, DummyGId)),
 
     ?assertEqual(CId, client_id(Job)),
     ?assertEqual(CId, client_id(GId)),
@@ -945,6 +1016,31 @@ id_test() ->
     AltIId = [some, other, stuff],
     AltJob = internal_id(Job, AltIId),
     ?assertEqual(AltIId, internal_id(AltJob)).
+
+print_test() ->
+    % The goal here is mainly that the results are printable strings.
+    DummyJob = dummy(),
+    DummyGId = print(gid(DummyJob)),
+    DummyLabel = label(DummyJob),
+
+    UserCId = {erlang:phash2(os:timestamp()), erlang:phash2(erlang:self())},
+    UserMod = 'Some@nonexistant$thing',
+    UserJob = job([
+        {module,    UserMod},
+        {cid,       UserCId},
+        {work,      work(DummyJob)}
+    ]),
+    UserGId = print(gid(UserJob)),
+    UserLabel = label(UserJob),
+
+    % ?debugVal(DummyGId),
+    % ?debugVal(DummyLabel),
+    % ?debugVal(UserGId),
+    % ?debugVal(UserLabel),
+    ?assert(io_lib:printable_list(DummyGId)),
+    ?assert(io_lib:printable_list(DummyLabel)),
+    ?assert(io_lib:printable_list(UserGId)),
+    ?assert(io_lib:printable_list(UserLabel)).
 
 runnable_test() ->
     Bogus = 'No$Such-Name...We-Hope',

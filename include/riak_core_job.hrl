@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2016 Basho Technologies, Inc.
+%% Copyright (c) 2016-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -68,15 +68,12 @@
 -define(JOB_PRIO_HIGH,          75).
 
 %%
-%% As close as is reasonable to a definitive guard for global IDs.
+%% A reasonable guard for Job Global IDs.
+%% Obviously, this is tightly coupled to the implementation, but there aren't
+%% many options - erlang:is_record/2 needs to see the full record definition,
+%% which we're not going to put out in public, but erlang:is_record/3 can get
+%% by with the name and size.
 %%
--define(is_job_gid(Term),   erlang:is_tuple(Term)
-    andalso erlang:tuple_size(Term) =:= 3
-    andalso erlang:is_atom(erlang:element(1, Term))
-    andalso ((erlang:is_tuple(erlang:element(3, Term))
-            andalso erlang:tuple_size(erlang:element(3, Term)) =:= 3)
-        orelse  (erlang:is_binary(erlang:element(3, Term))
-            andalso erlang:bit_size(erlang:element(3, Term)) =:= 128))
-).
+-define(is_job_gid(Term),   erlang:is_record(Term, rcj_gid_v1, 4)).
 
 -endif. % riak_core_job_included

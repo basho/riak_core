@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2007-2016 Basho Technologies, Inc.
+%% Copyright (c) 2007-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -21,7 +21,7 @@
 
 -behaviour(riak_core_vnode_worker).
 
-% behaviour callbacks
+%% behaviour callbacks
 -export([init_worker/3, handle_work/3]).
 
 -include("../src/riak_core_job_internal.hrl").
@@ -31,6 +31,27 @@
 
 -define(P2_CONCURRENCY,  7).
 -define(P2_PARTITION,   17).
+
+pool_test_() ->
+    {foreach,
+        fun() ->
+            % These tests crash lots of processes, so just block everything
+            % coming out of SASL.
+            error_logger:tty(false),
+            application:load(sasl),
+            application:set_env(sasl, sasl_error_logger, false)
+        end,
+        fun(_) ->
+            riak_core_job_sup:stop_test_sup(),
+            application:set_env(sasl, sasl_error_logger, tty)
+        end, [
+        {"using 'reply'", fun() ->
+            test_worker_pool(?P1_PARTITION, ?P1_CONCURRENCY, false)
+        end},
+        {"using 'noreply'", fun() ->
+            test_worker_pool(?P2_PARTITION, ?P2_CONCURRENCY, true)
+        end}
+    ]}.
 
 init_worker(_VnodeIndex, Noreply, _WorkerProps) ->
     {'ok', Noreply}.
@@ -69,18 +90,19 @@ test_worker_pool(Partition, PoolSize, Arg) ->
         {?JOB_SVC_IDLE_MIN,     0},
         {?JOB_SVC_IDLE_MAX,     PoolSize}
     ],
-    ?assertEqual('ok', jobs_test_util:set_config(Props)),
-    {'ok', TestSup} = riak_core_job_sup:start_test_sup(),
-    {'ok', Pool} = riak_core_vnode_worker_pool:start_link(
-                        ?MODULE, PoolSize, Partition, Arg, []),
+    ?assertEqual(ok, jobs_test_util:set_config(Props)),
+    ?assertMatch({ok, _}, riak_core_job_sup:start_test_sup()),
+    PoolRet = riak_core_vnode_worker_pool:start_link(
+        ?MODULE, PoolSize, Partition, Arg, []),
+    ?assertMatch({ok, _}, PoolRet),
+    {ok, Pool} = PoolRet,
 
     Seq = lists:seq(1, 10),
     lists:foldl(fun submit_work/2, Pool, Seq),
     [?assertEqual('true', receive_result(N)) || N <- Seq],
 
     erlang:unlink(Pool),
-    riak_core_vnode_worker_pool:shutdown_pool(Pool, 1000),
-    riak_core_job_sup:stop_test_sup(TestSup).
+    riak_core_vnode_worker_pool:shutdown_pool(Pool, 1000).
 
 submit_work(N, Pool) ->
     Work = fun() ->
@@ -90,11 +112,5 @@ submit_work(N, Pool) ->
     From = {'raw', N, erlang:self()},
     riak_core_vnode_worker_pool:handle_work(Pool, Work, From),
     Pool.
-
-simple_worker_pool_test() ->
-    test_worker_pool(?P1_PARTITION, ?P1_CONCURRENCY, 'false').
-
-simple_noreply_worker_pool_test() ->
-    test_worker_pool(?P2_PARTITION, ?P2_CONCURRENCY, 'true').
 
 -endif.

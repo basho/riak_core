@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2016 Basho Technologies, Inc.
+%% Copyright (c) 2016-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -73,11 +73,7 @@
 -define(else,   'true').
 
 %% This is just handy to have around because it's used a lot.
--define(is_non_neg_int(Term),   erlang:is_integer(Term) andalso Term >= 0).
-
-%% The servers including this file implement gen_server, so this is a shortcut
-%% to stuff an asynchronous message into their own message queue.
--define(cast(Msg),  gen_server:cast(erlang:self(), Msg)).
+-define(is_non_neg_int(Term),   (erlang:is_integer(Term) andalso Term >= 0)).
 
 %% Specific terms that get mapped between the worker pool facade and the new
 %% API services.
@@ -93,17 +89,10 @@
 -define(UNMATCHED_ARGS(Args),
     erlang:error({unmatched, {?MODULE, ?LINE}, Args})).
 
-% Internal magic tokens - stay away!
-% These aren't intended to offer any security, they're mainly to avoid
-% mistakes by ensuring the processes we're talking to implement the behavior
-% we expect. In some cases we're only dealing with a pid, so these give us the
-% equivalent of a way to ask "are you who I think you are?"
--define(job_svc_cfg_token,      '$config$611007$').
+% Internal magic token - stay away!
+% This isn't intended to offer any security, it's mainly to avoid mistakes.
+% There may be value in replacing this with some dynamic token at some point
+% to enforce the ownership relationship ... or not.
 -define(job_run_ctl_token,      '$control$19276$').
-
-%% How long to wait for a 'confirm' response.
-%% Note: DON'T encapsulate the 'confirm' exchange in a function - that would
-%% kinda defeat its purpose.
--define(CONFIRM_MSG_TIMEOUT,    666).
 
 -endif. % riak_core_job_internal_included

@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2013-2016 Basho Technologies, Inc.
+%% Copyright (c) 2013-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -29,6 +29,7 @@
 -module(worker_pool_pulse).
 
 -behaviour(riak_core_vnode_worker).
+
 -ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -endif.
@@ -36,23 +37,16 @@
 
 %% riak_core_vnode_worker behavior
 -export([init_worker/3, handle_work/3]).
-%% console debugging convenience
--compile(export_all).
 
 -ifdef(PULSE).
 -include_lib("pulse/include/pulse.hrl").
 %% have to transform the 'receive' of the work results
 -compile({parse_transform, pulse_instrument}).
-%% don't trasnform toplevel test functions
+%% don't transform top-level test functions
 -compile({pulse_skip,[{prop_any_pool,0},
                       {prop_small_pool,0},
                       {pool_test_,0}]}).
 -endif.
-
-% in start order, shutdown order is opposite
-% order must match that in riak:core_sup:init/1
--define(SVC_MODS,
-    [riak_core_job_sup, riak_core_job_service, riak_core_job_manager]).
 
 %%% Worker Definition - does nothing but reply with what it is given
 
@@ -135,22 +129,13 @@ pool_test_() ->
     {setup,
         fun() ->
             error_logger:tty(false),
+            application:load(sasl),
+            application:set_env(sasl, errlog_type, error),
             pulse:start(),
-            lists:foldl(
-                fun(Mod, Pids) ->
-                    {ok, Pid} = Mod:start_link(),
-                    [Pid | Pids]
-                end, [], ?SVC_MODS)
+            {ok, Sup} = riak_core_job_sup:start_test_sup(),
+            Sup
         end,
-        fun(Svcs) ->
-            lists:foreach(
-                fun(Pid) ->
-                    erlang:unlink(Pid),
-                    erlang:exit(Pid, 'shutdown')
-                end, Svcs),
-            pulse:stop(),
-            error_logger:tty(true)
-        end,
+        fun riak_core_job_sup:stop_test_sup/1,
         [
          %% not necessary to run both tests here, but why not anyway?
          ?_assert(eqc:quickcheck(prop_small_pool())),
@@ -158,4 +143,4 @@ pool_test_() ->
         ]
     }.
 
--endif.
+-endif. % PULSE

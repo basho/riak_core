@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2016 Basho Technologies, Inc.
+%% Copyright (c) 2016-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -85,7 +85,7 @@
 -module(riak_core_job_service).
 -behaviour(gen_server).
 
-% Private API
+%% Private API
 -export([
     app_config/1,
     app_config/2,
@@ -98,7 +98,7 @@
     stats/0
 ]).
 
-% Private Types
+%% Private Types
 -export_type([
     cfg_concur_max/0,
     cfg_idle_max/0,
@@ -113,7 +113,7 @@
     stat_val/0
 ]).
 
-% Gen_server API
+%% Gen_server API
 -export([
     code_change/3,
     handle_call/3,
@@ -133,13 +133,13 @@
 -define(StatsDict,  orddict).
 -type stats()   ::  ?orddict_t(stat_key(), stat_val()).
 
-% Idle Runner.
+%% Idle Runner.
 -record(rrec, {
     ref     ::  rkey(),
     pid     ::  runner()
 }).
 
-% Make sure icnt/idle are kept in sync!
+%% Make sure icnt/idle are kept in sync!
 -record(state, {
     icnt        = 0                         ::  non_neg_integer(),
     imin        = 0                         ::  non_neg_integer(),
@@ -435,27 +435,27 @@ stats() ->
 -spec code_change(OldVsn :: term(), State :: state(), Extra :: term())
         -> {ok, state()}.
 %% @private
-%
-% we don't care, just carry on
-%
+%%
+%% we don't care, just carry on
+%%
 code_change(_, State, _) ->
     {ok, State}.
 
 -spec handle_call(Msg :: term(), From :: {pid(), term()}, State :: state())
         -> {reply, term(), state()} | {stop, term(), term(), state()}.
 %% @private
-%
-% config() -> config() | {'error', term()}.
-%
+%%
+%% config() -> config() | {'error', term()}.
+%%
 handle_call(config, _, State) ->
     {reply, [
         {?JOB_SVC_IDLE_MIN, State#state.imin},
         {?JOB_SVC_IDLE_MAX, State#state.imax},
         {?JOB_SVC_RECYCLE,  State#state.recycle}
     ], State};
-%
-% runner() -> runner() | {'error', term()}.
-%
+%%
+%% runner() -> runner() | {'error', term()}.
+%%
 handle_call(runner, _, #state{icnt = 0} = State) ->
     case create() of
         Runner when erlang:is_pid(Runner) ->
@@ -468,9 +468,9 @@ handle_call(runner, _, #state{idle = IdleIn, icnt = ICnt} = State) ->
     {{value, #rrec{ref = Ref, pid = Runner}}, Idle} = queue:out(IdleIn),
     _ = erlang:demonitor(Ref, [flush]),
     {reply, Runner, check_pending(State#state{idle = Idle, icnt = (ICnt - 1)})};
-%
-% stats() -> [stat()] | {'error', term()}.
-%
+%%
+%% stats() -> [stat()] | {'error', term()}.
+%%
 handle_call(stats, _, State) ->
     Status = if State#state.shutdown -> stopping; ?else -> active end,
     Result = [
@@ -481,9 +481,9 @@ handle_call(stats, _, State) ->
         {recycling, State#state.recycle}
         | ?StatsDict:to_list(State#state.stats) ],
     {reply, Result, State};
-%
-% unrecognized message
-%
+%%
+%% unrecognized message
+%%
 handle_call(Msg, {Who, _}, State) ->
     _ = lager:error(
         "~s received unhandled call from ~p: ~p", [?JOBS_SVC_NAME, Who, Msg]),
@@ -492,52 +492,48 @@ handle_call(Msg, {Who, _}, State) ->
 -spec handle_cast(Msg :: term(), State :: state())
         -> {noreply, state()} | {stop, term(), state()}.
 %% @private
-%
-% release(Runner :: runner()) -> 'ok'.
-%
+%%
+%% release(Runner :: runner()) -> 'ok'.
+%%
+handle_cast({release, Runner}, #state{recycle = true} = State) when erlang:is_pid(Runner) ->
+    Ref = erlang:monitor(process, Runner),
+    Rec = #rrec{ref = Ref, pid = Runner},
+    {noreply, check_pending(State#state{
+        idle = queue:in(Rec, State#state.idle),
+        icnt = (State#state.icnt + 1) })};
+
 handle_cast({release, Runner}, State) when erlang:is_pid(Runner) ->
-    % Use the Runner's private 'confirm' handler to ensure that this is,
-    % in fact, a Runner process.
-    Service = erlang:self(),
-    Nonce   = erlang:phash2(os:timestamp()),
-    Expect  = erlang:phash2({Nonce, ?job_run_ctl_token, Runner}),
-    _ = erlang:send(Runner, {confirm, Service, Nonce}),
-    receive
-        {confirm, Nonce, Expect} ->
-            if
-                State#state.recycle ->
-                    Ref = erlang:monitor(process, Runner),
-                    Rec = #rrec{ref = Ref, pid = Runner},
-                    {noreply, check_pending(State#state{
-                        idle = queue:in(Rec, State#state.idle),
-                        icnt = (State#state.icnt + 1) })};
-                ?else ->
-                    _ = riak_core_job_sup:stop_runner(Runner),
-                    {noreply, State}
-            end
-    after
-        ?CONFIRM_MSG_TIMEOUT ->
+    case riak_core_job_sup:stop_runner(Runner) of
+        ok ->
+            {noreply, State};
+        {error, not_found} ->
             _ = lager:warning(
                 "~s received 'release' for unknown process ~p",
                 [?JOBS_SVC_NAME, Runner]),
-            {noreply, inc_stat({unknown_proc, ?LINE}, State)}
+            {noreply, inc_stat({unknown_proc, ?LINE}, State)};
+        {error, What} ->
+            _ = lager:warning(
+                "~s error ~p stopping runner ~p",
+                [?JOBS_SVC_NAME, What, Runner]),
+            {noreply, inc_stat({service_errors, ?LINE}, State)}
     end;
-%
-% internal 'pending' message
-%
-% State#state.pending MUST be 'true' at the time when we encounter a 'pending'
-% message - if it's not the State is invalid.
-%
+%%
+%% internal 'pending' message
+%%
+%% State#state.pending MUST be 'true' at the time when we encounter a 'pending'
+%% message - if it's not the State is invalid.
+%%
 handle_cast(pending, #state{pending = Flag} = State) when Flag /= true ->
     _ = lager:error("~s:~b: invalid state: ~p", [?JOBS_SVC_NAME, ?LINE, State]),
     {stop, invalid_state, State};
 
 handle_cast(pending, State) ->
     pending(State#state{pending = false});
-%
-% configuration message
-%
-handle_cast(?job_svc_cfg_token,
+%%
+%% reconfiguration message
+%% this only comes from the manager, there's no exported function
+%%
+handle_cast(reconfigure,
         #state{imin = IMin, imax = IMax, recycle = RMode} = State) ->
     App     = default_app(),
     IdleMin = app_config(App, ?JOB_SVC_IDLE_MIN),
@@ -553,9 +549,9 @@ handle_cast(?job_svc_cfg_token,
         ?else ->
             {noreply, State}
     end;
-%
-% unrecognized message
-%
+%%
+%% unrecognized message
+%%
 handle_cast(Msg, State) ->
     _ = lager:error("~s received unhandled cast: ~p", [?JOBS_SVC_NAME, Msg]),
     {noreply, inc_stat(unhandled, State)}.
@@ -563,11 +559,11 @@ handle_cast(Msg, State) ->
 -spec handle_info(Msg :: term(), State :: state())
         -> {noreply, state()} | {stop, term(), state()}.
 %% @private
-%
-% An idle runner crashed or was killed.
-% It's ok for this to be an inefficient operation, because it *really*
-% shouldn't ever happen.
-%
+%%
+%% An idle runner crashed or was killed.
+%% It's ok for this to be an inefficient operation, because it *really*
+%% shouldn't ever happen.
+%%
 handle_info({'DOWN', Ref, _, Pid, Info}, #state{icnt = ICnt} = State) ->
     List = queue:to_list(State#state.idle),
     case lists:keytake(Ref, #rrec.ref, List) of
@@ -592,18 +588,18 @@ handle_info({'DOWN', Ref, _, Pid, Info}, #state{icnt = ICnt} = State) ->
             "unrecognized process ~p: ~p", [?JOBS_SVC_NAME, Pid, Info]),
             {noreply, inc_stat({unknown_proc, ?LINE}, State)}
     end;
-%
-% unrecognized message
-%
+%%
+%% unrecognized message
+%%
 handle_info(Msg, State) ->
     _ = lager:error("~s received unhandled info: ~p", [?JOBS_SVC_NAME, Msg]),
     {noreply, inc_stat(unhandled, State)}.
 
 -spec init(?MODULE) -> {ok, state()} | {stop, {error, term()}}.
 %% @private
-%
-% initialize from the application environment
-%
+%%
+%% initialize from the application environment
+%%
 init(?MODULE) ->
     App = default_app(),
     {ok, #state{
@@ -614,18 +610,18 @@ init(?MODULE) ->
 
 -spec start_link() -> {ok, pid()}.
 %% @private
-%
-% start named service
-%
+%%
+%% start named service
+%%
 start_link() ->
     gen_server:start_link({local, ?JOBS_SVC_NAME}, ?MODULE, ?MODULE, []).
 
 -spec terminate(Why :: term(), State :: state()) -> ok.
 %% @private
-%
-% No matter why we're terminating, de-monitor all of our idle runners and send
-% each an appropriate exit message - they should all stop immediately.
-%
+%%
+%% No matter why we're terminating, de-monitor all of our idle runners and send
+%% each an appropriate exit message - they should all stop immediately.
+%%
 terminate(invalid_state, State) ->
     _ = lager:error(
         "~s terminated due to invalid state: ~p", [?JOBS_SVC_NAME, State]),
@@ -642,10 +638,10 @@ terminate(Why, State) ->
 %% ===================================================================
 
 -spec check_pending(State :: state()) -> state().
-%
-% Ensure that there's a 'pending' message in the inbox if there's background
-% work to be done.
-%
+%%
+%% Ensure that there's a 'pending' message in the inbox if there's background
+%% work to be done.
+%%
 check_pending(#state{icnt = ICnt, imin = IMin, imax = IMax} = State)
         when ICnt >= IMin andalso IMax >= ICnt ->
     State;
@@ -653,9 +649,9 @@ check_pending(State) ->
     set_pending(State).
 
 -spec create() -> runner() | {error, term()}.
-%
-% Creates a new Runner process.
-%
+%%
+%% Creates a new Runner process.
+%%
 create() ->
     case riak_core_job_sup:start_runner() of
         {ok, Runner} when erlang:is_pid(Runner) ->
@@ -667,9 +663,9 @@ create() ->
     end.
 
 -spec cull_idle(State :: state()) -> state().
-%
-% Removes and de-monitors the Runner at the head of the idle queue.
-%
+%%
+%% Removes and de-monitors the Runner at the head of the idle queue.
+%%
 cull_idle(#state{icnt = 0} = State) ->
     State;
 cull_idle(#state{idle = IdleIn, icnt = ICnt} = State) ->
@@ -680,9 +676,9 @@ cull_idle(#state{idle = IdleIn, icnt = ICnt} = State) ->
 
 -spec inc_stat(stat_key() | [stat_key()], state()) -> state()
         ;     (stat_key() | [stat_key()], stats()) -> stats().
-%
-% Increment one or more statistics counters.
-%
+%%
+%% Increment one or more statistics counters.
+%%
 inc_stat(Stat, #state{stats = Stats} = State) ->
     State#state{stats = inc_stat(Stat, Stats)};
 inc_stat(Stat, Stats) ->
@@ -699,13 +695,13 @@ inc_stat(Stat, Stats) ->
 -spec pending(State :: state())
         ->  {noreply, state()}
         |   {stop, shutdown | {error, term()}, state()}.
-%
-% Perform background tasks, one operation per invocation. If there are more
-% operations to be done, ensure that there's a 'pending' message in the inbox
-% on completion.
-%
-% Result is as specified for gen_server:handle_cast/2.
-%
+%%
+%% Perform background tasks, one operation per invocation. If there are more
+%% operations to be done, ensure that there's a 'pending' message in the inbox
+%% on completion.
+%%
+%% Result is as specified for gen_server:handle_cast/2.
+%%
 pending(#state{shutdown = true} = State) ->
     {stop, shutdown, State};
 
@@ -728,17 +724,17 @@ pending(State) ->
 
 -spec resolve_config_val(App :: atom(), Val :: non_neg_integer() | cfg_mult())
         -> einval | non_neg_integer().
-%
-% Returns the computed and/or validated value of Val.
-%
-% Val may be either an integer or a multiplier tuple.
-%
-% Multipliers are handled as described in the riak_core_job_manager module
-% documentation.
-%
-% If Val is neither a non-negative integer nor a valid multiplier tuple,
-% `einval' is returned.
-%
+%%
+%% Returns the computed and/or validated value of Val.
+%%
+%% Val may be either an integer or a multiplier tuple.
+%%
+%% Multipliers are handled as described in the riak_core_job_manager module
+%% documentation.
+%%
+%% If Val is neither a non-negative integer nor a valid multiplier tuple,
+%% `einval' is returned.
+%%
 resolve_config_val(_App, Val) when ?is_non_neg_int(Val) ->
     Val;
 
@@ -760,9 +756,9 @@ resolve_config_val(_, _) ->
     einval.
 
 -spec set_pending(State :: state()) -> state().
-%
-% Ensure that there's a 'pending' message in the inbox.
-%
+%%
+%% Ensure that there's a 'pending' message in the inbox.
+%%
 set_pending(#state{pending = false} = State) ->
     gen_server:cast(erlang:self(), pending),
     State#state{pending = true};

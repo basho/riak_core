@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2016 Basho Technologies, Inc.
+%% Copyright (c) 2016-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -26,13 +26,13 @@
 -module(riak_core_job_sup).
 -behaviour(supervisor).
 
-% Private API
+%% Private API
 -export([
     start_runner/0,
     stop_runner/1
 ]).
 
-% Supervisor API
+%% Supervisor API
 -export([
     init/1,
     start_link/0
@@ -41,6 +41,7 @@
 -ifdef(TEST).
 -export([
     start_test_sup/0,
+    stop_test_sup/0,
     stop_test_sup/1
 ]).
 -endif.
@@ -64,36 +65,14 @@
 %% @doc Start a new job runner process.
 %%
 start_runner() ->
-    supervisor:start_child(?MODULE, []).
+    supervisor:start_child(?WORK_SUP_NAME, []).
 
 -spec stop_runner(Runner :: pid()) -> ok | {error, term()}.
 %% @private
 %% @doc Stop a job runner process.
 %%
 stop_runner(Runner) when erlang:is_pid(Runner) ->
-    case supervisor:terminate_child(?MODULE, Runner) of
-        ok ->
-            ok;
-        {error, not_found} = Error ->
-            % Errr, is it a runner that might have been started by a previous
-            % incarnation of this supervisor?
-            Service = erlang:self(),
-            Nonce   = erlang:phash2(os:timestamp()),
-            Expect  = erlang:phash2({Nonce, ?job_run_ctl_token, Runner}),
-            _ = erlang:send(Runner, {confirm, Service, Nonce}),
-            receive
-                {confirm, Nonce, Expect} ->
-                    % It seems to be an idling runner, and apparently homeless,
-                    % so kill it off.
-                    _ = erlang:exit(Runner, shutdown),
-                    ok
-            after
-                ?CONFIRM_MSG_TIMEOUT ->
-                    Error
-            end;
-        {error, _} = Error ->
-            Error
-    end.
+    supervisor:terminate_child(?WORK_SUP_NAME, Runner).
 
 %% ===================================================================
 %% Supervisor API
@@ -115,7 +94,9 @@ start_link() ->
 %%
 -ifdef(TEST).
 
-init(riak_core_job_test_sup) ->
+-define(TEST_SUP_NAME,  riak_core_job_test_sup).
+
+init(?TEST_SUP_NAME) ->
     Children = [
         % Verbatim copy of the relevant specs from riak_core_sup:init/1.
         ?CHILD(riak_core_job_sup, supervisor, ?JOBS_SUP_SHUTDOWN_TIMEOUT),
@@ -141,16 +122,28 @@ init(?MODULE) ->
 -ifdef(TEST).
 
 -spec start_test_sup() -> {ok, pid()}.
-%
-% Starts a supervisor containing the job services for testing.
-%
+%%
+%% Starts a supervisor containing the job services for testing.
+%%
 start_test_sup() ->
-    supervisor:start_link(?MODULE, riak_core_job_test_sup).
+    supervisor:start_link({local, ?TEST_SUP_NAME}, ?MODULE, ?TEST_SUP_NAME).
+
+-spec stop_test_sup() -> ok | {error, term()}.
+%%
+%% Stops a supervisor created by {@link start_test_sup/0} synchronously.
+%%
+stop_test_sup() ->
+    case erlang:whereis(?TEST_SUP_NAME) of
+        Pid when erlang:is_pid(Pid) ->
+            stop_test_sup(Pid);
+        _ ->
+            ok
+    end.
 
 -spec stop_test_sup(pid()) -> ok | {error, term()}.
-%
-% Stops a supervisor created by {@link start_test_sup/0} synchronously.
-%
+%%
+%% Stops a supervisor created by {@link start_test_sup/0} synchronously.
+%%
 stop_test_sup(Pid) ->
     Mon = erlang:monitor(process, Pid),
     _ = erlang:unlink(Pid),
@@ -171,38 +164,48 @@ stop_test_sup(Pid) ->
 
 -ifdef(TEST).
 
-runner_test() ->
-    {ok, Sup} = start_link(),
-    try
-        Token = ?job_run_ctl_token,
-        {ok, Run1} = start_runner(),
-        {ok, Run2} = start_runner(),
-        {ok, Run3} = riak_core_job_runner:start_link(Token),
-        {ok, Run4} = riak_core_job_runner:start_link(Token),
-        _ = [erlang:unlink(P) || P <- [Run3, Run4]],
-        Runners = [Run1, Run2, Run3, Run4],
-        Bogus = erlang:spawn(fun() -> receive never_coming -> ok end end),
+runner_test_() ->
+    {setup,
+        fun() ->
+            {ok, Sup} = start_link(),
+            Sup
+        end,
+        fun(Sup) ->
+            erlang:unlink(Sup),
+            erlang:exit(Sup, shutdown)
+        end,
+        fun() ->
+            Token = ?job_run_ctl_token,
+            {ok, Run1} = start_runner(),
+            {ok, Run2} = start_runner(),
+            {ok, Run3} = riak_core_job_runner:start_link(Token),
+            {ok, Run4} = riak_core_job_runner:start_link(Token),
+            Owned = [Run1, Run2],
+            Loose = [Run3, Run4],
 
-        % Looks like a riak_core_job_manager:mgr_key() and causes runner
-        % updates to come to this process, where they'll be ignored.
-        MgrKey = {mgrkey, erlang:self(), erlang:make_ref()},
-        Dummy = riak_core_job:dummy(),
+            lists:foreach(fun erlang:unlink/1, Loose),
+            Runners = Owned ++ Loose,
+            ?assert(lists:all(fun erlang:is_process_alive/1, Runners)),
 
-        [?assertEqual(ok, riak_core_job_runner:run(P, Token, MgrKey, Dummy))
-            || P <- [Run2, Run4]],
+            % Create a tuple that looks like a riak_core_job_manager:mgr_key()
+            % and causes runner updates to come to this process, where they'll
+            % be ignored.
+            MgrKey = {mgrkey, erlang:self(), erlang:make_ref()},
+            Dummy = riak_core_job:dummy(),
 
-        [?assertEqual(ok, stop_runner(P)) || P <- Runners],
+            ?assertEqual(ok, riak_core_job_runner:run(Run2, Token, MgrKey, Dummy)),
+            ?assertEqual(ok, riak_core_job_runner:run(Run4, Token, MgrKey, Dummy)),
 
-        ?assertEqual({error, not_found}, stop_runner(Bogus)),
+            ?assertEqual(ok, stop_runner(Run1)),
+            ?assertEqual(ok, stop_runner(Run2)),
+            ?assertEqual({error, not_found}, stop_runner(Run3)),
+            ?assertEqual({error, not_found}, stop_runner(Run4)),
 
-        [?assertEqual(false, erlang:is_process_alive(P)) || P <- Runners],
+            ?assert(lists:all(fun(P) -> not erlang:is_process_alive(P) end, Owned)),
+            ?assert(lists:all(fun erlang:is_process_alive/1, Loose)),
 
-        ?assertEqual(true, erlang:is_process_alive(Bogus)),
-
-        erlang:exit(Bogus, kill)
-    after
-        _ = erlang:unlink(Sup),
-        _ = erlang:exit(Sup, shutdown)
-    end.
+            lists:foreach(fun(P) -> erlang:exit(P, shutdown) end, Loose)
+        end
+    }.
 
 -endif.

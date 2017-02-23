@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2016 Basho Technologies, Inc.
+%% Copyright (c) 2016-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -40,7 +40,7 @@
 -module(riak_core_job_manager).
 -behaviour(gen_server).
 
-% Public API
+%% Public API
 -export([
     cancel/2,
     config/0,
@@ -51,7 +51,7 @@
     submit/1
 ]).
 
-% Public Types
+%% Public Types
 -export_type([
     cfg_concur_max/0,
     cfg_hist_max/0,
@@ -65,12 +65,12 @@
     stat_val/0
 ]).
 
-% Work Callback API
+%% Work Callback API
 -export([
     running_job/1
 ]).
 
-% Runner Callback API
+%% Runner Callback API
 -export([
     cleanup/1,
     finished/2,
@@ -78,7 +78,7 @@
     starting/1
 ]).
 
-% Gen_server API
+%% Gen_server API
 -export([
     code_change/3,
     handle_call/3,
@@ -95,64 +95,71 @@
 %% Internal Types
 %% ===================================================================
 
-%
-% WARNING: This file has entries in dialyzer.ignore-warnings
-%
-% Edits may change matching patterns or necessity - be sure to check/update
-% if you're working in that area.
-%
-% The dialyzer attribute below turns off the warning starting in OTP-18, but
-% check occasionally to see if it still matters - it's an erroneous warning
-% from dialyzer that may be fixed in a newer release, as the types are
-% suitably tagged.
-%
+%%
+%% WARNING: This file has entries in dialyzer.ignore-warnings
+%%
+%% Edits may change matching patterns or necessity - be sure to check/update
+%% if you're working in that area.
+%%
+%% The dialyzer attribute below turns off the warning starting in OTP-18, but
+%% check occasionally to see if it still matters - it's an erroneous warning
+%% from dialyzer that may be fixed in a newer release, as the types are
+%% suitably tagged.
+%%
 -dialyzer({no_opaque, c_erase/2}).
 
 -define(StatsDict,  orddict).
 -type stats()   ::  ?orddict_t(stat_key(), stat_val()).
 
-% mgr_key() opaque type
+%% mgr_key() opaque type
 -record(mgrkey, {
     mgr     ::  pid(),  % manager process
     key     ::  rkey()  % reference into the 'run' dictionary
 }).
 
-% JobId/Job pair, always kept together
+%% JobId/Job pair, always kept together
 -record(jrec, {
     id      ::  jid(),
     job     ::  job()
 }).
 
-% Full running job record
+%% Full running job record
 -record(rrec, {
     rref    ::  rref(),
     jrec    ::  jrec()
 }).
 
-% RunnerRef/RunnerPid, always kept together
+%% RunnerRef/RunnerPid, always kept together
 -record(rref, {
     ref     ::  rkey(),
     pid     ::  runner()
 }).
 
-% Job queue of JobId/Job pairs
+%% Job queue of JobId/Job pairs
 -record(jq, {
     c   = 0             ::  non_neg_integer(),      % count
     d   = queue:new()   ::  ?queue_t(jrec())        % data
 }).
 
-% 'location' dictionary, JobId => location atom or ref
-% count is not maintained
+%% 'location' dictionary, JobId => location atom or ref
+%% count is not maintained
 -record(ld, {
     d   = dict:new()    ::  ?dict_t(jid(), jloc())  % data
 }).
 
-% 'running' dictionary, RunnerRef => full record
+%% 'running' dictionary, RunnerRef => full record
 -record(rd, {
     c   = 0             ::  non_neg_integer(),      % count
     d   = dict:new()    ::  ?dict_t(rkey(), rrec()) % data
 }).
 
+%%
+%% 'rmax', 'qmax', and 'hmax' are the maximum sizes, via configuration, of
+%% the 'run', 'que', and 'hist' collections, respectively.
+%%
+%% Any job we're managing is in exactly one of the 'run', 'que', or 'hist'
+%% collections, and the 'loc' dictionary tells us which one.
+%%
 -record(state, {
     rmax                            ::  pos_integer(),
     qmax                            ::  non_neg_integer(),
@@ -182,8 +189,8 @@
 -type runner()      ::  riak_core_job_service:runner().
 -type state()       ::  #state{}.
 
--define(is_job_loc(Term),   erlang:is_reference(Term)
-        orelse Term =:= queue orelse Term =:= history).
+-define(is_job_loc(Term),   (erlang:is_reference(Term)
+        orelse Term =:= queue orelse Term =:= history)).
 
 %% ===================================================================
 %% Public Types
@@ -308,7 +315,7 @@ find(JobOrId) ->
 %% @doc Re-read application environment configuration and adjust accordingly.
 %%
 reconfigure() ->
-    gen_server:cast(?JOBS_MGR_NAME, ?job_svc_cfg_token).
+    gen_server:cast(?JOBS_MGR_NAME, reconfigure).
 
 -spec stats() -> [stat()] | {error, term()}.
 %%
@@ -423,8 +430,8 @@ starting(MgrKey) ->
 -spec code_change(OldVsn :: term(), State :: state(), Extra :: term())
         -> {ok, state()}.
 %% @private
-% we don't care, just carry on
-%
+%% we don't care, just carry on
+%%
 code_change(_, State, _) ->
     {ok, State}.
 
@@ -432,47 +439,17 @@ code_change(_, State, _) ->
         -> {reply, term(), state()} | {stop, term(), term(), state()}.
 %% @private
 %% @end
-%
-% config() -> config() | {error, term()}.
-%
-handle_call(config, _, State) ->
-    {reply, [
-        {?JOB_SVC_CONCUR_LIMIT, State#state.rmax},
-        {?JOB_SVC_HIST_LIMIT,   State#state.hmax},
-        {?JOB_SVC_QUEUE_LIMIT,  State#state.qmax}
-    ] ++ gen_server:call(?JOBS_SVC_NAME, config), State};
-%
-% cancel(JobId :: jid(), Kill :: boolean())
-%   ->  {ok, killed | canceled | history, job()}
-%       | {error, running, job()} | false | {error, term()}
-%
+%%
+%% cancel(JobId :: jid(), Kill :: boolean())
+%%   ->  {ok, killed | canceled | history, job()}
+%%       | {error, running, job()} | false | {error, term()}
+%%
 handle_call({cancel, JobId, Kill}, _, State) ->
     case c_find(JobId, State#state.loc) of
 
         {_, Ref} when erlang:is_reference(Ref) ->
-            case Kill of
-                true ->
-                    {#rrec{rref = RRef, jrec = JRec}, Run} =
-                        c_remove(Ref, State#state.run),
-                    % kill it right away, notify the originator after updates
-                    _ = exit_runner(RRef, kill),
-                    % RRef is permanently invalidated
-                    JRIn = JRec#jrec{
-                        job = riak_core_job:update(killed, JRec#jrec.job)},
-                    StateIn = State#state{run = Run,
-                        stats = inc_stat(killed, State#state.stats)},
-                    {ok, StateOut} = advance(JRIn, history, StateIn),
-                    % get the updated job from history - it has to be there
-                    % ... we actually know where, but use the API what's there
-                    JROut = c_find(JRIn#jrec.id, StateOut#state.hist),
-                    % NOW tell the owner what we did to their job
-                    _ = notify(JROut, {?JOB_ERR_KILLED, cancel}),
-                    {reply, {ok, killed, JROut#jrec.job}, StateOut};
-                _ ->
-                    #rrec{jrec = #jrec{job = RJob}} =
-                        c_find(Ref, State#state.run),
-                    {reply, {error, running, RJob}, State}
-            end;
+            {Result, StateOut} = cancel_running(Ref, Kill, State),
+            {reply, Result, StateOut};
 
         {_, queue} ->
             {#jrec{job = QJob} = QRec, Que} = c_remove(JobId, State#state.que),
@@ -490,9 +467,18 @@ handle_call({cancel, JobId, Kill}, _, State) ->
         false ->
             {reply, false, State}
     end;
-%
-% find(JobId :: jid()) -> {'ok', Job :: job()} | false | {'error', term()}.
-%
+%%
+%% config() -> config() | {error, term()}.
+%%
+handle_call(config, _, State) ->
+    {reply, [
+        {?JOB_SVC_CONCUR_LIMIT, State#state.rmax},
+        {?JOB_SVC_HIST_LIMIT,   State#state.hmax},
+        {?JOB_SVC_QUEUE_LIMIT,  State#state.qmax}
+    ] ++ riak_core_job_service:config(), State};
+%%
+%% find(JobId :: jid()) -> {'ok', Job :: job()} | false | {'error', term()}.
+%%
 handle_call({find, JobId}, _, State) ->
     case find_job_by_id(JobId, State) of
         {ok, _, #jrec{job = Job}} ->
@@ -500,9 +486,9 @@ handle_call({find, JobId}, _, State) ->
         false ->
             {reply, false, State}
     end;
-%
-% running_job(MgrKey :: mgr_key()) -> riak_core_job:job() | {'error', term()}.
-%
+%%
+%% running_job(MgrKey :: mgr_key()) -> riak_core_job:job() | {'error', term()}.
+%%
 handle_call({running_job, Key}, _, State) ->
     case c_find(Key, State#state.run) of
         #rrec{jrec = #jrec{job = Job}} ->
@@ -510,9 +496,9 @@ handle_call({running_job, Key}, _, State) ->
         false ->
             {reply, {error, not_running}, State}
     end;
-%
-% stats() -> [stat()] | {'error', term()}.
-%
+%%
+%% stats() -> [stat()] | {'error', term()}.
+%%
 handle_call(stats, _, State) ->
     Status = if State#state.shutdown -> stopping; ?else -> active end,
     Result = [
@@ -523,12 +509,12 @@ handle_call(stats, _, State) ->
         {running,   State#state.run#rd.c},
         {inqueue,   State#state.que#jq.c},
         {history,   State#state.hist#jq.c},
-        {service,   gen_server:call(?JOBS_SVC_NAME, stats)}
+        {service,   riak_core_job_service:stats()}
         | ?StatsDict:to_list(State#state.stats) ],
     {reply, Result, State};
-%
-% stats(JobId :: jid()) -> [stat()] | false | {'error', term()}.
-%
+%%
+%% stats(JobId :: jid()) -> [stat()] | false | {'error', term()}.
+%%
 handle_call({stats, JobId}, _, State) ->
     case find_job_by_id(JobId, State) of
         {ok, _, #jrec{job = Job}} ->
@@ -536,9 +522,9 @@ handle_call({stats, JobId}, _, State) ->
         false ->
             {reply, false, State}
     end;
-%
-% submit(Job :: job()) -> 'ok' | {'error', term()}.
-%
+%%
+%% submit(Job :: job()) -> 'ok' | {'error', term()}.
+%%
 handle_call({submit = Phase, Job}, From, StateIn) ->
     case submit_job(Phase, Job, From, StateIn) of
         {error, Error, State} ->
@@ -546,9 +532,9 @@ handle_call({submit = Phase, Job}, From, StateIn) ->
         {Result, State} ->
             {reply, Result, State}
     end;
-%
-% unrecognized message
-%
+%%
+%% unrecognized message
+%%
 handle_call(Msg, {Who, _}, State) ->
     _ = lager:error(
         "~s received unhandled call from ~p: ~p", [?JOBS_MGR_NAME, Who, Msg]),
@@ -558,12 +544,12 @@ handle_call(Msg, {Who, _}, State) ->
         -> {noreply, state()} | {stop, term(), state()}.
 %% @private
 %% @end
-%
-% internal 'pending' message
-%
-% State#state.pending MUST be 'true' at the time when we encounter a 'pending'
-% message - if it's not the State is invalid.
-%
+%%
+%% internal 'pending' message
+%%
+%% State#state.pending MUST be 'true' at the time when we encounter a 'pending'
+%% message - if it's not the State is invalid.
+%%
 handle_cast(pending, #state{pending = Flag} = State) when Flag /= true ->
     _ = lager:error("Invalid State: ~p", [State]),
     {stop, invalid_state, State};
@@ -577,9 +563,9 @@ handle_cast(pending, StateIn) ->
         {{error, _} = Error, State} ->
             {stop, Error, State}
     end;
-%
-% update_job(MgrKey :: mgr_key(), Stat :: atom(), Info :: term()) -> ok.
-%
+%%
+%% update_job(MgrKey :: mgr_key(), Stat :: atom(), Info :: term()) -> ok.
+%%
 handle_cast({Ref, update, finished = Stat, TS, Result}, State) ->
     case c_remove(Ref, State#state.run) of
         {#rrec{rref = RRef, jrec = JRec}, Run} ->
@@ -599,9 +585,9 @@ handle_cast({Ref, update, finished = Stat, TS, Result}, State) ->
                 [?JOBS_MGR_NAME, Stat, Result, Ref]),
             {noreply, inc_stat(update_errors, State)}
     end;
-%
-% update_job(MgrKey :: mgr_key(), Stat :: stat_key()) -> ok.
-%
+%%
+%% update_job(MgrKey :: mgr_key(), Stat :: stat_key()) -> ok.
+%%
 handle_cast({Ref, update, Stat, TS}, State) ->
     case c_find(Ref, State#state.run) of
         #rrec{jrec = JRec} = RRec ->
@@ -614,15 +600,15 @@ handle_cast({Ref, update, Stat, TS}, State) ->
                 [?JOBS_MGR_NAME, Stat, Ref]),
             {noreply, inc_stat(update_errors, State)}
     end;
-%
-% configuration message
-%
-handle_cast(?job_svc_cfg_token,
+%%
+%% configuration message
+%%
+handle_cast(reconfigure,
         #state{rmax = RMax, qmax = QMax, hmax = HMax} = State) ->
 
     % Tell the riak_core_job_service server to [re]configure itself too, right
     % away, so it can get a jump on possibly cranking up available runners.
-    gen_server:cast(?JOBS_SVC_NAME, ?job_svc_cfg_token),
+    gen_server:cast(?JOBS_SVC_NAME, reconfigure),
 
     % Update the settings in the application environment.
     App     = riak_core_job_service:default_app(),
@@ -640,9 +626,9 @@ handle_cast(?job_svc_cfg_token,
         ?else ->
             {noreply, State}
     end;
-%
-% unrecognized message
-%
+%%
+%% unrecognized message
+%%
 handle_cast(Msg, State) ->
     _ = lager:error("~s received unhandled cast: ~p", [?JOBS_MGR_NAME, Msg]),
     {noreply, inc_stat(unhandled, State)}.
@@ -651,12 +637,12 @@ handle_cast(Msg, State) ->
         -> {noreply, state()} | {stop, term(), state()}.
 %% @private
 %% @end
-%
-% A monitored job crashed or was killed.
-% If it completed normally, a 'done' update arrived in our mailbox before this
-% and caused the monitor to be released and flushed, so the only way we get
-% this is an exit before completion.
-%
+%%
+%% A monitored job crashed or was killed.
+%% If it completed normally, a 'done' update arrived in our mailbox before this
+%% and caused the monitor to be released and flushed, so the only way we get
+%% this is an exit before completion.
+%%
 handle_info({'DOWN', Ref, _, Pid, Info}, StateIn) ->
     case c_remove(Ref, StateIn#state.run) of
         {#rrec{rref = RRef, jrec = JRec}, Run} ->
@@ -684,18 +670,18 @@ handle_info({'DOWN', Ref, _, Pid, Info}, StateIn) ->
                 [?JOBS_MGR_NAME, Pid]),
             {noreply, inc_stat(update_errors, StateIn)}
     end;
-%
-% unrecognized message
-%
+%%
+%% unrecognized message
+%%
 handle_info(Msg, State) ->
     _ = lager:error("~s received unhandled info: ~p", [?JOBS_MGR_NAME, Msg]),
     {noreply, inc_stat(unhandled, State)}.
 
 -spec init(?MODULE) -> {ok, state()} | {stop, {error, term()}}.
 %% @private
-%
-% initialize from the application environment
-%
+%%
+%% initialize from the application environment
+%%
 init(?MODULE) ->
 
     % Make sure we get shutdown signals from the supervisor
@@ -711,17 +697,17 @@ init(?MODULE) ->
 
 -spec start_link() -> {ok, pid()}.
 %% @private
-%
-% start named service
-%
+%%
+%% start named service
+%%
 start_link() ->
     gen_server:start_link({local, ?JOBS_MGR_NAME}, ?MODULE, ?MODULE, []).
 
 -spec terminate(Why :: term(), State :: state()) -> ok.
 %% @private
-%
-% no matter why we're terminating, de-monitor everything we're watching
-%
+%%
+%% no matter why we're terminating, de-monitor everything we're watching
+%%
 terminate({invalid_state, Line}, State) ->
     _ = lager:error(
         "~s terminated due to invalid state:~b: ~p",
@@ -742,9 +728,9 @@ terminate(Why, State) ->
 %% ===================================================================
 
 -spec acquire_runner() -> rref() | {error, term()}.
-%
-% Acquires a Runner, adds a monitor to it, and returns it.
-%
+%%
+%% Acquires a Runner, adds a monitor to it, and returns it.
+%%
 acquire_runner() ->
     case riak_core_job_service:runner() of
         Runner when erlang:is_pid(Runner) ->
@@ -759,11 +745,11 @@ acquire_runner() ->
     Dest    :: queue | running | history | rref(),
     State   :: state())
         -> {ok | {error, term()}, state()}.
-%
-% Advance a Job to Dest.
-% When Passing in a RRef, be sure any job associated with it has been
-% separately disposed of beforehand, as it will be lost.
-%
+%%
+%% Advance a Job to Dest.
+%% When Passing in a RRef, be sure any job associated with it has been
+%% separately disposed of beforehand, as it will be lost.
+%%
 advance(queue, running, State)
         when    State#state.que#jq.c =:= 0
         orelse  State#state.que#rd.c >= State#state.rmax ->
@@ -790,6 +776,7 @@ advance(#jrec{} = JRec, queue, State) ->
         loc = c_store({JRec#jrec.id, queue}, State#state.loc),
         stats = inc_stat(queued, State#state.stats)})};
 
+%%%% not currently used, hide but maintain order for later use
 %%advance(#jrec{}, running, State)
 %%        when State#state.que#rd.c >= State#state.rmax ->
 %%    % this is a programming error, shouldn't have gotten here with run full
@@ -837,9 +824,9 @@ advance(Job, Dest, State) ->
     end.
 
 -spec app_config(App :: atom(), Key :: atom()) -> term().
-%
-% Returns the configured value for Key in the specified application scope.
-%
+%%
+%% Returns the configured value for Key in the specified application scope.
+%%
 app_config(App, ?JOB_SVC_QUEUE_LIMIT = Key) ->
     riak_core_job_service:app_config(App, Key, 0, ?JOB_SVC_DEFAULT_QUEUE);
 app_config(App, ?JOB_SVC_HIST_LIMIT = Key) ->
@@ -847,11 +834,35 @@ app_config(App, ?JOB_SVC_HIST_LIMIT = Key) ->
 app_config(App, Key) ->
     riak_core_job_service:app_config(App, Key).
 
+-spec cancel_running(RunRef :: rkey(), Kill :: boolean(), State :: state()) ->
+        {{ok, killed, job()} | {error, running, job()}, state()}.
+%%
+%% Cancel a running job, or report that we're not allowed to kill it.
+%%
+cancel_running(RunRef, true, State) ->
+    {#rrec{rref = RRef, jrec = JRec}, Run} = c_remove(RunRef, State#state.run),
+    % kill it right away, notify the originator after updates
+    _ = exit_runner(RRef, kill),
+    % RRef is permanently invalidated
+    JRIn = JRec#jrec{job = riak_core_job:update(killed, JRec#jrec.job)},
+    {ok, StateOut} = advance(JRIn, history,
+        State#state{run = Run, stats = inc_stat(killed, State#state.stats)}),
+    % get the updated job from history - it has to be there
+    % ... we actually know where, but use the API what's there
+    JROut = c_find(JRIn#jrec.id, StateOut#state.hist),
+    % NOW tell the owner what we did to their job
+    _ = notify(JROut, {?JOB_ERR_KILLED, cancel}),
+    {{ok, killed, JROut#jrec.job}, StateOut};
+
+cancel_running(RunRef, false, State) ->
+    #rrec{jrec = #jrec{job = RJob}} = c_find(RunRef, State#state.run),
+    {{error, running, RJob}, State}.
+
 -spec check_pending(State :: state()) -> state().
-%
-% Ensure that there's a 'pending' message in the inbox if there's background
-% work to be done.
-%
+%%
+%% Ensure that there's a 'pending' message in the inbox if there's background
+%% work to be done.
+%%
 check_pending(State)
         when    State#state.que#jq.c =:= 0
         andalso State#state.hist#jq.c =< State#state.hmax ->
@@ -860,9 +871,9 @@ check_pending(State) ->
     set_pending(State).
 
 -spec exit_runner(RRef :: rref(), Why :: term()) -> ok.
-%
-% De-monitors and exits a Runner.
-%
+%%
+%% De-monitors and exits a Runner.
+%%
 exit_runner(#rref{ref = Ref, pid = Runner}, Why) ->
     _ = erlang:demonitor(Ref, [flush]),
     _ = erlang:exit(Runner, Why),
@@ -870,11 +881,11 @@ exit_runner(#rref{ref = Ref, pid = Runner}, Why) ->
 
 -spec find_job_by_id(JobId :: jid(), State :: state())
         -> {ok, jloc(), jrec()} | false | {error, term()}.
-%
-% Find the current instance of the specified Job and its location.
-%
-% `false' is returned if the Job is not (or no longer) known to the Manager.
-%
+%%
+%% Find the current instance of the specified Job and its location.
+%%
+%% `false' is returned if the Job is not (or no longer) known to the Manager.
+%%
 find_job_by_id(JobId, State) ->
     case c_find(JobId, State#state.loc) of
         {_, JLoc} when erlang:is_reference(JLoc) ->
@@ -892,13 +903,14 @@ find_job_by_id(JobId, State) ->
 
 -spec inc_stat(stat_key() | [stat_key()], state()) -> state()
         ;     (stat_key() | [stat_key()], stats()) -> stats().
-%
-% Increment one or more statistics counters.
-%
+%%
+%% Increment one or more statistics counters.
+%%
 inc_stat(Stat, #state{stats = Stats} = State) ->
     State#state{stats = inc_stat(Stat, Stats)};
 inc_stat(Stat, Stats) ->
     ?StatsDict:update_counter(Stat, 1, Stats).
+%%%% not currently used, hide but maintain order for later use
 %%inc_stat(Stat, Stats) when not erlang:is_list(Stat) ->
 %%    ?StatsDict:update_counter(Stat, 1, Stats);
 %%inc_stat([Stat], Stats) ->
@@ -912,10 +924,10 @@ inc_stat(Stat, Stats) ->
     What    :: jrec() | rrec() | jque() | rdict() | state(),
     Why     :: term())
         -> term().
-%
-% Notifies whoever may care of the premature disposal of the job(s) in What
-% and returns Why.
-%
+%%
+%% Notifies whoever may care of the premature disposal of the job(s) in What
+%% and returns Why.
+%%
 notify(#state{que = Que, run = Run}, Why) ->
     _ = notify(Que, {?JOB_ERR_CANCELED, Why}),
     _ = notify(Run, {?JOB_ERR_KILLED, Why}),
@@ -946,20 +958,20 @@ notify(Coll, Why) ->
 
 -spec pending(State :: state())
         -> {ok | shutdown | {error, term()}, state()}.
-%
-% Dequeue and dispatch at most one job. If there are more jobs waiting, ensure
-% that we'll get to them after handling whatever may already be waiting.
-%
-% When the queue's caught up to concurrency capacity, prune the history if
-% needed, one entry per iteration. Once in 'shutdown' mode, the history is
-% completely ignored.
-%
-% Implementation Notes:
-%
-%   Queued job counts of zero, one, and more have their own distinct behavior,
-%   so they get their own function heads. As elsewhere, we let the compile
-%   figure out the best optimization.
-%
+%%
+%% Dequeue and dispatch at most one job. If there are more jobs waiting, ensure
+%% that we'll get to them after handling whatever may already be waiting.
+%%
+%% When the queue's caught up to concurrency capacity, prune the history if
+%% needed, one entry per iteration. Once in 'shutdown' mode, the history is
+%% completely ignored.
+%%
+%% Implementation Notes:
+%%
+%%   Queued job counts of zero, one, and more have their own distinct behavior,
+%%   so they get their own function heads. As elsewhere, we let the compile
+%%   figure out the best optimization.
+%%
 pending(#state{shutdown = true} = State)
         when State#state.run#rd.c == 0 andalso State#state.que#jq.c == 0 ->
     {shutdown, State};
@@ -999,17 +1011,17 @@ pending(State) ->
     {ok, State}.
 
 -spec release_runner(RRef :: rref()) -> ok.
-%
-% De-monitors and releases a Runner.
-%
+%%
+%% De-monitors and releases a Runner.
+%%
 release_runner(#rref{ref = Ref, pid = Runner}) ->
     _ = erlang:demonitor(Ref, [flush]),
     riak_core_job_service:release(Runner).
 
 -spec set_pending(State :: state()) -> state().
-%
-% Ensure that there's a 'pending' message in the inbox.
-%
+%%
+%% Ensure that there's a 'pending' message in the inbox.
+%%
 set_pending(#state{pending = false} = State) ->
     gen_server:cast(erlang:self(), pending),
     State#state{pending = true};
@@ -1018,9 +1030,9 @@ set_pending(State) ->
 
 -spec start_job(Runner :: pid(), Ref :: reference(), Job :: job())
         -> ok | {error, term()}.
-%
-% Wrapper around riak_core_job_runner:run/4 that fills in the blanks.
-%
+%%
+%% Wrapper around riak_core_job_runner:run/4 that fills in the blanks.
+%%
 start_job(Runner, Ref, Job) ->
     riak_core_job_runner:run(Runner, ?job_run_ctl_token,
         #mgrkey{mgr = erlang:self(), key = Ref}, Job).
@@ -1031,10 +1043,10 @@ start_job(Runner, Ref, Job) ->
     From    :: {pid(), term()},
     State   :: state())
         -> {ok | {error, term()}, state()} | {error, term(), state()}.
-%
-% Accept and dispatch, or reject, the specified Job, updating statistics.
-% On entry from the external call Phase is 'submit'; other phases are internal.
-%
+%%
+%% Accept and dispatch, or reject, the specified Job, updating statistics.
+%% On entry from the external call Phase is 'submit'; other phases are internal.
+%%
 submit_job(submit, _, _, #state{shutdown = true} = State) ->
     {{error, ?JOB_ERR_SHUTTING_DOWN}, inc_stat(rejected_shutdown, State)};
 
@@ -1073,17 +1085,17 @@ submit_job(false, _, _, State) ->
     {{error, ?JOB_ERR_REJECTED}, inc_stat(rejected, State)}.
 
 -spec update_job(MgrKey :: mgr_key(), Stat :: stat_key()) -> ok.
-%
-% Update a Job's Stat with the current time.
-%
+%%
+%% Update a Job's Stat with the current time.
+%%
 update_job(#mgrkey{mgr = Mgr, key = Key}, Stat) ->
     Update = {Key, update, Stat, riak_core_job:timestamp()},
     gen_server:cast(Mgr, Update).
 
 -spec update_job(MgrKey :: mgr_key(), Stat :: atom(), Info :: term()) -> ok.
-%
-% Update a Job's Stat with the current time and additional Info.
-%
+%%
+%% Update a Job's Stat with the current time and additional Info.
+%%
 update_job(#mgrkey{mgr = Mgr, key = Key}, Stat, Info) ->
     Update = {Key, update, Stat, riak_core_job:timestamp(), Info},
     gen_server:cast(Mgr, Update).
@@ -1091,48 +1103,47 @@ update_job(#mgrkey{mgr = Mgr, key = Key}, Stat, Info) ->
 %% ===================================================================
 %% Collections
 %% ===================================================================
-
-%
-% These collections provide a common interface to the assorted dictionaries
-% and queues in the state.
-% Among other things, they fail gracefully so for the most part their
-% results don't need to be checked, and their input and output patterns are
-% the same across types.
-% In all cases they raise an informative exception if any parameter does not
-% strictly match the expected type.
-% There are a couple of places where case statements are strongly typed to
-% result values that are indicative of what's already been put into a
-% collection, and if the wrong data was there they'd cause a case clause
-% exception, but it's hoped we won't hit that and the safety code would be
-% overly pessimistic.
-%
-% Implementation Notes:
-%
-%   These collections are specific to this module, they're not intended to be
-%   general purpose. For instance, inserting a key that already exists into a
-%   collection other than the location dictionary is an error and *may* be
-%   flagged as such, depending on how onerous it is to do so. Some of the
-%   state consistency checking may be removed in time ... or not.
-%
-%   For the most part, the collections functions do not call themselves
-%   recursively when peeling apart records. This is deliberate, since we
-%   assume that when a key (the usual culprit) is found within a typed record
-%   that we can trust its type, but if it's passed as a naked parameter we
-%   should verify the type with guards, some of which are hefty. Instead, the
-%   function code is duplicated, in the hope that the compiler will jump over
-%   the redundant type check and optimize away the duplicate.
-%   That's the plan, anyway.
-%
-%   Find, remove, and erase operations are always performed by the Key even
-%   if the entire record is provided, on the assumption that an update may be
-%   underway and the full record *may* not match.
-%
+%%
+%% These collections provide a common interface to the assorted dictionaries
+%% and queues in the state.
+%% Among other things, they fail gracefully so for the most part their
+%% results don't need to be checked, and their input and output patterns are
+%% the same across types.
+%% In all cases they raise an informative exception if any parameter does not
+%% strictly match the expected type.
+%% There are a couple of places where case statements are strongly typed to
+%% result values that are indicative of what's already been put into a
+%% collection, and if the wrong data was there they'd cause a case clause
+%% exception, but it's hoped we won't hit that and the safety code would be
+%% overly pessimistic.
+%%
+%% Implementation Notes:
+%%
+%%  These collections are specific to this module, they're not intended to be
+%%  general purpose. For instance, inserting a key that already exists into a
+%%  collection other than the location dictionary is an error and *may* be
+%%  flagged as such, depending on how onerous it is to do so. Some of the
+%%  state consistency checking may be removed in time ... or not.
+%%
+%%  For the most part, the collections functions do not call themselves
+%%  recursively when peeling apart records. This is deliberate, since we
+%%  assume that when a key (the usual culprit) is found within a typed record
+%%  that we can trust its type, but if it's passed as a naked parameter we
+%%  should verify the type with guards, some of which are hefty. Instead, the
+%%  function code is duplicated, in the hope that the compiler will jump over
+%%  the redundant type check and optimize away the duplicate.
+%%  That's the plan, anyway.
+%%
+%%  Find, remove, and erase operations are always performed by the Key even
+%%  if the entire record is provided, on the assumption that an update may be
+%%  underway and the full record *may* not match.
+%%
 
 -spec c_erase(Key :: ckey() | crec(), Coll :: coll()) -> coll().
-%
-% Erase Key/Rec from collection Coll.
-% If you care whether it was there in the first place, use c_remove/2.
-%
+%%
+%% Erase Key/Rec from collection Coll.
+%% If you care whether it was there in the first place, use c_remove/2.
+%%
 c_erase({Key, Val}, #ld{d = D} = Coll) when ?is_job_loc(Val) ->
     Coll#ld{d = dict:erase(Key, D)};
 c_erase(Key, #ld{d = D} = Coll) when ?is_job_gid(Key) ->
@@ -1147,31 +1158,32 @@ c_erase(#rrec{rref = #rref{ref = Key}}, #rd{d = D} = Coll) ->
 c_erase(Key, #rd{d = D} = Coll) when erlang:is_reference(Key) ->
     Dict = dict:erase(Key, D),
     Coll#rd{c = dict:size(Dict), d = Dict};
-c_erase(Key, #jq{c = 0} = Coll) when ?is_job_gid(Key) ->
-    Coll;
-c_erase(#jrec{id = Key}, #jq{c = C, d = D} = Coll) ->
-    List = queue:to_list(D),
-    case lists:keytake(Key, #jrec.id, List) of
-        {value, #jrec{}, Que} ->
-            Coll#jq{c = (C - 1), d = queue:from_list(Que)};
-        false ->
-            Coll
-    end;
-c_erase(Key, #jq{c = C, d = D} = Coll) when ?is_job_gid(Key) ->
-    List = queue:to_list(D),
-    case lists:keytake(Key, #jrec.id, List) of
-        {value, #jrec{}, Que} ->
-            Coll#jq{c = (C - 1), d = queue:from_list(Que)};
-        false ->
-            Coll
-    end;
+%%%% not currently used, hide but maintain order for later use
+%%c_erase(Key, #jq{c = 0} = Coll) when ?is_job_gid(Key) ->
+%%    Coll;
+%%c_erase(#jrec{id = Key}, #jq{c = C, d = D} = Coll) ->
+%%    List = queue:to_list(D),
+%%    case lists:keytake(Key, #jrec.id, List) of
+%%        {value, #jrec{}, Que} ->
+%%            Coll#jq{c = (C - 1), d = queue:from_list(Que)};
+%%        false ->
+%%            Coll
+%%    end;
+%%c_erase(Key, #jq{c = C, d = D} = Coll) when ?is_job_gid(Key) ->
+%%    List = queue:to_list(D),
+%%    case lists:keytake(Key, #jrec.id, List) of
+%%        {value, #jrec{}, Que} ->
+%%            Coll#jq{c = (C - 1), d = queue:from_list(Que)};
+%%        false ->
+%%            Coll
+%%    end;
 c_erase(Key, Coll) ->
     ?UNMATCHED_ARGS([Key, Coll]).
 
 -spec c_find(Key :: ckey() | crec(), Coll :: coll()) -> crec() | false.
-%
-% Return Rec from collection Coll, or false if it is not found.
-%
+%%
+%% Return Rec from collection Coll, or false if it is not found.
+%%
 c_find({Key, Val}, #ld{} = Coll) when ?is_job_loc(Val) ->
     c_find(Key, Coll);
 c_find(Key, #ld{d = D}) when ?is_job_gid(Key) ->
@@ -1211,9 +1223,9 @@ c_find(Key, Coll) ->
 -spec c_fold(
     Fun :: fun((crec(), term()) -> term()), Accum :: term(), Coll :: coll())
         -> term().
-%
-% Fold over all of the records in Coll.
-%
+%%
+%% Fold over all of the records in Coll.
+%%
 c_fold(Fun, Accum, #ld{d = D}) when erlang:is_function(Fun, 2) ->
     dict:fold(fun(K, V, A) -> Fun({K, V}, A) end, Accum, D);
 c_fold(Fun, Accum, #rd{c = 0}) when erlang:is_function(Fun, 2) ->
@@ -1229,9 +1241,10 @@ c_fold(Fun, Accum, Coll) ->
 
 -spec c_remove(Key :: ckey() | crec(), Coll :: coll())
         -> {crec() | false, coll()}.
-%
-% Remove and return Rec from collection Coll, or false if it is not found.
-%
+%%
+%% Remove and return Rec from collection Coll, or false if it is not found.
+%%
+%%%% not currently used, hide but maintain order for later use
 %%c_remove({Key, Val}, #ld{} = Coll) when ?is_job_loc(Val) ->
 %%    c_remove(Key, Coll);
 %%c_remove(Key, #ld{d = D} = Coll) when ?is_job_gid(Key) ->
@@ -1281,9 +1294,9 @@ c_remove(Key, Coll) ->
     ?UNMATCHED_ARGS([Key, Coll]).
 
 -spec c_store(Rec :: crec(), Coll :: coll()) -> coll().
-%
-% Add/Update Rec in collection Coll.
-%
+%%
+%% Add/Update Rec in collection Coll.
+%%
 c_store({Key, Val}, #ld{d = D} = Coll)
         when ?is_job_loc(Val) andalso ?is_job_gid(Key) ->
     Coll#ld{d = dict:store(Key, Val, D)};
@@ -1299,10 +1312,10 @@ c_store(Rec, Coll) ->
     ?UNMATCHED_ARGS([Rec, Coll]).
 
 -spec q_pop(Que :: jque()) -> {jrec() | false, jque()}.
-%
-% Remove and return the record at the front of Que, or false if the queue is
-% empty.
-%
+%%
+%% Remove and return the record at the front of Que, or false if the queue is
+%% empty.
+%%
 q_pop(#jq{c = 0} = Que) ->
     {false, Que};
 q_pop(#jq{c = C, d = D} = Que) ->
