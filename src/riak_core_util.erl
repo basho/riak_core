@@ -360,19 +360,22 @@ multi_keydelete(KeysToDelete, N, TupleList) ->
 
 %% @doc Function composition: returns a function that is the composition of
 %% `F' and `G'.
--spec compose(fun(), fun()) -> fun().
+-spec compose(fun((X) -> X), fun((X) -> X)) -> fun((X) -> X).
 compose(F, G) when is_function(F), is_function(G) ->
     fun(X) ->
         F(G(X))
     end.
 
 %% @doc Function composition: returns a function that is the composition of all
-%% functions in the `Funs' list.
--spec compose([fun()]) -> fun().
+%% functions in the `Funs' list. Note that functions are composed from right to
+%% left, so the final function in the `Funs' will be the first one invoked when
+%% invoking the composed function.
+-spec compose([fun((X) -> X)]) -> fun((X) -> X).
 compose([Fun]) ->
     Fun;
-compose([Fun|Funs]) ->
-    lists:foldl(fun compose/2, Fun, Funs).
+compose(Funs) when is_list(Funs) ->
+    [Fun|Rest] = lists:reverse(Funs),
+    lists:foldl(fun compose/2, Fun, Rest).
 
 %% @doc Invoke function `F' over each element of list `L' in parallel,
 %%      returning the results in the same order as the input list.
@@ -962,8 +965,14 @@ compose_test_() ->
     Upper = fun string:to_upper/1,
     Reverse = fun lists:reverse/1,
     Strip = fun(S) -> string:strip(S, both, $!) end,
-    Composed = compose([Upper, Reverse, Strip]),
-    ?_assertEqual("DLROW OLLEH", Composed("Hello world!")).
+    StripReverseUpper = compose([Upper, Reverse, Strip]),
+
+    Increment = fun(N) -> N + 1 end,
+    Double = fun(N) -> N * 2 end,
+    Square = fun(N) -> N * N end,
+    SquareDoubleIncrement = compose([Increment, Double, Square]),
+    [?_assertEqual("DLROW OLLEH", StripReverseUpper("Hello world!")),
+     ?_assertEqual(Increment(Double(Square(3))), SquareDoubleIncrement(3))].
 
 pmap_test_() ->
     Fgood = fun(X) -> 2 * X end,
