@@ -80,7 +80,16 @@
 %%%  set_metadata_pid(_Pid) ->
 %%%      erlang:nif_error({error, not_loaded}).
 %%%  '''
-
+%%%
+%%%      == Error Handling ==
+%%%
+%%%      If any callback generates an exception, the response from
+%%%      `catch' will be logged and (where relevant) communicated to
+%%%      the caller.
+%%%
+%%%      If the registration or response handler callback defined by
+%%%      the consumer returns anything other than `ok', the service
+%%%      process will terminate.
 
 -module(riak_core_info_service).
 

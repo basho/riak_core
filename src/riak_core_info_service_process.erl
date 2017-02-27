@@ -22,10 +22,13 @@
 -module(riak_core_info_service_process).
 -behaviour(gen_server).
 
+-type callback() :: riak_core_info_service:callback().
+
 -record(state, {
-    service_provider = undefined :: riak_core_info_service:callback(),
-    response_handler = undefined :: riak_core_info_service:callback(),
-    shutdown = undefined :: riak_core_info_service:callback()
+    registration :: callback(),
+    service_provider :: callback(),
+    response_handler :: callback(),
+    shutdown :: callback()
 }).
 
 -export([start_link/4,
@@ -43,16 +46,22 @@
 
 %% `gen_server' implementation
 
-start_link(Registration, Shutdown, Provider, ResponseHandler) ->
-    State = #state{shutdown = Shutdown,
+%% All arguments must be fully-defined callbacks.
+start_link(Registration, Shutdown, Provider, ResponseHandler)
+  when is_tuple(Registration),
+       is_tuple(Shutdown),
+       is_tuple(Provider),
+       is_tuple(ResponseHandler) ->
+    State = #state{registration = Registration,
+                   shutdown = Shutdown,
                    service_provider = Provider,
                    response_handler = ResponseHandler},
-    {ok, Pid} = gen_server:start_link(?MODULE, State, []),
-    apply_callback(Registration, [Pid]),
-    {ok, Pid}.
+    gen_server:start_link(?MODULE, State, []).
 
-init(State) ->
-    {ok, State}.
+init(#state{registration=Registration}=State) ->
+    %% Registration callback *must* return `ok' or this process will
+    %% shut down
+    handle_consumer_response(apply_callback(Registration, [self()]), registration, State).
 
 handle_info({invoke, ProviderParams, HandlerContext}, State) ->
     handle_invoke_message(ProviderParams, HandlerContext, State);
@@ -81,20 +90,55 @@ terminate_not_implemented(Request, State) ->
 handle_invoke_message(ProviderParams, HandlerContext,
                       #state{service_provider = Provider,
                              response_handler = ResponseHandler } = State) ->
-    Result = apply_callback(Provider, ProviderParams),
+    %% At this layer we don't care much whether a callback succeeded
+    {_, Result} = apply_callback(Provider, ProviderParams),
+
     Reply = {Result, ProviderParams, HandlerContext},
-    apply_callback(ResponseHandler, [Reply]),
-    {noreply, State}.
+    handle_consumer_response(apply_callback(ResponseHandler, [Reply]), response, State).
 
 handle_shutdown_message(#state{shutdown = Shutdown}=State) ->
     apply_callback(Shutdown, [self()]),
     {stop, normal, State}.
 
-apply_callback(undefined, _CallSpecificArgs) ->
-    ok;
+%% The original response to the callback will be wrapped in an `ok' or
+%% `exit' tuple, primarily so that the service process can terminate
+%% if something goes wrong during registration.
+-spec apply_callback(callback(), list(term())) -> {ok, term()} |
+                                                  {exit, term()}.
 apply_callback({Mod, Fun, StaticArgs}, CallSpecificArgs) ->
     %% Invoke the callback, passing static + call-specific args for this call
-    erlang:apply(Mod, Fun, StaticArgs ++ CallSpecificArgs).
+    Args = StaticArgs ++ CallSpecificArgs,
+    _ = case (catch erlang:apply(Mod, Fun, Args)) of
+            {'EXIT', {Reason, _Stack}}=Exit->
+                %% provider called erlang:error(Reason)
+                lager:warning("~p:~p/~B exited (~p)",
+                              [Mod, Fun, length(Args), Reason]),
+                {error, Exit};
+            {'EXIT', Why}=Exit ->
+                %% provider called erlang:exit(Why)!
+                lager:warning("~p:~p/~B exited (~p)",
+                              [Mod, Fun, length(Args), Why]),
+                {error, Exit};
+            Result ->
+                {ok, Result}
+        end.
+
+handle_consumer_response({ok, ok}, response, State) ->
+    {noreply, State};
+handle_consumer_response({ok, ok}, registration, State) ->
+    {ok, State};
+handle_consumer_response({ok, Other}, response, State) ->
+    lager:error("Response handler gave ~p result, shutting down", [Other]),
+    {stop, invalid_return, State};
+handle_consumer_response({ok, Other}, registration, _State) ->
+    lager:error("Registration gave ~p result, shutting down", [Other]),
+    {stop, invalid_return};
+handle_consumer_response(_Error, response, State) ->
+    lager:error("Response handler failed, shutting down"),
+    {stop, response_handler_failure, State};
+handle_consumer_response(_Error, registration, _State) ->
+    lager:error("Registration failed, shutting down"),
+    {stop, registration_error}.
 
 -ifdef(TEST).
 callback_target() ->
@@ -107,10 +151,10 @@ shutdown_target(Key, _Pid) ->
     put(Key, true).
 
 callback1_test() ->
-    ?assertEqual(ok, apply_callback({?MODULE, callback_target, []}, [])).
+    ?assertEqual({ok, ok}, apply_callback({?MODULE, callback_target, []}, [])).
 
 callback2_test() ->
-    ?assertEqual(ok, apply_callback({?MODULE, callback_target, [static]}, [dynamic])).
+    ?assertEqual({ok, ok}, apply_callback({?MODULE, callback_target, [static]}, [dynamic])).
 
 shutdown_test() ->
     Pkey = '_rcisp_test_shutdown',
