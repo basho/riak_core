@@ -73,7 +73,7 @@ terminate(_Reason, State) ->
     handle_shutdown_message(State).
 
 code_change(_OldVsn, State, _Extra) ->
-    State.
+    {ok, State}.
 
 handle_call(Request, _From, State) ->
     terminate_not_implemented(Request, State).
