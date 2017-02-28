@@ -122,12 +122,88 @@ start_service(Registration, Shutdown, Provider, Handler) ->
 -define(HANDLER(Key), {?MODULE, response, [self(), Key]}).
 
 -define(GET_RING, {riak_core_ring, fresh, [64, ?NODE_NAME]}).
+-define(CRASH, {?MODULE, crashme, []}).
+
+crashme(_) ->
+    exit(for_testing).
+
+sup_wrapper() ->
+    {ok, Sup} = riak_core_info_service_sup:start_link(),
+    receive
+        sup_kill ->
+            exit(Sup, kill)
+    end.
+
+wait_for_no_sup(_Regname, 0) ->
+    throw(supervisor_did_not_die);
+wait_for_no_sup(Regname, Count) ->
+    case whereis(Regname) of
+        undefined ->
+            ok;
+        _ ->
+            timer:sleep(50),
+            wait_for_no_sup(Regname, Count-1)
+    end.
+
+wait_for_sup(_Regname, 0) ->
+    throw(no_supervisor);
+wait_for_sup(Regname, Count) ->
+    case whereis(Regname) of
+        undefined ->
+            timer:sleep(50),
+            wait_for_sup(Regname, Count-1);
+        _ ->
+            ok
+    end.
 
 setup() ->
-    riak_core_info_service_sup:start_link().
+    wait_for_no_sup(riak_core_info_service_sup, 5),
+    Pid = spawn(fun sup_wrapper/0),
+    wait_for_sup(riak_core_info_service_sup, 5),
+    Pid.
+
+teardown(Pid) ->
+    Pid ! sup_kill.
+
+exception_test() ->
+    Sup = setup(),
+    Key = 'exception_test',
+    Context = '_waydownwego',
+
+    {ok, Pid0} = riak_core_info_service:start_service(?REG(Key), ?SHUT(Key), ?GET_RING, ?CRASH),
+
+    Pid = receive
+              {register, {Key, SvcPid}} ->
+                  SvcPid;
+              Msg0 ->
+                  io:format(user, "Unknown msg: ~p~n", [Msg0]),
+                  throw(unexpected_msg)
+          after 1000 ->
+                  throw(timeout)
+          end,
+
+    ?assert(is_process_alive(Pid)),
+    ?assertEqual(Pid0, Pid),
+    Pid ! {invoke, [], Context},
+
+    Result = receive
+                 {shutdown, {Key, Pid}} ->
+                     shutdown;
+                 Msg1 ->
+                     io:format(user, "Unknown msg expecting shutdown: ~p~n", [Msg1]),
+                     element(1, Msg1)
+             after 1000 ->
+                     throw(timeout)
+             end,
+
+
+    %% Yes, if the ring structure changes again, this first assertion will fail
+    ?assertEqual(shutdown, Result),
+    teardown(Sup),
+    ok.
 
 receive_ring_test() ->
-    setup(), %% should make this a fixture
+    Sup = setup(),
     Key = 'test_receive_ring',
     Context = '_mesojedi',
 
@@ -160,7 +236,8 @@ receive_ring_test() ->
     %% Yes, if the ring structure changes again, this first assertion will fail
     ?assertEqual(chstate_v2, element(1, Ring)),
     ?assertEqual(?NODE_NAME, element(2, Ring)),
-    pass.
+    teardown(Sup),
+    ok.
 
 
 response(Pid, Key1, {Result, [], Context}) ->
