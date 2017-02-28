@@ -27,6 +27,8 @@
 %% Application callbacks
 -export([start/2, stop/1]).
 
+-export([start_eleveldb_info_service/0]).
+
 %% ===================================================================
 %% Application callbacks
 %% ===================================================================
@@ -150,7 +152,7 @@ register_capabilities() ->
 %% TODO: This belongs in riak_kv - an issue will be created to move it, but time constraints.
 start_eleveldb_info_service() ->
     Registration = {eleveldb, set_metadata_pid, []},
-    Shutdown = undefined, %%{eleveldb, metadata_service_shutdown, []}
+    Shutdown = {?MODULE, start_eleveldb_info_service, []},
     InfoSource = {riak_core_bucket, get_bucket, []},
     ResultsHandler = {eleveldb_metadata, handle_metadata_response, []},
     {ok, _Pid} = riak_core_info_service:start_service(Registration, Shutdown, InfoSource, ResultsHandler),
