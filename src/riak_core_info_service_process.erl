@@ -97,14 +97,14 @@ handle_invoke_message(ProviderParams, HandlerContext,
     handle_consumer_response(apply_callback(ResponseHandler, [Reply]), response, State).
 
 handle_shutdown_message(#state{shutdown = Shutdown}=State) ->
-    apply_callback(Shutdown, [self()]),
+    _ = apply_callback(Shutdown, [self()]),
     {stop, normal, State}.
 
 %% The original response to the callback will be wrapped in an `ok' or
 %% `exit' tuple, primarily so that the service process can terminate
 %% if something goes wrong during registration.
 -spec apply_callback(callback(), list(term())) -> {ok, term()} |
-                                                  {exit, term()}.
+                                                  {error, term()}.
 apply_callback({Mod, Fun, StaticArgs}, CallSpecificArgs) ->
     %% Invoke the callback, passing static + call-specific args for this call
     Args = StaticArgs ++ CallSpecificArgs,
