@@ -39,7 +39,7 @@
 %%%      <ol><li>Each item, if any, provided in the list in the 3rd element of the registration tuple</li>
 %%%      <li>The result from `Provider' wrapped in a 3-tuple:
 %%%        <ol><li>The result</li>
-%%%            <li>The list of parameters passed to `Provider'</li>
+%%%            <li>The list of parameters passed to `Provider' via the invoke message</li>
 %%%            <li>The opaque `HandlerContext' (see {@section Request Message})</li>
 %%%        </ol></li></ol>
 %%%
@@ -111,3 +111,68 @@
 
 start_service(Registration, Shutdown, Provider, Handler) ->
     riak_core_info_service_sup:start_service(Registration, Shutdown, Provider, Handler).
+
+-ifdef(TEST).
+-compile(export_all).
+-include_lib("eunit/include/eunit.hrl").
+
+-define(NODE_NAME, a_node).
+-define(REG(Key), {?MODULE, register, [self(), Key]}).
+-define(SHUT(Key), {?MODULE, shutdown, [self(), Key]}).
+-define(HANDLER(Key), {?MODULE, response, [self(), Key]}).
+
+-define(GET_RING, {riak_core_ring, fresh, [64, ?NODE_NAME]}).
+
+setup() ->
+    riak_core_info_service_sup:start_link().
+
+receive_ring_test() ->
+    setup(), %% should make this a fixture
+    Key = 'test_receive_ring',
+    Context = '_mesojedi',
+
+    {ok, Pid0} = riak_core_info_service:start_service(?REG(Key), ?SHUT(Key), ?GET_RING, ?HANDLER(Key)),
+
+    Pid = receive
+              {register, {Key, SvcPid}} ->
+                  SvcPid;
+              Msg0 ->
+                  io:format(user, "Unknown msg: ~p~n", [Msg0]),
+                  throw(unexpected_msg)
+          after 1000 ->
+                  throw(timeout)
+          end,
+
+    ?assert(is_process_alive(Pid)),
+    ?assertEqual(Pid0, Pid),
+    Pid ! {invoke, [], Context},
+
+    Ring = receive
+               {response, {Key, {Context, MyRing}}} ->
+                   MyRing;
+              Msg1 ->
+                  io:format(user, "Unknown msg expecting ring: ~p~n", [Msg1]),
+                  throw(unexpected_msg)
+           after 1000 ->
+                  throw(timeout)
+           end,
+
+    %% Yes, if the ring structure changes again, this first assertion will fail
+    ?assertEqual(chstate_v2, element(1, Ring)),
+    ?assertEqual(?NODE_NAME, element(2, Ring)),
+    pass.
+
+
+response(Pid, Key1, {Result, [], Context}) ->
+    Pid ! {response, {Key1, {Context, Result}}},
+    ok.
+
+register(Pid, Key, SvcPid) ->
+    Pid ! {register, {Key, SvcPid}},
+    ok.
+
+shutdown(Pid, Key, SvcPid) ->
+    Pid ! {shutdown, {Key, SvcPid}},
+    ok.
+
+-endif.
