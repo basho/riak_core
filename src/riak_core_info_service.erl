@@ -124,9 +124,9 @@ start_service(Registration, Shutdown, Provider, Handler) ->
 -define(GET_RING, {riak_core_ring, fresh, [64, ?NODE_NAME]}).
 -define(CRASH, {?MODULE, crashme, []}).
 
-crashme(_) ->
-    exit(for_testing).
-
+%% `supervisor` module does not supply a `start` interface, only
+%% `start_link`, so we use a process 'twixt us and the
+%% supervisor to start it, kill it, and take a dive
 sup_wrapper() ->
     {ok, Sup} = riak_core_info_service_sup:start_link(),
     receive
@@ -134,37 +134,69 @@ sup_wrapper() ->
             exit(Sup, kill)
     end.
 
-wait_for_no_sup(_Regname, 0) ->
-    throw(supervisor_did_not_die);
-wait_for_no_sup(Regname, Count) ->
-    case whereis(Regname) of
-        undefined ->
-            ok;
-        _ ->
-            timer:sleep(50),
-            wait_for_no_sup(Regname, Count-1)
-    end.
+%% Launching and terminating the supervisor is an async operation with
+%% all the non-determinism that that implies. So, we wait.
+sup_wait(Name, Fun) ->
+    sup_wait(Name, Fun, Fun(whereis(Name)), 5).
 
-wait_for_sup(_Regname, 0) ->
-    throw(no_supervisor);
-wait_for_sup(Regname, Count) ->
-    case whereis(Regname) of
-        undefined ->
-            timer:sleep(50),
-            wait_for_sup(Regname, Count-1);
-        _ ->
+sup_wait(_Name, _Fun, ok, _Count) ->
+    ok;
+sup_wait(_Name, Fun, wait, 0) ->
+    throw(Fun(throw));
+sup_wait(Name, Fun, wait, Count) ->
+    timer:sleep(50),
+    sup_wait(Name, Fun, Fun(whereis(Name)), Count-1).
+
+%% We're very selective about which messages to consider for these
+%% tests, but still, let's throw out extraneous messages from earlier
+%% tests
+flush_messages() ->
+    receive
+        _ -> flush_messages()
+    after 0 ->
             ok
     end.
 
 setup() ->
-    wait_for_no_sup(riak_core_info_service_sup, 5),
+    WaitTerminated = fun(undefined) -> ok;
+                        (throw) -> sup_did_not_die;
+                        (_) -> wait
+                     end,
+    WaitStarted    = fun(undefined) -> wait;
+                        (throw) -> sup_did_not_start;
+                        (_) -> ok
+                     end,
+    flush_messages(),
+
+    sup_wait(riak_core_info_service_sup, WaitTerminated),
     Pid = spawn(fun sup_wrapper/0),
-    wait_for_sup(riak_core_info_service_sup, 5),
+    sup_wait(riak_core_info_service_sup, WaitStarted),
+
     Pid.
 
 teardown(Pid) ->
     Pid ! sup_kill.
 
+%% In the middle of a long run of unit tests, there may be any number
+%% of unrelated messages arriving in our mailbox. Ignore anything that
+%% doesn't match the patterns we generate, send the rest to the
+%% function argument to decide whether it's what we expected.
+my_receive(Fun) ->
+    receive
+        {response, _}=Msg ->
+            Fun(Msg);
+        {register, _}=Msg ->
+            Fun(Msg);
+        {shutdown, _}=Msg ->
+            Fun(Msg);
+        _ ->
+            my_receive(Fun)
+    after 1000 ->
+            throw(timeout)
+    end.
+
+%% Define a response handler function which crashes, verify that we
+%% see the shutdown message we expect
 exception_test() ->
     Sup = setup(),
     Key = 'exception_test',
@@ -172,36 +204,30 @@ exception_test() ->
 
     {ok, Pid0} = riak_core_info_service:start_service(?REG(Key), ?SHUT(Key), ?GET_RING, ?CRASH),
 
-    Pid = receive
-              {register, {Key, SvcPid}} ->
-                  SvcPid;
-              Msg0 ->
-                  io:format(user, "Unknown msg: ~p~n", [Msg0]),
-                  throw(unexpected_msg)
-          after 1000 ->
-                  throw(timeout)
-          end,
+    Pid = my_receive(
+            fun({register, {AKey, SvcPid}}) when Key == AKey->
+                    SvcPid;
+                (Msg) ->
+                     throw({unexpected_message, Msg})
+            end),
 
     ?assert(is_process_alive(Pid)),
     ?assertEqual(Pid0, Pid),
     Pid ! {invoke, [], Context},
 
-    Result = receive
-                 {shutdown, {Key, Pid}} ->
-                     shutdown;
-                 Msg1 ->
-                     io:format(user, "Unknown msg expecting shutdown: ~p~n", [Msg1]),
-                     element(1, Msg1)
-             after 1000 ->
-                     throw(timeout)
-             end,
-
+    Result = my_receive(
+               fun({shutdown, {AKey, _Pid}}) when Key == AKey ->
+                       shutdown;
+                  (Msg) ->
+                       throw({unexpected_message, Msg})
+            end),
 
     %% Yes, if the ring structure changes again, this first assertion will fail
     ?assertEqual(shutdown, Result),
     teardown(Sup),
     ok.
 
+%% Ask for a fresh ring
 receive_ring_test() ->
     Sup = setup(),
     Key = 'test_receive_ring',
@@ -209,29 +235,24 @@ receive_ring_test() ->
 
     {ok, Pid0} = riak_core_info_service:start_service(?REG(Key), ?SHUT(Key), ?GET_RING, ?HANDLER(Key)),
 
-    Pid = receive
-              {register, {Key, SvcPid}} ->
-                  SvcPid;
-              Msg0 ->
-                  io:format(user, "Unknown msg: ~p~n", [Msg0]),
-                  throw(unexpected_msg)
-          after 1000 ->
-                  throw(timeout)
-          end,
+    Pid = my_receive(
+            fun({register, {AKey, SvcPid}}) when Key == AKey ->
+                    SvcPid;
+                (Msg) ->
+                     throw({unexpected_message, Msg})
+            end),
 
     ?assert(is_process_alive(Pid)),
     ?assertEqual(Pid0, Pid),
     Pid ! {invoke, [], Context},
 
-    Ring = receive
-               {response, {Key, {Context, MyRing}}} ->
-                   MyRing;
-              Msg1 ->
-                  io:format(user, "Unknown msg expecting ring: ~p~n", [Msg1]),
-                  throw(unexpected_msg)
-           after 1000 ->
-                  throw(timeout)
-           end,
+    Ring = my_receive(
+             fun({response, {AKey, {AContext, MyRing}}})
+                   when Key == AKey, Context == AContext ->
+                     MyRing;
+                (Msg) ->
+                     throw({unexpected_message, Msg})
+             end),
 
     %% Yes, if the ring structure changes again, this first assertion will fail
     ?assertEqual(chstate_v2, element(1, Ring)),
@@ -239,6 +260,8 @@ receive_ring_test() ->
     teardown(Sup),
     ok.
 
+crashme(_) ->
+    exit(for_testing).
 
 response(Pid, Key1, {Result, [], Context}) ->
     Pid ! {response, {Key1, {Context, Result}}},
