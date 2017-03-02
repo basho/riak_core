@@ -1428,7 +1428,8 @@ legacy_reconcile(MyNodeName, StateA, StateB) ->
         vclock:merge([StateA#chstate.vclock,
                 StateB#chstate.vclock])),
     CHRing = chash:merge_rings(StateA#chstate.chring,StateB#chstate.chring),
-    Meta = merge_meta(StateA#chstate.meta, StateB#chstate.meta),
+    log_ring_result(CHRing),
+    Meta = merge_meta({StateA#chstate.nodename, StateA#chstate.meta}, {StateB#chstate.nodename, StateB#chstate.meta}),
     #chstate{nodename=MyNodeName,
              vclock=VClock,
              chring=CHRing,
@@ -1449,15 +1450,34 @@ internal_ring_changed(Node, CState0) ->
     end.
 
 %% @private
-merge_meta(M1,M2) ->
-    dict:merge(fun(_,D1,D2) -> pick_val(D1,D2) end, M1, M2).
+merge_meta({N1,M1}, {N2,M2}) ->
+    Meta = dict:merge(fun(_,D1,D2) -> pick_val({N1,D1}, {N2,D2}) end, M1, M2),
+    log_meta_merge(M1, M2, Meta),
+    Meta.
 
 %% @private
-pick_val(M1,M2) ->
-    case M1#meta_entry.lastmod > M2#meta_entry.lastmod of
+pick_val({N1,M1}, {N2,M2}) ->
+    case {M1#meta_entry.lastmod, N1} > {M2#meta_entry.lastmod, N2} of
         true -> M1;
         false -> M2
     end.
+
+%% @private
+%% Log ring metadata input and result for debug purposes
+log_meta_merge(M1, M2, Meta) ->
+    lager:debug("Meta A: ~p", [M1]),
+    lager:debug("Meta B: ~p", [M2]),
+    lager:debug("Meta result: ~p", [Meta]).
+
+%% @private
+%% Log result of a ring reconcile. In the case of ring churn,
+%% subsequent log messages will allow us to track ring versions.
+%% Handle legacy rings as well.
+log_ring_result(#chstate_v2{vclock=V,members=Members,next=Next}) ->
+    lager:debug("Updated ring vclock: ~p, Members: ~p, Next: ~p", 
+        [V, Members, Next]);
+log_ring_result(Ring) ->
+    lager:debug("Ring: ~p", [Ring]).
 
 %% @private
 internal_reconcile(State, OtherState) ->
@@ -1513,9 +1533,11 @@ reconcile_divergent(VNode, StateA, StateB) ->
     VClock = vclock:increment(VNode, vclock:merge([StateA?CHSTATE.vclock,
                                                    StateB?CHSTATE.vclock])),
     Members = reconcile_members(StateA, StateB),
-    Meta = merge_meta(StateA?CHSTATE.meta, StateB?CHSTATE.meta),
+    Meta = merge_meta({StateA?CHSTATE.nodename, StateA?CHSTATE.meta}, {StateB?CHSTATE.nodename, StateB?CHSTATE.meta}),
     NewState = reconcile_ring(StateA, StateB, get_members(Members)),
-    NewState?CHSTATE{vclock=VClock, members=Members, meta=Meta}.
+    NewState1 = NewState?CHSTATE{vclock=VClock, members=Members, meta=Meta},
+    log_ring_result(NewState1),
+    NewState1.
 
 %% @private
 %% @doc Merge two members list using status vector clocks when possible,
@@ -1831,17 +1853,17 @@ metadata_inequality_test() ->
     Ring1 = update_meta(key,val,Ring0),
     ?assertNot(equal_rings(Ring0,Ring1)),
     ?assertEqual(Ring1?CHSTATE.meta,
-                 merge_meta(Ring0?CHSTATE.meta,Ring1?CHSTATE.meta)),
+                 merge_meta({'node0', Ring0?CHSTATE.meta}, {'node1', Ring1?CHSTATE.meta})),
     timer:sleep(1001), % ensure that lastmod is at least a second later
     Ring2 = update_meta(key,val2,Ring1),
     ?assertEqual(get_meta(key,Ring2),
                  get_meta(key,?CHSTATE{meta=
-                            merge_meta(Ring1?CHSTATE.meta,
-                                       Ring2?CHSTATE.meta)})),
+                            merge_meta({'node1',Ring1?CHSTATE.meta},
+                                       {'node2',Ring2?CHSTATE.meta})})),
     ?assertEqual(get_meta(key,Ring2),
                  get_meta(key,?CHSTATE{meta=
-                            merge_meta(Ring2?CHSTATE.meta,
-                                       Ring1?CHSTATE.meta)})).
+                            merge_meta({'node2',Ring2?CHSTATE.meta},
+                                       {'node1',Ring1?CHSTATE.meta})})).
 
 metadata_remove_test() ->
     Ring0 = fresh(2, node()),
@@ -1850,8 +1872,8 @@ metadata_remove_test() ->
     timer:sleep(1001), % ensure that lastmod is at least one second later
     Ring2 = remove_meta(key,Ring1),
     ?assertEqual(undefined, get_meta(key, Ring2)),
-    ?assertEqual(undefined, get_meta(key, ?CHSTATE{meta=merge_meta(Ring1?CHSTATE.meta, Ring2?CHSTATE.meta)})),
-    ?assertEqual(undefined, get_meta(key, ?CHSTATE{meta=merge_meta(Ring2?CHSTATE.meta, Ring1?CHSTATE.meta)})).
+    ?assertEqual(undefined, get_meta(key, ?CHSTATE{meta=merge_meta({'node1',Ring1?CHSTATE.meta}, {'node2',Ring2?CHSTATE.meta})})),
+    ?assertEqual(undefined, get_meta(key, ?CHSTATE{meta=merge_meta({'node2',Ring2?CHSTATE.meta}, {'node1',Ring1?CHSTATE.meta})})).
 
 rename_test() ->
     Ring0 = fresh(2, node()),
