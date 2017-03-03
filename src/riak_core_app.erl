@@ -155,5 +155,10 @@ start_eleveldb_info_service() ->
     Shutdown = {eleveldb, remove_metadata_pid, []},
     InfoSource = {riak_core_bucket, get_bucket, []},
     ResultsHandler = {eleveldb_metadata, handle_metadata_response, []},
-    {ok, _Pid} = riak_core_info_service:start_service(Registration, Shutdown, InfoSource, ResultsHandler),
-    ok.
+    case riak_core_info_service:start_service(Registration, Shutdown, InfoSource, ResultsHandler) of
+        {ok, _Pid} ->
+            ok;
+        {error, Error} ->
+            lager:warning("Info service failed to register for eleveldb: ~p", [Error]),
+            ok
+    end.
