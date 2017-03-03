@@ -360,8 +360,8 @@ multi_keydelete(KeysToDelete, N, TupleList) ->
 
 %% @doc Function composition: returns a function that is the composition of
 %% `F' and `G'.
--spec compose(fun((X) -> X), fun((X) -> X)) -> fun((X) -> X).
-compose(F, G) when is_function(F), is_function(G) ->
+-spec compose(F :: fun((B) -> C), G :: fun((A) -> B)) -> fun((A) -> C).
+compose(F, G) when is_function(F, 1), is_function(G, 1) ->
     fun(X) ->
         F(G(X))
     end.
@@ -370,7 +370,7 @@ compose(F, G) when is_function(F), is_function(G) ->
 %% functions in the `Funs' list. Note that functions are composed from right to
 %% left, so the final function in the `Funs' will be the first one invoked when
 %% invoking the composed function.
--spec compose([fun((X) -> X)]) -> fun((X) -> X).
+-spec compose([fun((any()) -> any())]) -> fun((any()) -> any()).
 compose([Fun]) ->
     Fun;
 compose(Funs) when is_list(Funs) ->
@@ -967,12 +967,20 @@ compose_test_() ->
     Strip = fun(S) -> string:strip(S, both, $!) end,
     StripReverseUpper = compose([Upper, Reverse, Strip]),
 
-    Increment = fun(N) -> N + 1 end,
-    Double = fun(N) -> N * 2 end,
-    Square = fun(N) -> N * N end,
+    Increment = fun(N) when is_integer(N) -> N + 1 end,
+    Double = fun(N) when is_integer(N) -> N * 2 end,
+    Square = fun(N) when is_integer(N) -> N * N end,
     SquareDoubleIncrement = compose([Increment, Double, Square]),
+
+    CompatibleTypes = compose(Increment,
+                              fun(X) when is_list(X) -> list_to_integer(X) end),
+    IncompatibleTypes = compose(Increment,
+                                fun(X) when is_binary(X) -> binary_to_list(X) end),
     [?_assertEqual("DLROW OLLEH", StripReverseUpper("Hello world!")),
-     ?_assertEqual(Increment(Double(Square(3))), SquareDoubleIncrement(3))].
+     ?_assertEqual(Increment(Double(Square(3))), SquareDoubleIncrement(3)),
+     ?_assertMatch(4, CompatibleTypes("3")),
+     ?_assertError(function_clause, IncompatibleTypes(<<"42">>)),
+     ?_assertError(function_clause, compose(fun(X, Y) -> {X, Y} end, fun(X) -> X end))].
 
 pmap_test_() ->
     Fgood = fun(X) -> 2 * X end,
