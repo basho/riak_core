@@ -26,7 +26,7 @@
 %%%      == Callbacks ==
 %%%      The dependency needs to know to which pid it should send
 %%%      requests for `riak_core' data. The pid will be sent to the
-%%%      `Registration' callback.
+%%%      `Registration' and `Shutdown' callbacks.
 %%%
 %%%      The `Provider' callback is a function inside `riak_core' that returns
 %%%      information that the dependency needs.
@@ -110,7 +110,27 @@
                            {error, term()}.
 
 start_service(Registration, Shutdown, Provider, Handler) ->
-    riak_core_info_service_sup:start_service(Registration, Shutdown, Provider, Handler).
+    case verify_callable([Registration, Shutdown, Handler]) of
+        true ->
+            riak_core_info_service_sup:start_service(Registration, Shutdown, Provider, Handler);
+        {false, {_Module, _Function, _Arity}=Fun} ->
+            {error, {not_callable, Fun}}
+    end.
+
+verify_callable([]) ->
+    true;
+verify_callable([{Module, Function, Parameters}|T]) ->
+    %% Each of these callbacks takes 1 argument in addition to the
+    %% statically-defined parameters in the callback tuple. In the
+    %% case of registration and shutdown, it's the pid; in the case of
+    %% the response handler, it's the response wrapped in a tuple.
+    Arity = 1 + length(Parameters),
+    case erlang:function_exported(Module, Function, Arity) of
+        true ->
+            verify_callable(T);
+        false ->
+            {false, {Module, Function, Arity}}
+    end.
 
 -ifdef(TEST).
 -compile(export_all).
@@ -121,6 +141,7 @@ start_service(Registration, Shutdown, Provider, Handler) ->
 -define(SHUT(Key), {?MODULE, shutdown, [self(), Key]}).
 -define(HANDLER(Key), {?MODULE, response, [self(), Key]}).
 
+-define(BOGUS_REG, {?MODULE, register, []}).
 -define(GET_RING, {riak_core_ring, fresh, [64, ?NODE_NAME]}).
 -define(CRASH, {?MODULE, crashme, []}).
 
@@ -226,6 +247,11 @@ exception_test() ->
     ?assertEqual(shutdown, Result),
     teardown(Sup),
     ok.
+
+no_callback_test() ->
+    Key = 'no_callback_test',
+    io:format(user, "~p~n", [riak_core_info_service:start_service(?BOGUS_REG, ?SHUT(Key), ?GET_RING, ?HANDLER(Key))]),
+    ?assertMatch({error, _}, riak_core_info_service:start_service(?BOGUS_REG, ?SHUT(Key), ?GET_RING, ?HANDLER(Key))).
 
 %% Ask for a fresh ring
 receive_ring_test() ->
