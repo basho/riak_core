@@ -250,7 +250,6 @@ exception_test() ->
 
 no_callback_test() ->
     Key = 'no_callback_test',
-    io:format(user, "~p~n", [riak_core_info_service:start_service(?BOGUS_REG, ?SHUT(Key), ?GET_RING, ?HANDLER(Key))]),
     ?assertMatch({error, _}, riak_core_info_service:start_service(?BOGUS_REG, ?SHUT(Key), ?GET_RING, ?HANDLER(Key))).
 
 %% Ask for a fresh ring
