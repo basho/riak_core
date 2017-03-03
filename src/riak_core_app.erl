@@ -151,7 +151,7 @@ register_capabilities() ->
 
 %% TODO: This belongs in riak_kv - an issue will be created to move it, but time constraints.
 start_eleveldb_info_service() ->
-    Registration = {eleveldb, set_metadata_pid, []},
+    Registration = {eleveldb, set_metadata_pid, [bucket_props]},
     Shutdown = {eleveldb, remove_metadata_pid, []},
     InfoSource = {riak_core_bucket, get_bucket, []},
     ResultsHandler = {eleveldb_metadata, handle_metadata_response, []},
