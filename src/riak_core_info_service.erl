@@ -125,6 +125,11 @@ verify_callable([{Module, Function, Parameters}|T]) ->
     %% case of registration and shutdown, it's the pid; in the case of
     %% the response handler, it's the response wrapped in a tuple.
     Arity = 1 + length(Parameters),
+
+    %% If `ensure_loaded' fails, `function_exported' will give us
+    %% `false', so no need to check for errors here
+    _ = code:ensure_loaded(Module),
+
     case erlang:function_exported(Module, Function, Arity) of
         true ->
             verify_callable(T);
