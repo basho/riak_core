@@ -91,6 +91,7 @@
          future_ring/1,
          disowning_indices/2,
          cancel_transfers/1,
+         legacy_reconcile/2,
          pending_changes/1,
          next_owner/1,
          next_owner/2,
@@ -1423,7 +1424,7 @@ legacy_reconcile(MyNodeName, StateA, StateB) ->
              vclock=VClock,
              chring=CHRing,
              meta=Meta}.
-             
+
 %% ====================================================================
 %% Internal functions
 %% ====================================================================
