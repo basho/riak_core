@@ -128,14 +128,14 @@ handle_consumer_response({ok, ok}, response, State) ->
 handle_consumer_response({ok, ok}, registration, State) ->
     {ok, State};
 handle_consumer_response({ok, Other}, response, State) ->
-    lager:error("Response handler gave ~p result, shutting down", [Other]),
-    {stop, invalid_return, State};
+    lager:warning("Response handler gave non-ok result: ~p", [Other]),
+    {noreply, State};
 handle_consumer_response({ok, Other}, registration, _State) ->
     lager:error("Registration gave ~p result, shutting down", [Other]),
     {stop, invalid_return};
-handle_consumer_response(_Error, response, State) ->
-    lager:error("Response handler failed, shutting down"),
-    {stop, response_handler_failure, State};
+handle_consumer_response({error, Error}, response, State) ->
+    lager:warning("Response handler failed: ~p", [Error]),
+    {noreply, State};
 handle_consumer_response(_Error, registration, _State) ->
     lager:error("Registration failed, shutting down"),
     {stop, registration_error}.
