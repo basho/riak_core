@@ -230,8 +230,8 @@ my_receive(Fun) ->
             throw(timeout)
     end.
 
-%% Define a response handler function which crashes, verify that we
-%% see the shutdown message we expect
+%% Provide a response handler function which exits, verify the service
+%% process does not crash.
 exception_test() ->
     Sup = setup(),
     Key = 'exception_test',
@@ -249,16 +249,13 @@ exception_test() ->
     ?assert(is_process_alive(Pid)),
     ?assertEqual(Pid0, Pid),
     Pid ! {invoke, [], Context},
+    %% There's really no good way to make certain all of the necessary
+    %% messages have been sent and received so other than a sleep I
+    %% don't know what to do. There will be no failures if this sleep
+    %% isn't long enough, only false positives.
+    timer:sleep(100),
+    ?assert(is_process_alive(Pid)),
 
-    Result = my_receive(
-               fun({shutdown, {AKey, _Pid}}) when Key == AKey ->
-                       shutdown;
-                  (Msg) ->
-                       throw({unexpected_message, Msg})
-            end),
-
-    %% Yes, if the ring structure changes again, this first assertion will fail
-    ?assertEqual(shutdown, Result),
     teardown(Sup),
     ok.
 
