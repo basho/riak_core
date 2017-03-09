@@ -162,7 +162,16 @@ sup_wrapper() ->
 
 %% Launching and terminating the supervisor is an async operation with
 %% all the non-determinism that that implies. So, we wait.
-sup_wait(Name, Fun) ->
+sup_wait(Name, kill, Fun) ->
+    %% in case an earlier test failure left a supervisor running
+    case whereis(Name) of
+        undefined ->
+            ok;
+        Pid ->
+            exit(Pid, kill)
+    end,
+    sup_wait(Name, undefined, Fun);
+sup_wait(Name, undefined, Fun) ->
     sup_wait(Name, Fun, Fun(whereis(Name)), 5).
 
 sup_wait(_Name, _Fun, ok, _Count) ->
@@ -194,9 +203,9 @@ setup() ->
                      end,
     flush_messages(),
 
-    sup_wait(riak_core_info_service_sup, WaitTerminated),
+    sup_wait(riak_core_info_service_sup, kill, WaitTerminated),
     Pid = spawn(fun sup_wrapper/0),
-    sup_wait(riak_core_info_service_sup, WaitStarted),
+    sup_wait(riak_core_info_service_sup, undefined, WaitStarted),
 
     Pid.
 
