@@ -235,7 +235,8 @@ my_receive(Fun) ->
 exception_test() ->
     Sup = setup(),
     Key = 'exception_test',
-    Context = '_waydownwego',
+    TestCasePid = self(),
+    Context = TestCasePid,
 
     {ok, Pid0} = riak_core_info_service:start_service(?REG(Key), ?SHUT(Key), ?GET_RING, ?CRASH),
 
@@ -246,14 +247,23 @@ exception_test() ->
                      throw({unexpected_message, Msg})
             end),
 
+    {CrashMod, CrashFun, CrashArgs} = ?CRASH,
+    CrashHandlerResult = [{'_', '_', TestCasePid}],
+    TestCasePid ! {TestCasePid, crashme_continue},
+    ?assertEqual({'EXIT', for_testing},
+            (catch erlang:apply(CrashMod,
+                                CrashFun,
+                                CrashArgs ++ CrashHandlerResult))),
+
     ?assert(is_process_alive(Pid)),
     ?assertEqual(Pid0, Pid),
     Pid ! {invoke, [], Context},
-    %% There's really no good way to make certain all of the necessary
-    %% messages have been sent and received so other than a sleep I
-    %% don't know what to do. There will be no failures if this sleep
-    %% isn't long enough, only false positives.
-    timer:sleep(100),
+    %% Synchronize with MFA ?CRASH to ensure that is called
+    receive {Pid0, crashme_waiting} ->
+            Pid0 ! {self(), crashme_continue}
+    after 500 ->
+            exit({not_called, ?CRASH})
+    end,
     ?assert(is_process_alive(Pid)),
 
     teardown(Sup),
@@ -296,7 +306,12 @@ receive_ring_test() ->
     teardown(Sup),
     ok.
 
-crashme(_) ->
+crashme({_Result, _ProviderParams, _Context = TestCasePid}) ->
+    TestCasePid ! {self(), crashme_waiting},
+    receive
+        {TestCasePid, crashme_continue} ->
+            ok
+    end,
     exit(for_testing).
 
 response(Pid, Key1, {Result, [], Context}) ->
