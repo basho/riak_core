@@ -27,6 +27,8 @@
 %% Application callbacks
 -export([start/2, stop/1]).
 
+-export([start_eleveldb_info_service/0]).
+
 %% ===================================================================
 %% Application callbacks
 %% ===================================================================
@@ -91,6 +93,7 @@ start_riak_core_sup() ->
             ok = register_capabilities(),
             ok = init_cli_registry(),
             ok = riak_core_throttle:init(),
+            ok = start_eleveldb_info_service(),
 
             {ok, Pid};
         {error, Reason} ->
@@ -145,3 +148,17 @@ register_capabilities() ->
       end,
       Capabilities),
     ok.
+
+%% TODO: This belongs in riak_kv - an issue will be created to move it, but time constraints.
+start_eleveldb_info_service() ->
+    Registration = {eleveldb, set_metadata_pid, []},
+    Shutdown = {eleveldb, remove_metadata_pid, []},
+    InfoSource = {riak_core_bucket, get_bucket, []},
+    ResultsHandler = {eleveldb_metadata, handle_metadata_response, []},
+    case riak_core_info_service:start_service(Registration, Shutdown, InfoSource, ResultsHandler) of
+        {ok, _Pid} ->
+            ok;
+        {error, Error} ->
+            lager:warning("Info service failed to register for eleveldb: ~p", [Error]),
+            ok
+    end.
