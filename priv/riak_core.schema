@@ -202,6 +202,27 @@
     hidden
 ]}.
 
+%% @doc Require secure transports when Riak Security is enabled.
+%% This flag can be changed to allow Riak security to operate in 
+%% environments that provide their own scheme for encrypted transport
+%% or in a development environment.
+{mapping, "security.require_secure_transport", "riak_core.security_require_secure_transport", [
+  {datatype, flag},
+  {default, on},
+  hidden
+]}.
+
+%% @doc Log Riak Security Authentication events sent in the clear.
+%% This will cause all Authentication attempts sent in the clear to be
+%% emitted to the console.log file as warnings.  Should you desire to
+%% operate Riak Security without using a built-in secure transport, you
+%% can suppress these log events by setting this flag to off.
+{mapping, "security.log_cleartext_warning", "riak_core.security_log_cleartext_warning", [
+  {datatype, flag},
+  {default, on},
+  hidden
+]}.
+
 %% Async Job Management
 %%
 %% This is a translation for mappings that appear in other schema files.

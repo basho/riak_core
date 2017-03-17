@@ -51,7 +51,9 @@
          is_enabled/0,
          print_ciphers/0,
          set_ciphers/1,
-         status/0]).
+         status/0,
+         is_this_transport_allowed/1,
+         is_secure_transport_required/0]).
 
 -define(DEFAULT_CIPHER_LIST,
 "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256"
@@ -827,6 +829,27 @@ del_source(Users, CIDR) ->
     _ = [riak_core_metadata:delete({<<"security">>, <<"sources">>},
                                    {User, anchor_mask(CIDR)}) || User <- UserList],
     ok.
+
+is_secure_transport(https) -> true;
+is_secure_transport(_) -> false.
+
+is_this_transport_allowed(Scheme) ->
+   is_secure_transport(Scheme) orelse not is_secure_transport_required().
+
+is_secure_transport_required() ->
+    case app_helper:get_env(riak_core, security_require_secure_transport, true) of
+        false -> 
+            maybe_log_cleartext_warning(),
+            false;
+        _ -> true
+    end.
+
+maybe_log_cleartext_warning() ->
+    case app_helper:get_env(riak_core, security_log_cleartext_warning, true) of
+        false -> ok;
+        _ -> 
+            lager:warning("Cleartext authentication allowed by configuration")
+    end.    
 
 is_enabled() ->
     try riak_core_capability:get({riak_core, security}) of
