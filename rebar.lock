@@ -17,7 +17,7 @@
  {<<"pbkdf2">>,{pkg,<<"pbkdf2">>,<<"2.0.0">>},0},
  {<<"poolboy">>,{pkg,<<"basho_poolboy">>,<<"0.8.2">>},0},
  {<<"riak_ensemble">>,{pkg,<<"riak_ensemble_ng">>,<<"2.4.0">>},0},
- {<<"riak_sysmon">>,{pkg,<<"riak_sysmon">>,<<"2.1.3">>},0},
+ {<<"riak_sysmon">>,{pkg,<<"riak_sysmon">>,<<"2.1.5">>},0},
  {<<"setup">>,{pkg,<<"setup">>,<<"1.7.0">>},1}]}.
 [
 {pkg_hash,[
@@ -39,6 +39,6 @@
  {<<"pbkdf2">>, <<"11C23279FDED5C0027AB3996CFAE77805521D7EF4BABDE2BD7EC04A9086CF499">>},
  {<<"poolboy">>, <<"AD5524BF4B8D30EEE0E5386847B74DAD739BB6AE1893F3AF10F54D427ACC96E4">>},
  {<<"riak_ensemble">>, <<"6570463BF09F1200C003DE298C5D6615C418D3BF0A2DF5CAF469A9DF2558059A">>},
- {<<"riak_sysmon">>, <<"2E81AF5763336C0B136D7ECEFFBEC3540DB20D54459C9F2AE1275FEE4927FB7B">>},
+ {<<"riak_sysmon">>, <<"2331BBCAEBE73EA7B2449F4C765827142476CC73D7D86999B4209EE005694D6B">>},
  {<<"setup">>, <<"15DF8E57C6DF9755E22BFB1AEF0C640BD97E9889396FDFB2A85A5536A9043674">>}]}
 ].

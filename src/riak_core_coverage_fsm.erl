@@ -88,14 +88,6 @@
          code_change/4]).
 
 -type mod_state() :: term().
--callback init(from(), RequestArgs :: [term()]) ->
-    {Request :: term(), vnode_selector(), NVal :: pos_integer(), primary_vnode_coverage(),
-     NodeCheckService :: module(), VNodeMaster :: atom(), timeout(), mod_state()}.
--callback process_results(Results :: term(), mod_state()) ->
-    {ok, mod_state()} |
-    {done, mod_state()} |
-    {error, term()}.
--callback finish(clean | {error, term()}, mod_state()) -> {stop, normal, mod_state()}.
 
 -define(DEFAULT_TIMEOUT, 60000*8).
 
