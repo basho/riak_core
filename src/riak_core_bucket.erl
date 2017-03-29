@@ -23,18 +23,20 @@
 %% @doc Functions for manipulating bucket properties.
 -module(riak_core_bucket).
 
--export([append_bucket_defaults/1,
-    set_bucket/2,
-    get_bucket/1,
-    get_bucket/2,
-    reset_bucket/1,
-    get_buckets/1,
-    bucket_nval_map/1,
-    default_object_nval/0,
-    all_n/1,
-    merge_props/2,
-    name/1,
-    n_val/1, get_value/2]).
+-export([all_n/1,
+         append_bucket_defaults/1,
+         bucket_nval_map/1,
+         default_object_nval/0,
+         fold_type/3,
+         get_bucket/1,
+         get_bucket/2,
+         get_buckets/1,
+         get_value/2,
+         merge_props/2,
+         n_val/1,
+         name/1,
+         reset_bucket/1,
+         set_bucket/2]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -63,7 +65,7 @@ append_bucket_defaults(Items) when is_list(Items) ->
 
 %% @doc Set the given BucketProps in Bucket or {BucketType, Bucket}. If BucketType does not
 %% exist, or is not active, {error, no_type} is returned.
--spec set_bucket(bucket(), [{atom(), any()}]) ->
+-spec set_bucket(bucket(), properties()) ->
                         ok | {error, no_type | [{atom(), atom()}]}.
 set_bucket({<<"default">>, Name}, BucketProps) ->
     set_bucket(Name, BucketProps);
@@ -239,6 +241,21 @@ bucket_key({_Type, _Name}=Bucket) ->
     Bucket;
 bucket_key(Name) ->
     {bucket, Name}.
+
+%% @doc Fold over all buckets belonging to the given bucket type. The
+%% provided fold function should accept three arguments: The bucket
+%% name, bucket properties, and accumulator and return a new
+%% accumulator value.
+-spec fold_type(bucket_type(), fun((Bucket :: binary(), properties(), Acc) -> Acc), Acc) -> Acc.
+fold_type(Type, F, Acc0) ->
+    riak_core_metadata:fold(fun ({{_, Bucket}, Props}, Acc)
+                                  when is_binary(Bucket) andalso is_list(Props) ->
+                                    F(Bucket, Props, Acc);
+                                (_, Acc) ->
+                                    Acc
+                            end, Acc0, ?METADATA_PREFIX,
+                            [{resolver, fun riak_core_bucket_props:resolve/2},
+                             {match, {Type, '_'}}]).
 
 %% ===================================================================
 %% EUnit tests
