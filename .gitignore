@@ -1,4 +1,5 @@
 .eunit/*
+log
 deps/*
 priv/*
 ebin/*
@@ -20,3 +21,4 @@ ring_manager_eunit/
 sim.out
 .eqc
 compile_commands.json
+rebar3.crashdump
