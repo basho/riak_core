@@ -18,3 +18,5 @@ data/
 nonode@nohost/
 ring_manager_eunit/
 sim.out
+.eqc
+compile_commands.json
