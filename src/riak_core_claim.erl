@@ -1133,16 +1133,17 @@ prop_claim_ensures_unique_nodes(ChooseFun) ->
             begin
                 Nval = 3,
                 TNval = Nval + 1,
-                Params = [{target_n_val, TNval}],
+                _Params = [{target_n_val, TNval}],
 
                 Partitions = ?POW_2(PartsPow),
                 [Node0 | RestNodes] = test_nodes(NodeCount),
 
                 R0 = riak_core_ring:fresh(Partitions, Node0),
-                Rfinal = lists:foldl(fun(Node, Racc) ->
-                                             Racc0 = riak_core_ring:add_member(Node0, Racc, Node),
-                                             ?MODULE:ChooseFun(Racc0, Node, Params)
+                RAdded = lists:foldl(fun(Node, Racc) ->
+                                             riak_core_ring:add_member(Node0, Racc, Node)
                                      end, R0, RestNodes),
+
+                Rfinal = claim(RAdded, {?MODULE, wants_claim_v2}, {?MODULE, ChooseFun}),
 
                 Preflists = riak_core_ring:all_preflists(Rfinal, Nval),
                 Counts = orddict:to_list(
