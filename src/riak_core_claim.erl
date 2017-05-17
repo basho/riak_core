@@ -68,7 +68,8 @@
 
 -ifdef(TEST).
 -ifdef(EQC).
--export([prop_claim_ensures_unique_nodes/1, prop_wants/0, prop_wants_counts/0]).
+-export([prop_claim_ensures_unique_nodes/1, prop_wants/0, prop_wants_counts/0,
+        eqc_check/2]).
 -include_lib("eqc/include/eqc.hrl").
 -endif.
 -include_lib("eunit/include/eunit.hrl").
@@ -278,6 +279,7 @@ choose_claim_v2(Ring, Node, Params0) ->
     Avg = RingSize div NodeCount,
     ActiveDeltas = [{Member, Avg - Count} || {Member, Count} <- Counts],
     Deltas = add_default_deltas(Owners, ActiveDeltas, 0),
+    BalancedDeltas = rebalance_deltas(Deltas),
     {_, Want} = lists:keyfind(Node, 1, Deltas),
     TargetN = proplists:get_value(target_n_val, Params),
     AllIndices = lists:zip(lists:seq(0, length(Owners)-1),
@@ -320,7 +322,7 @@ choose_claim_v2(Ring, Node, Params0) ->
     Indices2 = prefilter_violations(Ring, Node, AllIndices, Indices,
                                     TargetN, RingSize),
     %% Claim indices from the remaining candidate set
-    Claim = select_indices(Owners, Deltas, Indices2, TargetN, RingSize),
+    Claim = select_indices(Owners, BalancedDeltas, Indices2, TargetN, RingSize),
     Claim2 = lists:sublist(Claim, Want),
     NewRing = lists:foldl(fun(Idx, Ring0) ->
                                   riak_core_ring:transfer_node(Idx, Node, Ring0)
@@ -338,6 +340,33 @@ choose_claim_v2(Ring, Node, Params0) ->
         _ ->
             NewRing
     end.
+
+%% @private so that we don't end up with an imbalanced ring where one
+%% node has more vnodes than it should (e.g. [{n1, 6}, {n2, 6}, {n3,
+%% 6}, {n4, 8}, {n5,6} we rebalance the deltas so that select_indices
+%% doesn't leave some node not giving up enough partitions
+-spec rebalance_deltas([{node(), integer()}]) -> [{node(), integer()}].
+rebalance_deltas(NodeDeltas) ->
+    {_Nodes, Deltas} = lists:unzip(NodeDeltas),
+    case lists:sum(Deltas) of
+        0 ->
+            NodeDeltas;
+        N ->
+            increase_deltas(NodeDeltas, N, [])
+    end.
+
+%% @private increases the delta doing a round robin over nodes until
+%% total delta matches wants
+-spec increase_deltas(Deltas::[{node(), integer()}],
+                      WantsError::integer(),
+                      Acc::[{node(), integer()}]) ->
+                             Rebalanced::[{node(), integer()}].
+increase_deltas(Rest, 0, Acc) ->
+    lists:usort(lists:append(Rest, Acc));
+increase_deltas([{Node, Delta} | Rest], N, Acc) when Delta < 0 ->
+    increase_deltas(Rest, N+1, [{Node, Delta+1} | Acc]);
+increase_deltas([NodeDelta | Rest], N, Acc) ->
+    increase_deltas(Rest, N, [NodeDelta | Acc]).
 
 meets_target_n(Ring, TargetN) ->
     Owners = lists:keysort(1, riak_core_ring:all_owners(Ring)),
@@ -1101,6 +1130,11 @@ find_biggest_hole_test() ->
 
 -define(POW_2(N), trunc(math:pow(2, N))).
 
+eqc_check(File, Prop) ->
+    {ok, Bytes} = file:read_file(File),
+    CE = binary_to_term(Bytes),
+    eqc:check(Prop, CE).
+
 test_nodes(Count) ->
     [node() | [list_to_atom(lists:concat(["n_", N])) || N <- lists:seq(1, Count-1)]].
 
@@ -1114,7 +1148,7 @@ prop_claim_ensures_unique_nodes_v3_test_() ->
 
 prop_claim_ensures_unique_nodes(ChooseFun) ->
     %% NOTE: We know that this doesn't work for the case of {_, 3}.
-    ?FORALL({PartsPow, NodeCount}, {choose(4,9), choose(4,15)}, %{choose(4, 9), choose(4, 15)},
+    ?FORALL({PartsPow, NodeCount}, {choose(4, 9), choose(4, 15)},
             begin
                 Nval = 3,
                 TNval = Nval + 1,
@@ -1130,7 +1164,7 @@ prop_claim_ensures_unique_nodes(ChooseFun) ->
                                      end, R0, RestNodes),
 
                 Preflists = riak_core_ring:all_preflists(Rfinal, Nval),
-                Counts = orddict:to_list(
+                ImperfectPLs = orddict:to_list(
                            lists:foldl(fun(PL,Acc) ->
                                                PLNodes = lists:usort([N || {_,N} <- PL]),
                                                case length(PLNodes) of
@@ -1140,6 +1174,7 @@ prop_claim_ensures_unique_nodes(ChooseFun) ->
                                                        ordsets:add_element(PL, Acc)
                                                end
                                        end, [], Preflists)),
+
                 ?WHENFAIL(
                    begin
                        io:format(user, "{Partitions, Nodes} {~p, ~p}~n",
@@ -1150,8 +1185,45 @@ prop_claim_ensures_unique_nodes(ChooseFun) ->
                    conjunction([{meets_target_n,
                                  equals({true,[]},
                                         meets_target_n(Rfinal, TNval))},
-                                {unique_nodes, equals([], Counts)}]))
+                                {perfect_preflists, equals([], ImperfectPLs)},
+                                {balanced_ring, balanced_ring(Partitions, NodeCount, Rfinal)}]))
             end).
+
+%% @private check that no node claims more than it should
+-spec balanced_ring(RingSize::integer(), NodeCount::integer(),
+                    riak_core_ring:riak_core_ring()) ->
+                           boolean().
+balanced_ring(RingSize, NodeCount, Ring) ->
+    TargetClaim = ceiling(RingSize / NodeCount),
+    AllOwners0 = riak_core_ring:all_owners(Ring),
+    AllOwners = lists:keysort(2, AllOwners0),
+    {Balanced, AccFinal} = lists:foldl(fun({_Part, Node}, {_Balanced, [{Node, Cnt} | Acc]}) when Cnt >= TargetClaim ->
+                                             {false, [{Node, Cnt+1} | Acc]};
+                                        ({_Part, Node}, {Balanced, [{Node, Cnt} | Acc]}) ->
+                                             {Balanced, [{Node, Cnt+1} | Acc]};
+                                        ({_Part, NewNode}, {Balanced, Acc}) ->
+                                             {Balanced, [{NewNode, 1} | Acc]}
+                                     end,
+                                     {true, []},
+                                     AllOwners),
+    case Balanced of
+        true ->
+            true;
+        false ->
+            {TargetClaim, AccFinal}
+    end.
+
+
+%% @private every module has a ceiling function
+-spec ceiling(float()) -> integer().
+ceiling(F) ->
+    T = trunc(F),
+    case T - F of
+        0 ->
+            T;
+        _ ->
+            T +1
+    end.
 
 wants_counts_test() ->
     ?assert(eqc:quickcheck(?QC_OUT((prop_wants_counts())))).
