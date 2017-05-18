@@ -67,6 +67,7 @@
          wants/1, wants_owns_diff/2, meets_target_n/2, diagonal_stripe/2]).
 
 -ifdef(TEST).
+-compile(export_all).
 -ifdef(EQC).
 -export([prop_claim_ensures_unique_nodes/1, prop_wants/0, prop_wants_counts/0,
         eqc_check/2]).
@@ -363,6 +364,9 @@ rebalance_deltas(NodeDeltas) ->
                              Rebalanced::[{node(), integer()}].
 increase_deltas(Rest, 0, Acc) ->
     lists:usort(lists:append(Rest, Acc));
+increase_deltas([], N, Acc) when N < 0 ->
+    %% go around again
+    increase_deltas(lists:reverse(Acc), N, []);
 increase_deltas([{Node, Delta} | Rest], N, Acc) when Delta < 0 ->
     increase_deltas(Rest, N+1, [{Node, Delta+1} | Acc]);
 increase_deltas([NodeDelta | Rest], N, Acc) ->
@@ -529,6 +533,7 @@ claim_rebalance_n(Ring0, Node) ->
     Ring = riak_core_ring:upgrade(Ring0),
     Nodes = lists:usort([Node|riak_core_ring:claiming_members(Ring)]),
     Zipped = diagonal_stripe(Ring, Nodes),
+
     lists:foldl(fun({P, N}, Acc) ->
                         riak_core_ring:transfer_node(P, N, Acc)
                 end,
