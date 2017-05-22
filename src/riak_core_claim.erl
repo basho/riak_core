@@ -334,10 +334,10 @@ choose_claim_v2(Ring, Node, Params0) ->
     case {RingChanged, EnoughNodes, RingMeetsTargetN} of
         {false, _, _} ->
             %% Unable to claim, fallback to re-diagonalization
-            claim_rebalance_n(Ring, Node);
+            sequential_claim(Ring, Node, TargetN);
         {_, true, false} ->
             %% Failed to meet target_n, fallback to re-diagonalization
-            claim_rebalance_n(Ring, Node);
+            sequential_claim(Ring, Node, TargetN);
         _ ->
             NewRing
     end.
@@ -528,6 +528,51 @@ claim_diagonal(Wants, Owners, Params) ->
                    lists:sublist(Claiming, Tail)
            end,
     {lists:flatten([lists:duplicate(Reps, Claiming), Last]), [diagonalized]}.
+
+%% @private fall back to diagonal striping vnodes across nodes in a
+%% sequential round robin (eg n1 | n2 | n3 | n4 | n5 | n1 | n2 | n3
+%% etc) However, different to `claim_rebalance_n', this function
+%% attempts to eliminate tail violations (for example a ring that
+%% starts/ends n1 | n2 | ...| n3 | n4 | n1)
+-spec sequential_claim(riak_core_ring:riak_core_ring(),
+                       node(),
+                       integer()) ->
+                              riak_core_ring:riak_core_ring().
+sequential_claim(Ring0, Node, TargetN) ->
+    Ring = riak_core_ring:upgrade(Ring0),
+    Nodes = lists:usort([Node|riak_core_ring:claiming_members(Ring)]),
+    NodeCount = length(Nodes),
+    RingSize = riak_core_ring:num_partitions(Ring),
+    Zipped = diagonal_stripe(Ring, Nodes),
+
+    Overhang = RingSize rem NodeCount,
+    HasTailViolation = (Overhang > 0 andalso Overhang < TargetN),
+    Shortfall = TargetN - Overhang,
+    CompleteSequences = RingSize div NodeCount,
+    MaxFetchesPerSeq = NodeCount - TargetN,
+    MinFetchesPerSeq = ceiling(Shortfall / CompleteSequences),
+
+    CanSolveViolation = ((CompleteSequences * MaxFetchesPerSeq) >= Shortfall),
+
+    Zipped1 = case (HasTailViolation andalso CanSolveViolation) of
+                  true->
+                      solve_tail_violations(Nodes, Shortfall, MinFetchesPerSeq);
+                  false ->
+                      Zipped
+              end,
+
+    lists:foldl(fun({P, N}, Acc) ->
+                        riak_core_ring:transfer_node(P, N, Acc)
+                end,
+                Ring,
+                Zipped1).
+
+%% @private rem_fill increase the tail so that there is no wrap around
+%% preflist violation, by taking a `Shortfall' number nodes from
+%% earlier in the preflist
+solve_tail_violations(Nodes, Shortfall, MinFetchesPerSeq) ->
+    %% Starting with the TargetNth node
+    ok.
 
 claim_rebalance_n(Ring0, Node) ->
     Ring = riak_core_ring:upgrade(Ring0),
@@ -1126,6 +1171,31 @@ find_biggest_hole_test() ->
     ?assertEqual({Part16*13, Part16*3},
                  find_biggest_hole([Part16*3, Part16*7,
                                     Part16*10, Part16*13])).
+
+%% @private console helper function to return node lists for claiming
+%% partitions
+-spec gen_diag(pos_integer(), pos_integer()) -> [Node::atom()].
+gen_diag(RingSize, NodeCount) ->
+    Nodes = [list_to_atom(lists:concat(["n_", N])) || N <- lists:seq(1, NodeCount)],
+    {HeadNode, RestNodes} = {hd(Nodes), tl(Nodes)},
+    R0 = riak_core_ring:fresh(RingSize, HeadNode),
+    RAdded = lists:foldl(fun(Node, Racc) ->
+                                 riak_core_ring:add_member(HeadNode, Racc, Node)
+                         end,
+                         R0, RestNodes),
+    Diag = diagonal_stripe(RAdded, Nodes),
+    {_P, N} = lists:unzip(Diag),
+    N.
+
+%% @private call with result of gen_diag/1 only, does the list have
+%% tail violations, returns true if so, false otherwise.
+-spec has_violations([Node::atom()]) -> boolean().
+has_violations(Diag) ->
+    RS = length(Diag),
+    NC = length(lists:usort(Diag)),
+    Overhang = RS rem NC,
+    (Overhang > 0 andalso Overhang < 4). %% hardcoded target n of 4
+
 
 -ifdef(EQC).
 
