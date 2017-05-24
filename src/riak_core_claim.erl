@@ -570,8 +570,9 @@ sequential_claim(Ring0, Node, TargetN) ->
 %% @private rem_fill increase the tail so that there is no wrap around
 %% preflist violation, by taking a `Shortfall' number nodes from
 %% earlier in the preflist
-solve_tail_violations(Nodes, Shortfall, MinFetchesPerSeq) ->
-    %% Starting with the TargetNth node
+solve_tail_violations(_Nodes, _Shortfall, _MinFetchesPerSeq) ->
+    %% Work back from the tail, starting with the TargetNth node
+    %% @TODO implement me
     ok.
 
 claim_rebalance_n(Ring0, Node) ->
@@ -1223,7 +1224,10 @@ prop_claim_ensures_unique_nodes_v3_test_() ->
 
 prop_claim_ensures_unique_nodes(ChooseFun) ->
     %% NOTE: We know that this doesn't work for the case of {_, 3}.
-    ?FORALL({PartsPow, NodeCount}, {choose(4, 9), choose(4, 15)},
+    %% NOTE2: uses undocumented "double_shrink", is expensive, but should get
+    %% around those case where we shrink to a non-minimal case because
+    %% some intermediate combinations of ring_size/node have no violations
+    ?FORALL({PartsPow, NodeCount}, eqc_gen:double_shrink({choose(4, 9), choose(4, 15)}),
             begin
                 Nval = 3,
                 TNval = Nval + 1,
