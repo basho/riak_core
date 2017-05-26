@@ -543,7 +543,6 @@ sequential_claim(Ring0, Node, TargetN) ->
     Nodes = lists:usort([Node|riak_core_ring:claiming_members(Ring)]),
     NodeCount = length(Nodes),
     RingSize = riak_core_ring:num_partitions(Ring),
-    Zipped = diagonal_stripe(Ring, Nodes),
 
     Overhang = RingSize rem NodeCount,
     HasTailViolation = (Overhang > 0 andalso Overhang < TargetN),
@@ -551,29 +550,72 @@ sequential_claim(Ring0, Node, TargetN) ->
     CompleteSequences = RingSize div NodeCount,
     MaxFetchesPerSeq = NodeCount - TargetN,
     MinFetchesPerSeq = ceiling(Shortfall / CompleteSequences),
-
     CanSolveViolation = ((CompleteSequences * MaxFetchesPerSeq) >= Shortfall),
 
-    Zipped1 = case (HasTailViolation andalso CanSolveViolation) of
+    Zipped = case (HasTailViolation andalso CanSolveViolation) of
                   true->
-                      solve_tail_violations(Nodes, Shortfall, MinFetchesPerSeq);
+                      Partitions = lists:sort([ I || {I, _} <- riak_core_ring:all_owners(Ring) ]),
+                      Nodelist = solve_tail_violations(RingSize, Nodes, Shortfall, MinFetchesPerSeq),
+                      lists:zip(Partitions, lists:flatten(Nodelist));
                   false ->
-                      Zipped
+                      diagonal_stripe(Ring, Nodes)
               end,
 
     lists:foldl(fun({P, N}, Acc) ->
                         riak_core_ring:transfer_node(P, N, Acc)
                 end,
                 Ring,
-                Zipped1).
+                Zipped).
 
 %% @private rem_fill increase the tail so that there is no wrap around
 %% preflist violation, by taking a `Shortfall' number nodes from
 %% earlier in the preflist
-solve_tail_violations(_Nodes, _Shortfall, _MinFetchesPerSeq) ->
-    %% Work back from the tail, starting with the TargetNth node
-    %% @TODO implement me
-    ok.
+-spec solve_tail_violations(integer(), [node()], integer(), integer()) -> [node()].
+solve_tail_violations(RingSize, Nodes, Shortfall, MinFetchesPerSeq) ->
+    StartingNode = (RingSize rem length(Nodes)) + 1,
+    build_nodelist(RingSize, Nodes, Shortfall, StartingNode, MinFetchesPerSeq, []).
+
+
+%% @private Backfill the ring with full sequences
+-spec backfill_ring(integer(), [node()], integer(), [node()]) -> [node()].
+backfill_ring(_RingSize, _Nodes, 0, Acc) ->
+    Acc;
+
+backfill_ring(RingSize, Nodes, Remaining, Acc) ->
+    backfill_ring(RingSize, Nodes, Remaining - 1, [Nodes | Acc]).
+
+
+%% @private Finished shuffling, backfill if required
+-spec build_nodelist(integer(), [node()], integer(), integer(), integer(), [node()]) -> [node()].
+build_nodelist(RingSize, Nodes, 0, _NodeCounter, _MinFetchesPerSeq, Acc) ->
+    ShuffledRing = lists:flatten(Acc),
+    backfill_ring(RingSize, Nodes,
+                  (RingSize-length(ShuffledRing)) div (length(Nodes)), Acc);
+
+%% @private Build the tail with sufficient nodes to satisfy TargetN
+build_nodelist(RingSize, Nodes, Shortfall, NodeCounter, MinFetchesPerSeq, []) ->
+    NodeCount = length(Nodes),
+    LastSegLength = RingSize rem NodeCount + Shortfall,
+    NewSeq = lists:sublist(Nodes, 1, LastSegLength),
+    build_nodelist(RingSize, Nodes, Shortfall, NodeCounter, MinFetchesPerSeq, [NewSeq]);
+
+%% @private Build rest of list, subtracting minimum of MinFetchesPerSeq, Shortfall 
+%% or (NodeCount - NodeCounter) each time
+build_nodelist(RingSize, Nodes, Shortfall, NodeCounter, MinFetchesPerSeq, Acc) ->
+    NodeCount = length(Nodes),
+    NodesToRemove = min(min(MinFetchesPerSeq, Shortfall), NodeCount - NodeCounter),
+    RemovalList = lists:sublist(Nodes, NodeCounter, NodesToRemove),
+    NewSeq = lists:subtract(Nodes,RemovalList),
+    case (NodeCounter + NodesToRemove >= NodeCount) of
+        true ->
+            %% go round the nodes again - will this ever happen?
+            NewNodeCounter = 1;
+        false ->
+            NewNodeCounter = NodeCounter + NodesToRemove
+    end,
+    build_nodelist(RingSize, Nodes, Shortfall - NodesToRemove, NewNodeCounter,
+                   MinFetchesPerSeq, [ NewSeq | Acc]).
+
 
 claim_rebalance_n(Ring0, Node) ->
     Ring = riak_core_ring:upgrade(Ring0),
@@ -1298,11 +1340,11 @@ balanced_ring(RingSize, NodeCount, Ring) ->
 -spec ceiling(float()) -> integer().
 ceiling(F) ->
     T = trunc(F),
-    case T - F of
-        0 ->
+    case F - T == 0 of
+        true ->
             T;
-        _ ->
-            T +1
+        false ->
+            T + 1
     end.
 
 wants_counts_test() ->
