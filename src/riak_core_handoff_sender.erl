@@ -214,10 +214,15 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
          %% caught by handoff manager.  I know, this is confusing, a
          %% new handoff system will be written soon enough.
 
-         AccRecord0 = riak_core_vnode_master:sync_command({SrcPartition, SrcNode},
-                                                          Req,
-                                                          VMaster, infinity),
-
+         AccRecord0 = case riak_core_vnode_master:sync_command(
+                             {SrcPartition, SrcNode}, Req, VMaster, infinity) of
+                          #ho_acc{} = Ret ->
+                              Ret;
+                          Ret ->
+                              lager:error("[handoff] Bad handoff record: ~p",
+                                          [Ret]),
+                              Ret
+                      end,
          %% Send any straggler entries remaining in the buffer:
          AccRecord = send_objects(AccRecord0#ho_acc.item_queue, AccRecord0),
 
