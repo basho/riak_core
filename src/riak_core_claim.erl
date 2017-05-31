@@ -575,46 +575,37 @@ solve_tail_violations(RingSize, Nodes, Shortfall, MinFetchesPerSeq) ->
     StartingNode = (RingSize rem length(Nodes)) + 1,
     build_nodelist(RingSize, Nodes, Shortfall, StartingNode, MinFetchesPerSeq, []).
 
-
-%% @private Backfill the ring with full sequences
--spec backfill_ring(integer(), [node()], integer(), [node()]) -> [node()].
-backfill_ring(_RingSize, _Nodes, 0, Acc) ->
-    Acc;
-
-backfill_ring(RingSize, Nodes, Remaining, Acc) ->
-    backfill_ring(RingSize, Nodes, Remaining - 1, [Nodes | Acc]).
-
-
-%% @private Finished shuffling, backfill if required
+%% @private build the node list by building tail to satisfy TargetN, then removing
+%% the added nodes from earlier segments
 -spec build_nodelist(integer(), [node()], integer(), integer(), integer(), [node()]) -> [node()].
-build_nodelist(RingSize, Nodes, 0, _NodeCounter, _MinFetchesPerSeq, Acc) ->
+build_nodelist(RingSize, Nodes, _Shortfall=0, _NodeCounter, _MinFetchesPerSeq, Acc) ->
+    %% Finished shuffling, backfill if required
     ShuffledRing = lists:flatten(Acc),
     backfill_ring(RingSize, Nodes,
                   (RingSize-length(ShuffledRing)) div (length(Nodes)), Acc);
-
-%% @private Build the tail with sufficient nodes to satisfy TargetN
-build_nodelist(RingSize, Nodes, Shortfall, NodeCounter, MinFetchesPerSeq, []) ->
+build_nodelist(RingSize, Nodes, Shortfall, NodeCounter, MinFetchesPerSeq, _Acc=[]) ->
+    %% Build the tail with sufficient nodes to satisfy TargetN
     NodeCount = length(Nodes),
-    LastSegLength = RingSize rem NodeCount + Shortfall,
+    LastSegLength = (RingSize rem NodeCount) + Shortfall,
     NewSeq = lists:sublist(Nodes, 1, LastSegLength),
     build_nodelist(RingSize, Nodes, Shortfall, NodeCounter, MinFetchesPerSeq, [NewSeq]);
-
-%% @private Build rest of list, subtracting minimum of MinFetchesPerSeq, Shortfall 
-%% or (NodeCount - NodeCounter) each time
 build_nodelist(RingSize, Nodes, Shortfall, NodeCounter, MinFetchesPerSeq, Acc) ->
+    %% Build rest of list, subtracting minimum of MinFetchesPerSeq, Shortfall 
+    %% or (NodeCount - NodeCounter) each time
     NodeCount = length(Nodes),
     NodesToRemove = min(min(MinFetchesPerSeq, Shortfall), NodeCount - NodeCounter),
     RemovalList = lists:sublist(Nodes, NodeCounter, NodesToRemove),
     NewSeq = lists:subtract(Nodes,RemovalList),
-    case (NodeCounter + NodesToRemove >= NodeCount) of
-        true ->
-            %% go round the nodes again - will this ever happen?
-            NewNodeCounter = 1;
-        false ->
-            NewNodeCounter = NodeCounter + NodesToRemove
-    end,
+    NewNodeCounter = NodeCounter + NodesToRemove,
     build_nodelist(RingSize, Nodes, Shortfall - NodesToRemove, NewNodeCounter,
                    MinFetchesPerSeq, [ NewSeq | Acc]).
+
+%% @private Backfill the ring with full sequences
+-spec backfill_ring(integer(), [node()], integer(), [node()]) -> [node()].
+backfill_ring(_RingSize, _Nodes, _Remaining=0, Acc) ->
+    Acc;
+backfill_ring(RingSize, Nodes, Remaining, Acc) ->
+    backfill_ring(RingSize, Nodes, Remaining - 1, [Nodes | Acc]).
 
 
 claim_rebalance_n(Ring0, Node) ->
