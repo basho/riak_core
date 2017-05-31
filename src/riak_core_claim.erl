@@ -275,11 +275,13 @@ choose_claim_v2(Ring, Node, Params0) ->
     Active = riak_core_ring:claiming_members(Ring),
     Owners = riak_core_ring:all_owners(Ring),
     Counts = get_counts(Active, Owners),
+    io:format("counts ~p~n", [Counts]),
     RingSize = riak_core_ring:num_partitions(Ring),
     NodeCount = erlang:length(Active),
     Avg = RingSize div NodeCount,
     ActiveDeltas = [{Member, Avg - Count} || {Member, Count} <- Counts],
     Deltas = add_default_deltas(Owners, ActiveDeltas, 0),
+    io:format("deltas ~p~n", [Deltas]),
     BalancedDeltas = rebalance_deltas(Deltas),
     {_, Want} = lists:keyfind(Node, 1, Deltas),
     TargetN = proplists:get_value(target_n_val, Params),
@@ -1247,6 +1249,9 @@ eqc_check(File, Prop) ->
 test_nodes(Count) ->
     [node() | [list_to_atom(lists:concat(["n_", N])) || N <- lists:seq(1, Count-1)]].
 
+test_nodes(Count, StartNode) ->
+    [list_to_atom(lists:concat(["n_", N])) || N <- lists:seq(StartNode, StartNode + Count)].
+
 prop_claim_ensures_unique_nodes_v2_test_() ->
     Prop = eqc:numtests(100, ?QC_OUT(prop_claim_ensures_unique_nodes(choose_claim_v2))),
     {timeout, 120, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
@@ -1301,6 +1306,126 @@ prop_claim_ensures_unique_nodes(ChooseFun) ->
                                 {perfect_preflists, equals([], ImperfectPLs)},
                                 {balanced_ring, balanced_ring(Partitions, NodeCount, Rfinal)}]))
             end).
+
+prop_claim_ensures_unique_nodes_adding_groups_v2_test_() ->
+    Prop = eqc:numtests(100, ?QC_OUT(prop_claim_ensures_unique_nodes(choose_claim_v2))),
+    {timeout, 120, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
+
+prop_claim_ensures_unique_nodes_adding_groups_v3_test_() ->
+    Prop = eqc:numtests(5, ?QC_OUT(prop_claim_ensures_unique_nodes(choose_claim_v3))),
+    {timeout, 240, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
+
+prop_claim_ensures_unique_nodes_adding_groups(ChooseFun) ->
+    %% NOTE: We know that this doesn't work for the case of {_, 3}.
+    %% NOTE2: uses undocumented "double_shrink", is expensive, but should get
+    %% around those case where we shrink to a non-minimal case because
+    %% some intermediate combinations of ring_size/node have no violations
+    ?FORALL({PartsPow, BaseNodes, AddedNodes}, 
+            eqc_gen:double_shrink({choose(4, 9), choose(2, 10), choose(2, 5)}),
+            begin
+                Nval = 3,
+                TNval = Nval + 1,
+                _Params = [{target_n_val, TNval}],
+
+                Partitions = ?POW_2(PartsPow),
+                [Node0 | RestNodes] = test_nodes(BaseNodes),
+                AddNodes = test_nodes(AddedNodes-1, BaseNodes),
+                NodeCount = BaseNodes + AddedNodes,
+                io:format("Base: ~p~n",[[Node0 | RestNodes]]),
+                io:format("Added: ~p~n",[AddNodes]),
+
+                R0 = riak_core_ring:fresh(Partitions, Node0),
+                RBase = lists:foldl(fun(Node, Racc) ->
+                                             riak_core_ring:add_member(Node0, Racc, Node)
+                                     end, R0, RestNodes),
+
+                Rinterim = claim(RBase, {?MODULE, wants_claim_v2}, {?MODULE, ChooseFun}),
+                RAdded = lists:foldl(fun(Node, Racc) ->
+                                             riak_core_ring:add_member(Node0, Racc, Node)
+                                     end, Rinterim, AddNodes),
+
+                Rfinal = claim(RAdded, {?MODULE, wants_claim_v2}, {?MODULE, ChooseFun}),
+
+                Preflists = riak_core_ring:all_preflists(Rfinal, Nval),
+                ImperfectPLs = orddict:to_list(
+                           lists:foldl(fun(PL,Acc) ->
+                                               PLNodes = lists:usort([N || {_,N} <- PL]),
+                                               case length(PLNodes) of
+                                                   Nval ->
+                                                       Acc;
+                                                   _ ->
+                                                       ordsets:add_element(PL, Acc)
+                                               end
+                                       end, [], Preflists)),
+
+                ?WHENFAIL(
+                   begin
+                       io:format(user, "{Partitions, Nodes} {~p, ~p}~n",
+                                 [Partitions, NodeCount]),
+                       io:format(user, "Owners: ~p~n",
+                                 [riak_core_ring:all_owners(Rfinal)])
+                   end,
+                   conjunction([{meets_target_n,
+                                 equals({true,[]},
+                                        meets_target_n(Rfinal, TNval))},
+                                {perfect_preflists, equals([], ImperfectPLs)},
+                                {balanced_ring, balanced_ring(Partitions, NodeCount, Rfinal)}]))
+            end).
+
+prop_claim_ensures_unique_nodes_adding_singly_v2_test_() ->
+    Prop = eqc:numtests(100, ?QC_OUT(prop_claim_ensures_unique_nodes_adding_singly(choose_claim_v2))),
+    {timeout, 120, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
+
+prop_claim_ensures_unique_nodes_adding_singly_v3_test_() ->
+    Prop = eqc:numtests(5, ?QC_OUT(prop_claim_ensures_unique_nodes_adding_singly(choose_claim_v3))),
+    {timeout, 240, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
+
+prop_claim_ensures_unique_nodes_adding_singly(ChooseFun) ->
+    %% NOTE: We know that this doesn't work for the case of {_, 3}.
+    %% NOTE2: uses undocumented "double_shrink", is expensive, but should get
+    %% around those case where we shrink to a non-minimal case because
+    %% some intermediate combinations of ring_size/node have no violations
+    ?FORALL({PartsPow, NodeCount}, eqc_gen:double_shrink({choose(4, 9), choose(4, 15)}),
+            begin
+                Nval = 3,
+                TNval = Nval + 1,
+                Params = [{target_n_val, TNval}],
+
+                Partitions = ?POW_2(PartsPow),
+                [Node0 | RestNodes] = test_nodes(NodeCount),
+
+                R0 = riak_core_ring:fresh(Partitions, Node0),
+                Rfinal = lists:foldl(fun(Node, Racc) ->
+                                             Racc0 = riak_core_ring:add_member(Node0, Racc, Node),
+                                             ?MODULE:ChooseFun(Racc0, Node, Params)
+                                     end, R0, RestNodes),
+                Preflists = riak_core_ring:all_preflists(Rfinal, Nval),
+                ImperfectPLs = orddict:to_list(
+                           lists:foldl(fun(PL,Acc) ->
+                                               PLNodes = lists:usort([N || {_,N} <- PL]),
+                                               case length(PLNodes) of
+                                                   Nval ->
+                                                       Acc;
+                                                   _ ->
+                                                       ordsets:add_element(PL, Acc)
+                                               end
+                                       end, [], Preflists)),
+
+                ?WHENFAIL(
+                   begin
+                       io:format(user, "{Partitions, Nodes} {~p, ~p}~n",
+                                 [Partitions, NodeCount]),
+                       io:format(user, "Owners: ~p~n",
+                                 [riak_core_ring:all_owners(Rfinal)])
+                   end,
+                   conjunction([{meets_target_n,
+                                 equals({true,[]},
+                                        meets_target_n(Rfinal, TNval))},
+                                {perfect_preflists, equals([], ImperfectPLs)},
+                                {balanced_ring, balanced_ring(Partitions, NodeCount, Rfinal)}]))
+            end).
+
+
 
 %% @private check that no node claims more than it should
 -spec balanced_ring(RingSize::integer(), NodeCount::integer(),
