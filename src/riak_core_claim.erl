@@ -283,7 +283,7 @@ choose_claim_v2(Ring, Node, Params0) ->
                         Delta = Avg - Count,
                         DeltaI = case Delta < 0 of
                             true ->
-                                ceiling(abs(Delta)) * -1;
+                                ceiling(abs(Delta));
                             false ->
                                 trunc(Delta)
                         end,
@@ -359,13 +359,15 @@ choose_claim_v2(Ring, Node, Params0) ->
 %% doesn't leave some node not giving up enough partitions
 -spec rebalance_deltas([{node(), integer()}]) -> [{node(), integer()}].
 rebalance_deltas(NodeDeltas) ->
-%%    NodeDeltas = rebalance_deltas(NodeDeltas0, []),
+%x%    NodeDeltas = rebalance_deltas(NodeDeltas0, []),
     {_Nodes, Deltas} = lists:unzip(NodeDeltas),
      case lists:sum(Deltas) of
          0 ->
              NodeDeltas;
          N when N < 0 ->
-             increase_deltas(NodeDeltas, N, [])
+             increase_deltas(NodeDeltas, N, []);
+         N ->
+             decrease_deltas(NodeDeltas, N, [])
      end.
 
 %% @TODO refactor into the orginal deltas calculation in
@@ -376,6 +378,22 @@ rebalance_deltas([{Node, Delta} | Rest], Acc) when Delta < 0 ->
     rebalance_deltas(Rest, [{Node, ceiling(abs(Delta)) * -1} | Acc]);
 rebalance_deltas([{Node, Delta} | Rest], Acc)  ->
     rebalance_deltas(Rest, [{Node, trunc(Delta)} | Acc]).
+
+%% @private increases the delta doing a round robin over nodes until
+%% total delta matches wants
+-spec decrease_deltas(Deltas::[{node(), integer()}],
+                      WantsError::integer(),
+                      Acc::[{node(), integer()}]) ->
+                             Rebalanced::[{node(), integer()}].
+decrease_deltas(Rest, 0, Acc) ->
+    lists:usort(lists:append(Rest, Acc));
+decrease_deltas([], N, Acc) when N > 0 ->
+    %% go around again
+    decrease_deltas(lists:reverse(Acc), N, []);
+decrease_deltas([{Node, Delta} | Rest], N, Acc) when Delta > 0 ->
+    decrease_deltas(Rest, N-1, [{Node, Delta-1} | Acc]);
+decrease_deltas([NodeDelta | Rest], N, Acc) ->
+    decrease_deltas(Rest, N, [NodeDelta | Acc]).
 
 %% @private increases the delta doing a round robin over nodes until
 %% total delta matches wants
@@ -392,6 +410,7 @@ increase_deltas([{Node, Delta} | Rest], N, Acc) when Delta < 0 ->
     increase_deltas(Rest, N+1, [{Node, Delta+1} | Acc]);
 increase_deltas([NodeDelta | Rest], N, Acc) ->
     increase_deltas(Rest, N, [NodeDelta | Acc]).
+
 
 meets_target_n(Ring, TargetN) ->
     Owners = lists:keysort(1, riak_core_ring:all_owners(Ring)),
