@@ -272,27 +272,17 @@ choose_claim_v2(Ring, Node) ->
 
 choose_claim_v2(Ring, Node, Params0) ->
     Params = default_choose_params(Params0),
+    %% Active::[node()]
     Active = riak_core_ring:claiming_members(Ring),
+    %% Owners::[{index(), node()}]
     Owners = riak_core_ring:all_owners(Ring),
+    %% Counts::[node(), non_neg_integer()]
     Counts = get_counts(Active, Owners),
     RingSize = riak_core_ring:num_partitions(Ring),
     NodeCount = erlang:length(Active),
-    Avg = RingSize / NodeCount,
-    ActiveDeltas = [
-                    begin
-                        Delta = Avg - Count,
-                        DeltaI = case Delta < 0 of
-                            true ->
-                                ceiling(abs(Delta));
-                            false ->
-                                trunc(Delta)
-                        end,
-                        {Member, DeltaI}
-                    end|| {Member, Count} <- Counts],
-    Deltas = add_default_deltas(Owners, ActiveDeltas, 0),
-    BalancedDeltas = rebalance_deltas(Deltas),
-    {_, Want0} = lists:keyfind(Node, 1, Deltas),
-    Want = trunc(Want0),
+    %% Deltas::[node(), integer()]
+    Deltas = get_deltas(RingSize, NodeCount, Owners, Counts),
+    {_, Want} = lists:keyfind(Node, 1, Deltas),
     TargetN = proplists:get_value(target_n_val, Params),
     AllIndices = lists:zip(lists:seq(0, length(Owners)-1),
                            [Idx || {Idx, _} <- Owners]),
@@ -334,7 +324,7 @@ choose_claim_v2(Ring, Node, Params0) ->
     Indices2 = prefilter_violations(Ring, Node, AllIndices, Indices,
                                     TargetN, RingSize),
     %% Claim indices from the remaining candidate set
-    Claim = select_indices(Owners, BalancedDeltas, Indices2, TargetN, RingSize),
+    Claim = select_indices(Owners, Deltas, Indices2, TargetN, RingSize),
     Claim2 = lists:sublist(Claim, Want),
     NewRing = lists:foldl(fun(Idx, Ring0) ->
                                   riak_core_ring:transfer_node(Idx, Node, Ring0)
@@ -353,64 +343,95 @@ choose_claim_v2(Ring, Node, Params0) ->
             NewRing
     end.
 
+%% @private for each node in owners return a tuple of owner and delta
+%% where delta is an integer that expresses how many nodes the owner
+%% needs it's ownership to change by. A positive means the owner needs
+%% that many more partitions, a negative means the owner can lose that
+%% many paritions.
+-spec get_deltas(RingSize::pos_integer(),
+                 NodeCount::pos_integer(),
+                 Owners::[{Index::non_neg_integer(), node()}],
+                 Counts::[{node(), non_neg_integer()}]) ->
+                        Deltas::[{node(), integer()}].
+get_deltas(RingSize, NodeCount, Owners, Counts) ->
+    Avg = RingSize / NodeCount,
+    %% the most any node should own
+    Max = ceiling(RingSize / NodeCount),
+    ActiveDeltas = [{Member, Count, normalise_delta(Avg - Count)}
+                    || {Member, Count} <- Counts],
+    BalancedDeltas = rebalance_deltas(ActiveDeltas, Max, RingSize),
+    add_default_deltas(Owners, BalancedDeltas, 0).
+
+%% @private a node can only claim whole partitions, but if RingSize
+%% rem NodeCount /= 0, a delta will be a float. This function decides
+%% if that float should be floored or ceilinged
+-spec normalise_delta(float()) -> integer().
+normalise_delta(Delta) when Delta < 0 ->
+    %% if the node has too many (a negative delta) give up the most
+    %% you can (will be rebalanced)
+    ceiling(abs(Delta)) * -1;
+normalise_delta(Delta) ->
+    %% if the node wants partitions, ask for the fewest for least
+    %% movement
+    trunc(Delta).
+
 %% @private so that we don't end up with an imbalanced ring where one
 %% node has more vnodes than it should (e.g. [{n1, 6}, {n2, 6}, {n3,
 %% 6}, {n4, 8}, {n5,6} we rebalance the deltas so that select_indices
 %% doesn't leave some node not giving up enough partitions
--spec rebalance_deltas([{node(), integer()}]) -> [{node(), integer()}].
-rebalance_deltas(NodeDeltas) ->
-%x%    NodeDeltas = rebalance_deltas(NodeDeltas0, []),
-    {_Nodes, Deltas} = lists:unzip(NodeDeltas),
-     case lists:sum(Deltas) of
+-spec rebalance_deltas([{node(), integer()}], pos_integer(), pos_integer()) -> [{node(), integer()}].
+rebalance_deltas(NodeDeltas, Max, RingSize) ->
+    AppliedDeltas = [Own + Delta || {_, Own, Delta} <- NodeDeltas],
+     case lists:sum(AppliedDeltas) - RingSize of
          0 ->
-             NodeDeltas;
+             [{Node, Delta} || {Node, _Cnt, Delta} <- NodeDeltas];
          N when N < 0 ->
-             increase_deltas(NodeDeltas, N, []);
-         N ->
-             decrease_deltas(NodeDeltas, N, [])
+             increase_keeps(NodeDeltas, N, Max, [])
      end.
 
-%% @TODO refactor into the orginal deltas calculation in
-%% choose_claim_v2 rather than iterating the list again.
-rebalance_deltas([], Acc) ->
-    lists:usort(Acc);
-rebalance_deltas([{Node, Delta} | Rest], Acc) when Delta < 0 ->
-    rebalance_deltas(Rest, [{Node, ceiling(abs(Delta)) * -1} | Acc]);
-rebalance_deltas([{Node, Delta} | Rest], Acc)  ->
-    rebalance_deltas(Rest, [{Node, trunc(Delta)} | Acc]).
-
-%% @private increases the delta doing a round robin over nodes until
-%% total delta matches wants
--spec decrease_deltas(Deltas::[{node(), integer()}],
+%% @private increases the delta for (some) nodes giving away
+%% partitions to the max they can keep
+-spec increase_keeps(Deltas::[{node(), integer()}],
                       WantsError::integer(),
+                      Max::pos_integer(),
                       Acc::[{node(), integer()}]) ->
                              Rebalanced::[{node(), integer()}].
-decrease_deltas(Rest, 0, Acc) ->
-    lists:usort(lists:append(Rest, Acc));
-decrease_deltas([], N, Acc) when N > 0 ->
+increase_keeps(Rest, 0, _Max, Acc) ->
+    [{Node, Delta} || {Node, _Own, Delta} <- lists:usort(lists:append(Rest, Acc))];
+increase_keeps([], N, Max, Acc) when N < 0 ->
     %% go around again
-    decrease_deltas(lists:reverse(Acc), N, []);
-decrease_deltas([{Node, Delta} | Rest], N, Acc) when Delta > 0 ->
-    decrease_deltas(Rest, N-1, [{Node, Delta-1} | Acc]);
-decrease_deltas([NodeDelta | Rest], N, Acc) ->
-    decrease_deltas(Rest, N, [NodeDelta | Acc]).
+    increase_takes(lists:reverse(Acc), N, Max, []);
+increase_keeps([{Node, Own, Delta} | Rest], N, Max, Acc) when Delta < 0 ->
+    WouldOwn = Own + Delta,
+    Additive = case WouldOwn +1 =< Max of
+                   true -> 1;
+                   false -> 0
+               end,
+    increase_keeps(Rest, N+Additive, Max, [{Node, Own, Delta+Additive} | Acc]);
+increase_keeps([NodeDelta | Rest], N, Max, Acc) ->
+    increase_keeps(Rest, N, Max, [NodeDelta | Acc]).
 
-%% @private increases the delta doing a round robin over nodes until
-%% total delta matches wants
--spec increase_deltas(Deltas::[{node(), integer()}],
+%% @private increases the delta for (some) nodes taking partitions to the max
+%% they can ask for
+-spec increase_takes(Deltas::[{node(), integer()}],
                       WantsError::integer(),
+                      Max::pos_integer(),
                       Acc::[{node(), integer()}]) ->
                              Rebalanced::[{node(), integer()}].
-increase_deltas(Rest, 0, Acc) ->
-    lists:usort(lists:append(Rest, Acc));
-increase_deltas([], N, Acc) when N < 0 ->
+increase_takes(Rest, 0, _Max, Acc) ->
+    [{Node, Delta} || {Node, _Own, Delta} <- lists:usort(lists:append(Rest, Acc))];
+increase_takes([], N, Max, Acc) when N < 0 ->
     %% go around again
-    increase_deltas(lists:reverse(Acc), N, []);
-increase_deltas([{Node, Delta} | Rest], N, Acc) when Delta < 0 ->
-    increase_deltas(Rest, N+1, [{Node, Delta+1} | Acc]);
-increase_deltas([NodeDelta | Rest], N, Acc) ->
-    increase_deltas(Rest, N, [NodeDelta | Acc]).
-
+    increase_keeps(lists:reverse(Acc), N, Max, []);
+increase_takes([{Node, Own, Delta} | Rest], N, Max, Acc) when Delta > 0 ->
+    WouldOwn = Own + Delta,
+    Additive = case WouldOwn +1 =< Max of
+                   true -> 1;
+                   false -> 0
+               end,
+    increase_takes(Rest, N+Additive, Max, [{Node, Own, Delta+Additive} | Acc]);
+increase_takes([NodeDelta | Rest], N, Max, Acc) ->
+    increase_takes(Rest, N, Max, [NodeDelta | Acc]).
 
 meets_target_n(Ring, TargetN) ->
     Owners = lists:keysort(1, riak_core_ring:all_owners(Ring)),
@@ -813,6 +834,8 @@ find_violations(Ring, TargetN) ->
 %% @private
 %%
 %% @doc Counts up the number of partitions owned by each node.
+-spec get_counts([node()], riak_core_ring:riak_core_ring()) ->
+                        [{node(), non_neg_integer()}].
 get_counts(Nodes, Ring) ->
     Empty = [{Node, 0} || Node <- Nodes],
     Counts = lists:foldl(fun({_Idx, Node}, Counts) ->
@@ -1307,6 +1330,14 @@ prop_claim_ensures_unique_nodes_v2_test_() ->
     Prop = eqc:testing_time(30, ?QC_OUT(prop_claim_ensures_unique_nodes(choose_claim_v2))),
     {timeout, 120, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
 
+prop_claim_ensures_unique_nodes_adding_groups_v2_test_() ->
+    Prop = eqc:testing_time(30, ?QC_OUT(prop_claim_ensures_unique_nodes_adding_groups(choose_claim_v2))),
+    {timeout, 120, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
+
+prop_claim_ensures_unique_nodes_adding_singly_v2_test_() ->
+    Prop = eqc:testing_time(30, ?QC_OUT(prop_claim_ensures_unique_nodes_adding_singly(choose_claim_v2))),
+    {timeout, 120, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
+
 %% @TODO this is very few tests. This is broken afaict.
 prop_claim_ensures_unique_nodes_v3_test_() ->
     Prop = eqc:numtests(5, ?QC_OUT(prop_claim_ensures_unique_nodes(choose_claim_v3))),
@@ -1358,10 +1389,6 @@ prop_claim_ensures_unique_nodes(ChooseFun) ->
                                 {perfect_preflists, equals([], ImperfectPLs)},
                                 {balanced_ring, balanced_ring(Partitions, NodeCount, Rfinal)}]))
             end).
-
-prop_claim_ensures_unique_nodes_adding_groups_v2_test_() ->
-    Prop = eqc:testing_time(30, ?QC_OUT(prop_claim_ensures_unique_nodes(choose_claim_v2))),
-    {timeout, 120, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
 
 %% @TODO this fails, we didn't fix v3
 %% prop_claim_ensures_unique_nodes_adding_groups_v3_test_() ->
@@ -1425,9 +1452,6 @@ prop_claim_ensures_unique_nodes_adding_groups(ChooseFun) ->
                                 {balanced_ring, balanced_ring(Partitions, NodeCount, Rfinal)}]))
             end).
 
-prop_claim_ensures_unique_nodes_adding_singly_v2_test_() ->
-    Prop = eqc:testing_time(30, ?QC_OUT(prop_claim_ensures_unique_nodes_adding_singly(choose_claim_v2))),
-    {timeout, 120, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
 
 %% @TODO take this out (and add issue/comment in commit) not fixed
 %% prop_claim_ensures_unique_nodes_adding_singly_v3_test_() ->
@@ -1451,6 +1475,8 @@ prop_claim_ensures_unique_nodes_adding_singly(ChooseFun) ->
                 R0 = riak_core_ring:fresh(Partitions, Node0),
                 Rfinal = lists:foldl(fun(Node, Racc) ->
                                              Racc0 = riak_core_ring:add_member(Node0, Racc, Node),
+                                             %% TODO which is it? Claim or ChooseFun??
+                                             %%claim(Racc0, {?MODULE, wants_claim_v2}, {?MODULE, ChooseFun})
                                              ?MODULE:ChooseFun(Racc0, Node, Params)
                                      end, R0, RestNodes),
                 Preflists = riak_core_ring:all_preflists(Rfinal, Nval),
@@ -1487,9 +1513,10 @@ prop_claim_ensures_unique_nodes_adding_singly(ChooseFun) ->
                            boolean().
 balanced_ring(RingSize, NodeCount, Ring) ->
     TargetClaim = ceiling(RingSize / NodeCount),
+    MinClaim = RingSize div NodeCount,
     AllOwners0 = riak_core_ring:all_owners(Ring),
     AllOwners = lists:keysort(2, AllOwners0),
-    {Balanced, AccFinal} = lists:foldl(fun({_Part, Node}, {_Balanced, [{Node, Cnt} | Acc]}) when Cnt >= TargetClaim ->
+    {BalancedMax, AccFinal} = lists:foldl(fun({_Part, Node}, {_Balanced, [{Node, Cnt} | Acc]}) when Cnt >= TargetClaim ->
                                              {false, [{Node, Cnt+1} | Acc]};
                                         ({_Part, Node}, {Balanced, [{Node, Cnt} | Acc]}) ->
                                              {Balanced, [{Node, Cnt+1} | Acc]};
@@ -1498,11 +1525,12 @@ balanced_ring(RingSize, NodeCount, Ring) ->
                                      end,
                                      {true, []},
                                      AllOwners),
-    case Balanced of
+    BalancedMin = lists:all(fun({_Node, Cnt}) -> Cnt >= MinClaim end, AccFinal),
+    case BalancedMax andalso BalancedMin of
         true ->
             true;
         false ->
-            {TargetClaim, AccFinal}
+            {TargetClaim, MinClaim, lists:sort(AccFinal)}
     end.
 
 
