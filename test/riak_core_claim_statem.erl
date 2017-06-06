@@ -16,13 +16,21 @@
 
 -compile(export_all).
 
+
 %% -- State ------------------------------------------------------------------
 -record(state,
         {
+          ring_size,
           nodes=[?CLAIMANT] :: [atom()], %% nodes that have been added
           node_counter=1 :: non_neg_integer(), %% to aid with naming nodes
           ring = undefined
         }).
+
+%% @doc run the statem with a ring of size `math:pow(`N', 2)'.
+-spec with_ring_size(pos_integer()) -> eqc_statem:symbolic_state().
+with_ring_size(N) ->
+    RingSize = trunc(math:pow(2, N)),
+    #state{ring_size=RingSize, ring=riak_core_ring:fresh(RingSize, ?CLAIMANT)}.
 
 %% @doc Returns the state in which each test case starts. (Unless a different
 %%      initial state is supplied explicitly to, e.g. commands/2.)
@@ -32,32 +40,33 @@ initial_state() ->
 
 %% -- Operations -------------------------------------------------------------
 
-%% --- Operation: fresh_ring ---
-%% @doc fresh_ring_pre/1 - Precondition for generation
--spec fresh_ring_pre(S :: eqc_statem:symbolic_state()) -> boolean().
-fresh_ring_pre(#state{ring=undefined}) ->
-    true;
-fresh_ring_pre(_S) ->
-    false.
+%% %% --- Operation: fresh_ring ---
+%% %% @doc fresh_ring_pre/1 - Precondition for generation
+%% -spec fresh_ring_pre(S :: eqc_statem:symbolic_state()) -> boolean().
+%% fresh_ring_pre(#state{ring=undefined}) ->
+%%     true;
+%% fresh_ring_pre(_S) ->
+%%     false.
 
-%% @doc fresh_ring_args - Argument generator
--spec fresh_ring_args(S :: eqc_statem:symbolic_state()) -> eqc_gen:gen([term()]).
-fresh_ring_args(_S) ->
-    [choose(4, 9)].
+%% %% @doc fresh_ring_args - Argument generator
+%% -spec fresh_ring_args(S :: eqc_statem:symbolic_state()) -> eqc_gen:gen([term()]).
+%% fresh_ring_args(_S) ->
+%%     [choose(4, 9)].
 
-%% @doc fresh_ring - The actual operation
-fresh_ring(RingSize) ->
-    RS = trunc(math:pow(2, RingSize)),
-    riak_core_ring:fresh(RS, ?CLAIMANT).
+%% %% @doc fresh_ring - The actual operation
+%% fresh_ring(RingSize) ->
+%%     RS = trunc(math:pow(2, RingSize)),
+%%     riak_core_ring:fresh(RS, ?CLAIMANT).
 
-%% @doc fresh_ring_next - Next state function
--spec fresh_ring_next(S, Var, Args) -> NewS
-    when S    :: eqc_statem:symbolic_state() | eqc_state:dynamic_state(),
-         Var  :: eqc_statem:var() | term(),
-         Args :: [term()],
-         NewS :: eqc_statem:symbolic_state() | eqc_state:dynamic_state().
-fresh_ring_next(S, Ring, [_RingSize]) ->
-    S#state{ring=Ring}.
+%% %% @doc fresh_ring_next - Next state function
+%% -spec fresh_ring_next(S, Var, Args) -> NewS
+%%     when S    :: eqc_statem:symbolic_state() | eqc_state:dynamic_state(),
+%%          Var  :: eqc_statem:var() | term(),
+%%          Args :: [term()],
+%%          NewS :: eqc_statem:symbolic_state() | eqc_state:dynamic_state().
+%% fresh_ring_next(S, Ring, [_RingSize]) ->
+%%     S#state{ring=Ring}.
+
 
 %% --- Operation: add_node ---
 %% @doc add_node_pre/1 - Precondition for generation
@@ -65,7 +74,7 @@ fresh_ring_next(S, Ring, [_RingSize]) ->
 add_node_pre(#state{ring=undefined}) ->
     false;
 %% TODO make this dynamic based on ring_size
-add_node_pre(#state{nodes=Nodes}) when length(Nodes) > 15 ->
+add_node_pre(S=#state{nodes=Nodes}) when length(Nodes) == S#state.ring_size ->
     false;
 add_node_pre(_) ->
     true.
@@ -99,7 +108,9 @@ add_node_post(_S, [NodeName, _Ring], NextRing) ->
     lists:member(NodeName, riak_core_ring:members(NextRing, [joining])).
 
 
-%% --- Operation: claim ---
+%% --- Operation: claim --- Need to figure out how to only call claim
+%% if at least one node has been added or removed since last call
+
 %% @doc claim_pre/1 - Precondition for generation
 -spec claim_pre(S :: eqc_statem:symbolic_state()) -> boolean().
 claim_pre(#state{ring=undefined}) ->
@@ -175,9 +186,9 @@ weight(_S, add_node) -> 1;
 weight(_S, _Cmd) -> 1.
 
 %% @doc Default generated property
--spec prop_riak_core_claim_statem() -> eqc:property().
-prop_riak_core_claim_statem() ->
-    ?FORALL(Cmds, commands(?MODULE),
+-spec prop_claim(eqc_statem:symbolic_state()) -> eqc:property().
+prop_claim(InitialState) ->
+    ?FORALL(Cmds, commands(?MODULE, InitialState),
             begin
                 {H, S, Res} = run_commands(?MODULE, Cmds),
                 Ring = S#state.ring,
@@ -197,5 +208,18 @@ node_count(undefined) ->
     0;
 node_count(Ring) ->
     length(riak_core_ring:all_members(Ring)).
+
+%% eunit stuff
+-define(QC_OUT(P),
+        eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
+
+eqc_check(File, Prop) ->
+    {ok, Bytes} = file:read_file(File),
+    CE = binary_to_term(Bytes),
+    eqc:check(Prop, CE).
+
+prop_claim_test_() ->
+    Props = [{N, eqc:testing_time(10+N, ?QC_OUT(prop_claim(with_ring_size(N))))} || N <- lists:seq(4, 9)],
+    [{timeout, 120, fun() -> ?assert(eqc:quickcheck(Prop)) end} || {_N, Prop} <- Props].
 
 -endif.
