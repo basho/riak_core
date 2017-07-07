@@ -22,3 +22,5 @@ sim.out
 .eqc
 compile_commands.json
 rebar3.crashdump
+.rebar3/
+core_vnode_eqc.log

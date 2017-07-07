@@ -301,7 +301,8 @@ initialize(timeout, StateData0=#state{mod=Mod,
                              NVal,
                              PVC,
                              ReqId,
-                             NodeCheckService),
+                             NodeCheckService,
+                             Request),
     case CoveragePlan of
         {error, Reason} ->
             Mod:finish({error, Reason}, ModState);

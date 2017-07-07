@@ -368,11 +368,7 @@ visit_item2(K, V, Acc = #ho_acc{ack = _AccSyncThreshold, acksync_threshold = _Ac
         {error, Reason} ->
             Acc#ho_acc{ack=0, error={error, Reason}, stats=Stats3}
     end;
-<<<<<<< HEAD
 visit_item2(K, V, Acc) ->
-=======
-visit_item(K, V, Acc) ->
->>>>>>> add a simple, point to point capability check for batch message
     #ho_acc{filter=Filter,
             module=Module,
             total_objects=TotalObjects,
@@ -397,7 +393,6 @@ visit_item(K, V, Acc) ->
                             ItemQueue2 = [BinObj | ItemQueue],
                             ItemQueueLength2 = ItemQueueLength + 1,
                             ItemQueueByteSize2 = ItemQueueByteSize + byte_size(BinObj),
-<<<<<<< HEAD
 
                             Acc2 = Acc#ho_acc{item_queue_length=ItemQueueLength2,
                                               item_queue_byte_size=ItemQueueByteSize2},
@@ -405,15 +400,6 @@ visit_item(K, V, Acc) ->
                             %% Unit size is bytes:
                             HandoffBatchThreshold = app_helper:get_env(riak_core,
                                                                        handoff_batch_threshold,
-=======
-                            
-                            Acc2 = Acc#ho_acc{item_queue_length=ItemQueueLength2,
-                                              item_queue_byte_size=ItemQueueByteSize2},
-                            
-                            %% Unit size is bytes:
-                            HandoffBatchThreshold = app_helper:get_env(riak_core, 
-                                                                       handoff_batch_threshold, 
->>>>>>> add a simple, point to point capability check for batch message
                                                                        1024*1024),
 
                             case ItemQueueByteSize2 =< HandoffBatchThreshold of
@@ -430,7 +416,6 @@ visit_item(K, V, Acc) ->
                                     total_bytes=TotalBytes} = Acc,
                             M = <<?PT_MSG_OBJ:8,BinObj/binary>>,
                             NumBytes = byte_size(M),
-<<<<<<< HEAD
 
                             Stats2 = incr_bytes(incr_objs(Stats), NumBytes),
                             Stats3 = maybe_send_status({Module, SrcPartition,
@@ -441,18 +426,6 @@ visit_item(K, V, Acc) ->
                                     Acc#ho_acc{ack=Ack+1,
                                                error=ok,
                                                stats=Stats3,
-=======
-                            
-                            Stats2 = incr_bytes(incr_objs(Stats), NumBytes),
-                            Stats3 = maybe_send_status({Module, SrcPartition, 
-                                                        TargetPartition}, Stats2),
-                            
-                            case TcpMod:send(Sock, M) of
-                                ok ->
-                                    Acc#ho_acc{ack=Ack+1, 
-                                               error=ok, 
-                                               stats=Stats3, 
->>>>>>> add a simple, point to point capability check for batch message
                                                total_bytes=TotalBytes+NumBytes,
                                                total_objects=TotalObjects+1};
                                 {error, Reason} ->
@@ -639,22 +612,14 @@ get_filter(Opts) ->
         Filter -> Filter
     end.
 
-<<<<<<< HEAD
 %% @private
-=======
-%% @private 
->>>>>>> add a simple, point to point capability check for batch message
 %%
 %% @doc check if the handoff reciever will accept batching messages
 %%      otherwise fall back to the slower, object-at-a-time path
 
 remote_supports_batching(Node) ->
 
-<<<<<<< HEAD
     case catch rpc:call(Node, riak_core_handoff_receiver,
-=======
-    case catch rpc:call(Node, riak_core_handoff_receiver, 
->>>>>>> add a simple, point to point capability check for batch message
                   supports_batching, []) of
         true ->
             lager:debug("remote node supports batching, enabling"),
@@ -665,7 +630,6 @@ remote_supports_batching(Node) ->
             lager:debug("remote node doesn't support batching"),
             false
     end.
-<<<<<<< HEAD
 
 %% @private
 %% @doc The optional call to handoff_started/2 allows vnodes
@@ -694,6 +658,3 @@ maybe_call_handoff_started(Module, SrcPartition) ->
             %% optional callback not implemented, so we carry on, w/ no addition fold options
             []
     end.
-=======
-    
->>>>>>> add a simple, point to point capability check for batch message

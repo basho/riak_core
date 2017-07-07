@@ -78,17 +78,7 @@
          responsible_preflists/1,
          responsible_preflists/2,
          get_index_n/1,
-         preflist_siblings/1,
-         proxy_spawn/1,
-         proxy/2,
-         enable_job_class/1,
-         enable_job_class/2,
-         disable_job_class/1,
-         disable_job_class/2,
-         job_class_enabled/1,
-         job_class_enabled/2,
-         job_class_disabled_message/2,
-         report_job_request_disposition/6
+         preflist_siblings/1
         ]).
 
 -include("riak_core_vnode.hrl").

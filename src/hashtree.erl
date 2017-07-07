@@ -1075,13 +1075,6 @@ iterate({ok, K, V}, IS=#itr_state{itr=Itr,
             IS2 = IS#itr_state{current_segment=NextSeg,
                                segment_acc=[],
                                remaining_segments=Remaining,
-                               segment_acc=[{K,V}],
-                               prefetch=true},
-            iterate(iterator_move(Itr, prefetch, IS2), IS2);
-        {Id, _, [_NextSeg | _Remaining], true} ->
-            %% Pointing at uninteresting segment, but need to halt the
-            %% prefetch to ensure the interator can be reused
-            IS2 = IS#itr_state{segment_acc=[],
                                final_acc=[{Segment, F(Acc)} | FinalAcc],
                                prefetch=true}, % will be after second move
             _ = iterator_move(Itr, prefetch_stop), % ignore the pre-fetch,
@@ -1254,17 +1247,6 @@ expand(V, N, Acc) ->
                 Acc
         end,
     expand(V bsr 1, N+1, Acc2).
-
-open_opts([K | Ks], Opts) ->
-    case application:get_env(riak_core, K) of
-        {ok, V} ->
-            open_opts(Ks, [{K, V} | Opts]);
-        _ ->
-            open_opts(Ks, Opts)
-    end;
-
-open_opts([], Opts) ->
-    Opts.
 
 %%%===================================================================
 %%% Experiments
