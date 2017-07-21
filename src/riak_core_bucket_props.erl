@@ -168,6 +168,8 @@ resolve_prop({precommit, PC1}, {precommit, PC2}) ->
     resolve_hooks(PC1, PC2);
 resolve_prop({pw, PW1}, {pw, PW2}) ->
     max(PW1, PW2);
+resolve_prop({pd, PD1}, {pd, PD2}) ->
+    max(PD1, PD2);
 resolve_prop({r, R1}, {r, R2}) ->
     max(R1, R2);
 resolve_prop({rw, RW1}, {rw, RW2}) ->
@@ -206,6 +208,7 @@ simple_resolve_test() ->
               {pr,0},
               {precommit,[{a, b}]},
               {pw,0},
+              {pd,0},
               {r,quorum},
               {rw,quorum},
               {small_vclock,50},
@@ -226,6 +229,7 @@ simple_resolve_test() ->
               {pr,1},
               {precommit,[{c, d}]},
               {pw,3},
+              {pd,3},
               {r,3},
               {rw,3},
               {w,1},
@@ -245,6 +249,7 @@ simple_resolve_test() ->
                 {pr,1},
                 {precommit,[{a, b}, {c, d}]},
                 {pw,3},
+                {pd,3},
                 {r,quorum},
                 {rw,quorum},
                 {small_vclock,50},
