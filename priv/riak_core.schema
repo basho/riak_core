@@ -294,6 +294,7 @@ end
  "2048 and larger are supported, but considered advanced config",
  fun(Size) ->
   Size =< 1024
+ end}.
 
 {mapping, "buckets.default.pr", "riak_core.default_bucket_props.pr", [
   {default, "0"},
