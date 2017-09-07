@@ -516,7 +516,7 @@ end
   "can't be a local ip",
   fun(AddrString) ->
     case inet_parse:address(AddrString) of
-      {ok, {127, _, _, _}} -> false;
+      {ok, {127, 0, _, _}} -> false;
       {ok, _} -> true;
       {error, _} -> false
     end
