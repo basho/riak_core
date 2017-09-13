@@ -24,7 +24,7 @@
          leave/0, remove_from_cluster/1]).
 -export([vnode_modules/0, health_check/1]).
 -export([register/1, register/2, bucket_fixups/0, bucket_validators/0]).
--export([stat_mods/0]).
+-export([stat_mods/0, pool_mods/0]).
 
 -export([add_guarded_event_handler/3, add_guarded_event_handler/4]).
 -export([delete_guarded_event_handler/3]).
@@ -313,6 +313,12 @@ stat_mods() ->
         {ok, Mods} -> Mods
     end.
 
+pool_mods() ->
+    case application:get_env(riak_core, pool_mods) of
+        undefined -> [];
+        {ok, Mods} -> Mods % should be {Module, PoolSize}
+    end.
+
 health_check(App) ->
     case application:get_env(riak_core, health_checks) of
         undefined ->
@@ -373,6 +379,9 @@ register(App, [{permissions, Permissions}|T]) ->
     register(App, T);
 register(App, [{auth_mod, {AuthType, AuthMod}}|T]) ->
     register_proplist({AuthType, AuthMod}, auth_mods),
+    register(App, T);
+register(App, [{node_worker_pool, {WorkerMod, PoolSize, WArgs, WProps}}|T]) ->
+    register_pool(App, WorkerMod, PoolSize, WArgs, WProps),
     register(App, T).
 
 register_mod(App, Module, Type) when is_atom(Type) ->
@@ -391,6 +400,12 @@ register_mod(App, Module, Type) when is_atom(Type) ->
             application:set_env(riak_core, Type,
                 lists:usort([{App,Module}|Mods]))
     end.
+
+register_pool(_App, WorkerMod, PoolSize, WorkerArgs, WorkerProps) ->
+    riak_core_node_worker_pool_sup:start_pool(WorkerMod,
+                                                PoolSize, 
+                                                WorkerArgs, 
+                                                WorkerProps).
 
 register_metadata(App, Value, Type) ->
     case application:get_env(riak_core, Type) of
