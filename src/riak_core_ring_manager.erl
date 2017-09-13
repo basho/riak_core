@@ -331,8 +331,9 @@ stop() ->
 init([Mode]) ->
     setup_ets(Mode),
     Ring = reload_ring(Mode),
-    State = set_ring(Ring, #state{mode = Mode}),
-    riak_core_ring_events:ring_update(Ring),
+    Ring2 = node_level_config(Ring),
+    State = set_ring(Ring2, #state{mode = Mode}),
+    riak_core_ring_events:ring_update(Ring2),
     {ok, State}.
 
 reload_ring(test) ->
@@ -506,6 +507,14 @@ run_fixups([{App, Fixup}|T], BucketName, BucketProps) ->
             BucketProps
     end,
     run_fixups(T, BucketName, BP).
+
+%% Add node level configs to ring
+-spec node_level_config(riak_core_ring:riak_core_ring()) -> riak_core_ring:riak_core_ring().
+node_level_config(Ring) ->
+    %% Check node participation in coverage queries and update ring
+    Node = node(),
+    ParticipateInCoverage = app_helper:get_env(riak_core,participate_in_coverage),
+    riak_core_ring:update_member_meta(Node, Ring, Node, participate_in_coverage, ParticipateInCoverage).
 
 set_ring(Ring, State) ->
     set_ring_global(Ring),

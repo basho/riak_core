@@ -47,12 +47,18 @@
 create_plan(VNodeSelector, NVal, PVC, ReqId, Service) ->
     {ok, CHBin} = riak_core_ring_manager:get_chash_bin(),
     PartitionCount = chashbin:num_partitions(CHBin),
+    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
     %% Create a coverage plan with the requested primary
     %% preference list VNode coverage.
     %% Get a list of the VNodes owned by any unavailble nodes
+    Members = riak_core_ring:all_members(Ring),
+    NonCoverageNodes = [Node || Node <- Members,
+                                      riak_core_ring:get_member_meta(Ring, Node, participate_in_coverage) == false],
+
     DownVNodes = [Index ||
                      {Index, _Node}
-                         <- riak_core_apl:offline_owners(Service, CHBin)],
+                         <- riak_core_apl:offline_owners(Service, CHBin, NonCoverageNodes)],
+
     %% Calculate an offset based on the request id to offer
     %% the possibility of different sets of VNodes being
     %% used even when all nodes are available.
