@@ -313,8 +313,9 @@ wait_for_pid(Tag, Pid) ->
         {'DOWN', Mref, process, _, _} ->
             ok
     after
-        5000 ->
-            {error, Tag, didnotexit}
+        10000 ->
+	    exit(Pid, kill),
+	    ok
     end.
 
 -endif.

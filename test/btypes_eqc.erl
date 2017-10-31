@@ -338,55 +338,71 @@ weight(_S, _Cmd) -> 1.
 
 %% @doc the property
 prop_btype_invariant() ->
-    ?FORALL(Cmds, commands(?MODULE),
-            aggregate(command_names(Cmds),
-                      ?TRAPEXIT(
-                         begin
-                             meck:new(riak_core_capability, []),
-                             meck:expect(riak_core_capability, get,
-                                         fun({riak_core, bucket_types}) -> true;
-                                            (X) -> meck:passthrough([X]) end),
-                             os:cmd("rm -r ./btypes_eqc_meta"),
-                             application:set_env(riak_core, claimant_tick, 4294967295),
-                             application:set_env(riak_core, broadcast_lazy_timer, 4294967295),
-                             application:set_env(riak_core, broadcast_exchange_timer, 4294967295),
-                             application:set_env(riak_core, metadata_hashtree_timer, 4294967295),
-                             stop_pid(whereis(riak_core_ring_events)),
-                             stop_pid(whereis(riak_core_ring_manager)),
-                             {ok, RingEvents} = riak_core_ring_events:start_link(),
-                             {ok, _RingMgr} = riak_core_ring_manager:start_link(test),
-                             {ok, Claimant} = riak_core_claimant:start_link(),
-                             {ok, MetaMgr} = riak_core_metadata_manager:start_link([{data_dir, "./btypes_eqc_meta"}]),
-                             {ok, Hashtree} = riak_core_metadata_hashtree:start_link("./btypes_eqc_meta/trees"),
-                             {ok, Broadcast} = riak_core_broadcast:start_link(),
-                             {H, S, Res} = run_commands(?MODULE,Cmds),
-                             stop_pid(Broadcast),
-                             stop_pid(Hashtree),
-                             stop_pid(MetaMgr),
-                             stop_pid(Claimant),
-                             riak_core_ring_manager:stop(),
-                             stop_pid(RingEvents),
-                             os:cmd("rm -r ./btypes_eqc_meta"),
-                             meck:unload(riak_core_capability),
-                             pretty_commands(?MODULE, Cmds, {H, S, Res},
-                                             Res == ok)
-                         end))).
+    ?SETUP(
+       fun setup_cleanup/0,
+       ?FORALL(Cmds, commands(?MODULE),
+	       aggregate(command_names(Cmds),
+			 ?TRAPEXIT(
+			    try
+				os:cmd("rm -r ./btypes_eqc_meta"),
+				application:set_env(riak_core, claimant_tick, 4294967295),
+				application:set_env(riak_core, broadcast_lazy_timer, 4294967295),
+				application:set_env(riak_core, broadcast_exchange_timer, 4294967295),
+				application:set_env(riak_core, metadata_hashtree_timer, 4294967295),
+				stop_pid(riak_core_ring_events, whereis(riak_core_ring_events)),
+				stop_pid(riak_core_ring_manager, whereis(riak_core_ring_manager)),
+				{ok, RingEvents} = riak_core_ring_events:start_link(),
+				{ok, _RingMgr} = riak_core_ring_manager:start_link(test),
+				{ok, Claimant} = riak_core_claimant:start_link(),
+				{ok, MetaMgr} = riak_core_metadata_manager:start_link([{data_dir, "./btypes_eqc_meta"}]),
+				{ok, Hashtree} = riak_core_metadata_hashtree:start_link("./btypes_eqc_meta/trees"),
+				{ok, Broadcast} = riak_core_broadcast:start_link(),
+				{H, S, Res} = run_commands(?MODULE,Cmds),
+				stop_pid(riak_core_broadcast, Broadcast),
+				stop_pid(riak_core_metadata_hashtree, Hashtree),
+				stop_pid(riak_core_metadata_manager, MetaMgr),
+				stop_pid(riak_core_claimant, Claimant),
+				riak_core_ring_manager:stop(),
+				stop_pid(riak_core_ring_events2, RingEvents),
+				pretty_commands(?MODULE, Cmds, {H, S, Res},
+						Res == ok)
+			    after
+				os:cmd("rm -r ./btypes_eqc_meta")
+			    end
+			   )
+			)
+	      )
+       ).
 
-stop_pid(Other) when not is_pid(Other) ->
+setup_cleanup() ->
+    meck:new(riak_core_capability, []),
+    meck:expect(
+        riak_core_capability, get,
+        fun({riak_core, bucket_types}) -> true;
+            (X) -> meck:passthrough([X])
+        end
+    ),
+    fun() ->
+        meck:unload(riak_core_capability)
+    end.
+
+stop_pid(_Tag, Other) when not is_pid(Other) ->
     ok;
-stop_pid(Pid) ->
+stop_pid(Tag, Pid) ->
     unlink(Pid),
     exit(Pid, shutdown),
-    ok = wait_for_pid(Pid).
+    ok = wait_for_pid(Tag, Pid).
 
-wait_for_pid(Pid) ->
+wait_for_pid(Tag, Pid) ->
     Mref = erlang:monitor(process, Pid),
     receive
         {'DOWN', Mref, process, _, _} ->
             ok
     after
-        5000 ->
-            {error, didnotexit}
+	5000 ->
+	    demonitor(Mref, [flush]),
+	    exit(Pid, kill),
+	    wait_for_pid(Tag, Pid)
     end.
 
 -endif.
