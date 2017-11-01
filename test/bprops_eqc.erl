@@ -307,15 +307,17 @@ stop_pid(Tag, Pid) ->
     exit(Pid, shutdown),
     ok = wait_for_pid(Tag, Pid).
 
-wait_for_pid(_Tag, Pid) ->
+wait_for_pid(Tag, Pid) ->
     Mref = erlang:monitor(process, Pid),
     receive
         {'DOWN', Mref, process, _, _} ->
             ok
     after
-        10000 ->
+        5000 ->
+            demonitor(Mref, [flush]),
 	    exit(Pid, kill),
-	    ok
+	    wait_for_pid(Tag, Pid)
+
     end.
 
 -endif.
