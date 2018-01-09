@@ -78,6 +78,9 @@
 
 -define(DEF_TARGET_N, 4).
 
+-type delta() :: {node(), Ownership::non_neg_integer(), Delta::integer()}.
+-type deltas() :: [delta()].
+
 claim(Ring) ->
     Want = app_helper:get_env(riak_core, wants_claim_fun),
     Choose = app_helper:get_env(riak_core, choose_claim_fun),
@@ -291,12 +294,12 @@ choose_claim_v2(Ring, Node, Params0) ->
     Active = riak_core_ring:claiming_members(Ring),
     %% Owners::[{index(), node()}]
     Owners = riak_core_ring:all_owners(Ring),
-    %% Counts::[node(), non_neg_integer()]
-    Counts = get_counts(Active, Owners),
+    %% Ownerships ::[node(), non_neg_integer()]
+    Ownerships = get_counts(Active, Owners),
     RingSize = riak_core_ring:num_partitions(Ring),
     NodeCount = erlang:length(Active),
     %% Deltas::[node(), integer()]
-    Deltas = get_deltas(RingSize, NodeCount, Owners, Counts),
+    Deltas = get_deltas(RingSize, NodeCount, Owners, Ownerships),
     {_, Want} = lists:keyfind(Node, 1, Deltas),
     TargetN = proplists:get_value(target_n_val, Params),
     AllIndices = lists:zip(lists:seq(0, length(Owners)-1),
@@ -366,14 +369,14 @@ choose_claim_v2(Ring, Node, Params0) ->
 -spec get_deltas(RingSize::pos_integer(),
                  NodeCount::pos_integer(),
                  Owners::[{Index::non_neg_integer(), node()}],
-                 Counts::[{node(), non_neg_integer()}]) ->
-                        Deltas::[{node(), integer()}].
-get_deltas(RingSize, NodeCount, Owners, Counts) ->
+                 Ownerships::[{node(), non_neg_integer()}]) ->
+                        [{node(), integer()}].
+get_deltas(RingSize, NodeCount, Owners, Ownerships) ->
     Avg = RingSize / NodeCount,
     %% the most any node should own
-    Max = ceiling(RingSize / NodeCount),
-    ActiveDeltas = [{Member, Count, normalise_delta(Avg - Count)}
-                    || {Member, Count} <- Counts],
+    Max = ceiling(Avg),
+    ActiveDeltas = [{Member, Ownership, normalise_delta(Avg - Ownership)}
+                    || {Member, Ownership} <- Ownerships],
     BalancedDeltas = rebalance_deltas(ActiveDeltas, Max, RingSize),
     add_default_deltas(Owners, BalancedDeltas, 0).
 
@@ -392,26 +395,28 @@ normalise_delta(Delta) ->
 
 %% @private so that we don't end up with an imbalanced ring where one
 %% node has more vnodes than it should (e.g. [{n1, 6}, {n2, 6}, {n3,
-%% 6}, {n4, 8}, {n5,6} we rebalance the deltas so that select_indices
+%% 6}, {n4, 8}, {n5,6}] we rebalance the deltas so that select_indices
 %% doesn't leave some node not giving up enough partitions
--spec rebalance_deltas([{node(), integer()}], pos_integer(), pos_integer()) -> [{node(), integer()}].
-rebalance_deltas(NodeDeltas, Max, RingSize) ->
-    AppliedDeltas = [Own + Delta || {_, Own, Delta} <- NodeDeltas],
+-spec rebalance_deltas(deltas(),
+                       Max::pos_integer(), RingSize::pos_integer()) ->
+                              [{node(), integer()}].
+rebalance_deltas(ActiveDeltas, Max, RingSize) ->
+    AppliedDeltas = [Own + Delta || {_, Own, Delta} <- ActiveDeltas],
 
     case lists:sum(AppliedDeltas) - RingSize of
         0 ->
-            [{Node, Delta} || {Node, _Cnt, Delta} <- NodeDeltas];
+            [{Node, Delta} || {Node, _Cnt, Delta} <- ActiveDeltas];
         N when N < 0 ->
-            increase_keeps(NodeDeltas, N, Max, [])
+            increase_keeps(ActiveDeltas, N, Max, [])
     end.
 
 %% @private increases the delta for (some) nodes giving away
 %% partitions to the max they can keep
--spec increase_keeps(Deltas::[{node(), integer()}],
-                      WantsError::integer(),
-                      Max::pos_integer(),
-                      Acc::[{node(), integer()}]) ->
-                             Rebalanced::[{node(), integer()}].
+-spec increase_keeps(deltas(),
+                     WantsError::integer(),
+                     Max::pos_integer(),
+                     Acc:: deltas() | []) ->
+                            [{node(), integer()}].
 increase_keeps(Rest, 0, _Max, Acc) ->
     [{Node, Delta} || {Node, _Own, Delta} <- lists:usort(lists:append(Rest, Acc))];
 increase_keeps([], N, Max, Acc) when N < 0 ->
@@ -428,10 +433,10 @@ increase_keeps([NodeDelta | Rest], N, Max, Acc) ->
 
 %% @private increases the delta for (some) nodes taking partitions to the max
 %% they can ask for
--spec increase_takes(Deltas::[{node(), integer()}],
+-spec increase_takes(deltas(),
                       WantsError::integer(),
                       Max::pos_integer(),
-                      Acc::[{node(), integer()}]) ->
+                      Acc::deltas() | []) ->
                              Rebalanced::[{node(), integer()}].
 increase_takes(Rest, 0, _Max, Acc) ->
     [{Node, Delta} || {Node, _Own, Delta} <- lists:usort(lists:append(Rest, Acc))];
@@ -655,30 +660,34 @@ ceiling(F) ->
     end.
 
 
-%% @private rem_fill increase the tail so that there is no wrap around
-%% preflist violation, by taking a `Shortfall' number nodes from
-%% earlier in the preflist
--spec solve_tail_violations(integer(), [node()], integer(), integer()) -> [node()].
+%% @private increase the tail so that there is no wrap around preflist
+%% violation, by taking a `Shortfall' number nodes from earlier in the
+%% preflist
+-spec solve_tail_violations(pos_integer(), [node()], non_neg_integer(), pos_integer()) -> [[node()]].
 solve_tail_violations(RingSize, Nodes, Shortfall, MinFetchesPerSeq) ->
     StartingNode = (RingSize rem length(Nodes)) + 1,
-    build_nodelist(RingSize, Nodes, Shortfall, StartingNode, MinFetchesPerSeq, []).
+    build_nodelist(RingSize, Nodes, Shortfall, StartingNode, MinFetchesPerSeq).
+
+-spec build_nodelist(pos_integer(), [node()], non_neg_integer(), pos_integer(), pos_integer())
+                    -> [[node()]].
+build_nodelist(RingSize, Nodes, Shortfall, NodeCounter, MinFetchesPerSeq) ->
+    %% Build the tail with sufficient nodes to satisfy TargetN
+    NodeCount = length(Nodes),
+    LastSegLength = (RingSize rem NodeCount) + Shortfall,
+    NewSeq = lists:sublist(Nodes, 1, LastSegLength),
+    build_nodelist(RingSize, Nodes, Shortfall, NodeCounter, MinFetchesPerSeq, [NewSeq]).
 
 %% @private build the node list by building tail to satisfy TargetN, then removing
 %% the added nodes from earlier segments
--spec build_nodelist(integer(), [node()], integer(), integer(), integer(), [node()]) -> [node()].
+-spec build_nodelist(pos_integer(), [node()], non_neg_integer(), pos_integer(), pos_integer(), [[node()]])
+                    -> [[node()]].
 build_nodelist(RingSize, Nodes, _Shortfall=0, _NodeCounter, _MinFetchesPerSeq, Acc) ->
     %% Finished shuffling, backfill if required
     ShuffledRing = lists:flatten(Acc),
     backfill_ring(RingSize, Nodes,
                   (RingSize-length(ShuffledRing)) div (length(Nodes)), Acc);
-build_nodelist(RingSize, Nodes, Shortfall, NodeCounter, MinFetchesPerSeq, _Acc=[]) ->
-    %% Build the tail with sufficient nodes to satisfy TargetN
-    NodeCount = length(Nodes),
-    LastSegLength = (RingSize rem NodeCount) + Shortfall,
-    NewSeq = lists:sublist(Nodes, 1, LastSegLength),
-    build_nodelist(RingSize, Nodes, Shortfall, NodeCounter, MinFetchesPerSeq, [NewSeq]);
 build_nodelist(RingSize, Nodes, Shortfall, NodeCounter, MinFetchesPerSeq, Acc) ->
-    %% Build rest of list, subtracting minimum of MinFetchesPerSeq, Shortfall 
+    %% Build rest of list, subtracting minimum of MinFetchesPerSeq, Shortfall
     %% or (NodeCount - NodeCounter) each time
     NodeCount = length(Nodes),
     NodesToRemove = min(min(MinFetchesPerSeq, Shortfall), NodeCount - NodeCounter),
@@ -689,7 +698,7 @@ build_nodelist(RingSize, Nodes, Shortfall, NodeCounter, MinFetchesPerSeq, Acc) -
                    MinFetchesPerSeq, [ NewSeq | Acc]).
 
 %% @private Backfill the ring with full sequences
--spec backfill_ring(integer(), [node()], integer(), [node()]) -> [node()].
+-spec backfill_ring(pos_integer(), [node()], integer(), [[node()]]) -> [[node()]].
 backfill_ring(_RingSize, _Nodes, _Remaining=0, Acc) ->
     Acc;
 backfill_ring(RingSize, Nodes, Remaining, Acc) ->
@@ -848,9 +857,9 @@ find_violations(Ring, TargetN) ->
 %% @private
 %%
 %% @doc Counts up the number of partitions owned by each node.
--spec get_counts([node()], riak_core_ring:riak_core_ring()) ->
-                        [{node(), non_neg_integer()}].
-get_counts(Nodes, Ring) ->
+-spec get_counts([node()], [{non_neg_integer(), node()}]) ->
+                        [{node(), pos_integer()}].
+get_counts(Nodes, PartitionOwners) ->
     Empty = [{Node, 0} || Node <- Nodes],
     Counts = lists:foldl(fun({_Idx, Node}, Counts) ->
                                  case lists:member(Node, Nodes) of
@@ -859,7 +868,7 @@ get_counts(Nodes, Ring) ->
                                      false ->
                                          Counts
                                  end
-                         end, dict:from_list(Empty), Ring),
+                         end, dict:from_list(Empty), PartitionOwners),
     dict:to_list(Counts).
 
 %% @private
