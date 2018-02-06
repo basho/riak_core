@@ -120,26 +120,31 @@
 %% @doc The hardcoded defaults for all bucket types.
 -spec defaults() -> bucket_type_props().
 defaults() ->
-    custom_type_defaults().
+    v225_defaults() ++ custom_type_defaults().
+
+%% @private default propeties added for v2.2.5
+-spec v225_defaults() -> bucket_type_props().
+v225_defaults() ->
+    [{node_confirms, 0}].
 
 %% @doc The hardcoded defaults for the legacy, default bucket
 %% type. These find their way into the `default_bucket_props'
 %% environment variable
 -spec defaults(default_type) -> bucket_type_props().
 defaults(default_type) ->
-    default_type_defaults().
+    v225_defaults() ++ default_type_defaults().
 
 default_type_defaults() ->
-    common_defaults() ++
-        [{dvv_enabled, false},
-         {allow_mult, false}].
+    [{dvv_enabled, false},
+     {allow_mult, false}] ++
+        common_defaults().
 
 custom_type_defaults() ->
-    common_defaults() ++
-        %% @HACK dvv is a riak_kv only thing, yet there is nowhere else
-        %% to put it (except maybe fixups?)
-        [{dvv_enabled, true},
-         {allow_mult, true}].
+    %% @HACK dvv is a riak_kv only thing, yet there is nowhere else
+    %% to put it (except maybe fixups?)
+    [{dvv_enabled, true},
+     {allow_mult, true}] ++
+        common_defaults().
 
 common_defaults() ->
     [{linkfun, {modfun, riak_kv_wm_link_walker, mapreduce_linkfun}},
@@ -151,7 +156,6 @@ common_defaults() ->
      {r, quorum},
      {w, quorum},
      {pw, 0},
-     {node_confirms, 0},
      {dw, quorum},
      {rw, quorum},
      {basic_quorum, false},
