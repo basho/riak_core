@@ -158,7 +158,7 @@ seed_data({NEntries, Size}, SecondarySHA1) ->
 random_binary(0, Bin) ->
     Bin;
 random_binary(N, Bin) ->
-    X = random:uniform(255),
+    X = rand:uniform(255),
     random_binary(N-1, <<Bin/binary, X:8/integer>>).
 
 %% Directly "inject" a object w/ metadata, vtags, etc.: 

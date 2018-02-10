@@ -62,7 +62,7 @@ start_set_net_ticktime_daemon(Node, Time, true) ->
                             lager:info("start_set_net_ticktime_daemon: started "
                                        "changing net_ticktime on ~p to ~p\n",
                                  [Node, Time]),
-                            _ = random:seed(os:timestamp()),
+                            _ = rand:seed(os:timestamp()),
                             set_net_ticktime_daemon_loop(Time, 1)
                         catch _:_ ->
                                 ok
@@ -116,7 +116,7 @@ set_net_ticktime_daemon_loop(Time, Count) ->
                        "changing net_ticktime on ~p to ~p\n", [node(), Time]),
             exit(normal);
         _ ->
-            timer:sleep(random:uniform(1*1000)),
+            timer:sleep(rand:uniform(1*1000)),
             %% Here is an uncommon use the erlang:nodes/1 BIF.
             %% Hidden nodes (e.g. administrative escripts) may have
             %% connected to us.  Force them to change their tick time,

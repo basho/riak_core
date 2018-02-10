@@ -405,13 +405,13 @@ choose_claim_v3(Ring, _ClaimNode, Params) ->
 
     %% Seed the random number generator for predictable results
     %% run the claim, then put it back if possible
-    OldSeed = random:seed(proplists:get_value(seed, Params, {1,2,3})),
+    OldSeed = rand:seed(proplists:get_value(seed, Params, {1,2,3})),
     {NewOwners, NewMetrics} = claim_v3(Wants, Owners, Params),
     case OldSeed of
         undefined ->
             ok;
         _ ->
-            {_,_,_} = random:seed(OldSeed),
+            {_,_,_} = rand:seed(OldSeed),
             ok
     end,
 
@@ -1042,7 +1042,7 @@ urand(High) ->
     urand(1, High).
 
 urand(Low, High) ->
-    Low + random:uniform(High - Low + 1) - 1.
+    Low + rand:uniform(High - Low + 1) - 1.
 
 %% @private
 %% return all the indices within TN of Indices

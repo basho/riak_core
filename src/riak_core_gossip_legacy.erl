@@ -152,7 +152,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 schedule_next_gossip() ->
     MaxInterval = app_helper:get_env(riak_core, gossip_interval),
-    Interval = random:uniform(MaxInterval),
+    Interval = rand:uniform(MaxInterval),
     {ok, _} = timer:apply_after(Interval, gen_server, cast, [?MODULE, gossip_ring]),
     ok.
 
@@ -245,7 +245,7 @@ attempt_simple_transfer(Ring, [{P, Exit}|Rest], TargetN, Exit, Idx, Last) ->
                     target_n_fail;
                 Qualifiers ->
                     %% these nodes don't violate target_n forward
-                    Chosen = lists:nth(random:uniform(length(Qualifiers)),
+                    Chosen = lists:nth(rand:uniform(length(Qualifiers)),
                                        Qualifiers),
                     %% choose one, and do the rest of the ring
                     attempt_simple_transfer(
