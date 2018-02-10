@@ -12,3 +12,5 @@ doc/*
 dialyzer_warnings
 dialyzer_unhandled_warnings
 .rebar
+.rebar3
+_build

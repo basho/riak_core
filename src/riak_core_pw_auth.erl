@@ -33,7 +33,7 @@
 hash_password(BinaryPass) when is_binary(BinaryPass) ->
     % TODO: Do something more with the salt?
     % Generate salt the simple way
-    Salt = crypto:rand_bytes(?SALT_LENGTH),
+    Salt = crypto:strong_rand_bytes(?SALT_LENGTH),
 
     % Hash the original password and store as hex
     {ok, HashedPass} = pbkdf2:pbkdf2(?HASH_FUNCTION, BinaryPass, Salt, ?HASH_ITERATIONS),
