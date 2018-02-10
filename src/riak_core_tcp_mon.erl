@@ -453,7 +453,7 @@ ssl_test_() ->
         % Set the stat gathering interval to 100ms
         {ok, TCPMonPid} = riak_core_tcp_mon:start_link([{interval, 100}]),
         % set up a server to hear us out.
-        {ok, LS} = ssl:listen(0, [{active, true}, binary, {certfile, "../test/site1-cert.pem"}, {keyfile, "../test/site1-key.pem"}]),
+        {ok, LS} = ssl:listen(0, [{active, true}, binary, {certfile, "test/site1-cert.pem"}, {keyfile, "test/site1-key.pem"}]),
         {ok, {_, Port}} = ssl:sockname(LS),
         spawn(fun () ->
             %% server
@@ -462,7 +462,7 @@ ssl_test_() ->
             ssl_recv_loop(S)
         end),
 
-        {ok, Socket} = ssl:connect("localhost", Port, [binary, {active, true}, {certfile, "../test/site2-cert.pem"}, {keyfile, "../test/site2-key.pem"}]),
+        {ok, Socket} = ssl:connect("localhost", Port, [binary, {active, true}, {certfile, "test/site2-cert.pem"}, {keyfile, "test/site2-key.pem"}]),
         riak_core_tcp_mon:monitor(Socket, "test", ssl),
         % so we have stats to see
         lists:foreach(fun(_) ->
