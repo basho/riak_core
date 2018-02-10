@@ -1584,14 +1584,6 @@ opened_closed_test() ->
 %%%===================================================================
 
 -ifdef(EQC).
-sha_test_() ->
-    {spawn,
-     {timeout, 120,
-      fun() ->
-              ?assert(eqc:quickcheck(eqc:testing_time(4, prop_sha())))
-      end
-     }}.
-
 prop_sha() ->
     %% NOTE: Generating 1MB (1024 * 1024) size binaries is incredibly slow
     %% with EQC and was using over 2GB of memory
@@ -1605,14 +1597,6 @@ prop_sha() ->
                                 ChunkSize = max(1, (Size div NumChunks)),
                                 sha(ChunkSize, Bin) =:= esha(Bin)
                             end)).
-
-eqc_test_() ->
-    {spawn,
-     {timeout, 120,
-      fun() ->
-              ?assert(eqc:quickcheck(eqc:testing_time(4, prop_correct())))
-      end
-     }}.
 
 objects() ->
     ?SIZED(Size, objects(Size+3)).
@@ -1706,13 +1690,4 @@ est_prop() ->
                 ?assertEqual(true, MaxDiff > Diff),
                 true
             end).
-
-est_test_() ->
-    {spawn,
-     {timeout, 240,
-      fun() ->
-              ?assert(eqc:quickcheck(eqc:testing_time(10, est_prop())))
-      end
-     }}.
-
 -endif.

@@ -66,32 +66,6 @@
           split :: dict()
         }).
 
-eqc_test_() ->
-    {spawn,
-     [{setup,
-       fun setup/0,
-       fun cleanup/1,
-       [{inorder,
-         [manual_test_list(),
-          %% Run the quickcheck tests
-          {timeout, 60000, % timeout is in msec
-           ?_assertEqual(true, catch quickcheck(numtests(?TEST_ITERATIONS, ?QC_OUT(prop_join()))))}
-         ]}
-       ]
-      }
-     ]
-    }.
-
-eqc() ->
-    quickcheck(numtests(?TEST_ITERATIONS, ?QC_OUT(prop_join()))),
-    ok.
-
-setup() ->
-    ok.
-
-cleanup(_) ->
-    ok.
-
 prop_join() ->
     ?FORALL(Cmds, more_commands(100, commands(?MODULE)),
            ?TRAPEXIT(

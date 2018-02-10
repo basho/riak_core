@@ -1119,13 +1119,11 @@ find_biggest_hole_test() ->
 test_nodes(Count) ->
     [node() | [list_to_atom(lists:concat(["n_", N])) || N <- lists:seq(1, Count-1)]].
 
-prop_claim_ensures_unique_nodes_v2_test_() ->
-    Prop = eqc:numtests(100, ?QC_OUT(prop_claim_ensures_unique_nodes(choose_claim_v2))),
-    {timeout, 120, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
+prop_claim_ensures_unique_nodes_v2() ->
+    prop_claim_ensures_unique_nodes(choose_claim_v2).
 
-prop_claim_ensures_unique_nodes_v3_test_() ->
-    Prop = eqc:numtests(5, ?QC_OUT(prop_claim_ensures_unique_nodes(choose_claim_v3))),
-    {timeout, 240, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
+prop_claim_ensures_unique_nodes_v3() ->
+    prop_claim_ensures_unique_nodes(choose_claim_v3).
 
 prop_claim_ensures_unique_nodes(ChooseFun) ->
     %% NOTE: We know that this doesn't work for the case of {_, 3}.
@@ -1168,9 +1166,6 @@ prop_claim_ensures_unique_nodes(ChooseFun) ->
                                 {unique_nodes, equals([], Counts)}]))
             end).
 
-wants_counts_test() ->
-    ?assert(eqc:quickcheck(?QC_OUT((prop_wants_counts())))).
-
 prop_wants_counts() ->
     ?FORALL({S, Q}, {large_pos(100), large_pos(100000)},
             begin
@@ -1178,9 +1173,6 @@ prop_wants_counts() ->
                 conjunction([{len, equals(S, length(Wants))},
                              {sum, equals(Q, lists:sum(Wants))}])
             end).
-
-wants_test() ->
-    ?assert(eqc:quickcheck(?QC_OUT((prop_wants())))).
 
 prop_wants() ->
     ?FORALL({NodeStatus, Q},
@@ -1226,9 +1218,6 @@ prop_wants() ->
 %% Large positive integer between 1 and Max
 large_pos(Max) ->
     ?LET(X, largeint(), 1 + (abs(X) rem Max)).
-
-take_idxs_test() ->
-    ?assert(eqc:quickcheck(?QC_OUT((prop_take_idxs())))).
 
 prop_take_idxs() ->
     ?FORALL({OwnersSeed, CIdxsSeed, ExchangesSeed, TNSeed},

@@ -40,9 +40,6 @@
 
 -define(ORDSET(L), ordsets:from_list(L)).
 
-qc_test_() ->
-    {timeout, 120, fun() -> ?assert(eqc:quickcheck(?QC_OUT(prop_main()))) end}.
-
 prop_main() ->
     %% Initialize necessary env settings
     application:load(riak_core),

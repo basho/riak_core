@@ -194,7 +194,7 @@ bucket_prop_value() ->
 %% eqc properties
 %%
 
-skip_prop_buckets() ->
+prop_buckets() ->
     ?SETUP(
         fun setup_cleanup/0,
         ?FORALL(Cmds, eqc_statem:commands(?MODULE),
