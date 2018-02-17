@@ -46,9 +46,8 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
+    %% Note that exometer_core starts folsom now, so it is not needed here
     Children = lists:flatten(
-                 [?CHILD(folsom_sup, supervisor),
-                  ?CHILD(riak_core_stats_sup, supervisor)
-                 ]),
+                 [?CHILD(riak_core_stats_sup, supervisor)]),
 
     {ok, {{rest_for_one, 10, 10}, Children}}.
