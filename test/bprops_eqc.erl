@@ -247,8 +247,8 @@ prop_buckets() ->
                         application:set_env(riak_core, metadata_hashtree_timer, 4294967295),
                         application:set_env(riak_core, default_bucket_props, ?DEFAULT_BPROPS),
                         application:set_env(riak_core, cluster_name, "riak_core_bucket_eqc"),
-                        stop_pid(whereis(riak_core_ring_events)),
-                        stop_pid(whereis(riak_core_ring_manager)),
+                        stop_pid(riak_core_ring_events, whereis(riak_core_ring_events)),
+                        stop_pid(riak_core_ring_manager, whereis(riak_core_ring_manager)),
                         {ok, RingEvents} = riak_core_ring_events:start_link(),
                         {ok, _RingMgr} = riak_core_ring_manager:start_link(test),
                         {ok, Claimant} = riak_core_claimant:start_link(),
@@ -261,12 +261,12 @@ prop_buckets() ->
                         %%
                         %% shut down
                         %%
-                        stop_pid(Broadcast),
-                        stop_pid(Hashtree),
-                        stop_pid(MetaMgr),
-                        stop_pid(Claimant),
+                        stop_pid(riak_core_broadcast, Broadcast),
+                        stop_pid(riak_core_metadata_hashtree, Hashtree),
+                        stop_pid(riak_core_metadata_manager, MetaMgr),
+                        stop_pid(riak_core_claimant, Claimant),
                         riak_core_ring_manager:stop(),
-                        stop_pid(RingEvents),
+                        stop_pid(riak_core_ring_events2, RingEvents),
 
                         eqc_statem:pretty_commands(
                             ?MODULE, Cmds,
@@ -300,21 +300,24 @@ setup_cleanup() ->
 %% internal helper functions
 %%
 
-stop_pid(Other) when not is_pid(Other) ->
+stop_pid(_Tag, Other) when not is_pid(Other) ->
     ok;
-stop_pid(Pid) ->
+stop_pid(Tag, Pid) ->
     unlink(Pid),
     exit(Pid, shutdown),
-    ok = wait_for_pid(Pid).
+    ok = wait_for_pid(Tag, Pid).
 
-wait_for_pid(Pid) ->
+wait_for_pid(Tag, Pid) ->
     Mref = erlang:monitor(process, Pid),
     receive
         {'DOWN', Mref, process, _, _} ->
             ok
     after
         5000 ->
-            {error, didnotexit}
+            demonitor(Mref, [flush]),
+	    exit(Pid, kill),
+	    wait_for_pid(Tag, Pid)
+
     end.
 
 -endif.
