@@ -396,6 +396,15 @@ vnode_coverage(Sender, Request, KeySpaces, State=#state{index=Index,
             %% the result is sent back to 'From'
             riak_core_vnode_worker_pool:handle_work(Pool, Work, From),
             continue(State, NewModState);
+        {queue, Work, From, NewModState} ->
+            %% dispatch some work to the node worker pool
+            %% the result is sent back to 'From'
+            %% The node worker pool stops too many vnodes from running
+            %% the fold concurrently
+            riak_core_node_worker_pool:handle_work(node_worker_pool, 
+                                                    Work, 
+                                                    From),
+            continue(State, NewModState);
         {stop, Reason, NewModState} ->
             {stop, Reason, State#state{modstate=NewModState}}
     end.
