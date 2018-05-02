@@ -165,8 +165,12 @@ handle_call(overloaded, _From, State=#state{check_mailbox=Mailbox,
                                             check_threshold=Threshold}) ->
     Result = (Mailbox > Threshold),
     {reply, Result, State};
-handle_call(mailbox_size, _From, State=#state{check_mailbox=Mailbox}) ->
-    {reply, {ok, Mailbox}, State};
+handle_call(mailbox_size, _From, State=#state{check_mailbox=Mailbox,
+					      check_request_interval=CRI}) ->
+    Result = if (Mailbox < (CRI * 2)) -> ok;
+		true -> soft_loaded
+	     end,
+    {reply, Result, State};
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
 
