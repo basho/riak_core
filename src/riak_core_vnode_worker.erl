@@ -29,7 +29,7 @@
 -ifdef(PULSE).
 -compile(export_all).
 -compile({parse_transform, pulse_instrument}).
--compile({pulse_replace_module, [{gen_fsm_compat, pulse_gen_fsm_compat},
+-compile({pulse_replace_module, [{gen_fsm_compat, pulse_gen_fsm},
                                  {gen_server, pulse_gen_server}]}).
 -endif.
 
