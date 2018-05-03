@@ -133,7 +133,7 @@ process_message(?PT_MSG_BATCH, MsgData, State) ->
 process_message(?PT_MSG_OBJ, MsgData, State=#state{vnode=VNode, count=Count,
                                                    vnode_timeout_len=VNodeTimeout}) ->
     Msg = {handoff_data, MsgData},
-    try gen_fsm:sync_send_all_state_event(VNode, Msg, VNodeTimeout) of
+    try gen_fsm_compat:sync_send_all_state_event(VNode, Msg, VNodeTimeout) of
         ok ->
             State#state{count=Count+1};
         E={error, _} ->
