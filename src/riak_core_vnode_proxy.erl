@@ -167,8 +167,8 @@ handle_call(overloaded, _From, State=#state{check_mailbox=Mailbox,
     {reply, Result, State};
 handle_call(mailbox_size, _From, State=#state{check_mailbox=Mailbox,
 					      check_request_interval=CRI}) ->
-    Result = if (Mailbox < (CRI * 2)) -> ok;
-		true -> soft_loaded
+    Result = if (Mailbox < (CRI * 2)) -> {ok, Mailbox, CRI};
+		true -> {soft_loaded, Mailbox, CRI}
 	     end,
     {reply, Result, State};
 handle_call(_Msg, _From, State) ->
@@ -193,6 +193,13 @@ handle_cast({vnode_proxy_pong, Ref, Msgs}, State=#state{check_request=RequestSta
                        State
                end,
     {noreply, NewState};
+handle_cast({mailbox_size, From, Tag}, State=#state{check_mailbox=Mailbox,
+					      check_request_interval=CRI}) ->
+    Result = if (Mailbox < (CRI * 2)) -> {ok, Mailbox, CRI};
+		true -> {soft_loaded, Mailbox, CRI}
+	     end,
+    From ! {mbox, {Tag, Result}},
+    {noreply, State};
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
