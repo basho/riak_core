@@ -16,7 +16,7 @@
  {<<"parse_trans">>,{pkg,<<"parse_trans">>,<<"2.9.0">>},1},
  {<<"pbkdf2">>,{pkg,<<"pbkdf2">>,<<"2.0.0">>},0},
  {<<"poolboy">>,{pkg,<<"basho_poolboy">>,<<"0.8.4">>},0},
- {<<"riak_ensemble">>,{pkg,<<"riak_ensemble_ng">>,<<"2.4.2">>},0},
+ {<<"riak_ensemble">>,{pkg,<<"riak_ensemble_ng">>,<<"2.4.3">>},0},
  {<<"riak_sysmon">>,{pkg,<<"riak_sysmon">>,<<"2.1.7">>},0},
  {<<"setup">>,{pkg,<<"setup">>,<<"1.7.0">>},1}]}.
 [
@@ -38,7 +38,7 @@
  {<<"parse_trans">>, <<"3F5F7B402928FB9FD200C891E635DE909045D1EFAC40CE3F924D3892898F85EB">>},
  {<<"pbkdf2">>, <<"11C23279FDED5C0027AB3996CFAE77805521D7EF4BABDE2BD7EC04A9086CF499">>},
  {<<"poolboy">>, <<"45C306FF1C9F6451730DD21642EDF55FA72EBD5E2FE4A38D8D8A56B8EA21A256">>},
- {<<"riak_ensemble">>, <<"26A219F9D620A388C58ACD709BCCA0621C6E5ABC4A9406494205D40368CC4565">>},
+ {<<"riak_ensemble">>, <<"9D0F8EE95CDCD82E564BE6D3081985EE241E888CF7BAED3CC7BF9A644AAA124F">>},
  {<<"riak_sysmon">>, <<"AF420DF0F7569E1F12BCD465745164CB6189EB93F118D5CDB3F90FEB3F8BF47D">>},
  {<<"setup">>, <<"15DF8E57C6DF9755E22BFB1AEF0C640BD97E9889396FDFB2A85A5536A9043674">>}]}
 ].
