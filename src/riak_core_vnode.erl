@@ -912,6 +912,7 @@ handle_info(Info, StateName, State=#state{mod=Mod,modstate=ModState}) ->
             {next_state, StateName, State, State#state.inactivity_timeout}
     end.
 
+-ifndef('21.0').
 terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState,
         pool_pid=Pool}) ->
     %% Shutdown if the pool is still alive and a normal `Reason' is
@@ -936,6 +937,32 @@ terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState,
                 Mod:terminate(Reason, ModState)
         end
     end.
+-else.
+terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState,
+                                     pool_pid=Pool}) ->
+    %% Shutdown if the pool is still alive and a normal `Reason' is
+    %% given - there could be a race on delivery of the unregistered
+    %% event and successfully shutting down the pool.
+    try
+        case is_pid(Pool) andalso is_process_alive(Pool) andalso ?normal_reason(Reason) of
+            true ->
+                riak_core_vnode_worker_pool:shutdown_pool(Pool, 60000);
+            _ ->
+                ok
+        end
+    catch C:T:Stack ->
+            lager:error("Error while shutting down vnode worker pool ~p:~p trace : ~p",
+                        [C, T, Stack])
+    after
+        case ModState of
+            %% Handoff completed, Mod:delete has been called, now terminate.
+            {deleted, ModState1} ->
+                Mod:terminate(Reason, ModState1);
+            _ ->
+                Mod:terminate(Reason, ModState)
+        end
+    end.
+-endif.
 
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.

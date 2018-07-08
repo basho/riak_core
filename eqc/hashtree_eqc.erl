@@ -96,7 +96,7 @@ hashtree_test_() ->
 integer_to_binary(Int) ->
     list_to_binary(integer_to_list(Int)).
 
--ifndef(old_hash).
+-ifdef(new_hash).
 sha(Bin) ->
     crypto:hash(sha, Bin).
 -else.

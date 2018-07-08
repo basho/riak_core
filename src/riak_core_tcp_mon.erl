@@ -458,8 +458,8 @@ ssl_test_() ->
         spawn(fun () ->
             %% server
             {ok, S} = ssl:transport_accept(LS),
-            ok = ssl:ssl_accept(S),
-            ssl_recv_loop(S)
+            {ok, NewS} = riak_core_ssl_util:new_ssl_accept(S, [], infinity),
+            ssl_recv_loop(NewS)
         end),
 
         {ok, Socket} = ssl:connect("localhost", Port, [binary, {active, true}, {certfile, "test/site2-cert.pem"}, {keyfile, "test/site2-key.pem"}]),

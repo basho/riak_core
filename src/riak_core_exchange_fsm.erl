@@ -409,6 +409,7 @@ sort_disk_log_output(WriteLog, Count) ->
 fold_disk_log(Fun, Acc, DiskLog) ->
     fold_disk_log(disk_log:chunk(DiskLog, start), Fun, Acc, DiskLog).
 
+-ifndef('21.0').
 fold_disk_log(eof, _Fun, Acc, _DiskLog) ->
     Acc;
 fold_disk_log({Cont, Terms}, Fun, Acc, DiskLog) ->
@@ -420,6 +421,19 @@ fold_disk_log({Cont, Terms}, Fun, Acc, DiskLog) ->
                    Acc
            end,
     fold_disk_log(disk_log:chunk(DiskLog, Cont), Fun, Acc2, DiskLog).
+-else.
+fold_disk_log(eof, _Fun, Acc, _DiskLog) ->
+    Acc;
+fold_disk_log({Cont, Terms}, Fun, Acc, DiskLog) ->
+    Acc2 = try
+               lists:foldl(Fun, Acc, Terms)
+           catch X:Y:Stack ->
+                   lager:error("~s:fold_disk_log: caught ~p ~p @ ~p\n",
+                               [?MODULE, X, Y, Stack]),
+                   Acc
+           end,
+    fold_disk_log(disk_log:chunk(DiskLog, Cont), Fun, Acc2, DiskLog).
+-endif.
 
 tmp_dir() ->
     PDD = app_helper:get_env(riak_core, platform_data_dir, "/tmp"),
