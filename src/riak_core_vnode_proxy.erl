@@ -159,7 +159,7 @@ loop(Parent, State) ->
 %% @private
 handle_call({return_vnode, Req}, _From, State) ->
     {Pid, NewState} = get_vnode_pid(State),
-    gen_fsm:send_event(Pid, Req),
+    gen_fsm_compat:send_event(Pid, Req),
     {reply, {ok, Pid}, NewState};
 handle_call(overloaded, _From, State=#state{check_mailbox=Mailbox,
                                             check_threshold=Threshold}) ->
@@ -172,7 +172,7 @@ handle_call(_Msg, _From, State) ->
 handle_cast({unregister_vnode, Pid}, State) ->
     %% The pid may not match the vnode_pid in the state, but we must send the
     %% unregister event anyway -- the vnode manager requires it.
-    gen_fsm:send_event(Pid, unregistered),
+    gen_fsm_compat:send_event(Pid, unregistered),
     catch demonitor(State#state.vnode_mref, [flush]),
     NewState = forget_vnode(State),
     {noreply, NewState};

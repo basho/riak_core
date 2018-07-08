@@ -466,11 +466,11 @@ handle_vnode_event(inactive, Mod, Idx, Pid, State) ->
     {noreply, State};
 handle_vnode_event(handoff_complete, Mod, Idx, Pid, State) ->
     NewHO = dict:erase({Mod, Idx}, State#state.handoff),
-    gen_fsm:send_all_state_event(Pid, finish_handoff),
+    gen_fsm_compat:send_all_state_event(Pid, finish_handoff),
     {noreply, State#state{handoff=NewHO}};
 handle_vnode_event(handoff_error, Mod, Idx, Pid, State) ->
     NewHO = dict:erase({Mod, Idx}, State#state.handoff),
-    gen_fsm:send_all_state_event(Pid, cancel_handoff),
+    gen_fsm_compat:send_all_state_event(Pid, cancel_handoff),
     {noreply, State#state{handoff=NewHO}}.
 
 %% @private
@@ -522,6 +522,7 @@ maybe_ensure_vnodes_started(Ring) ->
             ok
     end.
 
+-ifndef('21.0').
 ensure_vnodes_started(Ring) ->
     spawn(fun() ->
                   try
@@ -531,6 +532,17 @@ ensure_vnodes_started(Ring) ->
                           lager:error("~p", [{T, R, erlang:get_stacktrace()}])
                   end
           end).
+-else.
+ensure_vnodes_started(Ring) ->
+    spawn(fun() ->
+                  try
+                      riak_core_ring_handler:ensure_vnodes_started(Ring)
+                  catch
+                      T:R:Stack ->
+                          lager:error("~p", [{T, R, Stack}])
+                  end
+          end).
+-endif.
 
 schedule_management_timer() ->
     ManagementTick = app_helper:get_env(riak_core,

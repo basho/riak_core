@@ -23,9 +23,21 @@
 %% @doc riak_core_claim_sim models adding/removing nodes from the ring
 %%
 -module(riak_core_claim_sim).
--compile(export_all).
 
+-export([help/0, run/1, add_choose_params/2, run_rebalance/4,
+         read_ringfile/1, setup_environment/1, dryrun/3, make_current/2,
+         make_prepared/3, make_postxfer/2, make_percmd/1, make_rebalance/2,
+         make_analysis/2, default_simopts/3, dryrun1/3, sim_node/1,
+         command/2, pretty_print/3, run_analysis/3, o/2, o/3,
+         commission/0, commission/1, commission/2, commission/3,
+         commission_tests_all/0
+        ]).
 -ifdef(TEST).
+-export([
+         commission_test_dir/6, commission_tests_first/0,
+         commission_tests_rest/0, commission_claims/0,
+         commission_test_no_longer_run_by_default/0
+        ]).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 

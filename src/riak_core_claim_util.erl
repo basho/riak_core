@@ -610,7 +610,7 @@ substitute(Names, Mapping, L) ->
 -ifdef(TEST).
 -ifdef(EQC).
 
-prop_adjacency_summary_test_() ->
+property_adjacency_summary_test_() ->
     {timeout, 60, ?_test(eqc:quickcheck(eqc:testing_time(30, prop_adjacency_summary())))}.
 
 longer_list(K, G) ->

@@ -69,10 +69,10 @@ init([SslOpts]) ->
 handle_call({set_socket, Socket0}, _From, State = #state{ssl_opts = SslOpts}) ->
     SockOpts = [{active, once}, {packet, 4}, {header, 1}],
     Socket = if SslOpts /= [] ->
-                     {ok, Skt} = ssl:ssl_accept(Socket0, SslOpts, 30*1000),
-                     ok = ssl:setopts(Skt, SockOpts),
-                     Peer = safe_peername(Skt, ssl),
-                     Skt;
+                     {ok, NSkt} = riak_core_ssl_util:new_ssl_accept(Socket0, SslOpts, 30*1000),
+                     ok = ssl:setopts(NSkt, SockOpts),
+                     Peer = safe_peername(NSkt, ssl),
+                     NSkt;
                 true ->
                      ok = inet:setopts(Socket0, SockOpts),
                      Peer = safe_peername(Socket0, inet),
@@ -133,7 +133,7 @@ process_message(?PT_MSG_BATCH, MsgData, State) ->
 process_message(?PT_MSG_OBJ, MsgData, State=#state{vnode=VNode, count=Count,
                                                    vnode_timeout_len=VNodeTimeout}) ->
     Msg = {handoff_data, MsgData},
-    try gen_fsm:sync_send_all_state_event(VNode, Msg, VNodeTimeout) of
+    try gen_fsm_compat:sync_send_all_state_event(VNode, Msg, VNodeTimeout) of
         ok ->
             State#state{count=Count+1};
         E={error, _} ->

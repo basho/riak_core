@@ -66,7 +66,7 @@
 
 -include("riak_core_vnode.hrl").
 
--behaviour(gen_fsm).
+-behaviour(gen_fsm_compat).
 
 %% API
 -export([start_link/3]).
@@ -77,7 +77,7 @@
 -export([test_link/5]).
 -endif.
 
-%% gen_fsm callbacks
+%% gen_fsm_compat callbacks
 -export([init/1,
          initialize/2,
          waiting_results/2,
@@ -162,7 +162,7 @@
 -spec start_link(module(), from(), [term()]) ->
                         {ok, pid()} | ignore | {error, term()}.
 start_link(Mod, From, RequestArgs) ->
-    gen_fsm:start_link(?MODULE, [Mod, From, RequestArgs], []).
+    gen_fsm_compat:start_link(?MODULE, [Mod, From, RequestArgs], []).
 
 %% ===================================================================
 %% Test API
@@ -173,7 +173,7 @@ start_link(Mod, From, RequestArgs) ->
 %% Create a coverage FSM for testing.
 test_link(Mod, From, RequestArgs, _Options, StateProps) ->
     Timeout = 60000,
-    gen_fsm:start_link(?MODULE,
+    gen_fsm_compat:start_link(?MODULE,
                        {test,
                         [Mod,
                          From,
@@ -185,7 +185,7 @@ test_link(Mod, From, RequestArgs, _Options, StateProps) ->
 -endif.
 
 %% ====================================================================
-%% gen_fsm callbacks
+%% gen_fsm_compat callbacks
 %% ====================================================================
 %% @private
 init([Mod,
@@ -255,7 +255,7 @@ maybe_start_timeout_timer(infinity) ->
 maybe_start_timeout_timer(Bad) when not is_integer(Bad) ->
     maybe_start_timeout_timer(?DEFAULT_TIMEOUT);
 maybe_start_timeout_timer(Timeout) ->
-    gen_fsm:start_timer(Timeout, {timer_expired, Timeout}),
+    gen_fsm_compat:start_timer(Timeout, {timer_expired, Timeout}),
     ok.
 
 %% @private

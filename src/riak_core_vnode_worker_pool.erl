@@ -39,13 +39,13 @@
 %% confuse (or cause a race) with this module's checkout management.
 -module(riak_core_vnode_worker_pool).
 
--behaviour(gen_fsm).
+-behaviour(gen_fsm_compat).
 
-%% gen_fsm callbacks
+%% gen_fsm_compat callbacks
 -export([init/1, handle_event/3, handle_sync_event/4, handle_info/3,
         terminate/3, code_change/4]).
 
-%% gen_fsm states
+%% gen_fsm_compat states
 -export([ready/2, queueing/2, ready/3, queueing/3, shutdown/2, shutdown/3]).
 
 %% API
@@ -54,7 +54,7 @@
 -ifdef(PULSE).
 -compile(export_all).
 -compile({parse_transform, pulse_instrument}).
--compile({pulse_replace_module, [{gen_fsm, pulse_gen_fsm}]}).
+-compile({pulse_replace_module, [{gen_fsm_compat, pulse_gen_fsm}]}).
 -endif.
 
 -record(state, {
@@ -77,18 +77,18 @@ start_link(WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps) ->
                         {ok, pid()}.
 
 start_link(WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps, Opts) ->
-    gen_fsm:start_link(?MODULE, [WorkerMod, PoolSize,  VNodeIndex, WorkerArgs,
+    gen_fsm_compat:start_link(?MODULE, [WorkerMod, PoolSize,  VNodeIndex, WorkerArgs,
                                  WorkerProps, Opts], []).
 
 handle_work(Pid, Work, From) ->
-    gen_fsm:send_event(Pid, {work, Work, From}).
+    gen_fsm_compat:send_event(Pid, {work, Work, From}).
 
 stop(Pid, Reason) ->
-    gen_fsm:sync_send_all_state_event(Pid, {stop, Reason}).
+    gen_fsm_compat:sync_send_all_state_event(Pid, {stop, Reason}).
 
 %% wait for all the workers to finish any current work
 shutdown_pool(Pid, Wait) ->
-    gen_fsm:sync_send_all_state_event(Pid, {shutdown, Wait}, infinity).
+    gen_fsm_compat:sync_send_all_state_event(Pid, {shutdown, Wait}, infinity).
 
 init([WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps, Opts]) ->
     {ok, Pid} = poolboy:start_link([{worker_module, riak_core_vnode_worker},
@@ -232,7 +232,7 @@ handle_info(_Info, StateName, State) ->
 
 terminate(_Reason, _StateName, #state{pool=Pool}) ->
     %% stop poolboy
-    gen_fsm:sync_send_all_state_event(Pool, stop),
+    gen_fsm_compat:sync_send_all_state_event(Pool, stop),
     ok.
 
 code_change(_OldVsn, StateName, State, _Extra) ->

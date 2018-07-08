@@ -221,7 +221,7 @@ integer_to_list(I0, Base, R0) ->
 	    integer_to_list(I1, Base, R1)
     end.
 
--ifndef(old_hash).
+-ifdef(new_hash).
 sha(Bin) ->
     crypto:hash(sha, Bin).
 

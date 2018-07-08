@@ -171,6 +171,7 @@ code_change(_OldVsn, State, _Extra) ->
 %% format_pretty_proc_info(Pid) ->
 %%     format_pretty_proc_info(Pid, current_function).
 
+-ifndef('21.0').
 format_pretty_proc_or_port_info(PidOrPort, Acf) ->
     try
         case get_pretty_proc_or_port_info(PidOrPort, Acf) of
@@ -183,6 +184,20 @@ format_pretty_proc_or_port_info(PidOrPort, Acf) ->
         {"Pid ~w, ~W ~W at ~w\n",
             [PidOrPort, X, 20, Y, 20, erlang:get_stacktrace()]}
     end.
+-else.
+format_pretty_proc_or_port_info(PidOrPort, Acf) ->
+    try
+        case get_pretty_proc_or_port_info(PidOrPort, Acf) of
+            undefined ->
+                {"", []};
+            Res ->
+                Res
+        end
+    catch X:Y:Stack ->
+            {"Pid ~w, ~W ~W at ~w\n",
+             [PidOrPort, X, 20, Y, 20, Stack]}
+    end.
+-endif.
 
 %% Enabling warnings_as_errors prevents a build since this function is
 %% dead code. To be safe, commenting out rather than deleting.

@@ -19,7 +19,7 @@
 %% -------------------------------------------------------------------
 
 -module(riak_core_exchange_fsm).
--behaviour(gen_fsm).
+-behaviour(gen_fsm_compat).
 
 %% API
 -export([start/7]).
@@ -29,7 +29,7 @@
          update_trees/2,
          key_exchange/2]).
 
-%% gen_fsm callbacks
+%% gen_fsm_compat callbacks
 -export([init/1, handle_event/3, handle_sync_event/4, handle_info/3,
          terminate/3, code_change/4]).
 
@@ -60,10 +60,10 @@
 %%%===================================================================
 
 start(Service, LocalVN, RemoteVN, IndexN, Tree, Manager, VNode) ->
-    gen_fsm:start(?MODULE, [Service, LocalVN, RemoteVN, IndexN, Tree, Manager, VNode], []).
+    gen_fsm_compat:start(?MODULE, [Service, LocalVN, RemoteVN, IndexN, Tree, Manager, VNode], []).
 
 %%%===================================================================
-%%% gen_fsm callbacks
+%%% gen_fsm_compat callbacks
 %%%===================================================================
 
 init([Service, LocalVN, RemoteVN, IndexN, LocalTree, Manager, VNode]) ->
@@ -80,7 +80,7 @@ init([Service, LocalVN, RemoteVN, IndexN, LocalTree, Manager, VNode]) ->
                    built=0,
                    vnode=VNode,
                    service=Service},
-    gen_fsm:send_event(self(), start_exchange),
+    gen_fsm_compat:send_event(self(), start_exchange),
     lager:debug("Starting exchange: ~p", [LocalVN]),
     {ok, prepare_exchange, State}.
 
@@ -104,7 +104,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
 %%%===================================================================
-%%% gen_fsm states
+%%% gen_fsm_compat states
 %%%===================================================================
 
 %% @doc Initial state. Attempt to acquire all necessary exchange locks.
@@ -120,7 +120,7 @@ prepare_exchange(start_exchange, State=#state{remote=RemoteVN,
                                                    local_fsm) of
                 ok ->
                     remote_exchange_request(Service, RemoteVN, IndexN),
-                    Timer = gen_fsm:send_event_after(State#state.timeout,
+                    Timer = gen_fsm_compat:send_event_after(State#state.timeout,
                                                      timeout),
                     {next_state, prepare_exchange, State#state{timer=Timer}};
                 _ ->
@@ -134,12 +134,12 @@ prepare_exchange(start_exchange, State=#state{remote=RemoteVN,
 prepare_exchange(timeout, State) ->
     do_timeout(State);
 prepare_exchange({remote_exchange, Pid}, State) when is_pid(Pid) ->
-    _ = gen_fsm:cancel_timer(State#state.timer),
+    _ = gen_fsm_compat:cancel_timer(State#state.timer),
     monitor(process, Pid),
     State2 = State#state{remote_tree=Pid, timer=undefined},
     update_trees(start_exchange, State2);
 prepare_exchange({remote_exchange, Error}, State) ->
-    _ = gen_fsm:cancel_timer(State#state.timer),
+    _ = gen_fsm_compat:cancel_timer(State#state.timer),
     send_exchange_status({remote, Error}, State),
     {stop, normal, State#state{timer=undefined}}.
 
@@ -326,7 +326,7 @@ as_event(F) ->
     Self = self(),
     spawn_link(fun() ->
                        Result = F(),
-                       gen_fsm:send_event(Self, Result)
+                       gen_fsm_compat:send_event(Self, Result)
                end),
     ok.
 
@@ -409,6 +409,7 @@ sort_disk_log_output(WriteLog, Count) ->
 fold_disk_log(Fun, Acc, DiskLog) ->
     fold_disk_log(disk_log:chunk(DiskLog, start), Fun, Acc, DiskLog).
 
+-ifndef('21.0').
 fold_disk_log(eof, _Fun, Acc, _DiskLog) ->
     Acc;
 fold_disk_log({Cont, Terms}, Fun, Acc, DiskLog) ->
@@ -420,6 +421,19 @@ fold_disk_log({Cont, Terms}, Fun, Acc, DiskLog) ->
                    Acc
            end,
     fold_disk_log(disk_log:chunk(DiskLog, Cont), Fun, Acc2, DiskLog).
+-else.
+fold_disk_log(eof, _Fun, Acc, _DiskLog) ->
+    Acc;
+fold_disk_log({Cont, Terms}, Fun, Acc, DiskLog) ->
+    Acc2 = try
+               lists:foldl(Fun, Acc, Terms)
+           catch X:Y:Stack ->
+                   lager:error("~s:fold_disk_log: caught ~p ~p @ ~p\n",
+                               [?MODULE, X, Y, Stack]),
+                   Acc
+           end,
+    fold_disk_log(disk_log:chunk(DiskLog, Cont), Fun, Acc2, DiskLog).
+-endif.
 
 tmp_dir() ->
     PDD = app_helper:get_env(riak_core, platform_data_dir, "/tmp"),

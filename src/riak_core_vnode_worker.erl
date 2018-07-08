@@ -29,7 +29,7 @@
 -ifdef(PULSE).
 -compile(export_all).
 -compile({parse_transform, pulse_instrument}).
--compile({pulse_replace_module, [{gen_fsm, pulse_gen_fsm},
+-compile({pulse_replace_module, [{gen_fsm_compat, pulse_gen_fsm},
                                  {gen_server, pulse_gen_server}]}).
 -endif.
 
@@ -60,7 +60,7 @@ handle_work(Worker, Work, From, Caller) ->
 init([Module, VNodeIndex, WorkerArgs, WorkerProps, Caller]) ->
     {ok, WorkerState} = Module:init_worker(VNodeIndex, WorkerArgs, WorkerProps),
     %% let the pool queue manager know there might be a worker to checkout
-    gen_fsm:send_all_state_event(Caller, worker_start),
+    gen_fsm_compat:send_all_state_event(Caller, worker_start),
     {ok, #state{module=Module, modstate=WorkerState}}.
 
 handle_call(Event, _From, State) ->
@@ -77,7 +77,7 @@ handle_cast({work, Work, WorkFrom, Caller},
             NS
     end,
     %% check the worker back into the pool
-    gen_fsm:send_all_state_event(Caller, {checkin, self()}),
+    gen_fsm_compat:send_all_state_event(Caller, {checkin, self()}),
     {noreply, State#state{modstate=NewModState}};
 handle_cast(_Event, State) ->
     {noreply, State}.

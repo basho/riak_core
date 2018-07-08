@@ -1327,20 +1327,20 @@ test_nodes(Count) ->
 test_nodes(Count, StartNode) ->
     [list_to_atom(lists:concat(["n_", N])) || N <- lists:seq(StartNode, StartNode + Count)].
 
-prop_claim_ensures_unique_nodes_v2_test_() ->
+property_claim_ensures_unique_nodes_v2_test_() ->
     Prop = eqc:testing_time(30, ?QC_OUT(prop_claim_ensures_unique_nodes(choose_claim_v2))),
     {timeout, 120, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
 
-prop_claim_ensures_unique_nodes_adding_groups_v2_test_() ->
+property_claim_ensures_unique_nodes_adding_groups_v2_test_() ->
     Prop = eqc:testing_time(30, ?QC_OUT(prop_claim_ensures_unique_nodes_adding_groups(choose_claim_v2))),
     {timeout, 120, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
 
-prop_claim_ensures_unique_nodes_adding_singly_v2_test_() ->
+property_claim_ensures_unique_nodes_adding_singly_v2_test_() ->
     Prop = eqc:testing_time(30, ?QC_OUT(prop_claim_ensures_unique_nodes_adding_singly(choose_claim_v2))),
     {timeout, 120, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
 
 %% @TODO this is very few tests. This is broken afaict.
-prop_claim_ensures_unique_nodes_v3_test_() ->
+property_claim_ensures_unique_nodes_v3_test_() ->
     Prop = eqc:numtests(5, ?QC_OUT(prop_claim_ensures_unique_nodes(choose_claim_v3))),
     {timeout, 240, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
 
