@@ -52,14 +52,15 @@ dtrace(ArgList) ->
         undefined ->
             case application:get_env(riak_core, dtrace_support) of
                 {ok, true} ->
-                    case string:to_float(erlang:system_info(version)) of
-                        {5.8, _} ->
+                    case [ list_to_integer(X)
+                           || X <- string:tokens(erlang:system_info(version), ".") ] of
+                        {5, 8, _} ->
                             %% R14B04
                             put(?MAGIC, dtrace),
                             if ArgList == enabled_check -> true;
                                true                     -> dtrace(ArgList)
                             end;
-                        {Num, _} when Num > 5.8 ->
+                        Ver when Ver > {5,8,0} ->
                             %% R15B or higher, though dyntrace option
                             %% was first available in R15B01.
                             put(?MAGIC, dyntrace),
