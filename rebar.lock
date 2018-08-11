@@ -6,7 +6,7 @@
  {<<"bear">>,{pkg,<<"bear">>,<<"0.8.5">>},2},
  {<<"clique">>,
   {git,"https://github.com/basho/clique.git",
-       {ref,"1b27d2c695be96c6a1ca4d250679b02720291e6c"}},
+       {ref,"ac5e7b9e68508546e02108e81b7e8d83e1008a0a"}},
   0},
  {<<"cuttlefish">>,
   {git,"https://github.com/basho/cuttlefish.git",
