@@ -24,7 +24,7 @@
          leave/0, remove_from_cluster/1]).
 -export([vnode_modules/0, health_check/1]).
 -export([register/1, register/2, bucket_fixups/0, bucket_validators/0]).
--export([stat_mods/0, pool_mods/0]).
+-export([stat_mods/0]).
 
 -export([add_guarded_event_handler/3, add_guarded_event_handler/4]).
 -export([delete_guarded_event_handler/3]).
@@ -317,12 +317,6 @@ stat_mods() ->
     case application:get_env(riak_core, stat_mods) of
         undefined -> [];
         {ok, Mods} -> Mods
-    end.
-
-pool_mods() ->
-    case application:get_env(riak_core, pool_mods) of
-        undefined -> [];
-        {ok, Mods} -> Mods % should be {Module, PoolSize}
     end.
 
 health_check(App) ->

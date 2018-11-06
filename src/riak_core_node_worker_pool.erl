@@ -52,6 +52,7 @@ start_link(WorkerMod, PoolSize, WorkerArgs, WorkerProps, PoolType) ->
 	{ok, Pid}.
 
 do_init([WorkerMod, PoolSize, WorkerArgs, WorkerProps]) ->
+	process_flag(trap_exit, true),
     poolboy:start_link([{worker_module, riak_core_vnode_worker},
 						{worker_args,
 								[node, WorkerArgs, WorkerProps, self()]},

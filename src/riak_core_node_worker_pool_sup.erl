@@ -22,7 +22,9 @@
 
 %% Helper macro for declaring children of supervisor
 -define(CHILD(I, PoolType, Args, Type, Timeout),
-		{PoolType, {I, start_link, Args}, permanent, Timeout, Type, [I]}).
+		{PoolType, 
+			{I, start_link, Args}, 
+			permanent, Timeout, Type, [I]}).
 -define(CHILD(I, PoolType, Args, Type),
 		?CHILD(I, PoolType, Args, Type, 5000)).
 
@@ -32,11 +34,7 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-    Children =
-		[pool(WorkerMod, PoolSize, WArgs, WProps, QueueType)
-			|| {_App, {WorkerMod, PoolSize, WArgs, WProps, QueueType}}
-				<- riak_core:pool_mods()],
-    {ok, {{one_for_one, 5, 10}, Children}}.
+    {ok, {{one_for_one, 5, 10}, []}}.
 
 -spec start_pool(atom(), pos_integer(), list(), list(), worker_pool()) -> ok.
 %% @doc

@@ -58,6 +58,7 @@
 -compile({pulse_replace_module, [{gen_fsm, pulse_gen_fsm}]}).
 -endif.
 
+-define(SHUTDOWN_WAIT, 60000).
 
 -record(state, {
 				queue = queue:new(),
@@ -222,8 +223,12 @@ handle_info(shutdown, shutdown, #state{monitors=Monitors} = State) ->
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
 
-terminate(_Reason, _StateName, #state{pool=Pool}) ->
+terminate(shutdown, _StateName, #state{pool=Pool, queue=Q, callback_mod=Mod}) ->
+    discard_queued_work(Q, Mod),
     %% stop poolboy
+    gen_fsm:sync_send_all_state_event(Pool, stop),
+    ok;
+terminate(_Reason, _StateName, #state{pool=Pool}) ->
     gen_fsm:sync_send_all_state_event(Pool, stop),
     ok.
 
