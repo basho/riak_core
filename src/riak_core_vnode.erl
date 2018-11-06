@@ -382,12 +382,11 @@ vnode_command(Sender, Request, State=#state{mod=Mod,
                 P when is_pid(P) ->
                     riak_core_node_worker_pool:handle_work(PoolName0,
                                                             Work, 
-                                                            From)
+                                                            From);
                 _ ->
                     lager:info("Using vnode pool as ~w pool is not registered",
                                 [PoolName0]),
-                    riak_core_vnode_worker_pool:handle_work(Pool, Work, From);
-                
+                    riak_core_vnode_worker_pool:handle_work(Pool, Work, From)
             end,
             continue(State, NewModState);
         {stop, Reason, NewModState} ->
