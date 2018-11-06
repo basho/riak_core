@@ -392,7 +392,7 @@ register(App,
     register_pool(App, WorkerMod, PoolSize, WArgs, WProps, node_worker_pool),
     register(App, T);
 register(App, 
-            [{dscp_pool, 
+            [{dscp_worker_pool, 
                 {WorkerMod, PoolSize, WArgs, WProps, PoolType}}|T]) ->
     register_pool(App, WorkerMod, PoolSize, WArgs, WProps, PoolType),
     register(App, T).
