@@ -386,8 +386,10 @@ register(App, [{permissions, Permissions}|T]) ->
 register(App, [{auth_mod, {AuthType, AuthMod}}|T]) ->
     register_proplist({AuthType, AuthMod}, auth_mods),
     register(App, T);
-register(App, [{node_worker_pool, {WorkerMod, PoolSize, WArgs, WProps}}|T]) ->
-    register_pool(App, WorkerMod, PoolSize, WArgs, WProps),
+register(App, 
+            [{node_worker_pool, 
+                {WorkerMod, PoolSize, WArgs, WProps, PoolType}}|T]) ->
+    register_pool(App, WorkerMod, PoolSize, WArgs, WProps, PoolType),
     register(App, T).
 
 register_mod(App, Module, Type) when is_atom(Type) ->
@@ -407,11 +409,12 @@ register_mod(App, Module, Type) when is_atom(Type) ->
                 lists:usort([{App,Module}|Mods]))
     end.
 
-register_pool(_App, WorkerMod, PoolSize, WorkerArgs, WorkerProps) ->
+register_pool(_App, WorkerMod, PoolSize, WorkerArgs, WorkerProps, PoolType) ->
     riak_core_node_worker_pool_sup:start_pool(WorkerMod,
                                                 PoolSize, 
                                                 WorkerArgs, 
-                                                WorkerProps).
+                                                WorkerProps,
+                                                PoolType).
 
 register_metadata(App, Value, Type) ->
     case application:get_env(riak_core, Type) of

@@ -66,24 +66,53 @@ simple_worker_pool() ->
     riak_core_vnode_worker_pool:stop(Pool, normal).
 
 simple_node_worker_pool() ->
-	{ok, Pool} = riak_core_node_worker_pool:start_link(?MODULE, 3, false, []),
-	[ riak_core_node_worker_pool:handle_work(node_worker_pool, fun() ->
+	{ok, BestEffortPool} =
+        riak_core_node_worker_pool:start_link(?MODULE,
+                                                1,
+                                                false,
+                                                [],
+                                                be_pool),
+	[ riak_core_node_worker_pool:handle_work(be_pool, fun() ->
                         timer:sleep(100),
                         1/(N rem 2)
                 end,
                 {raw, N, self()})
             || N <- lists:seq(1, 10)],
 
-    timer:sleep(1200),
+    timer:sleep(1000 + 500),
 
     %% make sure we got all the expected responses
 
     [ ?assertEqual(true, receive_result(N)) || N <- lists:seq(1, 10)],
-    unlink(Pool),
-    riak_core_node_worker_pool:stop(Pool, normal).
+    unlink(BestEffortPool),
+    riak_core_node_worker_pool:stop(BestEffortPool, normal),
+    
+    {ok, AssuredForwardingPool} =
+        riak_core_node_worker_pool:start_link(?MODULE,
+                                                5,
+                                                false,
+                                                [],
+                                                af1_pool),
+	[ riak_core_node_worker_pool:handle_work(
+            af1_pool,
+            fun() ->
+                    timer:sleep(100),
+                    1/(N rem 2)
+            end,
+            {raw, N, self()})
+        || N <- lists:seq(1, 10)],
+
+    timer:sleep(200 + 500),
+
+    %% make sure we got all the expected responses
+
+    [ ?assertEqual(true, receive_result(N)) || N <- lists:seq(1, 10)],
+    unlink(AssuredForwardingPool),
+    riak_core_node_worker_pool:stop(AssuredForwardingPool, normal).
 
 simple_noreply_worker_pool() ->
-    {ok, Pool} = riak_core_vnode_worker_pool:start_link(?MODULE, 3, 10, true, []),
+    {ok, Pool} =
+        riak_core_vnode_worker_pool:start_link(?MODULE, 3, 10, true, []),
     [ riak_core_vnode_worker_pool:handle_work(Pool, fun() ->
                         timer:sleep(100),
                         1/(N rem 2)

@@ -18,7 +18,7 @@
 -module(riak_core_node_worker_pool_sup).
 -behaviour(supervisor).
 -export([start_link/0, init/1]).
--export([start_pool/4]).
+-export([start_pool/5]).
 
 %% Helper macro for declaring children of supervisor
 -define(CHILD(I, Args, Type, Timeout),
@@ -26,23 +26,30 @@
 -define(CHILD(I, Args, Type),
 		?CHILD(I, Args, Type, 5000)).
 
+-type worker_pool() :: riak_core_node_worker_pool:worker_pool().
+
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
     Children =
-		[pool(WorkerMod, PoolSize, WArgs, WProps)
-			|| {_App, {WorkerMod, PoolSize, WArgs, WProps}}
+		[pool(WorkerMod, PoolSize, WArgs, WProps, QueueType)
+			|| {_App, {WorkerMod, PoolSize, WArgs, WProps, QueueType}}
 				<- riak_core:pool_mods()],
     {ok, {{one_for_one, 5, 10}, Children}}.
 
-start_pool(WorkerMod, PoolSize, WorkerArgs, WorkerProps) ->
-    Ref = pool(WorkerMod, PoolSize, WorkerArgs, WorkerProps),
+-spec start_pool(atom(), pos_integer(), list(), list(), worker_pool()) -> ok.
+%% @doc
+%% Start a node_worker_pool - can be either assuredforwardng_pool or
+%% a besteffort_pool (which will also be registered as a node_worker_pool for
+%% backwards compatability)
+start_pool(WorkerMod, PoolSize, WorkerArgs, WorkerProps, QueueType) ->
+    Ref = pool(WorkerMod, PoolSize, WorkerArgs, WorkerProps, QueueType),
     _ =  supervisor:start_child(?MODULE, Ref),
     ok.
 
-pool(WorkerMod, PoolSize, WorkerArgs, WorkerProps) ->
+pool(WorkerMod, PoolSize, WorkerArgs, WorkerProps, QueueType) ->
 	?CHILD(riak_core_node_worker_pool,
-			[WorkerMod, PoolSize, WorkerArgs, WorkerProps],
+			[WorkerMod, PoolSize, WorkerArgs, WorkerProps, QueueType],
 			worker).
 	
