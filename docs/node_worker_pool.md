@@ -3,7 +3,7 @@
 
 ## Background
 
-Riak Core has a pool of workers started by riak_core_vnode, based on configuration returned from the application vnode init code.
+Riak Core has a pool of workers started by riak_core_vnode, based on configuration returned from the application vnode init code:
 
 https://github.com/basho/riak_core/blob/2.1.9/src/riak_core_vnode.erl#L223-#L243
 
@@ -33,7 +33,7 @@ The application can determine both the size of each pool, and which pool can be 
 
 ## Implementation
 
-The `riak_core_vnode_worker_pool` as started and shutdown by the vnode process, as that vnode process started and shutdown.  The node_worker_pool cannot be tied to an individual vnode in the same way, so the node_worker_pool's supervisor is started directly through the main riak_core supervision tree:
+The `riak_core_vnode_worker_pool` is started and shutdown by the vnode process, as that vnode process starts up and shuts down.  The node_worker_pool cannot be tied to an individual vnode in the same way, so the node_worker_pool's supervisor is started directly through the main riak_core supervision tree:
 
 https://github.com/martinsumner/riak_core/blob/mas-2.2.5-dscpworkerpool/src/riak_core_sup.erl#L82
 
@@ -86,7 +86,7 @@ https://github.com/martinsumner/riak_core/blob/mas-2.2.5-dscpworkerpool/src/riak
 
 The primary difference in implementation is that `riak_core_node_worker_pool` must trap_exit on initialisation, as there is no closing vnode process to call shutdown_pool and neatly terminate the pool (with a wait for work to finish).
 
-A new function is added to the `riak_core_vnode` to prompt work to be queued for a node_worker_pool:
+A new function `queue_work/4` is added to the `riak_core_vnode` to prompt work to be queued for a node_worker_pool:
 
 https://github.com/martinsumner/riak_core/blob/mas-2.2.5-dscpworkerpool/src/riak_core_vnode.erl#L1092-L1105
 
@@ -101,9 +101,9 @@ If there is need to call for work to be queued directly from the application (e.
 https://github.com/martinsumner/riak_core/blob/mas-2.2.5-dscpworkerpool/src/riak_core_vnode.erl#L245-L254
 
 
-## Snapshots Pre-fold
+## Snapshots Pre-Fold
 
-Within `riak_kv`, fold functions returned from backends for performing queries which were directed towards a worker_pool (such as 2i queries) were passed to the worker without a snapshot being taken.  When the worker in the pool ran the `Fold()`, at that point a snapshot would be taken.
+Within `riak_kv` fold functions returned from backends for performing queries which were directed towards a worker_pool (such as 2i queries), were passed to the worker without a snapshot being taken.  When the worker in the pool ran the `Fold()`, at that point a snapshot would be taken.
 
 This model works if there is unlimited capacity in the vnode worker pools, as it is likely that the fold functions across a coverage plan will be called reasonably close together, so as to present a roughly cluster-wide point-in-time view of the query.  However, with a constrained pool, a subset of the folds in the coverage plan may be delayed behind other work.  Therefore, it is preferable for async work which intends to use node_worker_pools to have had the snapshot taken prior to the fold function being returned from the vnode backend.
 
