@@ -39,6 +39,8 @@
                 check_request          :: undefined | sent | ignore
                }).
 
+%% NOTE: changed down to 50 for gh1661 soft-limits on vnode mailbox
+-define(DEFAULT_CHECK_REQUEST_INTERVAL, 50).
 -define(DEFAULT_CHECK_INTERVAL, 5000).
 -define(DEFAULT_OVERLOAD_THRESHOLD, 10000).
 
@@ -64,7 +66,7 @@ init([Parent, RegName, Mod, Index]) ->
                                   ?DEFAULT_CHECK_INTERVAL),
     RequestInterval = app_helper:get_env(riak_core,
                                          vnode_check_request_interval,
-                                         Interval div 2),
+                                         ?DEFAULT_CHECK_REQUEST_INTERVAL),
     Threshold = app_helper:get_env(riak_core,
                                    vnode_overload_threshold,
                                    ?DEFAULT_OVERLOAD_THRESHOLD),
