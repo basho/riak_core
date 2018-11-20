@@ -22,34 +22,60 @@
 -behaviour(riak_core_worker_pool).
 
 -export([do_init/1, reply/2, do_work/3]).
+%% export the names of the pools as functions
+-export([af1/0, af2/0, af3/0, af4/0, be/0, nwp/0]).
 
 %% API
 -export([start_link/5, stop/2, shutdown_pool/2, handle_work/3]).
 
 -type worker_pool()
 	% Allows you to set up a DSCP-style set of pools (assuming the
-	% vnode_wroker_pool counts as ef.  Otherwise can just have a single
-	% node_worker_pool
+	% vnode_worker_pool counts as ef.  Otherwise can just have a
+	% single node_worker_pool
 	:: be_pool|af1_pool|af2_pool|af3_pool|af4_pool|node_worker_pool.
 
 -export_type([worker_pool/0]).
 
+-spec af1() -> af1_pool.
+af1() -> af1_pool.
+
+-spec af2() -> af2_pool.
+af2() -> af2_pool.
+
+-spec af3() -> af3_pool.
+af3() -> af3_pool.
+
+-spec af4() -> af4_pool.
+af4() -> af4_pool.
+
+-spec be() -> be_pool.
+be() -> be_pool.
+
+-spec nwp() -> node_worker_pool.
+nwp() -> node_worker_pool.
+
 -spec start_link(atom(), pos_integer(), list(), list(), worker_pool())
-																-> {ok, pid()}.
+                -> {ok, pid()}.
 %% @doc
 %% Start a worker pool, and register under the name PoolType, which should be
 %% a recognised name from type worker_pool()
-start_link(WorkerMod, PoolSize, WorkerArgs, WorkerProps, PoolType) ->
-	{ok, Pid} =
-		riak_core_worker_pool:start_link([WorkerMod,
-												PoolSize,
-												WorkerArgs,
-												WorkerProps],
-											?MODULE),
-	register(PoolType, Pid),
-	lager:info("Registered worker pool of type ~w and size ~w", 
-				[PoolType, PoolSize]),
-	{ok, Pid}.
+start_link(WorkerMod, PoolSize, WorkerArgs, WorkerProps, PoolType)
+  when PoolType == be_pool;
+       PoolType == af1_pool;
+       PoolType == af2_pool;
+       PoolType == af3_pool;
+       PoolType == af4_pool;
+       PoolType == node_worker_pool ->
+    {ok, Pid} =
+        riak_core_worker_pool:start_link([WorkerMod,
+                                          PoolSize,
+                                          WorkerArgs,
+                                          WorkerProps],
+                                         ?MODULE),
+    register(PoolType, Pid),
+    lager:info("Registered worker pool of type ~w and size ~w",
+               [PoolType, PoolSize]),
+    {ok, Pid}.
 
 do_init([WorkerMod, PoolSize, WorkerArgs, WorkerProps]) ->
 	process_flag(trap_exit, true),
@@ -74,5 +100,3 @@ reply(From, Msg) ->
 
 do_work(Pid, Work, From) ->
 	riak_core_vnode_worker:handle_work(Pid, Work, From).
-
-
