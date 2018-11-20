@@ -1092,7 +1092,7 @@ mod_set_forwarding(Forward, State=#state{mod=Mod, modstate=ModState}) ->
 queue_work(PoolName, Work, From, VnodeWrkPool) ->
     PoolName0 =
         case PoolName of
-            queue -> node_worker_pool;
+            queue -> riak_core_node_worker_pool:nwp();
             PoolName -> PoolName
         end,
     case whereis(PoolName0) of
