@@ -23,7 +23,7 @@
 
 -export([do_init/1, reply/2, do_work/3]).
 %% export the names of the pools as functions
--export([af1/0, af2/0, af3/0, af4/0, be/0, nwp/0]).
+-export([af1/0, af2/0, af3/0, af4/0, be/0, nwp/0, dscp_pools/0, pools/0]).
 
 %% API
 -export([start_link/5, stop/2, shutdown_pool/2, handle_work/3]).
@@ -54,6 +54,14 @@ be() -> be_pool.
 -spec nwp() -> node_worker_pool.
 nwp() -> node_worker_pool.
 
+-spec pools() -> [worker_pool()].
+pools() ->
+    [af1(), af2(), af3(), af4(), be(), nwp()].
+
+-spec dscp_pools() -> [worker_pool()].
+dscp_pools() ->
+    [af1(), af2(), af3(), af4(), be()].
+
 -spec start_link(atom(), pos_integer(), list(), list(), worker_pool())
                 -> {ok, pid()}.
 %% @doc
@@ -78,15 +86,22 @@ start_link(WorkerMod, PoolSize, WorkerArgs, WorkerProps, PoolType)
     {ok, Pid}.
 
 do_init([WorkerMod, PoolSize, WorkerArgs, WorkerProps]) ->
-	process_flag(trap_exit, true),
+    process_flag(trap_exit, true),
     poolboy:start_link([{worker_module, riak_core_vnode_worker},
-						{worker_args,
-								[node, WorkerArgs, WorkerProps, self()]},
-						{worker_callback_mod, WorkerMod},
-						{size, PoolSize}, {max_overflow, 0}]).
+                        {worker_args,
+                         [node, WorkerArgs, WorkerProps, self()]},
+                        {worker_callback_mod, WorkerMod},
+                        {size, PoolSize}, {max_overflow, 0}]).
 
-handle_work(Pid, Work, From) ->
-	riak_core_worker_pool:handle_work(Pid, Work, From).
+handle_work(PoolName, Work, From) when
+      PoolName == be_pool;
+      PoolName == af1_pool;
+      PoolName == af2_pool;
+      PoolName == af3_pool;
+      PoolName == af4_pool;
+      PoolName == node_worker_pool ->
+    riak_core_stat:update({worker_pool, PoolName}),
+    riak_core_worker_pool:handle_work(PoolName, Work, From).
 
 stop(Pid, Reason) ->
     riak_core_worker_pool:stop(Pid, Reason).

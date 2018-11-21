@@ -1099,6 +1099,7 @@ queue_work(PoolName, Work, From, VnodeWrkPool) ->
         undefined ->
             lager:info("Using vnode pool as ~w pool is not registered",
                         [PoolName0]),
+            riak_core_stat:update({worker_pool, unregistered}),
             riak_core_vnode_worker_pool:handle_work(VnodeWrkPool, Work, From);
         _P ->
             riak_core_node_worker_pool:handle_work(PoolName0, Work, From)
