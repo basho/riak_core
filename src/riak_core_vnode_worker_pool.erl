@@ -58,6 +58,7 @@ start_link(WorkerMod,
 										?MODULE).
 	
 handle_work(Pid, Work, From) ->
+    riak_core_stat:update({worker_pool, vnode_pool}),
 	riak_core_worker_pool:handle_work(Pid, Work, From).
 
 stop(Pid, Reason) ->

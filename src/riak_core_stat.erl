@@ -130,13 +130,14 @@ init([]) ->
 handle_call(_Req, _From, State) ->
     {reply, ok, State}.
 
+handle_cast({update, {worker_pool, vnode_pool}}, State) ->
+    exometer_update([prefix(), ?APP, vnode, worker_pool], 1),
+    {noreply, State};
+handle_cast({update, {worker_pool, Pool}}, State) ->
+    exometer_update([prefix(), ?APP, node, worker_pool, Pool], 1),
+    {noreply, State};
 handle_cast({update, Arg}, State) ->
-    case exometer:update([prefix(), ?APP, update_metric(Arg)], update_value(Arg)) of
-        {error, not_found} ->
-            lager:debug("~p not found on update.", [Arg]);
-        ok ->
-            ok
-    end,
+    exometer_update([prefix(), ?APP, update_metric(Arg)], update_value(Arg)),
     {noreply, State};
 handle_cast(_Req, State) ->
     {noreply, State}.
@@ -149,6 +150,15 @@ terminate(_Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+
+exometer_update(Name, Value) ->
+    case exometer:update(Name, Value) of
+        {error, not_found} ->
+            lager:debug("~p not found on update.", [Name]);
+        ok ->
+            ok
+    end.
 
 update_metric(converge_timer_begin ) -> converge_delay;
 update_metric(converge_timer_end   ) -> converge_delay;
@@ -182,7 +192,15 @@ stats() ->
      {rebalance_delay, duration, [], [{min, rebalance_delay_min},
                                       {max, rebalance_delay_max},
                                       {mean, rebalance_delay_mean},
-                                      {last, rebalance_delay_last}]}].
+                                      {last, rebalance_delay_last}]} |  nwp_stats()].
+
+nwp_stats() ->
+    [ {[vnode, worker_pool], counter, [], [{value, vnode_worker_pool_total}]},
+      {[node, worker_pool, unregistered], counter, [], [{value, node_worker_pool_unregistered_total}]} |
+      [nwp_stat(Pool) || Pool <- riak_core_node_worker_pool:pools()]].
+
+nwp_stat(Pool) ->
+    {[node, worker_pool, Pool], counter, [], [{value, nwp_name_atom(Pool)}]}.
 
 system_stats() ->
     [
@@ -250,8 +268,16 @@ vnodeq_aggregate(Service, MQLs0) ->
 vnodeq_atom(Service, Desc) ->
     binary_to_atom(<<(atom_to_binary(Service, latin1))/binary, Desc/binary>>, latin1).
 
+nwp_name_atom(Atom) ->
+    binary_to_atom(<< <<"node_worker_pool_">>/binary,
+                      (atom_to_binary(Atom, latin1))/binary,
+                      <<"_total">>/binary>>, latin1).
+
 
 -ifdef(TEST).
+
+nwp_name_to_atom_test() ->
+    ?assertEqual(node_worker_pool_af1_pool_total, nwp_name_atom(af1_pool)).
 
 %% Check vnodeq aggregation function
 vnodeq_aggregate_empty_test() ->
