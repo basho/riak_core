@@ -44,6 +44,7 @@
          trigger_delete/1,
          core_status/1,
          handoff_error/3]).
+-export([queue_work/4]).
 
 -ifdef(TEST).
 
@@ -229,22 +230,36 @@ do_init(State = #state{index=Index, mod=Mod, forward=Forward}) ->
         {error, Reason} ->
             {error, Reason};
         _ ->
-            case lists:keyfind(pool, 1, Props) of
-                {pool, WorkerModule, PoolSize, WorkerArgs}=PoolConfig ->
-                    lager:debug("starting worker pool ~p with size of ~p~n",
-                                [WorkerModule, PoolSize]),
-                    {ok, PoolPid} = riak_core_vnode_worker_pool:start_link(WorkerModule,
-                                                                       PoolSize,
-                                                                       Index,
-                                                                       WorkerArgs,
-                                                                       worker_props);
-                _ ->
-                    PoolPid = PoolConfig = undefined
-            end,
+            ModState0 = 
+                case lists:keyfind(pool, 1, Props) of
+                    {pool, WorkerMod, PoolSize, WorkerArgs}=PoolConfig ->
+                        lager:info("Starting vnode worker pool " ++ 
+                                        "~p with size of ~p~n",
+                                    [WorkerMod, PoolSize]),
+                        {ok, PoolPid} =
+                            riak_core_vnode_worker_pool:start_link(WorkerMod,
+                                                                PoolSize,
+                                                                Index,
+                                                                WorkerArgs,
+                                                                worker_props),
+                        % If the vnode Module requires access to the vnode worker 
+                        % pool, it should export a function add_vnode_pool/2
+                        case erlang:function_exported(Mod, add_vnode_pool, 2) of
+                            true ->
+                                lager:info("Adding vnode_pool ~w to ~w state",
+                                            [PoolPid, Mod]),
+                                Mod:add_vnode_pool(PoolPid, ModState);
+                            false ->
+                                ModState
+                        end;
+                    _ ->
+                        PoolPid = PoolConfig = undefined,
+                        ModState
+                end,
             riak_core_handoff_manager:remove_exclusion(Mod, Index),
             Timeout = app_helper:get_env(riak_core, vnode_inactivity_timeout, ?DEFAULT_TIMEOUT),
             Timeout2 = Timeout + random:uniform(Timeout),
-            State2 = State#state{modstate=ModState, inactivity_timeout=Timeout2,
+            State2 = State#state{modstate=ModState0, inactivity_timeout=Timeout2,
                                  pool_pid=PoolPid, pool_config=PoolConfig},
             lager:debug("vnode :: ~p/~p :: ~p~n", [Mod, Index, Forward]),
             State3 = mod_set_forwarding(Forward, State2),
@@ -360,6 +375,15 @@ vnode_command(Sender, Request, State=#state{mod=Mod,
             %% the result is sent back to 'From'
             riak_core_vnode_worker_pool:handle_work(Pool, Work, From),
             continue(State, NewModState);
+        {PoolName, Work, From, NewModState} ->
+            %% dispatch some work to the node worker pool
+            %% the result is sent back to 'From'
+            %% The node worker pool stops too many vnodes from running
+            %% the fold concurrently
+            %% If a node_worker_pool has not been setup under the given name
+            %% then it will fallback to the vnode worker pool
+            queue_work(PoolName, Work, From, Pool),
+            continue(State, NewModState);
         {stop, Reason, NewModState} ->
             {stop, Reason, State#state{modstate=NewModState}}
     end.
@@ -395,6 +419,15 @@ vnode_coverage(Sender, Request, KeySpaces, State=#state{index=Index,
             %% dispatch some work to the vnode worker pool
             %% the result is sent back to 'From'
             riak_core_vnode_worker_pool:handle_work(Pool, Work, From),
+            continue(State, NewModState);
+        {PoolName, Work, From, NewModState} ->
+            %% dispatch some work to the node worker pool
+            %% the result is sent back to 'From'
+            %% The node worker pool stops too many vnodes from running
+            %% the fold concurrently
+            %% If a node_worker_pool has not been setup under the given name
+            %% then it will fallback to the vnode worker pool
+            queue_work(PoolName, Work, From, Pool),
             continue(State, NewModState);
         {stop, Reason, NewModState} ->
             {stop, Reason, State#state{modstate=NewModState}}
@@ -1054,6 +1087,22 @@ mod_set_forwarding(Forward, State=#state{mod=Mod, modstate=ModState}) ->
             State#state{modstate=NewModState};
         false ->
             State
+    end.
+
+queue_work(PoolName, Work, From, VnodeWrkPool) ->
+    PoolName0 =
+        case PoolName of
+            queue -> riak_core_node_worker_pool:nwp();
+            PoolName -> PoolName
+        end,
+    case whereis(PoolName0) of
+        undefined ->
+            lager:info("Using vnode pool as ~w pool is not registered",
+                        [PoolName0]),
+            riak_core_stat:update({worker_pool, unregistered}),
+            riak_core_vnode_worker_pool:handle_work(VnodeWrkPool, Work, From);
+        _P ->
+            riak_core_node_worker_pool:handle_work(PoolName0, Work, From)
     end.
 
 %% ===================================================================
