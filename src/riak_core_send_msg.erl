@@ -31,7 +31,7 @@
 -ifdef(PULSE).
 -compile(export_all).
 -compile({parse_transform, pulse_instrument}).
--compile({pulse_replace_module, [{gen_fsm, pulse_gen_fsm},
+-compile({pulse_replace_module, [{gen_fsm_compat, pulse_gen_fsm},
                                  {gen_server, pulse_gen_server}]}).
 -endif.
 -endif.
@@ -43,7 +43,7 @@ reply_unreliable({To, Tag}, Reply) ->
 cast_unreliable(Dest, Request) ->
     bang_unreliable(Dest, {'$gen_cast', Request}).
 
-%% NOTE: We'ed peeked inside gen_fsm.erl's guts to see its internals.
+%% NOTE: We'ed peeked inside gen_fsm_compat.erl's guts to see its internals.
 send_event_unreliable({global, _Name} = GlobalTo, Event) ->
     erlang:error({unimplemented_send, GlobalTo, Event});
 send_event_unreliable({via, _Mod, _Name} = ViaTo, Event) ->
