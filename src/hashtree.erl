@@ -695,7 +695,7 @@ new_segment_store(Opts, State) ->
     DataDir = case proplists:get_value(segment_path, Opts) of
                   undefined ->
                       Root = "/tmp/anti/level",
-                      <<P:128/integer>> = md5(term_to_binary({erlang:now(), make_ref()})),
+                      <<P:128/integer>> = md5(term_to_binary({os:timestamp(), make_ref()})),
                       filename:join(Root, integer_to_list(P));
                   SegmentPath ->
                       SegmentPath
