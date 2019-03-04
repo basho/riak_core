@@ -107,9 +107,11 @@ dtrace(Int0, Int1, Ints, String0, String1, Strings)
             dtrace([Int0, Int1] ++ Ints ++ [S0, String1] ++ Strings)
     end.
 
+-spec enabled() -> boolean().
 enabled() ->
     dtrace(enabled_check).
 
+-spec put_tag(iodata() | undefined) -> boolean() | undefined.
 put_tag(Tag) ->
     case enabled() of
         true ->
@@ -117,7 +119,7 @@ put_tag(Tag) ->
             put(?DTRACE_TAG_KEY, FTag),
             dyntrace:put_tag(FTag);
         false ->
-            ok
+            undefined
     end.
 
 timeit0(ArgList) ->
