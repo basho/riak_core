@@ -23,6 +23,8 @@
 %% @doc riak_core_claim_sim models adding/removing nodes from the ring
 %%
 -module(riak_core_claim_sim).
+
+-compile(nowarn_export_all).
 -compile(export_all).
 
 -ifdef(TEST).

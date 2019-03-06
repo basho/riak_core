@@ -397,7 +397,7 @@ log_node_removed(Node, Old) ->
     lager:info("'~s' removed from cluster (previously: '~s')~n", [Node, Old]).
 
 remove_from_cluster(Ring, ExitingNode) ->
-    remove_from_cluster(Ring, ExitingNode, rand:seed(exrop, erlang:now())).
+    remove_from_cluster(Ring, ExitingNode, rand:seed(exrop, os:timestamp())).
 
 remove_from_cluster(Ring, ExitingNode, Seed) ->
     % Get a list of indices owned by the ExitingNode...
