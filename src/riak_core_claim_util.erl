@@ -34,6 +34,7 @@
          rotations/1, substitutions/2]).
 -ifdef(TEST).
 -ifdef(EQC).
+-export([prop_adjacency_summary/0]).
 -include_lib("eqc/include/eqc.hrl").
 -endif.
 -include_lib("eunit/include/eunit.hrl").

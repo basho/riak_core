@@ -157,7 +157,7 @@
 -endif. % TEST
 
 -ifdef(EQC).
--export([prop_correct/0]).
+-export([prop_correct/0, prop_sha/0, prop_est/0]).
 -include_lib("eqc/include/eqc.hrl").
 -endif.
 
@@ -434,7 +434,7 @@ clear_buckets(State=#state{id=Id, ref=Ref}) ->
     %% tree.
     State#state{next_rebuild = full,
                 tree = dict:new()}.
-            
+
 
 -spec update_tree([integer()], hashtree()) -> hashtree().
 update_tree([], State) ->
@@ -1679,7 +1679,7 @@ prop_correct() ->
                         true
                     end)).
 
-est_prop() ->
+prop_est() ->
     %% It's hard to estimate under 10000 keys
     ?FORALL(N, choose(10000, 500000),
             begin

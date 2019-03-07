@@ -35,7 +35,7 @@
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -type bucket_name() :: binary().
 -type orddict() :: orddict:orddict().

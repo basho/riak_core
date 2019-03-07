@@ -68,7 +68,9 @@
 
 -ifdef(TEST).
 -ifdef(EQC).
--export([prop_claim_ensures_unique_nodes/1, prop_wants/0, prop_wants_counts/0]).
+-export([prop_claim_ensures_unique_nodes/1, prop_wants/0, prop_wants_counts/0,
+         prop_claim_ensures_unique_nodes_v2/0, prop_claim_ensures_unique_nodes_v3/0,
+         prop_take_idxs/0]).
 -include_lib("eqc/include/eqc.hrl").
 -endif.
 -include_lib("eunit/include/eunit.hrl").
