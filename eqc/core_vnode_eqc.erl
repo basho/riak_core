@@ -28,7 +28,7 @@
 -include_lib("eqc/include/eqc_fsm.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include("include/riak_core_vnode.hrl").
--compile([export_all]).
+-compile([export_all, nowarn_export_all]).
 
 -define(POST_COND(PC, ErrTuple),
         case PC of

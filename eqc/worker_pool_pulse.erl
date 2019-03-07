@@ -32,7 +32,7 @@
 %% riak_core_vnode_worker behavior
 -export([init_worker/3, handle_work/3]).
 %% console debugging convenience
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -ifdef(PULSE).
 -include_lib("pulse/include/pulse.hrl").

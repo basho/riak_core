@@ -29,7 +29,7 @@
 -define(QC_OUT(P),
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -type bg_eqc_type() :: atom().
 -type bg_eqc_limit() :: non_neg_integer().

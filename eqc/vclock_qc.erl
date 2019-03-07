@@ -5,7 +5,7 @@
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
 -include_lib("eunit/include/eunit.hrl").
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -define(ACTOR_IDS, [a,b,c,d,e]).
 -define(QC_OUT(P),
