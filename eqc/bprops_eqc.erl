@@ -34,9 +34,8 @@
 -ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
--include_lib("eunit/include/eunit.hrl").
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -type bucket_name() :: binary().
 -type orddict() :: orddict:orddict().
@@ -44,9 +43,6 @@
 -define(NAMES, [<<0>>, <<1>>, <<2>>, <<3>>]).
 -define(BPROP_KEYS, [foo, bar, tapas]).
 -define(DEFAULT_BPROPS, [{n_val, 3}]).
--define(QC_OUT(P),
-    eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
-
 
 %%
 %% The state_m "Model".  This invariant represents what properties
@@ -55,38 +51,6 @@
 -record(state, {
     buckets = orddict:new() :: orddict()
 }).
-
-%%
-%% Eunit entrypoints
-%%
-
-bprops_test_() -> {
-        timeout, 60,
-        ?_test(?assert(
-            eqc:quickcheck(?QC_OUT(eqc:numtests(100, prop_buckets())))))
-    }.
-
-%%
-%% top level drivers (for testing by hand, typically)
-%%
-
-run() ->
-    run(100).
-
-run(N) ->
-    eqc:quickcheck(eqc:numtests(N, prop_buckets())).
-
-rerun() ->
-    eqc:check(eqc_statem:show_states(prop_buckets())).
-
-cover() ->
-    cover(100).
-
-cover(N) ->
-    cover:compile_beam(riak_core_bucket),
-    eqc:quickcheck(eqc:numtests(N, prop_buckets())),
-    cover:analyse_to_file(riak_core_bucket, [html]).
-
 
 %%
 %% eqc_statem initial model

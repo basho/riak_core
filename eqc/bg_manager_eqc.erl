@@ -22,14 +22,14 @@
 -ifdef(TEST).
 -ifdef(EQC).
 
--include("riak_core_bg_manager.hrl").
+-include("include/riak_core_bg_manager.hrl").
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -define(QC_OUT(P),
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -type bg_eqc_type() :: atom().
 -type bg_eqc_limit() :: non_neg_integer().
@@ -55,37 +55,6 @@
           %% number of tokens taken by type
           tokens :: [{bg_eqc_type(), non_neg_integer()}]
          }).
-
-bgmgr_test_() ->
-    {timeout, 60,
-     fun() ->
-              ?assert(eqc:quickcheck(?QC_OUT(eqc:testing_time(30, prop_bgmgr()))))
-     end
-    }.
-
-run_eqc() ->
-    run_eqc(100).
-
-run_eqc(Type) when is_atom(Type) ->
-    run_eqc(100, Type);
-run_eqc(N) ->
-    run_eqc(N, simple).
-
-run_eqc(N, simple) ->
-    run_eqc(N, prop_bgmgr());
-run_eqc(N, para) ->
-    run_eqc(N, parallel);
-run_eqc(N, parallel) ->
-    run_eqc(N, prop_bgmgr_parallel());
-run_eqc(N, Prop) ->
-    eqc:quickcheck(eqc:numtests(N, Prop)).
-
-run_check() ->
-    eqc:check(prop_bgmgr()).
-
-run_recheck() ->
-    eqc:recheck(prop_bgmgr()).
-
 
 %% @doc Returns the state in which each test case starts. (Unless a different
 %%      initial state is supplied explicitly to, e.g. commands/2.)

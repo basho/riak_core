@@ -27,7 +27,7 @@
 -include_lib("eqc/include/eqc_statem.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -record(state, { up_nodes = [],
                  services = [],
@@ -39,9 +39,6 @@
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 
 -define(ORDSET(L), ordsets:from_list(L)).
-
-qc_test_() ->
-    {timeout, 120, fun() -> ?assert(eqc:quickcheck(?QC_OUT(prop_main()))) end}.
 
 prop_main() ->
     %% Initialize necessary env settings

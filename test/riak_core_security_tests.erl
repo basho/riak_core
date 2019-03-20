@@ -1,5 +1,5 @@
 -module(riak_core_security_tests).
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").

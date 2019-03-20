@@ -42,7 +42,7 @@
 
 
 -module(hashtree_eqc).
--compile([export_all]).
+-compile([export_all, nowarn_export_all]).
 
 -ifdef(TEST).
 -ifdef(EQC).
@@ -52,36 +52,6 @@
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 
 -include_lib("eunit/include/eunit.hrl").
-
-%% Make it possible to run from '-s hashtree_eqc runfor 60' to run from cmdline
-runfor([DurationMinsStr]) ->
-    DurationSecs = 60 * list_to_integer(atom_to_list(DurationMinsStr)),
-    eqc:quickcheck(eqc:testing_time(DurationSecs, hashtree_eqc:prop_correct())).
-
-hashtree_test_() ->
-    {setup,
-     fun() ->
-             application:set_env(lager, handlers, [{lager_console_backend, info}]),
-             application:ensure_started(syntax_tools),
-             application:ensure_started(compiler),
-             application:ensure_started(goldrush),
-             application:ensure_started(lager)
-     end,
-     fun(_) ->
-             application:stop(lager),
-             application:stop(goldrush),
-             application:stop(compiler),
-             application:stop(syntax_tools),
-             application:unload(lager),
-             delete_ets()
-     end,
-     [{timeout, 60,
-       fun() ->
-              lager:info("Any warnings should be investigated.  No lager output expected.\n"),
-              ?assert(eqc:quickcheck(?QC_OUT(eqc:testing_time(29,
-                                                              hashtree_eqc:prop_correct()))))
-      end
-      }]}.
 
 -record(state,
     {
@@ -519,61 +489,77 @@ next_state(S,_R,{call, _, local_compare1, []}) ->
 %% hashtrees and afterwards force them to a comparable state.
 %%
 prop_correct() ->
-    ?FORALL(Cmds,commands(?MODULE, #state{}),
-            aggregate(command_names(Cmds),
-                begin
-                    %%io:format(user, "Starting in ~p\n", [self()]),
-                    put(t1, undefined),
-                    put(t2, undefined),
-                    catch ets:delete(t1),
-                    catch ets:delete(t2),
-                    {_H,S,Res0} = HSR = run_commands(?MODULE,Cmds),
-            {Segments, Width, MemLevels} =
-                        case S#state.params of
-                            undefined ->
-                                %% Possible if Cmds just init
-                                %% set segments to 1 to avoid div by zero
-                                {1, undefined, undefined};
-                            Params ->
-                                Params
-                        end,
-                    %% If ok after steps, do a final compare to increase
-                    %% the number of tests.
-                    Res = case (S#state.started andalso Res0 == ok) of
-                              true ->
-                                  final_compare(S);
-                              _ ->
-                                  Res0
-                          end,
-                    %% Clean up after the test
-                    case Res of 
-                        ok -> %  if all went well, remove leveldb files
-                            catch cleanup_hashtree(get(t1)),
-                            catch cleanup_hashtree(get(t2));
-                        _ -> % otherwise, leave them around for inspection
-                            ok
-                    end,
-                    NumUpdates = S#state.num_updates,
-                    pretty_commands(?MODULE, Cmds, HSR,
-                                    ?WHENFAIL(
-                                       begin
-                       {Segments, Width, MemLevels} = S#state.params,
-                       eqc:format("Segments ~p\nWidth ~p\nMemLevels ~p\n",
-                              [Segments, Width, MemLevels]),
-                       eqc:format("=== t1 ===\n~p\n\n", [ets:tab2list(t1)]),
-                       eqc:format("=== s1 ===\n~p\n\n", [safe_tab2list(s1)]),
-                       eqc:format("=== t2 ===\n~p\n\n", [ets:tab2list(t2)]),
-                       eqc:format("=== s2 ===\n~p\n\n", [safe_tab2list(s2)]),
-                       eqc:format("=== ht1 ===\n~w\n~p\n\n", [get(t1), catch dump(get(t1))]),
-                       eqc:format("=== ht2 ===\n~w\n~p\n\n", [get(t2), catch dump(get(t2))])
+    ?SETUP(fun() ->
+                   application:set_env(lager, handlers, [{lager_console_backend, info}]),
+                   application:ensure_started(syntax_tools),
+                   application:ensure_started(compiler),
+                   application:ensure_started(goldrush),
+                   application:ensure_started(lager),
+                   fun() ->
+                           application:stop(lager),
+                           application:stop(goldrush),
+                           application:stop(compiler),
+                           application:stop(syntax_tools),
+                           application:unload(lager),
+                           delete_ets()
+                   end
+           end,
+           ?FORALL(Cmds,commands(?MODULE, #state{}),
+                   aggregate(command_names(Cmds),
+                             begin
+                                 %%io:format(user, "Starting in ~p\n", [self()]),
+                                 put(t1, undefined),
+                                 put(t2, undefined),
+                                 catch ets:delete(t1),
+                                 catch ets:delete(t2),
+                                 {_H,S,Res0} = HSR = run_commands(?MODULE,Cmds),
+                                 {Segments, Width, MemLevels} =
+                                 case S#state.params of
+                                     undefined ->
+                                         %% Possible if Cmds just init
+                                         %% set segments to 1 to avoid div by zero
+                                         {1, undefined, undefined};
+                                     Params ->
+                                         Params
+                                 end,
+                                 %% If ok after steps, do a final compare to increase
+                                 %% the number of tests.
+                                 Res = case (S#state.started andalso Res0 == ok) of
+                                           true ->
+                                               final_compare(S);
+                                           _ ->
+                                               Res0
                                        end,
-                                       measure(num_updates, NumUpdates,
-                                       measure(segment_fill_ratio, NumUpdates / (2 * Segments), % Est of avg fill rate per segment
-                       collect(with_title(mem_levels), MemLevels,
-                                       collect(with_title(segments), Segments,
-                                       collect(with_title(width), Width,
-                                               equals(ok, Res))))))))
-        end)).
+                                 %% Clean up after the test
+                                 case Res of 
+                                     ok -> %  if all went well, remove leveldb files
+                                         catch cleanup_hashtree(get(t1)),
+                                         catch cleanup_hashtree(get(t2));
+                                     _ -> % otherwise, leave them around for inspection
+                                         ok
+                                 end,
+                                 NumUpdates = S#state.num_updates,
+                                 pretty_commands(?MODULE, Cmds, HSR,
+                                                 ?WHENFAIL(
+                                                    begin
+                                                        {Segments, Width, MemLevels} = S#state.params,
+                                                        eqc:format("Segments ~p\nWidth ~p\nMemLevels ~p\n",
+                                                                   [Segments, Width, MemLevels]),
+                                                        eqc:format("=== t1 ===\n~p\n\n", [ets:tab2list(t1)]),
+                                                        eqc:format("=== s1 ===\n~p\n\n", [safe_tab2list(s1)]),
+                                                        eqc:format("=== t2 ===\n~p\n\n", [ets:tab2list(t2)]),
+                                                        eqc:format("=== s2 ===\n~p\n\n", [safe_tab2list(s2)]),
+                                                        eqc:format("=== ht1 ===\n~w\n~p\n\n", [get(t1), catch dump(get(t1))]),
+                                                        eqc:format("=== ht2 ===\n~w\n~p\n\n", [get(t2), catch dump(get(t2))])
+                                                    end,
+                                                    measure(num_updates, NumUpdates,
+                                                            measure(segment_fill_ratio, NumUpdates / (2 * Segments), % Est of avg fill rate per segment
+                                                                    collect(with_title(mem_levels), MemLevels,
+                                                                            collect(with_title(segments), Segments,
+                                                                                    collect(with_title(width), Width,
+                                                                                            equals(ok, Res))))))))
+                             end))
+          ).
 
 cleanup_hashtree(HT) ->
     Path = hashtree:path(HT),

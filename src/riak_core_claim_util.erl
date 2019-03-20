@@ -34,6 +34,7 @@
          rotations/1, substitutions/2]).
 -ifdef(TEST).
 -ifdef(EQC).
+-export([prop_adjacency_summary/0]).
 -include_lib("eqc/include/eqc.hrl").
 -endif.
 -include_lib("eunit/include/eunit.hrl").
@@ -609,9 +610,6 @@ substitute(Names, Mapping, L) ->
 
 -ifdef(TEST).
 -ifdef(EQC).
-
-prop_adjacency_summary_test_() ->
-    {timeout, 60, ?_test(eqc:quickcheck(eqc:testing_time(30, prop_adjacency_summary())))}.
 
 longer_list(K, G) ->
     ?SIZED(Size, resize(trunc(K*Size), list(resize(Size, G)))).

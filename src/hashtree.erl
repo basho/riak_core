@@ -157,7 +157,7 @@
 -endif. % TEST
 
 -ifdef(EQC).
--export([prop_correct/0]).
+-export([prop_correct/0, prop_sha/0, prop_est/0]).
 -include_lib("eqc/include/eqc.hrl").
 -endif.
 
@@ -434,7 +434,7 @@ clear_buckets(State=#state{id=Id, ref=Ref}) ->
     %% tree.
     State#state{next_rebuild = full,
                 tree = dict:new()}.
-            
+
 
 -spec update_tree([integer()], hashtree()) -> hashtree().
 update_tree([], State) ->
@@ -695,7 +695,7 @@ new_segment_store(Opts, State) ->
     DataDir = case proplists:get_value(segment_path, Opts) of
                   undefined ->
                       Root = "/tmp/anti/level",
-                      <<P:128/integer>> = md5(term_to_binary({erlang:now(), make_ref()})),
+                      <<P:128/integer>> = md5(term_to_binary({os:timestamp(), make_ref()})),
                       filename:join(Root, integer_to_list(P));
                   SegmentPath ->
                       SegmentPath
@@ -712,7 +712,7 @@ new_segment_store(Opts, State) ->
     %% flushed to disk at once when under a heavy uniform load.
     WriteBufferMin = proplists:get_value(write_buffer_size_min, Config, DefaultWriteBufferMin),
     WriteBufferMax = proplists:get_value(write_buffer_size_max, Config, DefaultWriteBufferMax),
-    {Offset, _} = random:uniform_s(1 + WriteBufferMax - WriteBufferMin, now()),
+    Offset = rand:uniform(1 + WriteBufferMax - WriteBufferMin),
     WriteBufferSize = WriteBufferMin + Offset,
     Config2 = orddict:store(write_buffer_size, WriteBufferSize, Config),
     Config3 = orddict:erase(write_buffer_size_min, Config2),
@@ -1584,14 +1584,6 @@ opened_closed_test() ->
 %%%===================================================================
 
 -ifdef(EQC).
-sha_test_() ->
-    {spawn,
-     {timeout, 120,
-      fun() ->
-              ?assert(eqc:quickcheck(eqc:testing_time(4, prop_sha())))
-      end
-     }}.
-
 prop_sha() ->
     %% NOTE: Generating 1MB (1024 * 1024) size binaries is incredibly slow
     %% with EQC and was using over 2GB of memory
@@ -1605,14 +1597,6 @@ prop_sha() ->
                                 ChunkSize = max(1, (Size div NumChunks)),
                                 sha(ChunkSize, Bin) =:= esha(Bin)
                             end)).
-
-eqc_test_() ->
-    {spawn,
-     {timeout, 120,
-      fun() ->
-              ?assert(eqc:quickcheck(eqc:testing_time(4, prop_correct())))
-      end
-     }}.
 
 objects() ->
     ?SIZED(Size, objects(Size+3)).
@@ -1695,7 +1679,7 @@ prop_correct() ->
                         true
                     end)).
 
-est_prop() ->
+prop_est() ->
     %% It's hard to estimate under 10000 keys
     ?FORALL(N, choose(10000, 500000),
             begin
@@ -1706,13 +1690,4 @@ est_prop() ->
                 ?assertEqual(true, MaxDiff > Diff),
                 true
             end).
-
-est_test_() ->
-    {spawn,
-     {timeout, 240,
-      fun() ->
-              ?assert(eqc:quickcheck(eqc:testing_time(10, est_prop())))
-      end
-     }}.
-
 -endif.

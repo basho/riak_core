@@ -22,7 +22,7 @@
 %% https://gist.github.com/992317
 
 -module(claim_simulation).
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 %%-define(SIMULATE,1).
 -ifdef(SIMULATE).

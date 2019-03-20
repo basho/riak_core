@@ -27,8 +27,8 @@
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_fsm.hrl").
 -include_lib("eunit/include/eunit.hrl").
--include_lib("riak_core_vnode.hrl").
--compile([export_all]).
+-include("include/riak_core_vnode.hrl").
+-compile([export_all, nowarn_export_all]).
 
 -define(POST_COND(PC, ErrTuple),
         case PC of
@@ -47,20 +47,6 @@
                async_enabled = false,
                async_size = 0,
                async_work=[]}). % {Index, AsyncRef} async work submitted to each vnode
-
-simple_test_() ->
-    {setup,
-     fun setup_simple/0,
-     fun(OldVars) ->
-             riak_core_ring_manager:stop(),
-	     application:stop(exometer),
-	     application:stop(lager),
-	     application:stop(goldrush),
-             [ok = application:set_env(riak_core, K, V) || {K,V} <- OldVars],
-             ok
-     end,
-     {timeout, 600,
-      ?_assertEqual(true, quickcheck(?QC_OUT(numtests(100, prop_simple()))))}}.
 
 setup_simple() ->
     error_logger:tty(false),
@@ -83,35 +69,41 @@ setup_simple() ->
     riak_core_ring_manager:start_link(test),
     riak_core_vnode_proxy_sup:start_link(),
     riak_core:register([{vnode_module, mock_vnode}]),
-    OldVars.
-
-test(N) ->
-    quickcheck(numtests(N, prop_simple())).
+    fun() ->
+            riak_core_ring_manager:stop(),
+            application:stop(exometer),
+            application:stop(lager),
+            application:stop(goldrush),
+            [ok = application:set_env(riak_core, K, V) || {K,V} <- OldVars],
+            ok
+    end.
 
 prop_simple() ->
-    ?FORALL(Cmds, commands(?MODULE, {setup, initial_state_data()}),
-            aggregate(command_names(Cmds),
-                      begin
-                          {H,{_SN,S},Res} = run_commands(?MODULE, Cmds),
-                          timer:sleep(500), %% Adjust this to make shutdown sensitive stuff pass/fail
-                          %% Do a sync operation on all the started vnodes
-                          %% to ensure any of the noreply commands have executed before
-                          %% stopping.
-                          get_all_counters(S#qcst.started),
-                          stop_servers(),
-                          %% Check results
-                          ?WHENFAIL(
+    ?SETUP(fun setup_simple/0,
+           ?FORALL(Cmds, commands(?MODULE, {setup, initial_state_data()}),
+                   aggregate(command_names(Cmds),
                              begin
-                                 io:format(user, "History: ~p\n", [H]),
-                                 io:format(user, "State: ~p\n", [S]),
-                                 io:format(user, "Result: ~p\n", [Res])
-                             end,
-                             conjunction([{res, equals(Res, ok)},
-                                          {async,
-                                           equals(lists:sort(async_work(S#qcst.asyncdone_pid)),
-                                                  lists:sort(filter_work(S#qcst.async_work,
-                                                      S#qcst.asyncdone_pid)))}]))
-                      end)).
+                                 {H,{_SN,S},Res} = run_commands(?MODULE, Cmds),
+                                 timer:sleep(500), %% Adjust this to make shutdown sensitive stuff pass/fail
+                                 %% Do a sync operation on all the started vnodes
+                                 %% to ensure any of the noreply commands have executed before
+                                 %% stopping.
+                                 get_all_counters(S#qcst.started),
+                                 stop_servers(),
+                                 %% Check results
+                                 ?WHENFAIL(
+                                    begin
+                                        io:format(user, "History: ~p\n", [H]),
+                                        io:format(user, "State: ~p\n", [S]),
+                                        io:format(user, "Result: ~p\n", [Res])
+                                    end,
+                                    conjunction([{res, equals(Res, ok)},
+                                                 {async,
+                                                  equals(lists:sort(async_work(S#qcst.asyncdone_pid)),
+                                                         lists:sort(filter_work(S#qcst.async_work,
+                                                                                S#qcst.asyncdone_pid)))}]))
+                             end))
+          ).
 
 active_index(#qcst{started=Started}) ->
     elements(Started).

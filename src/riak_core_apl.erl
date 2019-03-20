@@ -285,7 +285,7 @@ last_in_ring() ->
 six_node_test() ->
     %% its non-trivial to create a real 6 node ring, so here's one we made
     %% earlier
-    {ok, [Ring0]} = file:consult("../test/my_ring"),
+    {ok, [Ring0]} = file:consult("test/my_ring"),
     Ring = riak_core_ring:upgrade(Ring0),
     %DocIdx = riak_core_util:chash_key({<<"foo">>, <<"bar">>}),
     DocIdx = <<73,212,27,234,104,13,150,207,0,82,86,183,125,225,172,
@@ -363,7 +363,7 @@ six_node_test() ->
     ok.
 
 six_node_bucket_key_ann_test() ->
-    {ok, [Ring0]} = file:consult("../test/my_ring"),
+    {ok, [Ring0]} = file:consult("test/my_ring"),
     Nodes = ['dev1@127.0.0.1', 'dev2@127.0.0.1', 'dev3@127.0.0.1',
         'dev4@127.0.0.1', 'dev5@127.0.0.1', 'dev6@127.0.0.1'],
     Ring = riak_core_ring:upgrade(Ring0),

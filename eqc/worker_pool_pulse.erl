@@ -32,7 +32,7 @@
 %% riak_core_vnode_worker behavior
 -export([init_worker/3, handle_work/3]).
 %% console debugging convenience
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -ifdef(PULSE).
 -include_lib("pulse/include/pulse.hrl").
@@ -59,25 +59,26 @@ handle_work(Work, _From, State) ->
 
 %% @doc Any amount of work should complete through any size pool.
 prop_any_pool() ->
-    ?FORALL({Seed, ExtraWork, WorkList},
-            {pulse:seed(),
-             frequency([{10,true},{1,false}]),
-             list(frequency([{10,nat()}, {1,die}]))},
-            aggregate([{{extra_work,
-                         pool_size(ExtraWork, WorkList) < length(WorkList) },
-                        {deaths, lists:member(die, WorkList)}}],
-            ?WHENFAIL(
-               io:format(user,
-                         "PoolSize: ~b~n"
-                         "WorkList: ~p~n"
-                         "Schedule: ~p~n",
-                         [pool_size(ExtraWork, WorkList),
-                          WorkList,
-                          pulse:get_schedule()]),
-               begin
-                   PoolSize = pool_size(ExtraWork, WorkList),
-                   true == all_work_gets_done(Seed, PoolSize, WorkList)
-               end))).
+    ?SETUP(fun setup_and_teardown/1,
+           ?FORALL({Seed, ExtraWork, WorkList},
+                   {pulse:seed(),
+                    frequency([{10,true},{1,false}]),
+                    list(frequency([{10,nat()}, {1,die}]))},
+                   aggregate([{{extra_work,
+                                pool_size(ExtraWork, WorkList) < length(WorkList) },
+                               {deaths, lists:member(die, WorkList)}}],
+                             ?WHENFAIL(
+                                io:format(user,
+                                          "PoolSize: ~b~n"
+                                          "WorkList: ~p~n"
+                                          "Schedule: ~p~n",
+                                          [pool_size(ExtraWork, WorkList),
+                                           WorkList,
+                                           pulse:get_schedule()]),
+                                begin
+                                    PoolSize = pool_size(ExtraWork, WorkList),
+                                    true == all_work_gets_done(Seed, PoolSize, WorkList)
+                                end)))).
 
 pool_size(false, WorkList) ->
     length(WorkList);
@@ -92,7 +93,9 @@ pool_size(true, WorkList) ->
 %% @doc Minimal case for the issue this test was created to probe: one
 %% worker, two inputs.
 prop_small_pool() ->
-    ?PULSE(Result, all_work_gets_done(1, [1,2]), true == Result).
+    ?SETUP(fun setup_and_teardown/0,
+           ?PULSE(Result, all_work_gets_done(1, [1,2]),
+                  true == Result)).
 
 all_work_gets_done(Seed, PoolSize, WorkList) ->
     pulse:run_with_seed(
@@ -119,21 +122,12 @@ all_work_gets_done(PoolSize, WorkList) ->
     %% thus never get here
     length(Results) == length(WorkList).
 
-pool_test_() ->
-    {setup,
-        fun() ->
-                error_logger:tty(false),
-                pulse:start()
-        end,
-        fun(_) ->
-                pulse:stop(),
-                error_logger:tty(true)
-        end,
-        [
-         %% not necessary to run both tests here, but why not anyway?
-         ?_assert(eqc:quickcheck(prop_small_pool())),
-         ?_assert(eqc:quickcheck(prop_any_pool()))
-        ]
-    }.
+setup_and_teardown() ->
+    error_logger:tty(false),
+    pulse:start(),
+    fun() ->
+            pulse:stop(),
+            error_logger:tty(true)
+    end.
 
 -endif.

@@ -25,7 +25,7 @@
 -include_lib("eqc/include/eqc_statem.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--compile(export_all).
+-compile([export_all, nowarn_export_all]).
 
 -type type_name() :: binary().
 -type type_active_status() :: boolean().
@@ -39,21 +39,6 @@
           %% a list of properties we have created
           types :: [{type_name(), type_active_status(), [{type_prop_name(), type_prop_val()}]}]
          }).
-
-btypes_test_() -> {
-        timeout, 60,
-        ?_test(?assert(
-            eqc:quickcheck(?QC_OUT(eqc:numtests(100, prop_btype_invariant())))))
-    }.
-
-run_eqc() ->
-    run_eqc(100).
-
-run_eqc(N) ->
-    eqc:quickcheck(eqc:numtests(N, prop_btype_invariant())).
-
-run_check() ->
-    eqc:check(prop_btype_invariant()).
 
 %% @doc Returns the state in which each test case starts. (Unless a different
 %%      initial state is supplied explicitly to, e.g. commands/2.)
@@ -314,12 +299,12 @@ props() ->
     fault_rate(1, 10, ?LET(Props, list(prop()), fault([immutable_core_prop() | Props], Props))).
 
 prop() ->
-    {prop_name(), prop_value()}.
+    {gen_prop_name(), gen_prop_value()}.
 
-prop_name() ->
+gen_prop_name() ->
     binary(10).
 
-prop_value() ->
+gen_prop_value() ->
     bool().
 
 immutable_core_prop() ->

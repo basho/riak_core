@@ -565,7 +565,7 @@ data_root(Opts) ->
     case proplists:get_value(data_dir, Opts) of
         undefined ->
             Base = "/tmp/hashtree_tree",
-            <<P:128/integer>> = riak_core_util:md5(term_to_binary(erlang:now())),
+            <<P:128/integer>> = riak_core_util:md5(term_to_binary(os:timestamp())),
             filename:join(Base, riak_core_util:integer_to_list(P, 16));
         Root -> Root
     end.

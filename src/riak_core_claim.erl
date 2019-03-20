@@ -69,8 +69,9 @@
 -ifdef(TEST).
 -compile(export_all).
 -ifdef(EQC).
--export([prop_claim_ensures_unique_nodes/1, prop_wants/0, prop_wants_counts/0,
-        eqc_check/2]).
+-export([prop_claim_ensures_unique_nodes/1, prop_wants/0, prop_wants_counts/0,eqc_check/2,
+         prop_claim_ensures_unique_nodes_v2/0, prop_claim_ensures_unique_nodes_v3/0,
+         prop_take_idxs/0]).
 -include_lib("eqc/include/eqc.hrl").
 -endif.
 -include_lib("eunit/include/eunit.hrl").
@@ -503,13 +504,13 @@ choose_claim_v3(Ring, _ClaimNode, Params) ->
 
     %% Seed the random number generator for predictable results
     %% run the claim, then put it back if possible
-    OldSeed = random:seed(proplists:get_value(seed, Params, {1,2,3})),
+    OldSeed = rand:seed(proplists:get_value(seed, Params, {1,2,3})),
     {NewOwners, NewMetrics} = claim_v3(Wants, Owners, Params),
     case OldSeed of
         undefined ->
             ok;
         _ ->
-            {_,_,_} = random:seed(OldSeed),
+            {_,_,_} = rand:seed(OldSeed),
             ok
     end,
 
@@ -1239,7 +1240,7 @@ urand(High) ->
     urand(1, High).
 
 urand(Low, High) ->
-    Low + random:uniform(High - Low + 1) - 1.
+    Low + rand:uniform(High - Low + 1) - 1.
 
 %% @private
 %% return all the indices within TN of Indices
@@ -1365,6 +1366,12 @@ prop_claim_ensures_unique_nodes_adding_singly_v2_test_() ->
 prop_claim_ensures_unique_nodes_v3_test_() ->
     Prop = eqc:numtests(5, ?QC_OUT(prop_claim_ensures_unique_nodes_old(choose_claim_v3))),
     {timeout, 240, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
+
+prop_claim_ensures_unique_nodes_v2() ->
+    prop_claim_ensures_unique_nodes(choose_claim_v2).
+
+prop_claim_ensures_unique_nodes_v3() ->
+    prop_claim_ensures_unique_nodes(choose_claim_v3).
 
 %% NOTE: this is a less than adequate test that has been re-instated
 %% so that we don't leave the code worse than we found it. Work that
@@ -1615,9 +1622,6 @@ prop_wants_counts() ->
                              {sum, equals(Q, lists:sum(Wants))}])
             end).
 
-wants_test() ->
-    ?assert(eqc:quickcheck(?QC_OUT((prop_wants())))).
-
 prop_wants() ->
     ?FORALL({NodeStatus, Q},
             {?SUCHTHAT(L, non_empty(list(elements([leaving, joining]))),
@@ -1662,9 +1666,6 @@ prop_wants() ->
 %% Large positive integer between 1 and Max
 large_pos(Max) ->
     ?LET(X, largeint(), 1 + (abs(X) rem Max)).
-
-take_idxs_test() ->
-    ?assert(eqc:quickcheck(?QC_OUT((prop_take_idxs())))).
 
 prop_take_idxs() ->
     ?FORALL({OwnersSeed, CIdxsSeed, ExchangesSeed, TNSeed},

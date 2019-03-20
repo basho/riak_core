@@ -146,47 +146,6 @@ boundary_test() ->
 -define(RINGSIZE(X), (1 bsl X)). %% We'll generate powers of 2 with choose() and convert that to a ring size with this macro
 -define(PARTITIONSIZE(X), ((1 bsl 160) div (X))).
 
-ids_are_boundaries_test_() ->
-    {timeout, ?TEST_TIME_SECS+5, [?_assert(test_ids_are_boundaries() =:= true)]}.
-
-test_ids_are_boundaries() ->
-    test_ids_are_boundaries(?TEST_TIME_SECS).
-
-test_ids_are_boundaries(TestTimeSecs) ->
-        eqc:quickcheck(eqc:testing_time(TestTimeSecs, ?QC_OUT(prop_ids_are_boundaries()))).
-
-reverse_test_() ->
-    {timeout, ?TEST_TIME_SECS+5, [?_assert(test_reverse() =:= true)]}.
-
-test_reverse() ->
-    test_reverse(?TEST_TIME_SECS).
-
-test_reverse(TestTimeSecs) ->
-        eqc:quickcheck(eqc:testing_time(TestTimeSecs, ?QC_OUT(prop_reverse()))).
-
-
-monotonic_test_() ->
-    {timeout, ?TEST_TIME_SECS+5, [?_assert(test_monotonic() =:= true)]}.
-
-test_monotonic() ->
-    test_monotonic(?TEST_TIME_SECS).
-
-test_monotonic(TestTimeSecs) ->
-        eqc:quickcheck(eqc:testing_time(TestTimeSecs, ?QC_OUT(prop_monotonic()))).
-
-
-%% `prop_only_boundaries' should run a little longer: not quite as
-%% fast, need to scan a larger portion of hash space to establish
-%% correctness
-only_boundaries_test_() ->
-    {timeout, ?TEST_TIME_SECS+15, [?_assert(test_only_boundaries() =:= true)]}.
-
-test_only_boundaries() ->
-    test_only_boundaries(?TEST_TIME_SECS+10).
-
-test_only_boundaries(TestTimeSecs) ->
-        eqc:quickcheck(eqc:testing_time(TestTimeSecs, ?QC_OUT(prop_only_boundaries()))).
-
 %% Partition IDs should map to hash values which are partition boundaries
 prop_ids_are_boundaries() ->
     ?FORALL(RingPower, choose(2, ?RINGSIZEEXPMAX),
