@@ -180,7 +180,6 @@ init([Mod,
 init({test, Args, StateProps}) ->
     %% Call normal init
     {ok, initialize, StateData, 0} = init(Args),
-
     %% Then tweak the state record with entries provided by StateProps
     Fields = record_info(fields, state),
     FieldPos = lists:zip(Fields, lists:seq(2, length(Fields)+1)),

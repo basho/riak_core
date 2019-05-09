@@ -159,7 +159,13 @@ standard_join(Node, Ring, Rejoin, Auto) ->
                                                   node(),
                                                   gossip_vsn,
                                                   GossipVsn),
-            {_, Ring5} = riak_core_capability:update_ring(Ring4),
+            ParticipateInCoverage = app_helper:get_env(riak_core,participate_in_coverage),
+            Ring4a =
+                riak_core_ring:update_member_meta(node(),
+                                                  Ring4,
+                                                  node(),
+                                                  participate_in_coverage, ParticipateInCoverage),
+            {_, Ring5} = riak_core_capability:update_ring(Ring4a),
             Ring6 = maybe_auto_join(Auto, node(), Ring5),
             riak_core_ring_manager:set_my_ring(Ring6),
             riak_core_gossip:send_ring(Node, node())
@@ -373,6 +379,16 @@ register(App, [{permissions, Permissions}|T]) ->
     register(App, T);
 register(App, [{auth_mod, {AuthType, AuthMod}}|T]) ->
     register_proplist({AuthType, AuthMod}, auth_mods),
+    register(App, T);
+register(App,
+            [{node_worker_pool,
+                {WorkerMod, PoolSize, WArgs, WProps, node_worker_pool}}|T]) ->
+    register_pool(App, WorkerMod, PoolSize, WArgs, WProps, node_worker_pool),
+    register(App, T);
+register(App,
+            [{dscp_worker_pool,
+                {WorkerMod, PoolSize, WArgs, WProps, PoolType}}|T]) ->
+    register_pool(App, WorkerMod, PoolSize, WArgs, WProps, PoolType),
     register(App, T).
 
 register_mod(App, Module, Type) when is_atom(Type) ->
@@ -391,6 +407,13 @@ register_mod(App, Module, Type) when is_atom(Type) ->
             application:set_env(riak_core, Type,
                 lists:usort([{App,Module}|Mods]))
     end.
+
+register_pool(_App, WorkerMod, PoolSize, WorkerArgs, WorkerProps, PoolType) ->
+    ok = riak_core_node_worker_pool_sup:start_pool(WorkerMod,
+                                                   PoolSize,
+                                                   WorkerArgs,
+                                                   WorkerProps,
+                                                   PoolType).
 
 register_metadata(App, Value, Type) ->
     case application:get_env(riak_core, Type) of
