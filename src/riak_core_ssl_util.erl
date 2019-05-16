@@ -51,6 +51,7 @@ maybe_use_ssl(App) ->
                 {App, get_my_common_name(app_helper:get_env(App, certfile,
                                                        undefined))}}},
         {verify, verify_peer},
+        {server_name_indication, disable},
         {fail_if_no_peer_cert, true},
         {secure_renegotiate, true} %% both sides are erlang, so we can force this
     ],
