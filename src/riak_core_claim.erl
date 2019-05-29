@@ -504,13 +504,14 @@ choose_claim_v3(Ring, _ClaimNode, Params) ->
 
     %% Seed the random number generator for predictable results
     %% run the claim, then put it back if possible
-    OldSeed = rand:seed(proplists:get_value(seed, Params, {1,2,3})),
+    OldSeed = rand:export_seed(),
+    _ = rand:seed(proplists:get_value(seed, Params, {1,2,3})),
     {NewOwners, NewMetrics} = claim_v3(Wants, Owners, Params),
     case OldSeed of
         undefined ->
             ok;
         _ ->
-            {_,_,_} = rand:seed(OldSeed),
+            _ = rand:seed(OldSeed),
             ok
     end,
 
