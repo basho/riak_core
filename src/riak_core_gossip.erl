@@ -195,12 +195,7 @@ handle_cast({send_ring_to, _Node}, State=#state{gossip_tokens=0}) ->
 handle_cast({send_ring_to, Node}, State) ->
     {ok, MyRing0} = riak_core_ring_manager:get_raw_ring(),
     MyRing = update_gossip_version(MyRing0),
-    GossipVsn = case gossip_version() of
-                    ?LEGACY_RING_VSN ->
-                        ?LEGACY_RING_VSN;
-                    _ ->
-                        rpc_gossip_version(MyRing, Node)
-                end,
+    GossipVsn = rpc_gossip_version(MyRing, Node),
     RingOut = riak_core_ring:downgrade(GossipVsn, MyRing),
     riak_core_ring:check_tainted(RingOut,
                                  "Error: riak_core_gossip/send_ring_to :: "
