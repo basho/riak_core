@@ -237,39 +237,44 @@ new() ->
 
 -spec new({index(), tree_id_bin() | non_neg_integer()}) -> hashtree().
 new(TreeId) ->
-    State = new_segment_store([], #state{}),
-    new(TreeId, State, []).
+    {DB, Path} = new_segment_store([]),
+    new(TreeId, DB, Path, []).
 
 -spec new({index(), tree_id_bin() | non_neg_integer()}, proplist()) -> hashtree();
-         ({index(), tree_id_bin() | non_neg_integer()}, hashtree()) -> hashtree().
+            ({index(), tree_id_bin() | non_neg_integer()}, hashtree()) -> hashtree().
 new(TreeId, Options) when is_list(Options) ->
-    State = new_segment_store(Options, #state{}),
-    new(TreeId, State, Options);
+    {DB, Path} = new_segment_store(Options),
+    new(TreeId, DB, Path, Options);
 new(TreeId, LinkedStore = #state{}) ->
     new(TreeId, LinkedStore, []).
 
 -spec new({index(), tree_id_bin() | non_neg_integer()},
-          hashtree(),
+            hashtree(), proplist()) -> hashtree().
+new(TreeId, LinkedStore, Options) ->
+    new(TreeId, LinkedStore#state.ref, LinkedStore#state.path, Options).
+
+-spec new({index(), tree_id_bin() | non_neg_integer()},
+          term(), string(),
           proplist()) -> hashtree().
-new({Index,TreeId}, LinkedStore, Options) ->
+new({Index,TreeId}, DB, Path, Options) ->
     NumSegments = proplists:get_value(segments, Options, ?NUM_SEGMENTS),
     Width = proplists:get_value(width, Options, ?WIDTH),
     MemLevels = proplists:get_value(mem_levels, Options, ?MEM_LEVELS),
     NumLevels = erlang:trunc(math:log(NumSegments) / math:log(Width)) + 1,
-    State = #state{id=encode_id(TreeId),
-                   index=Index,
-                   levels=NumLevels,
-                   segments=NumSegments,
-                   width=Width,
-                   mem_levels=MemLevels,
-                   %% dirty_segments=gb_sets:new(),
-                   dirty_segments=bitarray_new(NumSegments),
-                   next_rebuild=full,
-                   write_buffer=[],
-                   write_buffer_count=0,
-                   tree=dict:new()},
-    State2 = share_segment_store(State, LinkedStore),
-    State2.
+    #state{id=encode_id(TreeId),
+            index=Index,
+            levels=NumLevels,
+            segments=NumSegments,
+            width=Width,
+            mem_levels=MemLevels,
+            %% dirty_segments=gb_sets:new(),
+            dirty_segments=bitarray_new(NumSegments),
+            next_rebuild=full,
+            write_buffer=[],
+            write_buffer_count=0,
+            tree=dict:new(),
+            ref = DB,
+            path = Path}.
 
 -spec close(hashtree()) -> hashtree().
 close(State) ->
@@ -419,14 +424,13 @@ clear_buckets(State=#state{id=Id, ref=Ref}) ->
                   end
           end,
     Opts = [{first_key, encode_bucket(Id, 0, 0)}],
-    Removed = try
-%hashtree.erl:415: The call eleveldb:fold(Ref::any(),Fun::fun((_,_) -> number()),0,Opts::[{'first_key',<<_:320>>},...]) breaks the contract (db_ref(),fold_fun(),any(),read_options()) -> any()
-
-                  eleveldb:fold(Ref, Fun, 0, Opts)
-              catch
-                  {break, AccFinal} ->
-                      AccFinal
-              end,
+    Removed = 
+        try
+            eleveldb:fold(Ref, Fun, 0, Opts)
+        catch
+            {break, AccFinal} ->
+                AccFinal
+        end,
     lager:debug("Tree ~p cleared ~p segments.\n", [Id, Removed]),
 
     %% Mark the tree as requiring a full rebuild (will be fixed
@@ -690,8 +694,8 @@ del_bucket(Level, Bucket, State) ->
             del_disk_bucket(Level, Bucket, State)
     end.
 
--spec new_segment_store(proplist(), hashtree()) -> hashtree().
-new_segment_store(Opts, State) ->
+-spec new_segment_store(proplist()) -> {term(), string()}.
+new_segment_store(Opts) ->
     DataDir = case proplists:get_value(segment_path, Opts) of
                   undefined ->
                       Root = "/tmp/anti/level",
@@ -723,11 +727,7 @@ new_segment_store(Opts, State) ->
 
     ok = filelib:ensure_dir(DataDir),
     {ok, Ref} = eleveldb:open(DataDir, Options),
-    State#state{ref=Ref, path=DataDir}.
-
--spec share_segment_store(hashtree(), hashtree()) -> hashtree().
-share_segment_store(State, #state{ref=Ref, path=Path}) ->
-    State#state{ref=Ref, path=Path}.
+    {Ref, DataDir}.
 
 -spec hash(term()) -> empty | binary().
 hash([]) ->

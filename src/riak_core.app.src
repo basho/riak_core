@@ -20,7 +20,8 @@
                   pbkdf2,
                   poolboy,
                   exometer_core,
-                  clique
+                  clique,
+                  gen_fsm_compat
                  ]},
   {mod, {riak_core_app, []}},
   {env, [
