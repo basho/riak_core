@@ -153,10 +153,10 @@
                                  % dict of cluster-wide other data (primarily
                                  % bucket N-value, etc)
 
-    clustername :: {term(), term()},
+    clustername :: {term(), term()}|undefined,
     next     :: [{integer(), term(), term(), [module()], awaiting | complete}],
     members  :: [{node(), {member_status(), vclock:vclock(), [{atom(), term()}]}}],
-    claimant :: term(),
+    claimant :: term()|undefined,
     seen     :: [{term(), vclock:vclock()}],
     rvsn     :: vclock:vclock()
 }).
@@ -1758,15 +1758,14 @@ equal_cstate(StateA, StateB, false) ->
 
     %% Clear fields checked manually and test remaining through equality.
     %% Note: We do not consider cluster name in equality.
-    StateA2=StateA?CHSTATE{nodename=undefined, members=undefined, vclock=undefined,
-                           rvsn=undefined, seen=undefined, chring=undefined,
-                           meta=undefined, clustername=undefined},
-    StateB2=StateB?CHSTATE{nodename=undefined, members=undefined, vclock=undefined,
-                           rvsn=undefined, seen=undefined, chring=undefined,
-                           meta=undefined, clustername=undefined},
-    T5 = (StateA2 =:= StateB2),
+    T5 = (remaining_fields(StateA) =:= remaining_fields(StateB)),
 
     T1 andalso T2 andalso T3 andalso T4 andalso T5.
+
+remaining_fields(#chstate_v2{next = Next, claimant = Claimant}) ->
+    {Next, Claimant};
+remaining_fields(_) ->
+    {undefined, undefined}.
 
 %% @private
 equal_members(M1, M2) ->
