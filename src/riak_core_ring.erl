@@ -1763,9 +1763,7 @@ equal_cstate(StateA, StateB, false) ->
     T1 andalso T2 andalso T3 andalso T4 andalso T5.
 
 remaining_fields(#chstate_v2{next = Next, claimant = Claimant}) ->
-    {Next, Claimant};
-remaining_fields(_) ->
-    {undefined, undefined}.
+    {Next, Claimant}.
 
 %% @private
 equal_members(M1, M2) ->
