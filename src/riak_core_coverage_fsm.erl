@@ -92,7 +92,7 @@
                     PrimaryVNodeCoverage :: all | pos_integer(),
                     NodeCheckService :: module(),
                     VNodeMaster :: atom(),
-                    Timeout :: pos_integer(),
+                    Timeout :: pos_integer()|infinity,
                     ModState :: tuple()}.
 
 -callback process_results(Results :: any(), ModState :: tuple()) ->
