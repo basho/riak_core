@@ -106,7 +106,8 @@
                                 {done, UpModState :: tuple()} |
                                 {error, Error :: any()}.
 
--callback finish(clean | {error, Reason :: any()}, ModState :: tuple()) -> ok.
+-callback finish(clean | {error, Reason :: any()}, ModState :: tuple()) -> 
+                    {stop, normal, any()}.
 
 -optional_callbacks([process_results/2, process_results/3]).
     % must have one or the other
