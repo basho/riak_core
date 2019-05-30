@@ -86,14 +86,7 @@
 
 
 -callback init(From :: from(), RequestArgs :: list(any())) ->
-                {Request :: tuple(),
-                    VNodeSelector :: all | allup,
-                    NVal :: pos_integer(),
-                    PrimaryVNodeCoverage :: all | pos_integer(),
-                    NodeCheckService :: module(),
-                    VNodeMaster :: atom(),
-                    Timeout :: pos_integer(),
-                    ModState :: tuple()}.
+                cover_init_response().
 
 -callback process_results(Results :: any(), ModState :: tuple()) ->
                             {ok, UpdModState :: tuple()} |
@@ -116,6 +109,17 @@
 
 -type req_id() :: non_neg_integer().
 -type from() :: {atom(), req_id(), pid()}.
+-type cover_init_response() ::
+    {Request :: tuple(),
+        VNodeSelector :: all | allup,
+        NVal :: pos_integer(),
+        PrimaryVNodeCoverage :: all | pos_integer(),
+        NodeCheckService :: module(),
+        VNodeMaster :: atom(),
+        Timeout :: pos_integer(),
+        ModState :: tuple()}.
+
+-export_type([cover_init_response/0]).
 
 -record(state, {coverage_vnodes :: [{non_neg_integer(), node()}]|undefined,
                 mod :: atom(),
