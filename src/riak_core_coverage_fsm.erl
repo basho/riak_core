@@ -100,7 +100,16 @@
                             {done, UpModState :: tuple()} |
                             {error, Error :: any()}.
 
+-callback process_results(Vnode :: from(),
+                            Results :: any(), ModState :: tuple()) ->
+                                {ok, UpdModState :: tuple()} |
+                                {done, UpModState :: tuple()} |
+                                {error, Error :: any()}.
+
 -callback finish(clean | {error, Reason :: any()}, ModState :: tuple()) -> ok.
+
+-optional_callbacks([process_results/2, process_results/3]).
+    % must have one or the other
 
 -define(DEFAULT_TIMEOUT, 60000*8).
 
