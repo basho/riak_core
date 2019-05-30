@@ -335,6 +335,7 @@ maybe_flush_buffer(State=#state{write_buffer_count=WCount}) ->
             State
     end.
 
+-spec flush_buffer(hashtree()) -> hashtree().
 flush_buffer(State=#state{write_buffer=[], write_buffer_count=0}) ->
     State;
 flush_buffer(State=#state{write_buffer=WBuffer}) ->
