@@ -12,8 +12,8 @@
 %%
 %% @end
 -module(riak_core_exo_monitor).
--behaviour(exometer_folsom_monitor).
--behaviour(exometer_entry).
+-behaviour(exometer_folsom_monitor). %% TODO 15: remove this behaviour?
+-behaviour(exometer_entry).          %% TODO 16: look into how this would work with and without
 
 -export([copy_folsom/3]).
 -export([behaviour/0,
@@ -30,7 +30,7 @@ behaviour() ->
     entry.
 
 copy_folsom(Name, Type, Opts) when is_tuple(Name) ->
-    Prefix = riak_core_stat:prefix(),
+    Prefix = riak_stat:prefix(),
     {[Prefix|tuple_to_list(Name)], ad_hoc, [{folsom_name, Name},
 					    {module, ?MODULE},
 					    {type, Type}
@@ -43,15 +43,15 @@ new(N, _, Opts) ->
 	  proplists:get_value(folsom_name, Opts, N)}}.
 
 update(_, Value, counter, {_, Name}) ->
-    folsom_metrics:notify_existing_metric(Name, {inc,Value}, counter);
+  riak_stat:update(Name, Value, counter);
 update(_, Value, Type, {_, Name}) ->
-    folsom_metrics:notify_existing_metric(Name, Value, Type).
+  riak_stat:update(Name, Value, Type).
 
 reset(_, _, _) ->
     {error, unsupported}.
 
-get_value(_, Type, {_, Name}, DPs) ->
-    exometer_folsom:get_value(Name, Type, [], DPs).
+get_value(_, _Type, {_, Name}, DPs) ->
+  riak_stat_coordinator:get_datapoint(Name, DPs).
 
 sample(_, _, _) ->
     {error, unsupported}.
@@ -63,7 +63,7 @@ delete(_, _, _) ->
     {error, unsupported}.
 
 get_datapoints(Name, Type, _) ->
-    exometer_folsom:get_datapoints(Name, Type, []).
+  riak_stat_coordinator:get_datapoint(Name, Type).
 
 options(history, [Size]) ->
     [{size, Size}];

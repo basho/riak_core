@@ -23,12 +23,14 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, get_stats/0, get_stats/1, update/1,
-         register_stats/0, vnodeq_stats/0,
-	 register_stats/2,
-	 register_vnode_stats/3, unregister_vnode_stats/2,
-	 vnodeq_stats/1,
-	 prefix/0]).
+-export([
+    start_link/0, get_stats/0, get_stats/1, get_value/1,
+    get_stats_info/0, get_stats_status/0, get_stat/1, update/1,
+    register_stats/0, vnodeq_stats/0,
+	  register_stats/2,
+	  register_vnode_stats/3, unregister_vnode_stats/2,
+	  vnodeq_stats/1
+]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -43,6 +45,8 @@
 -define(SERVER, ?MODULE).
 
 -define(APP, riak_core).
+-define(PFX, riak_stat:prefix()).
+
 
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
@@ -54,56 +58,35 @@ register_stats() ->
 %% @spec register_stats(App, Stats) -> ok
 %% @doc (Re-)Register a list of metrics for App.
 register_stats(App, Stats) ->
-    P = prefix(),
-    lists:foreach(fun(Stat) ->
-			  register_stat(P, App, Stat)
-		  end, Stats).
-
-register_stat(P, App, Stat) ->
-    {Name, Type, Opts, Aliases} =
-        case Stat of
-            {N, T}         -> {N, T, [], []};
-            {N, T, Os}     -> {N, T, Os, []};
-            {N, T, Os, As} -> {N, T, Os, As}
-        end,
-    StatName = stat_name(P, App, Name),
-    exometer:re_register(StatName, Type, Opts),
-    lists:foreach(
-      fun({DP, Alias}) ->
-              exometer_alias:new(Alias, StatName, DP)
-      end, Aliases).
+  riak_stat:register(App, Stats).
 
 register_vnode_stats(Module, Index, Pid) ->
-    P = prefix(),
-    exometer:ensure([P, ?APP, vnodes_running, Module],
-		    { function, exometer, select_count,
-		      [[{ {[P, ?APP, vnodeq, Module, '_'], '_', '_'},
-			  [], [true] }]], match, value },
-                    [{aliases, [{value, vnodeq_atom(Module, <<"s_running">>)}]}]),
-    exometer:ensure([P, ?APP, vnodeq, Module],
-		    {function, riak_core_stat, vnodeq_stats, [Module],
-		     histogram, [mean,median,min,max,total]},
-                    [{aliases, [{mean  , vnodeq_atom(Module, <<"q_mean">>)},
-				{median, vnodeq_atom(Module, <<"q_median">>)},
-				{min   , vnodeq_atom(Module, <<"q_min">>)},
-				{max   , vnodeq_atom(Module, <<"q_max">>)},
-				{total , vnodeq_atom(Module, <<"q_total">>)}]}
-		    ]),
-    exometer:re_register(
-      [P, ?APP, vnodeq, Module, Index],
-      function, [{ arg, {erlang, process_info, [Pid, message_queue_len],
-                                match, {'_', value} }}]).
+  F = fun vnodeq_atom/2,
+  Stat1 =  {[vnodes_running, Module],
+    { function, exometer, select_count,
+      [[{ {[vnodeq, Module, '_'], '_', '_'},
+        [], [true] }]], match, value }, [],
+    [{aliases, [{value, F(Module, <<"s_running">>)}]}]},
+
+  Stat2 = {[vnodeq, Module],
+    {function, riak_core_stat, vnodeq_stats, [Module],
+      histogram, [mean,median,min,max,total]},[],
+    [{aliases, [{mean  , F(Module, <<"q_mean">>)},
+      {median, F(Module, <<"q_median">>)},
+      {min   , F(Module, <<"q_min">>)},
+      {max   , F(Module, <<"q_max">>)},
+      {total , F(Module, <<"q_total">>)}]}]},
+
+  Stat3 = {[vnodeq, Module, Index],
+    function, [{ arg, {erlang, process_info, [Pid, message_queue_len],
+      match, {'_', value} }}]},
+
+  RegisterStats = [Stat1, Stat2, Stat3],
+  riak_stat:register(?APP, RegisterStats).
 
 unregister_vnode_stats(Module, Index) ->
-    exometer:delete([riak_core_stat:prefix(), ?APP, vnodeq, Module, Index]).
+  riak_stat:unregister(Module, Index, vnodeq, ?APP).
 
-stat_name(P, App, N) when is_atom(N) ->
-    stat_name_([P, App, N]);
-stat_name(P, App, N) when is_list(N) ->
-    stat_name_([P, App | N]).
-
-stat_name_([P, [] | Rest]) -> [P | Rest];
-stat_name_(N) -> N.
 
 
 %% @spec get_stats() -> proplist()
@@ -112,14 +95,22 @@ get_stats() ->
     get_stats(?APP).
 
 get_stats(App) ->
-    P = prefix(),
-    exometer:get_values([P, App]).
+  riak_stat:get_app_stats(App).
+
+get_stats_status() ->
+  riak_stat:get_stats_status(?APP).
+
+get_stats_info() ->
+  riak_stat:get_stats_info(?APP).
+
+get_stat(Arg) ->
+  get_value([?PFX, ?APP | Arg]).
+
+get_value(Arg) ->
+  riak_stat:get_value(Arg).
 
 update(Arg) ->
     gen_server:cast(?SERVER, {update, Arg}).
-
-prefix() ->
-    app_helper:get_env(riak_core, stat_prefix, riak).
 
 %% gen_server
 
@@ -131,13 +122,13 @@ handle_call(_Req, _From, State) ->
     {reply, ok, State}.
 
 handle_cast({update, {worker_pool, vnode_pool}}, State) ->
-    exometer_update([prefix(), ?APP, vnode, worker_pool], 1),
+    exometer_update([?PFX, ?APP, vnode, worker_pool], 1, counter),
     {noreply, State};
 handle_cast({update, {worker_pool, Pool}}, State) ->
-    exometer_update([prefix(), ?APP, node, worker_pool, Pool], 1),
+    exometer_update([?PFX, ?APP, node, worker_pool, Pool], 1, counter),
     {noreply, State};
 handle_cast({update, Arg}, State) ->
-    exometer_update([prefix(), ?APP, update_metric(Arg)], update_value(Arg)),
+    exometer_update([?PFX, ?APP, update_metric(Arg)], update_value(Arg), update_type(Arg)),
     {noreply, State};
 handle_cast(_Req, State) ->
     {noreply, State}.
@@ -152,8 +143,8 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 
-exometer_update(Name, Value) ->
-    case exometer:update(Name, Value) of
+exometer_update(Name, Value, Type) ->
+    case riak_stat:update(Name, Value, Type) of
         {error, not_found} ->
             lager:debug("~p not found on update.", [Name]);
         ok ->
@@ -172,6 +163,12 @@ update_value(rebalance_timer_begin) -> timer_start;
 update_value(converge_timer_end   ) -> timer_end;
 update_value(rebalance_timer_end  ) -> timer_end;
 update_value(_) -> 1.
+
+update_type(converge_timer_begin ) -> duration;
+update_type(converge_timer_end   ) -> duration;
+update_type(rebalance_timer_begin) -> duration;
+update_type(rebalance_timer_end  ) -> duration;
+update_type(_) -> '_'.
 
 %% private
 stats() ->
@@ -259,9 +256,8 @@ vnodeq_aggregate(Service, MQLs0) ->
                  1 ->
                      lists:nth(Len div 2 + 1, MQLs)
              end,
-    P = prefix(),
-    [{[P, riak_core, vnodeq_atom(Service,<<"s_running">>)], [{value, Len}]},
-     {[P, riak_core, vnodeq_atom(Service,<<"q">>)],
+    [{[?PFX, riak_core, vnodeq_atom(Service,<<"s_running">>)], [{value, Len}]},
+     {[?PFX, riak_core, vnodeq_atom(Service,<<"q">>)],
       [{min, lists:nth(1, MQLs)}, {median, Median}, {mean, Mean},
        {max, lists:nth(Len, MQLs)}, {total, Total}]}].
 
@@ -284,37 +280,32 @@ vnodeq_aggregate_empty_test() ->
     ?assertEqual([], vnodeq_aggregate(service_vnode, [])).
 
 vnodeq_aggregate_odd1_test() ->
-    P = prefix(),
-    ?assertEqual([{[P, riak_core, service_vnodes_running], [{value, 1}]},
-                  {[P, riak_core, service_vnodeq],
+    ?assertEqual([{[?PFX, riak_core, service_vnodes_running], [{value, 1}]},
+                  {[?PFX, riak_core, service_vnodeq],
 		   [{min, 10}, {median, 10}, {mean, 10}, {max, 10}, {total, 10}]}],
                  vnodeq_aggregate(service_vnode, [10])).
 
 vnodeq_aggregate_odd3_test() ->
-    P = prefix(),
-    ?assertEqual([{[P, riak_core, service_vnodes_running], [{value, 3}]},
-                  {[P, riak_core, service_vnodeq],
+    ?assertEqual([{[?PFX, riak_core, service_vnodes_running], [{value, 3}]},
+                  {[?PFX, riak_core, service_vnodeq],
 		   [{min, 1}, {median, 2}, {mean, 2}, {max, 3}, {total, 6}]}],
                  vnodeq_aggregate(service_vnode, [1, 2, 3])).
 
 vnodeq_aggregate_odd5_test() ->
-    P = prefix(),
-    ?assertEqual([{[P, riak_core, service_vnodes_running], [{value, 5}]},
-                  {[P, riak_core, service_vnodeq],
+    ?assertEqual([{[?PFX, riak_core, service_vnodes_running], [{value, 5}]},
+                  {[?PFX, riak_core, service_vnodeq],
 		   [{min, 0}, {median, 1}, {mean, 2}, {max, 5}, {total, 10}]}],
                  vnodeq_aggregate(service_vnode, [1, 0, 5, 0, 4])).
 
 vnodeq_aggregate_even2_test() ->
-    P = prefix(),
-    ?assertEqual([{[P, riak_core, service_vnodes_running], [{value, 2}]},
-                  {[P, riak_core, service_vnodeq],
+    ?assertEqual([{[?PFX, riak_core, service_vnodes_running], [{value, 2}]},
+                  {[?PFX, riak_core, service_vnodeq],
 		   [{min, 10}, {median, 15}, {mean, 15}, {max, 20}, {total, 30}]}],
                  vnodeq_aggregate(service_vnode, [10, 20])).
 
 vnodeq_aggregate_even4_test() ->
-    P = prefix(),
-    ?assertEqual([{[P, riak_core, service_vnodes_running], [{value, 4}]},
-                  {[P, riak_core, service_vnodeq],
+    ?assertEqual([{[?PFX, riak_core, service_vnodes_running], [{value, 4}]},
+                  {[?PFX, riak_core, service_vnodeq],
 		   [{min, 0}, {median, 5}, {mean, 7}, {max, 20}, {total, 30}]}],
                  vnodeq_aggregate(service_vnode, [0, 10, 0, 20])).
 

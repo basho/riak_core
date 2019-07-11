@@ -68,7 +68,7 @@ setup_simple() ->
         ok = application:set_env(riak_core, AppKey, Val),
         {AppKey, Old}
      end || {AppKey, Val} <- Vars],
-    exometer:start(),
+    riak_stat_exometer:start(), %% TODO 17: change to riak_stat
     riak_core_ring_events:start_link(),
     riak_core_ring_manager:start_link(test),
     riak_core_vnode_proxy_sup:start_link(),
@@ -94,7 +94,7 @@ stop_servers(_Pid) ->
     stop_pid(whereis(riak_core_vnode_manager)),
     stop_pid(whereis(riak_core_vnode_events)),
     stop_pid(whereis(riak_core_vnode_sup)),
-    application:stop(exometer),
+    application:stop(exometer), %% TODO 18: change to riak_stat
     application:stop(lager),
     application:stop(goldrush).
 
