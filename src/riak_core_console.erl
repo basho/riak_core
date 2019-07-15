@@ -31,9 +31,10 @@
          print_users/1, print_user/1, print_sources/1,
          print_groups/1, print_group/1, print_grants/1,
          security_enable/1, security_disable/1, security_status/1, ciphers/1,
-	 stat_show/2, stat_info/1, stat_enable/1, stat_disable/1, stat_reset/1,
-    stat_disable_0/1, stat_0/1, stat_enabled/1, stat_disabled/1,
-    load_profile/1, add_profile/1, remove_profile/1, reset_profile/0, reset_profile/1]).
+	       stat_show/2, stat_info/1, stat_enable/1, stat_disable/1, stat_reset/1,
+         stat_disable_0/1, stat_0/1, stat_enabled/1, stat_disabled/1,
+         load_profile/1, add_profile/1, remove_profile/1, reset_profile/0, reset_profile/1,
+         enable_udp/1, enable_http/1, disable_udp/1, disable_http/1, change_port/1, restart_port/1]).
 
 %% New CLI API
 -export([command/1]).
@@ -1264,3 +1265,53 @@ reset_profile(_Arg) ->
 %% @end
 reset_profile() ->
     riak_stat:reset_stats_and_profile().
+
+%% STAT COLLECTION FUNCTIONS %%
+
+-spec(enable_udp(term()) -> ok).
+%% @doc
+%% enable the udp with port given, stats will be pulled from exometer and sent to that
+%% endpoint asynchronously
+%% @end
+enable_udp(Port) ->
+    exoskeleskin:enable(udp, Port).
+
+-spec(enable_http(term()) -> ok).
+%% @doc
+%% enable the http handler, starts up a listener and pulls out data to send to the http
+%% client, uses webmachine
+%% @end
+enable_http(Port) ->
+    exoskeleskin:enable(http, Port).
+
+-spec(disable_udp(term()) -> ok).
+%% @doc
+%% disable the udp connection, Port given doesn't always matter
+%% @end
+disable_udp(Port) ->
+    exoskeleskin:disable(udp, Port).
+
+-spec(disable_http(term()) -> ok).
+%% @doc
+%% disable the http connection, terminate it
+%% @end
+disable_http(Port) ->
+    exoskeleskin:disable(http, Port).
+
+-spec(change_port(Type :: term()) -> ok).
+%% @doc
+%% Change the endpoint for either http or udp, if they are disabled then it will
+%% enable the type and deliver the endpoint
+%% if they are already enabled it will change the endpoint for the stats
+%% if going from http -> udp or vice versa the former type will be disabled
+%% @end
+change_port(Arg) ->
+    exoskeleskin:change_port(Arg).
+
+
+-spec(restart_port(Arg :: term()) -> ok).
+%% @doc
+%% restarts the port and type wanted
+%% @end
+restart_port(Arg) ->
+    exoskeleskin:restart(Arg).
