@@ -38,7 +38,9 @@
          iterator_done/1,
          iterator_close/1,
          put/3,
-         merge/3]).
+         merge/3,
+         select/2,
+         replace/2]).
 
 %% riak_core_broadcast_handler callbacks
 -export([broadcast_data/1,
@@ -245,6 +247,24 @@ put({{Prefix, SubPrefix}, _Key}=PKey, Context, ValueOrFun)
 -spec merge(node(), {metadata_pkey(), undefined | metadata_context()}, metadata_object()) -> boolean().
 merge(Node, {PKey, _Context}, Obj) ->
     gen_server:call({?SERVER, Node}, {merge, PKey, Obj}, infinity).
+
+%% @doc Similar to iterator except a matchspec is passed in @end
+-spec select(metadata_prefix(), ets:match_spec()) -> metadata_value().
+select(Prefix, MS) ->
+  case ets_tab(Prefix) of
+    undefined -> io_lib:format("Prefix not in Metadata : ~p~n", [Prefix]);
+    Tab -> ets:select(Tab, MS)
+  end.
+
+%% @doc Similar to select except the values given in the match spec
+%% replace ones chosen in the metadata @end
+-spec replace(metadata_prefix(), ets:match_spec()) -> metadata_value().
+replace(Prefix, MS) ->
+  case ets_tab(Prefix) of
+    undefined -> io_lib:format("Prefix not in Metadata : ~p~n", [Prefix]);
+    Tab -> ets:select_replace(Tab, MS)
+  end.
+  end.
 
 %%%===================================================================
 %%% riak_core_broadcast_handler callbacks

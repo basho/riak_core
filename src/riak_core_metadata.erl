@@ -35,6 +35,8 @@
          itr_values/1,
          itr_value/1,
          itr_default/1,
+         select/2,
+         replace/2,
          prefix_hash/1,
          put/3,
          put/4,
@@ -284,6 +286,20 @@ itr_default({_, Opts}=It) ->
             Fun(itr_key(It));
         Val -> Val
     end.
+
+
+-spec select(metadata_prefix(), ets:match_spec()) -> metadata_value().
+select({Prefix, SubPrefix}=FullPrefix, MatchSpec)
+  when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
+       (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
+  riak_core_metadata_manager:select(FullPrefix, MatchSpec).
+
+-spec replace(metadata_prefix(), ets:match_spec()) -> metadata_value().
+replace({Prefix, SubPrefix}=FullPrefix, MatchSpec)
+  when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
+       (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
+  riak_core_metadata_manager:replace(FullPrefix, MatchSpec).
+
 
 %% @doc Return the local hash associated with a full-prefix or prefix. The hash value is
 %% updated periodically and does not always reflect the most recent value. This function

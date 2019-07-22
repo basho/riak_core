@@ -34,7 +34,8 @@
 	       stat_show/2, stat_info/1, stat_enable/1, stat_disable/1, stat_reset/1,
          stat_disable_0/1, stat_0/1, stat_enabled/1, stat_disabled/1,
          load_profile/1, add_profile/1, remove_profile/1, reset_profile/0, reset_profile/1,
-         enable_udp/1, enable_http/1, disable_udp/1, disable_http/1, change_port/1, restart_port/1]).
+         enable_metadata/1,  disable_port/1, setup_port/1, yes_data_persist/1, no_data_persist/1,
+         pro_data_persist/1]).
 
 %% New CLI API
 -export([command/1]).
@@ -1198,6 +1199,13 @@ stat_0(Arg) ->
 stat_disable_0(Arg) ->
     riak_stat:disable_stat_0(Arg).
 
+-spec(stat_info(Arg :: term()) -> ok | term()).
+%% @doc
+%% information on the stat
+%% @end
+stat_info(Arg) ->
+    riak_stat:show_stat_info(Arg).
+
 -spec(stat_enable(Arg :: term()) -> ok | term()).
 %% @doc
 %% enable the stats
@@ -1219,12 +1227,6 @@ stat_disable(Arg) ->
 stat_reset(Arg) ->
     riak_stat:reset_stat(Arg).
 
--spec(stat_info(Arg :: term()) -> ok | term()).
-%% @doc
-%% information on the stat
-%% @end
-stat_info(Arg) ->
-    riak_stat:show_stat_info(Arg).
 
 %%%% PROFILES %%%%
 
@@ -1266,52 +1268,61 @@ reset_profile(_Arg) ->
 reset_profile() ->
     riak_stat:reset_stats_and_profile().
 
+
+
+-spec(enable_metadata(term()) -> ok).
+%% @doc
+%% enable the metadata, arg should be true or false, if false then the communication to the metadata ends
+%% @end
+enable_metadata(Arg) ->
+    riak_stat:enable_metadata(Arg).
+
 %% STAT COLLECTION FUNCTIONS %%
 
--spec(enable_udp(term()) -> ok).
-%% @doc
-%% enable the udp with port given, stats will be pulled from exometer and sent to that
-%% endpoint asynchronously
-%% @end
-enable_udp(Port) ->
-    exoskeleskin:enable(udp, Port).
 
--spec(enable_http(term()) -> ok).
+-spec(disable_port(term()) -> ok).
 %% @doc
-%% enable the http handler, starts up a listener and pulls out data to send to the http
-%% client, uses webmachine
+%% disable the connection, Port given doesn't always matter
 %% @end
-enable_http(Port) ->
-    exoskeleskin:enable(http, Port).
+disable_port(Port) ->
+    exoskeleskin:disable_port(Port).
 
--spec(disable_udp(term()) -> ok).
+-spec(setup_port(term()) -> ok).
 %% @doc
-%% disable the udp connection, Port given doesn't always matter
+%% Setup the port, similar to how riak-admin stat takes in riak.riak_kv.**
+%% setup_port takes the argument [<<"udp.8089">>] and sets up the socket from the
+%% argument given.
 %% @end
-disable_udp(Port) ->
-    exoskeleskin:disable(udp, Port).
-
--spec(disable_http(term()) -> ok).
-%% @doc
-%% disable the http connection, terminate it
-%% @end
-disable_http(Port) ->
-    exoskeleskin:disable(http, Port).
-
--spec(change_port(Type :: term()) -> ok).
-%% @doc
-%% Change the endpoint for either http or udp, if they are disabled then it will
-%% enable the type and deliver the endpoint
-%% if they are already enabled it will change the endpoint for the stats
-%% if going from http -> udp or vice versa the former type will be disabled
-%% @end
-change_port(Arg) ->
-    exoskeleskin:change_port(Arg).
+setup_port(Port) ->
+    exoskeleskin:setup(Port).
 
 
--spec(restart_port(Arg :: term()) -> ok).
-%% @doc
-%% restarts the port and type wanted
-%% @end
-restart_port(Arg) ->
-    exoskeleskin:restart(Arg).
+%% DATA PERSISTENCE %%
+
+yes_data_persist(Arg) ->
+    riak_stat:data_persist(enabled, Arg).
+
+no_data_persist(Arg) ->
+    riak_stat:data_persist(disabled, Arg).
+
+pro_data_persist(Arg) ->
+    riak_stat:data_persist(profile, Arg).
+
+
+%%-spec(yes(Type :: term()) -> ok).
+%%%% @doc
+%%%% Change the endpoint for either http or udp, if they are disabled then it will
+%%%% enable the type and deliver the endpoint
+%%%% if they are already enabled it will change the endpoint for the stats
+%%%% if going from http -> udp or vice versa the former type will be disabled
+%%%% @end
+%%change_port(Arg) ->
+%%    exoskeleskin:change_port(Arg).
+%%
+%%
+%%-spec(restart_port(Arg :: term()) -> ok).
+%%%% @doc
+%%%% restarts the port and type wanted
+%%%% @end
+%%restart_port(Arg) ->
+%%    exoskeleskin:restart(Arg).
