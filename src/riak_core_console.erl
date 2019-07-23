@@ -35,7 +35,7 @@
          stat_disable_0/1, stat_0/1, stat_enabled/1, stat_disabled/1,
          load_profile/1, add_profile/1, remove_profile/1, reset_profile/0, reset_profile/1,
          enable_metadata/1,  disable_port/1, setup_port/1, yes_data_persist/1, no_data_persist/1,
-         pro_data_persist/1]).
+         pro_data_persist/1, stop_persisting/1]).
 
 %% New CLI API
 -export([command/1]).
@@ -1157,8 +1157,11 @@ parse_cidr(CIDR) ->
     {Addr, list_to_integer(Mask)}.
 
 %%%-------------------------------------------------------------------
-%%% Stats
+%%% riak_stat functions
 %%%-------------------------------------------------------------------
+%%%%%%%%%%%%%%%
+%%% console %%%
+%%%%%%%%%%%%%%%
 
 -spec(stat_show(Arg :: term(), Status :: atom()) -> ok | term()).
 %% @doc
@@ -1227,8 +1230,9 @@ stat_disable(Arg) ->
 stat_reset(Arg) ->
     riak_stat:reset_stat(Arg).
 
-
-%%%% PROFILES %%%%
+%%%%%%%%%%%%%%%
+%%% profile %%%
+%%%%%%%%%%%%%%%
 
 -spec(load_profile(FileName :: term()) -> term()).
 %% @doc
@@ -1268,7 +1272,9 @@ reset_profile(_Arg) ->
 reset_profile() ->
     riak_stat:reset_stats_and_profile().
 
-
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% data persistence %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
 
 -spec(enable_metadata(term()) -> ok).
 %% @doc
@@ -1277,52 +1283,62 @@ reset_profile() ->
 enable_metadata(Arg) ->
     riak_stat:enable_metadata(Arg).
 
-%% STAT COLLECTION FUNCTIONS %%
-
-
--spec(disable_port(term()) -> ok).
+-spec(yes_data_persist(term()) -> ok).
 %% @doc
-%% disable the connection, Port given doesn't always matter
+%% Enable stats data to be persisted into the metadata, the data going in will be
+%% of the same format as the other console commands such as "riak.riak_kv.**" will
+%% persist all the riak_kv data
 %% @end
-disable_port(Port) ->
-    exoskeleskin:disable_port(Port).
+yes_data_persist(Arg) ->
+    riak_stat:data_persist(enabled, Arg).
+
+-spec(no_data_persist(term()) -> ok).
+%% @doc
+%% Same Arg format as @see riak_core_console:yes_data_persist/1, but disables the
+%% persistence of that data, if it is persisted, resetting all the data to be
+%% persisted just requires riak.** as the Arg
+%% @end
+no_data_persist(Arg) ->
+    riak_stat:data_persist(disabled, Arg).
+
+-spec(pro_data_persist(term()) -> ok).
+%% @doc
+%% Persist data based on what stats are enabled in the profile given in Arg.
+%% Note it does not load the profile given, allowing profiles for persisted data
+%% to be created separately, to be used over multiple profiles.
+%%
+%% i.e. create a profile with only stats that you want persisted enabled, save
+%% the profile and then pro_data_persist that profile to persist the data continuously
+%% no matter the current "loaded" profile.
+%% @end
+pro_data_persist(Arg) ->
+    riak_stat:data_persist(profile, Arg).
+
+-spec(stop_persisting(term()) -> ok).
+%% @doc
+%% stop all data persistence for profiles and for other stats.
+%% @end
+stop_persisting(_Arg) ->
+    riak_stat:stop_persist().
+
+%%%%%%%%%%%%%%%%%%%%
+%%% exoskeleskin %%%
+%%%%%%%%%%%%%%%%%%%%
 
 -spec(setup_port(term()) -> ok).
 %% @doc
 %% Setup the port, similar to how riak-admin stat takes in riak.riak_kv.**
 %% setup_port takes the argument [<<"udp.8089">>] and sets up the socket from the
 %% argument given.
+%%
+%% Can be used to restart the port as well as change the port
 %% @end
 setup_port(Port) ->
     exoskeleskin:setup(Port).
 
-
-%% DATA PERSISTENCE %%
-
-yes_data_persist(Arg) ->
-    riak_stat:data_persist(enabled, Arg).
-
-no_data_persist(Arg) ->
-    riak_stat:data_persist(disabled, Arg).
-
-pro_data_persist(Arg) ->
-    riak_stat:data_persist(profile, Arg).
-
-
-%%-spec(yes(Type :: term()) -> ok).
-%%%% @doc
-%%%% Change the endpoint for either http or udp, if they are disabled then it will
-%%%% enable the type and deliver the endpoint
-%%%% if they are already enabled it will change the endpoint for the stats
-%%%% if going from http -> udp or vice versa the former type will be disabled
-%%%% @end
-%%change_port(Arg) ->
-%%    exoskeleskin:change_port(Arg).
-%%
-%%
-%%-spec(restart_port(Arg :: term()) -> ok).
-%%%% @doc
-%%%% restarts the port and type wanted
-%%%% @end
-%%restart_port(Arg) ->
-%%    exoskeleskin:restart(Arg).
+-spec(disable_port(term()) -> ok).
+%% @doc
+%% disable the connection, Port given doesn't always matter - unless multiple ports are open
+%% @end
+disable_port(Port) ->
+    exoskeleskin:disable_port(Port).
