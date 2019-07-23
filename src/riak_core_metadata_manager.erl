@@ -231,7 +231,7 @@ iterator_close(#metadata_iterator{prefix=undefined,match=undefined,tab=Tab}) ->
 iterator_close(It) -> finish_iterator(It).
 
 %% @doc Sets the value of a prefixed key. The most recently read context (see get/1)
-%% should be passed as the second argument to prevent unneccessary siblings.
+%% should be passed as the second argument to prevent unnecessary siblings.
 -spec put(metadata_pkey(),
           metadata_context() | undefined,
           metadata_value() | metadata_modifier()) -> metadata_object().
@@ -248,23 +248,23 @@ put({{Prefix, SubPrefix}, _Key}=PKey, Context, ValueOrFun)
 merge(Node, {PKey, _Context}, Obj) ->
     gen_server:call({?SERVER, Node}, {merge, PKey, Obj}, infinity).
 
-%% @doc Similar to iterator except a matchspec is passed in @end
+%% @doc Similar to iterator except a match_spec is passed in @end
 -spec select(metadata_prefix(), ets:match_spec()) -> metadata_value().
 select(Prefix, MS) ->
   case ets_tab(Prefix) of
-    undefined -> io_lib:format("Prefix not in Metadata : ~p~n", [Prefix]);
+    undefined -> io_lib:format("Prefix not in Metadata : ~p~n", [Prefix]), undefined;
     Tab -> ets:select(Tab, MS)
   end.
 
 %% @doc Similar to select except the values given in the match spec
-%% replace ones chosen in the metadata @end
+%% replace ones found in the metadata @end
 -spec replace(metadata_prefix(), ets:match_spec()) -> metadata_value().
 replace(Prefix, MS) ->
   case ets_tab(Prefix) of
-    undefined -> io_lib:format("Prefix not in Metadata : ~p~n", [Prefix]);
+    undefined -> io_lib:format("Prefix not in Metadata : ~p~n", [Prefix]), undefined;
     Tab -> ets:select_replace(Tab, MS)
   end.
-  end.
+
 
 %%%===================================================================
 %%% riak_core_broadcast_handler callbacks
