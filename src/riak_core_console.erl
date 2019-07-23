@@ -34,8 +34,7 @@
 	       stat_show/2, stat_info/1, stat_enable/1, stat_disable/1, stat_reset/1,
          stat_disable_0/1, stat_0/1, stat_enabled/1, stat_disabled/1,
          load_profile/1, add_profile/1, remove_profile/1, reset_profile/0, reset_profile/1,
-         enable_metadata/1,  disable_port/1, setup_port/1, yes_data_persist/1, no_data_persist/1,
-         pro_data_persist/1, stop_persisting/1]).
+         enable_metadata/1,  disable_port/1, setup_port/1]).
 
 %% New CLI API
 -export([command/1]).
@@ -1272,10 +1271,6 @@ reset_profile(_Arg) ->
 reset_profile() ->
     riak_stat:reset_stats_and_profile().
 
-%%%%%%%%%%%%%%%%%%%%%%%%
-%%% data persistence %%%
-%%%%%%%%%%%%%%%%%%%%%%%%
-
 -spec(enable_metadata(term()) -> ok).
 %% @doc
 %% enable the metadata, arg should be true or false, if false then the communication to the metadata ends
@@ -1283,43 +1278,6 @@ reset_profile() ->
 enable_metadata(Arg) ->
     riak_stat:enable_metadata(Arg).
 
--spec(yes_data_persist(term()) -> ok).
-%% @doc
-%% Enable stats data to be persisted into the metadata, the data going in will be
-%% of the same format as the other console commands such as "riak.riak_kv.**" will
-%% persist all the riak_kv data
-%% @end
-yes_data_persist(Arg) ->
-    riak_stat:data_persist(enabled, Arg).
-
--spec(no_data_persist(term()) -> ok).
-%% @doc
-%% Same Arg format as @see riak_core_console:yes_data_persist/1, but disables the
-%% persistence of that data, if it is persisted, resetting all the data to be
-%% persisted just requires riak.** as the Arg
-%% @end
-no_data_persist(Arg) ->
-    riak_stat:data_persist(disabled, Arg).
-
--spec(pro_data_persist(term()) -> ok).
-%% @doc
-%% Persist data based on what stats are enabled in the profile given in Arg.
-%% Note it does not load the profile given, allowing profiles for persisted data
-%% to be created separately, to be used over multiple profiles.
-%%
-%% i.e. create a profile with only stats that you want persisted enabled, save
-%% the profile and then pro_data_persist that profile to persist the data continuously
-%% no matter the current "loaded" profile.
-%% @end
-pro_data_persist(Arg) ->
-    riak_stat:data_persist(profile, Arg).
-
--spec(stop_persisting(term()) -> ok).
-%% @doc
-%% stop all data persistence for profiles and for other stats.
-%% @end
-stop_persisting(_Arg) ->
-    riak_stat:stop_persist().
 
 %%%%%%%%%%%%%%%%%%%%
 %%% exoskeleskin %%%
@@ -1339,6 +1297,51 @@ setup_port(Port) ->
 -spec(disable_port(term()) -> ok).
 %% @doc
 %% disable the connection, Port given doesn't always matter - unless multiple ports are open
+%% terminates gen_servers
 %% @end
 disable_port(Port) ->
     exoskeleskin:disable_port(Port).
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%% data persistence %%%
+%%%%%%%%%%%%%%%%%%%%%%%%
+%% Not ready for persisting Data yet:
+
+%%-spec(yes_data_persist(term()) -> ok).
+%%%% @doc
+%%%% Enable stats data to be persisted into the metadata, the data going in will be
+%%%% of the same format as the other console commands such as "riak.riak_kv.**" will
+%%%% persist all the riak_kv data
+%%%% @end
+%%yes_data_persist(Arg) ->
+%%    riak_stat:data_persist(enabled, Arg).
+%%
+%%-spec(no_data_persist(term()) -> ok).
+%%%% @doc
+%%%% Same Arg format as @see riak_core_console:yes_data_persist/1, but disables the
+%%%% persistence of that data, if it is persisted, resetting all the data to be
+%%%% persisted just requires riak.** as the Arg
+%%%% @end
+%%no_data_persist(Arg) ->
+%%    riak_stat:data_persist(disabled, Arg).
+%%
+%%-spec(pro_data_persist(term()) -> ok).
+%%%% @doc
+%%%% Persist data based on what stats are enabled in the profile given in Arg.
+%%%% Note it does not load the profile given, allowing profiles for persisted data
+%%%% to be created separately, to be used over multiple profiles.
+%%%%
+%%%% i.e. create a profile with only stats that you want persisted enabled, save
+%%%% the profile and then pro_data_persist that profile to persist the data continuously
+%%%% no matter the current "loaded" profile.
+%%%% @end
+%%pro_data_persist(Arg) ->
+%%    riak_stat:data_persist(profile, Arg).
+%%
+%%-spec(stop_persisting(term()) -> ok).
+%%%% @doc
+%%%% stop all data persistence for profiles and for other stats.
+%%%% @end
+%%stop_persisting(_Arg) ->
+%%    riak_stat:stop_persist().
