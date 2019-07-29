@@ -34,7 +34,7 @@
 	       stat_show/2, stat_info/1, stat_enable/1, stat_disable/1, stat_reset/1,
          stat_disable_0/1, stat_0/1, stat_enabled/1, stat_disabled/1,
          load_profile/1, add_profile/1, remove_profile/1, reset_profile/0, reset_profile/1,
-         enable_metadata/1,  disable_port/1, setup_port/1]).
+         enable_metadata/1, enable_exoskeleskin/1,  disable_port/1, setup_port/1]).
 
 %% New CLI API
 -export([command/1]).
@@ -1162,26 +1162,12 @@ parse_cidr(CIDR) ->
 %%% console %%%
 %%%%%%%%%%%%%%%
 
--spec(stat_show(Arg :: term(), Status :: atom()) -> ok | term()).
-%% @doc
-%% Automatically shows the enabled stats for
-%% riak-admin stat show riak.**
-%% @end
-stat_show(Arg, Status) ->
-    riak_stat:show_stat_status(Arg, Status).
-
--spec(stat_enabled(Arg :: term()) -> ok | term()).
+-spec(stat_show(Arg :: term()) -> ok | term()).
 %% @doc
 %% riak-admin stat enabled riak.** % shows enabled stats etc
 %% @end
-stat_enabled(Arg) ->
-    stat_show(Arg, enabled).
--spec(stat_disabled(Arg :: term()) -> ok | term()).
-%% @doc
-%% same as above but will display disabled stats
-%% @end
-stat_disabled(Arg) ->
-    stat_show(Arg, disabled).
+stat_show(Arg) ->
+    riak_stat:show_stat_status(Arg).
 
 -spec(stat_0(Arg :: term()) -> ok | term()).
 %% @doc
@@ -1278,6 +1264,13 @@ reset_profile() ->
 enable_metadata(Arg) ->
     riak_stat:enable_metadata(Arg).
 
+-spec(enable_exoskeleskin(term()) -> ok).
+%% @doc
+%% enables exoskeleskin, default is false,
+%% @end
+enable_exoskeleskin(Arg) ->
+    riak_stat:enable_exoskeleskin(Arg).
+
 
 %%%%%%%%%%%%%%%%%%%%
 %%% exoskeleskin %%%
@@ -1301,47 +1294,3 @@ setup_port(Port) ->
 %% @end
 disable_port(Port) ->
     exoskeleskin:disable_port(Port).
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%
-%%% data persistence %%%
-%%%%%%%%%%%%%%%%%%%%%%%%
-%% Not ready for persisting Data yet:
-
-%%-spec(yes_data_persist(term()) -> ok).
-%%%% @doc
-%%%% Enable stats data to be persisted into the metadata, the data going in will be
-%%%% of the same format as the other console commands such as "riak.riak_kv.**" will
-%%%% persist all the riak_kv data
-%%%% @end
-%%yes_data_persist(Arg) ->
-%%    riak_stat:data_persist(enabled, Arg).
-%%
-%%-spec(no_data_persist(term()) -> ok).
-%%%% @doc
-%%%% Same Arg format as @see riak_core_console:yes_data_persist/1, but disables the
-%%%% persistence of that data, if it is persisted, resetting all the data to be
-%%%% persisted just requires riak.** as the Arg
-%%%% @end
-%%no_data_persist(Arg) ->
-%%    riak_stat:data_persist(disabled, Arg).
-%%
-%%-spec(pro_data_persist(term()) -> ok).
-%%%% @doc
-%%%% Persist data based on what stats are enabled in the profile given in Arg.
-%%%% Note it does not load the profile given, allowing profiles for persisted data
-%%%% to be created separately, to be used over multiple profiles.
-%%%%
-%%%% i.e. create a profile with only stats that you want persisted enabled, save
-%%%% the profile and then pro_data_persist that profile to persist the data continuously
-%%%% no matter the current "loaded" profile.
-%%%% @end
-%%pro_data_persist(Arg) ->
-%%    riak_stat:data_persist(profile, Arg).
-%%
-%%-spec(stop_persisting(term()) -> ok).
-%%%% @doc
-%%%% stop all data persistence for profiles and for other stats.
-%%%% @end
-%%stop_persisting(_Arg) ->
-%%    riak_stat:stop_persist().
