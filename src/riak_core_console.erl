@@ -31,10 +31,10 @@
          print_users/1, print_user/1, print_sources/1,
          print_groups/1, print_group/1, print_grants/1,
          security_enable/1, security_disable/1, security_status/1, ciphers/1,
-	       stat_show/2, stat_info/1, stat_enable/1, stat_disable/1, stat_reset/1,
-         stat_disable_0/1, stat_0/1, stat_enabled/1, stat_disabled/1,
+	       stat_show/1, stat_info/1, stat_enable/1, stat_disable/1, stat_reset/1,
+         stat_disable_0/1, stat_0/1,
          load_profile/1, add_profile/1, remove_profile/1, reset_profile/0, reset_profile/1,
-         enable_metadata/1, enable_exoskeleskin/1,  disable_port/1, setup_port/1]).
+         enable_metadata/1, enable_exoskeleskin/1,  wm_collect/1, setup_endpoint/1, setdown_endpoint/1]).
 
 %% New CLI API
 -export([command/1]).
@@ -1276,7 +1276,15 @@ enable_exoskeleskin(Arg) ->
 %%% exoskeleskin %%%
 %%%%%%%%%%%%%%%%%%%%
 
--spec(setup_port(term()) -> ok).
+-spec(wm_collect(term()) -> term()).
+%% @doc
+%% collect data from exometer via HTTP using jsonprops, possible returns include
+%% the disk-stats and app-stats for riak
+%% @end
+wm_collect(Arg) ->
+    exoskeleskin:collect_stats(Arg).
+
+-spec(setup_endpoint(term()) -> ok).
 %% @doc
 %% Setup the port, similar to how riak-admin stat takes in riak.riak_kv.**
 %% setup_port takes the argument [<<"udp.8089">>] and sets up the socket from the
@@ -1284,13 +1292,13 @@ enable_exoskeleskin(Arg) ->
 %%
 %% Can be used to restart the port as well as change the port
 %% @end
-setup_port(Port) ->
-    exoskeleskin:setup(Port).
+setup_endpoint(Arg) ->
+    exoskeleskin:setup(Arg).
 
--spec(disable_port(term()) -> ok).
+-spec(setdown_endpoint(term()) -> ok).
 %% @doc
 %% disable the connection, Port given doesn't always matter - unless multiple ports are open
 %% terminates gen_servers
 %% @end
-disable_port(Port) ->
-    exoskeleskin:disable_port(Port).
+setdown_endpoint(Arg) ->
+    exoskeleskin:setdown(Arg).
