@@ -19,7 +19,7 @@
                   eleveldb,
                   pbkdf2,
                   poolboy,
-                  riak_stat,
+%%                  riak_stat,
                   clique
                  ]},
   {mod, {riak_core_app, []}},
