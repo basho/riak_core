@@ -34,7 +34,7 @@
 	       stat_show/1, stat_info/1, stat_enable/1, stat_disable/1, stat_reset/1,
          stat_disable_0/1, stat_0/1,
          load_profile/1, add_profile/1, remove_profile/1, reset_profile/0, reset_profile/1,
-         enable_metadata/1, enable_exoskeleskin/1,  wm_collect/1, setup_endpoint/1, setdown_endpoint/1]).
+         enable_metadata/1, enable_exoskeleskin/1, setup_endpoint/1, setdown_endpoint/1]).
 
 %% New CLI API
 -export([command/1]).
@@ -1275,14 +1275,6 @@ enable_exoskeleskin(Arg) ->
 %%%%%%%%%%%%%%%%%%%%
 %%% exoskeleskin %%%
 %%%%%%%%%%%%%%%%%%%%
-
--spec(wm_collect(term()) -> term()).
-%% @doc
-%% collect data from exometer via HTTP using jsonprops, possible returns include
-%% the disk-stats and app-stats for riak
-%% @end
-wm_collect(Arg) ->
-    exoskeleskin:collect_stats(Arg).
 
 -spec(setup_endpoint(term()) -> ok).
 %% @doc
