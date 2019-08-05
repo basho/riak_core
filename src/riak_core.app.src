@@ -68,12 +68,12 @@
          {dist_recv_buf_size, 786432}
 
 	 %% Exometer defaults
-%%	 {exometer_defaults,
-%%	  [
-%%	   {['_'], histogram, [{options,
-%%				[{histogram_module, exometer_slot_slide},
-%%				 {keep_high, 500}]}
-%%			    ]}
-%%	  ]}
+	 {exometer_defaults,
+	  [
+	   {['_'], histogram, [{options,
+				[{histogram_module, exometer_slot_slide},
+				 {keep_high, 500}]}
+			    ]}
+	  ]}
         ]}
  ]}.

@@ -12,9 +12,8 @@
 %%
 %% @end
 -module(riak_core_exo_monitor).
--behaviour(exometer_folsom_monitor). %% TODO 15: remove this behaviour?
--behaviour(exometer_entry).          %% TODO 16: look into how this would work with and without
-
+-behaviour(exometer_folsom_monitor).
+-behaviour(exometer_entry).
 -export([copy_folsom/3]).
 -export([behaviour/0,
 	 delete/3,
@@ -48,7 +47,7 @@ update(_, Value, Type, {_, Name}) ->
   riak_stat:update(Name, Value, Type).
 
 reset(_, _, _) ->
-    {error, unsupported}.
+    {error, unsupported}. %% todo: add riak_stat reset
 
 get_value(_, _Type, {_, Name}, DPs) ->
   riak_stat_coordinator:get_datapoint(Name, DPs).
@@ -60,7 +59,7 @@ setopts(_, _, _) ->
     ok.
 
 delete(_, _, _) ->
-    {error, unsupported}.
+    {error, unsupported}. %% todo: add riak_stat:unregister
 
 get_datapoints(Name, Type, _) ->
   riak_stat_coordinator:get_datapoint(Name, Type).
