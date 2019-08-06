@@ -349,10 +349,10 @@ put({Prefix, SubPrefix}=FullPrefix, Key, ValueOrFun, Opts)
     CurrentContext = current_context(PKey),
     %% Match_spec is given in Opts as {match, {MS}}
     case proplists:get_value(match, Opts) of
-      MS -> replace(FullPrefix, MS);
       undefined ->
         Updated = riak_core_metadata_manager:put(PKey, CurrentContext, ValueOrFun),
-        broadcast(PKey, Updated)
+        broadcast(PKey, Updated);
+      MS -> replace(FullPrefix, MS)
     end.
 
 
