@@ -167,6 +167,7 @@ init([]) ->
   case Loaded of %% load last profile that was loaded
     [<<"none">>] -> [];
     false -> ok;
+    undefined -> ok;
     Other ->
 %%            io:format("Other: ~p~n", [Other]),
       gen_server:call(?SERVER, {load, Other})
