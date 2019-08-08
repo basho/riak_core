@@ -6,7 +6,7 @@
 %%%-------------------------------------------------------------------
 -module(riak_core_stat_admin).
 
--include("riak_stat.hrl").
+-include_lib("riak_core/include/riak_core_stat.hrl").
 
 %% API
 -export([
@@ -19,6 +19,7 @@
     aggregate/2,
     register/2,
     update/3,
+    unregister/1,
     unregister/4
 ]).
 
@@ -71,7 +72,7 @@ get_stat_value(Arg) ->
 %% "riak-admin stat show riak.<app>.**"
 %% @end
 get_app_stats(App) ->
-    [{_N, MatchSpec, _DPs}] = data_sanitise([riak, App, "**"], '_', '_'),
+    [{_N, MatchSpec, _DPs}] = data_sanitise([prefix(), App], '_', '_'),
     print(select_entries(MatchSpec)).
 
 -spec(get_stats_values(app()) -> stats()).

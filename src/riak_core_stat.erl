@@ -25,7 +25,7 @@
 %% API
 -export([
     start_link/0, get_stats/0, get_stats/1, get_value/1,
-    get_stats_info/0, get_stats_status/0, get_stat/1, update/1,
+    get_stats_info/0, get_stat/1, update/1,
     register_stats/0, vnodeq_stats/0,
 	  register_stats/2,
 	  register_vnode_stats/3, unregister_vnode_stats/2,

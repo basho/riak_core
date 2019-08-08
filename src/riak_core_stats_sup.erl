@@ -19,7 +19,7 @@
 -module(riak_core_stats_sup).
 -behaviour(supervisor).
 -export([start_link/0, init/1]).
--export([start_server/1, stop_server/1]).
+-export([start_server/1, start_server/2, stop_server/1]).
 
 %% Helper macro for declaring children of supervisor
 -define(CHILD(I, Type, Timeout), {I, {I, start_link, []}, permanent, Timeout, Type, [I]}).
@@ -32,6 +32,12 @@ init([]) ->
     Children = [stat_server(Mod) || {_App, Mod} <- riak_core:stat_mods()],
     {ok, {{one_for_one, 5, 10}, [?CHILD(riak_core_stat_cache, worker)|Children]}}.
 
+start_server(Mod, Arg) ->
+    Ref = ?CHILD(Mod, worker, 6000, Arg),
+    case supervisor:start_child(?MODULE, Ref) of
+        {ok, Child} -> Child;
+        {error, {already_started, Child}} -> Child
+    end.
 start_server(Mod) ->
     Ref = stat_server(Mod),
     Pid = case supervisor:start_child(?MODULE, Ref) of
