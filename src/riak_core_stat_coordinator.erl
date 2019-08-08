@@ -430,8 +430,6 @@ update_exom(Name, IncrBy, Type) ->
   riak_core_stat_exometer:update_or_create(Name, IncrBy, Type).
 
 %%%===================================================================
-%%% Exoskeleskin API
-%%%===================================================================
 
 get_values(Arg) ->
   {Stats, _MS, _DPS} = riak_core_stat_admin:data_sanitise(Arg),

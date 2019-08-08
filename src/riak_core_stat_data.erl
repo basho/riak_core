@@ -22,6 +22,19 @@
   print/2
 ]).
 
+%% API
+-export([
+  format_time/1,
+  utc_milliseconds_time/0,
+  exo_timestamp/0,
+  sanitise_data/1
+]).
+
+-define(MEGASECS_MILLISECOND_DIVISOR,1000000000).
+-define(SECS_MILLISECOND_DIVISOR,1000).
+-define(MILLISECONDS_MICROSECONDS_DIVISOR,1000).
+
+
 -spec(data_sanitise(data()) -> data()).
 %% @doc
 %% this is for data coming in from the console of format [<<"X">>],
@@ -271,7 +284,7 @@ get_value(E, _Status, DPs) ->
   end.
 
 get_datapoint(E, DPs) ->
-  riak_stat_coordinator:get_datapoint(E,DPs).
+  riak_core_stat_exometer:get_datapoint(E,DPs).
 
 
 % used to print the entire stat information
@@ -292,25 +305,12 @@ print_info_1(N, [A | Attrs]) ->
 
 
 get_info(Name, Info) ->
-  case riak_stat_coordinator:get_info(Name, Info) of
+  case riak_core_stat_coordinator:get_info(Name, Info) of
     undefined ->
       [];
     Other ->
       Other
   end.
-
-%% API
--export([
-  format_time/1,
-  utc_milliseconds_time/0,
-  exo_timestamp/0,
-  sanitise_data/1
-]).
-
--define(MEGASECS_MILLISECOND_DIVISOR,1000000000).
--define(SECS_MILLISECOND_DIVISOR,1000).
--define(MILLISECONDS_MICROSECONDS_DIVISOR,1000).
-
 
 %%--------------------------------------------------------------------
 -spec(sanitise_data(arg()) -> sanitised_data()).
@@ -377,4 +377,4 @@ utc_milliseconds_time() ->
 %% timestamp format used with exometer_histogram and exometer_slide
 %% @end
 exo_timestamp() ->
-  riak_stat:timestamp().
+  riak_core_stat_exometer:timestamp().

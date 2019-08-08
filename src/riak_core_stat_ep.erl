@@ -24,11 +24,11 @@
 %% choose the endpoint details quicker and easier, passing in arguments is optional.
 %% @end
 setup(Arg) ->
-  exoskele_console:setup(Arg).
+  riak_core_stat_console:setup(Arg).
 
 -spec(setdown(arg()) -> ok).
 %% @doc
 %% Kill the udp servers currently running and pushing stats to an endpoint.
 %% @end
 setdown(Arg) ->
-  exoskele_console:setdown(Arg).
+  riak_core_stat_console:setdown(Arg).

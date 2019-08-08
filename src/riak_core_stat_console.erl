@@ -3,7 +3,7 @@
 %%% calls from riak_core_console are directed to this module to
 %%% enable/disable or read stats from exometer/metadata
 %%%
-%%% calls from exoskeleskin point to this module to retrieve stats
+%%% calls from endpoint to this module to retrieve stats
 %%% for a UDP or HTTP endpoint
 %%% @end
 %%%-------------------------------------------------------------------
@@ -18,7 +18,8 @@
   stat_info/1,
   disable_stat_0/1,
   status_change/2,
-  reset_stat/1
+  reset_stat/1,
+  enable_metadata/1
 ]).
 
 %% Endpoint API
@@ -108,6 +109,31 @@ reset_stat(Arg) ->
   [{Stats, _MatchSpec, _DP}] = data_sanitise(Arg),
   reset_stats([Entry || {Entry, _} <- find_entries(Stats, enabled)]).
 
+-spec(enable_metadata(data()) -> ok).
+%% @doc
+%% enabling the metadata allows the stats configuration and the stats values to
+%% be persisted, disabling the metadata returns riak to its original functionality
+%% of only using the exometer functions. Enabling and disabling the metadata occurs
+%% here, directing the stats and function work occurs in the riak_stat_coordinator
+%% @end
+enable_metadata(Arg) ->
+  Truth = ?IS_ENABLED(?META_ENABLED),
+  case data_sanitise(Arg) of
+    Truth ->
+      io:fwrite("Metadata-enabled already set to ~s~n", [Arg]);
+    Bool when Bool == true; Bool == false ->
+      case Bool of
+        true ->
+          riak_core_stat_coordinator:reload_metadata(get_stats()),
+          app_helper:get_env(riak_core, ?META_ENABLED, Bool);
+        false ->
+          app_helper:get_env(riak_core, ?META_ENABLED, Bool)
+      end;
+    Other ->
+      io:fwrite("Wrong argument entered: ~p~n", [Other])
+  end.
+
+
 %%%===================================================================
 %%% Admin API
 %%%===================================================================
@@ -186,7 +212,7 @@ split_arg([Str]) ->
 %% @end
 setup(Arg) ->
   {{Port, Instance, Sip}, STATSorPROFILES}    =     sanitise_data(Arg),
-  start_server(exoskele_udp, {{Port, Instance, Sip}, STATSorPROFILES}).
+  start_server(riak_core_stat_latency, {{Port, Instance, Sip}, STATSorPROFILES}).
 
 sanitise_data([<<>>]) -> sanitise_data([]);
 sanitise_data(Arg) -> riak_core_stat_data:sanitise_data(Arg).
@@ -226,7 +252,7 @@ terminate_server() ->
 %% gen_server, information is pulled out like a last known request
 %% @end
 get_host(Info) ->
-  case ets:lookup(?EXOSKELETABLE, Info) of
+  case ets:lookup(?ENDPOINTTABLE, Info) of
     [{_, {MonitorServer, undefined, MonitorPort, Socket}}] ->
       {Socket, MonitorServer, MonitorPort};
     [{_, {_MonitorServer, MonitorServerIp, MonitorPort, Socket}}] ->
@@ -241,7 +267,7 @@ get_host(Info) ->
 %% todo: improve the stat collection method
 %% @end
 get_stats() ->
-  case application:get_env(riak_stat, exoskele_stats_default, classic) of
+  case application:get_env(riak_core, endpoint_defaults_type, classic) of
     classic ->
       riak_kv_status:get_stats(web);
     beta ->

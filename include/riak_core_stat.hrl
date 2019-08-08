@@ -3,7 +3,6 @@
 -define(TIMESTAMP, riak_core_stat_exometer:timestamp()).
 
 -define(META_ENABLED, metadata_enabled).
--define(EXOSKEL_ENABLED, exoskeleskin_enabled).
 
 -define(IS_ENABLED(Arg),  app_helper:get_env(riak_core, Arg, true)).
 
@@ -43,23 +42,25 @@ timestamp | options | ref | datapoints | entry.
 -type ttl()           :: atom() | integer().
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
--define(INSTANCE,              riak_stat_config:get_env(instance)).
--define(MONITOR_SERVER,        riak_stat_config:get_env(monitor_server)).
--define(MONITOR_LATENCY_PORT,  riak_stat_config:get_env(monitor_latency_port)).
--define(MONITOR_STATS_PORT,    riak_stat_config:get_env(monitor_stats_port)).
+-define(ENVAPP, riak_core).
 
--define(EXCLUDED_DATAPOINTS,   riak_stat_config:get_env(exoskeleskin_excluded_datapoints, [ms_since_reset])).
--define(STATS_LISTEN_PORT,     riak_stat_config:get_env(stats_listen_port, 9000)).
+-define(INSTANCE,              app_helper:get_env(?ENVAPP, instance)).
+-define(MONITOR_SERVER,        app_helper:get_env(?ENVAPP, monitor_server)).
+-define(MONITOR_LATENCY_PORT,  app_helper:get_env(?ENVAPP, monitor_latency_port)).
+-define(MONITOR_STATS_PORT,    app_helper:get_env(?ENVAPP, monitor_stats_port)).
 
--define(EXOSKELETABLE,         exoskeleskin_state).
+-define(EXCLUDED_DATAPOINTS,   app_helper:get_env(?ENVAPP, endpoint_excluded_datapoints, [ms_since_reset])).
+-define(STATS_LISTEN_PORT,     app_helper:get_env(?ENVAPP, stats_listen_port, 9000)).
+
+-define(ENDPOINTTABLE,         endpoint_state).
 -define(UDP_KEY,               udp_socket).
 -define(WM_KEY,                http_socket).
 
--define(STATS_UPDATE_INTERVAL, riak_stat_config:get_env(exoskeleskin_stats_update_interval, 1000)).
--define(REFRESH_INTERVAL,      riak_stat_config:get_env(exoskeleskin_ip_refresh_interval, 30000)).
+-define(STATS_UPDATE_INTERVAL, app_helper:get_env(?ENVAPP, endpoint_stats_update_interval, 1000)).
+-define(REFRESH_INTERVAL,      app_helper:get_env(?ENVAPP, endpoint_ip_refresh_interval, 30000)).
 
--define(SPIRAL_TIME_SPAN,      riak_stat_config:get_env(exoskeleskin_stats_spiral_time_span, 1000)).
--define(HISTOGRAM_TIME_SPAN,   riak_stat_config:get_env(exoskeleskin_stats_histogram_time_span, 1000)).
+-define(SPIRAL_TIME_SPAN,      app_helper:get_env(?ENVAPP, endpoint_stats_spiral_time_span, 1000)).
+-define(HISTOGRAM_TIME_SPAN,   app_helper:get_env(?ENVAPP, endpoint_stats_histogram_time_span, 1000)).
 
 -define(UDP_OPEN_PORT,         0).
 -define(UDP_OPEN_BUFFER,       {buffer, 100*1024*1024}).

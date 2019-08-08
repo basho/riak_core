@@ -34,7 +34,7 @@
 	       stat_show/1, stat_info/1, stat_enable/1, stat_disable/1, stat_reset/1,
          stat_disable_0/1, stat_0/1,
          load_profile/1, add_profile/1, remove_profile/1, reset_profile/0, reset_profile/1,
-         enable_metadata/1, enable_exoskeleskin/1, setup_endpoint/1, setdown_endpoint/1]).
+         enable_metadata/1, setup_endpoint/1, setdown_endpoint/1]).
 
 %% New CLI API
 -export([command/1]).
@@ -1238,7 +1238,7 @@ load_profile(ProfileName) ->
 %%
 %% @end
 add_profile(ProfileName) ->
-    riak_core_stat_profiles:save_current_profile(ProfileName).
+    riak_core_stat_profiles:save_profile(ProfileName).
 
 -spec(remove_profile(FileName :: term()) -> term()).
 %% @doc
@@ -1255,26 +1255,14 @@ reset_profile(_Arg) ->
 %% unloads from the current profile, so all the stats are re-enabled.
 %% @end
 reset_profile() ->
-    riak_core_stat_profiles:reset_stats_and_profile().
+    riak_core_stat_profiles:reset_profile().
 
 -spec(enable_metadata(term()) -> ok).
 %% @doc
 %% enable the metadata, arg should be true or false, if false then the communication to the metadata ends
 %% @end
 enable_metadata(Arg) ->
-    riak_core_stat_profiles:enable_metadata(Arg).
-
--spec(enable_exoskeleskin(term()) -> ok).
-%% @doc
-%% enables exoskeleskin, default is false,
-%% @end
-enable_exoskeleskin(Arg) ->
-    riak_core_stat_profiles:enable_exoskeleskin(Arg).
-
-
-%%%%%%%%%%%%%%%%%%%%
-%%% exoskeleskin %%%
-%%%%%%%%%%%%%%%%%%%%
+    riak_core_stat_console:enable_metadata(Arg).
 
 -spec(setup_endpoint(term()) -> ok).
 %% @doc
