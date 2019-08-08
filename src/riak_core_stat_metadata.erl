@@ -97,7 +97,7 @@ get(Prefix, Key) ->
 get(Prefix, Key, Opts) ->
   riak_core_metadata:get(Prefix, Key, Opts).
 
--spec(put(metadata_prefix(), metadata_key(), metadata_value() | metadata_modifier(), put_opts()) -> ok).
+-spec(put(metadata_prefix(), metadata_key(), metadata_value() | metadata_modifier(), options()) -> ok).
 %% @doc
 %% put the data into the metadata, options contain the {match, Match_spec}
 %% @end
