@@ -33,12 +33,7 @@ init([]) ->
     Children = [stat_server(Mod) || {_App, Mod} <- riak_core:stat_mods()],
     {ok, {{one_for_one, 5, 10}, [?CHILD(riak_core_stat_cache, worker)|Children]}}.
 
-start_server(Mod, Arg) ->
-    Ref = ?CHILD(Mod, worker, 6000, Arg),
-    case supervisor:start_child(?MODULE, Ref) of
-        {ok, Child} -> Child;
-        {error, {already_started, Child}} -> Child
-    end.
+
 start_server(Mod) ->
     Ref = stat_server(Mod),
     Pid = case supervisor:start_child(?MODULE, Ref) of
@@ -46,6 +41,12 @@ start_server(Mod) ->
               {error, {already_started, Child}} -> Child
           end,
     Pid.
+start_server(Mod, Arg) ->
+    Ref = ?CHILD(Mod, worker, 6000, Arg),
+    case supervisor:start_child(?MODULE, Ref) of
+        {ok, Child} -> Child;
+        {error, {already_started, Child}} -> Child
+    end.
 
 stop_server(Mod) ->
     _ = supervisor:terminate_child(?MODULE, Mod),
