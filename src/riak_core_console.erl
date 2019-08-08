@@ -1167,7 +1167,7 @@ parse_cidr(CIDR) ->
 %% riak-admin stat enabled riak.** % shows enabled stats etc
 %% @end
 stat_show(Arg) ->
-    riak_stat:show_stat_status(Arg).
+    riak_core_stat_console:show_stat(Arg).
 
 -spec(stat_0(Arg :: term()) -> ok | term()).
 %% @doc
@@ -1177,7 +1177,7 @@ stat_show(Arg) ->
 %% behaves similar to stat show/info
 %% @end
 stat_0(Arg) ->
-    riak_stat:show_static_stats(Arg).
+    riak_core_stat_console:show_stat_0(Arg).
 
 -spec(stat_disable_0(Arg :: term()) -> ok | term()).
 %% @doc
@@ -1185,35 +1185,35 @@ stat_0(Arg) ->
 %% updating as well
 %% @end
 stat_disable_0(Arg) ->
-    riak_stat:disable_stat_0(Arg).
+    riak_core_stat_console:disable_stat_0(Arg).
 
 -spec(stat_info(Arg :: term()) -> ok | term()).
 %% @doc
 %% information on the stat
 %% @end
 stat_info(Arg) ->
-    riak_stat:show_stat_info(Arg).
+    riak_core_stat_console:stat_info(Arg).
 
 -spec(stat_enable(Arg :: term()) -> ok | term()).
 %% @doc
 %% enable the stats
 %% @end
 stat_enable(Arg) ->
-    riak_stat:change_stat_status(Arg, enabled).
+    riak_core_stat_console:status_change(Arg, enabled).
 
 -spec(stat_disable(Arg :: term()) -> ok | term()).
 %% @doc
 %% disable the stats
 %% @end
 stat_disable(Arg) ->
-    riak_stat:change_stat_status(Arg, disabled).
+    riak_core_stat_console:status_change(Arg, disabled).
 
 -spec(stat_reset(Arg :: term()) -> ok | term()).
 %% @doc
 %% resets the stats
 %% @end
 stat_reset(Arg) ->
-    riak_stat:reset_stat(Arg).
+    riak_core_stat_console:reset_stat(Arg).
 
 %%%%%%%%%%%%%%%
 %%% profile %%%
@@ -1225,7 +1225,7 @@ stat_reset(Arg) ->
 %% in exometer and in the metadata
 %% @end
 load_profile(ProfileName) ->
-    riak_stat:load_profile(ProfileName).
+    riak_core_stat_profiles:load_profile(ProfileName).
 
 -spec(add_profile(FileName :: term()) -> term()).
 %% @doc
@@ -1238,14 +1238,14 @@ load_profile(ProfileName) ->
 %%
 %% @end
 add_profile(ProfileName) ->
-    riak_stat:save_current_profile(ProfileName).
+    riak_core_stat_profiles:save_current_profile(ProfileName).
 
 -spec(remove_profile(FileName :: term()) -> term()).
 %% @doc
 %% remove the profile from the metadata if it is not longer necessary
 %% @end
 remove_profile(ProfileName) ->
-    riak_stat:delete_profile(ProfileName).
+    riak_core_stat_profiles:delete_profile(ProfileName).
 
 -spec(reset_profile(Arg :: term()) -> term()).
 reset_profile(_Arg) ->
@@ -1255,21 +1255,21 @@ reset_profile(_Arg) ->
 %% unloads from the current profile, so all the stats are re-enabled.
 %% @end
 reset_profile() ->
-    riak_stat:reset_stats_and_profile().
+    riak_core_stat_profiles:reset_stats_and_profile().
 
 -spec(enable_metadata(term()) -> ok).
 %% @doc
 %% enable the metadata, arg should be true or false, if false then the communication to the metadata ends
 %% @end
 enable_metadata(Arg) ->
-    riak_stat:enable_metadata(Arg).
+    riak_core_stat_profiles:enable_metadata(Arg).
 
 -spec(enable_exoskeleskin(term()) -> ok).
 %% @doc
 %% enables exoskeleskin, default is false,
 %% @end
 enable_exoskeleskin(Arg) ->
-    riak_stat:enable_exoskeleskin(Arg).
+    riak_core_stat_profiles:enable_exoskeleskin(Arg).
 
 
 %%%%%%%%%%%%%%%%%%%%
@@ -1285,7 +1285,7 @@ enable_exoskeleskin(Arg) ->
 %% Can be used to restart the port as well as change the port
 %% @end
 setup_endpoint(Arg) ->
-    exoskeleskin:setup(Arg).
+    riak_core_stat_ep:setup(Arg).
 
 -spec(setdown_endpoint(term()) -> ok).
 %% @doc
@@ -1293,4 +1293,4 @@ setup_endpoint(Arg) ->
 %% terminates gen_servers
 %% @end
 setdown_endpoint(Arg) ->
-    exoskeleskin:setdown(Arg).
+    riak_core_stat_ep:setdown(Arg).

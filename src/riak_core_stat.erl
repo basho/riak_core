@@ -45,7 +45,7 @@
 -define(SERVER, ?MODULE).
 
 -define(APP, riak_core).
--define(PFX, riak_stat:prefix()).
+-define(PFX, riak_core_stat_admin:prefix()).
 
 
 start_link() ->
@@ -58,7 +58,7 @@ register_stats() ->
 %% @spec register_stats(App, Stats) -> ok
 %% @doc (Re-)Register a list of metrics for App.
 register_stats(App, Stats) ->
-  riak_stat:register(App, Stats).
+  riak_core_stat_admin:register(App, Stats).
 
 register_vnode_stats(Module, Index, Pid) ->
   F = fun vnodeq_atom/2,
@@ -82,11 +82,10 @@ register_vnode_stats(Module, Index, Pid) ->
       match, {'_', value} }}]},
 
   RegisterStats = [Stat1, Stat2, Stat3],
-  riak_stat:register(?APP, RegisterStats).
+  register_stats(?APP, RegisterStats).
 
 unregister_vnode_stats(Module, Index) ->
-  riak_stat:unregister(Module, Index, vnodeq, ?APP).
-
+  riak_core_stat_admin:unregister(Module, Index, vnodeq, ?APP).
 
 
 %% @spec get_stats() -> proplist()
@@ -95,19 +94,16 @@ get_stats() ->
     get_stats(?APP).
 
 get_stats(App) ->
-  riak_stat:get_app_stats(App).
-
-get_stats_status() ->
-  riak_stat:get_stats_status(?APP).
+  riak_core_stat_admin:get_app_stats(App).
 
 get_stats_info() ->
-  riak_stat:get_stats_info(?APP).
+  riak_core_stat_admin:get_stats_info(?APP).
 
 get_stat(Arg) ->
   get_value([?PFX, ?APP | Arg]).
 
 get_value(Arg) ->
-  riak_stat:get_value(Arg).
+  riak_core_stat_admin:get_stat_value(Arg).
 
 update(Arg) ->
     gen_server:cast(?SERVER, {update, Arg}).
@@ -142,9 +138,8 @@ terminate(_Reason, _State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-
 exometer_update(Name, Value, Type) ->
-    case riak_stat:update(Name, Value, Type) of
+    case riak_core_stat_admin:update(Name, Value, Type) of
         {error, not_found} ->
             lager:debug("~p not found on update.", [Name]);
         ok ->

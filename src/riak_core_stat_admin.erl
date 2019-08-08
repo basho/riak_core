@@ -19,7 +19,7 @@
     aggregate/2,
     register/2,
     update/3,
-    unregister/5
+    unregister/4
 ]).
 
 %% Other API
@@ -128,15 +128,20 @@ update(Name, Inc, Type) ->
     riak_core_stat_coordinator:update(Name, Inc, Type).
 
 
-
--spec(unregister(pfx(), app(), Mod :: data(), Idx :: data(), type()) ->
+-spec(unregister(app(), Mod :: data(), Idx :: data(), type()) ->
   ok | error()).
 %% @doc
 %% unregister a stat from the metadata leaves it's status as
 %% {status, unregistered}, and deletes the metric from exometer
 %% @end
-unregister(Pfx, App, Mod, Idx, Type) ->
-    unreg_stats(Pfx, App, Type, Mod, Idx).
+unregister({Mod, Idx, Type, App}) ->
+    unregister(Mod, Idx, Type, App);
+unregister(StatName) ->
+    unreg_stats(StatName).
+
+unregister(App, Mod, Idx, Type) ->
+    P = prefix(),
+    unreg_stats(P, App, Type, Mod, Idx).
 
 
 %%%===================================================================
@@ -225,7 +230,8 @@ stat_name(P, App, N) when is_list(N) ->
 stat_name_([P, [] | Rest]) -> [P | Rest];
 stat_name_(N) -> N.
 
-
+unreg_stats(StatName) ->
+    unreg_stats_(StatName).
 unreg_stats(P, App, Type, [Op, time], Index) ->
     unreg_stats_([P, App, Type, Op, time, Index]);
 unreg_stats(P, App, Type, Mod, Index) ->
