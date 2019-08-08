@@ -24,6 +24,7 @@
 %% Helper macro for declaring children of supervisor
 -define(CHILD(I, Type, Timeout), {I, {I, start_link, []}, permanent, Timeout, Type, [I]}).
 -define(CHILD(I, Type), ?CHILD(I, Type, 5000)).
+-define(CHILD(I, Type, Timeout, Arg), {I, {I, start_link, [Arg]}, permanent, Timeout, Type, [I]}).
 
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
