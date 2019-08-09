@@ -153,8 +153,8 @@ alias(Group) ->
 %% @end
 aliases(new, [Alias, StatName, DP]) ->
   io:format("riak_stat_exometer:aliases(~p, ~p, ~p)~n", [Alias, StatName, DP]),
-  Answer = exometer_alias:new(Alias, StatName, DP),
-  io:format("riak_stat_exometer:aliases(etc) = ~p~n", Answer);
+  exometer_alias:new(Alias, StatName, DP);
+%%  io:format("riak_stat_exometer:aliases(etc) = ~p~n", Answer);
 aliases(prefix_foldl, []) ->
   exometer_alias:prefix_foldl(<<>>, alias_fun(), orddict:new());
 aliases(regexp_foldr, [N]) ->
