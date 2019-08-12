@@ -42,8 +42,17 @@
 %% otherwise use: riak-admin stat show <entry>/status=* | disabled
 %% @end
 show_stat(Arg) ->
-  [{_S, MatchSpec, DP}] = data_sanitise(Arg),
-  Entries = select_entries(MatchSpec),
+  io:format("2 riak_core_stat_console:show_stat(~p)~n", [Arg]),
+
+  [{Stats, MatchSpec, DP}] = data_sanitise(Arg),
+  io:format("[{~p, ~p, ~p}] = data_sanitise(~p)~n", [Stats, MatchSpec, DP, Arg]),
+  Entries =
+    case find_entries(Stats, enabled) of
+      [] -> select_entries(MatchSpec);
+      ok -> select_entries(MatchSpec);
+      SelectStats -> io:format("24 hit it in seelect:~p~n", [SelectStats]), SelectStats
+    end ,
+  io:format("Entries = (~p)~n", [Entries]),
   Stats =
     case DP of
       default -> [{Entry, Status} || {Entry, _, Status} <- Entries];
@@ -139,6 +148,7 @@ enable_metadata(Arg) ->
 %%%===================================================================
 
 data_sanitise(Arg) ->
+  io:format("3 riak_core_stat_admin:data_sanitise(~p)~n", [Arg]),
   riak_core_stat_admin:data_sanitise(Arg).
 
 print_stats(Entries) ->
@@ -151,9 +161,11 @@ print_stats(Entries, Attributes) ->
 %%%===================================================================
 
 find_entries(StatNames, Status) ->
+  io:format("25 find_entries"),
   riak_core_stat_coordinator:find_entries(StatNames, Status).
 
 select_entries(MS) ->
+  io:format("9 select_entries(~p)~n", [MS]),
   riak_core_stat_coordinator:select(MS).
 
 not_updating(StatNames) ->

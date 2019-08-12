@@ -1,4 +1,4 @@
-%%%-------------------------------------------------------------------
+%%%------------------------------------------------------------------
 %%% @doc
 %%% riak_core_stat_metadata is the middle-man for stat and
 %%% riak_core_metadata. All information that needs to go into or out
@@ -122,16 +122,29 @@ delete(Prefix, Key) ->
   riak_core_metadata:delete(Prefix, Key).
 
 select(MatchSpec) ->
-  NewSpec = [{{Name, {Status, Type, '_','_'}, Guard, Output}} ||
-    {{Name, Type, Status}, Guard, Output} <- MatchSpec],
-  select(?STATPFX, NewSpec).
+  io:format("13 riak_cpre_stat_metadata:select(~p)~n", [MatchSpec]),
+  [{{Name, [{Status, Type, '_','_'}]}, [], Output} || {{Name, Type, Status}, _Guard, Output} <- MatchSpec],
+%%  io:format("14 riak_cpre_stat_metadata:select(NewSpec)(~p)~n", [NewSpec]),
+  List = [{status,Status} || {{_Name, _Type, Status}, _Guard, _Output} <- MatchSpec],
+  [{status,Given}] = lists:flatten(lists:ukeysort(1, List)),
+  riak_core_metadata:fold(fun({Name, [{Status, '_', '_','_'}]}, Acc) when Status == Given -> {Name, Status} end, [], ?STATPFX).
+%%  [{match, NewSpec}]).
+%%  select(?STATPFX, NewSpec).
+
+
 -spec(select(metadata_prefix(), pattern()) -> metadata_value()).
 %% @doc
 %% use the ets:select in the metadata to pull the value wanted from the metadata
 %% using ets:select is more powerful that using the get function
 %% @end
 select(Prefix, MatchSpec) ->
-  riak_core_metadata:select(Prefix, MatchSpec).
+%%  riak_core_metadata:fold(fun({})
+
+  io:format("15 select(~p,~p)~n",[?STATPFX, MatchSpec]),
+  case riak_core_metadata:select(Prefix, MatchSpec) of
+    undefined -> [];
+    Otherwise -> io:format("Otherwise:~p~n", [Otherwise])
+  end.
 
 -spec(replace(metadata_prefix(), pattern()) -> metadata_value()).
 %% @doc
@@ -148,10 +161,22 @@ replace(Prefix, MatchSpec) ->
 %% the one given, default at riak_core_console level - is enabled.
 %% @end
 find_entries(Stats, Status) ->
-  lists:map(fun(Stat) ->
-    select(?STATPFX,
-      [{{Stat, {'$2','_','_','_'}}, [{'==', '$2', Status}],{Stat, '$2'}}])
-            end, Stats).
+  io:fwrite("28 riak_core_stat_metadata:find_entries(~p,~p)~n", [Stats, Status]),
+%%  NewSpec =
+    [{{Stats, [{'$1', '_', '_','_'}]}, [{'==', '$1', Status}], ['$_']}],
+  riak_core_metadata:fold(fun({Name,
+    [{MStatus, _Type, _Opts, _aliases}]}, Acc) when MStatus == Status ->
+    [{Name, MStatus}| Acc];
+    ({_Name, [{_MStatus, _Type, _Opts, _Aliases}]}, Acc) ->
+    Acc
+      end, [], ?STATPFX).
+%%    lists:flatten(
+%%      lists:map(fun(Stat) ->
+%%        Return =
+%%            select(?STATPFX,
+%%                [{{Stat, [{'$2','_','_','_'}]}, [{'==', '$2', Status}],['$_']}]),
+%%        [{Statname, Statuses} || {Statname, {Statuses, _type,_of,_things}} <- Return]
+%%              end, Stats)).
 
 
 %%%===================================================================

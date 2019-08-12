@@ -1167,6 +1167,7 @@ parse_cidr(CIDR) ->
 %% riak-admin stat enabled riak.** % shows enabled stats etc
 %% @end
 stat_show(Arg) ->
+    io:format("1 riak_core_console:stat_show(~p)~n", [Arg]),
     riak_core_stat_console:show_stat(Arg).
 
 -spec(stat_0(Arg :: term()) -> ok | term()).

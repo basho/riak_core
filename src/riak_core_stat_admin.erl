@@ -10,6 +10,7 @@
 
 %% API
 -export([
+    prefix/0,
     get_stats/0,
     get_stat/1,
     get_stat_value/1,
@@ -42,7 +43,10 @@
 %% @end
 get_stats() ->
     [{_N, MatchSpec, _DPs}] = data_sanitise([<<"riak.**">>], '_', '_'),
+%%    io:format("MAS: ~p~n", [MatchSpec]),
+
     Stats = select_entries(MatchSpec),
+
     print(Stats).
 
 %%% ------------------------------------------------------------------
@@ -72,7 +76,10 @@ get_stat_value(Arg) ->
 %% "riak-admin stat show riak.<app>.**"
 %% @end
 get_app_stats(App) ->
+%%    io:format("hitting admin get_app_stats()~n"),
+
     [{_N, MatchSpec, _DPs}] = data_sanitise([prefix(), App], '_', '_'),
+%%    io:format("MAS: ~p~n", [MatchSpec]),
     print(select_entries(MatchSpec)).
 
 -spec(get_stats_values(app()) -> stats()).
@@ -111,7 +118,7 @@ aggregate(Stats, DPs) ->
 %% @end
 register(App, Stats) ->
     P = prefix(),
-    io:format("riak_stat_admin:register(~p)~n", [App]),
+%%    io:format("riak_stat_admin:register(~p)~n", [App]),
         lists:foreach(fun(Stat) ->
             register_stat(P, App, Stat)
                       end, Stats).
@@ -163,6 +170,7 @@ prefix() ->
 %% and in exometer
 %% @end
 data_sanitise(Arg) ->
+    io:format("4 riak_core_stat_data:data_sanitise(~p)~n", [Arg]),
     riak_core_stat_data:data_sanitise(Arg).
 data_sanitise(Data, Type, Status) ->
     riak_core_stat_data:data_sanitise(Data, Type, Status).
@@ -184,6 +192,8 @@ find_entries(Stats, Status) ->
     riak_core_stat_coordinator:find_entries(Stats, Status).
 
 select_entries(MatchSpec) ->
+%%    io:format("hitting coordinator select()~n"),
+
     riak_core_stat_coordinator:select(MatchSpec).
 
 find_stat_value(Path) ->
@@ -199,7 +209,7 @@ find_stat_info(Stat) ->
 %%%===================================================================
 
 register_stat(P, App, Stat) ->
-    io:format("riak_stat_admin:register_stat(~p)~n", [Stat]),
+%%    io:format("riak_stat_admin:register_stat(~p)~n", [Stat]),
 
     {Name, Type, Opts, Aliases} =
         case Stat of
@@ -208,9 +218,9 @@ register_stat(P, App, Stat) ->
             {N, T, Os, As} -> {N, T, Os, As}
         end,
     StatName = stat_name(P, App, Name),
-    io:format("riak_stat_admin:stat_name(~p)~n", [StatName]),
+%%    io:format("riak_stat_admin:stat_name(~p)~n", [StatName]),
     NewOpts = add_cache(Opts),
-    io:format("riak_stat_admin:add_cache(~p)~n", [NewOpts]),
+%%    io:format("riak_stat_admin:add_cache(~p)~n", [NewOpts]),
   % Pull out the status of the stat from MetaData
     riak_core_stat_coordinator:register({StatName, Type, NewOpts, Aliases}).
 

@@ -127,6 +127,7 @@ fold(Fun, Acc0, FullPrefix) ->
            fold_opts()) -> any().
 fold(Fun, Acc0, FullPrefix, Opts) ->
     It = iterator(FullPrefix, Opts),
+  io:format("iteratore:~p~n", [It]),
     fold_it(Fun, Acc0, It).
 
 fold_it(Fun, Acc, It) ->
@@ -136,6 +137,7 @@ fold_it(Fun, Acc, It) ->
             Acc;
         false ->
             Next = Fun(itr_key_values(It), Acc),
+          io:format("Next: ~p~n", [Next]),
             fold_it(Fun, Next, itr_next(It))
     end.
 
@@ -184,7 +186,9 @@ iterator({Prefix, SubPrefix}=FullPrefix, Opts)
   when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
        (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
     KeyMatch = proplists:get_value(match, Opts),
+  io:format("KeyMatch = ~p~n", [KeyMatch]),
     It = riak_core_metadata_manager:iterator(FullPrefix, KeyMatch),
+  io:format("It: ~p~n", [It]),
     {It, Opts}.
 
 %% @doc Advances the iterator
@@ -297,10 +301,13 @@ itr_default({_, Opts}=It) ->
 -spec select(metadata_prefix(), ets:match_spec()) -> metadata_value().
 select({Prefix, SubPrefix}=FullPrefix, MatchSpec)
   when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
-       (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
+       (is_binary(SubPrefix) orelse is_atom(SubPrefix)) andalso
+        is_list(MatchSpec) orelse is_tuple(MatchSpec)->
+  io:format("16 riak_core_metadata:select(~p,~p)~n",[FullPrefix, MatchSpec]),
   case riak_core_metadata_manager:select(FullPrefix, MatchSpec) of
-    [] -> undefined;
-    Value -> Value
+    [] ->   io:format("21.A riak_core_metadata:select -> []~n"),
+      undefined;
+    Value -> io:format("21.B riak_core_metadata:select -> [~p]~n", [Value]), Value
   end.
 
 -spec replace(metadata_prefix(), ets:match_spec()) -> metadata_value().

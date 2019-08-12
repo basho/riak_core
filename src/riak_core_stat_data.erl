@@ -42,24 +42,32 @@
 %% console and metadata. Taken from legacy code 2013-2014
 %% @end
 data_sanitise(Data) ->
+  io:format("5.1 riak_core_stat_data:data_sanitise(~p)~n", [Data]),
   data_sanitise(Data, '_', enabled).
 data_sanitise([Da | Ta], Type, Status) when is_list(Da) ->
+  io:format("5.2 riak_core_stat_data:data_sanitise(~p|~p)~n", [Da,Ta]),
   Dat = list_to_binary(Da),
+  io:format("5.3 data_sanitise:list_to_binary = ~p~n", [Dat]),
   A = lists:map(fun(Stat) -> list_to_binary(Stat) end, Ta),
+  io:format("5.4 data_sanitise:list:map = ~p~n", [A]),
   data_sanitise([Dat | A], Type, Status);
 data_sanitise([Da | Ta], Type, Status) when is_atom(Da)  ->
+  io:format("5.5 data_sanitise:[Da|Ta] is atom(Da) = ~p ~p~n", [Da, Ta]),
   Data = lists:map(fun
                      ("**") -> <<"**">>;
                      ("*")  -> <<"*">>;
                      (D) -> atom_to_binary(D, latin1)
                    end, [Da|Ta]),
+  io:format("5.6 data_sanitise:atom_to_binary = ~p~n", [Data]),
   data_sanitise(Data, Type, Status);
 data_sanitise(Data, Type, Status) when is_binary(Data) ->
+  io:format("5.7 data_sanitise:is_ binary = ~p~n", [Data]),
   data_sanitise([Data], Type, Status);
 data_sanitise(Data, Type, Status) when is_atom(Data) ->
+  io:format("5.8 data_sanitise:is_atom = ~p~n", [Data]),
   data_sanitise([atom_to_binary(Data, latin1)], Type, Status);
 data_sanitise(Data, Type, Status) when is_list(Data) ->
-%%    io:format("Data in sanitise :~p~n", [Data]),
+  io:format("6 data_sanitise is_list(Data) = ~p~n", [Data]),
   lists:map(fun(D) ->
     data_sanitise_(D, Type, Status)
             end, Data).
@@ -68,11 +76,12 @@ data_sanitise(Data, Type, Status) when is_list(Data) ->
 data_sanitise_(Data, Type, Status) ->
   [Stat | Est] = re:split(Data, "/"),
   % [<<"riak.riak_kv.*.gets.**">> | <<"status=*">>]
-  io:format("Data : ~p -> Stat : ~p, Est : ~p~n", [Data, Stat, Est]),
+  io:format("7 [~p | ~p] = re:split(~p, /)~n", [Stat, Est, Data]),
   {Type, Status, DPs} = type_status_and_dps(Est, Type, Status, default),
-  io:format("Type : ~p -> Status : ~p, DPs : ~p~n", [Type, Status, DPs]),
+  io:format("8 {~p, ~p, ~p} = type_status_and_dps(Est, Type, Status, default)~n", [Type, Status, DPs]),
   {Names, MatchSpecs} = stat_entries(Stat, Type, Status),
-  io:format("Name : ~p, Matchspec : ~p, Dps : ~p~n", [Names, MatchSpecs, DPs]),
+  io:format("8.3 {~p, ~p} = stat_entries(~p, ~p, ~p)~n", [Names, MatchSpecs, Stat, Type, Status]),
+  io:format("8.4 {~p, ~p, ~p}~n", [Names, MatchSpecs, DPs]),
   {Names, MatchSpecs, DPs}.
 
 
@@ -80,7 +89,7 @@ data_sanitise_(Data, Type, Status) ->
 %% when /status=*, /type=* or /datapoints is given it can be extracted out
 %% @end
 type_status_and_dps([<<"type=", T/binary>> | Rest], _Type, Status, DPs) ->
-%%    io:format("types typestatusnaddps~n"),
+    io:format("7.1 type_status_and_dps([<<type=, ~p/binary>> | Rest]~n", [T]),
   NewType =
     case T of
       <<"*">> -> '_';
@@ -90,7 +99,7 @@ type_status_and_dps([<<"type=", T/binary>> | Rest], _Type, Status, DPs) ->
         end
     end, type_status_and_dps(Rest, NewType, Status, DPs);
 type_status_and_dps([<<"status=", S/binary>> | Rest], Type, _Status, DPs) ->
-%%    io:format("status typesatusanddps~n"),
+  io:format("7.2 type_status_and_dps([<<status=, ~p/binary>> | Rest]~n", [S]),
   NewStatus =
     case S of
       <<"*">> -> '_';
@@ -98,13 +107,13 @@ type_status_and_dps([<<"status=", S/binary>> | Rest], Type, _Status, DPs) ->
       <<"disabled">> -> disabled
     end, type_status_and_dps(Rest, Type, NewStatus, DPs);
 type_status_and_dps([DPsBin | Rest], Type, Status, DPs) ->
-%%    io:format("dps typestatusanddps~n"),
+  io:format("7.3 type_status_and_dps([~p | Rest]~n", [DPsBin]),
   NewDPs = merge(
     [binary_to_existing_atom(D, latin1) || D <- re:split(DPsBin, ",")],
     DPs),
   type_status_and_dps(Rest, Type, Status, NewDPs);
 type_status_and_dps([], Type, Status, DPs) ->
-%%    io:format("empty typestatusanddps~n"),
+  io:format("7.4 type_status_and_dps([])~n"),
   {Type, Status, DPs}.
 
 merge([_ | _] = DPs, default) ->
@@ -141,26 +150,26 @@ stat_entries("[" ++ _ = Expr, _Type, _Status) ->
       []
   end; %% legacy Code
 stat_entries(Data, Type, Status) when is_atom(Status) ->
-%%    io:format("stat_entries ----- Data : ~p ~n", [Data]),
+  io:format("8.1 stat_entries(~p,~p,~p)~n", [Data,Type,Status]),
   Parts = re:split(Data, "\\.", [{return, list}]),
-  io:format("stat_entries -----Parts : ~p ~n", [Parts]),
+  io:format("8.1.1 ~p = re:split(~p, \\., [{return, list}])~n", [Parts,Data]),
   Heads = replace_parts(Parts),
-  io:format("stat_entries -----Heads : ~p ~n", [Heads]),
+  io:format("8.2 ~p = replace_parts(~p)~n", [Heads,Parts]),
   {Heads,[{{H, Type, Status}, [], ['$_']} || H <- Heads]};
 stat_entries(_Stat, _Type, Status) ->
 %%    io:format("stat_entries illegal~n"),
   io:fwrite("(Illegal status : ~p~n", [Status]).
 
 replace_parts(Parts) ->
-%%    io:format("replace parts: ~p~n", [Parts]),
+  io:format("8.1.2 Heads = replace_parts(~p)~n", [Parts]),
   case split(Parts, "**", []) of
     {_, []} ->
-      io:format("replace_parts {_,[]}~n"),
+      io:format("8.1.3 replace_parts {_,[]}~n"),
 
       [replace_parts_1(Parts)];
     {Before, After} ->
-      io:format("replace_parts {Before,After}~n"),
-      io:format("Before:~p, After:~p~n", [Before, After]),
+      io:format("8.1.4 replace_parts {Before,After}~n"),
+      io:format("8.1.5 Before:~p, After:~p~n", [Before, After]),
 
       Head = replace_parts_1(Before),
       Tail = replace_parts_1(After),

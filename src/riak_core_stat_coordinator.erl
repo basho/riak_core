@@ -64,27 +64,37 @@
 %% the stat name and its status : {Stat, Status}
 %% @end
 find_entries(Stats, Status) ->
+  io:fwrite("26 riak_core_stat_coordinator:find_entries(~p,~p)~n", [Stats, Status]),
   case maybe_meta(fun find_entries_meta/2, {Stats, Status}) of
     false ->
+      find_entries_exom(Stats, Status);
+    ok ->
       find_entries_exom(Stats, Status);
     Stats ->
       Stats
   end.
 
 find_entries_meta(Stats, Status) ->
+  io:fwrite("27 riak_core_stat_coordinator:find_entries_meta(~p,~p)~n", [Stats, Status]),
   case riak_core_stat_metadata:find_entries(Stats, Status) of
     [] ->
-      legacy_search(Stats, Status);
+      find_entries_exom(Stats, Status);
+    ok ->
+      find_entries_exom(Stats, Status);
+    false ->
+      find_entries_exom(Stats, Status);
     {error, _Reason} ->
-      legacy_search(Stats, Status);
+      find_entries_exom(Stats, Status);
     Entries ->
+      io:format("Entries: ~p~n", [Entries]),
       Entries
   end.
 
 find_entries_exom(Stats, Status) ->
-  case legacy_search(Stats, Status) of
+  io:fwrite("29 riak_core_stat_coordinator:find_entries_exom(~p,~p)~n", [Stats, Status]),
+  case exo_select(Stats, Status) of
     [] ->
-      find_entries(Stats, Status);
+      legacy_search(Stats, Status);
     Entries ->
       Entries
   end.
@@ -95,6 +105,7 @@ find_entries_exom(Stats, Status) ->
 %% found in metadata/exometer
 %% @end
 legacy_search(Stats, Status) ->
+  io:fwrite("riak_core_stat_coordinator:legacy_search(~p,~p)~n", [Stats, Status]),
   case the_legacy_search(Stats, Status) of
     false ->
       [];
@@ -107,12 +118,15 @@ the_legacy_search(Stats, Status) ->
     legacy_search(Stat, '_', Status)
             end, Stats).
 legacy_search(Stat, Type, Status) ->
-  case re:run(Stat, "\\.", []) of
-    {match, _} ->
-      false;
-    nomatch ->
-      Re = <<"^", (make_re(Stat))/binary, "$">>,
-      [{Stat, legacy_search_(Re, Type, Status)}]
+  try case re:run(Stat, "\\.", []) of
+        {match, _} ->
+          false;
+        nomatch ->
+          Re = <<"^", (make_re(Stat))/binary, "$">>,
+          [{Stat, legacy_search_(Re, Type, Status)}];
+        _ -> false
+      end
+  catch _:_ -> false
   end.
 
 make_re(S) ->
@@ -242,7 +256,9 @@ reset_in_both(StatName) ->
   reset_exom_stat(StatName).
 
 select(Arg) ->
+  io:format("10 riak_core_stat_coordinator:select_entries(~p)~n", [Arg]),
   case maybe_meta(fun met_select/1, Arg) of
+    [] -> exo_select(Arg);
     false  ->
       exo_select(Arg);
     Stats ->
@@ -289,11 +305,11 @@ get_loaded_profile() ->
 %% and send that status to exometer
 %% @end
 register({Stat, Type, Opts, Aliases} = Arg) ->
-  io:format("riak_stat_coordinator:register(~p)~n", [Arg]),
+%%  io:format("riak_stat_coordinator:register(~p)~n", [Arg]),
   Fun = fun register_in_both/4,
   case maybe_meta(Fun, Arg) of
     false  ->
-      io:format("riak_stat_coordinatoe:register_in_exometer(Arg)~n"),
+%%      io:format("riak_stat_coordinatoe:register_in_exometer(Arg)~n"),
       register_in_exometer(Stat, Type, Opts, Aliases);
     Ans ->
       Ans
@@ -356,6 +372,7 @@ reload_metadata(Stats) ->
 
 
 maybe_meta(Fun, Args) ->
+  io:format("11 maybe_meta(~p,~p)~n", [Fun, Args]),
   case ?IS_ENABLED(?META_ENABLED) of
     true ->
       case Args of
@@ -371,6 +388,7 @@ maybe_meta(Fun, Args) ->
   end.
 
 register_in_metadata(StatInfo) ->
+%%  io:format("~nregister in metadata     ~p~n", [StatInfo]),
   riak_core_stat_metadata:register_stat(StatInfo).
 
 check_in_meta(Name) ->
@@ -389,6 +407,7 @@ reset_meta_stat(Arg) ->
   riak_core_stat_metadata:reset_stat(Arg).
 
 met_select(Arg) ->
+  io:format("12 met_select(Arg)~n"),
   riak_core_stat_metadata:select(Arg).
 
 
@@ -402,8 +421,19 @@ get_info(Name, Info) ->
 get_datapoint(Name, DP) ->
   riak_core_stat_exometer:get_datapoint(Name, DP).
 
+exo_select(Stats, Status) ->
+  exo_select([{{Stat, '_', '_'}, [{'==', '$status', Status}], ['$_']} || Stat <- Stats]).
+
 exo_select(Arg) ->
-  riak_core_stat_exometer:select_stat(Arg).
+  io:format("22 riak_core_stat_coordinator:exo_select(~p)~n", [Arg]),
+  case riak_core_stat_exometer:select_stat(Arg) of
+    [] ->   io:format("FINA riak_core_stat_coordinator:exo_select(~p) -> []~n", [Arg]),[];
+    false ->   io:format("FINB riak_core_stat_coordinator:exo_select(~p) -> false~n", [Arg]),[];
+    Other ->   io:format("FINC riak_core_stat_coordinator:exo_select(~p) -> ~p~n", [Arg, Other]), Other
+  end.
+
+%%find_entries_exom_(Stats, Status) ->
+%%  riak_core_stat_exometer:find_entries(Stats, Status).
 
 alias(Arg) ->
   riak_core_stat_exometer:alias(Arg).
@@ -414,7 +444,7 @@ aliases({Arg, Value}) ->
   riak_core_stat_exometer:aliases(Arg, Value).
 
 register_in_exometer(StatName, Type, Opts, Aliases) ->
-  io:format("riak_stat_coordinator:register_in_exometer(~p)~n", [StatName]),
+%%  io:format("riak_stat_coordinator:register_in_exometer(~p)~n", [StatName]),
   riak_core_stat_exometer:register_stat(StatName, Type, Opts, Aliases).
 
 unregister_in_exometer(StatName) ->

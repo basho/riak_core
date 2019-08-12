@@ -251,9 +251,18 @@ merge(Node, {PKey, _Context}, Obj) ->
 %% @doc Similar to iterator except a match_spec is passed in @end
 -spec select(metadata_prefix(), ets:match_spec()) -> metadata_value().
 select(Prefix, MS) ->
+  io:format("17 riak_core_metadata_manager(~p,~p)~n", [Prefix, MS]),
+  case ets:test_ms({[riak,object],[{enabled,spiral,[objects],[aliases]}]}, MS) of
+    {error, Error} -> io:format("18.A Error : ~p, MS : ~p~n", [Error, MS]);
+    {ok, Result} -> io:format("18.B Result: ~p, MS : ~p~n", [Result,MS]);
+    Other -> io:format("18.C Other: ~p~n", [Other])
+  end,
+  io:format("19 riak_core_metadata_manager(after ets:test)~n"),
   case ets_tab(Prefix) of
     undefined -> io_lib:format("Prefix not in Metadata : ~p~n", [Prefix]), undefined;
-    Tab -> ets:select(Tab, MS)
+    Tab ->
+      io:format("20 riak_core_metadata_manager@ets_tab = ~p~n", [Tab]),
+      ets:select(Tab, MS)
   end.
 
 %% @doc Similar to select except the values given in the match spec
@@ -583,6 +592,7 @@ store({FullPrefix, Key}=PKey, Metadata, State) ->
     Objs = [{Key, Metadata}],
     Hash = riak_core_metadata_object:hash(Metadata),
     ets:insert(ets_tab(FullPrefix), Objs),
+%%    io:format("ObJ:s ~p~n", Key),
     riak_core_metadata_hashtree:insert(PKey, Hash),
     ok = dets_insert(dets_tabname(FullPrefix), Objs),
     {Metadata, State}.
@@ -620,6 +630,7 @@ init_from_file(TabName, State) ->
     State.
 
 ets_tab(FullPrefix) ->
+%%  io:format("ets_tab: ~p~n", [FullPrefix]),
     case ets:lookup(?ETS, FullPrefix) of
         [] -> undefined;
         [{FullPrefix, TabId}] -> TabId
