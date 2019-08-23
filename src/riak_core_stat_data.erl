@@ -42,32 +42,32 @@
 %% console and metadata. Taken from legacy code 2013-2014
 %% @end
 data_sanitise(Data) ->
-  io:format("5.1 riak_core_stat_data:data_sanitise(~p)~n", [Data]),
+%%  io:format("5.1 riak_core_stat_data:data_sanitise(~p)~n", [Data]),
   data_sanitise(Data, '_', enabled).
 data_sanitise([Da | Ta], Type, Status) when is_list(Da) ->
-  io:format("5.2 riak_core_stat_data:data_sanitise(~p|~p)~n", [Da,Ta]),
+%%  io:format("5.2 riak_core_stat_data:data_sanitise(~p|~p)~n", [Da,Ta]),
   Dat = list_to_binary(Da),
-  io:format("5.3 data_sanitise:list_to_binary = ~p~n", [Dat]),
+%%  io:format("5.3 data_sanitise:list_to_binary = ~p~n", [Dat]),
   A = lists:map(fun(Stat) -> list_to_binary(Stat) end, Ta),
-  io:format("5.4 data_sanitise:list:map = ~p~n", [A]),
+%%  io:format("5.4 data_sanitise:list:map = ~p~n", [A]),
   data_sanitise([Dat | A], Type, Status);
 data_sanitise([Da | Ta], Type, Status) when is_atom(Da)  ->
-  io:format("5.5 data_sanitise:[Da|Ta] is atom(Da) = ~p ~p~n", [Da, Ta]),
+%%  io:format("5.5 data_sanitise:[Da|Ta] is atom(Da) = ~p ~p~n", [Da, Ta]),
   Data = lists:map(fun
                      ("**") -> <<"**">>;
                      ("*")  -> <<"*">>;
                      (D) -> atom_to_binary(D, latin1)
                    end, [Da|Ta]),
-  io:format("5.6 data_sanitise:atom_to_binary = ~p~n", [Data]),
+%%  io:format("5.6 data_sanitise:atom_to_binary = ~p~n", [Data]),
   data_sanitise(Data, Type, Status);
 data_sanitise(Data, Type, Status) when is_binary(Data) ->
-  io:format("5.7 data_sanitise:is_ binary = ~p~n", [Data]),
+%%  io:format("5.7 data_sanitise:is_ binary = ~p~n", [Data]),
   data_sanitise([Data], Type, Status);
 data_sanitise(Data, Type, Status) when is_atom(Data) ->
-  io:format("5.8 data_sanitise:is_atom = ~p~n", [Data]),
+%%  io:format("5.8 data_sanitise:is_atom = ~p~n", [Data]),
   data_sanitise([atom_to_binary(Data, latin1)], Type, Status);
 data_sanitise(Data, Type, Status) when is_list(Data) ->
-  io:format("6 data_sanitise is_list(Data) = ~p~n", [Data]),
+%%  io:format("6 data_sanitise is_list(Data) = ~p~n", [Data]),
   lists:map(fun(D) ->
     data_sanitise_(D, Type, Status)
             end, Data).
@@ -76,12 +76,12 @@ data_sanitise(Data, Type, Status) when is_list(Data) ->
 data_sanitise_(Data, Type, Status) ->
   [Stat | Est] = re:split(Data, "/"),
   % [<<"riak.riak_kv.*.gets.**">> | <<"status=*">>]
-  io:format("7 [~p | ~p] = re:split(~p, /)~n", [Stat, Est, Data]),
-  {Type, Status, DPs} = type_status_and_dps(Est, Type, Status, default),
-  io:format("8 {~p, ~p, ~p} = type_status_and_dps(Est, Type, Status, default)~n", [Type, Status, DPs]),
-  {Names, MatchSpecs} = stat_entries(Stat, Type, Status),
+%%  io:format("7 [~p | ~p] = re:split(~p, /)~n", [Stat, Est, Data]),
+  {NewType, NewStatus, DPs} = type_status_and_dps(Est, Type, Status, default),
+  io:format("8 {~p, ~p, ~p} = type_status_and_dps(Est, Type, Status, default)~n", [NewType, Status, DPs]),
+  {Names, MatchSpecs} = stat_entries(Stat, NewType, NewStatus),
   io:format("8.3 {~p, ~p} = stat_entries(~p, ~p, ~p)~n", [Names, MatchSpecs, Stat, Type, Status]),
-  io:format("8.4 {~p, ~p, ~p}~n", [Names, MatchSpecs, DPs]),
+%%  io:format("8.4 {~p, ~p, ~p}~n", [Names, MatchSpecs, DPs]),
   {Names, MatchSpecs, DPs}.
 
 
@@ -89,7 +89,7 @@ data_sanitise_(Data, Type, Status) ->
 %% when /status=*, /type=* or /datapoints is given it can be extracted out
 %% @end
 type_status_and_dps([<<"type=", T/binary>> | Rest], _Type, Status, DPs) ->
-    io:format("7.1 type_status_and_dps([<<type=, ~p/binary>> | Rest]~n", [T]),
+%%    io:format("7.1 type_status_and_dps([<<type=, ~p/binary>> | Rest]~n", [T]),
   NewType =
     case T of
       <<"*">> -> '_';
@@ -99,7 +99,7 @@ type_status_and_dps([<<"type=", T/binary>> | Rest], _Type, Status, DPs) ->
         end
     end, type_status_and_dps(Rest, NewType, Status, DPs);
 type_status_and_dps([<<"status=", S/binary>> | Rest], Type, _Status, DPs) ->
-  io:format("7.2 type_status_and_dps([<<status=, ~p/binary>> | Rest]~n", [S]),
+%%  io:format("7.2 type_status_and_dps([<<status=, ~p/binary>> | Rest]~n", [S]),
   NewStatus =
     case S of
       <<"*">> -> '_';
@@ -107,13 +107,13 @@ type_status_and_dps([<<"status=", S/binary>> | Rest], Type, _Status, DPs) ->
       <<"disabled">> -> disabled
     end, type_status_and_dps(Rest, Type, NewStatus, DPs);
 type_status_and_dps([DPsBin | Rest], Type, Status, DPs) ->
-  io:format("7.3 type_status_and_dps([~p | Rest]~n", [DPsBin]),
+%%  io:format("7.3 type_status_and_dps([~p | Rest]~n", [DPsBin]),
   NewDPs = merge(
     [binary_to_existing_atom(D, latin1) || D <- re:split(DPsBin, ",")],
     DPs),
   type_status_and_dps(Rest, Type, Status, NewDPs);
 type_status_and_dps([], Type, Status, DPs) ->
-  io:format("7.4 type_status_and_dps([])~n"),
+%%  io:format("7.4 type_status_and_dps([])~n"),
   {Type, Status, DPs}.
 
 merge([_ | _] = DPs, default) ->
@@ -150,26 +150,26 @@ stat_entries("[" ++ _ = Expr, _Type, _Status) ->
       []
   end; %% legacy Code
 stat_entries(Data, Type, Status) when is_atom(Status) ->
-  io:format("8.1 stat_entries(~p,~p,~p)~n", [Data,Type,Status]),
+%%  io:format("8.1 stat_entries(~p,~p,~p)~n", [Data,Type,Status]),
   Parts = re:split(Data, "\\.", [{return, list}]),
-  io:format("8.1.1 ~p = re:split(~p, \\., [{return, list}])~n", [Parts,Data]),
+%%  io:format("8.1.1 ~p = re:split(~p, \\., [{return, list}])~n", [Parts,Data]),
   Heads = replace_parts(Parts),
-  io:format("8.2 ~p = replace_parts(~p)~n", [Heads,Parts]),
+%%  io:format("8.2 ~p = replace_parts(~p)~n", [Heads,Parts]),
   {Heads,[{{H, Type, Status}, [], ['$_']} || H <- Heads]};
 stat_entries(_Stat, _Type, Status) ->
 %%    io:format("stat_entries illegal~n"),
   io:fwrite("(Illegal status : ~p~n", [Status]).
 
 replace_parts(Parts) ->
-  io:format("8.1.2 Heads = replace_parts(~p)~n", [Parts]),
+%%  io:format("8.1.2 Heads = replace_parts(~p)~n", [Parts]),
   case split(Parts, "**", []) of
     {_, []} ->
-      io:format("8.1.3 replace_parts {_,[]}~n"),
+%%      io:format("8.1.3 replace_parts {_,[]}~n"),
 
       [replace_parts_1(Parts)];
     {Before, After} ->
-      io:format("8.1.4 replace_parts {Before,After}~n"),
-      io:format("8.1.5 Before:~p, After:~p~n", [Before, After]),
+%%      io:format("8.1.4 replace_parts {Before,After}~n"),
+%%      io:format("8.1.5 Before:~p, After:~p~n", [Before, After]),
 
       Head = replace_parts_1(Before),
       Tail = replace_parts_1(After),
@@ -191,8 +191,8 @@ replace_parts_1([H | T]) ->
   R = replace_part(H),
   case T of
     '_' -> '_';
-    "**" -> [R] ++ ['_'];
-    ["**"] -> [R] ++ ['_'];
+    "**" -> [R] ++ '_';
+    ["**"] -> [R] ++ '_';
     _ -> [R | replace_parts_1(T)]
   end;
 replace_parts_1([]) ->
@@ -263,10 +263,12 @@ print({[], _}, _) ->
   io_lib:fwrite("No matching stats~n", []);
 print({Entry, DP}, _) when is_atom(DP) ->
   io:fwrite("~p: ~p~n", [Entry, DP]);
+%%print({Entries, DPs}, []) ->
+%%  io:fwrite("~p~n", [Entries])
 print({Entries, DPs}, []) ->
   io:fwrite("~p:~n", [Entries]),
   [io:fwrite("~p: ~p~n", [DP, Data])
-    || {DP, Data} <- DPs];
+    || {DP, Data} <- DPs, Data =/= undefined, Data =/= []];
 print({Entries, _}, Attrs) ->
   lists:foreach(
     fun({N, _, _}) ->
@@ -298,17 +300,23 @@ get_datapoint(E, DPs) ->
 
 % used to print the entire stat information
 print_info_1(N, [A | Attrs]) ->
-  Hdr = lists:flatten(io_lib:fwrite("~p: ", [N])),
+  Hdr = lists:flatten(io_lib:fwrite("~p: ~n", [N])),
   Pad = lists:duplicate(length(Hdr), $\s),
   Info = get_info(core, N),
   Status = proplists:get_value(status, Info, enabled),
-  Body = [io_lib:fwrite("~w = ~p~n", [A, proplists:get_value(A, Info)])
+  Body = [case proplists:get_value(A, Info) of
+            undefined -> [];
+            Other -> io_lib:fwrite("~w = ~p~n", [A, Other])
+          end
     | lists:map(fun(value) ->
       io_lib:fwrite(Pad ++ "~w = ~p~n",
         [value, get_value(N, Status, default)]);
       (Ax) ->
-        io_lib:fwrite(Pad ++ "~w = ~p~n",
-          [Ax, proplists:get_value(Ax, Info)])
+        case proplists:get_value(Ax, Info) of
+          undefined -> [];
+          Other -> io_lib:fwrite(Pad ++ "~w = ~p~n",
+            [Ax, Other])
+        end
                 end, Attrs)],
   io:put_chars([Hdr, Body]).
 

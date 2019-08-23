@@ -11,7 +11,7 @@
 
 %% Console API
 -export([
-  find_entries/2,
+  find_entries/3,
   find_static_stats/1,
   find_stats_info/2,
   change_status/1,
@@ -28,7 +28,9 @@
   get_loaded_profile/0
 ]).
 
+%% Admin API
 -export([
+  get_values/1,
   register/1,
   update/3,
   unregister/1,
@@ -45,11 +47,9 @@
 -export([
   get_info/2,
   get_datapoint/2,
-  select/1,
   alias/1,
   aliases/1,
-  aliases/2,
-  get_values/1
+  aliases/2
 ]).
 
 -define(DISABLED_META_RESPONSE, io:fwrite("Metadata is Disabled~n")).
@@ -58,75 +58,130 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%% Console API %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
--spec(find_entries(stats(), status()) -> stats()).
+-spec(find_entries(pattern(), stats(), datapoint()) -> stats()).
 %% @doc
 %% Find the entries in exometer if the metadata is disabled, return
 %% the stat name and its status : {Stat, Status}
 %% @end
-find_entries(Stats, Status) ->
-  io:fwrite("26 riak_core_stat_coordinator:find_entries(~p,~p)~n", [Stats, Status]),
-  case maybe_meta(fun find_entries_meta/2, {Stats, Status}) of
-    false ->
-      find_entries_exom(Stats, Status);
-    ok ->
-      find_entries_exom(Stats, Status);
-    Stats ->
-      Stats
+find_entries(MatchSpec, Stats,DP) ->
+  [{{_Name, Type, Status},_G,_O}] = MatchSpec,
+%%  io:format("Type: ~p~n", [Type]),
+  case maybe_meta(fun find_entries_meta/4, {Stats, Status, Type, DP}) of
+    false -> find_entries_exom(Stats, Status, MatchSpec, DP);
+    NewStats -> NewStats
   end.
 
-find_entries_meta(Stats, Status) ->
-  io:fwrite("27 riak_core_stat_coordinator:find_entries_meta(~p,~p)~n", [Stats, Status]),
-  case riak_core_stat_metadata:find_entries(Stats, Status) of
-    [] ->
-      find_entries_exom(Stats, Status);
-    ok ->
-      find_entries_exom(Stats, Status);
-    false ->
-      find_entries_exom(Stats, Status);
-    {error, _Reason} ->
-      find_entries_exom(Stats, Status);
-    Entries ->
-      io:format("Entries: ~p~n", [Entries]),
-      Entries
+find_entries_meta(Stats, Status ,Type, DP) ->
+%%  io:format("find_entries_meta~n"),
+  case riak_core_stat_metadata:find_entries(Stats, Status, Type, DP) of
+    [] -> find_entries_exom(Stats, Status, Type, DP);
+    {error, _Reason} -> find_entries_exom(Stats, Status, Type, DP);
+    NewStats ->
+%%      io:format("~p~n",[NewStats]),
+      find_entries_aliases(NewStats)
   end.
 
-find_entries_exom(Stats, Status) ->
-  io:fwrite("29 riak_core_stat_coordinator:find_entries_exom(~p,~p)~n", [Stats, Status]),
-  case exo_select(Stats, Status) of
-    [] ->
-      legacy_search(Stats, Status);
-    Entries ->
-      Entries
+
+find_entries_exom(Stats, Status, Type, []) ->
+  find_entries_exom(Stats, Status,Type);
+find_entries_exom(Stats, Status, Type, DP) ->
+  Stats = find_entries_exom(Stats, Status, Type),
+  lists:map(fun
+              ({Stat,Type0,Status0}) ->
+                DPS = [find_entries_dps(Stat,D,[]) || D <- DP],
+                case lists:flatten(DPS) of
+                  [] -> {Stat,Type0, Status0};
+                  DPO -> {Stat,Type0,Status0,DPO}
+                end;
+              ({Stat, Status0}) ->
+                DPS = [find_entries_dps(Stat,D,[]) || D <- DP],
+                case lists:flatten(DPS) of
+                  [] -> {Stat,Status0};
+                  DPO -> {Stat,Status0,DPO}
+                end
+            end, Stats).
+find_entries_exom(Stats, Status, Type) when is_atom(Type) ->
+%%  io:format("find_entries_exom~n"),
+  case legacy_search(Stats, Type, Status) of
+    [] -> exo_select(Stats, Status, Type);
+    Entries -> Entries
+  end;
+find_entries_exom(Stats, Status, MS) ->
+  case legacy_search(Stats, Status) of
+    [] -> exo_select(MS);
+    OtherWise -> OtherWise
   end.
 
--spec(legacy_search(stats(), status()) -> stats()).
+
+find_entries_dps(Stat, DP, Default) ->
+  case get_datapoint(Stat,DP) of
+    {ok,Ans} -> Ans;
+    {error,_} -> Default
+  end.
+
+find_entries_aliases(Stats) ->
+  lists:foldl(fun
+%%              ({Name, Status},Acc) ->
+%%                [{Name, Status}|Acc];
+%%              ({Name, Type, Status},Acc) ->
+%%                [{Name, Type, Status}|Acc];
+
+%%              ({Name, Type, Status, Aliases},Acc) ->
+%%                DPS = [riak_core_stat_exometer:find_alias(Name, {DP,Alias}) || {DP, Alias} <- Aliases],
+%%                case lists:flatten(DPS) of
+%%                  [] -> Acc;
+%%                  DPO -> [{Name, Status, DPO}|Acc]
+%%                end;
+
+              ({Name, Type, Status, Aliases},Acc) ->
+                DPS = [riak_core_stat_exometer:find_alias(Alias) || Alias <- Aliases],
+                [{Name, Type, Status, DPS}|Acc];
+
+                (Other,Acc) ->
+                  [Other| Acc]
+
+
+            end, [], Stats).
+
+
+  -spec(legacy_search(stats(), status()) -> stats()).
 %% @doc
 %% legacy code to find the stat and its status, in case it isn't
 %% found in metadata/exometer
 %% @end
 legacy_search(Stats, Status) ->
-  io:fwrite("riak_core_stat_coordinator:legacy_search(~p,~p)~n", [Stats, Status]),
-  case the_legacy_search(Stats, Status) of
-    false ->
-      [];
-    Stats ->
-      Stats
+%%  io:format("legacy search stats: ~p, Status: ~p~n", [Stats, Status]),
+  [Stats2] = lists:flatten(Stats),
+  Stats1 = atom_to_binary(Stats2, latin1),
+  case legacy_search(Stats1,'_', Status) of
+    false -> [];
+    [false] -> [];
+    Stats0 -> Stats0
   end.
 
-the_legacy_search(Stats, Status) ->
-  lists:map(fun(Stat) ->
-    legacy_search(Stat, '_', Status)
-            end, Stats).
+%%the_legacy_search(Stats, Status) ->
+%%  lists:map(fun([Stat]) when is_atom(Stat)->
+%%    Stat0 = atom_to_binary(Stat, latin1),
+%%    io:format("stat: ~p~n", [Stat0]),
+%%    legacy_search(Stat0, '_', Status)
+%%            end, Stats).
 legacy_search(Stat, Type, Status) ->
   try case re:run(Stat, "\\.", []) of
         {match, _} ->
+%%          io:format("match~n"),
           false;
         nomatch ->
+%%          io:format("nomatch~n"),
           Re = <<"^", (make_re(Stat))/binary, "$">>,
-          [{Stat, legacy_search_(Re, Type, Status)}];
-        _ -> false
+          {Stat, legacy_search_(Re, Type, Status)};
+        {error, _Reason} -> false;
+        _ ->
+%%          io:format("O ~p~n", [O]),
+          false
       end
-  catch _:_ -> false
+  catch _:_ ->
+%%    io:format("Rea ~p~n", [Rea]),
+    false
   end.
 
 make_re(S) ->
@@ -158,8 +213,10 @@ split_pattern(B, Acc) ->
 
 legacy_search_(N, Type, Status) ->
   Found = aliases(regexp_foldr, [N]),
+%%  io:format("Found ~p~n", [Found]),
   lists:foldr(
     fun({Entry, DPs}, Acc) ->
+%%      io:format("Entry ~p DPs ~p~n", [Entry, DPs]),
       case match_type(Entry, Type) of
         true ->
           DPnames = [D || {D, _} <- DPs],
@@ -255,15 +312,7 @@ reset_in_both(StatName) ->
   reset_meta_stat(StatName),
   reset_exom_stat(StatName).
 
-select(Arg) ->
-  io:format("10 riak_core_stat_coordinator:select_entries(~p)~n", [Arg]),
-  case maybe_meta(fun met_select/1, Arg) of
-    [] -> exo_select(Arg);
-    false  ->
-      exo_select(Arg);
-    Stats ->
-      Stats
-  end.
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%% Profile API %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -298,6 +347,17 @@ get_loaded_profile() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%% Admin API %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+-spec(get_values(arg()) -> stats()).
+%% @doc get the values from exometer of path given @end
+get_values(Arg) ->
+  [{Stats, _MS, _DPS}] = riak_core_stat_data:data_sanitise(Arg),
+  lists:map(fun(Path) ->
+    riak_core_stat_exometer:get_values(Path)
+            end, Stats).
+
+%%%----------------------------------------------------------------%%%
+
 
 -spec(register(data()) -> ok | error()).
 %% @doc
@@ -372,7 +432,6 @@ reload_metadata(Stats) ->
 
 
 maybe_meta(Fun, Args) ->
-  io:format("11 maybe_meta(~p,~p)~n", [Fun, Args]),
   case ?IS_ENABLED(?META_ENABLED) of
     true ->
       case Args of
@@ -388,7 +447,6 @@ maybe_meta(Fun, Args) ->
   end.
 
 register_in_metadata(StatInfo) ->
-%%  io:format("~nregister in metadata     ~p~n", [StatInfo]),
   riak_core_stat_metadata:register_stat(StatInfo).
 
 check_in_meta(Name) ->
@@ -406,9 +464,7 @@ unregister_in_metadata(StatName) ->
 reset_meta_stat(Arg) ->
   riak_core_stat_metadata:reset_stat(Arg).
 
-met_select(Arg) ->
-  io:format("12 met_select(Arg)~n"),
-  riak_core_stat_metadata:select(Arg).
+
 
 
 %%%===================================================================
@@ -421,11 +477,11 @@ get_info(Name, Info) ->
 get_datapoint(Name, DP) ->
   riak_core_stat_exometer:get_datapoint(Name, DP).
 
-exo_select(Stats, Status) ->
-  exo_select([{{Stat, '_', '_'}, [{'==', '$status', Status}], ['$_']} || Stat <- Stats]).
+exo_select(Stats, Status, Type) ->
+  exo_select([{{Stat, Type, '_'}, [{'==', '$status', Status}], ['$_']} || Stat <- Stats]).
 
 exo_select(Arg) ->
-  io:format("22 riak_core_stat_coordinator:exo_select(~p)~n", [Arg]),
+%%  io:format("22 riak_core_stat_coordinator:exo_select(~p)~n", [Arg]),
   case riak_core_stat_exometer:select_stat(Arg) of
     [] ->   io:format("FINA riak_core_stat_coordinator:exo_select(~p) -> []~n", [Arg]),[];
     false ->   io:format("FINB riak_core_stat_coordinator:exo_select(~p) -> false~n", [Arg]),[];
@@ -461,8 +517,3 @@ update_exom(Name, IncrBy, Type) ->
 
 %%%===================================================================
 
-get_values(Arg) ->
-  {Stats, _MS, _DPS} = riak_core_stat_admin:data_sanitise(Arg),
-  lists:map(fun(Path) ->
-    riak_core_stat_exometer:get_values(Path)
-            end, Stats).

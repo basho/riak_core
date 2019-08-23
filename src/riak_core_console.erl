@@ -1155,25 +1155,26 @@ parse_cidr(CIDR) ->
     {ok, Addr} = inet_parse:address(IP),
     {Addr, list_to_integer(Mask)}.
 
+
 %%%-------------------------------------------------------------------
-%%% riak_stat functions
+%%% Stat functions
 %%%-------------------------------------------------------------------
-%%%%%%%%%%%%%%%
-%%% console %%%
-%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%% console %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -spec(stat_show(Arg :: term()) -> ok | term()).
 %% @doc
-%% riak-admin stat enabled riak.** % shows enabled stats etc
+%% riak-admin stat riak.** % shows enabled stats etc
 %% @end
 stat_show(Arg) ->
-    io:format("1 riak_core_console:stat_show(~p)~n", [Arg]),
+%%    io:format("1 riak_core_console:stat_show(~p)~n", [Arg]),
     riak_core_stat_console:show_stat(Arg).
 
 -spec(stat_0(Arg :: term()) -> ok | term()).
 %% @doc
 %% Check all the stats in exometer that are not being updated by testing
-%% or otherwise, includes their vclock so their registration can be checked
+%% or otherwise,
 %% This helps disable stats that are unused.
 %% behaves similar to stat show/info
 %% @end
@@ -1216,9 +1217,9 @@ stat_disable(Arg) ->
 stat_reset(Arg) ->
     riak_core_stat_console:reset_stat(Arg).
 
-%%%%%%%%%%%%%%%
-%%% profile %%%
-%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%% profile %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -spec(load_profile(FileName :: term()) -> term()).
 %% @doc
@@ -1258,12 +1259,28 @@ reset_profile(_Arg) ->
 reset_profile() ->
     riak_core_stat_profiles:reset_profile().
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Other %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 -spec(enable_metadata(term()) -> ok).
 %% @doc
 %% enable the metadata, arg should be true or false, if false then the communication to the metadata ends
 %% @end
 enable_metadata(Arg) ->
     riak_core_stat_console:enable_metadata(Arg).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%% polling %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+-spec(setdown_endpoint(term()) -> ok).
+%% @doc
+%% disable the connection, Port given doesn't always matter - unless multiple ports are open
+%% terminates gen_servers
+%% @end
+setdown_endpoint(Arg) ->
+  riak_core_stat_ep:setdown(Arg).
 
 -spec(setup_endpoint(term()) -> ok).
 %% @doc
@@ -1276,10 +1293,3 @@ enable_metadata(Arg) ->
 setup_endpoint(Arg) ->
     riak_core_stat_ep:setup(Arg).
 
--spec(setdown_endpoint(term()) -> ok).
-%% @doc
-%% disable the connection, Port given doesn't always matter - unless multiple ports are open
-%% terminates gen_servers
-%% @end
-setdown_endpoint(Arg) ->
-    riak_core_stat_ep:setdown(Arg).

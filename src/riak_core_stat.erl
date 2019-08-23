@@ -24,10 +24,11 @@
 
 %% API
 -export([
-    start_link/0, get_stats/0, get_stats/1, get_value/1,
-    get_stats_info/0, get_stat/1, update/1,
+    start_link/0,
+    get_stats/0, get_stats/1, get_value/1,
+    get_stat/1, get_info/0, update/1,
     register_stats/0, vnodeq_stats/0,
-	  register_stats/2,
+	  register_stats/2, aggregate/2,
 	  register_vnode_stats/3, unregister_vnode_stats/2,
 	  vnodeq_stats/1
 ]).
@@ -51,6 +52,8 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
+%%%----------------------------------------------------------------%%%
+
 register_stats() ->
     register_stats(common, system_stats()),
     register_stats(?APP, stats()).
@@ -62,48 +65,59 @@ register_stats(App, Stats) ->
 
 register_vnode_stats(Module, Index, Pid) ->
   F = fun vnodeq_atom/2,
-  Stat1 =  {[vnodes_running, Module],
-    { function, exometer, select_count,
+  Stat1 =
+    {[vnodes_running, Module],
+    {function, exometer, select_count,
       [[{ {[vnodeq, Module, '_'], '_', '_'},
         [], [true] }]], match, value }, [],
-    [{aliases, [{value, F(Module, <<"s_running">>)}]}]},
+    [{aliases,[{value, F(Module, <<"s_running">>)}]}]},
 
-  Stat2 = {[vnodeq, Module],
+  Stat2 =
+    {[vnodeq, Module],
     {function, riak_core_stat, vnodeq_stats, [Module],
       histogram, [mean,median,min,max,total]},[],
-    [{aliases, [{mean  , F(Module, <<"q_mean">>)},
+    [{aliases,[{mean  , F(Module, <<"q_mean">>)},
       {median, F(Module, <<"q_median">>)},
       {min   , F(Module, <<"q_min">>)},
       {max   , F(Module, <<"q_max">>)},
       {total , F(Module, <<"q_total">>)}]}]},
 
   Stat3 = {[vnodeq, Module, Index],
-    function, [{ arg, {erlang, process_info, [Pid, message_queue_len],
-      match, {'_', value} }}]},
+    function, [{ arg, {erlang, process_info, [Pid, message_queue_len], match, {'_', value} }}]},
 
   RegisterStats = [Stat1, Stat2, Stat3],
   register_stats(?APP, RegisterStats).
 
+%%%----------------------------------------------------------------%%%
+
 unregister_vnode_stats(Module, Index) ->
   riak_core_stat_admin:unregister(Module, Index, vnodeq, ?APP).
 
+%%%----------------------------------------------------------------%%%
 
 %% @spec get_stats() -> proplist()
 %% @doc Get the current aggregation of stats.
 get_stats() ->
     get_stats(?APP).
 
-get_stats(App) ->
-  riak_core_stat_admin:get_app_stats(App).
-
-get_stats_info() ->
-  riak_core_stat_admin:get_stats_info(?APP).
+get_stats(Arg) ->
+  riak_core_stat_admin:get_stats(Arg).
 
 get_stat(Arg) ->
-  get_value([?PFX, ?APP | Arg]).
+  riak_core_stat_admin:get_stat(Arg).
 
 get_value(Arg) ->
-  riak_core_stat_admin:get_stat_value(Arg).
+  riak_core_stat_admin:get_value(Arg).
+
+get_info() ->
+  riak_core_stat_admin:get_info(?APP).
+
+%%%----------------------------------------------------------------%%%
+
+aggregate(Stats, DPS) ->
+  riak_core_stat_admin:aggregate(Stats, DPS).
+
+%%%----------------------------------------------------------------%%%
 
 update(Arg) ->
     gen_server:cast(?SERVER, {update, Arg}).
@@ -139,12 +153,8 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 exometer_update(Name, Value, Type) ->
-    case riak_core_stat_admin:update(Name, Value, Type) of
-        {error, not_found} ->
-            lager:debug("~p not found on update.", [Name]);
-        ok ->
-            ok
-    end.
+      riak_core_stat_admin:update(Name, Value, Type).
+
 
 update_metric(converge_timer_begin ) -> converge_delay;
 update_metric(converge_timer_end   ) -> converge_delay;

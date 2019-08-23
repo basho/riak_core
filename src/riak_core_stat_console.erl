@@ -4,7 +4,7 @@
 %%% enable/disable or read stats from exometer/metadata
 %%%
 %%% calls from endpoint to this module to retrieve stats
-%%% for a UDP or HTTP endpoint
+%%% for a UDP endpoint
 %%% @end
 %%%-------------------------------------------------------------------
 -module(riak_core_stat_console).
@@ -42,31 +42,25 @@
 %% otherwise use: riak-admin stat show <entry>/status=* | disabled
 %% @end
 show_stat(Arg) ->
-  io:format("2 riak_core_stat_console:show_stat(~p)~n", [Arg]),
-
   [{Stats, MatchSpec, DP}] = data_sanitise(Arg),
-  io:format("[{~p, ~p, ~p}] = data_sanitise(~p)~n", [Stats, MatchSpec, DP, Arg]),
-  Entries =
-    case find_entries(Stats, enabled) of
-      [] -> select_entries(MatchSpec);
-      ok -> select_entries(MatchSpec);
-      SelectStats -> io:format("24 hit it in seelect:~p~n", [SelectStats]), SelectStats
-    end ,
-  io:format("Entries = (~p)~n", [Entries]),
-  Stats =
+%%  io:format("Stats: ~p, MS: ~p, DP ~p~n", [Stats, MatchSpec, DP]),
+%%  Entries = find_entries(MatchSpec, Stats),
+%%  io:format("Entries ~p~n", [Entries]),
+  NewStats =
     case DP of
-      default -> [{Entry, Status} || {Entry, _, Status} <- Entries];
-      _ -> [find_stat_info(Entry, DP) || {Entry, _, _} <- Entries]
+      default -> find_entries(MatchSpec, Stats);
+      _ -> find_entries(MatchSpec, Stats, DP)
+%%      [{Entry, find_stat_info(Entry, DP)} || {Entry, _Status} <-  find_entries(MatchSpec, Stats)]
     end,
-  print_stats(Stats).
+  print_stats(NewStats).
 
 -spec(show_stat_0(data()) -> value()).
 %% @doc
 %% Check which stats in exometer are not updating, only checks enabled
 %% @end
 show_stat_0(Arg) ->
-  [{_Stats, MatchSpec, _DP}] = data_sanitise(Arg),
-  Entries = [Entry || {Entry, _,_} <- select_entries(MatchSpec)],
+  [{Stats, MatchSpec, _DP}] = data_sanitise(Arg),
+  Entries = [Entry || {Entry, _St} <- find_entries(MatchSpec, Stats)],
   NotUpdating = not_updating(Entries),
   print_stats(NotUpdating).
 
@@ -76,8 +70,8 @@ show_stat_0(Arg) ->
 %% @end
 stat_info(Arg) ->
   {Attrs, RestArg} = pick_info_attrs(Arg),
-  [{Stats, _MatchSpec, _DP}] = data_sanitise(RestArg),
-  Entries = find_entries(Stats, enabled),
+  [{Stats, MatchSpec, _DP}] = data_sanitise(RestArg),
+  Entries = find_entries(MatchSpec, Stats),
   Found = [find_stat_info(Entry, Attrs) || {Entry, _} <- Entries],
   print_stats(Found).
 
@@ -87,8 +81,8 @@ stat_info(Arg) ->
 %% are not updating
 %% @end
 disable_stat_0(Arg) ->
-  [{_S, MatchSpec, _DP}] = data_sanitise(Arg),
-  Entries = [Entry || {Entry, _,_} <- select_entries(MatchSpec)],
+  [{Stats, MatchSpec, _DP}] = data_sanitise(Arg),
+  Entries = [Entry || {Entry, _,_} <- find_entries(MatchSpec, Stats)],
   NotUpdating = not_updating(Entries),
   DisableTheseStats =
     lists:map(fun({Name, _V}) ->
@@ -101,11 +95,11 @@ disable_stat_0(Arg) ->
 %% change the status of the stat (in metadata and) in exometer
 %% @end
 status_change(Arg, ToStatus) ->
-  [{Stats, _MatchSpec, _DP}] = data_sanitise(Arg),
+  [{Stats, MatchSpec, _DP}] = data_sanitise(Arg),
   Entries = % if disabling lots of stats, pull out only enabled ones
   case ToStatus of
-    enabled -> find_entries(Stats, disabled);
-    disabled -> find_entries(Stats, enabled)
+    enabled -> find_entries(MatchSpec, Stats);
+    disabled -> find_entries(MatchSpec, Stats)
   end,
   change_status([{Stat, {status, Status}} || {Stat, Status} <- Entries]).
 
@@ -115,8 +109,8 @@ status_change(Arg, ToStatus) ->
 %% has been reset
 %% @end
 reset_stat(Arg) ->
-  [{Stats, _MatchSpec, _DP}] = data_sanitise(Arg),
-  reset_stats([Entry || {Entry, _} <- find_entries(Stats, enabled)]).
+  [{Stats, MatchSpec, _DP}] = data_sanitise(Arg),
+  reset_stats([Entry || {Entry, _} <- find_entries(MatchSpec, Stats)]).
 
 -spec(enable_metadata(data()) -> ok).
 %% @doc
@@ -148,25 +142,24 @@ enable_metadata(Arg) ->
 %%%===================================================================
 
 data_sanitise(Arg) ->
-  io:format("3 riak_core_stat_admin:data_sanitise(~p)~n", [Arg]),
-  riak_core_stat_admin:data_sanitise(Arg).
+%%  io:format("3 riak_core_stat_admin:data_sanitise(~p)~n", [Arg]),
+  riak_core_stat_data:data_sanitise(Arg).
 
 print_stats(Entries) ->
   print_stats(Entries, []).
 print_stats(Entries, Attributes) ->
-  riak_core_stat_admin:print(Entries, Attributes).
+  riak_core_stat_data:print(Entries, Attributes).
 
 %%%===================================================================
 %%% Coordinator API
 %%%===================================================================
 
-find_entries(StatNames, Status) ->
-  io:format("25 find_entries"),
-  riak_core_stat_coordinator:find_entries(StatNames, Status).
+find_entries(MatchSpec, StatNames) ->
+%%  io:format("25 find_entries"),
+  find_entries(MatchSpec, StatNames,[]).
 
-select_entries(MS) ->
-  io:format("9 select_entries(~p)~n", [MS]),
-  riak_core_stat_coordinator:select(MS).
+find_entries(MatchSpec,StatNames, DP) ->
+  riak_core_stat_coordinator:find_entries(MatchSpec, StatNames, DP).
 
 not_updating(StatNames) ->
   riak_core_stat_coordinator:find_static_stats(StatNames).

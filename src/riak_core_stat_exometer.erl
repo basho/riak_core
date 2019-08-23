@@ -10,6 +10,7 @@
 %% API
 -export([
   find_entries/2,
+  find_alias/1,
   find_static_stats/1,
   find_stats_info/2,
   register_stat/4,
@@ -93,10 +94,34 @@ find_static_stats(Stats) when is_list(Stats) ->
 %% @end
 find_stats_info(Stats, Info) when is_atom(Info) ->
   find_stats_info(Stats, [Info]);
-find_stats_info(Stats, Info) when is_list(Info) ->
-  lists:map(fun(Stat) ->
-    [{Stat, [{DP, get_datapoint(Stat, DP)} || DP <- Info]}]
-            end, Stats).
+find_stats_info(Stat, Info) when is_list(Info) ->
+  lists:foldl(fun(DP,Acc) ->
+    case get_datapoint(Stat, DP) of
+      {ok, [{DP,Error}]} ->
+        io:format("Error: ~p~n", [Error]),
+        Acc;
+      {ok,Value} ->
+        io:format("Value: ~p~n", [Value]),
+        [{DP,Value}|Acc];
+      {error, R} ->
+        io:format("error: ~p~n", [R]),
+        Acc;
+      {DP,undefined} ->
+        io:format("undefined: ~p~n", [undefined]),
+        Acc
+    end
+    end, [],Info).
+%%  lists:map(fun(Stat) ->
+%%  lists:foldl(fun(Stat, Acc) ->
+%%    [case get_datapoint(Stat,DP) of
+
+%%     end || DP <- Info].
+
+%%    [{Stats, [{DP, case get_datapoint(Stats, DP) of
+%%                     {ok, Value} -> Value;
+%%                     {error, _R} ->
+%%                   end} || DP <- Info]}].
+%%            end, Stats).
 
 
 %%%%%%%%%%%%%% CREATING %%%%%%%%%%%%%%
@@ -112,6 +137,7 @@ find_stats_info(Stats, Info) when is_list(Info) ->
 register_stat(StatName, Type, Opts, Aliases) ->
 %%  io:format("riak_stat_exometer:register_stat(~p)~n", [StatName]),
   re_register(StatName, Type, Opts),
+%%  lager:info("re_register_stat: ~p ~p ~p ~p~n",[StatName,Type, Opts, Aliases]),
 %%  io:format("riak_stat_exometer:re_register(Stat) = ~p~n", [Registerd]),
   lists:foreach(
     fun({DP, Alias}) ->
@@ -205,7 +231,7 @@ get_values(Path) ->
 %% Find the stat in exometer using this pattern
 %% @end
 select_stat(Pattern) ->
-  io:format("23 riak_core_stat_exometer:select_stat(~p)~n", [Pattern]),
+%%  io:format("23 riak_core_stat_exometer:select_stat(~p)~n", [Pattern]),
   exometer:select(Pattern).
 
 -spec(find_entries(stats()) -> stats()).
@@ -214,6 +240,30 @@ select_stat(Pattern) ->
 %% @end
 find_entries(Stat) ->
   exometer:find_entries(Stat).
+
+find_alias([]) ->
+  [];
+find_alias({DP,Alias}) -> %% which is better alias or get_value
+%%  {T1,Val1} = timer:tc(fun dp_dp/2, [Name, DP]),
+%%  {T2,_Val2} = timer:tc(fun alias_dp/2, [Alias, DP]),
+%%  io:format("Time1 : ~p,~nTime2 : ~p~n",[T1,T2]),
+%%  Diff = timer:now_diff(T2,T1),
+%%  io:format("Diff : ~p~n",[T1 - T2]),
+%%  Val1.
+  alias_dp({DP,Alias}).
+
+
+%%dp_dp(Name, DP) ->
+%%  case get_datapoint(Name, DP) of
+%%    {ok, Value} -> Value;
+%%    _Error -> []
+%%  end.
+
+alias_dp({DP,Alias}) ->
+  case exometer_alias:get_value(Alias) of
+    {ok, Val} -> {DP,Val};
+    _ -> []
+  end.
 
 -spec(info(statname(), info()) -> value()).
 %% @doc

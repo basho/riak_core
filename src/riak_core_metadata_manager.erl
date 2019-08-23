@@ -38,9 +38,7 @@
          iterator_done/1,
          iterator_close/1,
          put/3,
-         merge/3,
-         select/2,
-         replace/2]).
+         merge/3]).
 
 %% riak_core_broadcast_handler callbacks
 -export([broadcast_data/1,
@@ -248,32 +246,6 @@ put({{Prefix, SubPrefix}, _Key}=PKey, Context, ValueOrFun)
 merge(Node, {PKey, _Context}, Obj) ->
     gen_server:call({?SERVER, Node}, {merge, PKey, Obj}, infinity).
 
-%% @doc Similar to iterator except a match_spec is passed in @end
--spec select(metadata_prefix(), ets:match_spec()) -> metadata_value().
-select(Prefix, MS) ->
-  io:format("17 riak_core_metadata_manager(~p,~p)~n", [Prefix, MS]),
-  case ets:test_ms({[riak,object],[{enabled,spiral,[objects],[aliases]}]}, MS) of
-    {error, Error} -> io:format("18.A Error : ~p, MS : ~p~n", [Error, MS]);
-    {ok, Result} -> io:format("18.B Result: ~p, MS : ~p~n", [Result,MS]);
-    Other -> io:format("18.C Other: ~p~n", [Other])
-  end,
-  io:format("19 riak_core_metadata_manager(after ets:test)~n"),
-  case ets_tab(Prefix) of
-    undefined -> io_lib:format("Prefix not in Metadata : ~p~n", [Prefix]), undefined;
-    Tab ->
-      io:format("20 riak_core_metadata_manager@ets_tab = ~p~n", [Tab]),
-      ets:select(Tab, MS)
-  end.
-
-%% @doc Similar to select except the values given in the match spec
-%% replace ones found in the metadata @end
--spec replace(metadata_prefix(), ets:match_spec()) -> metadata_value().
-replace(Prefix, MS) ->
-  case ets_tab(Prefix) of
-    undefined -> io_lib:format("Prefix not in Metadata : ~p~n", [Prefix]), undefined;
-    Tab -> ets:select_replace(Tab, MS)
-  end.
-
 
 %%%===================================================================
 %%% riak_core_broadcast_handler callbacks
@@ -472,12 +444,17 @@ next_iterator(It=#metadata_iterator{done=true}) ->
     It;
 next_iterator(It=#metadata_iterator{prefix=undefined,match=undefined,tab=Tab,pos=Pos}) ->
     %% full-prefix iterator
-    next_iterator(It, ets:next(Tab, Pos));
+%%  io:format("ets:next: ~p~n",[ets:next(Tab, Pos)]),
+
+  next_iterator(It, ets:next(Tab, Pos));
 next_iterator(It=#metadata_iterator{prefix=undefined,pos=Pos}) ->
     %% sub-prefix iterator
-    next_iterator(It, ets:select(Pos));
+%%  io:format("ets:select: ~p~n",[ets:select(Pos)]),
+
+  next_iterator(It, ets:select(Pos));
 next_iterator(It=#metadata_iterator{pos=Pos}) ->
     %% key/value iterator
+%%  io:format("ets:match_obj: ~p~n",[ets:match_object(Pos)]),
     next_iterator(It, ets:match_object(Pos)).
 
 next_iterator(Ref, #state{iterators=Iterators}) when is_reference(Ref) ->
@@ -524,7 +501,10 @@ new_iterator(undefined, Prefix, Tab) ->
 new_iterator(FullPrefix, KeyMatch, Tab) ->
     %% key/value iterator
     ObjectMatch = iterator_match(KeyMatch),
-    new_iterator(FullPrefix, KeyMatch, Tab, ets:match_object(Tab, ObjectMatch, 1)).
+%%  io:format("OBjectMatch: ~p~n",[ObjectMatch]),
+%%  io:format("ets:match_obj/3: ~p~n",[ets:match_object(Tab, ObjectMatch, 1)]),
+
+  new_iterator(FullPrefix, KeyMatch, Tab, ets:match_object(Tab, ObjectMatch, 1)).
 
 new_iterator(FullPrefix, KeyMatch, Tab, '$end_of_table') ->
     %% catch-all for empty iterator of all types
@@ -598,6 +578,7 @@ store({FullPrefix, Key}=PKey, Metadata, State) ->
     {Metadata, State}.
 
 read({FullPrefix, Key}) ->
+%%  io:format("read~n"),
     case ets_tab(FullPrefix) of
         undefined -> undefined;
         TabId -> read(Key, TabId)

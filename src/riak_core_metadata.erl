@@ -35,8 +35,6 @@
          itr_values/1,
          itr_value/1,
          itr_default/1,
-         select/2,
-         replace/2,
          prefix_hash/1,
          put/3,
          put/4,
@@ -97,16 +95,11 @@ get({Prefix, SubPrefix}=FullPrefix, Key, Opts)
     Default = get_option(default, Opts, undefined),
     ResolveMethod = get_option(resolver, Opts, lww),
     AllowPut = get_option(allow_put, Opts, true),
-  case proplists:get_value(match, Opts) of
-    undefined ->
       case riak_core_metadata_manager:get(PKey) of
         undefined -> Default;
         Existing ->
           maybe_tombstone(maybe_resolve(PKey, Existing, ResolveMethod, AllowPut), Default)
-      end;
-    MS ->
-      select(FullPrefix, MS)
-  end.
+      end.
 
 %% @doc same as fold(Fun, Acc0, FullPrefix, []).
 -spec fold(fun(({metadata_key(),
@@ -127,7 +120,7 @@ fold(Fun, Acc0, FullPrefix) ->
            fold_opts()) -> any().
 fold(Fun, Acc0, FullPrefix, Opts) ->
     It = iterator(FullPrefix, Opts),
-  io:format("iteratore:~p~n", [It]),
+%%  io:format("iteratore:~p~n", [It]),
     fold_it(Fun, Acc0, It).
 
 fold_it(Fun, Acc, It) ->
@@ -137,7 +130,7 @@ fold_it(Fun, Acc, It) ->
             Acc;
         false ->
             Next = Fun(itr_key_values(It), Acc),
-          io:format("Next: ~p~n", [Next]),
+%%          io:format("Next: ~p~n", [Next]),
             fold_it(Fun, Next, itr_next(It))
     end.
 
@@ -186,9 +179,9 @@ iterator({Prefix, SubPrefix}=FullPrefix, Opts)
   when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
        (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
     KeyMatch = proplists:get_value(match, Opts),
-  io:format("KeyMatch = ~p~n", [KeyMatch]),
+%%  io:format("KeyMatch = ~p~n", [KeyMatch]),
     It = riak_core_metadata_manager:iterator(FullPrefix, KeyMatch),
-  io:format("It: ~p~n", [It]),
+%%  io:format("It: ~p~n", [It]),
     {It, Opts}.
 
 %% @doc Advances the iterator
@@ -298,28 +291,6 @@ itr_default({_, Opts}=It) ->
     end.
 
 
--spec select(metadata_prefix(), ets:match_spec()) -> metadata_value().
-select({Prefix, SubPrefix}=FullPrefix, MatchSpec)
-  when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
-       (is_binary(SubPrefix) orelse is_atom(SubPrefix)) andalso
-        is_list(MatchSpec) orelse is_tuple(MatchSpec)->
-  io:format("16 riak_core_metadata:select(~p,~p)~n",[FullPrefix, MatchSpec]),
-  case riak_core_metadata_manager:select(FullPrefix, MatchSpec) of
-    [] ->   io:format("21.A riak_core_metadata:select -> []~n"),
-      undefined;
-    Value -> io:format("21.B riak_core_metadata:select -> [~p]~n", [Value]), Value
-  end.
-
--spec replace(metadata_prefix(), ets:match_spec()) -> metadata_value().
-replace({Prefix, SubPrefix}=FullPrefix, MatchSpec)
-  when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
-       (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
-  case riak_core_metadata_manager:replace(FullPrefix, MatchSpec) of
-    [] -> undefined;
-    Value -> Value
-  end.
-
-
 %% @doc Return the local hash associated with a full-prefix or prefix. The hash value is
 %% updated periodically and does not always reflect the most recent value. This function
 %% can be used to determine when keys stored under a full-prefix or prefix have changed.
@@ -338,9 +309,6 @@ put(FullPrefix, Key, ValueOrFun) ->
 %% triggers a broadcast to notify other nodes in the cluster. Currently, there
 %% are no put options
 %%
-%% July 2019 ->
-%%    Added Options to use select_replace given a matchspec
-%%    (Specific for riak_stat at the moment)
 %%
 %% NOTE: because the third argument to this function can be a metadata_modifier(),
 %% used to resolve conflicts on write, metadata values cannot be functions.
@@ -349,18 +317,13 @@ put(FullPrefix, Key, ValueOrFun) ->
           metadata_key(),
           metadata_value() | metadata_modifier(),
           put_opts()) -> ok.
-put({Prefix, SubPrefix}=FullPrefix, Key, ValueOrFun, Opts)
+put({Prefix, SubPrefix}=FullPrefix, Key, ValueOrFun, _Opts)
   when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
        (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
     PKey = prefixed_key(FullPrefix, Key),
     CurrentContext = current_context(PKey),
-    %% Match_spec is given in Opts as {match, {MS}}
-    case proplists:get_value(match, Opts) of
-      undefined ->
-        Updated = riak_core_metadata_manager:put(PKey, CurrentContext, ValueOrFun),
-        broadcast(PKey, Updated);
-      MS -> replace(FullPrefix, MS)
-    end.
+    Updated = riak_core_metadata_manager:put(PKey, CurrentContext, ValueOrFun),
+    broadcast(PKey, Updated).
 
 
 %% @doc same as delete(FullPrefix, Key, [])
