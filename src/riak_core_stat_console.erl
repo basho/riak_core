@@ -3,7 +3,7 @@
 %%% calls from riak_core_console are directed to this module to
 %%% enable/disable or read stats from exometer/metadata
 %%%
-%%% calls from endpoint to this module to retrieve stats
+%%% calls for an endpoint to this module to retrieve stats
 %%% for a UDP endpoint
 %%% @end
 %%%-------------------------------------------------------------------
@@ -36,6 +36,7 @@
 
 -spec(show_stat(data()) -> value()).
 %% @doc
+%% riak admin stat show <entry>/type=(type())/status=(enabled|disabled|*)/[dps].
 %% Show enabled or disabled stats
 %% when using riak-admin stat show riak.** enabled stats will show by default
 %%
@@ -43,14 +44,10 @@
 %% @end
 show_stat(Arg) ->
   [{Stats, MatchSpec, DP}] = data_sanitise(Arg),
-%%  io:format("Stats: ~p, MS: ~p, DP ~p~n", [Stats, MatchSpec, DP]),
-%%  Entries = find_entries(MatchSpec, Stats),
-%%  io:format("Entries ~p~n", [Entries]),
   NewStats =
     case DP of
       default -> find_entries(MatchSpec, Stats);
       _ -> find_entries(MatchSpec, Stats, DP)
-%%      [{Entry, find_stat_info(Entry, DP)} || {Entry, _Status} <-  find_entries(MatchSpec, Stats)]
     end,
   print_stats(NewStats).
 
