@@ -29,7 +29,7 @@ behaviour() ->
     entry.
 
 copy_folsom(Name, Type, Opts) when is_tuple(Name) ->
-    Prefix = riak_stat:prefix(),
+    Prefix = riak_core_stat_admin:prefix(),
     {[Prefix|tuple_to_list(Name)], ad_hoc, [{folsom_name, Name},
 					    {module, ?MODULE},
 					    {type, Type}
@@ -42,15 +42,15 @@ new(N, _, Opts) ->
 	  proplists:get_value(folsom_name, Opts, N)}}.
 
 update(_, Value, counter, {_, Name}) ->
-  riak_stat:update(Name, Value, counter);
+  riak_core_stat_admin:update(Name, Value, counter);
 update(_, Value, Type, {_, Name}) ->
-  riak_stat:update(Name, Value, Type).
+  riak_core_stat_admin:update(Name, Value, Type).
 
 reset(_, _, _) ->
     {error, unsupported}. %% todo: add riak_stat reset
 
 get_value(_, _Type, {_, Name}, DPs) ->
-  riak_stat_coordinator:get_datapoint(Name, DPs).
+  riak_core_stat_coordinator:get_datapoint(Name, DPs).
 
 sample(_, _, _) ->
     {error, unsupported}.
@@ -59,10 +59,10 @@ setopts(_, _, _) ->
     ok.
 
 delete(_, _, _) ->
-    {error, unsupported}. %% todo: add riak_stat:unregister
+    {error, unsupported}. %% todo: riak_stat:unregister
 
 get_datapoints(Name, Type, _) ->
-  riak_stat_coordinator:get_datapoint(Name, Type).
+  riak_core_stat_coordinator:get_datapoint(Name, Type).
 
 options(history, [Size]) ->
     [{size, Size}];
