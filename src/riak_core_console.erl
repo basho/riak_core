@@ -1165,10 +1165,12 @@ parse_cidr(CIDR) ->
 
 -spec(stat_show(Arg :: term()) -> ok | term()).
 %% @doc
-%% riak-admin stat riak.** % shows enabled stats etc
+%% riak-admin stat riak.**
+%% the enabled stats are shown by default but the status can be chosen
+%% i.e. riak.riak_kv.**/status=disabled to show <disabled> stats
+%% pulls out of the metadata by default
 %% @end
 stat_show(Arg) ->
-%%    io:format("1 riak_core_console:stat_show(~p)~n", [Arg]),
     riak_core_stat_console:show_stat(Arg).
 
 -spec(stat_0(Arg :: term()) -> ok | term()).
@@ -1176,7 +1178,7 @@ stat_show(Arg) ->
 %% Check all the stats in exometer that are not being updated by testing
 %% or otherwise,
 %% This helps disable stats that are unused.
-%% behaves similar to stat show/info
+%% behaves similar to stat show
 %% @end
 stat_0(Arg) ->
     riak_core_stat_console:show_stat_0(Arg).
@@ -1184,35 +1186,36 @@ stat_0(Arg) ->
 -spec(stat_disable_0(Arg :: term()) -> ok | term()).
 %% @doc
 %% behaves the same as stat_0 but will disable all the stats that are not
-%% updating as well
+%% updating as well, returns ok unless there is an error.
 %% @end
 stat_disable_0(Arg) ->
     riak_core_stat_console:disable_stat_0(Arg).
 
 -spec(stat_info(Arg :: term()) -> ok | term()).
 %% @doc
-%% information on the stat
+%% information on the stat, default is all information, however it
+%% can be specific : -type -status etc...
 %% @end
 stat_info(Arg) ->
     riak_core_stat_console:stat_info(Arg).
 
 -spec(stat_enable(Arg :: term()) -> ok | term()).
 %% @doc
-%% enable the stats
+%% enable the stats, if the stat is already enabled does nothing
 %% @end
 stat_enable(Arg) ->
     riak_core_stat_console:status_change(Arg, enabled).
 
 -spec(stat_disable(Arg :: term()) -> ok | term()).
 %% @doc
-%% disable the stats
+%% disable the stats - if already disabled does nothing
 %% @end
 stat_disable(Arg) ->
     riak_core_stat_console:status_change(Arg, disabled).
 
 -spec(stat_reset(Arg :: term()) -> ok | term()).
 %% @doc
-%% resets the stats
+%% resets the stats in exometer, the number of resets is kept in the metadata
 %% @end
 stat_reset(Arg) ->
     riak_core_stat_console:reset_stat(Arg).
@@ -1224,23 +1227,18 @@ stat_reset(Arg) ->
 -spec(load_profile(FileName :: term()) -> term()).
 %% @doc
 %% Loads the profile of that name, and then will enable/disable all the stats
-%% in exometer and in the metadata
+%% in exometer and in the metadata that need enabling/disabling
 %% @end
 load_profile(ProfileName) ->
     riak_core_stat_profiles:load_profile(ProfileName).
 
 -spec(add_profile(FileName :: term()) -> term()).
 %% @doc
-%% Adds a profile with same name as the filename into the metadata, with it's values
-%% being the stat names stored inside, the stats can be stored as riak.riak_kv.**
-%% or as [riak,riak_kv] as long as they are in the format:
-%%
-%% {enabled, [riak.riak_kv.**, [riak,riak_core]]}
-%% {disabled, [riak.riak_api.**]}
-%%
+%% Saves the current configuration of the stats in the metadata with the
+%% profile name entered as the key, the stats and their status as the value.
+%% Profiles can be overwritten if the new profile is saved under the same name.
 %% @end
-add_profile(ProfileName) ->
-    riak_core_stat_profiles:save_profile(ProfileName).
+add_profile(ProfileName) -> riak_core_stat_profiles:save_profile(ProfileName).
 
 -spec(remove_profile(FileName :: term()) -> term()).
 %% @doc
@@ -1265,7 +1263,11 @@ reset_profile() ->
 
 -spec(enable_metadata(term()) -> ok).
 %% @doc
-%% enable the metadata, arg should be true or false, if false then the communication to the metadata ends
+%% enable the metadata, arg should be true or false, if false then the
+%% communication to the metadata ends, unpon re-enabling the metadata
+%% will "re-register" the stats, therefore the configuration remains
+%% consistent between both metadata and exometer, any profile that was
+%% loaded before will not be loaded upon re-enabling to prevent errors
 %% @end
 enable_metadata(Arg) ->
     riak_core_stat_console:enable_metadata(Arg).
@@ -1276,20 +1278,20 @@ enable_metadata(Arg) ->
 
 -spec(setdown_endpoint(term()) -> ok).
 %% @doc
-%% disable the connection, Port given doesn't always matter - unless multiple ports are open
-%% terminates gen_servers
+%% disable the connection, Port given doesn't always matter - unless
+%% multiple ports are open terminates gen_servers
 %% @end
 setdown_endpoint(Arg) ->
-  riak_core_stat_ep:setdown(Arg).
+    riak_core_stat_ep:setdown(Arg).
 
 -spec(setup_endpoint(term()) -> ok).
 %% @doc
-%% Setup the port, similar to how riak-admin stat takes in riak.riak_kv.**
-%% setup_port takes the argument [<<"udp.8089">>] and sets up the socket from the
+%% Setup the port, similar to how riak-admin stat show takes in
+%% riak.riak_kv.**/status=*, setup_port takes the argument
+%% "port=8089/sip=127.0.0.1" and sets up the socket from the
 %% argument given.
 %%
 %% Can be used to restart the port as well as change the port
 %% @end
 setup_endpoint(Arg) ->
     riak_core_stat_ep:setup(Arg).
-
