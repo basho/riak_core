@@ -1,10 +1,10 @@
--define(CACHE, app_helper:get_env(riak_core, exometer_cache, {cache, 5000})).
--define(PFX, riak_core_stat_admin:prefix()).
--define(TIMESTAMP, riak_core_stat_exometer:timestamp()).
+-define(CACHE,           app_helper:get_env(riak_core, exometer_cache, {cache, 5000})).
+-define(PFX,             riak_core_stat_admin:prefix()).
+-define(TIMESTAMP,       riak_core_stat_exometer:timestamp()).
 
--define(META_ENABLED, metadata_enabled).
+-define(META_ENABLED,    metadata_enabled).
 
--define(IS_ENABLED(Arg),  app_helper:get_env(riak_core, Arg, true)).
+-define(IS_ENABLED(Arg), app_helper:get_env(riak_core, Arg, true)).
 
 -type exometererror() :: no_template | exists | not_found.
 -type profileerror()  :: profile_exists_already | no_stats | no_data | no_profile.
@@ -17,7 +17,7 @@
 -type exo_value()     :: {ok, value()}.
 -type aliases()       :: list() | atom().
 -type info()          :: name | type | module | value | cache| status |
-timestamp | options | ref | datapoints | entry.
+                         timestamp | options | ref | datapoints | entry.
 -type datapoint()     :: info() | list() | integer().
 -type opt_tup()       :: {atom(), any()}.
 -type options()       :: list() | opt_tup().
@@ -36,12 +36,18 @@ timestamp | options | ref | datapoints | entry.
 -type incrvalue()     :: non_neg_integer().
 -type response()      :: ok | term() | error().
 
--type profilename()   :: list() | binary().
 -type pattern()       :: ets:match_spec().
 -type timestamp()     :: non_neg_integer().
 -type ttl()           :: atom() | integer().
 
+%%%%% PROFILES
+
+-type profilename()   :: [list()] | [binary()] | any().
+
+
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 -define(ENVAPP, riak_core).
 
 -define(INSTANCE,              app_helper:get_env(?ENVAPP, instance)).
