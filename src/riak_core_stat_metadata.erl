@@ -6,12 +6,12 @@
 %%%
 %%% Profile Prefix: {profiles, list}
 %%% Loaded Prefix:  {profiles, loaded}
-%%% Stats Prefix:   {stats, nodeid()}
+%%% Stats Prefix:   {stats,    nodeid()}
 %%%
 %%% Profile metadata-pkey: {{profiles, list}, [<<"profile-name">>]}
 %%% Profile metadata-val : [{Stat, {status, Status},...]
 %%%
-%%% Loaded metadata-pkey : {{profile, loaded}, nodeid()}
+%%% Loaded metadata-pkey : {{profiles, loaded}, nodeid()}
 %%% Loaded metadata-val  : [<<"profile-name">>]
 %%%
 %%% Stats metadata-pkey: {{stats, nodeid()}, [riak,riak_kv,...]}
@@ -26,53 +26,55 @@
 
 %% Basic API
 -export([
-  get/2,
-  get/3,
-  put/3,
-  put/4,
-  get_all/1,
-  delete/2,
-  find_entries/4,
-  dp_get/2,
-  get_dps/2
+    get/2,
+    get/3,
+    put/3,
+    put/4,
+    get_all/1,
+    delete/2,
+    find_entries/4,
+    dp_get/2,
+    get_dps/2
 ]).
 
 %% API
 -export([
-  check_meta/1,
-  check_status/1,
-  change_status/1,
-  change_status/2,
-  set_options/2
+    check_meta/1,
+    check_status/1,
+    change_status/1,
+    change_status/2,
+    set_options/2
 ]).
 
 %% Admin API
 -export([
-  register_stat/4,
-  register_stat/1,
-  unregister/1,
-  reset_stat/1,
-  reset_resets/0
+    register_stat/4,
+    register_stat/1,
+    unregister/1,
+    reset_stat/1,
+    reset_resets/0
 ]).
 
 %% Profile API
 -export([
-  get_profiles/0,
-  save_profile/1,
-  load_profile/1,
-  delete_profile/1,
-  reset_profile/0,
-  get_loaded_profile/0
+    get_profiles/0,
+    save_profile/1,
+    load_profile/1,
+    delete_profile/1,
+    reset_profile/0,
+    get_loaded_profile/0
 ]).
 
--define(STAT, stats).
--define(PROF, profiles).
--define(NODEID, term_to_binary(node())).
--define(PROFID, list).
+%% Stats are on per node basis
+-define(STAT,                 stats).
 -define(STATPFX,              {?STAT, ?NODEID}).
--define(PROFPFX,              {?PROF, ?PROFID}).
 -define(STATKEY(StatName),    {?STATPFX, StatName}).
-%%      Profiles are Globally shared
+-define(NODEID,               term_to_binary(node())).
+
+%% Profiles are Globally shared
+-define(PROF,                 profiles).
+-define(PROFID,               list).
+-define(PROFPFX,              {?PROF, ?PROFID}).
 -define(PROFILEKEY(Profile),  {?PROFPFX, Profile}).
 -define(LOADEDPFX,            {?PROF, loaded}).
 -define(LOADEDKEY,             ?NODEID).
@@ -126,7 +128,6 @@ delete(Prefix, Key) ->
 %% the one given, default at riak_core_console level - is enabled.
 %% @end
 find_entries(Stats, Status, Type, DP) ->
-%%  io:format("Stats: ~p~n", [Stats]),
   lists:flatten(
   lists:map(fun(Stat) ->
     fold(Stat, Status, Type, DP)
@@ -146,14 +147,13 @@ find_entries(Stats, Status, Type, DP) ->
 %% The Aliases are the names of the DPs for those specific stats, if the stat does not have any aliases
 %% for the data points requested it will not be returned.
 %% @end
-
 fold(Stat, Status0, Type0, DP0) ->
   {Acc1, _Status, _Type, _DP} =
   riak_core_metadata:fold(fun
                           %%%%%%% 4 - tuple
                           %%% The Type and DataPoints are not given so only the name and status is to be returned:
                             ({Name, [{MStatus,_Type,_Opts,_Aliases}]},{Acc,Status,'_',[]})
-                              when Status == '_'; MStatus == Status -> %% Status :: enabled | disabled | '_'
+                              when Status == '_' orelse MStatus == Status -> %% Status :: enabled | disabled | '_'
                               {[{Name, MStatus}|Acc],Status,'_',[]};
 
                           %%% The DataPoints are not given so the Name, Status and Type needs to be returned:
@@ -178,7 +178,7 @@ fold(Stat, Status0, Type0, DP0) ->
                             %%%%%%% 3 - tuple
                             %%% The Type and DataPoints are not given so only the name and status is to be returned:
                             ({Name, [{MStatus,_Type,_Opts}]},{Acc,Status,'_',[]})
-                              when Status == '_'; MStatus == Status -> %% Status :: enabled | disabled | '_'
+                              when Status == '_' orelse MStatus == Status -> %% Status :: enabled | disabled | '_'
                               {[{Name, MStatus}|Acc],Status,'_',[]};
 
                             %%% The DataPoints are not given so the Name, Status and Type needs to be returned:
@@ -202,7 +202,7 @@ fold(Stat, Status0, Type0, DP0) ->
                             %%%%%%% 2 - tuple
                             %%% The Type and DataPoints are not given so only the name and status is to be returned:
                             ({Name, [{MStatus,_Type}]},{Acc,Status,'_',[]})
-                              when Status == '_'; MStatus == Status -> %% Status :: enabled | disabled | '_'
+                              when Status == '_' orelse MStatus == Status -> %% Status :: enabled | disabled | '_'
                               {[{Name, MStatus}|Acc],Status,'_',[]};
 
                             %%% The DataPoints are not in this stat, Status and Type needs to be returned:
@@ -230,63 +230,6 @@ get_dps(DP, Aliases) ->
     V -> {DP,V}
   end.
 
-
-%% for 4-tuple value, Where Status matches and the Type doesn't matter
-%%                            ({Name, [{MStatus,_Type,_O,Aliases}]},{Acc, Status, '_', DP}) when MStatus == Status; Status == '_' ->
-%%                                case lists:flatten([{D,proplists:get_value(D,Aliases,[])} || D <- DP]) of
-%%                                  {_,[]} -> {Acc, Status, '_', DP};
-%%                                  Alia -> {[{Name, [], MStatus, Alia}|Acc], Status, '_', DP}
-%%                                end;
-                              %% return the aliases if the DPs for them are given, otherwise -> []
-
-
-                            %% for 4-tuple value, Where Status and Type matches (are requested)
-%%                            ({Name, [{MStatus,MType,_O,Aliases}]},{Acc, Status, Type, DP})
-%%                              when MType == Type andalso (MStatus == Status orelse Status == '_')  ->
-%%
-%%                              case lists:flatten([{D,proplists:get_value(D,Aliases,[])} || D <- DP]) of
-%%                                {_,[]} -> {Acc, Status, Type, DP};
-%%                                Alia -> {[{Name, MType, MStatus, Alia}|Acc], Status, '_', DP}
-%%                              end;
-
-
-                            %% for 3-tuple value, Where Status matches and the Type doesn't matter
-%%                            ({Name, [{MStatus,_Type,O}]},{Acc, Status, '_', DP}) when MStatus == Status; Status == '_' ->
-%%
-%%                              Value = proplists:get_value(aliases,O, []),
-%%                                case lists:flatten([{D,proplists:get_value(D,Value,[])} || D <- DP]) of
-%%                                  {_,[]} -> {Acc, Status, '_', DP};
-%%                                  Alia -> {[{Name, [], MStatus, Alia}|Acc], Status, '_', DP}
-%%                                end;
-
-
-                            %% for 3-tuple value, Where Status and Type matches
-%%                            ({Name, [{MStatus,MType,O}]},{Acc, Status, Type, DP})
-%%                              when MType == Type andalso (MStatus == Status orelse Status == '_')  ->
-%%
-%%                              Value = proplists:get_value(aliases,O, []),
-%%                              case lists:flatten([{D,proplists:get_value(D,Value,[])} || D <- DP]) of
-%%                                {_,[]} -> {Acc, Status, Type, DP};
-%%                                Alia -> {[{Name, MType, MStatus, Alia}|Acc], Status, Type, DP}
-%%                              end;
-
-
-%%                            %% for 2-tuple value, Where Status matches and Type don't matter
-%%                            ({Name, [{MStatus,_Type}]},{Acc, Status, '_', DP}) when MStatus == Status; Status == '_' ->
-%%
-%%                              {[{Name, [], MStatus, []}|Acc], Status, '_', DP}; %% aliases can't be retrieved, return []
-
-
-%%                            %% for 2-tuple value, Where Status and Type both match
-%%                            ({Name, [{MStatus,MType}]},{Acc, Status, Type, DP})%
-%%                              when MType == Type andalso (MStatus == Status orelse Status == '_')  ->
-%%
-%%                              {[{Name, MType, MStatus, []}|Acc], Status, Type, DP};
-
-
-
-
-
 find_all_entries() ->
   Stats = get_all(?STATPFX),
   [{Name, {status, Status}} || {Name, Status} <- find_entries(Stats, '_', '_',[])].
@@ -301,11 +244,7 @@ find_all_entries() ->
 %% node and save it into the metadata as a profile - works on per node
 %% @end
 save_profile(ProfileName) ->
-  case check_meta(?PROFILEKEY(ProfileName)) of
-    [] -> put(?PROFPFX, ProfileName, find_all_entries());
-    _  -> {error, profile_exists_already}
-  end.
-
+    put(?PROFPFX, ProfileName, find_all_entries()).
 
 -spec(load_profile(profilename()) -> ok | error()).
 %% @doc
@@ -322,7 +261,7 @@ load_profile(ProfileName) ->
       ToChange = the_alpha_stat(ProfileStats, CurrentStats),
       %% delete stats that are already enabled/disabled, any duplicates
       %% with different statuses will be replaced with the profile one
-      change_stat_list_to_status(ToChange),
+      change_stat_list_to_status(ToChange), %% todo: use the metadata fold to change the stats
       put(?LOADEDPFX, ?LOADEDKEY, ProfileName)
   end.
 
@@ -340,7 +279,7 @@ the_alpha_stat(Alpha, Beta) ->
   AlphaList = the_alpha_map(Alpha),
   BetaList = the_alpha_map(Beta),
   {_Nout, ListtoChange} =
-    lists:foldr(fun(Stat, {List1, List2}) ->
+    lists:foldr(fun(Stat, {List1, List2}) -> %% todo: revamp this fold
       case lists:member(Stat, List1) of
         true ->
           {List1, List2};
@@ -349,7 +288,6 @@ the_alpha_stat(Alpha, Beta) ->
       end
                 end, {BetaList, []}, AlphaList),
   ListtoChange.
-%%    lists:ukeymerge(2, lists:ukeysort(1, AlphaList), lists:ukeysort(1, BetaList)).
 % The stats must fight, to become the alpha
 
 the_alpha_map(A_B) ->
@@ -360,7 +298,7 @@ the_alpha_map(A_B) ->
             end, A_B).
 
 
-change_stat_list_to_status(StatusList) ->
+change_stat_list_to_status(StatusList) -> %% todo: change the name of this function to some generic
   riak_core_stat_coordinator:change_status(StatusList).
 
 
@@ -373,7 +311,7 @@ change_stat_list_to_status(StatusList) ->
 %% @end
 delete_profile(ProfileName) ->
   case check_meta(?LOADEDPKEY) of
-    ProfileName ->
+    ProfileName -> %% make this a guard instead of a pattern match
       put(?LOADEDPFX, ?LOADEDKEY, [<<"none">>]),
       delete(?PROFPFX, ProfileName);
     _ ->
@@ -395,7 +333,7 @@ reset_profile() ->
 
 
 change_stats_from(Stats, Status) ->
-  change_stat_list_to_status(
+  change_stat_list_to_status( %% todo: make this using metadata fold
     lists:foldl(fun
                   ({Stat, {status, St}}, Acc) when St == Status ->
                     NewSt =
@@ -440,7 +378,6 @@ check_meta({Prefix, Key}) ->
     undefined -> % Not found, return empty list
       [];
     Value ->
-%%      io:format("check_meta:get:value~n"),
       case find_unregister_status(Key, Value) of
         false ->
           Value;
@@ -621,3 +558,59 @@ reset_resets() ->
     {Status, Type, Opts, Aliases} = check_meta(?STATKEY(Stat)),
     set_options({Stat, {Status, Type, Opts, Aliases}}, {resets, 0})
                 end, get_all(?STATPFX)).
+
+
+%% for 4-tuple value, Where Status matches and the Type doesn't matter
+%%                            ({Name, [{MStatus,_Type,_O,Aliases}]},{Acc, Status, '_', DP}) when MStatus == Status; Status == '_' ->
+%%                                case lists:flatten([{D,proplists:get_value(D,Aliases,[])} || D <- DP]) of
+%%                                  {_,[]} -> {Acc, Status, '_', DP};
+%%                                  Alia -> {[{Name, [], MStatus, Alia}|Acc], Status, '_', DP}
+%%                                end;
+%% return the aliases if the DPs for them are given, otherwise -> []
+
+
+%% for 4-tuple value, Where Status and Type matches (are requested)
+%%                            ({Name, [{MStatus,MType,_O,Aliases}]},{Acc, Status, Type, DP})
+%%                              when MType == Type andalso (MStatus == Status orelse Status == '_')  ->
+%%
+%%                              case lists:flatten([{D,proplists:get_value(D,Aliases,[])} || D <- DP]) of
+%%                                {_,[]} -> {Acc, Status, Type, DP};
+%%                                Alia -> {[{Name, MType, MStatus, Alia}|Acc], Status, '_', DP}
+%%                              end;
+
+
+%% for 3-tuple value, Where Status matches and the Type doesn't matter
+%%                            ({Name, [{MStatus,_Type,O}]},{Acc, Status, '_', DP}) when MStatus == Status; Status == '_' ->
+%%
+%%                              Value = proplists:get_value(aliases,O, []),
+%%                                case lists:flatten([{D,proplists:get_value(D,Value,[])} || D <- DP]) of
+%%                                  {_,[]} -> {Acc, Status, '_', DP};
+%%                                  Alia -> {[{Name, [], MStatus, Alia}|Acc], Status, '_', DP}
+%%                                end;
+
+
+%% for 3-tuple value, Where Status and Type matches
+%%                            ({Name, [{MStatus,MType,O}]},{Acc, Status, Type, DP})
+%%                              when MType == Type andalso (MStatus == Status orelse Status == '_')  ->
+%%
+%%                              Value = proplists:get_value(aliases,O, []),
+%%                              case lists:flatten([{D,proplists:get_value(D,Value,[])} || D <- DP]) of
+%%                                {_,[]} -> {Acc, Status, Type, DP};
+%%                                Alia -> {[{Name, MType, MStatus, Alia}|Acc], Status, Type, DP}
+%%                              end;
+
+
+%%                            %% for 2-tuple value, Where Status matches and Type don't matter
+%%                            ({Name, [{MStatus,_Type}]},{Acc, Status, '_', DP}) when MStatus == Status; Status == '_' ->
+%%
+%%                              {[{Name, [], MStatus, []}|Acc], Status, '_', DP}; %% aliases can't be retrieved, return []
+
+
+%%                            %% for 2-tuple value, Where Status and Type both match
+%%                            ({Name, [{MStatus,MType}]},{Acc, Status, Type, DP})%
+%%                              when MType == Type andalso (MStatus == Status orelse Status == '_')  ->
+%%
+%%                              {[{Name, MType, MStatus, []}|Acc], Status, Type, DP};
+
+
+
