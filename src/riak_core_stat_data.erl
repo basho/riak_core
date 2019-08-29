@@ -245,22 +245,30 @@ print({Entries, DPs}, []) ->
     io:fwrite("~p:~n", [Entries]),
     [io:fwrite("~p: ~p~n", [DP, Data])
         || {DP, Data} <- DPs, Data =/= undefined, Data =/= []];
-print({Entries, _}, Attrs) ->
+print({Entries, _}, Attrs) -> %% todo make this work please, remove print_info_1
     lists:foreach(
-        fun({N, _, _}) ->
-            print_info_1(N, Attrs)
+        fun
+            ({N,_,_,_}) ->
+                print(N, Attrs);
+            ({N, _, _}) ->
+                print(N, Attrs);
+            ({N, _}) ->
+                print(N, Attrs)
+%%            (N) ->
+%%                print(N, [])
         end, Entries);
 print(Entries, []) when is_list(Entries) ->
     lists:map(fun
                   (Ent) when is_atom(Ent) ->
                       print({Entries, []}, []);
                   ({Stat, Status}) when is_atom(Status) ->
-                      print({Stat, Status}, stat);
+                      print({Stat, Status}, []);
                   (Ent) ->
                       print(Ent, [name, status])
               end, Entries);
 print(Data, Att) ->
-    print({[{Data, [], []}], []}, Att).
+    io:fwrite("~p:~p~n", [Data, Att]).
+%%    print({Data, []}, Att).
 
 get_value(_, disabled, _) ->
     disabled;

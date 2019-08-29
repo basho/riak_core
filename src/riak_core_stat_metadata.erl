@@ -66,14 +66,14 @@
 ]).
 
 %% Stats are on per node basis
--define(STAT,                 stats).
+-define(STAT,                  stats).
 -define(STATPFX,              {?STAT, ?NODEID}).
 -define(STATKEY(StatName),    {?STATPFX, StatName}).
--define(NODEID,               term_to_binary(node())).
+-define(NODEID,                term_to_binary(node())).
 
 %% Profiles are Globally shared
--define(PROF,                 profiles).
--define(PROFID,               list).
+-define(PROF,                  profiles).
+-define(PROFID,                list).
 -define(PROFPFX,              {?PROF, ?PROFID}).
 -define(PROFILEKEY(Profile),  {?PROFPFX, Profile}).
 -define(LOADEDPFX,            {?PROF, loaded}).

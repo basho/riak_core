@@ -61,17 +61,19 @@ show_stat_0(Arg) ->
 %% @doc
 %% Returns all the stats information
 %% @end
+stat_info([]) ->
+    print_stats([],[]);
 stat_info(Arg) ->
     {Attrs, RestArg} = pick_info_attrs(Arg),
     [{Stats, MatchSpec, _DP}] = data_sanitise(RestArg),
-    [{Stats, MatchSpec, _DP}] = data_sanitise(Arg),
+%%    [{Stats, MatchSpec, _DP}] = data_sanitise(Arg),
     Found = lists:map(fun
                             ({Stat,        _Status}) ->       {Stat, find_stat_info(Stat, Attrs)};
                             ({Stat, _Type, _Status}) ->       {Stat, find_stat_info(Stat, Attrs)};
                             ({Stat, _Type, _Status, _DPs}) -> {Stat, find_stat_info(Stat, Attrs)}
                         end,
         find_entries(MatchSpec, Stats)),
-    print_stats(Found).
+    print_stats(Found, []).
 
 -spec(disable_stat_0(data()) -> ok).
 %% @doc
@@ -98,11 +100,14 @@ disable_stat_0(Arg) ->
 %% change the status of the stat (in metadata and) in exometer
 %% @end
 status_change(Arg, ToStatus) ->
-    [{Stats, MatchSpec, _DP}] = data_sanitise(Arg, '_', ToStatus),
     Entries = % if disabling lots of stats, pull out only enabled ones
     case ToStatus of
-        enabled  -> find_entries(MatchSpec, Stats);
-        disabled -> find_entries(MatchSpec, Stats)
+        enabled  ->
+            [{Stats, MatchSpec, _DP}] = data_sanitise(Arg, '_', disabled),
+            find_entries(MatchSpec, Stats);
+        disabled ->
+            [{Stats, MatchSpec, _DP}] = data_sanitise(Arg, '_', enabled),
+            find_entries(MatchSpec, Stats)
     end,
     change_status([{Stat, {status, ToStatus}} || {Stat, _Status} <- Entries]).
 
@@ -207,6 +212,5 @@ pick_info_attrs(Arg) ->
             Other
     end.
 
-split_arg([Str]) ->
+split_arg(Str) ->
     re:split(Str, "\\s", [{return, list}]).
-

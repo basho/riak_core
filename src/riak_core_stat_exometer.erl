@@ -98,11 +98,11 @@ find_stats_info(Stats, Info) when is_atom(Info) ->
 find_stats_info(Stat, Info) when is_list(Info) ->
     lists:foldl(fun(DP, Acc) ->
         case get_datapoint(Stat, DP) of
-            {ok, [{DP, Error}]} ->
+            {ok, [{DP, _Error}]} ->
                 Acc;
             {ok, Value} ->
                 [{DP, Value} | Acc];
-            {error, R} ->
+            {error, _R} ->
                 Acc;
             {DP, undefined} ->
                 Acc
