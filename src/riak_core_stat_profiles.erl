@@ -323,7 +323,7 @@ last_loaded_profile() ->
 %%%===================================================================
 
 print(ok,Args) ->
-    print("~p~n", [Args]);
+    print("~s~n", [Args]);
 print({error, Reason},Args) ->
     print("Error in ~p because ~p~n", [Args, Reason]);
 print([],_) ->
