@@ -120,7 +120,6 @@ fold(Fun, Acc0, FullPrefix) ->
            fold_opts()) -> any().
 fold(Fun, Acc0, FullPrefix, Opts) ->
     It = iterator(FullPrefix, Opts),
-%%  io:format("iteratore:~p~n", [It]),
     fold_it(Fun, Acc0, It).
 
 fold_it(Fun, Acc, It) ->
@@ -130,7 +129,6 @@ fold_it(Fun, Acc, It) ->
             Acc;
         false ->
             Next = Fun(itr_key_values(It), Acc),
-%%          io:format("Next: ~p~n", [Next]),
             fold_it(Fun, Next, itr_next(It))
     end.
 
@@ -179,9 +177,7 @@ iterator({Prefix, SubPrefix}=FullPrefix, Opts)
   when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
        (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
     KeyMatch = proplists:get_value(match, Opts),
-%%  io:format("KeyMatch = ~p~n", [KeyMatch]),
     It = riak_core_metadata_manager:iterator(FullPrefix, KeyMatch),
-%%  io:format("It: ~p~n", [It]),
     {It, Opts}.
 
 %% @doc Advances the iterator

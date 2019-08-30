@@ -73,7 +73,142 @@ stat_info(Arg) ->
                             ({Stat, _Type, _Status, _DPs}) -> {Stat, find_stat_info(Stat, Attrs)}
                         end,
         find_entries(MatchSpec, Stats)),
+
     print_stats(Found, []).
+%%    infotest(Arg).
+
+infotest(Arg) ->
+    {T0,V0} = timer:tc(fun infotestor/1, Arg),
+    {TN,VN} = timer:tc(fun infotestnew/1,Arg),
+    io:fwrite("Test results:~n"),
+    io:fwrite("Original Test : ~p~n", [T0]),
+    io:fwrite("New Test      : ~p~n", [TN]),
+    V0s = term_to_binary(V0),
+    VNs = term_to_binary(VN),
+    SV0 = erlang:size(V0s),
+    SVN = erlang:size(VNs),
+    io:fwrite("Original Size Final  : ~p~n", [SV0]),
+    io:fwrite("New Size Final       : ~p~n", [SVN]).
+
+infotestor(Arg) ->
+    V1 = term_to_binary(Arg),
+    V2 = erlang:size(V1),
+    io:fwrite("Original Size Arg  : ~p~n", [V2]),
+
+    {Attr, Rest} = pick_info_attrs(Arg),
+    V3 = term_to_binary(Rest),
+    V4 = erlang:size(V3),
+    io:fwrite("Original Size Rest : ~p~n", [V4]),
+
+    [{Stats, Match, DP}] = data_sanitise(Rest),
+    V5 = term_to_binary([{Stats,Match,DP}]),
+    V6 = erlang:size(V5),
+    io:fwrite("Original Size data_: ~p~n", [V6]),
+
+    Found = lists:map(fun
+                          ({Stat,        _Status}) ->       Stat;
+                          ({Stat, _Type, _Status}) ->       Stat;
+                          ({Stat, _Type, _Status, _DPs}) -> Stat
+                      end,
+        find_entries(Match, Stats)),
+    V7 = term_to_binary(Found),
+    V8 = erlang:size(V7),
+    io:fwrite("Original Size Found: ~p~n", [V8]),
+
+    print_(Found, Attr).
+
+infotestnew(Arg) ->
+    V1 = term_to_binary(Arg),
+    V2 = erlang:size(V1),
+    io:fwrite("New Size Arg  : ~p~n", [V2]),
+
+    {Attr, Rest} = pick_info_attrs(Arg),
+    V3 = term_to_binary(Rest),
+    V4 = erlang:size(V3),
+    io:fwrite("New Size Rest : ~p~n", [V4]),
+
+    [{Stats, Match, DP}] = data_sanitise(Rest),
+    V5 = term_to_binary([{Stats,Match,DP}]),
+    V6 = erlang:size(V5),
+    io:fwrite("New Size data_: ~p~n", [V6]),
+
+    Found = lists:map(fun
+                          ({Stat,        _Status}) ->       {Stat, find_stat_info(Stat, Attr)};
+                          ({Stat, _Type, _Status}) ->       {Stat, find_stat_info(Stat, Attr)};
+                          ({Stat, _Type, _Status, _DPs}) -> {Stat, find_stat_info(Stat, Attr)}
+                      end,
+        find_entries(Match, Stats)),
+    V7 = term_to_binary(Found),
+    V8 = erlang:size(V7),
+    io:fwrite("New Size Found: ~p~n", [V8]),
+
+    print_(Found, []).
+
+
+print_([],_) ->
+    io:fwrite("No matching stats (test)~n");
+print_(Stats, []) ->
+    lists:foreach(fun
+                      ({Stat, Info}) ->
+                          io:fwrite("~p : ~p~n", [Stat,Info])
+                          end, Stats);
+print_(Stats, Attr) ->
+    lists:foreach(
+        fun
+            ({N,_,_}) ->
+                print_info_1(N, Attr);
+            ({N,_}) ->
+                print_info_1(N, Attr);
+            (N) ->
+                print_info_1(N, Attr)
+        end, Stats
+    ).
+
+get_value(_, disabled, _) ->
+    disabled;
+get_value(E, _Status, DPs) ->
+    case get_datapoint(E, DPs) of
+        {ok, V} -> V;
+        {error, _} -> unavailable
+    end.
+
+get_datapoint(E, DPs) ->
+    riak_core_stat_exometer:get_datapoint(E,DPs).
+
+
+% used to print the entire stat information
+print_info_1(N, [A | Attrs]) ->
+    Hdr = lists:flatten(io_lib:fwrite("~p: ~n", [N])),
+    Pad = lists:duplicate(length(Hdr), $\s),
+    Info = get_info(core, N),
+    Status = proplists:get_value(status, Info, enabled),
+    Body = [case proplists:get_value(A, Info) of
+                undefined -> [];
+                Other -> io_lib:fwrite("~w = ~p~n", [A, Other])
+            end
+        | lists:map(fun(value) ->
+            io_lib:fwrite(Pad ++ "~w = ~p~n",
+                [value, get_value(N, Status, default)]);
+            (Ax) ->
+                case proplists:get_value(Ax, Info) of
+                    undefined -> [];
+                    Other -> io_lib:fwrite(Pad ++ "~w = ~p~n",
+                        [Ax, Other])
+                end
+                    end, Attrs)],
+    io:put_chars([Hdr, Body]).
+
+
+get_info(Name, Info) ->
+    case riak_core_stat_coordinator:get_info(Name, Info) of
+        undefined ->
+            [];
+        Other ->
+            Other
+    end.
+
+
+
 
 -spec(disable_stat_0(data()) -> ok).
 %% @doc

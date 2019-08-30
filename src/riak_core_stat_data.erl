@@ -34,6 +34,7 @@
 -define(SECS_MILLISECOND_DIVISOR,1000).
 -define(MILLISECONDS_MICROSECONDS_DIVISOR,1000).
 
+%%%-------------------------------------------------------------------
 
 -spec(data_sanitise(data()) -> data()).
 %% @doc
@@ -42,178 +43,182 @@
 %% this one transforms the arg given into usable arguments in admin
 %% console and metadata. Taken from legacy code 2013-2014
 %% @end
-data_sanitise(Data) ->
-  data_sanitise(Data, '_', enabled).
-data_sanitise([Da | Ta], Type, Status) when is_list(Da) ->
-  Dat = list_to_binary(Da),
-  A = lists:map(fun(Stat) -> list_to_binary(Stat) end, Ta),
-  data_sanitise([Dat | A], Type, Status);
-data_sanitise([Da | Ta], Type, Status) when is_atom(Da)  ->
-  Data = lists:map(fun
-                     ("**") -> <<"**">>;
-                     ("*")  -> <<"*">>;
-                     (D) -> atom_to_binary(D, latin1)
-                   end, [Da|Ta]),
-  data_sanitise(Data, Type, Status);
-data_sanitise(Data, Type, Status) when is_binary(Data) ->
-  data_sanitise([Data], Type, Status);
-data_sanitise(Data, Type, Status) when is_atom(Data) ->
-  data_sanitise([atom_to_binary(Data, latin1)], Type, Status);
-data_sanitise(Data, Type, Status) when is_list(Data) ->
-  lists:map(fun(D) ->
-    data_sanitise_(D, Type, Status)
-            end, Data).
-%% convert Data to binary in a list if it isn't already, to pull out
-%% additional arguments, such as type and status.
+data_sanitise(Arg) ->
+    BinArg = check_args(Arg),
+    DefaultType     = '_',
+    DefaultStatus   = enabled,
+    DefaultDPs      = [],
+    data_sanitise_(BinArg, DefaultType, DefaultStatus, DefaultDPs).
 
+data_sanitise_(BinArg, Type, Status, DPs) ->
+    [Bin | Arg] = re:split(BinArg, "/"),
+    %% with "riak admin stat show ..." the separation of type, status and datapoints
+    %% is with "/" -> riak.**/type=duration/status=*/mean,max
+    {NewType, NewStatus, NewDps} = type_status_and_dps(Arg, Type, Status, DPs),
+%%    {Stats, ExoMatchSpec, DatPs} =
+        stats_and_matchspecs(Bin, NewType, NewStatus, NewDps).
 
-data_sanitise_(Data, Type, Status) ->
-  [Stat | Est] = re:split(Data, "/"),
-    %% When pulling out additional arguments they are separated by "/"
-    %% i.e. riak.riak_kv.*.gets.**/status=* ->
-    %% [<<"riak.riak_kv.*.gets.**">> | <<"status=*">>]
-  {NewType, NewStatus, DPs} = type_status_and_dps(Est, Type, Status, default),
-  {Names, MatchSpecs} = stat_entries(Stat, NewType, NewStatus),
-  {Names, MatchSpecs, DPs}.
-
-
-%% @doc
-%% when /status=*, /type=* or /datapoints is given it can be extracted out
-%% @end
-type_status_and_dps([<<"type=", T/binary>> | Rest], _Type, Status, DPs) ->
-  NewType =
-    case T of
-      <<"*">> -> '_'; %% type does not matter, is also the default
-      _ ->
-        try binary_to_existing_atom(T, latin1)
-        catch error:_ ->T
-        end
-    end, type_status_and_dps(Rest, NewType, Status, DPs);
-type_status_and_dps([<<"status=", S/binary>> | Rest], Type, _Status, DPs) ->
-  NewStatus =
-    case S of
-      <<"*">> -> '_'; %% status does not matter,
-      <<"enabled">> ->  enabled; %% enabled is the default
-      <<"disabled">> -> disabled
-    end, type_status_and_dps(Rest, Type, NewStatus, DPs);
-type_status_and_dps([DPsBin | Rest], Type, Status, DPs) ->
-  NewDPs = merge(
-    [binary_to_existing_atom(D, latin1) || D <- re:split(DPsBin, ",")],
-    DPs), %% datapoints are separated by ","
-  type_status_and_dps(Rest, Type, Status, NewDPs);
 type_status_and_dps([], Type, Status, DPs) ->
-  {Type, Status, DPs}.
+    {Type, Status, DPs};
+type_status_and_dps([<<"type=", T/binary>> | Rest], _Type, Status, DPs) ->
+    NewType =
+        case T of
+            <<"*">> -> '_';
+            _ ->
+                try binary_to_existing_atom(T, latin1)
+                catch error:_ -> T
+                end
+        end,
+    type_status_and_dps(Rest, NewType, Status, DPs);
+type_status_and_dps([<<"status=", S/binary>> | Rest], Type, _Status, DPs) ->
+    NewStatus =
+        case S of
+            <<"*">> -> '_';
+            <<"enabled">>  -> enabled;
+            <<"disabled">> -> disabled
+        end,
+    type_status_and_dps(Rest, Type, NewStatus, DPs);
+type_status_and_dps([DPsBin | Rest], Type, Status, DPs) ->
+    NewDPs = merge(
+        [binary_to_existing_atom(D, latin1) || D <- re:split(DPsBin, ",")],
+        DPs), %% datapoints are separated by ","
+    type_status_and_dps(Rest, Type, Status, NewDPs).
 
-merge([_ | _] = DPs, default) ->
-  DPs;
+merge([_ | _] = DPs, []) ->
+    DPs;
 merge([H | T], DPs) ->
-  case lists:member(H, DPs) of
-    true -> merge(T, DPs);
-    false -> merge(T, DPs ++ [H])
-  end;
+    case lists:member(H, DPs) of
+        true -> merge(T, DPs);
+        false -> merge(T, DPs ++ [H])
+    end;
 merge([], DPs) ->
-  DPs.
+    DPs.
 
-%% @doc
-%% Input is a name of a stat(s) in binary
-%% output is the name of a stat or several in list form
-%% [<<"riak,riak_kv,*.gets.**">>] -> [riak,riak_kv,'_',gets,'_','_',...]
-%% @end
-stat_entries([], Type, Status) ->
-  {[],[{{[?PFX]++'_', Type, '_'}, [{'=:=', '$status', Status}], ['$_']}]};
-    %% match_spec to match the metrics saved in exometer, is the pattern used in
-    %% exometer:select
-stat_entries("*", Type, Status) ->
-  stat_entries([], Type, Status);
-stat_entries("[" ++ _ = Expr, _Type, _Status) ->
-  case erl_scan:string(ensure_trailing_dot(Expr)) of
-    {ok, Toks, _} ->
-      case erl_parse:parse_exprs(Toks) of
-        {ok, [Abst]} ->
-          partial_eval(Abst);
-        Error ->
-          io:fwrite("(Parse error for ~p: ~p~n", [Expr, Error]),
-          []
-      end;
-    ScanErr ->
-      io:fwrite("(Scan error for ~p: ~p~n", [Expr, ScanErr]),
-      []
-  end; %% legacy Code
-stat_entries(Data, Type, Status) when is_atom(Status) ->
-  Parts = re:split(Data, "\\.", [{return, list}]),
-  Heads = replace_parts(Parts),
-  {Heads,[{{H, Type, Status}, [], ['$_']} || H <- Heads]};
-stat_entries(_Stat, _Type, Status) ->
-  io:fwrite("(Illegal status : ~p~n", [Status]).
+stats_and_matchspecs([], Type, Status, DPs) -> % basic
+    {[?PFX]++'_',
+        [{{[?PFX]++'_', Type, '_'}, [{'=:=', '$status', Status}], ['$_']}], DPs};
+stats_and_matchspecs("*", Type, Status, DPs) ->
+    stats_and_matchspecs([], Type, Status, DPs);
+stats_and_matchspecs("["++_ = Expr, _Type, _Status, _DPs) ->
+    case erl_scan:string(ensure_trailing_dot(Expr)) of
+        {ok, Toks, _} ->
+            case erl_parse:parse_exprs(Toks) of
+                {ok, [Abst]} -> partial_eval(Abst);
+                Error -> print("Parse error in ~p for ~p~n", [Expr, Error]), []
+            end;
+        Error -> print("Scan Error in ~p for ~p~n", [Expr, Error]), []
+    end;
+stats_and_matchspecs(Data, Type, Status, DPs) when is_atom(Status)->
+    Parts = re:split(Data, "\\.", [{return, list}]),
+    Heads = replace_parts(Parts),
+    {Heads,[{{H, Type, Status}, [], ['$_']} || H <- Heads]}, DPs;
+stats_and_matchspecs(_Stat, _Type, Status, _DP) ->
+    print("(Illegal status : ~p~n", [Status]).
+
 
 replace_parts(Parts) ->
-  case split(Parts, "**", []) of
-    {_, []} ->
-      [replace_parts_1(Parts)];
-    {Before, After} ->
-      Head = replace_parts_1(Before),
-      Tail = replace_parts_1(After),
-      [Head ++ Pad ++ Tail || Pad <- pads()]
-      %% case of "**" in between elements in metric name
-  end.
+    case split(Parts, "**", []) of
+        {_, []} ->
+            [replace_parts_1(Parts)];
+        {Before, After} ->
+            Head = replace_parts_1(Before),
+            Tail = replace_parts_1(After),
+            [Head ++ Pad ++ Tail || Pad <- pads()]
+        %% case of "**" in between elements in metric name
+    end.
 
 split([H | T], H, Acc) ->
-  {lists:reverse(Acc), T};
+    {lists:reverse(Acc), T};
 split([H | T], X, Acc) ->
-  split(T, X, [H | Acc]);
+    split(T, X, [H | Acc]);
 split([], _, Acc) ->
-  {lists:reverse(Acc), []}.
+    {lists:reverse(Acc), []}.
 
 
 replace_parts_1([H | T]) ->
-  R = replace_part(H),
-  case T of
-    '_' -> '_';
-    "**" -> [R] ++ '_';
-    ["**"] -> [R] ++ '_'; %% [riak,riak_kv|'_']
-    _ -> [R | replace_parts_1(T)]
-  end;
+    R = replace_part(H),
+    case T of
+        '_' -> '_';
+        "**" -> [R] ++ '_';
+        ["**"] -> [R] ++ '_'; %% [riak,riak_kv|'_']
+        _ -> [R | replace_parts_1(T)]
+    end;
 replace_parts_1([]) ->
-  [].
+    [].
 
 replace_part(H) ->
-  case H of
-    '_' -> '_';
-    "*" -> '_';
-    "'" ++ _ ->
-      case erl_scan:string(H) of
-        {ok, [{atom, _, A}], _} ->
-          A;
-        Error ->
-          lager:error("Cannot replace part: ~p~n", [Error])
-      end;
-    [C | _] when C >= $0, C =< $9 ->
-      try list_to_integer(H)
-      catch
-        error:_ -> list_to_atom(H)
-      end;
-    _ -> list_to_atom(H)
-  end.
+    case H of
+        '_' -> '_';
+        "*" -> '_';
+        "'" ++ _ ->
+            case erl_scan:string(H) of
+                {ok, [{atom, _, A}], _} ->
+                    A;
+                Error ->
+                    lager:error("Cannot replace part: ~p~n", [Error])
+            end;
+        [C | _] when C >= $0, C =< $9 ->
+            try list_to_integer(H)
+            catch
+                error:_ -> list_to_atom(H)
+            end;
+        _ -> list_to_atom(H)
+    end.
 
 pads() ->
-  [lists:duplicate(N, '_') || N <- lists:seq(1,15)].
+    [lists:duplicate(N, '_') || N <- lists:seq(1,15)].
 
-ensure_trailing_dot(Str) ->
-  case lists:reverse(Str) of
-    "." ++ _ ->
-      Str;
-    _ ->
-      Str ++ "."
-  end.
+
 
 partial_eval({cons, _, H, T}) ->
-  [partial_eval(H) | partial_eval(T)];
+    [partial_eval(H) | partial_eval(T)];
 partial_eval({tuple, _, Elems}) ->
-  list_to_tuple([partial_eval(E) || E <- Elems]);
+    list_to_tuple([partial_eval(E) || E <- Elems]);
 partial_eval({op, _, '++', L1, L2}) ->
-  partial_eval(L1) ++ partial_eval(L2);
+    partial_eval(L1) ++ partial_eval(L2);
 partial_eval(X) ->
-  erl_parse:normalise(X).
+    erl_parse:normalise(X).
+
+
+ensure_trailing_dot(Str) ->
+    case lists:reverse(Str) of
+        "." ++ _ ->
+            Str;
+        _ ->
+            Str ++ "."
+    end.
+
+check_args([]) ->
+    print([]);
+check_args([Args]) when is_atom(Args) ->
+    check_args(atom_to_binary(Args, latin1));
+check_args([Args]) when is_list(Args) ->
+    check_args(list_to_binary(Args));
+check_args([Args]) when is_binary(Args) ->
+    [Args];
+
+check_args(Args) when is_atom(Args) ->
+    check_args(atom_to_binary(Args, latin1));
+check_args(Args) when is_list(Args) ->
+    check_args(lists:map(fun
+                             (A) when is_atom(A) ->
+                                 atom_to_binary(A, latin1);
+                             (A) when is_list(A) ->
+                                 list_to_binary(A);
+                             (A) when is_binary(A) ->
+                                 A
+              end, Args));
+check_args(Args) when is_binary(Args) ->
+    [Args];
+check_args(_) ->
+    print(illegal).
+
+print([]) ->
+    io:fwrite("No Argument given~n");
+print(illegal) ->
+    io:fwrite("Illegal Argument Type given ~n").
+
+
 
 
 
@@ -249,13 +254,13 @@ print({Entries, _}, Attrs) -> %% todo make this work please, remove print_info_1
     lists:foreach(
         fun
             ({N,_,_,_}) ->
-                print(N, Attrs);
+                print_info_1(N, Attrs);
             ({N, _, _}) ->
-                print(N, Attrs);
+                print_info_1(N, Attrs);
             ({N, _}) ->
-                print(N, Attrs)
-%%            (N) ->
-%%                print(N, [])
+                print_info_1(N, Attrs);
+            (N) ->
+                print_info_1(N, [])
         end, Entries);
 print(Entries, []) when is_list(Entries) ->
     lists:map(fun
