@@ -177,27 +177,28 @@ update_type(_) -> '_'.
 
 %% private
 stats() ->
-    [{ignored_gossip_total, counter, [], [{value, ignored_gossip_total}]},
-     {rings_reconciled, spiral, [], [{count, rings_reconciled_total},
-                                     {one, rings_reconciled}]},
+    [{ignored_gossip_total,   counter, [], [{value, ignored_gossip_total}]},
+     {rings_reconciled,       spiral,  [], [{count, rings_reconciled_total},
+                                            {one, rings_reconciled}]},
      {ring_creation_size,
-      {function, app_helper, get_env, [riak_core, ring_creation_size],
-       match, value}, [], [{value, ring_creation_size}]},
-     {gossip_received, spiral, [], [{one, gossip_received}]},
-     {rejected_handoffs, counter, [], [{value, rejected_handoffs}]},
-     {handoff_timeouts, counter, [], [{value, handoff_timeouts}]},
+      {function, app_helper, get_env,
+          [riak_core, ring_creation_size],
+       match, value},                  [], [{value, ring_creation_size}]},
+     {gossip_received,        spiral,  [], [{one, gossip_received}]},
+     {rejected_handoffs,      counter, [], [{value, rejected_handoffs}]},
+     {handoff_timeouts,       counter, [], [{value, handoff_timeouts}]},
      {dropped_vnode_requests, counter, [], [{value, dropped_vnode_requests_total}]},
-     {converge_delay, duration, [], [{mean, converge_delay_mean},
-                                     {min, converge_delay_min},
-                                     {max, converge_delay_max},
-                                     {last, converge_delay_last}]},
-     {rebalance_delay, duration, [], [{min, rebalance_delay_min},
-                                      {max, rebalance_delay_max},
-                                      {mean, rebalance_delay_mean},
-                                      {last, rebalance_delay_last}]} |  nwp_stats()].
+     {converge_delay,        duration, [], [{mean, converge_delay_mean},
+                                            {min, converge_delay_min},
+                                            {max, converge_delay_max},
+                                            {last, converge_delay_last}]},
+     {rebalance_delay,      duration, [],  [{min, rebalance_delay_min},
+                                            {max, rebalance_delay_max},
+                                            {mean, rebalance_delay_mean},
+                                            {last, rebalance_delay_last}]} |  nwp_stats()].
 
 nwp_stats() ->
-    [ {[vnode, worker_pool], counter, [], [{value, vnode_worker_pool_total}]},
+    [ {[vnode, worker_pool],              counter, [], [{value, vnode_worker_pool_total}]},
       {[node, worker_pool, unregistered], counter, [], [{value, node_worker_pool_unregistered_total}]} |
       [nwp_stat(Pool) || Pool <- riak_core_node_worker_pool:pools()]].
 
