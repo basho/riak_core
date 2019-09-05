@@ -129,7 +129,7 @@ aggregate(Stats, DPs) ->
 
 %%% ------------------------------------------------------------------
 
--spec(register(app(), statname()) -> ok | error()).
+%%-spec(register(app(), statname()) -> ok | error()).
 %% @doc
 %% register apps stats into both meta and exometer adding the prefix
 %% @end

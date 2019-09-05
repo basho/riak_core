@@ -128,10 +128,20 @@ delete(Prefix, Key) ->
 %% the one given, default at riak_core_console level - is enabled.
 %% @end
 find_entries(Stats, Status, Type, DP) ->
+%%    {T1,V1} =
   lists:flatten(
   lists:map(fun(Stat) ->
     fold(Stat, Status, Type, DP)
             end, Stats)).
+%%    {T2,_V2} =
+%%    lists:flatten(
+%%        lists:map(fun(Stat) ->
+%%            test_find_entries_with_print(Stat, Status, Type, DP)
+%%                  end, Stats)),
+%%
+%%    io:fwrite("Fold without print : ~p~n", [T1]),
+%%    io:fwrite("Fold with    print : ~p~n", [T2]),
+%%    V1.
 
 -spec(fold(statname(),(enabled | disabled | '_'),(type() | '_'), (datapoint() | [])) -> acc()).
 %% @doc
@@ -147,6 +157,8 @@ find_entries(Stats, Status, Type, DP) ->
 %% The Aliases are the names of the DPs for those specific stats, if the stat does not have any aliases
 %% for the data points requested it will not be returned.
 %% @end
+
+
 fold(Stat, Status0, Type0, DP0) ->
   {Acc1, _Status, _Type, _DP} =
   riak_core_metadata:fold(fun
@@ -234,6 +246,94 @@ find_all_entries() ->
   Stats = get_all(?STATPFX),
   [{Name, {status, Status}} || {Name, Status} <- find_entries(Stats, '_', '_',[])].
 
+test_find_entries_with_print(Stat, Status0, Type0, DP0) ->
+    {Acc1, _Status, _Type, _DP} =
+        riak_core_metadata:fold(fun
+        %%%%%%% 4 - tuple
+        %%% The Type and DataPoints are not given so only the name and status is to be returned:
+                                    ({Name, [{MStatus,_Type,_Opts,_Aliases}]},{Acc,Status,'_',[]})
+                                        when Status == '_' orelse MStatus == Status -> %% Status :: enabled | disabled | '_'
+                                        io:fwrite("{~p, ~p}~n", [Name, Status]),
+
+                                        {[{Name, MStatus}|Acc],Status,'_',[]};
+
+                                    %%% The DataPoints are not given so the Name, Status and Type needs to be returned:
+                                    ({Name, [{MStatus,MType,_Opts,_Aliases}]},{Acc,Status,Type,[]})
+                                        when (Type == '_' orelse MType == Type)
+                                        andalso (Status == '_' orelse MStatus == Status) ->
+                                        io:fwrite("{~p, ~p, ~p}~n", [Name, Type, Status]),
+                                        {[{Name,MType,MStatus}|Acc],Status,Type,[]};
+
+                                    ({Name, [{MStatus,MType,_MOpts,MAliases}]},{Acc,Status,Type,DPs})
+                                        when (Type == '_' orelse MType == Type)
+                                        andalso (Status == '_' orelse MStatus == Status)
+                                        andalso MAliases =/= [] -> %% aliases aren't stored in options and isn't empty
+
+                                        Result = riak_core_stat_metadata:dp_get(DPs,MAliases),
+
+                                        case lists:flatten(Result) of
+                                            [] -> {Acc, Status,Type,DPs};
+                                            Aliases ->
+                                                NewA =
+                                                    [{DP, [Val || {ok, Val} <- exometer_alias:get_value(A)]}
+                                                    || {DP, A} <- Aliases],
+                                                io:fwrite("{~p, ~p, ~p, ~p}~n", [Name, Type, Status, NewA]),
+                                                {[{Name,MType,MStatus,Aliases}|Acc],Status,Type,DPs}
+                                        end;
+
+
+                                    %%%%%%% 3 - tuple
+                                    %%% The Type and DataPoints are not given so only the name and status is to be returned:
+                                    ({Name, [{MStatus,_Type,_Opts}]},{Acc,Status,'_',[]})
+                                        when Status == '_' orelse MStatus == Status -> %% Status :: enabled | disabled | '_'
+                                        io:fwrite("{~p, ~p}~n", [Name, Status]),
+                                        {[{Name, MStatus}|Acc],Status,'_',[]};
+
+                                    %%% The DataPoints are not given so the Name, Status and Type needs to be returned:
+                                    ({Name, [{MStatus,MType,_Opts}]},{Acc,Status,Type,[]})
+                                        when (Type == '_' orelse MType == Type)
+                                        andalso (Status == '_' orelse MStatus == Status) ->
+                                        io:fwrite("{~p, ~p, ~p}~n", [Name, Type, Status]),
+                                        {[{Name,MType,MStatus}|Acc],Status,Type,[]};
+
+                                    ({Name, [{MStatus,MType,MOpts}]},{Acc,Status,Type,DPs})
+                                        when (Type == '_' orelse MType == Type)
+                                        andalso (Status == '_' orelse MStatus == Status) ->
+
+                                        MAliases = proplists:get_value(aliases,MOpts,[]),
+                                        Result = riak_core_stat_metadata:dp_get(DPs,MAliases),
+
+                                        case lists:flatten(Result) of
+                                            [] -> {Acc, Status,Type,DPs};
+                                            Aliases ->                            NewA =
+                                                [{DP, [Val || {ok, Val} <- exometer_alias:get_value(A)]}
+                                                    || {DP, A} <- Aliases],
+                                                io:fwrite("{~p, ~p, ~p, ~p}~n", [Name, Type, Status, NewA]),
+                                                {[{Name,MType,MStatus,Aliases}|Acc],Status,Type,DPs}
+                                        end;
+
+                                    %%%%%%% 2 - tuple
+                                    %%% The Type and DataPoints are not given so only the name and status is to be returned:
+                                    ({Name, [{MStatus,_Type}]},{Acc,Status,'_',[]})
+                                        when Status == '_' orelse MStatus == Status -> %% Status :: enabled | disabled | '_'
+                                        io:fwrite("{~p, ~p}~n", [Name, Status]),
+                                        {[{Name, MStatus}|Acc],Status,'_',[]};
+
+                                    %%% The DataPoints are not in this stat, Status and Type needs to be returned:
+                                    ({Name, [{MStatus,MType}]},{Acc, Status, Type, DP})
+                                        when (Type == '_' orelse MType == Type)
+                                        andalso (Status == '_' orelse MStatus == Status)  ->
+                                        io:fwrite("{~p, ~p, ~p}~n", [Name, Type, Status]),
+                                        {[{Name, MType, MStatus}|Acc], Status, Type, DP};
+
+
+                                    %% Otherwise
+                                    (_Other, {Acc, Status, Type, DP}) ->
+                                        {Acc, Status, Type, DP}
+
+                                end, {[], Status0, Type0, DP0}, ?STATPFX, [{match, Stat}]), Acc1.
+
+
 %%%===================================================================
 %%% Profile API
 %%%===================================================================
@@ -279,7 +379,7 @@ the_alpha_stat(Alpha, Beta) ->
   AlphaList = the_alpha_map(Alpha),
   BetaList = the_alpha_map(Beta),
   {_Nout, ListtoChange} =
-    lists:foldr(fun(Stat, {List1, List2}) -> %% todo: revamp this fold
+    lists:foldr(fun(Stat, {List1, List2}) ->
       case lists:member(Stat, List1) of
         true ->
           {List1, List2};

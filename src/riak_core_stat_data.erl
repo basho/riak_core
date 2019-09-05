@@ -18,7 +18,7 @@
 
 -export([
   data_sanitise/1,
-  data_sanitise/3,
+    data_sanitise/4,
   print/2
 ]).
 
@@ -35,29 +35,21 @@
 -define(MILLISECONDS_MICROSECONDS_DIVISOR,1000).
 
 %%%-------------------------------------------------------------------
-
--spec(data_sanitise(data()) -> data()).
+-spec(data_sanitise(data(),status(),type(),datapoint()) -> data()).
 %% @doc
 %% this is for data coming in from the console of format [<<"X">>]
 %% or ["riak...."] etc.,
 %% this one transforms the arg given into usable arguments in admin
 %% console and metadata. Taken from legacy code 2013-2014
 %% @end
-data_sanitise(Arg) ->
-    BinArg = check_args(Arg),
-    DefaultType     = '_',
-    DefaultStatus   = enabled,
-    DefaultDPs      = [],
-    data_sanitise_(BinArg, DefaultType, DefaultStatus, DefaultDPs).
-
-data_sanitise_(BinArg, Type, Status, DPs) ->
-    [Bin | Arg] = re:split(BinArg, "/"),
-    %% with "riak admin stat show ..." the separation of type, status and datapoints
-    %% is with "/" -> riak.**/type=duration/status=*/mean,max
-    {NewType, NewStatus, NewDps} = type_status_and_dps(Arg, Type, Status, DPs),
-%%    {Stats, ExoMatchSpec, DatPs} =
-        stats_and_matchspecs(Bin, NewType, NewStatus, NewDps).
-
+%%data_sanitise(Arg, Status, Type, DPs) ->
+%%    BinArgs = check_args(Arg),
+%%    [Bin | Args] = re:split(BinArgs, "/"),
+%%    %% Arguments are separated with "/"
+%%    {NewType, NewStatus, NewDPs} =
+%%        type_status_and_dps(Args, Type, Status, DPs),
+%%    {Bin, NewStatus, NewType, NewDPs}.
+%%
 type_status_and_dps([], Type, Status, DPs) ->
     {Type, Status, DPs};
 type_status_and_dps([<<"type=", T/binary>> | Rest], _Type, Status, DPs) ->
@@ -94,6 +86,29 @@ merge([H | T], DPs) ->
 merge([], DPs) ->
     DPs.
 
+
+
+
+data_sanitise(Arg) ->
+    BinArg = check_args(Arg),
+    DefaultType     = '_',
+    DefaultStatus   = enabled,
+    DefaultDPs      = [],
+    data_sanitise_(BinArg, DefaultType, DefaultStatus, DefaultDPs).
+
+data_sanitise(Arg, Status, Type, DPs) ->
+    data_sanitise_(check_args(Arg), Status, Type, DPs).
+
+data_sanitise_(BinArg, Type, Status, DPs) ->
+    [Bin | Arg] = re:split(BinArg, "/"),
+%%     with "riak admin stat show ..." the separation of type, status and datapoints
+%%     is with "/" -> riak.**/type=duration/status=*/mean,max
+    {NewType, NewStatus, NewDps} = type_status_and_dps(Arg, Type, Status, DPs),
+%%    {Stats, ExoMatchSpec, DatPs} =
+        stats_and_matchspecs(Bin, NewType, NewStatus, NewDps).
+
+
+
 stats_and_matchspecs([], Type, Status, DPs) -> % basic
     {[?PFX]++'_',
         [{{[?PFX]++'_', Type, '_'}, [{'=:=', '$status', Status}], ['$_']}], DPs};
@@ -111,7 +126,7 @@ stats_and_matchspecs("["++_ = Expr, _Type, _Status, _DPs) ->
 stats_and_matchspecs(Data, Type, Status, DPs) when is_atom(Status)->
     Parts = re:split(Data, "\\.", [{return, list}]),
     Heads = replace_parts(Parts),
-    {Heads,[{{H, Type, Status}, [], ['$_']} || H <- Heads]}, DPs;
+    {Heads,[{{H, Type, Status}, [], ['$_']} || H <- Heads], DPs};
 stats_and_matchspecs(_Stat, _Type, Status, _DP) ->
     print("(Illegal status : ~p~n", [Status]).
 

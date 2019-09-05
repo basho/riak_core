@@ -69,14 +69,14 @@ register_vnode_stats(Module, Index, Pid) ->
     {[vnodes_running, Module],
     {function, exometer, select_count,
       [[{ {[vnodeq, Module, '_'], '_', '_'},
-        [], [true] }]], match, value }, [],
+        [], [true] }]], match, value },
     [{aliases,[{value, F(Module, <<"s_running">>)}]}]},
 
   Stat2 =
     {[vnodeq, Module],
     {function, riak_core_stat, vnodeq_stats, [Module],
-      histogram, [mean,median,min,max,total]},[],
-    [{aliases,[{mean  , F(Module, <<"q_mean">>)},
+      histogram, [mean,median,min,max,total]},
+    [{aliases, [{mean  , F(Module, <<"q_mean">>)},
       {median, F(Module, <<"q_median">>)},
       {min   , F(Module, <<"q_min">>)},
       {max   , F(Module, <<"q_max">>)},

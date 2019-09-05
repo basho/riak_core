@@ -49,6 +49,41 @@
 %%% API
 %%%===================================================================
 
+%%find_entries(print, Stat, Status, Type, DPs) ->
+%%    find_pentries(Stat, Status, Type, DPs);
+%%find_entries(return, Stat, Status, Type, DPs) ->
+%%    find_rentries(Stat, Status, Type, DPs).
+%%
+%%find_pentries(Stat, Status, '_', default) ->
+%%    print(find_entries_(Stat, Status));
+%%find_pentries(Stat, Status, Type, default) ->
+%%    print(find_entries_(Stat, Status, Type));
+%%find_pentries(Stat, Status, '_', DPs) ->
+%%    Stats = find_entries_(Stat, Status),
+%%    NewDP = find_dps(Stat, DPs),
+%%    print(Stats, NewDP);
+%%find_pentries(Stat, Status, Type, DPs) ->
+%%    Stats = find_entries_(Stat, Status, Type),
+%%    NewDP = find_dps(Stat, DPs),
+%%    print(Stats, NewDP).
+%%
+%%find_rentries(Stat, Status, '_', default) ->
+%%    find_entries_(Stat, Status);
+%%find_rentries(Stat, Status, Type, default) ->
+%%    find_entries_(Stat, Status, Type);
+%%find_rentries(Stat, Status, '_', DPs) ->
+%%    Stats = find_entries_(Stat, Status),
+%%    NewDP = find_dps(Stats, DPs),
+%%    {Stats, NewDP};
+%%find_rentries(Stat, Status, Type, DPs) ->
+%%    Stats = find_entries_(Stat, Status, Type),
+%%    NewDP = find_dps(Stats, DPs),
+%%    {Stats, NewDP}.
+%%
+%%print(Arg) ->
+%%    io:fwrite("~p~n", [Arg]).
+
+
 -spec(find_entries(stats(), status()) -> stats()).
 %% @doc
 %% Use @see exometer:find_entries to get the name, type and status of
@@ -56,16 +91,20 @@
 %% a list to be returned
 %% @end
 find_entries(Stats, Status) ->
-    lists:foldl(fun(Stat, Found) ->
-        case find_entries(Stat) of
-            [{Name, _Type, EStatus}] when EStatus == Status; Status == '_' ->
-                [{Name, Status} | Found];
-            [{_Name, _Type, _EStatus}] -> % Different status
-                Found;
-            [] ->
-                Found
-        end
-                end, [], Stats).
+%% todo: need to do parse_stat_entry.
+    lists:foldl(
+        fun(Stat, Found) ->
+            case find_entries(Stat) of
+                [{Name, _Type, EStatus}] when EStatus == Status; Status == '_' ->
+                    [{Name, Status} | Found];
+                [{_Name, _Type, _EStatus}] -> % Different status
+                    Found;
+                [] ->
+                    Found
+            end
+        end, [], Stats).
+
+
 
 -spec(find_static_stats(stats()) -> stats()).
 %% @doc

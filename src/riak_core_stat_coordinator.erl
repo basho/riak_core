@@ -11,6 +11,7 @@
 
 %% Console API
 -export([
+%%    find_entries/4,
     find_entries/3,
     find_static_stats/1,
     find_stats_info/2,
@@ -57,6 +58,40 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%% Console API %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+%%find_entries(Format, Arg, Status, Type, DPs) ->
+%%    lists:map(
+%%        fun(A) ->
+%%            {Stat, NewSt, NewType, NewDps} =
+%%                data_sanitise(A, Status, Type, DPs),
+%%            case Stat of
+%%                "[" ++ _ ->
+%%                    find_entries_e(Format, Stat, NewSt, NewType, NewDps);
+%%                _ -> case legacy_search(Format, Stat, NewSt, NewType) of
+%%                         false ->
+%%                             find_entries_m(Format, Stat, NewSt, NewType, NewDps);
+%%                         Found ->
+%%                             {Found, find_dps(Found, DPs)}
+%%                     end
+%%            end
+%%        end, Arg).
+
+%%data_sanitise(S, St, T, DP) ->
+%%    riak_core_stat_data:data_sanitise(S, St, T, DP).
+
+%%
+%%find_entries_e(Format, Stat, Status, Type, DPs) ->
+%%    %% find the stat in exometer
+%%    riak_core_stat_exometer:find_entries(Format, Stat, Status, Type, DPs).
+%%
+%%find_entries_m(Format, Stat, Status, Type, DPs) ->
+%%    riak_core_stat_metadata:find_entries(Format, Stat, Status, Type, DPs).
+%%
+%%
+%%find_dps(Stats, DataPoints) ->
+%%    ok.
 
 -spec(find_entries(pattern(), stats(), datapoint()) -> stats()).
 %% @doc
