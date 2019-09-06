@@ -92,6 +92,10 @@
     profiletable    %% tableId for profile ETS table
 }).
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -330,3 +334,7 @@ check_args([Args]) ->
     Args;
 check_args(_) ->
     check_args([]).
+
+-ifdef(TEST).
+
+-endif.

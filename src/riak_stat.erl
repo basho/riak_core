@@ -65,7 +65,8 @@
     get_stats/1,
     get_value/1,
     get_info/1,
-    aggregate/2]).
+    aggregate/2,
+    sample/1]).
 
 %% Update API
 -export([update/3]).
@@ -73,13 +74,18 @@
 %% Delete/Reset API
 -export([
     unregister/1,
-    unregister/4]).
+    unregister/4,
+    reset/1]).
 
 %% Additional API
 -export([prefix/0]).
 
 -define(STATCACHE,          app_helper:get_env(riak_core,exometer_cache,{cache,5000})).
 -define(INFOSTAT,           [name,type,module,value,cache,status,timestamp,options]).
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
 
 %%%===================================================================
 %%% Registration API
@@ -159,8 +165,9 @@ get_stats(Path) ->
     find_entries(Path, '_').
 
 find_entries(Stats, Status) ->
-    MS = [{{Stats, '_', Status}, [], ['$_']}],
-    riak_stat_mgr:find_entries(MS,Stats,Status).
+    find_entries(Stats, Status, '_', []).
+find_entries(Stats, Status, Type, DPs) ->
+    riak_stat_mgr:find_entries(Stats, Status, Type, DPs).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -199,6 +206,16 @@ aggregate(Stats, DPs) ->
 aggregate_(Pattern, DPs) ->
     riak_stat_mgr:aggregate(Pattern, DPs).
 
+%%%-------------------------------------------------------------------
+%% @doc
+%% @see exometer:sample/1
+%% @end
+%%%-------------------------------------------------------------------
+-spec(sample(metricname()) -> ok | error() | value()).
+sample(StatName) ->
+    riak_stat_exom:sample(StatName).
+
+
 %%%===================================================================
 %%% Updating Stats API
 %%%===================================================================
@@ -221,13 +238,14 @@ update(Name, Inc, Type) ->
 %%% Deleting/Resetting Stats API
 %%%===================================================================
 
--spec(unregister(app(), Mod :: data(), Idx :: data(), type()) ->
-    ok | error()).
+%%%-------------------------------------------------------------------
 %% @doc
 %% unregister a stat from the metadata leaves it's status as
 %% {status, unregistered}, and deletes the metric from exometer
 %% @end
-unregister({Mod, Idx, Type, App}) ->
+%%%-------------------------------------------------------------------
+-spec(unregister(app(), Mod :: data(), Idx :: data(), type()) ->
+    ok | error()).unregister({Mod, Idx, Type, App}) ->
     unregister(Mod, Idx, Type, App);
 unregister(StatName) ->
     unreg_stats(StatName).
@@ -245,6 +263,16 @@ unreg_stats(P, App, Type, Mod, Index) ->
 
 unreg_stats_(StatName) ->
     riak_stat_mgr:unregister(StatName).
+
+%%%-------------------------------------------------------------------
+%% @doc
+%% reset the stat in exometer and in metadata
+%% @end
+%%%-------------------------------------------------------------------
+-spec(reset(metricname()) -> ok | error()).
+reset(StatName) ->
+    riak_stat_mgr:reset_stat(StatName).
+
 
 %%%===================================================================
 %%% Additional API
@@ -270,3 +298,143 @@ print(Entries, Attr) when is_list(Entries) ->
 print(Entries, Attr) ->
     riak_stat_data:print(Entries, Attr).
 
+%%%===================================================================
+%%% EUNIT Testing
+%%%==================================================================
+
+-ifdef(TEST).
+
+-define(new(Mod),                   meck:new(Mod)).
+-define(expect(Mod,Fun,Func),       meck:expect(Mod,Fun,Func)).
+-define(expect(Mod,Fun,Val,Func),   meck:expect(Mod,Fun,Val,Func)).
+-define(unload(Mod),                meck:unload(Mod)).
+
+-define(setup(Fun),        {setup,    fun setup/0,          fun cleanup/1, Fun}).
+-define(foreach(Funs),     {foreach,  fun setup/0,          fun cleanup/1, Funs}).
+
+-define(spawn(Test),       {spawn,        Test}).
+-define(timeout(Test),     {timeout, 120, Test}).
+-define(inorder(Test),     {inorder,      Test}).
+-define(inparallel(Test),  {inparallel,   Test}).
+
+-define(setuptest(Desc, Test), {Desc, ?setup(fun(_) -> Test end)}).
+
+setup() ->
+    catch(?unload(riak_stat)),
+    catch(?unload(riak_stat_data)),
+    catch(?unload(riak_stat_mgr)),
+    catch(?unload(riak_stat_exom)),
+    catch(?unload(riak_stat_meta)),
+    catch(?unload(riak_stat_console)),
+    catch(?unload(riak_stat_profiles)),
+    ?new(riak_stat),
+    ?new(riak_stat_data),
+    ?new(riak_stat_mgr),
+    ?new(riak_stat_exom),
+    ?new(riak_stat_meta),
+    ?new(riak_stat_console),
+    ?new(riak_stat_profiles),
+    {ok, Pid} = riak_stat_profiles:start_link(),
+    [Pid].
+
+cleanup(Pids) ->
+    process_flag(trap_exit, true),
+    catch(?unload(riak_stat)),
+    catch(?unload(riak_stat_data)),
+    catch(?unload(riak_stat_mgr)),
+    catch(?unload(riak_stat_exom)),
+    catch(?unload(riak_stat_meta)),
+    catch(?unload(riak_stat_console)),
+    catch(?unload(riak_stat_profiles)),
+    process_flag(trap_exit, false),
+    Children = [supervisor:which_children(Pid) || Pid <- Pids],
+    lists:foreach(fun({Child, _n, _o, _b}) ->
+        [supervisor:terminate_child(Pid, Child) || Pid <- Pids] end, Children).
+
+-define(TestApps,     [riak_stat,riak_test,riak_core,riak_kv,riak_repl,riak_pipe]).
+-define(TestCaches,   [{cache,6000},{cache,7000},{cache,8000},{cache,9000},{cache,0}]).
+-define(TestStatuses, [{status,disabled},{status,enabled}]).
+-define(TestName,     [stat,counter,active,list,pb,node,metadata,exometer]).
+-define(TestTypes,    [histogram, gauge, spiral, counter, duration]).
+
+-define(HistoAlias,   ['mean','max','99','95','median']).
+-define(SpiralAlias,  ['one','count']).
+-define(DuratAlias,   ['mean','max','last','min']).
+
+types() ->
+    pick_rand_(?TestTypes).
+
+options() ->
+    Cache  = pick_rand_(?TestCaches),
+    Status = pick_rand_(?TestStatuses),
+    [Cache|Status].
+
+aliases(Stat,Type) ->
+    case Type of
+        histogram ->
+            [alias(Stat,Alias) || Alias <- ?HistoAlias];
+        gauge ->
+            [];
+        spiral ->
+            [alias(Stat,Alias) || Alias <- ?SpiralAlias];
+        counter ->
+            [alias(Stat,value)];
+        duration ->
+            [alias(Stat,Alias) || Alias <- ?DuratAlias]
+    end.
+
+alias(Stat,Alias) ->
+    Pre = lists:map(fun(S) -> atom_to_list(S) end, Stat),
+    Pref = lists:join("_", Pre),
+    Prefi = lists:concat(Pref++"_"++atom_to_list(Alias)),
+    Prefix = list_to_atom(Prefi),
+    {Alias, Prefix}.
+
+
+pick_rand_([]) ->
+    pick_rand_([error]);
+pick_rand_(List) ->
+    Num  = length(List),
+    Elem = rand:uniform(Num),
+    element(Elem, List).
+
+
+stat_generator() ->
+    Prefix = prefix(),
+    RandomApp = pick_rand_(?TestApps),
+    RandomName = [pick_rand_(?TestName) || _ <- lists:seq(1,rand:uniform(length(?TestName)))],
+    Stat = [Prefix, RandomApp | RandomName],
+    RandomType = types(),
+    RandomOptions = options(),
+    RandomAliases = aliases(Stat,RandomType),
+    {Stat, RandomType, RandomOptions, RandomAliases}.
+
+-define(TestStatNum, 1000).
+
+register_stat_test_() ->
+    ?setuptest("riak_stat:register(Stat) test~n",
+        [
+            {"Register stats",                fun test_register_stats/0},
+            {"Register an unregistered stat", fun test_register_unreg_stats/0},
+            {"Register stat twice",           fun test_re_register/0}
+        ]).
+
+test_register_stats() ->
+    lists:foreach(fun(_) ->
+        Stat = stat_generator(),
+        register_stats(Stat)
+                  end,
+        lists:seq(1,rand:uniform(?TestStatNum))).
+
+test_register_unreg_stats() ->
+    {CStat,Ctype,COpts,CAlias} = stat_generator(),
+    riak_stat:unregister(CStat),
+    register_stats({CStat,Ctype,COpts,CAlias}).
+
+test_re_register() ->
+    Stat = stat_generator(),
+    register_stats(Stat),
+    register_stats(Stat).
+
+
+-endif.

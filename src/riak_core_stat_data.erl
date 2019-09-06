@@ -30,7 +30,6 @@
   sanitise_data/1
 ]).
 
--define(MEGASECS_MILLISECOND_DIVISOR,1000000000).
 -define(SECS_MILLISECOND_DIVISOR,1000).
 -define(MILLISECONDS_MICROSECONDS_DIVISOR,1000).
 
@@ -383,6 +382,8 @@ format_time({ _, _, MicroSeconds} = Now) ->
   {{Year, Month, Day},{ Hour, Min, Sec}} = calendar:now_to_universal_time(Now),
   lists:flatten(io_lib:format("~.4.0w-~.2.0w-~.2.0wT~.2.0w:~.2.0w:~.2.0w.~.3.0wZ",
     [Year, Month, Day, Hour, Min, Sec, MicroSeconds div ?MILLISECONDS_MICROSECONDS_DIVISOR])).
+
+-define(MEGASECS_MILLISECOND_DIVISOR,1000000000).
 
 %%--------------------------------------------------------------------
 -spec(utc_milliseconds_time() -> term()).

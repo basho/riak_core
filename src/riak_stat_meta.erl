@@ -32,6 +32,18 @@
     dp_get/2,
     get_dps/2]).
 
+%% Updating API
+-export([
+    change_status/1,
+    change_status/2
+]).
+
+%% Resetting/Deleting API
+-export([
+    reset_stat/1,
+    reset_resets/0,
+    unregister/1]).
+
 %% Profile API
 -export([
     save_profile/1,
@@ -55,6 +67,10 @@
 -define(LOADEDPFX,            {?PROF, loaded}).
 -define(LOADEDKEY,             ?NODEID).
 -define(LOADEDPKEY,           {?LOADEDPFX, ?LOADEDKEY}).
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
 
 
 %%%===================================================================
@@ -425,24 +441,144 @@ re_register(StatName, Value) -> %% ok
     put(?STATPFX, StatName, Value).
 
 
+%%%===================================================================
+%%% Updating API
+%%%===================================================================
+
+%%%-------------------------------------------------------------------
+%% @doc
+%% Changes the status of stats in the metadata
+%% @end
+%%%-------------------------------------------------------------------
+-spec(change_status(metadata_key(), status()) -> ok | acc()).
+change_status(Stats) when is_list(Stats) ->
+    lists:foldl(fun
+                    ({Stat, {status, Status}}, Acc) ->
+                        [change_status(Stat, Status) | Acc];
+                    ({Stat, Status}, Acc) ->
+                        [change_status(Stat, Status) | Acc]
+                end, [], Stats);
+change_status({StatName, Status}) ->
+    change_status(StatName, Status).
+change_status(Statname, ToStatus) ->
+    case check_meta(?STATKEY(Statname)) of
+        [] ->
+            [];
+        unregistered ->
+            [];
+        {_Status, Type, Opts, Aliases} ->
+            put(?STATPFX, Statname, {ToStatus, Type, Opts, Aliases})
+    end.
+
+%%%-------------------------------------------------------------------
+%% @doc
+%% Setting the options in the metadata manually, such as
+%% resets etc...
+%% @end
+%%%-------------------------------------------------------------------
+-spec(set_options(metadata_key(), options()) -> ok).
+set_options(StatInfo, NewOpts) when is_list(NewOpts) ->
+    lists:foreach(fun({Key, NewVal}) ->
+        set_options(StatInfo, {Key, NewVal})
+                  end, NewOpts);
+set_options({Statname, {Status, Type, Opts, Aliases}}, {Key, NewVal}) ->
+    NewOpts = lists:keyreplace(Key, 1, Opts, {Key, NewVal}),
+    NewOpts2 = fresh_clock(NewOpts),
+    set_options(Statname, {Status, Type, NewOpts2, Aliases});
+set_options(StatName, {Status, Type, NewOpts, Aliases}) ->
+    re_register(StatName, {Status, Type, NewOpts, Aliases}).
+
+fresh_clock(Opts) ->
+    case lists:keysearch(vclock, 1, Opts) of
+        false ->
+            [{vclock, clock_fresh(?NODEID, 0)} | Opts];
+        {value, {vclock, [{Node, {Count, _VC}}]}} ->
+            lists:keyreplace(vclock, 1, Opts, {vclock, clock_fresh(Node, Count)});
+        _ ->
+            [{vclock, clock_fresh(?NODEID, 0)} | Opts]
+    end.
+
+clock_fresh(Node, Count) ->
+    vclock:fresh(Node, vc_inc(Count)).
+vc_inc(Count) -> Count + 1.
+
+
+%%%==================================================================
+%%% Deleting/Resetting Stats API
+%%%===================================================================
+
+
+%%%-------------------------------------------------------------------
+%% @doc
+%% reset the stat in exometer and notify metadata of its reset
+%% @end
+%%%-------------------------------------------------------------------
+-spec(reset_stat(metadata_key()) -> ok | error()).
+reset_stat(Statname) ->
+    case check_meta(?STATKEY(Statname)) of
+        [] -> ok;
+        unregistered -> {error, unregistered};
+        {_Status, Type, Opts, Aliases} ->
+            Resets= proplists:get_value(resets, Opts),
+            Options = [{resets, reset_inc(Resets)}],
+            set_options({Statname, {enabled, Type, Opts, Aliases}}, Options)
+    end.
+
+reset_inc(Count) -> Count + 1.
+
+%%%-------------------------------------------------------------------
+%% @doc
+%% sometimes the reset count just gets too high, and for every single
+%% stat its a bit much
+%% @end
+%%%-------------------------------------------------------------------
+-spec(reset_resets() -> ok).
+reset_resets() ->
+    lists:foreach(fun({Stat, _Val}) ->
+        {Status, Type, Opts, Aliases} = check_meta(?STATKEY(Stat)),
+        set_options({Stat, {Status, Type, Opts, Aliases}}, {resets, 0})
+                  end, get_all(?STATPFX)).
+
+%%%-------------------------------------------------------------------
+
+
+%%%-------------------------------------------------------------------
+%% @doc
+%% Marks the stats as unregistered, that way when a node is restarted and registers the
+%% stats it will ignore stats that are marked unregistered
+%% @end
+%%%-------------------------------------------------------------------
+-spec(unregister(metadata_key()) -> ok).
+unregister(Statname) ->
+    case check_meta(?STATKEY(Statname)) of
+        {_Status, Type, MetaOpts, Aliases} ->
+            re_register(Statname, {unregistered, Type, MetaOpts, Aliases});
+        _ -> ok
+    end.
+
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%% Profile API %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
--spec(save_profile(profilename()) -> ok | error()).
+%%%-------------------------------------------------------------------
 %% @doc
 %% Take the stats and their status out of the metadata for the current
 %% node and save it into the metadata as a profile - works on per node
 %% @end
+%%%-------------------------------------------------------------------
+-spec(save_profile(profilename()) -> ok | error()).
 save_profile(ProfileName) ->
     put(?PROFPFX, ProfileName, find_all_entries()).
 
--spec(load_profile(profilename()) -> ok | error()).
+%%%-------------------------------------------------------------------
 %% @doc
 %% Find the profile in the metadata and pull out stats to change them.
 %% It will compare the current stats with the profile stats and will
 %% change the ones that need changing to prevent errors/less expense
 %% @end
+%%%-------------------------------------------------------------------
+-spec(load_profile(profilename()) -> ok | error()).
 load_profile(ProfileName) ->
     case check_meta(?PROFILEKEY(ProfileName)) of
         {error, Reason} ->
@@ -460,13 +596,15 @@ change_stat_list_to_status(StatusList) -> %% todo: change the name of this funct
     riak_core_stat_coordinator:change_status(StatusList).
 
 
--spec(delete_profile(profilename()) -> ok).
+%%%-------------------------------------------------------------------
 %% @doc
 %% Deletes the profile from the metadata, however currently the metadata
 %% returns a tombstone for the profile, it can be overwritten when a new profile
 %% is made of the same name, and in the profile gen_server the name of the
 %% profile is "unregistered" so it can not be reloaded again after deletion
 %% @end
+%%%-------------------------------------------------------------------
+-spec(delete_profile(profilename()) -> ok).
 delete_profile(ProfileName) ->
     case check_meta(?LOADEDPKEY) of
         ProfileName -> %% make this a guard instead of a pattern match
@@ -477,12 +615,14 @@ delete_profile(ProfileName) ->
     end.
 
 
--spec(reset_profile() -> ok | error()).
+%%%-------------------------------------------------------------------
 %% @doc
 %% resets the profile by enabling all the stats, pulling out all the stats that
 %% are disabled in the metadata and then changing them to enabled in both the
 %% metadata and exometer
 %% @end
+%%%-------------------------------------------------------------------
+-spec(reset_profile() -> ok | error()).
 reset_profile() ->
     CurrentStats =
         put(?LOADEDPFX, ?LOADEDKEY, [<<"none">>]),
@@ -505,17 +645,24 @@ change_stats_from(Stats, Status) ->
                     end, [], Stats)).
 
 
--spec(get_profiles() -> metadata_value()).
+%%%-------------------------------------------------------------------
 %% @doc
 %% returns a list of the profile names stored in the metadata
 %% @end
+%%%-------------------------------------------------------------------
+-spec(get_profiles() -> metadata_value()).
 get_profiles() ->
     get_all(?PROFPFX).
 
--spec(get_loaded_profile() -> profilename()).
+%%%-------------------------------------------------------------------
 %% @doc
 %% get the profile that is loaded in the metadata
 %% @end
+%%%-------------------------------------------------------------------
+-spec(get_loaded_profile() -> profilename()).
 get_loaded_profile() ->
     get(?LOADEDPFX, ?LOADEDKEY).
 
+-ifdef(TEST).
+
+-endif.

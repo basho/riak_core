@@ -1171,7 +1171,7 @@ parse_cidr(CIDR) ->
 %% pulls out of the metadata by default
 %% @end
 stat_show(Arg) ->
-    riak_core_stat_console:show_stat(Arg).
+    riak_stat_console:show_stat(Arg).
 
 -spec(stat_0(Arg :: term()) -> ok | term()).
 %% @doc
@@ -1181,7 +1181,7 @@ stat_show(Arg) ->
 %% behaves similar to stat show
 %% @end
 stat_0(Arg) ->
-    riak_core_stat_console:show_stat_0(Arg).
+    riak_stat_console:show_stat_0(Arg).
 
 -spec(stat_disable_0(Arg :: term()) -> ok | term()).
 %% @doc
@@ -1189,7 +1189,7 @@ stat_0(Arg) ->
 %% updating as well, returns ok unless there is an error.
 %% @end
 stat_disable_0(Arg) ->
-    riak_core_stat_console:disable_stat_0(Arg).
+    riak_stat_console:disable_stat_0(Arg).
 
 -spec(stat_info(Arg :: term()) -> ok | term()).
 %% @doc
@@ -1197,28 +1197,28 @@ stat_disable_0(Arg) ->
 %% can be specific : -type -status etc...
 %% @end
 stat_info(Arg) ->
-    riak_core_stat_console:stat_info(Arg).
+    riak_stat_console:stat_info(Arg).
 
 -spec(stat_enable(Arg :: term()) -> ok | term()).
 %% @doc
 %% enable the stats, if the stat is already enabled does nothing
 %% @end
 stat_enable(Arg) ->
-    riak_core_stat_console:status_change(Arg, enabled).
+    riak_stat_console:status_change(Arg, enabled).
 
 -spec(stat_disable(Arg :: term()) -> ok | term()).
 %% @doc
 %% disable the stats - if already disabled does nothing
 %% @end
 stat_disable(Arg) ->
-    riak_core_stat_console:status_change(Arg, disabled).
+    riak_stat_console:status_change(Arg, disabled).
 
 -spec(stat_reset(Arg :: term()) -> ok | term()).
 %% @doc
 %% resets the stats in exometer, the number of resets is kept in the metadata
 %% @end
 stat_reset(Arg) ->
-    riak_core_stat_console:reset_stat(Arg).
+    riak_stat_console:reset_stat(Arg).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%% profile %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -1230,7 +1230,7 @@ stat_reset(Arg) ->
 %% in exometer and in the metadata that need enabling/disabling
 %% @end
 load_profile(ProfileName) ->
-    riak_core_stat_profiles:load_profile(ProfileName).
+    riak_stat_profiles:load_profile(ProfileName).
 
 -spec(add_profile(FileName :: term()) -> term()).
 %% @doc
@@ -1238,14 +1238,14 @@ load_profile(ProfileName) ->
 %% profile name entered as the key, the stats and their status as the value.
 %% Profiles can be overwritten if the new profile is saved under the same name.
 %% @end
-add_profile(ProfileName) -> riak_core_stat_profiles:save_profile(ProfileName).
+add_profile(ProfileName) -> riak_stat_profiles:save_profile(ProfileName).
 
 -spec(remove_profile(FileName :: term()) -> term()).
 %% @doc
 %% remove the profile from the metadata if it is not longer necessary
 %% @end
 remove_profile(ProfileName) ->
-    riak_core_stat_profiles:delete_profile(ProfileName).
+    riak_stat_profiles:delete_profile(ProfileName).
 
 -spec(reset_profile(Arg :: term()) -> term()).
 reset_profile(_Arg) ->
@@ -1255,7 +1255,7 @@ reset_profile(_Arg) ->
 %% unloads from the current profile, so all the stats are re-enabled.
 %% @end
 reset_profile() ->
-    riak_core_stat_profiles:reset_profile().
+    riak_stat_profiles:reset_profile().
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Other %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -1270,7 +1270,7 @@ reset_profile() ->
 %% loaded before will not be loaded upon re-enabling to prevent errors
 %% @end
 enable_metadata(Arg) ->
-    riak_core_stat_console:enable_metadata(Arg).
+    riak_stat_console:enable_metadata(Arg).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%% polling %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -1282,7 +1282,7 @@ enable_metadata(Arg) ->
 %% multiple ports are open terminates gen_servers
 %% @end
 setdown_endpoint(Arg) ->
-    riak_core_stat_ep:setdown(Arg).
+    riak_stat_latency:setdown(Arg).
 
 -spec(setup_endpoint(term()) -> ok).
 %% @doc
@@ -1294,4 +1294,4 @@ setdown_endpoint(Arg) ->
 %% Can be used to restart the port as well as change the port
 %% @end
 setup_endpoint(Arg) ->
-    riak_core_stat_ep:setup(Arg).
+    riak_stat_latency:setup(Arg).

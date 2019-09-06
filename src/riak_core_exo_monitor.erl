@@ -16,66 +16,66 @@
 -behaviour(exometer_entry).
 -export([copy_folsom/3]).
 -export([behaviour/0,
-	 delete/3,
-	 get_datapoints/3,
-	 get_value/4,
-	 new/3,
-	 reset/3,
-	 sample/3,
-	 setopts/3,
-	 update/4]).
+    delete/3,
+    get_datapoints/3,
+    get_value/4,
+    new/3,
+    reset/3,
+    sample/3,
+    setopts/3,
+    update/4]).
 
 behaviour() ->
     entry.
 
 copy_folsom(Name, Type, Opts) when is_tuple(Name) ->
-    Prefix = riak_core_stat_admin:prefix(),
-    {[Prefix|tuple_to_list(Name)], ad_hoc, [{folsom_name, Name},
-					    {module, ?MODULE},
-					    {type, Type}
-					    | options(Type, Opts)]};
+    Prefix = riak_stat:prefix(),
+    {[Prefix | tuple_to_list(Name)], ad_hoc, [{folsom_name, Name},
+        {module, ?MODULE},
+        {type, Type}
+        | options(Type, Opts)]};
 copy_folsom(_, _, _) ->
     false.
 
 new(N, _, Opts) ->
     {ok, {proplists:get_value(type, Opts, unknown),
-	  proplists:get_value(folsom_name, Opts, N)}}.
+        proplists:get_value(folsom_name, Opts, N)}}.
 
 update(_, Value, counter, {_, Name}) ->
-  riak_core_stat_admin:update(Name, Value, counter);
+    riak_stat:update(Name, Value, counter);
 update(_, Value, Type, {_, Name}) ->
-  riak_core_stat_admin:update(Name, Value, Type).
+    riak_stat:update(Name, Value, Type).
 
-reset(_, _, _) ->
-    {error, unsupported}. %% todo: add riak_stat reset
+reset(N, _, _) ->
+    riak_stat:reset(N).
 
 get_value(_, _Type, {_, Name}, DPs) ->
-  riak_core_stat_coordinator:get_datapoint(Name, DPs).
+    riak_stat_exom:get_datapoint(Name, DPs).
 
-sample(_, _, _) ->
-    {error, unsupported}.
+sample(N, _, _) ->
+    riak_stat:sample(N).
 
 setopts(_, _, _) ->
     ok.
 
-delete(_, _, _) ->
-    {error, unsupported}. %% todo: riak_stat:unregister
+delete(N, _, _) ->
+    riak_stat:unregister(N).
 
 get_datapoints(Name, Type, _) ->
-  riak_core_stat_coordinator:get_datapoint(Name, Type).
+    riak_stat_exom:get_datapoint(Name, Type).
 
 options(history, [Size]) ->
     [{size, Size}];
 options(histogram, [SampleType, SampleSize, Alpha]) ->
     [{sample_type, SampleType},
-     {sample_size, SampleSize},
-     {alpha, Alpha}];
-options(duration    , [SampleType, SampleSize, Alpha]) ->
+        {sample_size, SampleSize},
+        {alpha, Alpha}];
+options(duration, [SampleType, SampleSize, Alpha]) ->
     [{sample_type, SampleType},
-     {sample_size, SampleSize},
-     {alpha, Alpha}];
+        {sample_size, SampleSize},
+        {alpha, Alpha}];
 options(meter_reader, []) -> [];
-options(spiral      , []) -> [];
-options(meter       , []) -> [];
-options(gauge       , []) -> [];
-options(counter     , []) -> [].
+options(spiral, []) -> [];
+options(meter, []) -> [];
+options(gauge, []) -> [];
+options(counter, []) -> [].

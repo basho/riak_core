@@ -26,7 +26,7 @@
 -export([
     start_link/0,
     get_stats/0, get_stats/1, get_value/1,
-    get_stat/1, get_info/0, update/1,
+    get_info/0, update/1,
     register_stats/0, vnodeq_stats/0,
 	  register_stats/2, aggregate/2,
 	  register_vnode_stats/3, unregister_vnode_stats/2,
@@ -46,7 +46,7 @@
 -define(SERVER, ?MODULE).
 
 -define(APP, riak_core).
--define(PFX, riak_core_stat_admin:prefix()).
+-define(PFX, riak_stat:prefix()).
 
 
 start_link() ->
@@ -61,7 +61,7 @@ register_stats() ->
 %% @spec register_stats(App, Stats) -> ok
 %% @doc (Re-)Register a list of metrics for App.
 register_stats(App, Stats) ->
-  riak_core_stat_admin:register(App, Stats).
+  riak_stat:register(App, Stats).
 
 register_vnode_stats(Module, Index, Pid) ->
   F = fun vnodeq_atom/2,
@@ -91,7 +91,7 @@ register_vnode_stats(Module, Index, Pid) ->
 %%%----------------------------------------------------------------%%%
 
 unregister_vnode_stats(Module, Index) ->
-  riak_core_stat_admin:unregister(Module, Index, vnodeq, ?APP).
+    riak_stat:unregister(Module, Index, vnodeq, ?APP).
 
 %%%----------------------------------------------------------------%%%
 
@@ -101,21 +101,18 @@ get_stats() ->
     get_stats(?APP).
 
 get_stats(Arg) ->
-  riak_core_stat_admin:get_stats(Arg).
-
-get_stat(Arg) ->
-  riak_core_stat_admin:get_stat(Arg).
+    riak_stat:get_stats(Arg).
 
 get_value(Arg) ->
-  riak_core_stat_admin:get_value(Arg).
+    riak_stat:get_value(Arg).
 
 get_info() ->
-  riak_core_stat_admin:get_info(?APP).
+    riak_stat:get_info(?APP).
 
 %%%----------------------------------------------------------------%%%
 
 aggregate(Stats, DPS) ->
-  riak_core_stat_admin:aggregate(Stats, DPS).
+    riak_stat:aggregate(Stats, DPS).
 
 %%%----------------------------------------------------------------%%%
 
@@ -153,7 +150,7 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 exometer_update(Name, Value, Type) ->
-      riak_core_stat_admin:update(Name, Value, Type).
+      riak_stat:update(Name, Value, Type).
 
 
 update_metric(converge_timer_begin ) -> converge_delay;

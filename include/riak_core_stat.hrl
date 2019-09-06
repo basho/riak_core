@@ -30,7 +30,6 @@
 -type print()         :: any().
 -type attr()          :: [info()].
 -type stats()         :: list() | tuple().
--type priority()      :: metadata | exometer.
 -type data()          :: any().
 -type pfx()           :: riak.
 -type incrvalue()     :: non_neg_integer().
