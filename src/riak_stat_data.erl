@@ -44,8 +44,8 @@
 data_sanitise(Arg) ->
     data_sanitise(check_args(Arg), ?TYPE, ?STATUS, ?DPs).
 
-data_sanitise(Arg, Status)
-    when Status == (enabled or disabled or '_') ->
+data_sanitise(Arg, Status) when Status == enabled
+    orelse Status == disabled orelse Status == '_' ->
     data_sanitise(check_args(Arg), ?TYPE, Status, ?DPs);
 data_sanitise(Arg, Type) ->
     data_sanitise(check_args(Arg), Type, ?STATUS, ?DPs).
@@ -204,18 +204,18 @@ print(_) ->
 
 
 print([],_) ->
-    io:fwrite("No Matching Stats~n");
+    io_lib:fwrite("No Matching Stats~n");
 print(Stats, stats) ->
     lists:map(fun
                   ({N, _T, S}) ->
                       io:fwrite("{~p, ~p}~n", [N,S]);
-                  ({Stats, DPs}) ->
-                      print_stat(Stats,DPs)
+                  ({Stat, DPs}) ->
+                      print_stat(Stat,DPs)
               end, Stats);
 print(Elem, [])   when is_list(Elem) ->
-    io:fwrite(Elem);
+    io_lib:fwrite(Elem);
 print(Elem, Args) when is_list(Elem) ->
-    io:fwrite(Elem, Args);
+    io_lib:fwrite(Elem, Args);
 
 
 print(_i,_u) ->
@@ -224,13 +224,13 @@ print(_i,_u) ->
 print_stat(Stats, []) ->
     lists:map(fun
                   ({Stat, Type, Status}) ->
-                      io:fwrite("{~p,~p,~p}~n",
+                      io_lib:fwrite("{~p,~p,~p}~n",
                           [Stat,Type,Status])
               end, Stats);
 print_stat(Stats, DPs) ->
     lists:map(fun
                   ({Stat,Type,Status}) ->
-                      io:fwrite("{~p,~p,~p}: ~p~n",
+                      io_lib:fwrite("{~p,~p,~p}: ~p~n",
                           [Stat,Type,Status,DPs])
               end, Stats).
 

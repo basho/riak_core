@@ -9,6 +9,7 @@
 -type app()         :: atom().
 -type statslist()   :: [metricname()].
 -type metricname()  :: [atom()] | atom().
+-type statname()    :: metricname().
 
 -type statinfo()    :: {metricname(),type(),options(),aliases()}.
 -type status()      :: enabled | disabled | unregistered | '_'.
@@ -26,7 +27,6 @@
                            {arg(),arg()}|
                            {arg(),arg(),arg()}|
                            {arg(),arg(),arg(),arg()}.
--type function()    :: any().
 
 -type aliastype()   :: new | prefix_foldl | regexp_foldr.
 -type value()         :: any().
@@ -53,6 +53,11 @@
 
 -type incrvalue()     :: non_neg_integer().
 -type response()      :: ok | term() | error().
+
+
+-type jsonprops()         :: [{atom(), any()}].
+-type serviceid()         :: string() | binary().
+-type correlationid()     :: string() | binary().
 
 %% Stat Macros
 

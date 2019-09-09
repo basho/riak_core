@@ -9,8 +9,8 @@
 -type exometererror() :: no_template | exists | not_found.
 -type profileerror()  :: profile_exists_already | no_stats | no_data | no_profile.
 -type metaerror()     :: unregistered | no_stat | no_status.
-%%-type reason()        :: exometererror() | profileerror() | metaerror() | any().
-%%-type error()         :: {error, reason()}.
+-type reason()        :: exometererror() | profileerror() | metaerror() | any().
+-type error()         :: {error, reason()}.
 -type arg()               :: any().
 
 -type value()         :: any().
@@ -23,8 +23,8 @@
 -type options()       :: list() | opt_tup().
 -type acc()           :: any().
 
-%%-type app()           :: atom().
-%%-type statname()      :: atom() | list().
+-type app()           :: atom().
+-type statname()      :: atom() | list().
 -type type()          :: atom() | tuple().
 -type status()        :: enabled | disabled | unregistered.
 -type print()         :: any().

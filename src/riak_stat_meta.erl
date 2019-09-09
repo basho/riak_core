@@ -166,8 +166,8 @@ find_entries(Stats,Status,Type,DPs) ->
 %% name of the stat and the status it has in the metadata.
 %% @end
 %%%-------------------------------------------------------------------
-fold(Stat, Status, '_', []) ->
-    {Stats, Status} =
+fold(Stat, Status0, '_', []) ->
+    {Stats, _Status} =
         riak_core_metadata:fold(fun
                                     ({Name, [{MStatus, _T, _O, _A}]}, {Acc, Status})
                                         when Status == '_' orelse Status == MStatus ->
@@ -183,7 +183,7 @@ fold(Stat, Status, '_', []) ->
 
                                     (_Other, {Acc, Status}) ->
                                         {Acc, Status}
-                                end, {[], Status}, ?STATPFX, [{match, Stat}]),
+                                end, {[], Status0}, ?STATPFX, [{match, Stat}]),
     Stats;
 %%%-------------------------------------------------------------------
 %% @doc
@@ -191,8 +191,8 @@ fold(Stat, Status, '_', []) ->
 %% returned, as well as matching the status given.
 %% @end
 %%%-------------------------------------------------------------------
-fold(Stat, Status, Type, []) ->
-    {Stats, Status} =
+fold(Stat, Status0, Type0, []) ->
+    {Stats, _Status, _Type} =
         riak_core_metadata:fold(fun
                                     ({Name, [{MStatus, MType, _O, _A}]}, {Acc, Status, Type})
                                         when MType == Type
@@ -211,7 +211,7 @@ fold(Stat, Status, Type, []) ->
 
                                     (_Other, {Acc, Status, Type}) ->
                                         {Acc, Status, Type}
-                                end, {[], Status, Type}, ?STATPFX, [{match, Stat}]),
+                                end, {[], Status0, Type0}, ?STATPFX, [{match, Stat}]),
     Stats;
 %%%-------------------------------------------------------------------
 %% @doc
@@ -221,8 +221,8 @@ fold(Stat, Status, Type, []) ->
 %% between the output from this function by tuple arity.
 %% @end
 %%%-------------------------------------------------------------------
-fold(Stat, Status, '_', DPs) ->
-    {Stats, Status} =
+fold(Stat, Status0, '_', DPs0) ->
+    {Stats, _Status, _Type, _DPs} =
         riak_core_metadata:fold(fun
                                     ({Name, [{MStatus, MType, _O, MAliases}]}, {Acc, Status, DPs})
                                         when Status == '_' orelse MStatus == Status
@@ -248,7 +248,7 @@ fold(Stat, Status, '_', DPs) ->
 
                                     (_Other, {Acc, Status, DPs}) ->
                                         {Acc, Status, DPs}
-                                end, {[], Status, DPs}, ?STATPFX, [{match, Stat}]),
+                                end, {[], Status0, DPs0}, ?STATPFX, [{match, Stat}]),
     Stats;
 %%%-------------------------------------------------------------------
 %% @doc
@@ -256,12 +256,12 @@ fold(Stat, Status, '_', DPs) ->
 %% type then there will be nothing returned.
 %% @end
 %%%-------------------------------------------------------------------
-fold(Stat, Status, Type, DPs) ->
+fold(Stat, Status0, Type0, DPs0) ->
     %% todo: check that the DPs correspond to that type, prevent an
     %% interation over all the stats in the metadata and pulling out
     %% all the aliases to then check for the DP, when it could just
     %% return nothing.
-    {Stats, Status} =
+    {Stats, _Status, _Type, _DPs} =
         riak_core_metadata:fold(fun
                                     ({Name, [{MStatus, MType, _O, MAliases}]}, {Acc, Status, Type, DPs})
                                         when (Type == '_' orelse MType == Type)
@@ -290,7 +290,7 @@ fold(Stat, Status, Type, DPs) ->
                                     (_Other, {Acc, Status, DPs}) ->
                                         {Acc, Status, DPs}
 
-                                end, {[], Status, Type, DPs}, ?STATPFX, [{match, Stat}]),
+                                end, {[], Status0, Type0, DPs0}, ?STATPFX, [{match, Stat}]),
     Stats.
 
 dp_get(DPs, Aliases) ->

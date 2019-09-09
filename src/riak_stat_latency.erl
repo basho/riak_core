@@ -107,9 +107,6 @@ sanitise_data_([], Port, Instance, Sip) ->
 %%%-------------------------------------------------------------------
 
 -type hostarg() :: atom().
--type socket()            :: inet:socket().
--type server()            :: inet:ip4_address().
--type server_ip()         :: inet:ip4_address().
 
 %%%-------------------------------------------------------------------
 %% @doc

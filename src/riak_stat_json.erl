@@ -4,7 +4,7 @@
 %%% @end
 %%%-------------------------------------------------------------------
 -module(riak_stat_json).
--include_lib("riak_core/include/riak_core_stat.hrl").
+-include_lib("riak_core/include/riak_stat.hrl").
 
 %% API
 -export([

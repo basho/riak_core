@@ -81,7 +81,6 @@
     code_change/3]).
 
 
--type profilename()   :: [list()] | [binary()] | any().
 
 -define(SERVER, ?MODULE).
 -define(timestamp, os:timestamp()).

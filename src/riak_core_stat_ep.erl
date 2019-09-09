@@ -69,6 +69,11 @@ start_server(Child, Arg) ->
 terminate_server() ->
     riak_core_stats_sup:stop_server(riak_core_stat_latency).
 
+-type hostarg() :: atom().
+%%-type socket()            :: inet:socket().
+%%-type server()            :: inet:ip4_address().
+%%-type server_ip()         :: inet:ip4_address().
+
 
 %%-------------------------------------------------------------------
 -spec(get_host(hostarg()) -> {socket(), server_ip() | server(), port()}).

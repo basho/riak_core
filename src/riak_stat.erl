@@ -245,7 +245,8 @@ update(Name, Inc, Type) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(unregister(app(), Mod :: data(), Idx :: data(), type()) ->
-    ok | error()).unregister({Mod, Idx, Type, App}) ->
+    ok | error()).
+unregister({Mod, Idx, Type, App}) ->
     unregister(Mod, Idx, Type, App);
 unregister(StatName) ->
     unreg_stats(StatName).
@@ -411,12 +412,16 @@ stat_generator() ->
 
 -define(TestStatNum, 1000).
 
+%%%-------------------------------------------------------------------
+
 register_stat_test_() ->
     ?setuptest("riak_stat:register(Stat) test~n",
         [
             {"Register stats",                fun test_register_stats/0},
             {"Register an unregistered stat", fun test_register_unreg_stats/0},
-            {"Register stat twice",           fun test_re_register/0}
+            {"Register stat twice",           fun test_re_register/0},
+            {"Register a stat many times",    fun test_stat_register_many/0},
+            {"Register many stats many times",fun test_stats_register_many/0}
         ]).
 
 test_register_stats() ->
@@ -436,5 +441,178 @@ test_re_register() ->
     register_stats(Stat),
     register_stats(Stat).
 
+test_stat_register_many() ->
+    Stat = stat_generator(),
+    [register_stats(Stat) || _ <- lists:seq(1, ?TestStatNum)].
+
+test_stats_register_many() ->
+    Stats = [stat_generator() || _<- lists:seq(1,?TestStatNum)],
+    lists:foreach(fun(Stat) ->
+        [register_stats(Stat) || _ <- lists:seq(1,?TestStatNum)]
+        end, Stats).
+
+%% todo: output checks: makesure what goes in is what is actually registered
+%% todo: register without metadata, then reload metadata and register again
+%% todo: check if registered with cache it is available to get in that time
+%% from the cache
+%% todo: check if it is registered without cache it is not available in that
+%% time.
+
+%% todo:what registers the quickest? exometer or metadata.
+
+%%%-------------------------------------------------------------------
+
+reading_stats_test_() ->
+    ?setuptest("riak_stat:stats()/app_stats(App)/get_stats(Arg)/etc...",
+        [
+            {"stats()",                     fun test_stats_0/0},
+            {"app_stats(App)",              fun test_app_stats_1/0},
+            {"get_stats(Path)",             fun test_get_stats/0},
+            {"find_entries/2",              fun test_find_entries_1/0},
+            {"find_entries/4",              fun test_find_entries_2/0},
+            {"get_values",                  fun test_get_values/0},
+            {"get_info",                    fun test_get_info/0},
+            {"aggregate stats",             fun test_aggregate/0},
+            {"sample Stats",                fun test_sample_stat/0}
+        ]).
+
+test_stats_0() ->
+    Stats = get_stats([prefix()|'_']),
+    print(Stats) == stats(). %% consistent.
+
+test_app_stats_1() ->
+    Stats = get_stats([prefix(),riak_stat|'_']),
+    print(Stats) == app_stats(riak_stat), %% existing app
+
+    print([]) == app_stats(riak_fake).
+
+test_get_stats() ->
+    Stat = stat_generator(),
+    register_stats(Stat), %% ensure registered,
+    Stat == get_stats(Stat),
+
+    Path1 = [riak,riak_stat|'_'],
+    PathGet1 = get_stats(Path1),
+    print(PathGet1) == app_stats(riak_stat).
+
+test_find_entries_1() ->
+    Path = [riak,riak_core|'_'],
+    P1 = find_entries(Path,'_'), %% any status.
+    P2 = find_entries(Path,enabled),
+    P3 = find_entries(Path,disabled),
+    %% make sure non are the same.
+    P1 =/= P2,
+    P2 =/= P3,
+    P3 =/= P1,
+    %% cause if they are theres other problems.
+    P2List = lists_member(P1,P2),
+    P3List = lists_member(P1,P3),
+    P2List == [], %% should both be in the P1 list so both
+    P3List == []. %% should be empty lists
+
+
+lists_member(List1, List2) ->
+    lists:concat(
+        lists:map(fun(L) ->
+            case lists:member(L, List1) of
+                true -> [];
+                false -> error
+            end
+                  end, List2)).
+
+test_find_entries_2() ->
+    Path = [riak,riak_kv|'_'],
+    P1 = find_entries(Path,'_',histogram,[]),
+    P2 = find_entries(Path,enabled,histogram,[]),
+    P3 = find_entries(Path,disabled,histogram,[]),
+    P4 = find_entries(Path,enabled,histogram,[max]),
+    P5 = find_entries(Path,enabled,'_',[mean,max]),
+    lists_member(P1, P2) == [],
+    lists_member(P1, P3) == [],
+    lists_member(P4, P5) == [].
+
+test_get_values() ->
+    ok == get_value(stat_generator()).
+
+test_get_info() ->
+    ok == get_info(riak_stat), %% for app when is_atom
+    ok == get_info([riak,riak_stat|'_']).
+
+test_aggregate() ->
+    ok.
+
+test_sample_stat() ->
+    ok.
+
+
+%%%-------------------------------------------------------------------
+
+update_stats_test_() ->
+    ?setuptest("Update Stats Test",
+        [{"Update a stat, check Vals are different",    fun test_update/0}]).
+
+test_update() ->
+    Name = [riak,riak_stat,control,stat],
+    Type = histogram,
+    Options = [{status,enabled},{cache,5000}],
+    Aliases = [{max,control_stat_max},
+    {min,control_stat_min},
+    {99,control_stat_99},
+    {95,control_stat_95},
+    {mean,contol_stat_mean}],
+    ControlsStat = {Name,Type, Options,Aliases},
+    register_stats(ControlsStat),
+    %% made sure the stat is registered and its type
+    update(Name, rand:uniform(), Type),
+    [{Name, Vals1}] = riak_stat_exom:get_values(Name),
+    update(Name, rand:uniform(), Type),
+    [{Name, Vals2}] = riak_stat_exom:get_values(Name),
+    Vals1 =/= Vals2.
+
+%%%-------------------------------------------------------------------
+
+unregister_stats_test_() ->
+    ?setuptest("unregister and delete stats",
+        [
+            {"unregister stat",             fun test_unregister_stat/0},
+            {"unregister stat twice",       fun test_unregister_again/0},
+            {"unregister non-existing stat",fun test_unregister_unstat/0}
+        ]).
+
+test_unregister_stat() ->
+    {Stat,T,O,A} = stat_generator(),
+    register_stats({Stat,T,O,A}),
+    riak_stat:unregister(Stat).
+
+test_unregister_again() ->
+    {Stat,T,O,A} = stat_generator(),
+    register_stats({Stat,T,O,A}),
+    riak_stat:unregister(Stat),
+    riak_stat:unregister(Stat).
+
+test_unregister_unstat() ->
+    {Stat,_T,_O,_A} = stat_generator(),
+    riak_stat:unregister(Stat).
+
+%%%-------------------------------------------------------------------
+
+reset_stats_test_() ->
+    ?setuptest("Reset a stat",
+        [
+            {"reset a stat",                fun test_reset_stat/0},
+            {"reset a non-existing stat",   fun test_reset_unstat/0}
+        ]).
+
+test_reset_stat() ->
+    {Stat,T,O,A} = stat_generator(),
+    register_stats({Stat,T,O,A}),
+    update(Stat,rand:uniform(),T),
+    update(Stat,rand:uniform(),T),
+    update(Stat,rand:uniform(),T),
+    reset(Stat).
+
+test_reset_unstat() ->
+    {Stat,_T,_O,_A} = stat_generator(),
+    reset(Stat).
 
 -endif.
