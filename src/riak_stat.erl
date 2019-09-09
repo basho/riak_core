@@ -77,15 +77,19 @@
     unregister/4,
     reset/1]).
 
+
 %% Additional API
 -export([prefix/0]).
+
+
+-ifdef(TEST).
+-export([register_stats/1]).
+-endif.
+
 
 -define(STATCACHE,          app_helper:get_env(riak_core,exometer_cache,{cache,5000})).
 -define(INFOSTAT,           [name,type,module,value,cache,status,timestamp,options]).
 
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
 
 %%%===================================================================
 %%% Registration API
@@ -129,6 +133,8 @@ add_cache(Options) ->
         undefined -> [?STATCACHE | Options];
         _ -> Options
     end.
+
+
 
 register_stats(StatInfo) -> riak_stat_mgr:register(StatInfo).
 
@@ -304,6 +310,7 @@ print(Entries, Attr) ->
 %%%==================================================================
 
 -ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
 
 -define(new(Mod),                   meck:new(Mod)).
 -define(expect(Mod,Fun,Func),       meck:expect(Mod,Fun,Func)).
@@ -335,8 +342,11 @@ setup() ->
     ?new(riak_stat_meta),
     ?new(riak_stat_console),
     ?new(riak_stat_profiles),
-    {ok, Pid} = riak_stat_profiles:start_link(),
-    [Pid].
+%%    ?expect(riak_stat,register_stats,ok,fun() -> ok end),
+%%    ?expect(riak_stat,register_stats,fun() -> ok end),
+%%    {ok, Pid} = riak_stat_profiles:start_link(),
+%%    [Pid].
+    ok.
 
 cleanup(Pids) ->
     process_flag(trap_exit, true),
@@ -412,10 +422,11 @@ stat_generator() ->
 
 -define(TestStatNum, 1000).
 
+
 %%%-------------------------------------------------------------------
 
-register_stat_test_() ->
-    ?setuptest("riak_stat:register(Stat) test~n",
+register_stat_test() ->
+    ?setuptest("riak_stat:register(Stat) test",
         [
             {"Register stats",                fun test_register_stats/0},
             {"Register an unregistered stat", fun test_register_unreg_stats/0},
@@ -424,17 +435,20 @@ register_stat_test_() ->
             {"Register many stats many times",fun test_stats_register_many/0}
         ]).
 
+
 test_register_stats() ->
-    lists:foreach(fun(_) ->
-        Stat = stat_generator(),
-        register_stats(Stat)
-                  end,
-        lists:seq(1,rand:uniform(?TestStatNum))).
+    ?expect(riak_stat, register_stats, fun() -> ok end),
+        lists:foreach(fun(_) ->
+            Stat = stat_generator(),
+            ?assert(register_stats(Stat))
+                      end,
+        lists:seq(1, rand:uniform(?TestStatNum))).
+
 
 test_register_unreg_stats() ->
-    {CStat,Ctype,COpts,CAlias} = stat_generator(),
+    {CStat, Ctype, COpts, CAlias} = stat_generator(),
     riak_stat:unregister(CStat),
-    register_stats({CStat,Ctype,COpts,CAlias}).
+    register_stats({CStat, Ctype, COpts, CAlias}).
 
 test_re_register() ->
     Stat = stat_generator(),
@@ -446,10 +460,10 @@ test_stat_register_many() ->
     [register_stats(Stat) || _ <- lists:seq(1, ?TestStatNum)].
 
 test_stats_register_many() ->
-    Stats = [stat_generator() || _<- lists:seq(1,?TestStatNum)],
+    Stats = [stat_generator() || _ <- lists:seq(1, ?TestStatNum)],
     lists:foreach(fun(Stat) ->
-        [register_stats(Stat) || _ <- lists:seq(1,?TestStatNum)]
-        end, Stats).
+        [register_stats(Stat) || _ <- lists:seq(1, ?TestStatNum)]
+                  end, Stats).
 
 %% todo: output checks: makesure what goes in is what is actually registered
 %% todo: register without metadata, then reload metadata and register again
@@ -461,8 +475,8 @@ test_stats_register_many() ->
 %% todo:what registers the quickest? exometer or metadata.
 
 %%%-------------------------------------------------------------------
-
-reading_stats_test_() ->
+%%
+reading_stats_test() ->
     ?setuptest("riak_stat:stats()/app_stats(App)/get_stats(Arg)/etc...",
         [
             {"stats()",                     fun test_stats_0/0},
@@ -475,25 +489,28 @@ reading_stats_test_() ->
             {"aggregate stats",             fun test_aggregate/0},
             {"sample Stats",                fun test_sample_stat/0}
         ]).
-
+%%
 test_stats_0() ->
     Stats = get_stats([prefix()|'_']),
-    print(Stats) == stats(). %% consistent.
+    ?assertEqual(true,
+    print(Stats) == stats()). %% consistent.
 
 test_app_stats_1() ->
     Stats = get_stats([prefix(),riak_stat|'_']),
-    print(Stats) == app_stats(riak_stat), %% existing app
-
-    print([]) == app_stats(riak_fake).
+    ?assertEqual(true,
+        print(Stats) == app_stats(riak_stat)), %% existing app
+    ?assertEqual(true,
+    print([]) == app_stats(riak_fake)).
 
 test_get_stats() ->
     Stat = stat_generator(),
     register_stats(Stat), %% ensure registered,
-    Stat == get_stats(Stat),
+    Stat = get_stats(Stat),
 
     Path1 = [riak,riak_stat|'_'],
     PathGet1 = get_stats(Path1),
-    print(PathGet1) == app_stats(riak_stat).
+    ?assertEqual(true,
+        print(PathGet1) == app_stats(riak_stat)).
 
 test_find_entries_1() ->
     Path = [riak,riak_core|'_'],
@@ -501,14 +518,14 @@ test_find_entries_1() ->
     P2 = find_entries(Path,enabled),
     P3 = find_entries(Path,disabled),
     %% make sure non are the same.
-    P1 =/= P2,
-    P2 =/= P3,
-    P3 =/= P1,
+    ?assertEqual(true, P1 =/= P2),
+    ?assertEqual(true, P2 =/= P3),
+    ?assertEqual(true, P3 =/= P1),
     %% cause if they are theres other problems.
     P2List = lists_member(P1,P2),
     P3List = lists_member(P1,P3),
-    P2List == [], %% should both be in the P1 list so both
-    P3List == []. %% should be empty lists
+    P2List = [], %% should both be in the P1 list so both
+    P3List = []. %% should be empty lists
 
 
 lists_member(List1, List2) ->
@@ -527,16 +544,17 @@ test_find_entries_2() ->
     P3 = find_entries(Path,disabled,histogram,[]),
     P4 = find_entries(Path,enabled,histogram,[max]),
     P5 = find_entries(Path,enabled,'_',[mean,max]),
-    lists_member(P1, P2) == [],
-    lists_member(P1, P3) == [],
-    lists_member(P4, P5) == [].
+
+    [] = lists_member(P1, P2),
+    [] = lists_member(P1, P3),
+    [] = lists_member(P4, P5).
 
 test_get_values() ->
-    ok == get_value(stat_generator()).
+    ok = get_value(stat_generator()).
 
 test_get_info() ->
-    ok == get_info(riak_stat), %% for app when is_atom
-    ok == get_info([riak,riak_stat|'_']).
+    ok = get_info(riak_stat), %% for app when is_atom
+    ok = get_info([riak,riak_stat|'_']).
 
 test_aggregate() ->
     ok.
@@ -547,7 +565,7 @@ test_sample_stat() ->
 
 %%%-------------------------------------------------------------------
 
-update_stats_test_() ->
+update_stats_test() ->
     ?setuptest("Update Stats Test",
         [{"Update a stat, check Vals are different",    fun test_update/0}]).
 
@@ -567,11 +585,11 @@ test_update() ->
     [{Name, Vals1}] = riak_stat_exom:get_values(Name),
     update(Name, rand:uniform(), Type),
     [{Name, Vals2}] = riak_stat_exom:get_values(Name),
-    Vals1 =/= Vals2.
+    ?assertEqual(Vals1 =/= Vals2, true).
 
 %%%-------------------------------------------------------------------
 
-unregister_stats_test_() ->
+unregister_stats_test() ->
     ?setuptest("unregister and delete stats",
         [
             {"unregister stat",             fun test_unregister_stat/0},
@@ -596,7 +614,7 @@ test_unregister_unstat() ->
 
 %%%-------------------------------------------------------------------
 
-reset_stats_test_() ->
+reset_stats_test() ->
     ?setuptest("Reset a stat",
         [
             {"reset a stat",                fun test_reset_stat/0},

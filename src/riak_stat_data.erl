@@ -25,9 +25,6 @@
 -define(TYPE,   '_').     %% default type
 -define(DPs,    default). %% default Datapoints
 
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
 
 %%%===================================================================
 %%% API
@@ -267,5 +264,77 @@ check_args(_) ->
 %%    riak_stat_exom:get_datapoint(Entry,DPs).
 
 -ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+-define(setup(Fun),        {setup,    fun setup/0,          fun cleanup/1, Fun}).
+-define(foreach(Funs),     {foreach,  fun setup/0,          fun cleanup/1, Funs}).
+-define(setuptest(Desc, Test), {Desc, ?setup(fun(_) -> Test end)}).
+
+-define(new(Mod),                   meck:new(Mod)).
+-define(unload(Mod),                meck:unload(Mod)).
+
+
+setup() ->
+    ?unload(riak_stat_data),
+    ?new(riak_stat_data).
+
+cleanup(_Pid) ->
+    catch?unload(riak_stat_data),
+    ok.
+
+data_sanitise_test() ->
+    ?setuptest("Data Sanitise test",
+        [
+            {"riak.**",                         fun tests_riak_star_star/0},
+            {"riak.riak_kv.**",                 fun tests_riak_kv_star_star/0},
+            {"riak.riak_kv.*",                  fun tests_riak_kv_star/0},
+            {"riak.riak_kv.node.*",             fun tests_riak_kv_node_star/0},
+            {"node_gets",                       fun tests_node_gets/0},
+            {"riak.riak_kv.node.gets/max",      fun tests_node_gets_dp/0},
+            {"riak.riak_kv.**/type=spiral",     fun tests_riak_kv_type_spiral/0},
+            {"riak.riak_kv.**/status=disabled", fun tests_riak_kv_status_dis/0},
+            {"true",                            fun tests_true/0}
+        ]).
+
+tests_riak_star_star() ->
+    {Name,_T,_S,_DP} = data_sanitise(["riak.**"]),
+    ?assertEqual([riak|'_'],Name).
+
+tests_riak_kv_star_star() ->
+    {Name,_T,_S,_DP} = data_sanitise(["riak.riak_kv.**"]),
+    ?assertEqual([riak,riak_kv|'_'],Name).
+
+tests_riak_kv_star() ->
+    {Name,_T,_S,_DP} = data_sanitise(["riak.riak_kv.*"]),
+    ?assertEqual(Name, [riak,riak_kv,'_']).
+
+tests_riak_kv_node_star() ->
+    {Name,_T,_S,_DP} = data_sanitise(["riak.riak_kv.node.*"]),
+    ?assertEqual(Name, [riak,riak_kv,node,'_']).
+
+tests_node_gets() ->
+    {Name,_T,_S,_DP} = data_sanitise(["node_gets"]),
+    ?assertEqual([node_gets],Name).
+
+tests_node_gets_dp() ->
+    {Name,_T,_S,DPs} = data_sanitise(["riak.riak_kv.node.gets/max"]),
+    ?assertEqual(Name, [riak,riak_kv,node,gets]),
+    ?assertEqual([max],DPs).
+
+tests_riak_kv_type_spiral() ->
+    {Name,Type,_St,_DP} = data_sanitise(["riak.riak_kv.**/type=spiral"]),
+    ?assertEqual(Name, [riak,riak_kv|'_']),
+    ?assertEqual(Type, spiral).
+
+tests_riak_kv_status_dis() ->
+    {Name,_Type,Status,_DP} = data_sanitise(["riak.riak_kv.**/status=disabled"]),
+    ?assertEqual(Name, [riak,riak_kv|'_']),
+    ?assertEqual(Status, disabled).
+
+tests_true() ->
+    {Arg,_t,_S,_D} = data_sanitise(["true"]),
+    ?assertEqual(Arg, [true]).
+
+
 
 -endif.

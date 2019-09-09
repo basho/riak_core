@@ -41,13 +41,6 @@
     instance      :: instance()
 }).
 
--type socket()            :: inet:socket().
--type server()            :: inet:ip4_address().
--type latency_port()      :: inet:port_number().
--type server_ip()         :: inet:ip4_address().
--type stats_port()        :: inet:port_number().
--type hostname()          :: inet:hostname().
--type instance()          :: string().
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
