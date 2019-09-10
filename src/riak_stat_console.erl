@@ -47,13 +47,14 @@
 %%%-------------------------------------------------------------------
 -spec(show_stat(arg()) -> statslist()).
 show_stat(Arg) ->
+%%    print_stats(find_entries(Arg)).
     {Stats,Status,Type,DPs} = data_sanitise(Arg),
     NewStats =
         case DPs of
             default -> find_entries(Stats, Status, Type);
             _       -> find_entries(Stats, Status, Type, DPs)
         end,
-    print(stats,NewStats).
+    print(NewStats,DPs).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -194,8 +195,88 @@ data_sanitise(Arg, Type, Status) ->
 data_sanitise(Arg, Type, Status, DPs) ->
     riak_stat_data:data_sanitise(Arg, Type, Status, DPs).
 
+%%%-------------------------------------------------------------------
+
+%%read_stats(Stats, Status) ->
+%%    read_stats(Stats,Status, '_').
+%%read_stats(Stats, Status, Type,DPs) ->
+%%    riak_stat_mgr:read_stats(Stats,Status,Type,DPs).
+
 
 %%%-------------------------------------------------------------------
+
+%%find_entries(Arg) ->
+%%    {Stat, Type, Status, DPs} = data_sanitise(Arg),
+%%    case Stat of
+%%        "[" ++ _ ->
+%%            {find_entries_extra(Stat), DPs};
+%%        _ ->
+%%            case legacy_search(Stat, Type, Status) of
+%%                false ->
+%%                    find_entries_(Stat, Type, Status, DPs);
+%%                Stats ->
+%%                    Stats
+%%            end
+%%    end.
+%%
+%%find_entries_(Stat, Type, Status, default) ->
+%%    find_entries_(Stat, Type, Status);
+%%find_entries_(Stat,Type, Status, DPs) ->
+%%    Stats = find_entries_(Stat, Type, Status),
+%%    lists:map(fun
+%%                  ({Name, _Type, _Status}) when DPs == []->
+%%                      io:fwrite("~p : ~p~n",
+%%                          [Name, riak_stat_exom:get_values(Name)]);
+%%                  ({Name, _Type, _Status}) ->
+%%                      io:fwrite("~p : ~p~n",
+%%                          [Name, riak_stat_exom:get_datapoint(Name, DPs)])
+%%              end, Stats).
+%%find_entries_(Stat, Type, Status) ->
+%%    MS = ms_stat_entry(Stat, Type, Status),
+%%    riak_stat_exom:select(MS).
+%%
+%%ms_stat_entry([], Type, Status) ->
+%%    {{[riak_stat:prefix()]++'_', Type, '_'}, [{'=:=','$status',Status}], ['$_']};
+%%ms_stat_entry("*", Type, Status) ->
+%%    find_entries_([], Type, Status);
+%%ms_stat_entry(Stat, Type, Status) when Status == '_'
+%%    orelse Status == disabled orelse Status == endabled ->
+%%    [{{Stat, Type, Status},[],['$_']}];
+%%ms_stat_entry(_Stat,_Type,Status) ->
+%%    io:fwrite("Illegal Status Type: ~p~n",[Status]).
+
+%%find_entries_extra(Expr) ->
+%%    case erl_scan:string(ensure_trailing_dot(Expr)) of
+%%        {ok,Tokens,_} ->
+%%            case erl_parse:parse_exprs(Tokens) of
+%%                {ok, [Abstract]} ->
+%%                    partial_eval(Abstract);
+%%                Error ->
+%%                    lager:debug("Parse Error in find_entries ~p:~p~n",
+%%                    [Expr, Error]), []
+%%            end;
+%%        ScanError ->
+%%            lager:error("Scan Error in find_entries for ~p:~p~n",
+%%                [Expr, ScanError])
+%%%%    end.
+%%
+%%ensure_trailing_dot(Str) ->
+%%    case lists:reverse(Str) of
+%%        "." ++ _ ->
+%%            Str;
+%%        _ ->
+%%            Str ++ "."
+%%    end.
+%%
+%%partial_eval({cons,_,H,T}) ->
+%%    [partial_eval(H) | partial_eval(T)];
+%%partial_eval({tuple,_,Elems}) ->
+%%    list_to_tuple([partial_eval(E) || E <- Elems]);
+%%partial_eval({op,_,'++',L1,L2}) ->
+%%    partial_eval(L1) ++ partial_eval(L2);
+%%partial_eval(X) ->
+%%    erl_parse:normalise(X).
+
 
 find_entries(Stats, Status, Type) ->
     find_entries(Stats, Status, Type, []).
@@ -224,12 +305,12 @@ reset_stats(Name) ->
     riak_stat_mgr:reset_stat(Name).
 
 
-
 %%%-------------------------------------------------------------------
 
 print(Arg) ->
     print(Arg, []).
-
+print(Stats, default) ->
+    print(Stats, []);
 print(stats,Stats) ->
     print(Stats,stats);
 print(Stats,Attr) ->

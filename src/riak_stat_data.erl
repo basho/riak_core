@@ -201,34 +201,71 @@ print(_) ->
 
 
 print([],_) ->
-    io_lib:fwrite("No Matching Stats~n");
+    io:fwrite("No Matching Stats~n");
+print(Stats, DPs) ->
+    lists:map(fun
+                  ({Name, _Type, _Status}) when DPs == [] ->
+                      io:fwrite("~p : ~p~n", [Name, get_values(Name)]);
+                  ({Name, _Type, _Status}) ->
+                      io:fwrite("~p : ~p~n",[Name, get_dps(Name, DPs)])
+              end, Stats);
 print(Stats, stats) ->
     lists:map(fun
                   ({N, _T, S}) ->
                       io:fwrite("{~p, ~p}~n", [N,S]);
+                  ({Stat,Status}) when Status == enabled;
+                      Status == disabled ->
+                      io:format("~p : ~p~n",[Stat,Status]);
                   ({Stat, DPs}) ->
-                      print_stat(Stat,DPs)
+                      io:format("catrchallw1 ~p~n",[DPs]),
+
+                      print_stat([Stat],DPs);
+                  (Stat) ->
+                      io:format("catrchallw2~n"),
+                      print_stat([Stat],[])
               end, Stats);
 print(Elem, [])   when is_list(Elem) ->
-    io_lib:fwrite(Elem);
+    io:fwrite(Elem);
 print(Elem, Args) when is_list(Elem) ->
-    io_lib:fwrite(Elem, Args);
+    io:fwrite(Elem, Args);
 
 
 print(_i,_u) ->
     ok.
 
+get_dps(Name, DataPoints) ->
+    lists:map(fun
+                  (D) ->
+                      {Name, riak_stat_exom:get_datapoint(Name, D)}
+              end, DataPoints).
+
+get_values(Name) ->
+    riak_stat_exom:get_values(Name).
+
 print_stat(Stats, []) ->
     lists:map(fun
+                  ({Stat,Type,Status,DPs}) ->
+                      io:fwrite("{~p,~p,~p} : ~p~n",
+                          [Stat,Type,Status,DPs]);
                   ({Stat, Type, Status}) ->
-                      io_lib:fwrite("{~p,~p,~p}~n",
-                          [Stat,Type,Status])
+                      io:fwrite("{~p,~p,~p}~n",
+                          [Stat,Type,Status]);
+                  ({Stat,Status}) ->
+                      io:fwrite("{~p,~p}~n",
+                          [Stat,Status]);
+                  (Stat) ->
+                      io:fwrite("~p~n",[Stat])
               end, Stats);
 print_stat(Stats, DPs) ->
     lists:map(fun
                   ({Stat,Type,Status}) ->
-                      io_lib:fwrite("{~p,~p,~p}: ~p~n",
-                          [Stat,Type,Status,DPs])
+                      io:fwrite("{~p,~p,~p}: ~p~n",
+                          [Stat,Type,Status,DPs]);
+                  ({Stat,Status}) ->
+                      io:fwrite("{~p,~p}: ~p~n",
+                          [Stat,Status,DPs]);
+                  (Stat) ->
+                      io:fwrite("~p~n",[Stat])
               end, Stats).
 
 %%%===================================================================

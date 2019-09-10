@@ -65,7 +65,7 @@ register(StatName, Type, Opts, Aliases) ->
     re_register(StatName, Type, Opts),
     lists:foreach(fun
                       ({DP,Alias}) ->
-                          aliases(new,{Alias,StatName,DP})
+                          aliases(new,[Alias,StatName,DP])
                   end,Aliases).
 
 re_register(StatName, Type, Opts) ->

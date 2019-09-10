@@ -19,6 +19,7 @@
 
 %% Reading API
 -export([
+    read_stats/4,
     find_entries/4,
     find_stats_info/2,
     find_static_stats/1,
@@ -94,13 +95,15 @@ reload_metadata(Stats) ->
 %%%-------------------------------------------------------------------
 -spec(register(statinfo()) -> ok | error()).
 register(StatInfo) ->
-    DefFun = fun register_both/1,
+    DefFun = fun register_both/4,
     ExoFun = fun register_exom/1,
     case maybe_meta(DefFun, StatInfo) of
         false     -> ExoFun(StatInfo);
         Otherwise -> Otherwise
     end.
 
+register_both(Stat,Type,Options,Aliases) ->
+    register_both({Stat,Type,Options,Aliases}).
 register_both(StatInfo) ->
     case register_meta(StatInfo) of
         [] -> ok; %% stat is deleted or recorded as unregistered in meta
@@ -108,6 +111,8 @@ register_both(StatInfo) ->
             register_exom({Name, Type, NewOpts, Aliases})
     end.
 
+%%register_meta(Stat,Type,Options,Aliases) ->
+%%    register_meta({Stat,Type,Options,Aliases}).
 register_meta(StatInfo) ->
     riak_stat_meta:register(StatInfo).
 
@@ -117,6 +122,24 @@ register_exom(StatInfo) ->
 %%%===================================================================
 %%% Reading Stats API
 %%%===================================================================
+
+read_stats(Stats,Status,Type,DPs) ->
+    case legacy_search(Stats, Status, Type) of
+        [] ->
+            case read_exo_stats(Stats, Status, Type) of
+                [] ->
+                    find_entries_meta(Stats,Status,Type,DPs);
+                Ans -> Ans
+            end;
+        Stat ->
+            Stat
+    end.
+
+read_exo_stats(Stats, Status, Type) ->
+    MS = make_exo_ms(Stats, Status, Type),
+    riak_stat_exom:select(MS).
+
+
 
 %%%-------------------------------------------------------------------
 %%% @doc
@@ -152,17 +175,20 @@ find_entries(Stats,Status,Type,DPs) ->
 %%%-------------------------------------------------------------------
 -spec(legacy_search(statslist(), status(), type()) -> statslist()).
 legacy_search(Stats, Status, Type) ->
-    lists:map(fun(S) ->
+    lists:flatten(
+        lists:map(fun(S) ->
         legacy_search_(S, Status, Type)
-              end, Stats).
+              end, Stats)).
 
 legacy_search_(Stat, Status, Type) ->
-    case re:run(Stat, "\\.",[]) of
+    try re:run(Stat, "\\.",[]) of
         {match, _} -> %% wrong format, does not match
             [];
         nomatch ->
             Re = <<"^", (make_re(Stat))/binary, "$">>,
                 [{Stat, legacy_search_cont(Re, Status, Type)}]
+    catch _:_ ->
+        []
     end.
 
 make_re(Stat) ->
@@ -176,7 +202,6 @@ repl([H|T]) ->
     <<H/binary, (repl(T))/binary>>;
 repl([]) ->
     <<>>.
-
 
 split_pattern(<<>>, Acc) ->
     lists:reverse(Acc);
@@ -236,16 +261,17 @@ get_info(Name, Info) ->
 
 %%%-------------------------------------------------------------------
 
-find_entries_meta(Stats, Status, Type, DPs) ->
+find_entries_meta(Stats, Status, Type, DPs) -> %% todo: why is it breaking here?
     case riak_stat_meta:find_entries(Stats, Status, Type, DPs) of
         [] -> %% it is not registered or "unregistered"
             find_entries_exom(Stats, Status, Type, DPs);
         {error, _Reason} ->
             find_entries_exom(Stats, Status, Type, DPs);
-        Stats when DPs == []->
-            Stats;
-        Stats ->
-            find_entries_aliases(Stats)
+        NewStats when DPs == []->
+            NewStats;
+        NewStats ->
+            find_entries_aliases(NewStats)
+
     end.
 
 find_entries_aliases(Stats) ->
@@ -262,16 +288,22 @@ find_entries_exom(Stats, Status, Type, DPs) ->
     MS = make_exo_ms(Stats, Status, Type),
     case exo_select(MS) of
         [] ->
-            {riak_stat_exom:find_entries(Stats, Status),DPs};
+            try riak_stat_exom:find_entries(Stats, Status) of
+                NewStats -> {NewStats, DPs}
+            catch _:_ ->
+                []
+            end;
         Stats ->
             {Stats, DPs}
     end.
 
 exo_select(MatchSpec) ->
+    io:format("exo_select~n"),
     riak_stat_exom:select(MatchSpec).
 
 make_exo_ms(Stats,Status,Type) ->
-    [{{S,Type,'_'},[{'=:=','$status',Status}],['$_']} || S <- Stats].
+    [{{Stats,Type,'_'},[{'=:=','$status',Status}],['$_']}].
+%%    [{{S,Type,'_'},[{'=:=','$status',Status}],['$_']} || S <- Stats].
 
 %%%-------------------------------------------------------------------
 

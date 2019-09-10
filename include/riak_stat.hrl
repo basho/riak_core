@@ -54,7 +54,13 @@
 -type incrvalue()     :: non_neg_integer().
 -type response()      :: ok | term() | error().
 
-
+-type socket()            :: inet:socket().
+-type server()            :: inet:ip4_address().
+-type latency_port()      :: inet:port_number().
+-type server_ip()         :: inet:ip4_address().
+-type stats_port()        :: inet:port_number().
+-type hostname()          :: inet:hostname().
+-type instance()          :: string().
 -type jsonprops()         :: [{atom(), any()}].
 -type serviceid()         :: string() | binary().
 -type correlationid()     :: string() | binary().
