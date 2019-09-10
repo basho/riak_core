@@ -278,6 +278,66 @@ data_sanitise(Arg, Type, Status, DPs) ->
 %%    erl_parse:normalise(X).
 
 
+%% todo: create a find_entries for the show, show-0 and info, include
+%% todo: a function for stats and info and show-0 .,
+
+% todo: make it generic but specific for these, i.e. show and show-0 will have
+% todo: similar arguments to be printed.
+%
+% todo: basically make a simple and generic print(Elem, Args),
+% then for each stat take its type, status and datapoints similar to how its
+% done in riak_stat_meta and instead of returning a stat that matches those points
+%
+% print them out
+%
+% then do a separate function for enable/disable/reset/disable-0 to go to the
+% mgr to have its status change and it done in both metadata (if enabled) and in the
+% exometer.,
+%
+% A good point is should we be checking if the metadata is enabled/disabled when
+% changing the status, I think it shouldnt matter, if the metadata is causing an error
+% have lager:debug return the error and just return ok, that way the metadata does not
+% need to  be "reloaded" when it is loaded up.
+% enabling and disabling stats does not account for the most of the traffic so it
+% should not be too much of an issue.
+%
+% for disable-0 it might be best if it is down to exometer first.
+%
+% The order for find_entries: legacy -> exom -> meta.
+% the order for enabling/disabling/reset/disable-0 : exom -> meta.
+%
+% todo:
+% do the data_sanitise in this module, to remove the riak_stat_data module basically
+%
+% do the print function in this module as well or have an atom get passed through to riak_stat
+% exom to print if needing printing or returned.
+%
+% so for functions that need the stats printed it would be like find_entries(print,etc..)
+% and if the entries are needed for other things then it would be find_entries(return,etc...)
+%
+% then we can do the same for metadata, i.e. when the status is enabled and disabled we
+% could print the enabled and disabled stats with their status, in the same way
+% as with exometer find_entries(print, etc...) and find_entries(return, etc....)
+%
+% todo:
+%
+% make a select_replace function in riak_core_metadata, it takes the MS, and replaces a value
+%
+% see how it is compared to the iterator, as in can it be iterated over and the status changed
+%
+% i..e
+%
+% fold(fun({Stat,[{Status,Type,Opts,Aliases}]} when Status == disabled ->
+%               {Stat,[{NewStatus,Type,Opts,Aliases}]} end, ?STATPFX).
+%
+% legacy search should be in here instead of mgr then?
+%
+% todo: see if we actually need the mgr. It does the communication between the meta
+% and exomter, so it is useful in that way. but if we already have riak_stat_exom
+% and riak_stat_meta then maybe its best to just remove the one module as mgr, it is
+% actually useful, for the other modules to call to instead of this one just replacing the
+% riak_core_console...
+
 find_entries(Stats, Status, Type) ->
     find_entries(Stats, Status, Type, []).
 
