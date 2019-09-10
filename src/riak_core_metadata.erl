@@ -35,6 +35,8 @@
          itr_values/1,
          itr_value/1,
          itr_default/1,
+    replace/2,
+    select/2,
          prefix_hash/1,
          put/3,
          put/4,
@@ -284,6 +286,25 @@ itr_default({_, Opts}=It) ->
         Fun when is_function(Fun) ->
             Fun(itr_key(It));
         Val -> Val
+    end.
+
+-spec select(metadata_prefix(), ets:match_spec()) -> metadata_value().
+select({Prefix, SubPrefix}=FullPrefix, MatchSpec)
+    when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
+    (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
+    case riak_core_metadata_manager:select(FullPrefix, MatchSpec) of
+        [] -> undefined;
+        Value -> Value
+    end.
+
+
+-spec replace(metadata_prefix(), ets:match_spec()) -> metadata_value().
+replace({Prefix, SubPrefix}=FullPrefix, MatchSpec)
+    when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
+    (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
+    case riak_core_metadata_manager:replace(FullPrefix, MatchSpec) of
+        [] -> undefined;
+        Value -> Value
     end.
 
 

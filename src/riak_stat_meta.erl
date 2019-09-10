@@ -29,6 +29,8 @@
 %% Basic API
 -export([
     find_entries/4,
+    find_entries_/4,
+    find_entries_2/4,
     dp_get/2,
     get_dps/2]).
 
@@ -136,12 +138,22 @@ delete(Prefix, Key) ->
 %%%-------------------------------------------------------------------
 -spec(find_entries(statslist(),status(),type(),datapoint()) -> statslist()).
 find_entries(Stats,Status,Type,DPs) ->
-    lists:flatten(lists:map(
-        fun(Stat) ->
-            fold(Stat,Status,Type,DPs)
-        end, Stats
-    )).
+%%    lists:flatten(lists:map(
+%%        fun(Stat) ->
+%%            fold(Stat,Status,Type,DPs)
+%%        end, Stats
+%%    )),
+    {T1,_V1} = timer:tc(fun find_entries_/4, [Stats,Status,Type,DPs]),
+    {T2,_V2} = timer:tc(fun find_entries_2/4, [Stats,Status,Type,DPs]),
+    io:fwrite("riak_core_meta:fold : ~p~n", [T1]),
+    io:fwrite("riak_core_meta:select : ~p~n", [T2]).
 
+find_entries_2(Stats,Status,_Type,_DPs) ->
+    MS = [ {{Stats, [{'$2','_','_','_'}]}, [{'==','$2',Status}], ['$_']}],
+    riak_core_metadata:select(?STATPFX,MS).
+
+find_entries_(Stats,Status,Type,DPs) ->
+    lists:flatten(lists:map(fun(Stat) -> fold(Stat,Status,Type,DPs) end, Stats)).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -185,6 +197,7 @@ fold(Stat, Status0, '_', []) ->
                                         {Acc, Status}
                                 end, {[], Status0}, ?STATPFX, [{match, Stat}]),
     Stats;
+
 %%%-------------------------------------------------------------------
 %% @doc
 %% The type is given, therefore only metrics of that type can be
