@@ -53,6 +53,9 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+%%test funs
+-export([data_root/1]).
+
 -export_type([metadata_iterator/0]).
 
 -include("riak_core_metadata.hrl").
@@ -709,5 +712,7 @@ data_root(Opts) ->
 default_data_root() ->
     case application:get_env(riak_core, platform_data_dir) of
         {ok, PRoot} -> filename:join(PRoot, "cluster_meta");
-        undefined -> undefined
+        undefined ->
+%%            undefined
+            "data"
     end.

@@ -55,7 +55,8 @@
 
 %% Registration API
 -export([
-    register/2]).
+    register/2,
+    register_stats/1]).
 
 %% Read Stats API
 -export([
@@ -82,9 +83,9 @@
 -export([prefix/0]).
 
 
--ifdef(TEST).
--export([register_stats/1]).
--endif.
+%%-ifdef(TEST).
+%%-export([register_stats/1]).
+%%-endif.
 
 
 -define(STATCACHE,          app_helper:get_env(riak_core,exometer_cache,{cache,5000})).

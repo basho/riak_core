@@ -432,7 +432,7 @@ register(StatName,Type, Opts, Aliases) ->
         _ -> lager:debug(
             "riak_stat_meta:register(StatInfo) ->
             Could not register stat:~n{~p,[{~p,~p,~p,~p}]}~n",
-            [StatName,undefined,Type,Opts,Aliases])
+            [StatName,undefined,Type,Opts,Aliases]),[]
     end.
 
 find_status(fresh, Opts) ->

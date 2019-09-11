@@ -202,13 +202,13 @@ print(_) ->
 
 print([],_) ->
     io:fwrite("No Matching Stats~n");
-print(Stats, DPs) ->
-    lists:map(fun
-                  ({Name, _Type, _Status}) when DPs == [] ->
-                      io:fwrite("~p : ~p~n", [Name, get_values(Name)]);
-                  ({Name, _Type, _Status}) ->
-                      io:fwrite("~p : ~p~n",[Name, get_dps(Name, DPs)])
-              end, Stats);
+%%print(Stats, DPs) ->
+%%    lists:map(fun
+%%                  ({Name, _Type, _Status}) when DPs == [] ->
+%%                      io:fwrite("~p : ~p~n", [Name, get_values(Name)]);
+%%                  ({Name, _Type, _Status}) ->
+%%                      io:fwrite("~p : ~p~n",[Name, get_dps(Name, DPs)])
+%%              end, Stats);
 print(Stats, stats) ->
     lists:map(fun
                   ({N, _T, S}) ->

@@ -47,7 +47,6 @@
 %%%-------------------------------------------------------------------
 -spec(show_stat(arg()) -> statslist()).
 show_stat(Arg) ->
-%%    print_stats(find_entries(Arg)).
     {Stats,Status,Type,DPs} = data_sanitise(Arg),
     NewStats =
         case DPs of
@@ -91,6 +90,25 @@ stat_info(Arg) ->
                       end,
         find_entries(Stats,Status,Type,DPs)),
     print(stats,Found).
+
+%%%-------------------------------------------------------------------
+%% @doc
+%% Find_entries for the stat show/show-0/info, each one will use
+%% find_entries to print a stats information. specific for show-0 and
+%% different for info, stat show is the generic base in which it was
+%% created
+%% @end
+%%%-------------------------------------------------------------------
+%%-spec(find_entries((print | return),statname(),status(),type(),aliases()) -> statslist()).
+%%
+%%
+%%find_entries(print, Stat,Status,Type,Aliases) ->
+%%    ;
+%%find_entries(return,Stat,Status,Type,Aliases) ->
+%%    ok;
+%%find_entries(Format,_Stat,_Status,_Type,_Aliases) ->
+%%    io:fwrite("Illegal Format : ~p~n",[Format]).
+
 
 
 %%%-------------------------------------------------------------------
