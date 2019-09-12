@@ -47,13 +47,16 @@
 %%%-------------------------------------------------------------------
 -spec(show_stat(arg()) -> statslist()).
 show_stat(Arg) ->
-    {Stats,Status,Type,DPs} = data_sanitise(Arg),
-    NewStats =
-        case DPs of
-            default -> find_entries(Stats, Status, Type);
-            _       -> find_entries(Stats, Status, Type, DPs)
-        end,
-    print(NewStats,DPs).
+%%    {Stats,Status,Type,DPs} = data_sanitise(Arg),
+%%    NewStats =
+%%        case DPs of
+%%            default -> find_entries(Stats, Status, Type);
+%%            _       -> find_entries(Stats, Status, Type, DPs)
+%%        end,
+%%    NewStats = find_entries({Stats,Status,Type,DPs}),
+%%    print(NewStats,DPs).
+%%    print(
+        find_entries(data_sanitise(Arg)).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -62,15 +65,15 @@ show_stat(Arg) ->
 %%%-------------------------------------------------------------------
 -spec(show_stat_0(data()) -> value()).
 show_stat_0(Arg) ->
-    {Stats,Status,Type,DPs} = data_sanitise(Arg),
-    Entries = lists:map(fun
-                            ({Stat,        _Status}) ->         Stat;
-                            ({Stat, _Type, _Status}) ->         Stat;
-                            ({Stat, _Type, _Status, _DPs}) ->   Stat
-                        end,
-        find_entries(Stats,Status,Type,DPs)),
-    NotUpdating = not_updating(Entries),
-    print(stats,NotUpdating).
+%%    {Stats,Status,Type,DPs} = data_sanitise(Arg),
+%%    Entries = lists:map(fun
+%%                            ({Stat,        _Status}) ->         Stat;
+%%                            ({Stat, _Type, _Status}) ->         Stat;
+%%                            ({Stat, _Type, _Status, _DPs}) ->   Stat
+%%                        end,
+%%        find_entries(data_sanitise(Arg))),
+%%    NotUpdating = not_updating(data_sanitise(Arg)),
+    not_updating(data_sanitise(Arg)).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -78,38 +81,18 @@ show_stat_0(Arg) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(stat_info(data()) -> value()).
-stat_info([]) ->
-    print([]);
 stat_info(Arg) ->
+    %% todo: work out how to put info into the find_entries
     {Attrs, RestArg} = pick_info_attrs(Arg),
-    {Stats,Status,Type,DPs} = data_sanitise(RestArg),
-    Found = lists:map(fun
-                          ({Stat,        _Status}) ->       {Stat, find_stat_info(Stat, Attrs)};
-                          ({Stat, _Type, _Status}) ->       {Stat, find_stat_info(Stat, Attrs)};
-                          ({Stat, _Type, _Status, _DPs}) -> {Stat, find_stat_info(Stat, Attrs)}
-                      end,
-        find_entries(Stats,Status,Type,DPs)),
-    print(stats,Found).
-
-%%%-------------------------------------------------------------------
-%% @doc
-%% Find_entries for the stat show/show-0/info, each one will use
-%% find_entries to print a stats information. specific for show-0 and
-%% different for info, stat show is the generic base in which it was
-%% created
-%% @end
-%%%-------------------------------------------------------------------
-%%-spec(find_entries((print | return),statname(),status(),type(),aliases()) -> statslist()).
-%%
-%%
-%%find_entries(print, Stat,Status,Type,Aliases) ->
-%%    ;
-%%find_entries(return,Stat,Status,Type,Aliases) ->
-%%    ok;
-%%find_entries(Format,_Stat,_Status,_Type,_Aliases) ->
-%%    io:fwrite("Illegal Format : ~p~n",[Format]).
-
-
+%%    {Stats,Status,Type,DPs} = data_sanitise(RestArg),
+%%    Found = lists:map(fun
+%%                          ({Stat,        _Status}) ->       {Stat, find_stat_info(Stat, Attrs)};
+%%                          ({Stat, _Type, _Status}) ->       {Stat, find_stat_info(Stat, Attrs)};
+%%                          ({Stat, _Type, _Status, _DPs}) -> {Stat, find_stat_info(Stat, Attrs)}
+%%                      end,
+    {S,T,ST,_DPS} = data_sanitise(RestArg),
+        find_entries({S,T,ST,Attrs}).
+%%    print(Found).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -119,19 +102,19 @@ stat_info(Arg) ->
 %%%-------------------------------------------------------------------
 -spec(disable_stat_0(data()) -> ok).
 disable_stat_0(Arg) ->
-    {Stats,Status,Type,DPs} = data_sanitise(Arg),
-    Entries = lists:map(fun
-                            ({Stat,        _Status}) ->         Stat;
-                            ({Stat, _Type, _Status}) ->         Stat;
-                            ({Stat, _Type, _Status, _DPs}) ->   Stat
-                        end,
-        find_entries(Stats,Status,Type,DPs)),
-    NotUpdating = not_updating(Entries),
-    DisableTheseStats =
-        lists:map(fun({Name, _V}) ->
-            {Name, {status, disabled}}
-                  end, NotUpdating),
-    change_status(DisableTheseStats).
+%%    {Stats,Status,Type,DPs} = data_sanitise(Arg),
+%%    Entries = lists:map(fun
+%%                            ({Stat,        _Status}) ->         Stat;
+%%                            ({Stat, _Type, _Status}) ->         Stat;
+%%                            ({Stat, _Type, _Status, _DPs}) ->   Stat
+%%                        end,
+%%        find_entries(data_sanitise(Arg))),
+    NotUpdating = not_updating(find_entries(data_sanitise(Arg))),
+%%    DisableTheseStats =
+%%        lists:map(fun({Name, _V}) ->
+%%            {Name, {status, disabled}}
+%%                  end, NotUpdating),
+    change_status([{Name,{status,disabled}} || {Name,_V} <- NotUpdating]).
 
 
 
@@ -145,11 +128,11 @@ status_change(Arg, ToStatus) ->
     Entries = % if disabling lots of stats, pull out only enabled ones
     case ToStatus of
         enabled  ->
-            {Stats,Status,Type,DPs} = data_sanitise(Arg, '_', disabled),
-            find_entries(Stats,Status,Type,DPs);
+%%            {Stats,Status,Type,DPs} = data_sanitise(Arg, '_', disabled),
+            find_entries(data_sanitise(Arg, '_', disabled));
         disabled ->
-            {Stats,Status,Type,DPs} = data_sanitise(Arg, '_', enabled),
-            find_entries(Stats,Status,Type,DPs)
+%%            {Stats,Status,Type,DPs} = data_sanitise(Arg, '_', enabled),
+            find_entries(data_sanitise(Arg, '_', enabled))
     end,
     change_status([{Stat, {status, ToStatus}} || {Stat, _Status} <- Entries]).
 
@@ -163,13 +146,13 @@ status_change(Arg, ToStatus) ->
 %%%-------------------------------------------------------------------
 -spec(reset_stat(data()) -> ok).
 reset_stat(Arg) ->
-    {Stats,Status,Type,DPs} = data_sanitise(Arg),
+%%    {Stats,Status,Type,DPs} = data_sanitise(Arg),
     Entries = lists:map(fun
                             ({Stat,        _Status}) ->         Stat;
                             ({Stat, _Type, _Status}) ->         Stat;
                             ({Stat, _Type, _Status, _DPs}) ->   Stat
                         end,
-        find_entries(Stats,Status,Type,DPs)),
+        find_entries(data_sanitise(Arg))),
     reset_stats(Entries).
 
 
@@ -212,6 +195,101 @@ data_sanitise(Arg, Type, Status) ->
     riak_stat_data:data_sanitise(Arg, Type, Status).
 data_sanitise(Arg, Type, Status, DPs) ->
     riak_stat_data:data_sanitise(Arg, Type, Status, DPs).
+
+%%%-------------------------------------------------------------------
+%% @doc
+%% Find_entries for the stat show/show-0/info, each one will use
+%% find_entries to print a stats information. specific for show-0 and
+%% different for info, stat show is the generic base in which it was
+%% created
+%% @end
+%%%-------------------------------------------------------------------
+-spec(find_entries(statname(),status(),type(),datapoint()) -> statslist()).
+find_entries({Stat,Status,Type,DPs}) ->
+    find_entries(Stat,Status,Type,DPs).
+find_entries(Stats,Status,Type,default) ->
+    find_entries(Stats,Status,Type,[]);
+find_entries(Stats,Status,Type,DPs) ->
+    riak_stat_mgr:find_entries(Stats,Status,Type,DPs).
+
+
+%%%-------------------------------------------------------------------
+
+find_stat_info(Stats, Info) ->
+    riak_stat_mgr:find_stats_info(Stats, Info).
+
+
+%%%-------------------------------------------------------------------
+
+not_updating({Stats,_Status,Type,DPs}) ->
+    NewStats = find_entries(Stats,enabled,Type,DPs), %% only car about enabled stats
+    lists:foldl(fun
+                    ({N, _}, Acc) ->        not_0(N, Acc);
+                    ({N, _, _}, Acc) ->     not_0(N, Acc);
+                    ({N, _, _, _}, Acc) ->  not_0(N, Acc);
+                    (N, Acc) ->             not_0(N, Acc)
+              end,[],riak_stat_mgr:find_static_stats(NewStats)).
+
+not_0(StatName,Acc) ->
+    case riak_stat_exom:get_datapoint(StatName,value) of
+        {value, 0} -> [{StatName,0}|Acc];
+        {value,[]} -> [{StatName,0}|Acc];
+        {value, _} -> Acc;
+        _Otherwise -> Acc
+    end.
+
+change_status(Stats) ->
+    riak_stat_mgr:change_status(Stats).
+
+
+reset_stats(Name) ->
+    riak_stat_mgr:reset_stat(Name).
+
+
+%%%-------------------------------------------------------------------
+
+print(undefined) ->
+    print([]);
+print([undefined]) ->
+    print([]);
+print(Arg) ->
+    print(Arg, []).
+print(Stats, default) ->
+    print(Stats, []);
+print(stats,Stats) ->
+    print(Stats,stats);
+print(Stats,Attr) ->
+    riak_stat_data:print(Stats,Attr).
+
+%%%===================================================================
+
+-spec(pick_info_attrs(data()) -> value()).
+%% @doc get list of attrs to print @end
+pick_info_attrs(Arg) ->
+    case lists:foldr(
+        fun("-name", {As, Ps}) -> {[name | As], Ps};
+            ("-type", {As, Ps}) -> {[type | As], Ps};
+            ("-module", {As, Ps}) -> {[module | As], Ps};
+            ("-value", {As, Ps}) -> {[value | As], Ps};
+            ("-cache", {As, Ps}) -> {[cache | As], Ps};
+            ("-status", {As, Ps}) -> {[status | As], Ps};
+            ("-timestamp", {As, Ps}) -> {[timestamp | As], Ps};
+            ("-options", {As, Ps}) -> {[options | As], Ps};
+            (P, {As, Ps}) -> {As, [P | Ps]}
+        end, {[], []}, split_arg(Arg)) of
+        {[], Rest} ->
+            {[name, type, module, value, cache, status, timestamp, options], Rest};
+        Other ->
+            Other
+    end.
+
+
+split_arg(Str) ->
+    re:split(Str, "\\s", [{return, list}]).
+
+-ifdef(TEST).
+
+-endif.
 
 %%%-------------------------------------------------------------------
 
@@ -351,75 +429,7 @@ data_sanitise(Arg, Type, Status, DPs) ->
 % legacy search should be in here instead of mgr then?
 %
 % todo: see if we actually need the mgr. It does the communication between the meta
-% and exomter, so it is useful in that way. but if we already have riak_stat_exom
+% and exometer, so it is useful in that way. but if we already have riak_stat_exom
 % and riak_stat_meta then maybe its best to just remove the one module as mgr, it is
 % actually useful, for the other modules to call to instead of this one just replacing the
 % riak_core_console...
-
-find_entries(Stats, Status, Type) ->
-    find_entries(Stats, Status, Type, []).
-
-find_entries(Stats, Status, Type, DPs) ->
-    riak_stat_mgr:find_entries(Stats, Status, Type, DPs).
-
-%%%-------------------------------------------------------------------
-
-find_stat_info(Stats, Info) ->
-    %% todo: change this so the stat info is pulled out during print
-    riak_stat_mgr:find_stats_info(Stats, Info).
-
-
-%%%-------------------------------------------------------------------
-
-not_updating(Stats) ->
-    riak_stat_mgr:find_static_stats(Stats).
-
-
-change_status(Stats) ->
-    riak_stat_mgr:change_status(Stats).
-
-
-reset_stats(Name) ->
-    riak_stat_mgr:reset_stat(Name).
-
-
-%%%-------------------------------------------------------------------
-
-print(Arg) ->
-    print(Arg, []).
-print(Stats, default) ->
-    print(Stats, []);
-print(stats,Stats) ->
-    print(Stats,stats);
-print(Stats,Attr) ->
-    riak_stat_data:print(Stats,Attr).
-
-%%%===================================================================
-
--spec(pick_info_attrs(data()) -> value()).
-%% @doc get list of attrs to print @end
-pick_info_attrs(Arg) ->
-    case lists:foldr(
-        fun("-name", {As, Ps}) -> {[name | As], Ps};
-            ("-type", {As, Ps}) -> {[type | As], Ps};
-            ("-module", {As, Ps}) -> {[module | As], Ps};
-            ("-value", {As, Ps}) -> {[value | As], Ps};
-            ("-cache", {As, Ps}) -> {[cache | As], Ps};
-            ("-status", {As, Ps}) -> {[status | As], Ps};
-            ("-timestamp", {As, Ps}) -> {[timestamp | As], Ps};
-            ("-options", {As, Ps}) -> {[options | As], Ps};
-            (P, {As, Ps}) -> {As, [P | Ps]}
-        end, {[], []}, split_arg(Arg)) of
-        {[], Rest} ->
-            {[name, type, module, value, cache, status, timestamp, options], Rest};
-        Other ->
-            Other
-    end.
-
-
-split_arg(Str) ->
-    re:split(Str, "\\s", [{return, list}]).
-
--ifdef(TEST).
-
--endif.

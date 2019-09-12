@@ -253,6 +253,8 @@ merge(Node, {PKey, _Context}, Obj) ->
 
 -spec select(metadata_prefix(), ets:match_spec()) -> metadata_value().
 select(Prefix, MS) ->
+%%    io:format("ffff"),
+
     case ets_tab(Prefix) of
         undefined -> io_lib:format("Prefix not in Metadata : ~p~n", [Prefix]), undefined;
         Tab -> ets:select(Tab, MS)

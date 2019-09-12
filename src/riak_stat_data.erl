@@ -81,9 +81,6 @@ type_status_and_dps([<<"status=", S/binary>> | Rest], Type, _Status, DPs) ->
         end,
     type_status_and_dps(Rest, Type, NewStatus, DPs);
 type_status_and_dps([DPsBin | Rest], Type, Status, DPs) ->
-%%    NewDPs = merge(
-%%        [binary_to_existing_atom(D, latin1) || D <- re:split(DPsBin, ",")],
-%%        DPs), %% datapoints are separated by ","
     Atoms =
     lists:map(fun(D) ->
         try binary_to_existing_atom(D, latin1) of

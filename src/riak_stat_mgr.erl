@@ -158,17 +158,19 @@ read_exo_stats(Stats, Status, Type) ->
 find_entries(Stats,Status,Type,DPs) ->
     MFun = fun find_entries_meta/4,
     EFun = fun find_entries_exom/4,
+    %% todo: at this point check for the stat name, if it is {legacy,Stat},
+    % then look in legacy search
     %% check in legacy search first, as it takes less time to perform
     case legacy_search(Stats, Status, Type) of
         [] ->
             case maybe_meta(MFun, {Stats, Status, Type, DPs}) of
-                false ->
+                [] ->
                     EFun(Stats, Status, Type, DPs);
                 Return ->
                     Return
             end;
-        Stats ->
-            {Stats, DPs}
+        NewStats ->
+            print_stats(NewStats, DPs)
     end.
 
 %%%-------------------------------------------------------------------
@@ -185,7 +187,7 @@ legacy_search(Stats, Status, Type) ->
               end, Stats)).
 
 legacy_search_(Stat, Status, Type) ->
-    try re:run(Stat, "\\.",[]) of
+    try re:run(Stat, "\\.",[]) of %% todo: remove this, it was here for types before
         {match, _} -> %% wrong format, does not match
             [];
         nomatch ->
@@ -230,9 +232,9 @@ legacy_search_cont(Re, Status, Type) ->
                 true ->
                     DPnames = [D || {D,_}<- DPs],
                     case get_datapoint(Entry, DPnames) of
-                        {ok, Values} when is_list(Values) ->
+                        Values when is_list(Values) ->
                             [{Entry, zip_values(Values, DPs)} | Acc];
-                        {ok, disabled} when Status == '_';
+                        disabled when Status == '_';
                             Status == disabled ->
                             [{Entry, zip_disabled(DPs)} | Acc];
                         _ ->
@@ -258,61 +260,131 @@ zip_disabled(DPs) ->
     [{D, disabled, N} || {D, N} <- DPs].
 
 get_datapoint(Entry, DPs) ->
-    riak_stat_exom:get_datapoint(Entry, DPs).
-
+    case riak_stat_exom:get_datapoint(Entry, DPs) of
+        {ok, V} -> V;
+        _ -> unavailable
+    end.
 get_info(Name, Info) ->
     riak_stat_exom:get_info(Name, Info).
 
 %%%-------------------------------------------------------------------
 
 find_entries_meta(Stats, Status, Type, DPs) -> %% todo: why is it breaking here?
-    case riak_stat_meta:find_entries(Stats, Status, Type, DPs) of
+    case riak_stat_meta:find_entries(Stats, Status, Type) of
         [] -> %% it is not registered or "unregistered"
             find_entries_exom(Stats, Status, Type, DPs);
         {error, _Reason} ->
             find_entries_exom(Stats, Status, Type, DPs);
-        NewStats when DPs == []->
-            NewStats;
+        [undefined] ->
+            find_entries_exom(Stats, Status, Type, DPs);
         NewStats ->
-            find_entries_aliases(NewStats)
-
+            print_stats(NewStats,DPs)
     end.
 
 find_entries_aliases(Stats) ->
-    lists:foldl(fun
-                    ({Name, Type, Status, Aliases}, Acc) ->
+    lists:map(fun
+                    ({Name, _Type, _Status, Aliases}) ->
                         DPs =
                 [riak_stat_exom:find_alias(Alias) || Alias <- Aliases],
-                        [{Name, Type, Status, DPs} | Acc];
-                    (Other, Acc) ->
-                        [Other | Acc]
-                end, [], Stats).
+                        io:fwrite("A ~p : ~p~n",[Name, DPs]);
+%%                        {Name, Type, Status, DPs};
+                    (_Other) ->
+                        []
+                end, Stats).
 
 find_entries_exom(Stats, Status, Type, DPs) ->
     MS = make_exo_ms(Stats, Status, Type),
     case exo_select(MS) of
         [] ->
             try riak_stat_exom:find_entries(Stats, Status) of
-                NewStats -> {NewStats, DPs}
+                NewStats -> print_stats(NewStats, DPs)
             catch _:_ ->
-                []
+                print_stats([],[])
             end;
-        Stats ->
-            {Stats, DPs}
+        NewStats ->
+            print_stats(NewStats,DPs)
+
     end.
 
 exo_select(MatchSpec) ->
-    io:format("exo_select~n"),
     riak_stat_exom:select(MatchSpec).
 
 make_exo_ms(Stats,Status,Type) ->
-    [{{Stats,Type,'_'},[{'=:=','$status',Status}],['$_']}].
-%%    [{{S,Type,'_'},[{'=:=','$status',Status}],['$_']} || S <- Stats].
+    [{{Stat,Type,Status},[],['$_']} || Stat <- Stats].
+
+
+print_stats([], _) ->
+    io:fwrite("No Matching Stats~n");
+print_stats(NewStats,DPs) ->
+    lists:map(fun
+                  ({N,_S})    when DPs == []->  get_value(N);
+                  ({N,_S})    ->                find_stats_info(N,DPs);
+
+                  ({N,_T,_S}) when DPs == [] -> get_value(N);
+                  ({N,_T,_S}) ->                find_stats_info(N,DPs);
+
+                  %% legacy pattern
+                  (Legacy) ->
+                      lists:map(fun
+                                    ({LP,[]}) ->
+                                        io:fwrite(
+                                            "== ~s (Legacy pattern): No matching stats ==~n", [LP]);
+                                    ({LP, Matches}) ->
+                                        io:fwrite("== ~s (Legacy pattern): ==~n", [LP]),
+                                        [[io:fwrite("~p: ~p (~p/~p)~n", [N, V, E, DP])
+                                            || {DP, V, N} <- DPs] || {E, DPs} <- Matches];
+                                    (_) ->
+                                        io:fwrite("0~n"),
+                                       []
+                                end, Legacy)
+              end,NewStats).
 
 %%%-------------------------------------------------------------------
 
+get_value(N) ->
+    case riak_stat_exom:get_value(N) of
+        {ok,Val} -> io:fwrite("~p : ~p~n",[N,Val]);
+        {error, _} -> io:format("1"),[]
+    end.
+%%    {ok, Val} = riak_stat_exom:get_value(N),
+%%    Val.
+
 find_stats_info(Stats, Info) ->
-    riak_stat_exom:find_stats_info(Stats, Info).
+    case riak_stat_exom:get_datapoint(Stats, Info) of
+        [] -> io:format("2"), [];
+        {ok, V} -> lists:map(fun
+                                 ([]) -> io:format("3"),[];
+                                 ({_DP, undefined}) -> io:format("4"), [];
+                                 (DP) ->
+                                     io:fwrite("~p : ~p~n", [Stats, DP])
+                             end, V);
+        {error,_} -> get_info_2_electric_boogaloo(Stats, Info)
+    end.
+
+get_info_2_electric_boogaloo(N,Attrs) ->
+    lists:flatten(io_lib:fwrite("~p: ", [N])),
+    lists:map(fun
+                  (undefined) -> [];
+                  ([]) -> [];
+                  (A) -> io:fwrite("~p~n",[A])
+                  end, [riak_stat_exom:get_info(N,Attrs)]).
+%%    case [riak_stat_exom:get_info(N,I) || I <- Attrs] of
+%%        [] -> [];
+%%        undefined -> [];
+%%        NAttrs -> io:fwrite("~p~n",[NAttrs])
+%%    end.
+%%    Pad = lists:duplicate(length(Hdr), $\s),
+%%    Info = exometer:get_info(N),
+%%    Status = proplists:get_value(status, Info, enabled),
+%%    Body = [io_lib:fwrite("~w = ~p~n", [A, proplists:get_value(A, Info,undefined)])
+%%        | lists:map(fun(value) ->
+%%            io_lib:fwrite(Pad ++ "~w = ~p~n",
+%%                [value, get_datapoint(N, default)]);
+%%            (Ax) ->
+%%                io_lib:fwrite(Pad ++ "~w = ~p~n",
+%%                    [Ax, proplists:get_value(Ax, Info, undefined)])
+%%                    end, Attrs)],
+%%    io:put_chars([Hdr, Body]).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -613,10 +685,6 @@ test_find_entries() ->
     StatPath = [riak|'_'],
     EStatPath = [riak],
     Status = enabled,
-%%    ?debugTime("T1 ", find_entries_meta_print(StatPath,Status,'_',[])),
-%%    ?debugTime("T2 ", find_entries_meta_return(StatPath,Status,'_',[])),
-%%    ?debugTime("T3 ", find_entries_exom_print(EStatPath,Status,'_',[])),
-%%    ?debugTime("T4 ", find_entries_exom_return(EStatPath,Status,'_',[])).
     {T1,V1} = timer:tc(fun find_entries_meta_print/4, [StatPath,Status,'_',[]]),
     {T2,V2} = timer:tc(fun find_entries_meta_return/4, [StatPath,Status,'_',[]]),
     {T3,V3} = timer:tc(fun find_entries_exom_print/4, [EStatPath,Status,'_',[]]),
@@ -628,10 +696,6 @@ test_find_entries_spiral() ->
     EStatPath = [riak],
     Status = enabled,
     Type = spiral,
-%%    ?debugTime("T1 ", find_entries_meta_print(StatPath,Status,Type,[])),
-%%    ?debugTime("T2 ", find_entries_meta_return(StatPath,Status,Type,[])),
-%%    ?debugTime("T3 ", find_entries_exom_print(EStatPath,Status,Type,[])),
-%%    ?debugTime("T4 ", find_entries_exom_return(EStatPath,Status,Type,[])).
     {T1,V1} = timer:tc(fun find_entries_meta_print/4, [StatPath,Status,Type,[]]),
     {T2,V2} = timer:tc(fun find_entries_meta_return/4, [StatPath,Status,Type,[]]),
     {T3,V3} = timer:tc(fun find_entries_exom_print/4, [EStatPath,Status,Type,[]]),
@@ -643,10 +707,6 @@ test_find_entries_dps() ->
     EStatPath = [riak],
     Status = enabled,
     DPs = [max,mean],
-%%    ?debugTime("T1 ", find_entries_meta_print(StatPath,Status,'_',DPs)),
-%%    ?debugTime("T2 ", find_entries_meta_return(StatPath,Status,'_',DPs)),
-%%    ?debugTime("T3 ", find_entries_exom_print(EStatPath,Status,'_',DPs)),
-%%    ?debugTime("T4 ", find_entries_exom_return(EStatPath,Status,'_',DPs)).
     {T1,V1} = timer:tc(fun find_entries_meta_print/4, [StatPath,Status,'_',DPs]),
     {T2,V2} = timer:tc(fun find_entries_meta_return/4, [StatPath,Status,'_',DPs]),
     {T3,V3} = timer:tc(fun find_entries_exom_print/4, [EStatPath,Status,'_',DPs]),
@@ -657,10 +717,6 @@ test_find_entries_dis() ->
     StatPath = [riak|'_'],
     EStatPath = [riak],
     Status = disabled,
-%%    ?debugTime("T1 ", find_entries_meta_print(StatPath,Status,'_',[])),
-%%    ?debugTime("T2 ", find_entries_meta_return(StatPath,Status,'_',[])),
-%%    ?debugTime("T3 ", find_entries_exom_print(EStatPath,Status,'_',[])),
-%%    ?debugTime("T4 ", find_entries_exom_return(EStatPath,Status,'_',[])).
     {T1,V1} = timer:tc(fun find_entries_meta_print/4, [StatPath,Status,'_',[]]),
     {T2,V2} = timer:tc(fun find_entries_meta_return/4, [StatPath,Status,'_',[]]),
     {T3,V3} = timer:tc(fun find_entries_exom_print/4, [EStatPath,Status,'_',[]]),
@@ -672,10 +728,6 @@ test_find_entries_onedp() ->
     EStatPath = [riak],
     Status = enabled,
     DPs = [one],
-%%    ?debugTime("T1 ", find_entries_meta_print(StatPath,Status,'_',DPs)),
-%%    ?debugTime("T2 ", find_entries_meta_return(StatPath,Status,'_',DPs)),
-%%    ?debugTime("T3 ", find_entries_exom_print(EStatPath,Status,'_',DPs)),
-%%    ?debugTime("T4 ", find_entries_exom_return(EStatPath,Status,'_',DPs)).
     {T1,V1} = timer:tc(fun find_entries_meta_print/4, [StatPath,Status,'_',DPs]),
     {T2,V2} = timer:tc(fun find_entries_meta_return/4, [StatPath,Status,'_',DPs]),
     {T3,V3} = timer:tc(fun find_entries_exom_print/4, [EStatPath,Status,'_',DPs]),
@@ -688,10 +740,6 @@ test_find_entries_hist_dp() ->
     Status = enabled,
     Type = histogram,
     DPs = [mean],
-%%    ?debugTime("T1 ", find_entries_meta_print(StatPath,Status,Type,DPs)),
-%%    ?debugTime("T2 ", find_entries_meta_return(StatPath,Status,Type,DPs)),
-%%    ?debugTime("T3 ", find_entries_exom_print(EStatPath,Status,Type,DPs)),
-%%    ?debugTime("T4 ", find_entries_exom_return(EStatPath,Status,Type,DPs)).
     {T1,V1} = timer:tc(fun find_entries_meta_print/4, [StatPath,Status,Type,DPs]),
     {T2,V2} = timer:tc(fun find_entries_meta_return/4, [StatPath,Status,Type,DPs]),
     {T3,V3} = timer:tc(fun find_entries_exom_print/4, [EStatPath,Status,Type,DPs]),

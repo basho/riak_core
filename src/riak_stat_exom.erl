@@ -16,6 +16,7 @@
     get_info/2,
     find_entries/2,
     get_datapoint/2,
+    get_value/1,
     select/1,
     sample/1,
     find_stats_info/2,
@@ -183,6 +184,9 @@ find_entries(Stat) ->
 -spec(get_datapoint(statname(), datapoint()) -> exo_value() | error()).
 get_datapoint(Name, Datapoint) ->
     exometer:get_value(Name, Datapoint).
+
+get_value(Name) ->
+    exometer:get_value(Name).
 
 %%%-------------------------------------------------------------------
 %% @doc

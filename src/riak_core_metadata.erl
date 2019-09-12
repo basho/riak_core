@@ -121,10 +121,13 @@ fold(Fun, Acc0, FullPrefix) ->
            metadata_prefix(),
            fold_opts()) -> any().
 fold(Fun, Acc0, FullPrefix, Opts) ->
+%%    io:format("Stat in fold for DPs~n"),
+
     It = iterator(FullPrefix, Opts),
     fold_it(Fun, Acc0, It).
 
 fold_it(Fun, Acc, It) ->
+%%    io:format("Stat in fold_it for DPs~n"),
     case itr_done(It) of
         true ->
             ok = itr_close(It),
@@ -292,6 +295,8 @@ itr_default({_, Opts}=It) ->
 select({Prefix, SubPrefix}=FullPrefix, MatchSpec)
     when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
     (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
+%%    io:format("eeee"),
+
     case riak_core_metadata_manager:select(FullPrefix, MatchSpec) of
         [] -> undefined;
         Value -> Value
