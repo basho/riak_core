@@ -30,6 +30,9 @@
 %%% API
 %%%===================================================================
 
+%% todo: make sure that if there is a legacy_stat come in it returns as
+%% a legacy stat, as in {legacy,Stat} is whats returned.
+
 %%%-------------------------------------------------------------------
 %%% @doc
 %%% Arguments coming in from the console or _stat modules arrive at
@@ -78,14 +81,24 @@ type_status_and_dps([<<"status=", S/binary>> | Rest], Type, _Status, DPs) ->
         end,
     type_status_and_dps(Rest, Type, NewStatus, DPs);
 type_status_and_dps([DPsBin | Rest], Type, Status, DPs) ->
-    NewDPs = merge(
-        [binary_to_existing_atom(D, latin1) || D <- re:split(DPsBin, ",")],
-        DPs), %% datapoints are separated by ","
+%%    NewDPs = merge(
+%%        [binary_to_existing_atom(D, latin1) || D <- re:split(DPsBin, ",")],
+%%        DPs), %% datapoints are separated by ","
+    Atoms =
+    lists:map(fun(D) ->
+        try binary_to_existing_atom(D, latin1) of
+            DP -> DP
+        catch _:_ ->
+            io:fwrite("Illegal datapoint name~n"),[]
+        end
+              end, re:split(DPsBin,",")),
+    NewDPs = merge(lists:flatten(Atoms),DPs),
     type_status_and_dps(Rest, Type, Status, NewDPs).
 
-merge([_ | _] = DPs, []) ->
+merge([_ | _] = DPs, default) ->
     DPs;
 merge([H | T], DPs) ->
+    io:format("H: ~p, T: ~p, DPs : ~p~n",[H,T,DPs]),
     case lists:member(H, DPs) of
         true -> merge(T, DPs);
         false -> merge(T, DPs ++ [H])
