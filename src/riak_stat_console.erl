@@ -66,8 +66,8 @@ show_stat_0(Arg) ->
 %%%-------------------------------------------------------------------
 -spec(stat_info(data()) -> value()).
 stat_info(Arg) ->
-    %% todo: work out how to put info into the find_entries
     {Attrs, RestArg} = pick_info_attrs(Arg),
+    io:fwrite("~p~n",[1]),
 %%    {Stats,Status,Type,DPs} = data_sanitise(RestArg),
 %%    Found = lists:map(fun
 %%                          ({Stat,        _Status}) ->       {Stat, find_stat_info(Stat, Attrs)};
@@ -75,7 +75,8 @@ stat_info(Arg) ->
 %%                          ({Stat, _Type, _Status, _DPs}) -> {Stat, find_stat_info(Stat, Attrs)}
 %%                      end,
     {S,T,ST,_DPS} = data_sanitise(RestArg),
-        find_entries({S,T,ST,Attrs}).
+    io:fwrite("~p~n",[2]),
+    print_stats(find_entries({S,T,ST,Attrs})).
 %%    print(Found).
 
 %%%-------------------------------------------------------------------
@@ -194,6 +195,8 @@ find_entries({Stat,Status,Type,DPs}) ->
 find_entries(Stats,Status,Type,default) ->
     find_entries(Stats,Status,Type,[]);
 find_entries(Stats,Status,Type,DPs) ->
+    io:fwrite("~p~n",[3]),
+
     riak_stat_mgr:find_entries(Stats,Status,Type,DPs).
 
 
@@ -224,14 +227,7 @@ not_0(StatName,DPs) ->
     case Vals of
         [] -> ok;
         _ -> io:fwrite("~p : ~p~n",[StatName,Vals])
-    end.
-
-%%    case riak_stat_exom:get_datapoint(StatName,value) of
-%%        {value, 0} -> [{StatName,0}|Acc];
-%%        {value,[]} -> [{StatName,[]}|Acc];
-%%        {value, _} -> Acc;
-%%        _Otherwise -> Acc
-%%    end.
+    end. %% todo: put the formatting in the map above
 
 
 print_stats({Stats,DPs}) ->
@@ -239,6 +235,7 @@ print_stats({Stats,DPs}) ->
 print_stats([], _) ->
     io:fwrite("No Matching Stats~n");
 print_stats(NewStats,DPs) ->
+    io:fwrite("~p~n",[6]),
     lists:map(fun
                   ({Names,NDPs}) ->
                       [not_0(N,NDPs)||{N,_,_}<-Names];
@@ -251,10 +248,6 @@ print_stats(NewStats,DPs) ->
                   %% legacy pattern
                   (Legacy) ->
                       lists:map(fun
-%%                                    ({{INewStats,IDPs},[]}) ->
-%%                                         not legacy, but will be used in show-0
-%%                                        io:format("~p~n",[IDPs]),
-%%                                        [not_0(N,IDPs)||{N,_,_}<-INewStats];
                                     ({LP,[]}) ->
                                         io:fwrite(
                                             "== ~s (Legacy pattern): No matching stats ==~n", [LP]);
@@ -284,13 +277,14 @@ get_value(N) ->
 find_stats_info(Stats, Info) ->
     case riak_stat_exom:get_datapoint(Stats, Info) of
         [] -> [];
-        {ok, V} -> lists:map(fun
+        {ok, V} ->
+            lists:map(fun
                                  ([]) -> [];
                                  ({_DP, undefined}) -> [];
                                  ({_DP, {error,_}}) -> [];
                                  (DP) ->
                                      io:fwrite("3~p : ~p~n", [Stats, DP])
-                             end, V);
+                             end, V); %% todo: change this so it doesnt return the entire stat every time it prints a DP
         {error,_} -> get_info_2_electric_boogaloo(Stats, Info)
     end.
 

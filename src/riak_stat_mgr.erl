@@ -165,8 +165,11 @@ find_entries(Stats,Status,Type,DPs) ->
         [] ->
             case maybe_meta(MFun, {Stats, Status, Type, DPs}) of
                 [] ->
+                    io:fwrite("~p~n",[4]),
                     EFun(Stats, Status, Type, DPs);
                 Return ->
+                    io:fwrite("~p~n",[5]),
+
                     Return
             end;
         NewStats ->
@@ -278,6 +281,8 @@ find_entries_meta(Stats, Status, Type, DPs) -> %% todo: why is it breaking here?
         [undefined] ->
             find_entries_exom(Stats, Status, Type, DPs);
         NewStats ->
+            io:fwrite("~p~n",[7]),
+
             {NewStats,DPs}
     end.
 %%
