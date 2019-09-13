@@ -21,7 +21,7 @@
 -export([
     read_stats/4,
     find_entries/4,
-    find_stats_info/2,
+%%    find_stats_info/2,
     find_static_stats/1,
     aggregate/2]).
 
@@ -280,17 +280,17 @@ find_entries_meta(Stats, Status, Type, DPs) -> %% todo: why is it breaking here?
         NewStats ->
             {NewStats,DPs}
     end.
-
-find_entries_aliases(Stats) ->
-    lists:map(fun
-                    ({Name, _Type, _Status, Aliases}) ->
-                        DPs =
-                [riak_stat_exom:find_alias(Alias) || Alias <- Aliases],
-                        io:fwrite("A ~p : ~p~n",[Name, DPs]);
-%%                        {Name, Type, Status, DPs};
-                    (_Other) ->
-                        []
-                end, Stats).
+%%
+%%find_entries_aliases(Stats) ->
+%%    lists:map(fun
+%%                    ({Name, _Type, _Status, Aliases}) ->
+%%                        DPs =
+%%                [riak_stat_exom:find_alias(Alias) || Alias <- Aliases],
+%%                        io:fwrite("A ~p : ~p~n",[Name, DPs]);
+%%%%                        {Name, Type, Status, DPs};
+%%                    (_Other) ->
+%%                        []
+%%                end, Stats).
 
 find_entries_exom(Stats, Status, Type, DPs) ->
     MS = make_exo_ms(Stats, Status, Type),

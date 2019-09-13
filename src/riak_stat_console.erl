@@ -57,7 +57,7 @@ show_stat(Arg) ->
 -spec(show_stat_0(data()) -> value()).
 show_stat_0(Arg) ->
     {Stats,_Status,Type,DPs}=data_sanitise(Arg),
-    print_stats(find_entries({Stats,enabled,Type,DPs}),[]).
+    print_stats({[find_entries({Stats,enabled,Type,DPs})],[]}).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -199,8 +199,8 @@ find_entries(Stats,Status,Type,DPs) ->
 
 %%%-------------------------------------------------------------------
 
-find_stat_info(Stats, Info) ->
-    riak_stat_mgr:find_stats_info(Stats, Info).
+%%find_stat_info(Stats, Info) ->
+%%    riak_stat_mgr:find_stats_info(Stats, Info).
 
 
 %%%-------------------------------------------------------------------
@@ -212,13 +212,26 @@ not_updating({Stats,_Status,Type,DPs}) ->
                     (N, Acc) ->             not_0(N, Acc)
               end,[],find_entries(Stats,enabled,Type,DPs)).
 
-not_0(StatName,Acc) ->
-    case riak_stat_exom:get_datapoint(StatName,value) of
-        {value, 0} -> [{StatName,0}|Acc];
-        {value,[]} -> [{StatName,[]}|Acc];
-        {value, _} -> Acc;
-        _Otherwise -> Acc
+not_0(StatName,DPs) ->
+    Vals =lists:flatten(
+    lists:map(fun
+                  ({ok,[{value,0}]}) -> {value,0};
+                  ({ok,[{value,[]}]}) -> {value,0};
+                  ({ok,[{value,{error,_}}]}) -> [];
+                  (ANs)-> io:format("ANS: ~p~n",[ANs]),[];
+                  (_) -> []
+                      end,[riak_stat_exom:get_datapoint(StatName,[V])||V<-[value|DPs]])),
+    case Vals of
+        [] -> ok;
+        _ -> io:fwrite("~p : ~p~n",[StatName,Vals])
     end.
+
+%%    case riak_stat_exom:get_datapoint(StatName,value) of
+%%        {value, 0} -> [{StatName,0}|Acc];
+%%        {value,[]} -> [{StatName,[]}|Acc];
+%%        {value, _} -> Acc;
+%%        _Otherwise -> Acc
+%%    end.
 
 
 print_stats({Stats,DPs}) ->
@@ -227,8 +240,10 @@ print_stats([], _) ->
     io:fwrite("No Matching Stats~n");
 print_stats(NewStats,DPs) ->
     lists:map(fun
-                  ({N,_S})    when DPs == []->  get_value(N);
-                  ({N,_S})    ->                find_stats_info(N,DPs);
+                  ({Names,NDPs}) ->
+                      [not_0(N,NDPs)||{N,_,_}<-Names];
+%%                  ({N,_S})    when DPs == []->  get_value(N);
+%%                  ({N,_S})    ->                find_stats_info(N,DPs);
 
                   ({N,_T,_S}) when DPs == [] -> get_value(N);
                   ({N,_T,_S}) ->                find_stats_info(N,DPs);
@@ -236,9 +251,10 @@ print_stats(NewStats,DPs) ->
                   %% legacy pattern
                   (Legacy) ->
                       lists:map(fun
-                                    ({{NewStats,DPs},[]}) ->
-                                        %% not legacy, but will be used in show-0
-                                        ok;
+%%                                    ({{INewStats,IDPs},[]}) ->
+%%                                         not legacy, but will be used in show-0
+%%                                        io:format("~p~n",[IDPs]),
+%%                                        [not_0(N,IDPs)||{N,_,_}<-INewStats];
                                     ({LP,[]}) ->
                                         io:fwrite(
                                             "== ~s (Legacy pattern): No matching stats ==~n", [LP]);
