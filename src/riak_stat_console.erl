@@ -47,16 +47,7 @@
 %%%-------------------------------------------------------------------
 -spec(show_stat(arg()) -> statslist()).
 show_stat(Arg) ->
-%%    {Stats,Status,Type,DPs} = data_sanitise(Arg),
-%%    NewStats =
-%%        case DPs of
-%%            default -> find_entries(Stats, Status, Type);
-%%            _       -> find_entries(Stats, Status, Type, DPs)
-%%        end,
-%%    NewStats = find_entries({Stats,Status,Type,DPs}),
-%%    print(NewStats,DPs).
-%%    print(
-        find_entries(data_sanitise(Arg)).
+    print_stats(find_entries(data_sanitise(Arg))).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -65,15 +56,8 @@ show_stat(Arg) ->
 %%%-------------------------------------------------------------------
 -spec(show_stat_0(data()) -> value()).
 show_stat_0(Arg) ->
-%%    {Stats,Status,Type,DPs} = data_sanitise(Arg),
-%%    Entries = lists:map(fun
-%%                            ({Stat,        _Status}) ->         Stat;
-%%                            ({Stat, _Type, _Status}) ->         Stat;
-%%                            ({Stat, _Type, _Status, _DPs}) ->   Stat
-%%                        end,
-%%        find_entries(data_sanitise(Arg))),
-%%    NotUpdating = not_updating(data_sanitise(Arg)),
-    not_updating(data_sanitise(Arg)).
+    {Stats,_Status,Type,DPs}=data_sanitise(Arg),
+    print_stats(find_entries({Stats,enabled,Type,DPs}),[]).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -222,21 +206,90 @@ find_stat_info(Stats, Info) ->
 %%%-------------------------------------------------------------------
 
 not_updating({Stats,_Status,Type,DPs}) ->
-    NewStats = find_entries(Stats,enabled,Type,DPs), %% only car about enabled stats
+%%    [not_0(N,[]) || {N,_T,_S} <- find_entries(Stats,enabled,Type,DPs)].
     lists:foldl(fun
-                    ({N, _}, Acc) ->        not_0(N, Acc);
                     ({N, _, _}, Acc) ->     not_0(N, Acc);
-                    ({N, _, _, _}, Acc) ->  not_0(N, Acc);
                     (N, Acc) ->             not_0(N, Acc)
-              end,[],riak_stat_mgr:find_static_stats(NewStats)).
+              end,[],find_entries(Stats,enabled,Type,DPs)).
 
 not_0(StatName,Acc) ->
     case riak_stat_exom:get_datapoint(StatName,value) of
         {value, 0} -> [{StatName,0}|Acc];
-        {value,[]} -> [{StatName,0}|Acc];
+        {value,[]} -> [{StatName,[]}|Acc];
         {value, _} -> Acc;
         _Otherwise -> Acc
     end.
+
+
+print_stats({Stats,DPs}) ->
+    print_stats(Stats,DPs).
+print_stats([], _) ->
+    io:fwrite("No Matching Stats~n");
+print_stats(NewStats,DPs) ->
+    lists:map(fun
+                  ({N,_S})    when DPs == []->  get_value(N);
+                  ({N,_S})    ->                find_stats_info(N,DPs);
+
+                  ({N,_T,_S}) when DPs == [] -> get_value(N);
+                  ({N,_T,_S}) ->                find_stats_info(N,DPs);
+
+                  %% legacy pattern
+                  (Legacy) ->
+                      lists:map(fun
+                                    ({{NewStats,DPs},[]}) ->
+                                        %% not legacy, but will be used in show-0
+                                        ok;
+                                    ({LP,[]}) ->
+                                        io:fwrite(
+                                            "== ~s (Legacy pattern): No matching stats ==~n", [LP]);
+                                    ({LP, Matches}) ->
+                                        io:fwrite("== ~s (Legacy pattern): ==~n", [LP]),
+                                        [[io:fwrite("~p: ~p (~p/~p)~n", [N, V, E, DP])
+                                            || {DP, V, N} <- DPs] || {E, DPs} <- Matches];
+                                    (_) ->
+                                        []
+                                end, Legacy)
+              end,NewStats).
+
+%%%-------------------------------------------------------------------
+
+get_value(N) ->
+    case riak_stat_exom:get_value(N) of
+        {ok,Val} ->
+%%            io:fwrite("~p : ",[N]),
+            lists:map(fun({_,{error,_}}) -> [];
+                (D) -> io:fwrite("1~p : ~p~n",[N,D])
+                      end, Val);
+        {error, _} -> io:format("2"),[]
+    end.
+%%    {ok, Val} = riak_stat_exom:get_value(N),
+%%    Val.
+
+find_stats_info(Stats, Info) ->
+    case riak_stat_exom:get_datapoint(Stats, Info) of
+        [] -> [];
+        {ok, V} -> lists:map(fun
+                                 ([]) -> [];
+                                 ({_DP, undefined}) -> [];
+                                 ({_DP, {error,_}}) -> [];
+                                 (DP) ->
+                                     io:fwrite("3~p : ~p~n", [Stats, DP])
+                             end, V);
+        {error,_} -> get_info_2_electric_boogaloo(Stats, Info)
+    end.
+
+get_info_2_electric_boogaloo(N,Attrs) ->
+    lists:flatten(io_lib:fwrite("~p: ", [N])),
+    lists:map(fun
+                  (undefined) -> [];
+                  ([]) -> [];
+                  ({_,{error,_ }}) -> [];
+                  (A) -> io:fwrite("~p~n",[A])
+              end, [riak_stat_exom:get_info(N,Attrs)]).
+
+
+
+
 
 change_status(Stats) ->
     riak_stat_mgr:change_status(Stats).
@@ -433,3 +486,25 @@ split_arg(Str) ->
 % and riak_stat_meta then maybe its best to just remove the one module as mgr, it is
 % actually useful, for the other modules to call to instead of this one just replacing the
 % riak_core_console...
+
+
+
+%%    {Stats,Status,Type,DPs} = data_sanitise(Arg),
+%%    NewStats =
+%%        case DPs of
+%%            default -> find_entries(Stats, Status, Type);
+%%            _       -> find_entries(Stats, Status, Type, DPs)
+%%        end,
+%%    NewStats = find_entries({Stats,Status,Type,DPs}),
+%%    print(NewStats,DPs).
+%%    print(
+
+
+%%    {Stats,Status,Type,DPs} = data_sanitise(Arg),
+%%    Entries = lists:map(fun
+%%                            ({Stat,        _Status}) ->         Stat;
+%%                            ({Stat, _Type, _Status}) ->         Stat;
+%%                            ({Stat, _Type, _Status, _DPs}) ->   Stat
+%%                        end,
+%%        find_entries(data_sanitise(Arg))),
+%%    NotUpdating = not_updating(data_sanitise(Arg)),

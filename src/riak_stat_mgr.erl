@@ -170,7 +170,7 @@ find_entries(Stats,Status,Type,DPs) ->
                     Return
             end;
         NewStats ->
-            print_stats(NewStats, DPs)
+            {NewStats, DPs}
     end.
 
 %%%-------------------------------------------------------------------
@@ -278,7 +278,7 @@ find_entries_meta(Stats, Status, Type, DPs) -> %% todo: why is it breaking here?
         [undefined] ->
             find_entries_exom(Stats, Status, Type, DPs);
         NewStats ->
-            print_stats(NewStats,DPs)
+            {NewStats,DPs}
     end.
 
 find_entries_aliases(Stats) ->
@@ -297,12 +297,12 @@ find_entries_exom(Stats, Status, Type, DPs) ->
     case exo_select(MS) of
         [] ->
             try riak_stat_exom:find_entries(Stats, Status) of
-                NewStats -> print_stats(NewStats, DPs)
+                NewStats -> {NewStats, DPs}
             catch _:_ ->
-                print_stats([],[])
+                {[],[]}
             end;
         NewStats ->
-            print_stats(NewStats,DPs)
+            {NewStats,DPs}
 
     end.
 
@@ -313,67 +313,6 @@ make_exo_ms(Stats,Status,Type) ->
     [{{Stat,Type,Status},[],['$_']} || Stat <- Stats].
 
 
-print_stats([], _) ->
-    io:fwrite("No Matching Stats~n");
-print_stats(NewStats,DPs) ->
-    lists:map(fun
-                  ({N,_S})    when DPs == []->  get_value(N);
-                  ({N,_S})    ->                find_stats_info(N,DPs);
-
-                  ({N,_T,_S}) when DPs == [] -> get_value(N);
-                  ({N,_T,_S}) ->                find_stats_info(N,DPs);
-
-                  %% legacy pattern
-                  (Legacy) ->
-                      lists:map(fun
-                                    ({LP,[]}) ->
-                                        io:fwrite(
-                                            "== ~s (Legacy pattern): No matching stats ==~n", [LP]);
-                                    ({LP, Matches}) ->
-                                        io:fwrite("== ~s (Legacy pattern): ==~n", [LP]),
-                                        [[io:fwrite("~p: ~p (~p/~p)~n", [N, V, E, DP])
-                                            || {DP, V, N} <- DPs] || {E, DPs} <- Matches];
-                                    (_) ->
-                                        io:fwrite("0~n"),
-                                       []
-                                end, Legacy)
-              end,NewStats).
-
-%%%-------------------------------------------------------------------
-
-get_value(N) ->
-    case riak_stat_exom:get_value(N) of
-        {ok,Val} ->
-%%            io:fwrite("~p : ",[N]),
-            lists:map(fun({_,{error,_}}) -> [];
-                (D) -> io:fwrite("1~p : ~p~n",[N,D])
-                end, Val);
-        {error, _} -> io:format("2"),[]
-    end.
-%%    {ok, Val} = riak_stat_exom:get_value(N),
-%%    Val.
-
-find_stats_info(Stats, Info) ->
-    case riak_stat_exom:get_datapoint(Stats, Info) of
-        [] -> [];
-        {ok, V} -> lists:map(fun
-                                 ([]) -> [];
-                                 ({_DP, undefined}) -> [];
-                                 ({_DP, {error,_}}) -> [];
-                                 (DP) ->
-                                     io:fwrite("3~p : ~p~n", [Stats, DP])
-                             end, V);
-        {error,_} -> get_info_2_electric_boogaloo(Stats, Info)
-    end.
-
-get_info_2_electric_boogaloo(N,Attrs) ->
-    lists:flatten(io_lib:fwrite("~p: ", [N])),
-    lists:map(fun
-                  (undefined) -> [];
-                  ([]) -> [];
-                  ({_,{error,_ }}) -> [];
-                  (A) -> io:fwrite("~p~n",[A])
-                  end, [riak_stat_exom:get_info(N,Attrs)]).
 %%    case [riak_stat_exom:get_info(N,I) || I <- Attrs] of
 %%        [] -> [];
 %%        undefined -> [];
