@@ -343,20 +343,25 @@ print_stats(NewStats,DPs) ->
 
 get_value(N) ->
     case riak_stat_exom:get_value(N) of
-        {ok,Val} -> io:fwrite("~p : ~p~n",[N,Val]);
-        {error, _} -> io:format("1"),[]
+        {ok,Val} ->
+%%            io:fwrite("~p : ",[N]),
+            lists:map(fun({_,{error,_}}) -> [];
+                (D) -> io:fwrite("1~p : ~p~n",[N,D])
+                end, Val);
+        {error, _} -> io:format("2"),[]
     end.
 %%    {ok, Val} = riak_stat_exom:get_value(N),
 %%    Val.
 
 find_stats_info(Stats, Info) ->
     case riak_stat_exom:get_datapoint(Stats, Info) of
-        [] -> io:format("2"), [];
+        [] -> [];
         {ok, V} -> lists:map(fun
-                                 ([]) -> io:format("3"),[];
-                                 ({_DP, undefined}) -> io:format("4"), [];
+                                 ([]) -> [];
+                                 ({_DP, undefined}) -> [];
+                                 ({_DP, {error,_}}) -> [];
                                  (DP) ->
-                                     io:fwrite("~p : ~p~n", [Stats, DP])
+                                     io:fwrite("3~p : ~p~n", [Stats, DP])
                              end, V);
         {error,_} -> get_info_2_electric_boogaloo(Stats, Info)
     end.
@@ -366,6 +371,7 @@ get_info_2_electric_boogaloo(N,Attrs) ->
     lists:map(fun
                   (undefined) -> [];
                   ([]) -> [];
+                  ({_,{error,_ }}) -> [];
                   (A) -> io:fwrite("~p~n",[A])
                   end, [riak_stat_exom:get_info(N,Attrs)]).
 %%    case [riak_stat_exom:get_info(N,I) || I <- Attrs] of
