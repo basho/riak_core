@@ -62,34 +62,17 @@
 %%%-------------------------------------------------------------------
 -module(riak_stat_profiles).
 -include_lib("riak_core/include/riak_stat.hrl").
--behaviour(gen_server).
 
 %% API
 -export([
-    start_link/0,
     save_profile/1,
     load_profile/1,
     delete_profile/1,
     reset_profile/0]).
 
-%% gen_server callbacks
--export([init/1,
-    handle_call/3,
-    handle_cast/2,
-    handle_info/2,
-    terminate/2,
-    code_change/3]).
 
-
-
--define(SERVER, ?MODULE).
 -define(timestamp, os:timestamp()).
 -define(NODEID, term_to_binary(node())).
-
--record(state, {
-    profile = none, %% currently loaded profile
-    profiletable    %% tableId for profile ETS table
-}).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -124,14 +107,8 @@
 save_profile(ProfileName) ->
     case check_args(ProfileName) of
         ok -> ok;
-        Args -> save_profile_(Args)
+        _ -> riak_stat_mgr:save_profile(ProfileName)
     end.
-%%    case check_args(ProfileName) of
-%%        ok -> ok;
-%%        Args ->
-%%            Reply = gen_server:call(?SERVER,{save,Args}),
-%%            print(Reply, Args++" saved")
-%%    end.
 
 %% -------------------------------------------------------------------
 %% @doc
@@ -148,13 +125,8 @@ save_profile(ProfileName) ->
 load_profile(ProfileName) ->
     case check_args(ProfileName) of
         ok -> ok;
-        Args -> load_profile_(Args)
+        _ -> riak_stat_mgr:load_profile(ProfileName)
     end.
-%%    case check_args(ProfileName) of
-%%        ok -> ok;
-%%        Args -> print(gen_server:call(?SERVER, {load, Args}), Args++" loaded")
-%%    end.
-
 
 %% -------------------------------------------------------------------
 %% @doc
@@ -167,12 +139,8 @@ load_profile(ProfileName) ->
 delete_profile(ProfileName) ->
     case check_args(ProfileName) of
         ok -> ok;
-        Args -> delete_profile_(Args)
+        _ -> riak_stat_mgr:delete_profile(ProfileName)
     end.
-%%    case check_args(ProfileName) of
-%%        ok -> ok;
-%%        Args -> print(gen_server:call(?SERVER, {delete, Args}), Args++" deleted")
-%%    end.
 
 %% -------------------------------------------------------------------
 %% @doc
@@ -183,152 +151,8 @@ delete_profile(ProfileName) ->
 %% -------------------------------------------------------------------
 -spec(reset_profile() -> ok | error()).
 reset_profile() ->
-    reset_profile_().
-%%    gen_server:call(?SERVER, reset).
-
-%% -------------------------------------------------------------------
-%%
-%%pull_profiles() ->
-%%    riak_stat_mgr:get_profiles().
-%%
-%%last_loaded_profile() ->
-%%    riak_stat_mgr:get_loaded_profile().
-
-
--spec(start_link() ->
-    {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
-start_link() ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
-
-%%%===================================================================
-%%% gen_server callbacks
-%%%===================================================================
-
-%%--------------------------------------------------------------------
--spec(init(Args :: term()) ->
-    {ok, State :: #state{}} | {ok, State :: #state{}, timeout() | hibernate} |
-    {stop, Reason :: term()} | ignore).
-init([]) ->
-    Tid =
-        ets:new(profiles, [
-            set,
-            protected,
-            named_table,
-            {keypos, 1},
-            {write_concurrency, true},
-            {read_concurrency, true}
-        ]),
-    %% the ets table is a process kept alive by this gen_server, to keep track of profiles
-%%    case pull_profiles() of
-%%        false        -> ok;
-%%        Profiles     -> ets:insert(Tid, Profiles)
-%%    end,
-%%    case last_loaded_profile() of %% load last profile that was loaded
-%%        [<<"none">>] -> ok;
-%%        false        -> ok;
-%%        undefined    -> ok;
-%%        Other        -> gen_server:call(?SERVER, {load, Other})
-%%    end,
-    {ok, #state{profiletable = Tid}}.
-
-%%--------------------------------------------------------------------
--spec(handle_call(Request :: term(), From :: {pid(), Tag :: term()},
-    State :: #state{}) ->
-    {reply, Reply :: term(), NewState :: #state{}} |
-    {reply, Reply :: term(), NewState :: #state{}, timeout() | hibernate} |
-    {noreply, NewState :: #state{}} |
-    {noreply, NewState :: #state{}, timeout() | hibernate} |
-    {stop, Reason :: term(), Reply :: term(), NewState :: #state{}} |
-    {stop, Reason :: term(), NewState :: #state{}}).
-handle_call({save, Arg}, _From, State = #state{profiletable = ProfileList}) ->
-    ets:insert(ProfileList, {Arg, ?timestamp}),
-    Reply = save_profile_(Arg),
-    {reply, Reply, State};
-handle_call({load, Arg}, _From, State =
-    #state{profile = Profile, profiletable  = ProfileList}) ->
-
-    {Reply, NewState} =
-        case Profile == Arg of %% check if the current loaded is same as argument given
-            true ->
-                {io_lib:format("~s already loaded~n", [Profile]), State};
-            false ->
-                case ets:lookup(ProfileList, Arg) of
-                    [] -> {{error, no_profile}, State};
-                    {Name, _time} -> {load_profile_(Name), State#state{profile = Name}};
-                    Other -> {load_profile_(Other), State#state{profile = Other}}
-                end
-        end,
-    {reply, Reply, NewState};
-handle_call({delete, Arg}, _From, State =
-    #state{profile = Profile, profiletable = ProfileList}) ->
-    NewState =
-        case Profile == Arg of
-            true -> State#state{profile = none};
-            false -> State
-        end,
-    Reply =
-        case ets:lookup(ProfileList, Arg) of
-            [] -> {error, no_profile};
-            {Name, _time} -> delete_profile_(Name);
-            Other -> {delete_profile_(Other), State#state{profile = Other}}
-
-        end,
-    {reply, Reply, NewState};
-handle_call(reset, _From, State) ->
-    Reply = reset_profile_(),
-    NewState = State#state{profile = none},
-    {reply, Reply, NewState};
-
-handle_call({Request, _Arg}, _From, State) ->
-    {reply, {error, Request}, State};
-handle_call(Request, _From, State) ->
-    {reply, {error, Request}, State}.
-
-
-%%--------------------------------------------------------------------
--spec(handle_cast(Request :: term(), State :: #state{}) ->
-    {noreply, NewState :: #state{}} |
-    {noreply, NewState :: #state{}, timeout() | hibernate} |
-    {stop, Reason :: term(), NewState :: #state{}}).
-handle_cast(_Request, State) ->
-    {noreply, State}.
-
-%%--------------------------------------------------------------------
--spec(handle_info(Info :: timeout() | term(), State :: #state{}) ->
-    {noreply, NewState :: #state{}} |
-    {noreply, NewState :: #state{}, timeout() | hibernate} |
-    {stop, Reason :: term(), NewState :: #state{}}).
-handle_info(_Info, State) ->
-    {noreply, State}.
-
-%%--------------------------------------------------------------------
--spec(terminate(Reason :: (normal | shutdown | {shutdown, term()} | term()),
-    State :: #state{}) -> term()).
-terminate(_Reason, _State) ->
-    ok.
-
-%%--------------------------------------------------------------------
--spec(code_change(OldVsn :: term() | {down, term()}, State :: #state{},
-    Extra :: term()) ->
-    {ok, NewState :: #state{}} | {error, Reason :: term()}).
-code_change(_OldVsn, State, _Extra) ->
-    {ok, State}.
-
-%%%===================================================================
-%%% Manager API
-%%%===================================================================
-
-save_profile_(ProfileName) ->
-    riak_stat_mgr:save_profile(ProfileName).
-
-load_profile_(ProfileName) ->
-    riak_stat_mgr:load_profile(ProfileName).
-
-delete_profile_(ProfileName) ->
-    riak_stat_mgr:delete_profile(ProfileName).
-
-reset_profile_() ->
     riak_stat_mgr:reset_profile().
+
 
 %%%===================================================================
 %%% Internal functions
