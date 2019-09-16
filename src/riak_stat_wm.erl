@@ -141,4 +141,4 @@ pretty_print(RD1, C1=#ctx{}) ->
 %%--------------------------------------------------------------------
 
 get_stats() ->
-    riak_stat:get_stats().
+    riak_stat:stats().
