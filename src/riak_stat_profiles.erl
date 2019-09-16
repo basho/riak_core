@@ -124,8 +124,14 @@
 save_profile(ProfileName) ->
     case check_args(ProfileName) of
         ok -> ok;
-        Args -> print(gen_server:call(?SERVER, {save, Args}), Args++" saved")
+        Args -> save_profile_(Args)
     end.
+%%    case check_args(ProfileName) of
+%%        ok -> ok;
+%%        Args ->
+%%            Reply = gen_server:call(?SERVER,{save,Args}),
+%%            print(Reply, Args++" saved")
+%%    end.
 
 %% -------------------------------------------------------------------
 %% @doc
@@ -142,8 +148,12 @@ save_profile(ProfileName) ->
 load_profile(ProfileName) ->
     case check_args(ProfileName) of
         ok -> ok;
-        Args -> print(gen_server:call(?SERVER, {load, Args}), Args++" loaded")
+        Args -> load_profile_(Args)
     end.
+%%    case check_args(ProfileName) of
+%%        ok -> ok;
+%%        Args -> print(gen_server:call(?SERVER, {load, Args}), Args++" loaded")
+%%    end.
 
 
 %% -------------------------------------------------------------------
@@ -157,8 +167,12 @@ load_profile(ProfileName) ->
 delete_profile(ProfileName) ->
     case check_args(ProfileName) of
         ok -> ok;
-        Args -> print(gen_server:call(?SERVER, {delete, Args}), Args++" deleted")
+        Args -> delete_profile_(Args)
     end.
+%%    case check_args(ProfileName) of
+%%        ok -> ok;
+%%        Args -> print(gen_server:call(?SERVER, {delete, Args}), Args++" deleted")
+%%    end.
 
 %% -------------------------------------------------------------------
 %% @doc
@@ -169,15 +183,16 @@ delete_profile(ProfileName) ->
 %% -------------------------------------------------------------------
 -spec(reset_profile() -> ok | error()).
 reset_profile() ->
-    gen_server:call(?SERVER, reset).
+    reset_profile_().
+%%    gen_server:call(?SERVER, reset).
 
 %% -------------------------------------------------------------------
-
-pull_profiles() ->
-    riak_stat_mgr:get_profiles().
-
-last_loaded_profile() ->
-    riak_stat_mgr:get_loaded_profile().
+%%
+%%pull_profiles() ->
+%%    riak_stat_mgr:get_profiles().
+%%
+%%last_loaded_profile() ->
+%%    riak_stat_mgr:get_loaded_profile().
 
 
 -spec(start_link() ->
@@ -204,16 +219,16 @@ init([]) ->
             {read_concurrency, true}
         ]),
     %% the ets table is a process kept alive by this gen_server, to keep track of profiles
-    case pull_profiles() of
-        false        -> ok;
-        Profiles     -> ets:insert(Tid, Profiles)
-    end,
-    case last_loaded_profile() of %% load last profile that was loaded
-        [<<"none">>] -> ok;
-        false        -> ok;
-        undefined    -> ok;
-        Other        -> gen_server:call(?SERVER, {load, Other})
-    end,
+%%    case pull_profiles() of
+%%        false        -> ok;
+%%        Profiles     -> ets:insert(Tid, Profiles)
+%%    end,
+%%    case last_loaded_profile() of %% load last profile that was loaded
+%%        [<<"none">>] -> ok;
+%%        false        -> ok;
+%%        undefined    -> ok;
+%%        Other        -> gen_server:call(?SERVER, {load, Other})
+%%    end,
     {ok, #state{profiletable = Tid}}.
 
 %%--------------------------------------------------------------------
@@ -227,9 +242,11 @@ init([]) ->
     {stop, Reason :: term(), NewState :: #state{}}).
 handle_call({save, Arg}, _From, State = #state{profiletable = ProfileList}) ->
     ets:insert(ProfileList, {Arg, ?timestamp}),
-    {reply, save_profile_(Arg), State};
+    Reply = save_profile_(Arg),
+    {reply, Reply, State};
 handle_call({load, Arg}, _From, State =
     #state{profile = Profile, profiletable  = ProfileList}) ->
+
     {Reply, NewState} =
         case Profile == Arg of %% check if the current loaded is same as argument given
             true ->
