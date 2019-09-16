@@ -67,17 +67,8 @@ show_stat_0(Arg) ->
 -spec(stat_info(data()) -> value()).
 stat_info(Arg) ->
     {Attrs, RestArg} = pick_info_attrs(Arg),
-    io:fwrite("~p~n",[1]),
-%%    {Stats,Status,Type,DPs} = data_sanitise(RestArg),
-%%    Found = lists:map(fun
-%%                          ({Stat,        _Status}) ->       {Stat, find_stat_info(Stat, Attrs)};
-%%                          ({Stat, _Type, _Status}) ->       {Stat, find_stat_info(Stat, Attrs)};
-%%                          ({Stat, _Type, _Status, _DPs}) -> {Stat, find_stat_info(Stat, Attrs)}
-%%                      end,
     {S,T,ST,_DPS} = data_sanitise(RestArg),
-    io:fwrite("~p~n",[2]),
     print_stats(find_entries({S,T,ST,Attrs})).
-%%    print(Found).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -87,19 +78,8 @@ stat_info(Arg) ->
 %%%-------------------------------------------------------------------
 -spec(disable_stat_0(data()) -> ok).
 disable_stat_0(Arg) ->
-%%    {Stats,Status,Type,DPs} = data_sanitise(Arg),
-%%    Entries = lists:map(fun
-%%                            ({Stat,        _Status}) ->         Stat;
-%%                            ({Stat, _Type, _Status}) ->         Stat;
-%%                            ({Stat, _Type, _Status, _DPs}) ->   Stat
-%%                        end,
-%%        find_entries(data_sanitise(Arg))),
-    NotUpdating = not_updating(find_entries(data_sanitise(Arg))),
-%%    DisableTheseStats =
-%%        lists:map(fun({Name, _V}) ->
-%%            {Name, {status, disabled}}
-%%                  end, NotUpdating),
-    change_status([{Name,{status,disabled}} || {Name,_V} <- NotUpdating]).
+    {NotUpdating,_DP} = not_updating(find_entries(data_sanitise(Arg))),
+    change_status([{Name,{status,disabled}} || {Name,_,_V} <- NotUpdating]).
 
 
 
@@ -110,16 +90,17 @@ disable_stat_0(Arg) ->
 %%%-------------------------------------------------------------------
 -spec(status_change(data(), status()) -> ok).
 status_change(Arg, ToStatus) ->
-    Entries = % if disabling lots of stats, pull out only enabled ones
+    {Entries,_DP} = % if disabling lots of stats, pull out only enabled ones
     case ToStatus of
         enabled  ->
-%%            {Stats,Status,Type,DPs} = data_sanitise(Arg, '_', disabled),
             find_entries(data_sanitise(Arg, '_', disabled));
         disabled ->
-%%            {Stats,Status,Type,DPs} = data_sanitise(Arg, '_', enabled),
             find_entries(data_sanitise(Arg, '_', enabled))
     end,
-    change_status([{Stat, {status, ToStatus}} || {Stat, _Status} <- Entries]).
+%%    change_status(lists:foldl(fun
+%%                                  ({Stat,_,_},Acc) -> [{Stat,{status,ToStatus}}|Acc];
+%%        (_,Acc) -> Acc end, [],Entries)).
+    change_status([{Stat, {status, ToStatus}} || {Stat,_,_} <- Entries]).
 
 
 
@@ -131,7 +112,6 @@ status_change(Arg, ToStatus) ->
 %%%-------------------------------------------------------------------
 -spec(reset_stat(data()) -> ok).
 reset_stat(Arg) ->
-%%    {Stats,Status,Type,DPs} = data_sanitise(Arg),
     Entries = lists:map(fun
                             ({Stat,        _Status}) ->         Stat;
                             ({Stat, _Type, _Status}) ->         Stat;
@@ -195,7 +175,7 @@ find_entries({Stat,Status,Type,DPs}) ->
 find_entries(Stats,Status,Type,default) ->
     find_entries(Stats,Status,Type,[]);
 find_entries(Stats,Status,Type,DPs) ->
-    io:fwrite("~p~n",[3]),
+%%    io:fwrite("~p~n",[3]),
 
     riak_stat_mgr:find_entries(Stats,Status,Type,DPs).
 
@@ -221,21 +201,20 @@ not_0(StatName,DPs) ->
                   ({ok,[{value,0}]}) -> {value,0};
                   ({ok,[{value,[]}]}) -> {value,0};
                   ({ok,[{value,{error,_}}]}) -> [];
-                  (ANs)-> io:format("ANS: ~p~n",[ANs]),[];
                   (_) -> []
                       end,[riak_stat_exom:get_datapoint(StatName,[V])||V<-[value|DPs]])),
     case Vals of
         [] -> ok;
         _ -> io:fwrite("~p : ~p~n",[StatName,Vals])
     end. %% todo: put the formatting in the map above
-
+%% todo: adjust this function for disable-0
 
 print_stats({Stats,DPs}) ->
     print_stats(Stats,DPs).
 print_stats([], _) ->
     io:fwrite("No Matching Stats~n");
 print_stats(NewStats,DPs) ->
-    io:fwrite("~p~n",[6]),
+%%    io:fwrite("~p~n",[6]),
     lists:map(fun
                   ({Names,NDPs}) ->
                       [not_0(N,NDPs)||{N,_,_}<-Names];
@@ -265,11 +244,11 @@ print_stats(NewStats,DPs) ->
 get_value(N) ->
     case riak_stat_exom:get_value(N) of
         {ok,Val} ->
-%%            io:fwrite("~p : ",[N]),
+            io:fwrite("~p : ~n",[N]), %% todo: if there is no DPs then do not print
             lists:map(fun({_,{error,_}}) -> [];
-                (D) -> io:fwrite("1~p : ~p~n",[N,D])
+                (D) -> io:fwrite("                      ~p~n",[D])
                       end, Val);
-        {error, _} -> io:format("2"),[]
+        {error, _} -> []
     end.
 %%    {ok, Val} = riak_stat_exom:get_value(N),
 %%    Val.
@@ -278,23 +257,25 @@ find_stats_info(Stats, Info) ->
     case riak_stat_exom:get_datapoint(Stats, Info) of
         [] -> [];
         {ok, V} ->
+            io:fwrite("~p :~n",[Stats]),
             lists:map(fun
                                  ([]) -> [];
                                  ({_DP, undefined}) -> [];
                                  ({_DP, {error,_}}) -> [];
                                  (DP) ->
-                                     io:fwrite("3~p : ~p~n", [Stats, DP])
-                             end, V); %% todo: change this so it doesnt return the entire stat every time it prints a DP
+                                     io:fwrite("                 ~p~n", [DP])
+                             end, V);
+        %% todo: change the formatting on the stats info returned.
         {error,_} -> get_info_2_electric_boogaloo(Stats, Info)
     end.
 
 get_info_2_electric_boogaloo(N,Attrs) ->
-    lists:flatten(io_lib:fwrite("~p: ", [N])),
+    lists:flatten(io_lib:fwrite("A~p: ", [N])),
     lists:map(fun
                   (undefined) -> [];
                   ([]) -> [];
                   ({_,{error,_ }}) -> [];
-                  (A) -> io:fwrite("~p~n",[A])
+                  (A) -> io:fwrite("B~p~n",[A])
               end, [riak_stat_exom:get_info(N,Attrs)]).
 
 
@@ -518,3 +499,25 @@ split_arg(Str) ->
 %%                        end,
 %%        find_entries(data_sanitise(Arg))),
 %%    NotUpdating = not_updating(data_sanitise(Arg)),
+
+%%    io:fwrite("~p~n",[1]),
+%%    {Stats,Status,Type,DPs} = data_sanitise(RestArg),
+%%    Found = lists:map(fun
+%%                          ({Stat,        _Status}) ->       {Stat, find_stat_info(Stat, Attrs)};
+%%                          ({Stat, _Type, _Status}) ->       {Stat, find_stat_info(Stat, Attrs)};
+%%                          ({Stat, _Type, _Status, _DPs}) -> {Stat, find_stat_info(Stat, Attrs)}
+%%                      end,
+
+
+%%    {Stats,Status,Type,DPs} = data_sanitise(Arg),
+%%    Entries = lists:map(fun
+%%                            ({Stat,        _Status}) ->         Stat;
+%%                            ({Stat, _Type, _Status}) ->         Stat;
+%%                            ({Stat, _Type, _Status, _DPs}) ->   Stat
+%%                        end,
+%%        find_entries(data_sanitise(Arg))),
+
+%%    DisableTheseStats =
+%%        lists:map(fun({Name, _V}) ->
+%%            {Name, {status, disabled}}
+%%                  end, NotUpdating),
