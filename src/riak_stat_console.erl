@@ -25,7 +25,9 @@
     data_sanitise/1,
     data_sanitise/2,
     data_sanitise/3,
-    data_sanitise/4
+    data_sanitise/4,
+    print/1,
+    print/2
 ]).
 
 -define(STATUS, enabled). %% default status
@@ -74,6 +76,30 @@ stat_info(Arg) ->
     {S,T,ST,_DPS} = data_sanitise(RestArg),
     print_stats(find_entries({S,T,ST,Attrs})).
 
+-spec(pick_info_attrs(data()) -> value()).
+%% @doc get list of attrs to print @end
+pick_info_attrs(Arg) ->
+    case lists:foldr(
+        fun("-name", {As, Ps}) -> {[name | As], Ps};
+            ("-type", {As, Ps}) -> {[type | As], Ps};
+            ("-module", {As, Ps}) -> {[module | As], Ps};
+            ("-value", {As, Ps}) -> {[value | As], Ps};
+            ("-cache", {As, Ps}) -> {[cache | As], Ps};
+            ("-status", {As, Ps}) -> {[status | As], Ps};
+            ("-timestamp", {As, Ps}) -> {[timestamp | As], Ps};
+            ("-options", {As, Ps}) -> {[options | As], Ps};
+            (P, {As, Ps}) -> {As, [P | Ps]}
+        end, {[], []}, split_arg(Arg)) of
+        {[], Rest} ->
+            {[name, type, module, value, cache, status, timestamp, options], Rest};
+        Other ->
+            Other
+    end.
+
+
+split_arg(Str) ->
+    re:split(Str, "\\s", [{return, list}]).
+
 %%%-------------------------------------------------------------------
 %% @doc
 %% Similar to the function above, but will disable all the stats that
@@ -95,10 +121,8 @@ disable_stat_0(Arg) ->
 status_change(Arg, ToStatus) ->
     {Entries,_DP} = % if disabling lots of stats, pull out only enabled ones
     case ToStatus of
-        enabled  ->
-            find_entries(data_sanitise(Arg, '_', disabled));
-        disabled ->
-            find_entries(data_sanitise(Arg, '_', enabled))
+        enabled  -> find_entries(data_sanitise(Arg, '_', disabled));
+        disabled -> find_entries(data_sanitise(Arg, '_', enabled))
     end,
     change_status([{Stat, {status, ToStatus}} || {Stat,_,_} <- Entries]).
 
@@ -146,6 +170,7 @@ enable_metadata(Arg) ->
 %%% Helper API
 %%%===================================================================
 
+%% todo: clean up everything below this point, it is a mess
 
 %%%-------------------------------------------------------------------
 %%% @doc
@@ -350,10 +375,8 @@ find_entries(Stats,Status,Type,DPs) ->
 change_status(Stats) ->
     riak_stat_mgr:change_status(Stats).
 
-
 reset_stats(Name) ->
     riak_stat_mgr:reset_stat(Name).
-
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -477,6 +500,9 @@ print_stats(NewStats,DPs) ->
                                 end, Legacy)
               end,NewStats).
 
+%% todo: consolidate the print_stats and the print/2 functions, see if the print/1-2
+%% function are necessary
+
 %%%-------------------------------------------------------------------
 
 get_value(N) ->
@@ -515,33 +541,10 @@ get_info_2_electric_boogaloo(N,Attrs) ->
               end, [riak_stat_exom:get_info(N,Attrs)]).
 
 
-
-
+%%%===================================================================
 %%%===================================================================
 
--spec(pick_info_attrs(data()) -> value()).
-%% @doc get list of attrs to print @end
-pick_info_attrs(Arg) ->
-    case lists:foldr(
-        fun("-name", {As, Ps}) -> {[name | As], Ps};
-            ("-type", {As, Ps}) -> {[type | As], Ps};
-            ("-module", {As, Ps}) -> {[module | As], Ps};
-            ("-value", {As, Ps}) -> {[value | As], Ps};
-            ("-cache", {As, Ps}) -> {[cache | As], Ps};
-            ("-status", {As, Ps}) -> {[status | As], Ps};
-            ("-timestamp", {As, Ps}) -> {[timestamp | As], Ps};
-            ("-options", {As, Ps}) -> {[options | As], Ps};
-            (P, {As, Ps}) -> {As, [P | Ps]}
-        end, {[], []}, split_arg(Arg)) of
-        {[], Rest} ->
-            {[name, type, module, value, cache, status, timestamp, options], Rest};
-        Other ->
-            Other
-    end.
 
-
-split_arg(Str) ->
-    re:split(Str, "\\s", [{return, list}]).
 
 -ifdef(TEST).
 
