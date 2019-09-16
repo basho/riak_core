@@ -14,27 +14,20 @@
     reload_metadata/1]).
 
 %% Registration API
--export([
-    register/1]).
+-export([register/1]).
 
 %% Reading API
 -export([
     read_stats/4,
     find_entries/4,
-%%    find_stats_info/2,
     find_static_stats/1,
     aggregate/2]).
 
 %% Updating API
--export([
-    change_status/1
-]).
+-export([change_status/1]).
 
 %% Deleting/Resetting API
--export([
-    reset_stat/1,
-    unregister/1
-]).
+-export([reset_stat/1, unregister/1]).
 
 %% Profile API
 -export([
@@ -45,16 +38,8 @@
     get_profiles/0,
     get_loaded_profile/0]).
 
-%% Specific to manager Macros:
-
--define(DISABLED_METADATA,  io:fwrite("Metadata is Disabled~n")).
-
 -ifdef(EUNIT).
-%%-ifdef(DEBUG).
--export([
-    return/2,
-    register_both/1]).
-%%-endif.
+-export([return/2, register_both/1]).
 -endif.
 
 %%%===================================================================
@@ -72,7 +57,7 @@
 -spec(maybe_meta(function(), arguments()) -> false | ok | error() | arg()).
 maybe_meta(Function, Arguments) ->
     case ?IS_ENABLED(?METADATA_ENABLED) of
-        false -> ?DISABLED_METADATA, false; %% it's disabled
+        false -> false; %% it's disabled
         true  -> case Arguments of          %% it's enabled (default)
                      []        -> Function();
                      {U,D}     -> Function(U,D);
@@ -84,7 +69,7 @@ maybe_meta(Function, Arguments) ->
 
 
 reload_metadata(Stats) ->
-    change_meta_status(Stats).
+    change_meta_status([{Stat,Status} || {Stat,_,Status}<-Stats]).
 
 
 %%%===================================================================
@@ -115,8 +100,6 @@ register_both(StatInfo) ->
             register_exom({Name, Type, NewOpts, Aliases})
     end.
 
-%%register_meta(Stat,Type,Options,Aliases) ->
-%%    register_meta({Stat,Type,Options,Aliases}).
 register_meta(StatInfo) ->
     riak_stat_meta:register(StatInfo).
 
@@ -164,12 +147,9 @@ find_entries(Stats,Status,Type,DPs) ->
     case legacy_search(Stats, Status, Type) of
         [] ->
             case maybe_meta(MFun, {Stats, Status, Type, DPs}) of
-                [] ->
-                    io:fwrite("~p~n",[4]),
+                false ->
                     EFun(Stats, Status, Type, DPs);
                 Return ->
-                    io:fwrite("~p~n",[5]),
-
                     Return
             end;
         NewStats ->
@@ -281,28 +261,16 @@ find_entries_meta(Stats, Status, Type, DPs) -> %% todo: why is it breaking here?
         [undefined] ->
             find_entries_exom(Stats, Status, Type, DPs);
         NewStats ->
-            io:fwrite("~p~n",[7]),
-
             {NewStats,DPs}
     end.
-%%
-%%find_entries_aliases(Stats) ->
-%%    lists:map(fun
-%%                    ({Name, _Type, _Status, Aliases}) ->
-%%                        DPs =
-%%                [riak_stat_exom:find_alias(Alias) || Alias <- Aliases],
-%%                        io:fwrite("A ~p : ~p~n",[Name, DPs]);
-%%%%                        {Name, Type, Status, DPs};
-%%                    (_Other) ->
-%%                        []
-%%                end, Stats).
 
 find_entries_exom(Stats, Status, Type, DPs) ->
     MS = make_exo_ms(Stats, Status, Type),
     case exo_select(MS) of
         [] ->
             try riak_stat_exom:find_entries(Stats, Status) of
-                NewStats -> {NewStats, DPs}
+                NewStats ->
+                    {NewStats, DPs}
             catch _:_ ->
                 {[],[]}
             end;
@@ -316,25 +284,6 @@ exo_select(MatchSpec) ->
 
 make_exo_ms(Stats,Status,Type) ->
     [{{Stat,Type,Status},[],['$_']} || Stat <- Stats].
-
-
-%%    case [riak_stat_exom:get_info(N,I) || I <- Attrs] of
-%%        [] -> [];
-%%        undefined -> [];
-%%        NAttrs -> io:fwrite("~p~n",[NAttrs])
-%%    end.
-%%    Pad = lists:duplicate(length(Hdr), $\s),
-%%    Info = exometer:get_info(N),
-%%    Status = proplists:get_value(status, Info, enabled),
-%%    Body = [io_lib:fwrite("~w = ~p~n", [A, proplists:get_value(A, Info,undefined)])
-%%        | lists:map(fun(value) ->
-%%            io_lib:fwrite(Pad ++ "~w = ~p~n",
-%%                [value, get_datapoint(N, default)]);
-%%            (Ax) ->
-%%                io_lib:fwrite(Pad ++ "~w = ~p~n",
-%%                    [Ax, proplists:get_value(Ax, Info, undefined)])
-%%                    end, Attrs)],
-%%    io:put_chars([Hdr, Body]).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -356,8 +305,6 @@ find_static_stats(Stats) ->
 aggregate(Pattern, DPs) ->
     riak_stat_exom:aggregate(Pattern, DPs).
 
-
-
 %%%===================================================================
 %%% Updating Stats API
 %%%===================================================================
@@ -370,7 +317,7 @@ aggregate(Pattern, DPs) ->
 %%%-------------------------------------------------------------------
 -spec(change_status(stats()) -> ok | error()).
 change_status([]) ->
-    io:format("Error, no stats~n");
+    io:format("No stats need changing~n");
 change_status(StatsList) ->
     case maybe_meta(fun change_both_status/1, StatsList) of
         false ->
@@ -382,7 +329,6 @@ change_status(StatsList) ->
 change_both_status(StatsList) ->
     change_meta_status(StatsList),
     change_exom_status(StatsList).
-
 
 change_meta_status(Arg) ->
     riak_stat_meta:change_status(Arg).
@@ -423,7 +369,6 @@ reset_exom_stat(Arg) ->
 
 %%%-------------------------------------------------------------------
 
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% set status to unregister in metadata, and delete
@@ -460,27 +405,45 @@ unregister_in_exometer(StatName) ->
 %%% If it is enabled it sends the data to the fun in the metadata
 %%% @end
 %%%-------------------------------------------------------------------
+-define(DISABLED_METADATA,  io:fwrite("Metadata is Disabled~n")).
 
 save_profile(Profile) ->
-    maybe_meta(fun riak_stat_meta:save_profile/1, Profile).
+    case maybe_meta(fun riak_stat_meta:save_profile/1, Profile) of
+        false -> ?DISABLED_METADATA;
+        Other -> Other
+    end.
 
 load_profile(Profile) ->
-    maybe_meta(fun riak_stat_meta:load_profile/1, Profile).
+    case maybe_meta(fun riak_stat_meta:load_profile/1, Profile) of
+        false -> ?DISABLED_METADATA;
+        Other -> Other
+    end.
 
 delete_profile(Profile) ->
-    maybe_meta(fun riak_stat_meta:delete_profile/1, Profile).
+    case maybe_meta(fun riak_stat_meta:delete_profile/1, Profile) of
+        false -> ?DISABLED_METADATA;
+        Other -> Other
+    end.
 
 reset_profile() ->
-    maybe_meta(fun riak_stat_meta:reset_profile/0, []).
+    case maybe_meta(fun riak_stat_meta:reset_profile/0, []) of
+        false -> ?DISABLED_METADATA;
+        Other -> Other
+    end.
 
 get_profiles() ->
-    maybe_meta(fun riak_stat_meta:get_profiles/0, []).
+    case maybe_meta(fun riak_stat_meta:get_profiles/0, []) of
+        false -> ?DISABLED_METADATA;
+        Other -> Other
+    end.
 
 get_loaded_profile() ->
-    maybe_meta(fun riak_stat_meta:get_loaded_profile/0, []).
+    case maybe_meta(fun riak_stat_meta:get_loaded_profile/0, []) of
+        false -> ?DISABLED_METADATA;
+        Other -> Other
+    end.
 
 -ifdef(EUNIT).
-%%-ifdef(DEBUG).
 -include_lib("eunit/include/eunit.hrl").
 
 
@@ -1035,4 +998,5 @@ find_entries_exom_return(StatPath,Status,Type,DPs) ->
     length(Stats).
 
 -endif.
-%%-endif.
+
+
