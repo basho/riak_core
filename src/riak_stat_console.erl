@@ -28,6 +28,10 @@
     data_sanitise/4
 ]).
 
+-define(STATUS, enabled). %% default status
+-define(TYPE,   '_').     %% default type
+-define(DPs,    default). %% default Datapoints
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -80,9 +84,6 @@ stat_info(Arg) ->
 disable_stat_0(Arg) ->
     {Stats,_Status,Type,DPs} = data_sanitise(Arg),
     print_stats({[find_entries({Stats,enabled,Type,DPs})],disable_0}).
-%%    {NotUpdating,_DP} = not_updating(find_entries(data_sanitise(Arg))),
-%%    change_status([{Name,{status,disabled}} || {Name,_,_V} <- NotUpdating]).
-
 
 
 %%%-------------------------------------------------------------------
@@ -99,12 +100,7 @@ status_change(Arg, ToStatus) ->
         disabled ->
             find_entries(data_sanitise(Arg, '_', enabled))
     end,
-%%    change_status(lists:foldl(fun
-%%                                  ({Stat,_,_},Acc) -> [{Stat,{status,ToStatus}}|Acc];
-%%        (_,Acc) -> Acc end, [],Entries)).
     change_status([{Stat, {status, ToStatus}} || {Stat,_,_} <- Entries]).
-
-
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -128,34 +124,210 @@ reset_stat(Arg) ->
 -spec(enable_metadata(data()) -> ok).
 enable_metadata(Arg) ->
     Truth = ?IS_ENABLED(?METADATA_ENABLED),
-    case data_sanitise(Arg) of
+    {A,_,_,_} = data_sanitise(Arg),
+    [C] = lists:flatten(A),
+    case C of
         Truth ->
             print("Metadata-enabled already set to ~s~n", [Arg]);
-        Bool when Bool == true; Bool == false ->
+        Bool ->
             case Bool of
                 true ->
                     riak_stat_mgr:reload_metadata(
-                        riak_stat_exom:find_entries([riak | '_'])),
-                    app_helper:get_env(riak_core, ?METADATA_ENABLED, Bool);
+                        riak_stat_exom:find_entries([riak])),
+                    application:set_env(riak_core, ?METADATA_ENABLED, Bool);
                 false ->
-                    app_helper:get_env(riak_core, ?METADATA_ENABLED, Bool)
-            end;
-        Other ->
-            print("Wrong argument entered: ~p~n", [Other])
+                    application:set_env(riak_core, ?METADATA_ENABLED, Bool);
+                Other ->
+                    print("Wrong argument entered: ~p~n", [Other])
+            end
     end.
 
 %%%===================================================================
 %%% Helper API
 %%%===================================================================
 
+
+%%%-------------------------------------------------------------------
+%%% @doc
+%%% Arguments coming in from the console or _stat modules arrive at
+%%% this function, the data is transformed into a metrics name and type
+%%% status/datapoints if they have been given.
+%%% @end
+%%%-------------------------------------------------------------------
+-spec(data_sanitise(data()) -> sanitised()).
 data_sanitise(Arg) ->
-    riak_stat_data:data_sanitise(Arg).
-data_sanitise(Arg, TypeOrStatus) ->
-    riak_stat_data:data_sanitise(Arg, TypeOrStatus).
+    data_sanitise(check_args(Arg), ?TYPE, ?STATUS, ?DPs).
+
+data_sanitise(Arg, Status) when Status == enabled
+    orelse Status == disabled orelse Status == '_' ->
+    data_sanitise(check_args(Arg), ?TYPE, Status, ?DPs);
+data_sanitise(Arg, Type) ->
+    data_sanitise(check_args(Arg), Type, ?STATUS, ?DPs).
+
 data_sanitise(Arg, Type, Status) ->
-    riak_stat_data:data_sanitise(Arg, Type, Status).
-data_sanitise(Arg, Type, Status, DPs) ->
-    riak_stat_data:data_sanitise(Arg, Type, Status, DPs).
+    data_sanitise(check_args(Arg), Type, Status, ?DPs).
+
+check_args([]) ->
+    print([]);
+check_args([Args]) when is_atom(Args) ->
+    check_args(atom_to_binary(Args, latin1));
+check_args([Args]) when is_list(Args) ->
+    check_args(list_to_binary(Args));
+check_args([Args]) when is_binary(Args) ->
+    [Args];
+
+check_args(Args) when is_atom(Args) ->
+    check_args(atom_to_binary(Args, latin1));
+check_args(Args) when is_list(Args) ->
+    check_args(lists:map(fun
+                             (A) when is_atom(A) ->
+                                 atom_to_binary(A, latin1);
+                             (A) when is_list(A) ->
+                                 list_to_binary(A);
+                             (A) when is_binary(A) ->
+                                 A
+                         end, Args));
+check_args(Args) when is_binary(Args) ->
+    [Args];
+check_args(_) ->
+    print("Illegal Argument Type ~n"), [].
+
+data_sanitise(BinArgs, Type, Status, DPs) ->
+    [Bin | Args] = re:split(BinArgs, "/"), %% separate type etc...
+    {NewType, NewStatus, NewDPs} =
+        type_status_and_dps(Args, Type, Status, DPs),
+    StatName = statname(Bin),
+    {StatName, NewStatus, NewType, NewDPs}.
+
+type_status_and_dps([], Type, Status, DPs) ->
+    {Type, Status, DPs};
+type_status_and_dps([<<"type=", T/binary>> | Rest], _Type, Status, DPs) ->
+    NewType =
+        case T of
+            <<"*">> -> '_';
+            _ ->
+                try binary_to_existing_atom(T, latin1)
+                catch error:_ -> T
+                end
+        end,
+    type_status_and_dps(Rest, NewType, Status, DPs);
+type_status_and_dps([<<"status=", S/binary>> | Rest], Type, _Status, DPs) ->
+    NewStatus =
+        case S of
+            <<"*">> -> '_';
+            <<"enabled">>  -> enabled;
+            <<"disabled">> -> disabled
+        end,
+    type_status_and_dps(Rest, Type, NewStatus, DPs);
+type_status_and_dps([DPsBin | Rest], Type, Status, DPs) ->
+    Atoms =
+        lists:map(fun(D) ->
+            try binary_to_existing_atom(D, latin1) of
+                DP -> DP
+            catch _:_ ->
+                io:fwrite("Illegal datapoint name~n"),[]
+            end
+                  end, re:split(DPsBin,",")),
+    NewDPs = merge(lists:flatten(Atoms),DPs),
+    type_status_and_dps(Rest, Type, Status, NewDPs).
+
+merge([_ | _] = DPs, default) ->
+    DPs;
+merge([H | T], DPs) ->
+    io:format("H: ~p, T: ~p, DPs : ~p~n",[H,T,DPs]),
+    case lists:member(H, DPs) of
+        true -> merge(T, DPs);
+        false -> merge(T, DPs ++ [H])
+    end;
+merge([], DPs) ->
+    DPs.
+
+statname([]) ->
+    [riak_stat:prefix()] ++ '_' ;
+statname("*") ->
+    statname([]);
+statname("["++_ = Expr) -> %% legacy code?
+    case erl_scan:string(ensure_trailing_dot(Expr)) of
+        {ok, Toks, _} ->
+            case erl_parse:parse_exprs(Toks) of
+                {ok, [Abst]} -> partial_eval(Abst);
+                Error -> print("Parse error in ~p for ~p~n", [Expr, Error]), []
+            end;
+        Error -> print("Scan Error in ~p for ~p~n", [Expr, Error]), []
+    end;
+statname(Arg) when is_binary(Arg) ->
+    Parts = re:split(Arg, "\\.", [{return,list}]),
+    replace_parts(Parts);
+statname(_) ->
+    print("Illegal Argument Type in riak_stat_data:statname~n").
+
+ensure_trailing_dot(Str) ->
+    case lists:reverse(Str) of
+        "." ++ _ ->
+            Str;
+        _ ->
+            Str ++ "."
+    end.
+
+partial_eval({cons, _, H, T}) ->
+    [partial_eval(H) | partial_eval(T)];
+partial_eval({tuple, _, Elems}) ->
+    list_to_tuple([partial_eval(E) || E <- Elems]);
+partial_eval({op, _, '++', L1, L2}) ->
+    partial_eval(L1) ++ partial_eval(L2);
+partial_eval(X) ->
+    erl_parse:normalise(X).
+
+replace_parts(Parts) ->
+    case split(Parts, "**", []) of
+        {_, []} ->
+            [replace_parts_1(Parts)];
+        {Before, After} ->
+            Head = replace_parts_1(Before),
+            Tail = replace_parts_1(After),
+            [Head ++ Pad ++ Tail || Pad <- pads()]
+        %% case of "**" in between elements in metric name
+    end.
+
+split([H | T], H, Acc) ->
+    {lists:reverse(Acc), T};
+split([H | T], X, Acc) ->
+    split(T, X, [H | Acc]);
+split([], _, Acc) ->
+    {lists:reverse(Acc), []}.
+
+replace_parts_1([H | T]) ->
+    R = replace_part(H),
+    case T of
+        '_' -> '_';
+        "**" -> [R] ++ '_';
+        ["**"] -> [R] ++ '_'; %% [riak,riak_kv|'_']
+        _ -> [R | replace_parts_1(T)]
+    end;
+replace_parts_1([]) ->
+    [].
+
+replace_part(H) ->
+    case H of
+        '_' -> '_';
+        "*" -> '_';
+        "'" ++ _ ->
+            case erl_scan:string(H) of
+                {ok, [{atom, _, A}], _} ->
+                    A;
+                Error ->
+                    lager:error("Cannot replace part: ~p~n", [Error])
+            end;
+        [C | _] when C >= $0, C =< $9 ->
+            try list_to_integer(H)
+            catch
+                error:_ -> list_to_atom(H)
+            end;
+        _ -> list_to_atom(H)
+    end.
+
+pads() ->
+    [lists:duplicate(N, '_') || N <- lists:seq(1,15)].
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -171,9 +343,81 @@ find_entries({Stat,Status,Type,DPs}) ->
 find_entries(Stats,Status,Type,default) ->
     find_entries(Stats,Status,Type,[]);
 find_entries(Stats,Status,Type,DPs) ->
-%%    io:fwrite("~p~n",[3]),
-
     riak_stat_mgr:find_entries(Stats,Status,Type,DPs).
+
+%%%-------------------------------------------------------------------
+
+change_status(Stats) ->
+    riak_stat_mgr:change_status(Stats).
+
+
+reset_stats(Name) ->
+    riak_stat_mgr:reset_stat(Name).
+
+
+%%%-------------------------------------------------------------------
+%% @doc
+%% Print stats is generic, and used by both stat show and stat info,
+%% Stat info includes all the attributes that will be printed whereas
+%% stat show will pass in an empty list into the Attributes field.
+%% @end
+%%%-------------------------------------------------------------------
+print(undefined) ->
+    print([]);
+print([undefined]) ->
+    print([]);
+print(Arg) ->
+    print(Arg, []).
+print([],_) ->
+    io:fwrite("No Matching Stats~n");
+print(Stats, default) ->
+    print(Stats, []);
+print(stats,Stats) ->
+    print(Stats,stats);
+print(Stats, stats) ->
+    lists:map(fun
+                  ({N, _T, S}) ->
+                      io:fwrite("{~p, ~p}~n", [N,S]);
+                  ({Stat,Status}) when Status == enabled;
+                      Status == disabled ->
+                      io:format("~p : ~p~n",[Stat,Status]);
+                  ({Stat, DPs}) ->
+                      print_stat([Stat],DPs);
+                  (Stat) ->
+                      print_stat([Stat],[])
+              end, Stats);
+print(Elem, [])   when is_list(Elem) ->
+    io:fwrite(Elem);
+print(Elem, Args) when is_list(Elem) ->
+    io:fwrite(Elem, Args);
+print(A,B) ->
+    io:format("Cannot print: ~p / ~p ~n",[A,B]).
+
+print_stat(Stats, []) ->
+    lists:map(fun
+                  ({Stat,Type,Status,DPs}) ->
+                      io:fwrite("{~p,~p,~p} : ~p~n",
+                          [Stat,Type,Status,DPs]);
+                  ({Stat, Type, Status}) ->
+                      io:fwrite("{~p,~p,~p}~n",
+                          [Stat,Type,Status]);
+                  ({Stat,Status}) ->
+                      io:fwrite("{~p,~p}~n",
+                          [Stat,Status]);
+                  (Stat) ->
+                      io:fwrite("~p~n",[Stat])
+              end, Stats);
+print_stat(Stats, DPs) ->
+    lists:map(fun
+                  ({Stat,Type,Status}) ->
+                      io:fwrite("{~p,~p,~p}: ~p~n",
+                          [Stat,Type,Status,DPs]);
+                  ({Stat,Status}) ->
+                      io:fwrite("{~p,~p}: ~p~n",
+                          [Stat,Status,DPs]);
+                  (Stat) ->
+                      io:fwrite("~p~n",[Stat])
+              end, Stats).
 
 not_0(StatName,dis) ->
     case not_0_(StatName,[]) of
@@ -193,28 +437,16 @@ not_0_(Stat, _DPs) ->
                             ({Va,0},Acc) -> [{Va,0}|Acc];
                             ({Va,[]},Acc) ->[{Va,0}|Acc];
                             ({Va,{error,_}},Acc)->Acc;
-                            (_, Acc) ->
-%%                                io:fwrite("vlaues: ~p~n", [A]),
-                                Acc
+                            (_, Acc) -> Acc
                         end, [], V);
         _ -> []
     end.
-
-%%    lists:flatten(
-%%    lists:map(fun
-%%                   ({ok,[{value,0}]}) -> {value,0};
-%%                  ({ok,[{value,[]}]}) -> {value,0};
-%%                  ({ok,[{value,{error,_}}]}) -> [];
-%%                  (_) -> []
-%%              end,[riak_stat_exom:get_datapoint(Stat,[V])||V<-[value|DPs]])).
-
 
 print_stats({Stats,DPs}) ->
     print_stats(Stats,DPs).
 print_stats([], _) ->
     io:fwrite("No Matching Stats~n");
 print_stats(NewStats,DPs) ->
-%%    io:fwrite("~p~n",[6]),
     lists:map(fun
                   ({Names,_NDPs}) when DPs == disable_0 ->
                       case lists:flatten([not_0(N,dis)||{N,_,_}<-Names]) of
@@ -225,7 +457,7 @@ print_stats(NewStats,DPs) ->
                       case lists:flatten([not_0(N,NDPs)||{N,_,_}<-Names]) of
                           [] -> print_stats([],[]);
                           _ -> ok
-                      end; %% show-0
+                      end;
 
                   ({N,_T,_S}) when DPs == [] -> get_value(N);
                   ({N,_T,_S}) ->                find_stats_info(N,DPs);
@@ -256,8 +488,6 @@ get_value(N) ->
                       end, Val);
         {error, _} -> []
     end.
-%%    {ok, Val} = riak_stat_exom:get_value(N),
-%%    Val.
 
 find_stats_info(Stats, Info) ->
     case riak_stat_exom:get_datapoint(Stats, Info) of
@@ -265,51 +495,27 @@ find_stats_info(Stats, Info) ->
         {ok, V} ->
             io:fwrite("~p :~n",[Stats]),
             lists:map(fun
-                                 ([]) -> [];
-                                 ({_DP, undefined}) -> [];
-                                 ({_DP, {error,_}}) -> [];
-                                 (DP) ->
-                                     io:fwrite("                 ~p~n", [DP])
-                             end, V);
+                          ([]) -> [];
+                          ({_DP, undefined}) -> [];
+                          ({_DP, {error,_}}) -> [];
+                          (DP) ->
+                              io:fwrite("                 ~p~n", [DP])
+                      end, V);
         %% todo: change the formatting on the stats info returned.
         {error,_} -> get_info_2_electric_boogaloo(Stats, Info)
     end.
 
 get_info_2_electric_boogaloo(N,Attrs) ->
-    lists:flatten(io_lib:fwrite("A~p: ", [N])),
+    lists:flatten(io_lib:fwrite("~p: ", [N])),
     lists:map(fun
                   (undefined) -> [];
                   ([]) -> [];
                   ({_,{error,_ }}) -> [];
-                  (A) -> io:fwrite("B~p~n",[A])
+                  (A) -> io:fwrite("~p~n",[A])
               end, [riak_stat_exom:get_info(N,Attrs)]).
 
 
 
-
-
-change_status(Stats) ->
-    riak_stat_mgr:change_status(Stats).
-
-
-reset_stats(Name) ->
-    riak_stat_mgr:reset_stat(Name).
-
-
-%%%-------------------------------------------------------------------
-
-print(undefined) ->
-    print([]);
-print([undefined]) ->
-    print([]);
-print(Arg) ->
-    print(Arg, []).
-print(Stats, default) ->
-    print(Stats, []);
-print(stats,Stats) ->
-    print(Stats,stats);
-print(Stats,Attr) ->
-    riak_stat_data:print(Stats,Attr).
 
 %%%===================================================================
 
@@ -339,208 +545,76 @@ split_arg(Str) ->
 
 -ifdef(TEST).
 
+
+-define(setup(Fun),        {setup,    fun setup/0,          fun cleanup/1, Fun}).
+-define(foreach(Funs),     {foreach,  fun setup/0,          fun cleanup/1, Funs}).
+-define(setuptest(Desc, Test), {Desc, ?setup(fun(_) -> Test end)}).
+
+-define(new(Mod),                   meck:new(Mod)).
+-define(unload(Mod),                meck:unload(Mod)).
+
+
+setup() ->
+    ?unload(riak_stat_data),
+    ?new(riak_stat_data).
+
+cleanup(_Pid) ->
+    catch?unload(riak_stat_data),
+    ok.
+
+data_sanitise_test() ->
+    ?setuptest("Data Sanitise test",
+        [
+            {"riak.**",                         fun tests_riak_star_star/0},
+            {"riak.riak_kv.**",                 fun tests_riak_kv_star_star/0},
+            {"riak.riak_kv.*",                  fun tests_riak_kv_star/0},
+            {"riak.riak_kv.node.*",             fun tests_riak_kv_node_star/0},
+            {"node_gets",                       fun tests_node_gets/0},
+            {"riak.riak_kv.node.gets/max",      fun tests_node_gets_dp/0},
+            {"riak.riak_kv.**/type=spiral",     fun tests_riak_kv_type_spiral/0},
+            {"riak.riak_kv.**/status=disabled", fun tests_riak_kv_status_dis/0},
+            {"true",                            fun tests_true/0}
+        ]).
+
+tests_riak_star_star() ->
+    {Name,_T,_S,_DP} = data_sanitise(["riak.**"]),
+    ?assertEqual([riak|'_'],Name).
+
+tests_riak_kv_star_star() ->
+    {Name,_T,_S,_DP} = data_sanitise(["riak.riak_kv.**"]),
+    ?assertEqual([riak,riak_kv|'_'],Name).
+
+tests_riak_kv_star() ->
+    {Name,_T,_S,_DP} = data_sanitise(["riak.riak_kv.*"]),
+    ?assertEqual(Name, [riak,riak_kv,'_']).
+
+tests_riak_kv_node_star() ->
+    {Name,_T,_S,_DP} = data_sanitise(["riak.riak_kv.node.*"]),
+    ?assertEqual(Name, [riak,riak_kv,node,'_']).
+
+tests_node_gets() ->
+    {Name,_T,_S,_DP} = data_sanitise(["node_gets"]),
+    ?assertEqual([node_gets],Name).
+
+tests_node_gets_dp() ->
+    {Name,_T,_S,DPs} = data_sanitise(["riak.riak_kv.node.gets/max"]),
+    ?assertEqual(Name, [riak,riak_kv,node,gets]),
+    ?assertEqual([max],DPs).
+
+tests_riak_kv_type_spiral() ->
+    {Name,Type,_St,_DP} = data_sanitise(["riak.riak_kv.**/type=spiral"]),
+    ?assertEqual(Name, [riak,riak_kv|'_']),
+    ?assertEqual(Type, spiral).
+
+tests_riak_kv_status_dis() ->
+    {Name,_Type,Status,_DP} = data_sanitise(["riak.riak_kv.**/status=disabled"]),
+    ?assertEqual(Name, [riak,riak_kv|'_']),
+    ?assertEqual(Status, disabled).
+
+tests_true() ->
+    {Arg,_t,_S,_D} = data_sanitise(["true"]),
+    ?assertEqual(Arg, [true]).
+
+
+
 -endif.
-
-%%%-------------------------------------------------------------------
-
-%%read_stats(Stats, Status) ->
-%%    read_stats(Stats,Status, '_').
-%%read_stats(Stats, Status, Type,DPs) ->
-%%    riak_stat_mgr:read_stats(Stats,Status,Type,DPs).
-
-
-%%%-------------------------------------------------------------------
-
-%%find_entries(Arg) ->
-%%    {Stat, Type, Status, DPs} = data_sanitise(Arg),
-%%    case Stat of
-%%        "[" ++ _ ->
-%%            {find_entries_extra(Stat), DPs};
-%%        _ ->
-%%            case legacy_search(Stat, Type, Status) of
-%%                false ->
-%%                    find_entries_(Stat, Type, Status, DPs);
-%%                Stats ->
-%%                    Stats
-%%            end
-%%    end.
-%%
-%%find_entries_(Stat, Type, Status, default) ->
-%%    find_entries_(Stat, Type, Status);
-%%find_entries_(Stat,Type, Status, DPs) ->
-%%    Stats = find_entries_(Stat, Type, Status),
-%%    lists:map(fun
-%%                  ({Name, _Type, _Status}) when DPs == []->
-%%                      io:fwrite("~p : ~p~n",
-%%                          [Name, riak_stat_exom:get_values(Name)]);
-%%                  ({Name, _Type, _Status}) ->
-%%                      io:fwrite("~p : ~p~n",
-%%                          [Name, riak_stat_exom:get_datapoint(Name, DPs)])
-%%              end, Stats).
-%%find_entries_(Stat, Type, Status) ->
-%%    MS = ms_stat_entry(Stat, Type, Status),
-%%    riak_stat_exom:select(MS).
-%%
-%%ms_stat_entry([], Type, Status) ->
-%%    {{[riak_stat:prefix()]++'_', Type, '_'}, [{'=:=','$status',Status}], ['$_']};
-%%ms_stat_entry("*", Type, Status) ->
-%%    find_entries_([], Type, Status);
-%%ms_stat_entry(Stat, Type, Status) when Status == '_'
-%%    orelse Status == disabled orelse Status == endabled ->
-%%    [{{Stat, Type, Status},[],['$_']}];
-%%ms_stat_entry(_Stat,_Type,Status) ->
-%%    io:fwrite("Illegal Status Type: ~p~n",[Status]).
-
-%%find_entries_extra(Expr) ->
-%%    case erl_scan:string(ensure_trailing_dot(Expr)) of
-%%        {ok,Tokens,_} ->
-%%            case erl_parse:parse_exprs(Tokens) of
-%%                {ok, [Abstract]} ->
-%%                    partial_eval(Abstract);
-%%                Error ->
-%%                    lager:debug("Parse Error in find_entries ~p:~p~n",
-%%                    [Expr, Error]), []
-%%            end;
-%%        ScanError ->
-%%            lager:error("Scan Error in find_entries for ~p:~p~n",
-%%                [Expr, ScanError])
-%%%%    end.
-%%
-%%ensure_trailing_dot(Str) ->
-%%    case lists:reverse(Str) of
-%%        "." ++ _ ->
-%%            Str;
-%%        _ ->
-%%            Str ++ "."
-%%    end.
-%%
-%%partial_eval({cons,_,H,T}) ->
-%%    [partial_eval(H) | partial_eval(T)];
-%%partial_eval({tuple,_,Elems}) ->
-%%    list_to_tuple([partial_eval(E) || E <- Elems]);
-%%partial_eval({op,_,'++',L1,L2}) ->
-%%    partial_eval(L1) ++ partial_eval(L2);
-%%partial_eval(X) ->
-%%    erl_parse:normalise(X).
-
-
-%% todo: create a find_entries for the show, show-0 and info, include
-%% todo: a function for stats and info and show-0 .,
-
-% todo: make it generic but specific for these, i.e. show and show-0 will have
-% todo: similar arguments to be printed.
-%
-% todo: basically make a simple and generic print(Elem, Args),
-% then for each stat take its type, status and datapoints similar to how its
-% done in riak_stat_meta and instead of returning a stat that matches those points
-%
-% print them out
-%
-% then do a separate function for enable/disable/reset/disable-0 to go to the
-% mgr to have its status change and it done in both metadata (if enabled) and in the
-% exometer.,
-%
-% A good point is should we be checking if the metadata is enabled/disabled when
-% changing the status, I think it shouldnt matter, if the metadata is causing an error
-% have lager:debug return the error and just return ok, that way the metadata does not
-% need to  be "reloaded" when it is loaded up.
-% enabling and disabling stats does not account for the most of the traffic so it
-% should not be too much of an issue.
-%
-% for disable-0 it might be best if it is down to exometer first.
-%
-% The order for find_entries: legacy -> exom -> meta.
-% the order for enabling/disabling/reset/disable-0 : exom -> meta.
-%
-% todo:
-% do the data_sanitise in this module, to remove the riak_stat_data module basically
-%
-% do the print function in this module as well or have an atom get passed through to riak_stat
-% exom to print if needing printing or returned.
-%
-% so for functions that need the stats printed it would be like find_entries(print,etc..)
-% and if the entries are needed for other things then it would be find_entries(return,etc...)
-%
-% then we can do the same for metadata, i.e. when the status is enabled and disabled we
-% could print the enabled and disabled stats with their status, in the same way
-% as with exometer find_entries(print, etc...) and find_entries(return, etc....)
-%
-% todo:
-%
-% make a select_replace function in riak_core_metadata, it takes the MS, and replaces a value
-%
-% see how it is compared to the iterator, as in can it be iterated over and the status changed
-%
-% i..e
-%
-% fold(fun({Stat,[{Status,Type,Opts,Aliases}]} when Status == disabled ->
-%               {Stat,[{NewStatus,Type,Opts,Aliases}]} end, ?STATPFX).
-%
-% legacy search should be in here instead of mgr then?
-%
-% todo: see if we actually need the mgr. It does the communication between the meta
-% and exometer, so it is useful in that way. but if we already have riak_stat_exom
-% and riak_stat_meta then maybe its best to just remove the one module as mgr, it is
-% actually useful, for the other modules to call to instead of this one just replacing the
-% riak_core_console...
-
-
-
-%%    {Stats,Status,Type,DPs} = data_sanitise(Arg),
-%%    NewStats =
-%%        case DPs of
-%%            default -> find_entries(Stats, Status, Type);
-%%            _       -> find_entries(Stats, Status, Type, DPs)
-%%        end,
-%%    NewStats = find_entries({Stats,Status,Type,DPs}),
-%%    print(NewStats,DPs).
-%%    print(
-
-
-%%    {Stats,Status,Type,DPs} = data_sanitise(Arg),
-%%    Entries = lists:map(fun
-%%                            ({Stat,        _Status}) ->         Stat;
-%%                            ({Stat, _Type, _Status}) ->         Stat;
-%%                            ({Stat, _Type, _Status, _DPs}) ->   Stat
-%%                        end,
-%%        find_entries(data_sanitise(Arg))),
-%%    NotUpdating = not_updating(data_sanitise(Arg)),
-
-%%    io:fwrite("~p~n",[1]),
-%%    {Stats,Status,Type,DPs} = data_sanitise(RestArg),
-%%    Found = lists:map(fun
-%%                          ({Stat,        _Status}) ->       {Stat, find_stat_info(Stat, Attrs)};
-%%                          ({Stat, _Type, _Status}) ->       {Stat, find_stat_info(Stat, Attrs)};
-%%                          ({Stat, _Type, _Status, _DPs}) -> {Stat, find_stat_info(Stat, Attrs)}
-%%                      end,
-
-
-%%    {Stats,Status,Type,DPs} = data_sanitise(Arg),
-%%    Entries = lists:map(fun
-%%                            ({Stat,        _Status}) ->         Stat;
-%%                            ({Stat, _Type, _Status}) ->         Stat;
-%%                            ({Stat, _Type, _Status, _DPs}) ->   Stat
-%%                        end,
-%%        find_entries(data_sanitise(Arg))),
-
-%%    DisableTheseStats =
-%%        lists:map(fun({Name, _V}) ->
-%%            {Name, {status, disabled}}
-%%                  end, NotUpdating),
-
-
-
-%%%-------------------------------------------------------------------
-
-%%find_stat_info(Stats, Info) ->
-%%    riak_stat_mgr:find_stats_info(Stats, Info).
-
-
-%%%-------------------------------------------------------------------
-
-%%not_updating({Stats,_Status,Type,DPs}) ->
-%%    [not_0(N,[]) || {N,_T,_S} <- find_entries(Stats,enabled,Type,DPs)].
-%%    lists:foldl(fun
-%%                    ({N, _, _}, Acc) ->     not_0(N, Acc);
-%%                    (N, Acc) ->             not_0(N, Acc)
-%%              end,[],find_entries(Stats,enabled,Type,DPs)).
