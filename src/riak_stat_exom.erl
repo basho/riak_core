@@ -15,6 +15,7 @@
     get_values/1,
     get_info/2,
     find_entries/2,
+    find_entries/1,
     get_datapoint/2,
     get_value/1,
     select/1,
@@ -231,6 +232,7 @@ find_stats_info(Stat, Info) when is_list(Info) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(find_static_stats(stats()) -> stats()).
+ %% todo: remove this funciton if it is not used.
 find_static_stats(Stats) when is_list(Stats) ->
     lists:map(fun(Stat) ->
         case get_values(Stat) of
