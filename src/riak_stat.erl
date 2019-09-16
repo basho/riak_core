@@ -56,10 +56,9 @@
 %% Registration API
 -export([
     register/2,
-    register_stats/1]).
+    register_stats/1,
 
 %% Read Stats API
--export([
     find_entries/2,
     stats/0,
     app_stats/1,
@@ -67,26 +66,19 @@
     get_value/1,
     get_info/1,
     aggregate/2,
-    sample/1]).
+    sample/1,
 
 %% Update API
--export([update/3]).
+    update/3,
 
 %% Delete/Reset API
--export([
     unregister/1,
     unregister/4,
-    reset/1]).
-
+    reset/1,
 
 %% Additional API
--export([prefix/0]).
-
-
-%%-ifdef(TEST).
-%%-export([register_stats/1]).
-%%-endif.
-
+    prefix/0
+]).
 
 -define(STATCACHE,          app_helper:get_env(riak_core,exometer_cache,{cache,5000})).
 -define(INFOSTAT,           [name,type,module,value,cache,status,timestamp,options]).
@@ -95,7 +87,6 @@
 %%%===================================================================
 %%% Registration API
 %%%===================================================================
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% register an apps stats in both metadata and exometer adding the stat
@@ -104,21 +95,17 @@
 %%%-------------------------------------------------------------------
 -spec(register(app(), statslist()) -> ok | error()).
 register(App, Stats) ->
-    Prefix = prefix(),
-    lists:foreach(fun(Stat) ->
-        register_(Prefix, App, Stat)
+    lists:foreach(fun
+                      ({N,T})     -> register_(App,N,T,[],[]);
+                      ({N,T,O})   -> register_(App,N,T,O ,[]);
+                      ({N,T,O,A}) -> register_(App,N,T,O , A)
                   end, Stats).
 
-register_(Prefix, App, Stat) ->
-    {Name, Type, Options, Aliases} =
-        case Stat of
-            {N, T}       -> {N, T,[],[]};
-            {N, T, O}    -> {N, T, O,[]};
-            {N, T, O, A} -> {N, T, O, A}
-        end,
-    StatName = stat_name(Prefix, App, Name),
-    OptsWithCache = add_cache(Options),
-    register_stats({StatName, Type, OptsWithCache, Aliases}).
+register_(App, N,Type,O,Aliases) ->
+    StatName = stat_name(prefix(),App,N),
+    Opts = add_cache(O),
+    register_stats({StatName,Type,Opts,Aliases}).
+
 
 stat_name(P, App, N) when is_atom(N) ->
     stat_name_([P, App, N]);
@@ -135,14 +122,11 @@ add_cache(Options) ->
         _ -> Options
     end.
 
-
-
 register_stats(StatInfo) -> riak_stat_mgr:register(StatInfo).
 
 %%%===================================================================
 %%% Reading Stats API
 %%%===================================================================
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% get all the stats for riak stored in exometer/metadata
@@ -222,11 +206,9 @@ aggregate_(Pattern, DPs) ->
 sample(StatName) ->
     riak_stat_exom:sample(StatName).
 
-
 %%%===================================================================
 %%% Updating Stats API
 %%%===================================================================
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% update a stat in exometer, if the stat doesn't exist it will
@@ -240,11 +222,9 @@ sample(StatName) ->
 update(Name, Inc, Type) ->
     ok = riak_stat_exom:update(Name, Inc, Type).
 
-
 %%%===================================================================
 %%% Deleting/Resetting Stats API
 %%%===================================================================
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% unregister a stat from the metadata leaves it's status as
@@ -285,7 +265,6 @@ reset(StatName) ->
 %%%===================================================================
 %%% Additional API
 %%%==================================================================
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% standard prefix for all stats inside riak, all modules call
@@ -304,7 +283,7 @@ print(Arg) ->
 print(Entries, Attr) when is_list(Entries) ->
     lists:map(fun(E) -> print(E, Attr) end, Entries);
 print(Entries, Attr) ->
-    riak_stat_data:print(Entries, Attr).
+    riak_stat_console:print(Entries, Attr).
 
 %%%===================================================================
 %%% EUNIT Testing
@@ -343,22 +322,10 @@ setup() ->
     ?new(riak_stat_meta),
     ?new(riak_stat_console),
     ?new(riak_stat_profiles),
-%%    ?expect(riak_stat,register_stats,ok,fun() -> ok end),
-%%    ?expect(riak_stat,register_stats,fun() -> ok end),
-%%    {ok, Pid} = riak_stat_profiles:start_link(),
-%%    [Pid].
+    %% todo: dont need to meck:new or unload any modules
     ok.
 
 cleanup(Pids) ->
-    process_flag(trap_exit, true),
-    catch(?unload(riak_stat)),
-    catch(?unload(riak_stat_data)),
-    catch(?unload(riak_stat_mgr)),
-    catch(?unload(riak_stat_exom)),
-    catch(?unload(riak_stat_meta)),
-    catch(?unload(riak_stat_console)),
-    catch(?unload(riak_stat_profiles)),
-    process_flag(trap_exit, false),
     Children = [supervisor:which_children(Pid) || Pid <- Pids],
     lists:foreach(fun({Child, _n, _o, _b}) ->
         [supervisor:terminate_child(Pid, Child) || Pid <- Pids] end, Children).
