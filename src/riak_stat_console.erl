@@ -114,14 +114,8 @@ status_change(Arg, ToStatus) ->
 %%%-------------------------------------------------------------------
 -spec(reset_stat(data()) -> ok).
 reset_stat(Arg) ->
-    Entries = lists:map(fun
-                            ({Stat,        _Status}) ->         Stat;
-                            ({Stat, _Type, _Status}) ->         Stat;
-                            ({Stat, _Type, _Status, _DPs}) ->   Stat
-                        end,
-        find_entries(data_sanitise(Arg))),
-    reset_stats(Entries).
-
+    {Found, _DPs} = find_entries(data_sanitise(Arg)),
+    reset_stats([N || {N,_,_} <-Found]).
 
 %%%-------------------------------------------------------------------
 %% @doc
