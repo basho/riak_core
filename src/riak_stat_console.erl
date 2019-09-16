@@ -57,7 +57,7 @@ show_stat(Arg) ->
 -spec(show_stat_0(data()) -> value()).
 show_stat_0(Arg) ->
     {Stats,_Status,Type,DPs}=data_sanitise(Arg),
-    print_stats({[find_entries({Stats,enabled,Type,DPs})],[]}).
+    print_stats({[find_entries({Stats,enabled,Type,DPs})],show_0}).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -78,8 +78,10 @@ stat_info(Arg) ->
 %%%-------------------------------------------------------------------
 -spec(disable_stat_0(data()) -> ok).
 disable_stat_0(Arg) ->
-    {NotUpdating,_DP} = not_updating(find_entries(data_sanitise(Arg))),
-    change_status([{Name,{status,disabled}} || {Name,_,_V} <- NotUpdating]).
+    {Stats,_Status,Type,DPs} = data_sanitise(Arg),
+    print_stats({[find_entries({Stats,enabled,Type,DPs})],disable_0}).
+%%    {NotUpdating,_DP} = not_updating(find_entries(data_sanitise(Arg))),
+%%    change_status([{Name,{status,disabled}} || {Name,_,_V} <- NotUpdating]).
 
 
 
@@ -179,35 +181,39 @@ find_entries(Stats,Status,Type,DPs) ->
 
     riak_stat_mgr:find_entries(Stats,Status,Type,DPs).
 
-
-%%%-------------------------------------------------------------------
-
-%%find_stat_info(Stats, Info) ->
-%%    riak_stat_mgr:find_stats_info(Stats, Info).
-
-
-%%%-------------------------------------------------------------------
-
-not_updating({Stats,_Status,Type,DPs}) ->
-%%    [not_0(N,[]) || {N,_T,_S} <- find_entries(Stats,enabled,Type,DPs)].
-    lists:foldl(fun
-                    ({N, _, _}, Acc) ->     not_0(N, Acc);
-                    (N, Acc) ->             not_0(N, Acc)
-              end,[],find_entries(Stats,enabled,Type,DPs)).
-
+not_0(StatName,dis) ->
+    case not_0_(StatName,[]) of
+        [] -> [];
+        _Vals -> change_status([{StatName,{status,disabled}}])
+    end;
 not_0(StatName,DPs) ->
-    Vals =lists:flatten(
-    lists:map(fun
-                  ({ok,[{value,0}]}) -> {value,0};
-                  ({ok,[{value,[]}]}) -> {value,0};
-                  ({ok,[{value,{error,_}}]}) -> [];
-                  (_) -> []
-                      end,[riak_stat_exom:get_datapoint(StatName,[V])||V<-[value|DPs]])),
-    case Vals of
-        [] -> ok;
-        _ -> io:fwrite("~p : ~p~n",[StatName,Vals])
+    case not_0_(StatName,DPs) of
+        [] -> [];
+        Vals -> io:fwrite("~p : ~p~n",[StatName,Vals])
     end. %% todo: put the formatting in the map above
-%% todo: adjust this function for disable-0
+
+not_0_(Stat, _DPs) ->
+    case riak_stat_exom:get_value(Stat) of
+        {ok, V} ->
+            lists:foldl(fun
+                            ({Va,0},Acc) -> [{Va,0}|Acc];
+                            ({Va,[]},Acc) ->[{Va,0}|Acc];
+                            ({Va,{error,_}},Acc)->Acc;
+                            (_, Acc) ->
+%%                                io:fwrite("vlaues: ~p~n", [A]),
+                                Acc
+                        end, [], V);
+        _ -> []
+    end.
+
+%%    lists:flatten(
+%%    lists:map(fun
+%%                   ({ok,[{value,0}]}) -> {value,0};
+%%                  ({ok,[{value,[]}]}) -> {value,0};
+%%                  ({ok,[{value,{error,_}}]}) -> [];
+%%                  (_) -> []
+%%              end,[riak_stat_exom:get_datapoint(Stat,[V])||V<-[value|DPs]])).
+
 
 print_stats({Stats,DPs}) ->
     print_stats(Stats,DPs).
@@ -216,10 +222,16 @@ print_stats([], _) ->
 print_stats(NewStats,DPs) ->
 %%    io:fwrite("~p~n",[6]),
     lists:map(fun
-                  ({Names,NDPs}) ->
-                      [not_0(N,NDPs)||{N,_,_}<-Names];
-%%                  ({N,_S})    when DPs == []->  get_value(N);
-%%                  ({N,_S})    ->                find_stats_info(N,DPs);
+                  ({Names,_NDPs}) when DPs == disable_0 ->
+                      case lists:flatten([not_0(N,dis)||{N,_,_}<-Names]) of
+                          [] -> io:fwrite("No Stats with Value 0~n");
+                          _ -> ok
+                      end;
+                  ({Names,NDPs}) when DPs == show_0->
+                      case lists:flatten([not_0(N,NDPs)||{N,_,_}<-Names]) of
+                          [] -> print_stats([],[]);
+                          _ -> ok
+                      end; %% show-0
 
                   ({N,_T,_S}) when DPs == [] -> get_value(N);
                   ({N,_T,_S}) ->                find_stats_info(N,DPs);
@@ -521,3 +533,20 @@ split_arg(Str) ->
 %%        lists:map(fun({Name, _V}) ->
 %%            {Name, {status, disabled}}
 %%                  end, NotUpdating),
+
+
+
+%%%-------------------------------------------------------------------
+
+%%find_stat_info(Stats, Info) ->
+%%    riak_stat_mgr:find_stats_info(Stats, Info).
+
+
+%%%-------------------------------------------------------------------
+
+%%not_updating({Stats,_Status,Type,DPs}) ->
+%%    [not_0(N,[]) || {N,_T,_S} <- find_entries(Stats,enabled,Type,DPs)].
+%%    lists:foldl(fun
+%%                    ({N, _, _}, Acc) ->     not_0(N, Acc);
+%%                    (N, Acc) ->             not_0(N, Acc)
+%%              end,[],find_entries(Stats,enabled,Type,DPs)).
