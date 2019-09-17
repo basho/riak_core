@@ -50,38 +50,30 @@
 %%%
 %%% @end
 %%%-------------------------------------------------------------------
+
 -module(riak_stat).
 -include_lib("riak_core/include/riak_stat.hrl").
 
 %% Registration API
 -export([
-    register/2,
-    register_stats/1,
+    register/2, register_stats/1,
 
 %% Read Stats API
-    find_entries/2,
-    stats/0,
-    app_stats/1,
-    get_stats/1,
-    get_value/1,
-    get_info/1,
-    aggregate/2,
-    sample/1,
+    find_entries/2, stats/0, app_stats/1, get_stats/1,
+    get_value/1, get_info/1, aggregate/2, sample/1,
 
 %% Update API
     update/3,
 
 %% Delete/Reset API
-    unregister/1,
-    unregister/4,
-    reset/1,
+    unregister/1, unregister/4, reset/1,
 
 %% Additional API
     prefix/0
 ]).
 
--define(STATCACHE,          app_helper:get_env(riak_core,exometer_cache,{cache,5000})).
--define(INFOSTAT,           [name,type,module,value,cache,status,timestamp,options]).
+-define(STATCACHE, app_helper:get_env(riak_core,exometer_cache,{cache,5000})).
+-define(INFOSTAT,  [name,type,module,value,cache,status,timestamp,options]).
 
 
 %%%===================================================================
@@ -105,7 +97,6 @@ register_(App, N,Type,O,Aliases) ->
     StatName = stat_name(prefix(),App,N),
     Opts = add_cache(O),
     register_stats({StatName,Type,Opts,Aliases}).
-
 
 stat_name(P, App, N) when is_atom(N) ->
     stat_name_([P, App, N]);
@@ -433,17 +424,9 @@ test_stats_register_many() ->
         [register_stats(Stat) || _ <- lists:seq(1, ?TestStatNum)]
                   end, Stats).
 
-%% todo: output checks: makesure what goes in is what is actually registered
-%% todo: register without metadata, then reload metadata and register again
-%% todo: check if registered with cache it is available to get in that time
-%% from the cache
-%% todo: check if it is registered without cache it is not available in that
-%% time.
-
-%% todo:what registers the quickest? exometer or metadata.
 
 %%%-------------------------------------------------------------------
-%%
+
 reading_stats_test() ->
     ?setuptest("riak_stat:stats()/app_stats(App)/get_stats(Arg)/etc...",
         [
