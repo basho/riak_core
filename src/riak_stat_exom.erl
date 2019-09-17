@@ -8,40 +8,21 @@
 -include_lib("riak_core/include/riak_stat.hrl").
 
 %% Registration API
--export([register/1]).
+-export([register/1,
 
 %% Read API
--export([
-    get_values/1,
-    get_info/2,
-    find_entries/2,
-    find_entries/1,
-    get_datapoint/2,
-    get_value/1,
-    select/1,
-    sample/1,
-    find_stats_info/2,
-    find_static_stats/1,
-    aggregate/2]).
+    get_values/1, get_info/2, find_entries/2, find_entries/1,
+    get_datapoint/2, get_value/1, select/1, sample/1,
+    find_stats_info/2, aggregate/2,
 
 %% Update API
--export([
-    update/3,
-    update/4,
-    change_status/1,
-    change_status/2]).
+    update/3, update/4, change_status/1, change_status/2,
 
 %% Deleting/Resetting API
--export([
-    reset_stat/1,
-    unregister/1
-]).
+    reset_stat/1, unregister/1,
 
 %% Other
--export([
-    alias/1,
-    aliases/2,
-    find_alias/1,
+    alias/1, aliases/2, find_alias/1,
     timestamp/0]).
 
 -ifdef(TEST).
@@ -51,7 +32,6 @@
 %%%===================================================================
 %%% Registration API
 %%%===================================================================
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% Registers all stats, using  exometer:re_register/3, any stat that is
@@ -64,14 +44,11 @@
 register({StatName, Type, Opts, Aliases}) ->
     register(StatName, Type, Opts, Aliases).
 register(StatName, Type, Opts, Aliases) ->
-    re_register(StatName, Type, Opts),
+    exometer:re_register(StatName, Type ,Opts),
     lists:foreach(fun
                       ({DP,Alias}) ->
                           aliases(new,[Alias,StatName,DP])
                   end,Aliases).
-
-re_register(StatName, Type, Opts) ->
-    exometer:re_register(StatName, Type ,Opts).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -90,7 +67,6 @@ alias_fun() ->
     fun(Alias, Entry, DP, Acc) ->
         orddict:append(Entry, {DP, Alias}, Acc)
     end.
-
 
 -spec(alias(Group :: term()) -> ok | acc()).
 alias(Group) ->
@@ -161,7 +137,6 @@ get_info(Stat, Info) ->
 %%%-------------------------------------------------------------------
 -spec(find_entries(stats(), status()) -> stats()).
 find_entries(Stats, Status) ->
-%% todo: need to do parse_stat_entry.
     lists:foldl(
         fun(Stat, Found) ->
             case find_entries(Stat) of
@@ -202,7 +177,6 @@ select(Pattern) ->
 sample(Stat) ->
     exometer:sample(Stat).
 
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% Find the stats and the info for that stat
@@ -225,30 +199,6 @@ find_stats_info(Stat, Info) when is_list(Info) ->
         end
                 end, [], Info).
 
-%%%-------------------------------------------------------------------
-%% @doc
-%% Find all the enabled stats in exometer with the value 0 or [] and
-%% put into a list
-%% @end
-%%%-------------------------------------------------------------------
--spec(find_static_stats(stats()) -> stats()).
- %% todo: remove this funciton if it is not used.
-find_static_stats(Stats) when is_list(Stats) ->
-    lists:map(fun(Stat) ->
-        case get_values(Stat) of
-            [] ->
-                [];
-            List ->
-                lists:foldl(fun
-                                ({Name, 0}, Acc) ->
-                                    [{Name, 0} | Acc];
-                                ({Name, []}, Acc) ->
-                                    [{Name, 0} | Acc];
-                                ({_Name, _V}, Acc) ->
-                                    Acc
-                            end, [], List)
-        end
-              end, Stats).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -310,8 +260,6 @@ metric_names(Pattern) ->
 %%%===================================================================
 %%% Updating Stats API
 %%%===================================================================
-
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% Updates the stat, if the stat does not exist it will create a
