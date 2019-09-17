@@ -43,7 +43,7 @@
          delete/2,
          delete/3]).
 
--include("riak_core_metadata.hrl").
+-include_lib("riak_core/include/riak_core_metadata.hrl").
 
 -export_type([iterator/0]).
 
@@ -295,8 +295,6 @@ itr_default({_, Opts}=It) ->
 select({Prefix, SubPrefix}=FullPrefix, MatchSpec)
     when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
     (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
-%%    io:format("eeee"),
-
     case riak_core_metadata_manager:select(FullPrefix, MatchSpec) of
         [] -> undefined;
         Value -> Value
