@@ -349,7 +349,7 @@ replace_part(H) ->
     end.
 
 pads() ->
-    [lists:duplicate(N, '_') || N <- lists:seq(1,15)].
+    [lists:duplicate(N, '_') || N <- lists:seq(1,10)].
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -386,10 +386,10 @@ print(undefined) ->
     print([]);
 print([undefined]) ->
     print([]);
-print(Arg) ->
-    print(Arg, []);
 print({Stats,DPs}) ->
-    print(Stats,DPs).
+    print(Stats,DPs);
+print(Arg) ->
+    print(Arg, []).
 
 print([], _) ->
     io:fwrite("No Matching Stats~n");
@@ -418,7 +418,7 @@ print(NewStats,DPs) ->
                                     ({LP, Matches}) ->
                                         io:fwrite("== ~s (Legacy pattern): ==~n", [LP]),
                                         [[io:fwrite("~p: ~p (~p/~p)~n", [N, V, E, DP])
-                                            || {DP, V, N} <- DPs] || {E, DPs} <- Matches];
+                                            || {DP, V, N} <- LDPs] || {E, LDPs} <- Matches];
                                     (_) ->
                                         []
                                 end, Legacy)
@@ -438,7 +438,7 @@ not_0_(Stat, _DPs) ->
             lists:foldl(fun
                             ({Va,0},Acc) -> [{Va,0}|Acc];
                             ({Va,[]},Acc) ->[{Va,0}|Acc];
-                            ({Va,{error,_}},Acc)->Acc;
+                            ({_Va,{error,_}},Acc)->Acc;
                             (_, Acc) -> Acc
                         end, [], V);
         _ -> []
