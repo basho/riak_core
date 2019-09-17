@@ -470,7 +470,7 @@ change_stat_list_to_status(StatusList) ->
 -spec(delete_profile(profilename()) -> ok).
 delete_profile(ProfileName) ->
     case check_meta(?LOADEDPKEY) of
-        ProfileName -> 
+        ProfileName ->
             put(?LOADEDPFX, ?LOADEDKEY, [<<"none">>]),
             delete(?PROFPFX, ProfileName);
         _ ->
