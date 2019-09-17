@@ -24,36 +24,21 @@
 -include_lib("riak_core/include/riak_core_metadata.hrl").
 
 %% Registration API
--export([register/1, register/4]).
+-export([register/1, register/4,
 
 %% Basic API
--export([
     find_entries/3,
-%%    find_entries_/4,
-%%    find_entries_2/4,
-    dp_get/2,
-    get_dps/2]).
 
 %% Updating API
--export([
-    change_status/1,
-    change_status/2
-]).
+    change_status/1, change_status/2,
 
 %% Resetting/Deleting API
--export([
-    reset_stat/1,
-    reset_resets/0,
-    unregister/1]).
+    reset_stat/1, reset_resets/0, unregister/1,
 
 %% Profile API
--export([
-    save_profile/1,
-    load_profile/1,
-    delete_profile/1,
-    reset_profile/0,
-    get_profiles/0,
-    get_loaded_profile/0]).
+    save_profile/1, load_profile/1, delete_profile/1,
+    reset_profile/0
+]).
 
 %% Stats are on per node basis
 -define(STAT,                  stats).
@@ -81,9 +66,10 @@
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% Get the data from the riak_core_metadata, If not Opts are passed then an empty
-%% list is given and the defaults are set in the riak_core_metadata.
-%% it's possible to do a select pattern in the options under the form:
+%% Get the data from the riak_core_metadata, If not Opts are passed
+%% then an empty list is given and the defaults are set in the
+%% riak_core_metadata. it's possible to do a select pattern in the
+%% options under the form:
 %%      {match, ets:match_spec}
 %% Which is pulled out in riak_core_metadata and used in an ets:select,
 %% @end
@@ -147,17 +133,12 @@ find_entries(Stats,Status,Type) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% Using riak_core_metadata the statname(s) is passed in a tuple: {match,Name} which will
-%% return the objects that match in the metadata in order to fold through in the iterator, this
-%% iterates over the ?STATPFX : {stats,term_to_binary(node())}, and fold over the objects returned
-%% and depending on the Status, Type or DataPoints (DP) requested, it will be guarded and then returned
-%% in the accumulator.
-%%
-%% Some objects have a tuple 3 or 2 value, and some of the tuple-3 values store the aliases in the
-%% Options (O), encompasses any possible Value that may have the aliases stored in a different place.
-%%
-%% The Aliases are the names of the DPs for those specific stats, if the stat does not have any aliases
-%% for the data points requested it will not be returned.
+%% Using riak_core_metadata the statname(s) is passed in a tuple:
+%% {match,Name} which will return the objects that match in the metadata
+%% in order to fold through in the iterator, this iterates over the
+%% ?STATPFX : {stats,term_to_binary(node())}, and fold over the objects
+%% returned and depending on the Status or Type requested,
+%% it will be guarded and then returned in the accumulator.
 %% @end
 %%%-------------------------------------------------------------------
 -spec(fold(statname(),(enabled | disabled | '_'),(type() | '_')) -> acc()).
@@ -189,21 +170,7 @@ fold(Stat, Status0, Type0) ->
                                     (_Other, {Acc, Status, Type}) ->
                                         {Acc, Status, Type}
                                 end, {[], Status0, Type0}, ?STATPFX, [{match, Stat}]),
-
-Stats.
-
-
-dp_get(DPs, Aliases) ->
-    lists:foldl(fun
-                    ({_,[]},Ac) -> Ac;
-                    (Valid, Ac) -> [Valid|Ac]
-                end,[],[riak_stat_meta:get_dps(DP,Aliases) || DP <- DPs]).
-
-get_dps(DP, Aliases) ->
-    case proplists:get_value(DP, Aliases, []) of
-        [] -> [];
-        V -> {DP,V}
-    end.
+    Stats.
 
 
 %%%-------------------------------------------------------------------
@@ -236,7 +203,6 @@ find_unregister_status(_PN, _Stats) ->
 
 
 %%%===================================================================
-
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -272,7 +238,6 @@ the_alpha_stat(Alpha, Beta) ->
     AlphaStatList.
 % The stats must fight, to become the alpha
 
-
 the_alpha_map(A_B) ->
     lists:foldl(fun
                   ({Stat, {Atom, Val}},Acc) -> [{Stat, {Atom, Val}}|Acc];
@@ -284,7 +249,8 @@ the_alpha_map(A_B) ->
 %%%-------------------------------------------------------------------
 
 find_all_entries() ->
-    [{Name, {status, Status}} || {Name,_Type, Status} <- find_entries([[riak|'_']], '_', '_')].
+    [{Name, {status, Status}} ||
+        {Name,_Type, Status} <- find_entries([[riak|'_']], '_', '_')].
 
 %%%-------------------------------------------------------------------
 
@@ -309,8 +275,7 @@ register(StatName,Type, Opts, Aliases) ->
             {Status, MOpts} = find_status(fresh, Opts),
             re_register(StatName,{Status,Type,MOpts,Aliases}),
             MOpts;
-        unregistered ->
-            [];
+        unregistered -> [];
         {MStatus,Type,MOpts,Aliases} -> %% is registered
             {Status,NewMOpts,NewOpts} = find_status(re_reg,{Opts,MStatus,MOpts}),
             re_register(StatName, {Status,Type, NewMOpts,Aliases}),
@@ -405,8 +370,6 @@ vc_inc(Count) -> Count + 1.
 %%%==================================================================
 %%% Deleting/Resetting Stats API
 %%%===================================================================
-
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% reset the stat in exometer and notify metadata of its reset
@@ -439,9 +402,6 @@ reset_resets() ->
                   end, get_all(?STATPFX)).
 
 %%%-------------------------------------------------------------------
-
-
-%%%-------------------------------------------------------------------
 %% @doc
 %% Marks the stats as unregistered, that way when a node is restarted and registers the
 %% stats it will ignore stats that are marked unregistered
@@ -459,7 +419,6 @@ unregister(Statname) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%% Profile API %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% Take the stats and their status out of the metadata for the current
@@ -477,6 +436,7 @@ save_profile(ProfileName) ->
 %% It will compare the current stats with the profile stats and will
 %% change the ones that need changing to prevent errors/less expense
 %% @end
+%% todo : change_list_to_status -> riak_core_metadata:fold(...) ?
 %%%-------------------------------------------------------------------
 -spec(load_profile(profilename()) -> ok | error()).
 load_profile(ProfileName) ->
@@ -490,12 +450,12 @@ load_profile(ProfileName) ->
             ToChange = the_alpha_stat(ProfileStats, CurrentStats),
             %% delete stats that are already enabled/disabled, any duplicates
             %% with different statuses will be replaced with the profile one
-            change_stat_list_to_status(ToChange), %% todo: use the metadata fold to change the stats
+            change_stat_list_to_status(ToChange),
             put(?LOADEDPFX, ?LOADEDKEY, ProfileName),
             io:format("Loaded Profile: ~s~n",[ProfileName])
     end.
 
-change_stat_list_to_status(StatusList) -> %% todo: change the name of this function to some generic
+change_stat_list_to_status(StatusList) ->
     riak_stat_mgr:change_status(StatusList).
 
 
@@ -510,7 +470,7 @@ change_stat_list_to_status(StatusList) -> %% todo: change the name of this funct
 -spec(delete_profile(profilename()) -> ok).
 delete_profile(ProfileName) ->
     case check_meta(?LOADEDPKEY) of
-        ProfileName -> %% make this a guard instead of a pattern match
+        ProfileName -> 
             put(?LOADEDPFX, ?LOADEDKEY, [<<"none">>]),
             delete(?PROFPFX, ProfileName);
         _ ->
@@ -534,9 +494,8 @@ reset_profile() ->
     io:format("All Stats set to 'enabled'~n").
 % change from disabled to enabled
 
-
 change_stats_from(Stats, Status) ->
-    change_stat_list_to_status( %% todo: make this using metadata fold
+    change_stat_list_to_status(
         lists:foldl(fun
                         ({Stat, {status, St}}, Acc) when St == Status ->
                             NewSt =
@@ -549,25 +508,3 @@ change_stats_from(Stats, Status) ->
                             Acc
                     end, [], Stats)).
 
-
-%%%-------------------------------------------------------------------
-%% @doc
-%% returns a list of the profile names stored in the metadata
-%% @end
-%%%-------------------------------------------------------------------
--spec(get_profiles() -> metadata_value()).
-get_profiles() ->
-    get_all(?PROFPFX).
-
-%%%-------------------------------------------------------------------
-%% @doc
-%% get the profile that is loaded in the metadata
-%% @end
-%%%-------------------------------------------------------------------
--spec(get_loaded_profile() -> profilename()).
-get_loaded_profile() ->
-    get(?LOADEDPFX, ?LOADEDKEY).
-
--ifdef(TEST).
-
--endif.
