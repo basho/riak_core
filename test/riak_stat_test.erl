@@ -129,17 +129,14 @@ profile_test_() ->
             {"Save a profile",                              fun test_save_profile/0},
             {"Save a profile, same name, different nodes",  fun test_save_profile_for_two/0},
             {"Save a profile, load on different nodes",     fun test_save_profile_for_them/0},
-
             {"Load a profile",                              fun test_load_profile/0},
             {"Load a profile, on all nodes",                fun test_load_all_profiles/0},
             {"Load a profile, already loaded",              fun test_load_profile_again/0},
-
             {"Delete a profile",                            fun test_delete_profile/0},
             {"Delete a non-existent profile",               fun test_delete_un_profile/0},
             {"Delete a profile thats loaded",               fun test_delete_loaded_profile/0},
             {"Delete profile loaded on other nodes",        fun test_unknown_delete_profile/0},
             {"Delete profile then load on other node",      fun test_delete_then_they_load/0},
-
             {"Reset a profile",                             fun test_reset_profile/0}
         ]).
 
@@ -151,20 +148,16 @@ stat_admin_test_() ->
             {"Register a stat",                     fun test_register_stat/0},
             {"Register a stat again",               fun test_register_stat_again/0},
             {"Register a basic stat",               fun test_register_raw_stat/0},
-
             {"Read a stat by app",                  fun test_read_app_stats/0},
             {"Read a stat by path",                 fun test_read_path_stats/0},
             {"Read a stats value",                  fun test_read_stats_val/0},
-
             {"Update a stat",                       fun test_update_stat/0},
             {"Update a stat many times",            fun test_update_stat_many/0},
             {"Update many stats at once",           fun test_update_many_stat/0},
             {"Update many stats many times",        fun test_update_many_stat_many/0},
-
             {"Unregister a stat",                   fun test_unregister_stat/0},
             {"Unregister unregistered stat",        fun test_unregister_stat_again/0},
             {"Unregister a stat that doesnt exist", fun test_unregister_unstat/0},
-
             {"Reset a stat",                        fun test_reset_stat/0},
             {"Reset a stat thats disabled",         fun test_reset_dis_stat/0},
             {"Reset a stat that doesnt exist",      fun test_reset_non_stat/0}
@@ -216,9 +209,11 @@ endpoint_test_() ->
         [
             {"Set up stat polling to an udp endpoint",   fun test_stat_polling/0},
             {"Set down stat polling to an udp endpoint", fun test_stop_stat_polling/0},
-            {"Test Json objects from metrics",           fun test_udp_json/0},
-            {"Sanitise data from console for endpoint",  fun test_sanitise_data_endpoint/0}
+            {"Test Json objects from metrics",           fun test_udp_json/0}
         ]).
+
+%% todo: future tests:
+%% push to multiple endpoints?
 
 %%% --------------------------------------------------------------
 
@@ -274,7 +269,7 @@ test_data_sanitise_console() ->
                     [riak,'_','_','_','_','_','_','_','_',time],
                     [riak,'_','_','_','_','_','_','_','_','_',time],
                     [riak,'_','_','_','_','_','_','_','_','_','_',time]],N9).
-                        %% stop judging the pyramid
+                        %% stop judging the pyramid                                                                             Its meant to look like that
 
 test_data_sanitise_endpoint() ->
     %% Sanitise data from the console specific to riak admin stat setup/
@@ -301,89 +296,243 @@ test_data_sanitise_endpoint() ->
     ?_assertEqual(?TestSip,S6),?_assertEqual([riak,riak_kv|'_'],Stats6),
     ?_assertEqual([riak,riak_kv|'_'],Stats7).
 
-
 %%% --------------------------------------------------------------
 
 %% @see profile_test_/0
 
-test_save_profile() -> ok.
-test_save_profile_for_two() -> ok.
-test_save_profile_for_them() -> ok.
-test_load_profile() -> ok.
-test_load_all_profiles() -> ok.
-test_load_profile_again() -> ok.
-test_delete_profile() -> ok.
-test_delete_un_profile() -> ok.
-test_delete_loaded_profile() -> ok.
-test_unknown_delete_profile() -> ok.
-test_delete_then_they_load() -> ok.
-test_reset_profile() -> ok.
+test_save_profile() ->
+    %% Save a profile
+    ProfileName = ["test-profile"], %% input type from console
+    ?_assert(ok == riak_stat_profiles:save_profile(ProfileName)).
+
+test_save_profile_for_two() ->
+    %% Save a profile with different stats configuration on two separate
+    %% nodes at the same time, see which becomes the alpha
+    ok.
+
+test_save_profile_for_them() ->
+    %% Save a profile, open on a different node
+    ok.
+
+test_load_profile() ->
+    %% load a profile
+    ProfileName = ["hellothere"],
+    riak_stat_profiles:save_profile(ProfileName),
+    ?_assert(ok == riak_stat_profiles:load_profile(ProfileName)).
+
+test_load_all_profiles() ->
+    %% load a profile, onto multiple nodes
+    ok.
+
+test_load_profile_again() ->
+    %% load a profile that is already loaded,
+    %% enabled all the stats and load that profile again
+    ok.
+
+test_delete_profile() ->
+    %% Delete a profile
+    ProfileName = ["obiwankenobi"],
+    riak_stat_profiles:save_profile(ProfileName),
+    ?_assert(ok == riak_stat_profiles:delete_profile(ProfileName)).
+
+test_delete_un_profile() ->
+    %% Delete a profile that has never existed,
+    %% then delete a profile that used to exist
+    ok.
+
+test_delete_loaded_profile() ->
+    %% Load a profile and then Delete it, check metadata for the
+    %% currently loaded profile
+    ok.
+
+test_unknown_delete_profile() ->
+    %% Load a profile on another node, then delete it on a different node
+    ok.
+
+test_delete_then_they_load() ->
+    %% delete a profile on one node while it is being loaded on another
+    ok.
+
+test_reset_profile() ->
+    %% Reset profile . i.e. set all stats to enabled and unload a profile
+    ProfileName = ["you-were-my-brother-anakin"],
+    riak_stat_profiles:save_profile(ProfileName),
+    ?_assert(ok == riak_stat_profiles:reset_profile()).
+    %% todo: check if all the stats have the status : enabled,
+    %% or check that the stats that are disabled is an empty list
 
 %%% --------------------------------------------------------------
 
 %% @see stat_admin_test_/0
 
-test_register_stat() -> ok.
-test_register_stat_again() -> ok.
-test_register_raw_stat() -> ok.
-test_read_app_stats() -> ok.
-test_read_path_stats() -> ok.
-test_read_stats_val() -> ok.
-test_update_stat() -> ok.
-test_update_stat_many() -> ok.
-test_update_many_stat() -> ok.
-test_update_many_stat_many() -> ok.
-test_unregister_stat() -> ok.
-test_unregister_stat_again() -> ok.
-test_unregister_unstat() -> ok.
-test_reset_stat() -> ok.
-test_reset_dis_stat() -> ok.
-test_reset_non_stat() -> ok.
+test_register_stat() ->
+    %% Register a stat in the metadata and in exometer
+    Stat = stat_generator(),
+    ?_assert(ok == riak_stat:register_stats(Stat)).
+
+test_register_stat_again() ->
+    %% register a stat then register it again
+    Stat = stat_generator(),
+    ok = riak_stat:register_stats(Stat),
+    ok = riak_stat:register_stats(Stat),
+    ?_assert(ok == riak_stat:register_stats(Stat)).
+
+test_register_raw_stat() ->
+    %% register a stat with just its name and type
+    Stat = {[riak,stat,test,name],counter,[],[]},
+    ?_assert(ok == riak_stat:register_stats(Stat)).
+
+test_read_app_stats() ->
+    %% get stats using riak_stat:get_stats(App)
+    ok.
+
+test_read_path_stats() ->
+    %% get a stats by passing in the path of the stat
+    ok.
+
+test_read_stats_val() ->
+    %% Get a stats value from exometer
+    ok.
+
+test_update_stat() ->
+    %% update a stat
+    ok.
+
+test_update_stat_many() ->
+    %% update a stat many times and time it, does it get faster with frequency
+    ok.
+
+test_update_many_stat() ->
+    %% update many stats at once
+    ok.
+
+test_update_many_stat_many() ->
+    %% update many stats many times
+    ok.
+
+test_unregister_stat() ->
+    %% unregister a stat
+    ok.
+
+test_unregister_stat_again() ->
+    %% unregister a stat that has just been unregistered
+    ok.
+
+test_unregister_unstat() ->
+    %% unregister a stat that does not exist (error)
+    ok.
+
+test_reset_stat() ->
+    %% reset a stat (known to be enabled)
+    ok.
+
+test_reset_dis_stat() ->
+    %% try to reset a disabled stat (error)
+    ok.
+
+test_reset_non_stat() ->
+    %% reset a stat that does not exist (error)
+    ok.
 
 %%% --------------------------------------------------------------
 
 %% @see legacy_search_test_/0
 
-test_legacy_search_stat() -> ok.
-test_non_legacy_search_stat() -> ok.
+test_legacy_search_stat() ->
+    %% Test legacy search for a stat of legacy name
+    ok.
+
+test_non_legacy_search_stat() ->
+    %% test legacy search for a stat that is not a legacy name
+    %% i.e. an alias
+    ok.
 
 %%% --------------------------------------------------------------
 
 %% @see find_entries_test_/0
 
-test_find_entries_metadata() -> ok.
-test_find_entries_exometer() -> ok.
-test_find_entries_exometer_fun() -> ok.
+test_find_entries_metadata() ->
+    %% find_entries in the riak_stat_meta
+    %% compared to the riak_core_metadata select
+    ok.
+
+test_find_entries_exometer() ->
+    %% find_entries in riak_stat_exom
+    %% compared to the exometer select
+    ok.
+
+test_find_entries_exometer_fun() ->
+    %% find_entries in exometer compared to
+    %% find_entries in meta
+    ok.
 
 %%% --------------------------------------------------------------
 
 %% @see exometer_test_/0
 
-test_stat_aggregation() -> ok.
-test_sample_exometer() -> ok.
-test_aliases() -> ok.
+test_stat_aggregation() ->
+    %% aggregate stats based on their datapoints
+    ok.
+
+test_sample_exometer() ->
+    %% take a sample for a stat that is a probe
+    ok.
+
+test_aliases() ->
+    %% test exometer_alias functions
+    ok.
 
 %%% --------------------------------------------------------------
 
 %% @see metadata_test_/0
 
-test_stat_persistence() -> ok.
-test_profile_persistence() -> ok.
-test_fold_meta() -> ok.
+test_stat_persistence() ->
+    %% register stats in the metadata, change their status
+    %% "reload" the nodes and check the status of the stats in the
+    %% metadata
+    ok.
+
+test_profile_persistence() ->
+    %% test if the profiles status is stored in the metadata
+    %% after nodes are restarted is it still loaded, at the profiles
+    %% still there
+    ok.
+
+test_fold_meta() ->
+    %% test the efficiency of the metadata fold, such as changing the status of the
+    %% stats instead of the current method, compared to the replace and
+    %% select functions
+    ok.
 
 %%% --------------------------------------------------------------
 
 %% @see endpoint_test_/0
 
-test_stat_polling() -> ok.
-test_stop_stat_polling() -> ok.
-test_udp_json() -> ok.
-test_sanitise_data_endpoint() -> ok.
+test_stat_polling() ->
+    %% set up an endpoint and see if stats are sent as a json object
+    ok.
+
+test_stop_stat_polling() ->
+    %% set up endpoint and monitor
+    %% setdown the pushing of stats and see if the polling stops
+    ok.
+
+test_udp_json() ->
+    %% test the json object created for the udp endpoint pushing
+    %% is of the correct format
+    ok.
+
 
 %%% --------------------------------------------------------------
 
 %% @see wm_test_/0
 
-test_stats_hhtp() -> ok.
-test_json_objects_wm() -> ok.
+test_stats_http() ->
+    %% test the precision of the http requesting of stats
+    ok.
+
+test_json_objects_wm() ->
+    %% test the mochiweb encoding for the metrics,
+    %% compare to the json_to_metric
+    ok.
 
