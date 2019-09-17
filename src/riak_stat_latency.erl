@@ -14,7 +14,8 @@
     setdown/1,
     setdown/0,
     get_host/1,
-    get_stats/0]).
+    get_stats/0,
+    sanitise_data/1]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -70,17 +71,18 @@ terminate_server() ->
 %% Sanitise the data coming in, into the necessary arguments for setting
 %% up an endpoint, This is specific to the endpoint functions
 %% @end
-sanitise_data([<<>>]) ->
-    sanitise_data([]);
+sanitise_data([]) ->
+    io:fwrite("No argument given~n");
 sanitise_data(Arg) ->
     [Opts | Stats] = break_up(Arg, "/"),
     List = break_up(Opts, "\\s"),
-    NewStats =
         case Stats of
-            [] -> ['_'];
-            Data -> Data
-        end,
-    {sanitise_data_(List), NewStats}.
+            [] -> case riak_stat_console:data_sanitise(List) of
+                      [riak|Rest] -> {sanitise_data_([]),[riak|Rest]};
+                      _ -> {sanitise_data_(List), ['_']}
+                  end;
+            Data -> {sanitise_data_(List),riak_stat_console:data_sanitise(Data)}
+        end.
 
 break_up(Arg, Str) ->
     re:split(Arg, Str, []).

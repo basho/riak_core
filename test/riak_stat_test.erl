@@ -36,6 +36,10 @@
 
 -define(TestStatNum, 1000).
 
+-define(TestPort,       8189).
+-define(TestSip,        "127.0.0.1").
+-define(TestInstance,   "testinstance").
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%% HELPER FUNS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -269,10 +273,34 @@ test_data_sanitise_console() ->
                     [riak,'_','_','_','_','_','_','_',time],
                     [riak,'_','_','_','_','_','_','_','_',time],
                     [riak,'_','_','_','_','_','_','_','_','_',time],
-                    [riak,'_','_','_','_','_','_','_','_','_','_',time]
-        ],N9).
+                    [riak,'_','_','_','_','_','_','_','_','_','_',time]],N9).
+                        %% stop judging the pyramid
 
-test_data_sanitise_endpoint() -> ok.
+test_data_sanitise_endpoint() ->
+    %% Sanitise data from the console specific to riak admin stat setup/
+    %% setdown ---
+    A1 = ["port=8080"],
+    A2 = ["port=8080 sip=127.0.0.1"],
+    A3 = ["port=8080 sip=127.0.0.1 instance=test"],
+    A4 = ["port=8080/riak.riak_kv.**"],
+    A5 = ["port=8080 sip=127.0.0.1/riak.riak_kv.**"],
+    A6 = ["sip=127.0.0.1/riak.riak_kv.**"],
+    A7 = ["riak.riak_kv.**"],
+    {{ P1,_I1,_S1},_Stats1} = riak_stat_latency:sanitise_data(A1),
+    {{ P2,_I2, S2},_Stats2} = riak_stat_latency:sanitise_data(A2),
+    {{ P3, I3, S3},_Stats3} = riak_stat_latency:sanitise_data(A3),
+    {{ P4,_I4,_S4}, Stats4} = riak_stat_latency:sanitise_data(A4),
+    {{ P5,_I5, S5}, Stats5} = riak_stat_latency:sanitise_data(A5),
+    {{_P6,_I6, S6}, Stats6} = riak_stat_latency:sanitise_data(A6),
+    {{_P7,_I7,_S7}, Stats7} = riak_stat_latency:sanitise_data(A7),
+    ?_assertEqual(8080,P1),
+    ?_assertEqual(8080,P2),?_assertEqual(?TestSip,S2),
+    ?_assertEqual(8080,P3),?_assertEqual(?TestSip,S3),?_assertEqual("test",I3),
+    ?_assertEqual(8080,P4),?_assertEqual([riak,riak_kv|'_'],Stats4),
+    ?_assertEqual(8080,P5),?_assertEqual(?TestSip,S5),?_assertEqual([riak,riak_kv|'_'],Stats5),
+    ?_assertEqual(?TestSip,S6),?_assertEqual([riak,riak_kv|'_'],Stats6),
+    ?_assertEqual([riak,riak_kv|'_'],Stats7).
+
 
 %%% --------------------------------------------------------------
 
