@@ -4,7 +4,7 @@
 %%% @end
 %%%-------------------------------------------------------------------
 -module(riak_stat_wm).
--include_lib("webmachine/include/webmachine.hrl"). 
+-include_lib("webmachine/include/webmachine.hrl").
 
 %% wm resource exports
 -export([
