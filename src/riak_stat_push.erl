@@ -11,12 +11,7 @@
 
 -behaviour(gen_server).
 
--export([
-    notify/1,
-    notify/2,
-    notify/3,
-    get_host/0
-]).
+-export([notify/1, notify/2, notify/3, get_host/0]).
 
 %% API
 -export([start_link/0]).
@@ -74,11 +69,6 @@
 %%%===================================================================
 %%% API
 %%%===================================================================
-%%
-%%-type jsonprops()         :: [{atom(), any()}].
-%%-type serviceid()         :: string() | binary().
-%%-type correlationid()     :: string() | binary().
-
 %%--------------------------------------------------------------------
 %% @doc
 %% Notify the udp latency monitor
@@ -165,7 +155,6 @@ init({{MonitorLatencyPort, Instance, Sip}, Stats}) ->
         instance      = Instance}
     }.
 
-
 %%--------------------------------------------------------------------
 -spec(handle_call(Request :: term(), From :: {pid(), Tag :: term()},
     State :: #state{}) ->
@@ -228,9 +217,6 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-
-
-
 format_time() ->
     format_time(os:timestamp()).
 

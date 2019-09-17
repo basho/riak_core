@@ -1,13 +1,10 @@
 %%%-------------------------------------------------------------------
 %%% @doc
 %%% A mimic of riak_kv_wm_stats,
-%%% todo: remove the riak_kv_wm_stats?
-%%% todo: add more application specific functionality
 %%% @end
 %%%-------------------------------------------------------------------
 -module(riak_stat_wm).
-%%-include_lib("webmachine/include/webmachine.hrl"). % could not find in app list
-
+-include_lib("webmachine/include/webmachine.hrl"). % could not find in app list
 
 %% wm resource exports
 -export([
@@ -25,7 +22,6 @@
 -record(ctx, {
     prefix,     %% prefix for resource uris
     riak        %% local | {node(), atom()}
-%%    client
 }).
 
 -type props()  :: proplists:proplist().
