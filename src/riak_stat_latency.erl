@@ -9,7 +9,8 @@
 -include_lib("riak_core/include/riak_core_stat.hrl").
 
 %% API
--export([    setup/1,
+-export([
+    setup/1,
     setdown/1,
     setdown/0,
     get_host/1,
