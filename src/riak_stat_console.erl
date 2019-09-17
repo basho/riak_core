@@ -53,7 +53,7 @@
 %%%-------------------------------------------------------------------
 -spec(show_stat(arg()) -> statslist()).
 show_stat(Arg) ->
-    print_stats(find_entries(data_sanitise(Arg))).
+    print(find_entries(data_sanitise(Arg))).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -63,7 +63,7 @@ show_stat(Arg) ->
 -spec(show_stat_0(data()) -> value()).
 show_stat_0(Arg) ->
     {Stats,_Status,Type,DPs}=data_sanitise(Arg),
-    print_stats({[find_entries({Stats,enabled,Type,DPs})],show_0}).
+    print({[find_entries({Stats,enabled,Type,DPs})],show_0}).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -74,7 +74,7 @@ show_stat_0(Arg) ->
 stat_info(Arg) ->
     {Attrs, RestArg} = pick_info_attrs(Arg),
     {S,T,ST,_DPS} = data_sanitise(RestArg),
-    print_stats(find_entries({S,T,ST,Attrs})).
+    print(find_entries({S,T,ST,Attrs})).
 
 -spec(pick_info_attrs(data()) -> value()).
 %% @doc get list of attrs to print @end
@@ -96,7 +96,6 @@ pick_info_attrs(Arg) ->
             Other
     end.
 
-
 split_arg(Str) ->
     re:split(Str, "\\s", [{return, list}]).
 
@@ -109,8 +108,7 @@ split_arg(Str) ->
 -spec(disable_stat_0(data()) -> ok).
 disable_stat_0(Arg) ->
     {Stats,_Status,Type,DPs} = data_sanitise(Arg),
-    print_stats({[find_entries({Stats,enabled,Type,DPs})],disable_0}).
-
+    print({[find_entries({Stats,enabled,Type,DPs})],disable_0}).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -169,9 +167,6 @@ enable_metadata(Arg) ->
 %%%===================================================================
 %%% Helper API
 %%%===================================================================
-
-%% todo: clean up everything below this point, it is a mess
-
 %%%-------------------------------------------------------------------
 %%% @doc
 %%% Arguments coming in from the console or _stat modules arrive at
@@ -191,6 +186,7 @@ data_sanitise(Arg, Type) ->
 
 data_sanitise(Arg, Type, Status) ->
     data_sanitise(check_args(Arg), Type, Status, ?DPs).
+%%%-------------------------------------------------------------------
 
 check_args([]) ->
     print([]);
@@ -216,6 +212,7 @@ check_args(Args) when is_binary(Args) ->
     [Args];
 check_args(_) ->
     print("Illegal Argument Type ~n"), [].
+%%%-------------------------------------------------------------------
 
 data_sanitise(BinArgs, Type, Status, DPs) ->
     [Bin | Args] = re:split(BinArgs, "/"), %% separate type etc...
@@ -223,7 +220,7 @@ data_sanitise(BinArgs, Type, Status, DPs) ->
         type_status_and_dps(Args, Type, Status, DPs),
     StatName = statname(Bin),
     {StatName, NewStatus, NewType, NewDPs}.
-
+%% legacy code \/
 type_status_and_dps([], Type, Status, DPs) ->
     {Type, Status, DPs};
 type_status_and_dps([<<"type=", T/binary>> | Rest], _Type, Status, DPs) ->
@@ -326,7 +323,7 @@ replace_parts_1([H | T]) ->
     case T of
         '_' -> '_';
         "**" -> [R] ++ '_';
-        ["**"] -> [R] ++ '_'; %% [riak,riak_kv|'_']
+        ["**"] -> [R] ++ '_'; %% [riak|'_']
         _ -> [R | replace_parts_1(T)]
     end;
 replace_parts_1([]) ->
@@ -390,96 +387,23 @@ print(undefined) ->
 print([undefined]) ->
     print([]);
 print(Arg) ->
-    print(Arg, []).
-print([],_) ->
+    print(Arg, []);
+print({Stats,DPs}) ->
+    print(Stats,DPs).
+
+print([], _) ->
     io:fwrite("No Matching Stats~n");
-print(Stats, default) ->
-    print(Stats, []);
-print(stats,Stats) ->
-    print(Stats,stats);
-print(Stats, stats) ->
-    lists:map(fun
-                  ({N, _T, S}) ->
-                      io:fwrite("{~p, ~p}~n", [N,S]);
-                  ({Stat,Status}) when Status == enabled;
-                      Status == disabled ->
-                      io:format("~p : ~p~n",[Stat,Status]);
-                  ({Stat, DPs}) ->
-                      print_stat([Stat],DPs);
-                  (Stat) ->
-                      print_stat([Stat],[])
-              end, Stats);
-print(Elem, [])   when is_list(Elem) ->
-    io:fwrite(Elem);
-print(Elem, Args) when is_list(Elem) ->
-    io:fwrite(Elem, Args);
-print(A,B) ->
-    io:format("Cannot print: ~p / ~p ~n",[A,B]).
-
-print_stat(Stats, []) ->
-    lists:map(fun
-                  ({Stat,Type,Status,DPs}) ->
-                      io:fwrite("{~p,~p,~p} : ~p~n",
-                          [Stat,Type,Status,DPs]);
-                  ({Stat, Type, Status}) ->
-                      io:fwrite("{~p,~p,~p}~n",
-                          [Stat,Type,Status]);
-                  ({Stat,Status}) ->
-                      io:fwrite("{~p,~p}~n",
-                          [Stat,Status]);
-                  (Stat) ->
-                      io:fwrite("~p~n",[Stat])
-              end, Stats);
-print_stat(Stats, DPs) ->
-    lists:map(fun
-                  ({Stat,Type,Status}) ->
-                      io:fwrite("{~p,~p,~p}: ~p~n",
-                          [Stat,Type,Status,DPs]);
-                  ({Stat,Status}) ->
-                      io:fwrite("{~p,~p}: ~p~n",
-                          [Stat,Status,DPs]);
-                  (Stat) ->
-                      io:fwrite("~p~n",[Stat])
-              end, Stats).
-
-not_0(StatName,dis) ->
-    case not_0_(StatName,[]) of
-        [] -> [];
-        _Vals -> change_status([{StatName,{status,disabled}}])
-    end;
-not_0(StatName,DPs) ->
-    case not_0_(StatName,DPs) of
-        [] -> [];
-        Vals -> io:fwrite("~p : ~p~n",[StatName,Vals])
-    end. %% todo: put the formatting in the map above
-
-not_0_(Stat, _DPs) ->
-    case riak_stat_exom:get_value(Stat) of
-        {ok, V} ->
-            lists:foldl(fun
-                            ({Va,0},Acc) -> [{Va,0}|Acc];
-                            ({Va,[]},Acc) ->[{Va,0}|Acc];
-                            ({Va,{error,_}},Acc)->Acc;
-                            (_, Acc) -> Acc
-                        end, [], V);
-        _ -> []
-    end.
-
-print_stats({Stats,DPs}) ->
-    print_stats(Stats,DPs).
-print_stats([], _) ->
-    io:fwrite("No Matching Stats~n");
-print_stats(NewStats,DPs) ->
+print(NewStats,DPs) ->
     lists:map(fun
                   ({Names,_NDPs}) when DPs == disable_0 ->
                       case lists:flatten([not_0(N,dis)||{N,_,_}<-Names]) of
                           [] -> io:fwrite("No Stats with Value 0~n");
-                          _ -> ok
+                          _V -> ok
                       end;
                   ({Names,NDPs}) when DPs == show_0->
                       case lists:flatten([not_0(N,NDPs)||{N,_,_}<-Names]) of
-                          [] -> print_stats([],[]);
-                          _ -> ok
+                          [] -> print([],[]);
+                          V -> io:fwrite("~p: ~p~n",[Names, V])
                       end;
 
                   ({N,_T,_S}) when DPs == [] -> get_value(N);
@@ -500,18 +424,39 @@ print_stats(NewStats,DPs) ->
                                 end, Legacy)
               end,NewStats).
 
-%% todo: consolidate the print_stats and the print/2 functions, see if the print/1-2
-%% function are necessary
+not_0(StatName,dis) ->
+    case not_0_(StatName,[]) of
+        [] -> [];
+        _Vals -> change_status([{StatName,{status,disabled}}])
+    end;
+not_0(StatName,DPs) ->
+    not_0_(StatName,DPs).
+
+not_0_(Stat, _DPs) ->
+    case riak_stat_exom:get_value(Stat) of
+        {ok, V} ->
+            lists:foldl(fun
+                            ({Va,0},Acc) -> [{Va,0}|Acc];
+                            ({Va,[]},Acc) ->[{Va,0}|Acc];
+                            ({Va,{error,_}},Acc)->Acc;
+                            (_, Acc) -> Acc
+                        end, [], V);
+        _ -> []
+    end.
 
 %%%-------------------------------------------------------------------
 
 get_value(N) ->
     case riak_stat_exom:get_value(N) of
         {ok,Val} ->
-            io:fwrite("~p : ~n",[N]), %% todo: if there is no DPs then do not print
-            lists:map(fun({_,{error,_}}) -> [];
-                (D) -> io:fwrite("                      ~p~n",[D])
-                      end, Val);
+            case lists:foldl(fun
+                          ({_,{error,_}},A) -> A;
+                          (D,A) -> io:fwrite("                      ~p~n",[D]),[ok|A]
+                      end, [],Val) of
+                [] -> [];
+                R ->  io:fwrite("~p : ~n",[N]),
+                    [io:fwrite("~p~n",[D])||D<-R]
+            end;
         {error, _} -> []
     end.
 
@@ -527,7 +472,6 @@ find_stats_info(Stats, Info) ->
                           (DP) ->
                               io:fwrite("                 ~p~n", [DP])
                       end, V);
-        %% todo: change the formatting on the stats info returned.
         {error,_} -> get_info_2_electric_boogaloo(Stats, Info)
     end.
 
@@ -547,7 +491,7 @@ get_info_2_electric_boogaloo(N,Attrs) ->
 
 
 -ifdef(TEST).
-
+-export([data_sanitise_test/0]).
 
 -define(setup(Fun),        {setup,    fun setup/0,          fun cleanup/1, Fun}).
 -define(foreach(Funs),     {foreach,  fun setup/0,          fun cleanup/1, Funs}).
