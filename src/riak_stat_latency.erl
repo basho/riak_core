@@ -39,8 +39,12 @@
 %%%-------------------------------------------------------------------
 -spec(setup(arg()) -> ok).
 setup(Arg) ->
-    {{Port, Instance, Sip}, STATSorPROFILES} = sanitise_data(Arg),
-    start_server(riak_stat_push, {{Port, Instance, Sip}, STATSorPROFILES}).
+%%    {{Port, Instance, Sip}, STATSorPROFILES} =
+        case sanitise_data(Arg) of
+            ok -> ok;
+            Other -> start_server(riak_stat_push,Other)
+        end.
+%%    start_server(riak_stat_push, {{Port, Instance, Sip}, STATSorPROFILES}).
 
 start_server(Child, Arg) ->
     riak_core_stats_sup:start_server(Child, Arg).
@@ -75,8 +79,8 @@ sanitise_data([]) ->
     io:fwrite("No argument given~n");
 sanitise_data(Arg) ->
     [Opts | Stats] = break_up(Arg, "/"),
-    List = break_up(Opts, "\\s"),
-        case Stats of
+    List = break_up(Opts, ","),
+    case Stats of
             [] -> case riak_stat_console:data_sanitise(List) of
                       [riak|Rest] -> {sanitise_data_([]),[riak|Rest]};
                       _ -> {sanitise_data_(List), ['_']}
@@ -85,15 +89,15 @@ sanitise_data(Arg) ->
         end.
 
 break_up(Arg, Str) ->
-    re:split(Arg, Str, []).
+    re:split(Arg, Str).
 
 sanitise_data_(Arg) ->
     sanitise_data_(Arg, ?MONITOR_STATS_PORT, ?INSTANCE, ?MONITOR_SERVER).
 sanitise_data_([<<"port=", Po/binary>> | Rest], Port, Instance, Sip) ->
     NewPort =
-        case binary_to_integer(Po) of
-            {error, _reason} -> Port;
+        try binary_to_integer(Po) of
             Int -> Int
+        catch _e:_r -> Port
         end,
     sanitise_data_(Rest, NewPort, Instance, Sip);
 sanitise_data_([<<"instance=", I/binary>> | Rest], Port, _Instance, Sip) ->

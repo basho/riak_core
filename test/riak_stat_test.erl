@@ -150,55 +150,12 @@ stat_admin_test_() ->
             {"Read a stat by path",                 fun test_read_path_stats/0},
             {"Read a stats value",                  fun test_read_stats_val/0},
             {"Update a stat",                       fun test_update_stat/0},
-            {"Update a stat many times",            fun test_update_stat_many/0},
-            {"Update many stats at once",           fun test_update_many_stat/0},
-            {"Update many stats many times",        fun test_update_many_stat_many/0},
             {"Unregister a stat",                   fun test_unregister_stat/0},
             {"Unregister unregistered stat",        fun test_unregister_stat_again/0},
-            {"Unregister a stat that doesnt exist", fun test_unregister_unstat/0},
             {"Reset a stat",                        fun test_reset_stat/0},
-            {"Reset a stat thats disabled",         fun test_reset_dis_stat/0},
-            {"Reset a stat that doesnt exist",      fun test_reset_non_stat/0}
+            {"Reset a stat thats disabled",         fun test_reset_dis_stat/0}
         ]).
 
-%%% --------------------------------------------------------------
-
-legacy_search_test_() ->
-    ?setuptest("Testing the use of legacy_Search",
-        [
-            {"Test for legacy stat name",     fun test_legacy_search_stat/0},
-            {"Test for non legacy stat name", fun test_non_legacy_search_stat/0}
-        ]).
-
-%%% --------------------------------------------------------------
-
-find_entries_test_() ->
-    ?setuptest("Test the efficiency and use of find_entries",
-        [
-            {"Find_entries in metadata",    fun test_find_entries_metadata/0},
-            {"Find_entries in exometer",    fun test_find_entries_exometer/0},
-            {"Find_entries fun in exometer",fun test_find_entries_exometer_fun/0}
-        ]).
-
-%%% --------------------------------------------------------------
-
-exometer_test_() ->
-    ?setuptest("Testing functions specific to the exometer side of riak_stat",
-        [
-            {"Aggregation of stats",           fun test_stat_aggregation/0},
-            {"Sample for a probe in exometer", fun test_sample_exometer/0},
-            {"aliases tests",                  fun test_aliases/0}
-        ]).
-
-%%% --------------------------------------------------------------
-
-metadata_test_() ->
-    ?setuptest("Test functions specific to the riak_core_metadata",
-        [
-            {"Test stat configuration persistence", fun test_stat_persistence/0},
-            {"Test profile persistence",            fun test_profile_persistence/0},
-            {"Test fold in riak_core_meta for profiles/stats", fun test_fold_meta/0}
-        ]).
 
 %%% --------------------------------------------------------------
 
@@ -413,125 +370,69 @@ test_register_raw_stat() ->
 
 test_read_app_stats() ->
     %% get stats using riak_stat:get_stats(App)
-    ok.
+    App = riak_api,
+    StatName = [?PREFIX,App|'_'],
+    riak_stat_console:status_change(StatName, enabled), %% ensure enabled
+    Stats = riak_stat:get_stats(StatName), %% as used in riak_stat
+    ?_assertEqual(Stats, [{pbc_connects,spiral,enabled},
+                            {[pbc_connects,active],{function,App,active_pbc_connects},enabled}]).
 
 test_read_path_stats() ->
     %% get a stats by passing in the path of the stat
-    ok.
+    Path = [?PREFIX,riak_kv,node,gets,time],
+    riak_stat_console:status_change(Path, enabled), %% ensure enabled
+    Stat = riak_stat:get_stats(Path),
+    ?_assertEqual([{[riak,riak_kv,node,gets,time],histogram,enabled}],Stat).
 
 test_read_stats_val() ->
     %% Get a stats value from exometer
-    ok.
+    Stat = [?PREFIX,riak_stat,test,counter],
+    riak_stat:register_stats({Stat,spiral,[],[]}),
+    ok = update_again(Stat,1.0,spiral,100),
+    {ok, Value} = riak_stat_exom:get_value(Stat),
+    Count = proplists:get_value(count, Value),
+    ?_assertEqual(Count, 100.0).
+
+update_again(_,_,_,0) ->
+    ok;
+update_again(Stat,Incr,Type,Num) ->
+    riak_stat:update(Stat,Incr,Type),
+    update_again(Stat,Incr,Type,Num-1).
 
 test_update_stat() ->
     %% update a stat
-    ok.
-
-test_update_stat_many() ->
-    %% update a stat many times and time it, does it get faster with frequency
-    ok.
-
-test_update_many_stat() ->
-    %% update many stats at once
-    ok.
-
-test_update_many_stat_many() ->
-    %% update many stats many times
-    ok.
+    Stat = [?PREFIX,riak_stat,test,updates],
+    riak_stat:register_stats({Stat,counter,[],[]}),
+    update_again(Stat,1,counter,1).
 
 test_unregister_stat() ->
     %% unregister a stat
-    ok.
+    Stat = [?PREFIX,riak_stat,unregister,test],
+    riak_stat:register_stats({Stat,counter,[],[]}),
+    ?_assertEqual(ok,riak_stat:unregister(Stat)).
 
 test_unregister_stat_again() ->
     %% unregister a stat that has just been unregistered
-    ok.
-
-test_unregister_unstat() ->
-    %% unregister a stat that does not exist (error)
-    ok.
+    Stat = [?PREFIX,riak_stat,unregister,test],
+    riak_stat:register_stats({Stat,counter,[],[]}),
+    ?_assertEqual(ok,riak_stat:unregister(Stat)),
+    ?_assertEqual(ok,riak_stat:unregister(Stat)).
 
 test_reset_stat() ->
     %% reset a stat (known to be enabled)
-    ok.
+    Stat = [?PREFIX,riak_stat,reset,test],
+    riak_stat:register_stats({Stat,counter,[],[]}),
+    update_again(Stat,1,counter,24601),
+    ?_assertEqual(ok,riak_stat:reset(Stat)).
 
 test_reset_dis_stat() ->
     %% try to reset a disabled stat (error)
-    ok.
+    Stat = [?PREFIX,riak_stat,reset,test],
+    riak_stat:register_stats({Stat,counter,[],[]}),
+    update_again(Stat,1,counter,24601),
+    riak_stat_console:status_change(Stat,disabled),
+    ?_assertEqual(ok,riak_stat:reset(Stat)).
 
-test_reset_non_stat() ->
-    %% reset a stat that does not exist (error)
-    ok.
-
-%%% --------------------------------------------------------------
-
-%% @see legacy_search_test_/0
-
-test_legacy_search_stat() ->
-    %% Test legacy search for a stat of legacy name
-    ok.
-
-test_non_legacy_search_stat() ->
-    %% test legacy search for a stat that is not a legacy name
-    %% i.e. an alias
-    ok.
-
-%%% --------------------------------------------------------------
-
-%% @see find_entries_test_/0
-
-test_find_entries_metadata() ->
-    %% find_entries in the riak_stat_meta
-    %% compared to the riak_core_metadata select
-    ok.
-
-test_find_entries_exometer() ->
-    %% find_entries in riak_stat_exom
-    %% compared to the exometer select
-    ok.
-
-test_find_entries_exometer_fun() ->
-    %% find_entries in exometer compared to
-    %% find_entries in meta
-    ok.
-
-%%% --------------------------------------------------------------
-
-%% @see exometer_test_/0
-
-test_stat_aggregation() ->
-    %% aggregate stats based on their datapoints
-    ok.
-
-test_sample_exometer() ->
-    %% take a sample for a stat that is a probe
-    ok.
-
-test_aliases() ->
-    %% test exometer_alias functions
-    ok.
-
-%%% --------------------------------------------------------------
-
-%% @see metadata_test_/0
-
-test_stat_persistence() ->
-    %% register stats in the metadata, change their status
-    %% "reload" the nodes and check the status of the stats in the
-    %% metadata
-    ok.
-
-test_profile_persistence() ->
-    %% test if the profiles status is stored in the metadata
-    %% after nodes are restarted is it still loaded, at the profiles
-    %% still there
-    ok.
-
-test_fold_meta() ->
-    %% test the efficiency of the metadata fold, such as changing the status of the
-    %% stats instead of the current method, compared to the replace and
-    %% select functions
-    ok.
 
 %%% --------------------------------------------------------------
 
@@ -539,6 +440,7 @@ test_fold_meta() ->
 
 test_stat_polling() ->
     %% set up an endpoint and see if stats are sent as a json object
+
     ok.
 
 test_stop_stat_polling() ->

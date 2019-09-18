@@ -14,7 +14,7 @@
 -export([notify/1, notify/2, notify/3, get_host/0]).
 
 %% API
--export([start_link/0]).
+-export([start_link/1]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -120,10 +120,10 @@ notify(ServiceId, CorrelationId, JsonProps) ->
 
 
 %%--------------------------------------------------------------------
--spec(start_link() ->
+-spec(start_link(Term::arg()) ->
     {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
-start_link() ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+start_link(Obj) ->
+    gen_server:start_link({local, ?SERVER}, ?MODULE, Obj, []).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -139,7 +139,7 @@ init({{MonitorLatencyPort, Instance, Sip}, Stats}) ->
     MonitorStatsPort   = ?MONITOR_STATS_PORT,
     Hostname           = inet_db:gethostname(),
     Socket             = open(),
-
+    ets:new(?ENDPOINTTABLE,[named_table]),
     ets_insert({MonitorServer, Sip, MonitorLatencyPort, Socket}),
 
     self() ! refresh_monitor_server_ip,
