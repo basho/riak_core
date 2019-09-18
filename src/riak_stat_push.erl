@@ -1,6 +1,6 @@
 %%%-------------------------------------------------------------------
 %%% @doc
-%%% Data given from riak_core_stat_console through console/config, passed
+%%% Data given from riak_stat_console through console/config, passed
 %%% into this gen_server to open a udp socket on a Port. Values from
 %%% Exometer are retrieved and sent as a Json object to a latency monitoring
 %%% server

@@ -219,8 +219,10 @@ find_unregister_status(_PN, _Stats) ->
 %%%-------------------------------------------------------------------
 -spec(the_alpha_stat(Alpha :: list(), Beta :: list()) -> term()).
 the_alpha_stat(Alpha, Beta) ->
+%%    io:format("A: ~p~nB: ~p~n",[length(Alpha),length(Beta)]),
     AlphaList = the_alpha_map([Alpha]),
     BetaList  = the_alpha_map(Beta),
+%%    io:format("Al: ~p~nBl: ~p~n",[length(AlphaList),length(BetaList)]),
     {_LeftOvers, AlphaStatList} =
         lists:foldl(fun
                         (AlphaStat, {BetaAcc, TheAlphaStats}) ->
@@ -235,15 +237,20 @@ the_alpha_stat(Alpha, Beta) ->
                                         [AlphaStat|TheAlphaStats]}
                             end
                     end, {BetaList, []}, AlphaList),
+%%    io:format("Asl: ~p~n",[AlphaStatList]),
     AlphaStatList.
 % The stats must fight, to become the alpha
-
-the_alpha_map(A_B) ->
+the_alpha_map([]) -> [];
+the_alpha_map([A_B]) when is_list(A_B) -> the_alpha_map(A_B);
+the_alpha_map([A|B]) when is_tuple(A) ->
     lists:foldl(fun
                   ({Stat, {Atom, Val}},Acc) -> [{Stat, {Atom, Val}}|Acc];
                   ({Stat, Val},Acc)         -> [{Stat, {atom, Val}}|Acc];
-                  (_,Acc) -> Acc
-              end,[], A_B).
+%%                  (Stats,Acc) when is_list(Stats)->
+%%                      io:format("List : ~p~n",[length(Stats)]),
+%%                      the_alpha_map(Stats);
+                    (_,Acc) -> Acc
+              end,[], [A|B]).
 
 
 %%%-------------------------------------------------------------------
@@ -436,7 +443,6 @@ save_profile(ProfileName) ->
 %% It will compare the current stats with the profile stats and will
 %% change the ones that need changing to prevent errors/less expense
 %% @end
-%% todo : change_list_to_status -> riak_core_metadata:fold(...) ?
 %%%-------------------------------------------------------------------
 -spec(load_profile(profilename()) -> ok | error()).
 load_profile(ProfileName) ->
@@ -453,6 +459,13 @@ load_profile(ProfileName) ->
             change_stat_list_to_status(ToChange),
             put(?LOADEDPFX, ?LOADEDKEY, ProfileName),
             io:format("Loaded Profile: ~s~n",[ProfileName])
+
+        %% the reason a profile is not checked to see if it is already
+        %% loaded is because it is easier to "reload" an already loaded
+        %% profile in the case the stats configuration is changed,
+        %% rather than "unloading" the profile and reloading it to change
+        %% many stats statuses unnecessarily
+
     end.
 
 change_stat_list_to_status(StatusList) ->
@@ -472,11 +485,18 @@ delete_profile(ProfileName) ->
     case check_meta(?LOADEDPKEY) of
         ProfileName ->
             put(?LOADEDPFX, ?LOADEDKEY, [<<"none">>]),
-            delete(?PROFPFX, ProfileName);
-        _ ->
-            delete(?PROFPFX, ProfileName)
-    end,
-    io:format("Profile Deleted : ~s~n",[ProfileName]).
+            delete(?PROFPFX, ProfileName),
+            io:format("Profile Deleted : ~s~n",[ProfileName]);
+        _Other ->
+            case check_meta(?PROFILEKEY(ProfileName)) of
+                [] ->
+                    io:format("Error : Profile does not Exist~n"),
+                    no_profile;
+                _ ->
+                    delete(?PROFPFX, ProfileName),
+                    io:format("Profile Deleted : ~s~n",[ProfileName])
+            end
+    end.
 
 
 %%%-------------------------------------------------------------------

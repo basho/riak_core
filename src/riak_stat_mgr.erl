@@ -16,7 +16,7 @@
     register/1,
 
 %% Reading API
-    read_stats/4, find_entries/4, aggregate/2,
+    read_stats/4, find_entries/4, aggregate/2, find_entries_exom/4,
 
 %% Updating API
     change_status/1,
@@ -296,7 +296,9 @@ change_status(StatsList) ->
 
 change_both_status(StatsList) ->
     change_meta_status(StatsList),
+%%    io:format("Changed status in meta~n"),
     change_exom_status(StatsList).
+%%    io:format("Changed status in exom~n").
 
 change_meta_status(Arg) ->
     riak_stat_meta:change_status(Arg).

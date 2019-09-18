@@ -134,9 +134,7 @@ profile_test_() ->
             {"Load a profile, already loaded",              fun test_load_profile_again/0},
             {"Delete a profile",                            fun test_delete_profile/0},
             {"Delete a non-existent profile",               fun test_delete_un_profile/0},
-            {"Delete a profile thats loaded",               fun test_delete_loaded_profile/0},
             {"Delete profile loaded on other nodes",        fun test_unknown_delete_profile/0},
-            {"Delete profile then load on other node",      fun test_delete_then_they_load/0},
             {"Reset a profile",                             fun test_reset_profile/0}
         ]).
 
@@ -250,14 +248,14 @@ test_data_sanitise_console() ->
     {N7,_T7,_S7, B7} = riak_stat_console:data_sanitise(A7),
     {N8, T8, S8, B8} = riak_stat_console:data_sanitise(A8),
     {N9,_T9,_S9,_B9} = riak_stat_console:data_sanitise(A9),
-    ?_assertEqual([riak|'_'],N1),
-    ?_assertEqual([riak,riak_kv|'_'],N2),
-    ?_assertEqual([riak,riak_kv,node,gets|'_'],N3),
-    ?_assertEqual([riak,riak_kv,node,gets],N4),
-    ?_assertEqual([node_gets],N5),
-    ?_assertEqual([riak|'_'],N6), ?_assertEqual(duration,T6),
-    ?_assertEqual([riak|'_'],N7), ?_assertEqual([mean,max],B7),
-    ?_assertEqual([riak,riak_kv|'_'],N8),?_assertEqual(spiral,T8),
+    ?_assertEqual([[riak|'_']],N1),
+    ?_assertEqual([[riak,riak_kv|'_']],N2),
+    ?_assertEqual([[riak,riak_kv,node,gets|'_']],N3),
+    ?_assertEqual([[riak,riak_kv,node,gets]],N4),
+    ?_assertEqual([[node_gets]],N5),
+    ?_assertEqual([[riak|'_']],N6), ?_assertEqual(duration,T6),
+    ?_assertEqual([[riak|'_']],N7), ?_assertEqual([mean,max],B7),
+    ?_assertEqual([[riak,riak_kv|'_']],N8),?_assertEqual(spiral,T8),
         ?_assertEqual('_',S8),?_assertEqual([one],B8),
     ?_assertEqual([[riak,'_',time],
                     [riak,'_','_',time],
@@ -308,10 +306,18 @@ test_save_profile() ->
 test_save_profile_for_two() ->
     %% Save a profile with different stats configuration on two separate
     %% nodes at the same time, see which becomes the alpha
+    %%
+    %% This test was one manually, the profile is consistent with only one
+    %% node always, therefore that node is the alpha.
+    %% However the node that "wins" the main profile stat configuration
+    %% is random.
     ok.
 
 test_save_profile_for_them() ->
     %% Save a profile, open on a different node
+    %%
+    %% Tested manually, the profile only changes the stats that need changing
+    %% on that node.
     ok.
 
 test_load_profile() ->
@@ -322,11 +328,37 @@ test_load_profile() ->
 
 test_load_all_profiles() ->
     %% load a profile, onto multiple nodes
+    %%
+    %% Tested manually, can be done, each node changes the stats based on
+    %% the stat configuration on that node,
     ok.
 
 test_load_profile_again() ->
     %% load a profile that is already loaded,
     %% enabled all the stats and load that profile again
+    %%
+    %% First time testing:
+    %%
+    %% RPC to 'dev1@127.0.0.1' failed: {'EXIT',
+%%    {{case_clause,{status,enabled}},
+%%        [{exometer,setopts,2,
+%%            [{file,
+%%                "/home/savannahallsop/github/riak/_checkouts/riak_core/_build/default/lib/exometer_core/src/exometer.erl"},
+%%                {line,535}]},
+%%            {lists,map,2,
+%%                [{file,"lists.erl"},{line,1239}]},
+%%            {lists,map,2,
+%%                [{file,"lists.erl"},{line,1239}]},
+%%            {riak_stat_mgr,change_status,1,
+%%                [{file,
+%%                    "/home/savannahallsop/github/riak/_checkouts/riak_core/src/riak_stat_mgr.erl"},
+%%                    {line,290}]},
+%%            {rpc,'-handle_call_call/6-fun-0-',5,
+%%                [{file,"rpc.erl"},{line,197}]}]}}
+%%
+%%  Testing it again: by trying to recreate the error
+%%
+%%  Works perfectly fine.
     ok.
 
 test_delete_profile() ->
@@ -338,28 +370,25 @@ test_delete_profile() ->
 test_delete_un_profile() ->
     %% Delete a profile that has never existed,
     %% then delete a profile that used to exist
-    ok.
+    ProfileName = ["Idonotexist"],
+    ?_assert(no_profile == riak_stat_profiles:delete_profile(ProfileName)),
+    ?_assert(no_profile == riak_stat_profiles:delete_profile(["anotheronebitesthedust"])).
 
-test_delete_loaded_profile() ->
-    %% Load a profile and then Delete it, check metadata for the
-    %% currently loaded profile
-    ok.
 
 test_unknown_delete_profile() ->
     %% Load a profile on another node, then delete it on a different node
-    ok.
-
-test_delete_then_they_load() ->
-    %% delete a profile on one node while it is being loaded on another
+    %%
+    %% Loaded "timothy" one dev1, deleted on dev2. Loaded timothy again on
+    %% dev1 and it loaded again.
+    %% Reset profile and loaded timothy with return Error : no profile exists.
     ok.
 
 test_reset_profile() ->
     %% Reset profile . i.e. set all stats to enabled and unload a profile
     ProfileName = ["you-were-my-brother-anakin"],
     riak_stat_profiles:save_profile(ProfileName),
-    ?_assert(ok == riak_stat_profiles:reset_profile()).
-    %% todo: check if all the stats have the status : enabled,
-    %% or check that the stats that are disabled is an empty list
+    ?_assert(ok == riak_stat_profiles:reset_profile()),
+    ?_assert([] == riak_stat_exom:select([{{[riak|'_'],'_',disabled},[],['$_']}])).
 
 %%% --------------------------------------------------------------
 
