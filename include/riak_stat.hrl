@@ -71,3 +71,13 @@
 -define(METADATA_ENABLED,   metadata_enabled).
 
 -define(PFX,             riak_stat:prefix()).
+
+
+%% Endpoint Polling Macros
+
+-define(INSTANCE,              "riak_stat_latency-polling").
+-define(MONITOR_SERVER,        "127.0.0.1").
+-define(MONITOR_LATENCY_PORT,  10075).
+-define(MONITOR_STATS_PORT,    10085).
+-define(ENDPOINTTABLE,         endpoint_state).
+

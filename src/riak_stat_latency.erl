@@ -21,12 +21,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--define(ENVAPP, riak_core).
--define(INSTANCE,              app_helper:get_env(?ENVAPP, instance)).
--define(MONITOR_SERVER,        app_helper:get_env(?ENVAPP, monitor_server)).
--define(MONITOR_LATENCY_PORT,  app_helper:get_env(?ENVAPP, monitor_latency_port)).
--define(MONITOR_STATS_PORT,    app_helper:get_env(?ENVAPP, monitor_stats_port)).
--define(ENDPOINTTABLE,         endpoint_state).
+
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -87,31 +82,39 @@ sanitise_data(Arg) ->
     List = break_up(Opts, ","),
     case Stats of
             [] -> case riak_stat_console:data_sanitise(List) of
-                      [riak|Rest] -> {sanitise_data_([]),[riak|Rest]};
-                      _ -> {sanitise_data_(List), ['_']}
+                      {[riak|Rest],_,_} ->
+                          {data_sanitise_2_electric_boogaloo([]),[riak|Rest]};
+                      _ ->
+                          {data_sanitise_2_electric_boogaloo(List), ['_']}
                   end;
-            Data -> {sanitise_data_(List),riak_stat_console:data_sanitise(Data)}
+            Data ->
+                {data_sanitise_2_electric_boogaloo(List),
+                    riak_stat_console:data_sanitise(Data)}
         end.
 
 break_up(Arg, Str) ->
     re:split(Arg, Str).
 
-sanitise_data_(Arg) ->
-    sanitise_data_(Arg, ?MONITOR_STATS_PORT, ?INSTANCE, ?MONITOR_SERVER).
-sanitise_data_([<<"port=", Po/binary>> | Rest], Port, Instance, Sip) ->
+data_sanitise_2_electric_boogaloo(Arg) ->
+    data_sanitise_2_electric_boogaloo(Arg, ?MONITOR_STATS_PORT, ?INSTANCE, ?MONITOR_SERVER).
+
+data_sanitise_2_electric_boogaloo([<<"port=", Po/binary>> | Rest], Port, Instance, Sip) ->
     NewPort =
         try binary_to_integer(Po) of
             Int -> Int
         catch _e:_r -> Port
         end,
-    sanitise_data_(Rest, NewPort, Instance, Sip);
-sanitise_data_([<<"instance=", I/binary>> | Rest], Port, _Instance, Sip) ->
+    data_sanitise_2_electric_boogaloo(Rest, NewPort, Instance, Sip);
+
+data_sanitise_2_electric_boogaloo([<<"instance=", I/binary>> | Rest], Port, _Instance, Sip) ->
     NewInstance = binary_to_list(I),
-    sanitise_data_(Rest, Port, NewInstance, Sip);
-sanitise_data_([<<"sip=", S/binary>> | Rest], Port, Instance, _Sip) ->
+    data_sanitise_2_electric_boogaloo(Rest, Port, NewInstance, Sip);
+
+data_sanitise_2_electric_boogaloo([<<"sip=", S/binary>> | Rest], Port, Instance, _Sip) ->
     NewIP = re:split(S, "\\s", [{return, list}]),
-    sanitise_data_(Rest, Port, Instance, NewIP);
-sanitise_data_([], Port, Instance, Sip) ->
+    data_sanitise_2_electric_boogaloo(Rest, Port, Instance, NewIP);
+
+data_sanitise_2_electric_boogaloo([], Port, Instance, Sip) ->
     {Port, Instance, Sip}.
 
 
@@ -121,9 +124,10 @@ sanitise_data_([], Port, Instance, Sip) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% get the host details of the udp_socket or http request details, similar to the state
-%% in a gen_server but kept in an ets - table to preserve it longer that the udp
-%% gen_server, information is pulled out like a last known request
+%% get the host details of the udp_socket or http request details,
+%% similar to the state in a gen_server but kept in an ets - table
+%% to preserve it longer that the udp gen_server, information is
+%% pulled out like a last known request
 %% @end
 %%%-------------------------------------------------------------------
 -spec(get_host(hostarg()) -> {socket(), server_ip() | server(), port()}).
