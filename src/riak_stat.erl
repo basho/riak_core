@@ -17,29 +17,24 @@
 %%% DELETE or RESET the stats.
 %%%
 %%% For registration the stats call into this module to become a uniform
-%%% format in a list to be "re-registered" in the metadata and in exometer
+%%% format in a list to be "re-registered" in the metadata and in exometer.
 %%% Unless the metadata is disabled (it is enabled by default), the stats
-%%% only get sent to exometer to be registered. The purpose of the
+%%% are sent to both to be registered. The purpose of the
 %%% metadata is to allow persistence of the stats registration and
-%%% configuration - meaning whether the stat is enabled/disabled/unregistered,
-%%% Exometer does not persist the stats values or information
-%%%
-%%% For reading the stats to the shell (riak attach) there are functions in
-%%% each module to return all/some/specific stats and their statuses or info
-%%% that is stored in either the metadata or exometer, these functions work
-%%% the same way as the "riak admin stat show ..." in the command line.
+%%% configuration - whether the stat is enabled/disabled/unregistered;
+%%% Exometer does not persist the stats values or information.
 %%%
 %%% For updating the stats, each of the stats module will call into this module
 %%% to update the stat in exometer by IncrVal given, all update function calls
 %%% call into the update_or_create/3 function in exometer. Meaning if the
-%%% stat is unregistered but is still hitting a function that updates it, it will
+%%% stat has been deleted but is still hitting a function that updates it, it will
 %%% create a basic (unspecific) metric for that stat so the update values are
 %%% stored somewhere. This means if the stat is to be unregistered/deleted,
 %%% its existence should be removed from the stats code, otherwise it is to
 %%% be disabled.
 %%%
-%%% Resetting the stats change the values back to 0, it's reset counter in the
-%%% metadata and in the exometer are updated +1
+%%% Resetting the stats change the values back to 0, and it's reset counter in the
+%%% metadata and in the exometer are updated +1 (enabled only)
 %%%
 %%% As of AUGUST 2019 -> the aggregate function is a test function and
 %%% works in a very basic way, i.e. it will produce the sum of any counter
@@ -54,27 +49,32 @@
 -module(riak_stat).
 -include_lib("riak_core/include/riak_stat.hrl").
 
-%% Registration API
 -export([
-    register/2, register_stats/1,
+    register/2,
+    register_stats/1,
 
-%% Read Stats API
-    find_entries/2, stats/0, app_stats/1, get_stats/1,
-    get_value/1, get_info/1, aggregate/2, sample/1,
+    find_entries/2,
+    stats/0,
+    app_stats/1,
+    get_stats/1,
+    get_value/1,
+    get_info/1,
+    aggregate/2,
+    sample/1,
 
-%% Update API
     update/3,
 
-%% Delete/Reset API
-    unregister/1, unregister/4, reset/1,
+    unregister/1,
+    unregister_vnode/4,
+    reset/1,
 
-%% Additional API
     prefix/0
 ]).
 
 -define(STATCACHE, app_helper:get_env(riak_core,exometer_cache,{cache,5000})).
+                    %% default can be changed in config this way.
 -define(INFOSTAT,  [name,type,module,value,cache,status,timestamp,options]).
-
+                    %% attributes for all the metrics stored in exometer
 
 %%%===================================================================
 %%% Registration API
@@ -98,6 +98,7 @@ register_(App, N,Type,O,Aliases) ->
     Opts = add_cache(O),
     register_stats({StatName,Type,Opts,Aliases}).
 
+%% All stats of App are appended onto the prefix
 stat_name(P, App, N) when is_atom(N) ->
     stat_name_([P, App, N]);
 stat_name(P, App, N) when is_list(N) ->
@@ -110,7 +111,7 @@ add_cache(Options) ->
     %% look for cache value in stat, if undefined - add cache option
     case proplists:get_value(cache, Options) of
         undefined -> [?STATCACHE | Options];
-        _ -> Options
+        _ -> Options %% Otherwise return the Options as is
     end.
 
 register_stats(StatInfo) -> riak_stat_mgr:register(StatInfo).
@@ -139,7 +140,7 @@ app_stats(App) ->
 %%%-------------------------------------------------------------------
 %% @doc
 %% Give a path to a particular stat such as : [riak,riak_kv,node,gets,time]
-%% to retrieve the stat's as [{Name,Type,Status}]
+%% to retrieve the stat' as [{Name,Type,Status}]
 %% @end
 %%%-------------------------------------------------------------------
 -spec(get_stats(statslist()) -> arg()).
@@ -148,6 +149,7 @@ get_stats(Path) ->
 
 find_entries(Stats, Status) ->
     find_entries(Stats, Status, '_', []).
+
 find_entries(Stats, Status, Type, DPs) ->
     riak_stat_mgr:find_entries(Stats, Status, Type, DPs).
 
@@ -167,7 +169,7 @@ get_value(Arg) ->
 %%%-------------------------------------------------------------------
 -spec(get_info(app() | statslist()) -> stats()).
 get_info(Arg) when is_atom(Arg) ->
-    get_info([prefix(),Arg |'_']); %% assumed arg is the app
+    get_info([prefix(),Arg |'_']); %% assumed arg is the app (when atom)
 get_info(Arg) ->
     print([{Stat, stat_info(Stat)} || {Stat, _Status} <- get_stats(Arg)]).
 
@@ -176,11 +178,11 @@ stat_info(Stat) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% @see exometer:aggregate
+%% @see exometer:aggregate/2
 %% Does the average of stats averages
 %% @end
 %%%-------------------------------------------------------------------
--spec(aggregate(pattern(), datapoint()) -> stats()).
+-spec(aggregate(metricname(), datapoint()) -> stats()).
 aggregate(Stats, DPs) ->
     Pattern = [{{Stats, '_', '_'}, [], ['$_']}],
     print(aggregate_(Pattern, DPs)).
@@ -197,6 +199,7 @@ aggregate_(Pattern, DPs) ->
 sample(StatName) ->
     riak_stat_exom:sample(StatName).
 
+
 %%%===================================================================
 %%% Updating Stats API
 %%%===================================================================
@@ -205,13 +208,14 @@ sample(StatName) ->
 %% update a stat in exometer, if the stat doesn't exist it will
 %% re_register it. When the stat is deleted in exometer the status is
 %% changed to unregistered in metadata, it will check the metadata
-%% first, if unregistered then ok is returned by default and no stat
+%% first, if unregistered then 'ok' is returned by default and no stat
 %% is created.
 %% @end
 %%%-------------------------------------------------------------------
 -spec(update(statname(), incrvalue(), type()) -> ok | error()).
 update(Name, Inc, Type) ->
     ok = riak_stat_exom:update(Name, Inc, Type).
+
 
 %%%===================================================================
 %%% Deleting/Resetting Stats API
@@ -222,30 +226,30 @@ update(Name, Inc, Type) ->
 %% {status, unregistered}, and deletes the metric from exometer
 %% @end
 %%%-------------------------------------------------------------------
--spec(unregister(app(), Mod :: data(), Idx :: data(), type()) ->
-    ok | error()).
-unregister({Mod, Idx, Type, App}) ->
-    unregister(Mod, Idx, Type, App);
-unregister(StatName) ->
-    unreg_stats(StatName).
+-spec(unregister({app(),Idx :: term(),type(),app()}) -> ok | error()).
+-spec(unregister(metricname()) -> ok | error()).
+unregister({Mod, Idx, Type, App}) -> %% specific to riak_core vnode
+    unregister_vnode(Mod, Idx, Type, App);
+unregister(StatName) -> %% generic
+    unregister_stat(StatName).
 
-unregister(App, Mod, Idx, Type) ->
+unregister_vnode(App, Mod, Idx, Type) ->
     P = prefix(),
-    unreg_stats(P, App, Type, Mod, Idx).
+    unregister_stat(P, App, Type, Mod, Idx).
+
+unregister_stat(StatName) ->
+    unreg_stats(StatName).
+unregister_stat(P, App, Type, [Op, time], Index) ->
+    unreg_stats([P, App, Type, Op, time, Index]);
+unregister_stat(P, App, Type, Mod, Index) ->
+    unreg_stats([P, App, Type, Mod, Index]).
 
 unreg_stats(StatName) ->
-    unreg_stats_(StatName).
-unreg_stats(P, App, Type, [Op, time], Index) ->
-    unreg_stats_([P, App, Type, Op, time, Index]);
-unreg_stats(P, App, Type, Mod, Index) ->
-    unreg_stats_([P, App, Type, Mod, Index]).
-
-unreg_stats_(StatName) ->
     riak_stat_mgr:unregister(StatName).
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% reset the stat in exometer and in metadata
+%% reset the stat in exometer and in metadata (enabled metrics only)
 %% @end
 %%%-------------------------------------------------------------------
 -spec(reset(metricname()) -> ok | error()).
@@ -268,7 +272,8 @@ prefix() ->
 
 %%%-------------------------------------------------------------------
 
--spec(print(data(), attr()) -> value()).
+-spec(print(arg()) -> ok).
+-spec(print(data(), attr()) -> ok).
 print(Arg) ->
     print(Arg, []).
 print(Entries, Attr) when is_list(Entries) ->
