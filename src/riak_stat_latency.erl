@@ -110,7 +110,6 @@ sanitise_data_([], Port, Instance, Sip) ->
     {Port, Instance, Sip}.
 
 
-
 %%%-------------------------------------------------------------------
 
 -type hostarg() :: atom().

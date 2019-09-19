@@ -1276,14 +1276,6 @@ enable_metadata(Arg) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%% polling %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
--spec(setdown_endpoint(term()) -> ok).
-%% @doc
-%% disable the connection, Port given doesn't always matter - unless
-%% multiple ports are open terminates gen_servers
-%% @end
-setdown_endpoint(Arg) ->
-    riak_stat_latency:setdown(Arg).
-
 -spec(setup_endpoint(term()) -> ok).
 %% @doc
 %% Setup the port, similar to how riak-admin stat show takes in
@@ -1295,3 +1287,12 @@ setdown_endpoint(Arg) ->
 %% @end
 setup_endpoint(Arg) ->
     riak_stat_latency:setup(Arg).
+
+-spec(setdown_endpoint(term()) -> ok).
+%% @doc
+%% disable the connection, Port given doesn't always matter - unless
+%% multiple ports are open terminates gen_servers
+%% @end
+setdown_endpoint(Arg) ->
+    riak_stat_latency:setdown(Arg).
+

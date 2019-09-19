@@ -11,7 +11,7 @@
 
 -behaviour(gen_server).
 
--export([notify/1, notify/2, notify/3, get_host/0]).
+-export([get_host/0]).
 
 %% API
 -export([start_link/1]).
@@ -69,55 +69,6 @@
 %%%===================================================================
 %%% API
 %%%===================================================================
-%%--------------------------------------------------------------------
-%% @doc
-%% Notify the udp latency monitor
-%% @end
-%%--------------------------------------------------------------------
--spec(notify(jsonprops()) -> ok).
-notify(JsonProps) when is_list(JsonProps) ->
-    DateTime = format_time(),
-    try
-        case get_host() of
-            {Socket, Host, Port} ->
-                Data = build_data_packet(JsonProps, DateTime),
-                send(Socket, Host, Port, Data);
-            {error, no_udp_socket} ->
-                lager:error("No UDP socket for sending latency"),
-                ok
-        end
-    catch Class:Reason  ->
-        lager:error("Unable to log latency for json=~p, timestamp=~s, Reason={~p,~p}, Stacktrace=~p~n",
-            [JsonProps, DateTime, Class, Reason, erlang:get_stacktrace()])
-    end;
-notify(JsonProps) ->
-    lager:error("Unknown format of JsonProps=~p~n", [JsonProps]).
-
--spec(notify(serviceid(), correlationid()) -> ok).
-notify(ServiceId, CorrelationId)
-    when is_list(ServiceId) orelse is_binary(ServiceId)
-    andalso is_list(CorrelationId) orelse is_binary(CorrelationId) ->
-    notify([
-        {service_id, ServiceId},
-        {correlation_id, CorrelationId}
-    ]);
-notify(ServiceId, CorrelationId) ->
-    lager:error("Unknown format ServiceId=~p, CorrelationId=~p~n", [ServiceId, CorrelationId]).
-
--spec(notify(serviceid(), correlationid(), jsonprops()) -> ok).
-notify(ServiceId, CorrelationId, JsonProps)
-    when is_list(ServiceId) orelse is_binary(ServiceId)
-    andalso is_list(CorrelationId) orelse is_binary(CorrelationId)
-    andalso is_list(JsonProps) ->
-    notify([
-        {service_id, ServiceId},
-        {correlation_id, CorrelationId}
-        | JsonProps
-    ]);
-notify(ServiceId, CorrelationId, JsonProps) ->
-    lager:error("Unknown format ServiceId=~p, CorrelationId=~p, JsonProps=~p~n",
-        [ServiceId, CorrelationId, JsonProps]).
-
 
 %%--------------------------------------------------------------------
 -spec(start_link(Term::arg()) ->
@@ -217,11 +168,8 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-format_time() ->
-    format_time(os:timestamp()).
 
-format_time(Time) ->
-    riak_stat_json:format_time(Time).
+
 
 send(Socket, Host, Port, Data) ->
     gen_udp:send(Socket, Host, Port, Data).
@@ -250,46 +198,9 @@ dispatch_stats(Socket, ComponentHostname, Instance, MonitoringHostname, Port, St
 
     erlang:send_after(?STATS_UPDATE_INTERVAL, self(), {dispatch_stats, Stats}).
 
-get_host() ->
-    riak_stat_latency:get_host(udp_info).
-
-build_data_packet(Props, DateTime) ->
-    [${, riak_stat_json:format_fields([{timestamp, DateTime}|Props], []), $}].
 
 get_stats(Stats) ->
     riak_stat_exom:get_values(Stats).
 
 
 
--ifdef(TEST).
-
-build_data_packet_test() ->
-    DateTime = format_time({1429,703171,905719}),
-    ?assertEqual("{\"timestamp\":\"2015-04-22T11:46:11.905Z\",\"service_id\":\"test\",\"correlation_id\":\"document_1\"}",
-        lists:flatten(build_data_packet([{service_id, "test"}, {correlation_id, document_1}], DateTime))),
-
-    ?assertEqual("{\"timestamp\":\"2015-04-22T11:46:11.905Z\",\"service_id\":\"test\",\"correlation_id\":\"document_1\",\"wibble\":1}",
-        lists:flatten(build_data_packet([{service_id, "test"}, {correlation_id, document_1}|[{wibble, 1}]], DateTime))),
-
-    ?assertEqual("{\"timestamp\":\"2015-04-22T11:46:11.905Z\",\"service_id\":\"test\",\"correlation_id\":\"document_1\",\"wobble\":[\"hello\",\"world\"],\"wibble\":1}",
-        lists:flatten(build_data_packet([{service_id, "test"}, {correlation_id, document_1},{wobble, [<<"hello">>, <<"world">>]}|[{wibble, 1}]], DateTime))),
-
-    ?assertEqual("{\"timestamp\":\"2015-04-22T11:46:11.905Z\",\"service_id\":\"test\",\"correlation_id\":\"document_1\"}",
-        lists:flatten(build_data_packet([{service_id, "test"}, {correlation_id, "document_1"}], DateTime))),
-
-    ?assertEqual("{\"timestamp\":\"2015-04-22T11:46:11.905Z\",\"service_id\":\"test\",\"correlation_id\":\"document_1\"}",
-        lists:flatten(build_data_packet([{service_id, <<"test">>}, {correlation_id, <<"document_1">>}], DateTime))),
-
-    ?assertEqual("{\"timestamp\":\"2015-04-22T11:46:11.905Z\",\"service_id\":1,\"correlation_id\":2}",
-        lists:flatten(build_data_packet([{service_id, 1}, {correlation_id, 2}], DateTime))).
-
-build_stats_test() ->
-    JsonStats = riak_stat_json:metrics_to_json([{[wibble, wobble], [{95, 23}, {n, 290}]}], [], []),
-    ?debugFmt("~s", [JsonStats]).
-
--endif.
-
-
--ifdef(TEST).
-
--endif.
