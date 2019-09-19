@@ -61,7 +61,7 @@
 -define(SPIRAL_TIME_SPAN,      app_helper:get_env(?ENVAPP, endpoint_stats_spiral_time_span, 1000)).
 -define(HISTOGRAM_TIME_SPAN,   app_helper:get_env(?ENVAPP, endpoint_stats_histogram_time_span, 1000)).
 
--define(UDP_OPEN_PORT,         0).
+-define(UDP_OPEN_PORT,         10029).
 -define(UDP_OPEN_BUFFER,       {buffer, 100*1024*1024}).
 -define(UDP_OPEN_SNDBUFF,      {sndbuf,   5*1024*1024}).
 -define(UDP_OPEN_ACTIVE,       {active,         false}).
