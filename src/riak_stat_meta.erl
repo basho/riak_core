@@ -130,7 +130,6 @@ find_entries(Stats,Status,Type) ->
         end, Stats
     )).
 
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% Using riak_core_metadata the statname(s) is passed in a tuple:
@@ -171,7 +170,6 @@ fold(Stat, Status0, Type0) ->
                                         {Acc, Status, Type}
                                 end, {[], Status0, Type0}, ?STATPFX, [{match, Stat}]),
     Stats.
-
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -219,10 +217,8 @@ find_unregister_status(_PN, _Stats) ->
 %%%-------------------------------------------------------------------
 -spec(the_alpha_stat(Alpha :: list(), Beta :: list()) -> term()).
 the_alpha_stat(Alpha, Beta) ->
-%%    io:format("A: ~p~nB: ~p~n",[length(Alpha),length(Beta)]),
     AlphaList = the_alpha_map([Alpha]),
     BetaList  = the_alpha_map(Beta),
-%%    io:format("Al: ~p~nBl: ~p~n",[length(AlphaList),length(BetaList)]),
     {_LeftOvers, AlphaStatList} =
         lists:foldl(fun
                         (AlphaStat, {BetaAcc, TheAlphaStats}) ->
@@ -237,18 +233,15 @@ the_alpha_stat(Alpha, Beta) ->
                                         [AlphaStat|TheAlphaStats]}
                             end
                     end, {BetaList, []}, AlphaList),
-%%    io:format("Asl: ~p~n",[AlphaStatList]),
     AlphaStatList.
 % The stats must fight, to become the alpha
+
 the_alpha_map([]) -> [];
 the_alpha_map([A_B]) when is_list(A_B) -> the_alpha_map(A_B);
 the_alpha_map([A|B]) when is_tuple(A) ->
     lists:foldl(fun
                   ({Stat, {Atom, Val}},Acc) -> [{Stat, {Atom, Val}}|Acc];
                   ({Stat, Val},Acc)         -> [{Stat, {atom, Val}}|Acc];
-%%                  (Stats,Acc) when is_list(Stats)->
-%%                      io:format("List : ~p~n",[length(Stats)]),
-%%                      the_alpha_map(Stats);
                     (_,Acc) -> Acc
               end,[], [A|B]).
 

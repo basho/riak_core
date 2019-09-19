@@ -562,6 +562,4 @@ tests_true() ->
     {Arg,_t,_S,_D} = data_sanitise(["true"]),
     ?assertEqual(Arg, [true]).
 
-
-
 -endif.

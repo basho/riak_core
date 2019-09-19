@@ -152,7 +152,7 @@ legacy_search(Stats, Status, Type) ->
         legacy_search_(S, Status, Type)
               end, Stats)).
 
-%% todo : change re:run, as the data is not binary anymore
+%% todo : revamp
 legacy_search_(Stat, Status, Type) ->
     try re:run(Stat, "\\.",[]) of
         {match, _} -> %% wrong format, does not match
@@ -260,7 +260,6 @@ find_entries_exom(Stats, Status, Type, DPs) ->
             end;
         NewStats ->
             {NewStats,DPs}
-
     end.
 
 exo_select(MatchSpec) ->
@@ -296,9 +295,7 @@ change_status(StatsList) ->
 
 change_both_status(StatsList) ->
     change_meta_status(StatsList),
-%%    io:format("Changed status in meta~n"),
     change_exom_status(StatsList).
-%%    io:format("Changed status in exom~n").
 
 change_meta_status(Arg) ->
     riak_stat_meta:change_status(Arg).
@@ -400,7 +397,6 @@ reset_profile() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%% EUNIT TESTS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
 
 -ifdef(EUNIT).
 -include_lib("eunit/include/eunit.hrl").

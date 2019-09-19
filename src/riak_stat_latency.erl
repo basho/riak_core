@@ -6,7 +6,7 @@
 %%% @end
 %%%-------------------------------------------------------------------
 -module(riak_stat_latency).
--include_lib("riak_core/include/riak_core_stat.hrl").
+-include_lib("riak_core/include/riak_stat.hrl").
 
 %% API
 -export([
@@ -20,6 +20,13 @@
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
+
+-define(ENVAPP, riak_core).
+-define(INSTANCE,              app_helper:get_env(?ENVAPP, instance)).
+-define(MONITOR_SERVER,        app_helper:get_env(?ENVAPP, monitor_server)).
+-define(MONITOR_LATENCY_PORT,  app_helper:get_env(?ENVAPP, monitor_latency_port)).
+-define(MONITOR_STATS_PORT,    app_helper:get_env(?ENVAPP, monitor_stats_port)).
+-define(ENDPOINTTABLE,         endpoint_state).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -39,12 +46,10 @@
 %%%-------------------------------------------------------------------
 -spec(setup(arg()) -> ok).
 setup(Arg) ->
-%%    {{Port, Instance, Sip}, STATSorPROFILES} =
         case sanitise_data(Arg) of
             ok -> ok;
             Other -> start_server(riak_stat_push,Other)
         end.
-%%    start_server(riak_stat_push, {{Port, Instance, Sip}, STATSorPROFILES}).
 
 start_server(Child, Arg) ->
     riak_core_stats_sup:start_server(Child, Arg).

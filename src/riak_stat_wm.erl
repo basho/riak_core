@@ -93,14 +93,6 @@ content_types_provided(Req, Ctx) ->
 %% Determine a connection to riak
 %% @end
 service_available(Req, Ctx=#ctx{}) ->
-%%    ClientId = riak_kv_wm_utils:get_client_id(Req),
-%%    case riak_kv_wm_utils:get_riak_client(Riak, ClientId) of
-%%        {ok, Client} ->
-%%            {true, Req, Ctx#ctx{client = Client}};
-%%        Error ->
-%%            {false, wrq:set_resp_body(io_lib:format("Cannot connect to Riak: ~p~n", [Error]),
-%%              wrq:set_resp_header(?CONTENT_TYPE, ?PLAIN_TEXT_CONTENT_TYPE, Req))}
-%%      end,
     {true, Req, Ctx}.
 
 %%--------------------------------------------------------------------

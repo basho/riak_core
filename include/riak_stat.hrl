@@ -70,4 +70,4 @@
 -define(IS_ENABLED(Arg),    app_helper:get_env(riak_core,Arg,true)).
 -define(METADATA_ENABLED,   metadata_enabled).
 
--define(PFX,             riak_core_stat_admin:prefix()).
+-define(PFX,             riak_stat:prefix()).

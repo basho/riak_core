@@ -1238,7 +1238,8 @@ load_profile(ProfileName) ->
 %% profile name entered as the key, the stats and their status as the value.
 %% Profiles can be overwritten if the new profile is saved under the same name.
 %% @end
-add_profile(ProfileName) -> riak_stat_profiles:save_profile(ProfileName).
+add_profile(ProfileName) ->
+    riak_stat_profiles:save_profile(ProfileName).
 
 -spec(remove_profile(FileName :: term()) -> term()).
 %% @doc
@@ -1295,4 +1296,3 @@ setup_endpoint(Arg) ->
 %% @end
 setdown_endpoint(Arg) ->
     riak_stat_latency:setdown(Arg).
-

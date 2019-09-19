@@ -11,8 +11,6 @@
 
 -behaviour(gen_server).
 
--export([get_host/0]).
-
 %% API
 -export([start_link/1]).
 
@@ -168,7 +166,6 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-
 
 
 send(Socket, Host, Port, Data) ->
