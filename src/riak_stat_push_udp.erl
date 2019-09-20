@@ -122,9 +122,6 @@ handle_info({dispatch_stats, Stats}, #state{socket=Socket, stats_port = Port,
     server_ip = ServerIp, hostname = Hostname, instance = Instance} = State) ->
     dispatch_stats(Socket, Hostname, Instance, ServerIp, Port, Stats),
     {noreply, State};
-handle_info({guess_whos_back,Socket,MonitoringHostName,Port,JsonStats},State) ->
-    send(Socket,MonitoringHostName,Port,JsonStats),
-    {noreply,State};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -159,10 +156,14 @@ open() ->
     Socket.
 
 
-dispatch_stats(Socket,ComponentHostname,Instance,MonitoringHostname,Port,Stats) ->
-    riak_stat_push_util:dispatch_stats(
-        Socket,ComponentHostname,Instance,MonitoringHostname,Port,Stats,self()).
-
+dispatch_stats(Socket, ComponentHostname, Instance, MonitoringHostname, Port, Stats) ->
+    case riak_stat_push_util:json_stats(ComponentHostname, Instance, Stats) of
+        ok ->
+            erlang:send_after(?STATS_UPDATE_INTERVAL, self(), {dispatch_stats, Stats});
+        JsonStats ->
+            send(Socket, MonitoringHostname, Port, JsonStats),
+            erlang:send_after(?STATS_UPDATE_INTERVAL, self(), {dispatch_stats, Stats})
+    end.
 
 
 -ifdef(TEST).

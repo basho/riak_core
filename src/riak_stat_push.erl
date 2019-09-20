@@ -16,10 +16,14 @@
     get_stats/0,
     sanitise_data/1]).
 
+%% todo: make it so the sip instance and port should be added in,
+%% should not be undefined in the gen_server, otherwise fail.
+
+
 %%%-------------------------------------------------------------------
 %% @doc
 %% the default operation of this function is to start up the pushing
-%% andpolling of stats from exometer to the UDP endpoint "setup".
+%% and polling of stats from exometer to the UDP endpoint "setup".
 %% The ability to pass in an argument gives the added layer of
 %% functionality to choose the endpoint details quicker and easier,
 %% passing in arguments is optional. sanitise the argument passed in
@@ -37,7 +41,8 @@
 setup(Arg) ->
     case sanitise_data(Arg) of
         ok -> ok;
-        SanitisedData -> start_server(riak_stat_push_udp,SanitisedData)
+        SanitisedData ->
+            start_server(riak_stat_push_udp,SanitisedData)
     end.
 
 start_server(Child, Arg) ->
@@ -58,7 +63,7 @@ setdown(_Arg) ->
     terminate_server().
 
 terminate_server() ->
-    riak_core_stats_sup:stop_server(riak_stat_push).
+    riak_core_stats_sup:stop_server(riak_stat_push_udp).
 
 %%--------------------------------------------------------------------
 
