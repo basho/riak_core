@@ -87,8 +87,8 @@
 %% as a name, as it is just the key, but it cannot be loaded from console
 %% unless the format is of the same form. i.e. saving it from console
 %% saves it in binary form, saving from shell can be of any format, if
-%% it is to be loaded from console then it must be of the same input format
-%% entered from "riak admin stat load-profile ...."
+%% it is to be loaded from console then it must be of the same input
+%% format entered from "riak admin stat load-profile ...."
 %% @end
 %% -------------------------------------------------------------------
 
@@ -114,8 +114,8 @@ save_profile(ProfileName) ->
 %% will return {error, no_profile}, if nothing was entered it will return
 %% the statement below. Stats will be pulled out of the metadata and
 %% compared to the current status of the stats, It will only enable the
-%% disabled stats and disable the enabled stats etc, any unregistered stats that
-%% are saved in the profile will do nothing - will be ignored.
+%% disabled stats and disable the enabled stats etc, any unregistered
+%% stats that are saved in the profile will do nothing - will be ignored.
 %% the return will be 'ok' | {error, Reason}
 %% @end
 %% -------------------------------------------------------------------
