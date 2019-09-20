@@ -1,7 +1,7 @@
 %%%-------------------------------------------------------------------
 %%% @doc
-%%% This module is for the administration of the stats within riak_core
-%%% and other stats, in other riak apps. Specifically:
+%%% This module is for the administration of the stats within
+%%% riak_core and other stats, in other riak apps. Specifically:
 %%% @see :
 %%%
 %%% riak_api_stat
@@ -13,36 +13,38 @@
 %%% riak_core_connection_mgr_stats (riak_repl)
 %%% riak_core_exo_monitor (riak_core)
 %%%
-%%% These _stat modules call into this module to REGISTER, READ, UPDATE,
-%%% DELETE or RESET the stats.
+%%% These _stat modules call into this module to REGISTER, READ,
+%%% UPDATE, DELETE or RESET the stats.
 %%%
-%%% For registration the stats call into this module to become a uniform
-%%% format in a list to be "re-registered" in the metadata and in exometer.
-%%% Unless the metadata is disabled (it is enabled by default), the stats
-%%% are sent to both to be registered. The purpose of the
-%%% metadata is to allow persistence of the stats registration and
-%%% configuration - whether the stat is enabled/disabled/unregistered;
+%%% For registration the stats call into this module to become a
+%%% uniform format in a list to be "re-registered" in the metadata
+%%% and in exometer. Unless the metadata is disabled (it is enabled
+%%% by default), the stats are sent to both to be registered. The
+%%% purpose of the metadata is to allow persistence of the stats
+%%% registration and configuration - whether the stat is
+%%% enabled/disabled/unregistered;
 %%% Exometer does not persist the stats values or information.
 %%%
-%%% For updating the stats, each of the stats module will call into this module
-%%% to update the stat in exometer by IncrVal given, all update function calls
-%%% call into the update_or_create/3 function in exometer. Meaning if the
-%%% stat has been deleted but is still hitting a function that updates it, it will
-%%% create a basic (unspecific) metric for that stat so the update values are
-%%% stored somewhere. This means if the stat is to be unregistered/deleted,
-%%% its existence should be removed from the stats code, otherwise it is to
-%%% be disabled.
+%%% For updating the stats, each of the stats module will call into
+%%% this module to update the stat in exometer by IncrVal given, all
+%%% update function calls call into the update_or_create/3 function
+%%% in exometer. Meaning if the stat has been deleted but is still
+%%% hitting a function that updates it, it will create a basic
+%%% (unspecific) metric for that stat so the update values are stored
+%%% somewhere. This means if the stat is to be unregistered/deleted,
+%%% its existence should be removed from the stats code, otherwise it
+%%% is to be disabled.
 %%%
-%%% Resetting the stats change the values back to 0, and it's reset counter in the
-%%% metadata and in the exometer are updated +1 (enabled only)
+%%% Resetting the stats change the values back to 0, and it's reset
+%%% counter in the metadata and in the exometer are updated +1
+%%% (enabled only)
 %%%
 %%% As of AUGUST 2019 -> the aggregate function is a test function and
-%%% works in a very basic way, i.e. it will produce the sum of any counter
-%%% datapoints for any stats given, or the average of any "average" datapoints
-%%% such as mean/median/one/value etc... This only works on a single nodes
-%%% stats list, there will be updates in future to aggregate the stats
-%%% for all the nodes.
-%%%
+%%% works in a very basic way, i.e. it will produce the sum of any
+%%% counter datapoints for any stats given, or the average of any
+%%% "average" datapoints such as mean/median/one/value etc...
+%%% This only works on a single nodes stats list, there will be
+%%% updates in future to aggregate the stats for all the nodes.
 %%% @end
 %%%-------------------------------------------------------------------
 
@@ -71,17 +73,20 @@
     prefix/0
 ]).
 
--define(STATCACHE, app_helper:get_env(riak_core,exometer_cache,{cache,5000})).
-                    %% default can be changed in config this way.
--define(INFOSTAT,  [name,type,module,value,cache,status,timestamp,options]).
-                    %% attributes for all the metrics stored in exometer
+-define(STATCACHE, app_helper:get_env(riak_core,exometer_cache,
+                                                    {cache,5000})).
+                  %% default can be changed in config this way.
+
+-define(INFOSTAT,  [name,type,module,value,cache,
+                    status,timestamp,options]).
+                  %% attributes for all the metrics stored in exometer
 
 %%%===================================================================
 %%% Registration API
 %%%===================================================================
 %%%-------------------------------------------------------------------
 %% @doc
-%% register an apps stats in both metadata and exometer adding the stat
+%% register apps stats in both metadata and exometer adding the stat
 %% prefix
 %% @end
 %%%-------------------------------------------------------------------
@@ -139,7 +144,7 @@ app_stats(App) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% Give a path to a particular stat such as : [riak,riak_kv,node,gets,time]
+%% Give a path to a stat such as : [riak,riak_kv,node,gets,time]
 %% to retrieve the stat' as [{Name,Type,Status}]
 %% @end
 %%%-------------------------------------------------------------------
@@ -164,14 +169,16 @@ get_value(Arg) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% get the info of the stat/app-stats from exometer (enabled metrics only)
+%% get the info of the stat/app-stats from exometer
+%% (enabled metrics only)
 %% @end
 %%%-------------------------------------------------------------------
 -spec(get_info(app() | statslist()) -> stats()).
 get_info(Arg) when is_atom(Arg) ->
-    get_info([prefix(),Arg |'_']); %% assumed arg is the app (when atom)
+    get_info([prefix(),Arg |'_']); %% assumed arg is the app (atom)
 get_info(Arg) ->
-    print([{Stat, stat_info(Stat)} || {Stat, _Status} <- get_stats(Arg)]).
+    print([{Stat, stat_info(Stat)} ||
+        {Stat, _Status} <- get_stats(Arg)]).
 
 stat_info(Stat) ->
     riak_stat_exom:get_info(Stat, ?INFOSTAT).
@@ -283,7 +290,7 @@ print(Entries, Attr) ->
 
 %%%===================================================================
 %%% EUNIT Testing
-%%%==================================================================
+%%%===================================================================
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
