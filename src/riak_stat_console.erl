@@ -1,9 +1,10 @@
 %%%-------------------------------------------------------------------
 %%% @doc
 %%% Commands for "riak admin stat ___ ...." call into this module from
-%%% riak_core_console. the purpose of these console commands is to display
-%%% to the user all the information they want about an entry or entries,
-%%% then the stats can be configured/updated in the metadata/exometer directly.
+%%% riak_core_console. the purpose of these console commands is to
+%%% display to the user all the information they want about an entry
+%%% or entries, then the stats can be configured/updated in the
+%%% metadata/exometer directly.
 %%% @end
 %%%-------------------------------------------------------------------
 -module(riak_stat_console).
@@ -44,9 +45,11 @@
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% riak admin stat show <entry>/type=(type())/status=(enabled|disabled|*)/[dps].
+%% riak admin stat show
+%%      <entry>/type=(type())/status=(enabled|disabled|*)/[dps].
 %% Show enabled or disabled stats
-%% when using riak-admin stat show riak.** enabled stats will show by default
+%% when using riak-admin stat show riak.** enabled stats will
+%% show by default
 %%
 %% otherwise use: riak-admin stat show <entry>/status=* | disabled
 %% @end
@@ -57,7 +60,7 @@ show_stat(Arg) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% Check which stats in exometer are not updating (only checks enabled)
+%% Check which stats in exometer are not updating (checks enabled)
 %% @end
 %%%-------------------------------------------------------------------
 -spec(show_stat_0(data()) -> value()).
@@ -91,7 +94,8 @@ pick_info_attrs(Arg) ->
             (P, {As, Ps}) -> {As, [P | Ps]}
         end, {[], []}, split_arg(Arg)) of
         {[], Rest} ->
-            {[name, type, module, value, cache, status, timestamp, options], Rest};
+            {[name, type, module, value, cache,
+                status, timestamp, options], Rest};
         Other ->
             Other
     end.
@@ -117,17 +121,18 @@ disable_stat_0(Arg) ->
 %%%-------------------------------------------------------------------
 -spec(status_change(data(), status()) -> ok).
 status_change(Arg, ToStatus) ->
-    {Entries,_DP} = % if disabling lots of stats, pull out only enabled ones
+    {Entries,_DP} = % if disabling stats, pull only enabled ones
     case ToStatus of
         enabled  -> find_entries(data_sanitise(Arg, '_', disabled));
         disabled -> find_entries(data_sanitise(Arg, '_', enabled))
     end,
-    change_status([{Stat, {status, ToStatus}} || {Stat,_,_} <- Entries]).
+    change_status([{Stat, {status, ToStatus}} ||
+        {Stat,_,_} <- Entries]).
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% resets the stats in metadata and exometer and tells metadata that the stat
-%% has been reset
+%% resets the stats in metadata and exometer and tells metadata that
+%% the stat has been reset
 %% @end
 %%%-------------------------------------------------------------------
 -spec(reset_stat(data()) -> ok).
@@ -137,10 +142,11 @@ reset_stat(Arg) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% enabling the metadata allows the stats configuration and the stats values to
-%% be persisted, disabling the metadata returns riak to its original functionality
-%% of only using the exometer functions. Enabling and disabling the metadata occurs
-%% here, directing the stats and function work occurs in the riak_stat_coordinator
+%% enabling the metadata allows the stats configuration and the stats
+%% values to be persisted, disabling the metadata returns riak to its
+%% original functionality of only using the exometer functions.
+%% Enabling and disabling the metadata occurs here, directing the
+%% stats and function work occurs in the riak_stat_coordinator
 %% @end
 %%%-------------------------------------------------------------------
 -spec(enable_metadata(data()) -> ok).
@@ -156,9 +162,11 @@ enable_metadata(Arg) ->
                 true ->
                     riak_stat_mgr:reload_metadata(
                         riak_stat_exom:find_entries([riak])),
-                    application:set_env(riak_core, ?METADATA_ENABLED, Bool);
+                    application:set_env(riak_core,
+                        ?METADATA_ENABLED, Bool);
                 false ->
-                    application:set_env(riak_core, ?METADATA_ENABLED, Bool);
+                    application:set_env(riak_core,
+                        ?METADATA_ENABLED, Bool);
                 Other ->
                     print("Wrong argument entered: ~p~n", [Other])
             end
@@ -170,7 +178,7 @@ enable_metadata(Arg) ->
 %%%-------------------------------------------------------------------
 %%% @doc
 %%% Arguments coming in from the console or _stat modules arrive at
-%%% this function, the data is transformed into a metrics name and type
+%%% this function, data is transformed into a metrics name and type
 %%% status/datapoints if they have been given.
 %%% @end
 %%%-------------------------------------------------------------------
@@ -225,7 +233,7 @@ data_sanitise(BinArgs, Type, Status, DPs) ->
 %% legacy code \/
 type_status_and_dps([], Type, Status, DPs) ->
     {Type, Status, DPs};
-type_status_and_dps([<<"type=", T/binary>> | Rest], _Type, Status, DPs) ->
+type_status_and_dps([<<"type=", T/binary>> | Rest], _T,Status,DPs) ->
     NewType =
         case T of
             <<"*">> -> '_';
@@ -235,7 +243,7 @@ type_status_and_dps([<<"type=", T/binary>> | Rest], _Type, Status, DPs) ->
                 end
         end,
     type_status_and_dps(Rest, NewType, Status, DPs);
-type_status_and_dps([<<"status=", S/binary>> | Rest], Type, _Status, DPs) ->
+type_status_and_dps([<<"status=", S/binary>> | Rest],Type,_St,DPs) ->
     NewStatus =
         case S of
             <<"*">> -> '_';
@@ -275,9 +283,11 @@ statname("["++_ = Expr) -> %% legacy code?
         {ok, Toks, _} ->
             case erl_parse:parse_exprs(Toks) of
                 {ok, [Abst]} -> partial_eval(Abst);
-                Error -> print("Parse error in ~p for ~p~n", [Expr, Error]), []
+                Error -> print("Parse error in ~p for ~p~n",
+                             [Expr, Error]), []
             end;
-        Error -> print("Scan Error in ~p for ~p~n", [Expr, Error]), []
+        Error -> print("Scan Error in ~p for ~p~n",
+                        [Expr, Error]), []
     end;
 statname(Arg) when is_binary(Arg) ->
     Parts = re:split(Arg, "\\.", [{return,list}]),
@@ -340,7 +350,8 @@ replace_part(H) ->
                 {ok, [{atom, _, A}], _} ->
                     A;
                 Error ->
-                    lager:error("Cannot replace part: ~p~n", [Error])
+                    lager:error("Cannot replace part: ~p~n",
+                        [Error])
             end;
         [C | _] when C >= $0, C =< $9 ->
             try list_to_integer(H)
@@ -361,7 +372,8 @@ pads() ->
 %% created
 %% @end
 %%%-------------------------------------------------------------------
--spec(find_entries(statname(),status(),type(),datapoint()) -> statslist()).
+-spec(find_entries(statname(),status(),type(),datapoint()) ->
+    statslist()).
 find_entries({Stat,Status,Type,DPs}) ->
     find_entries(Stat,Status,Type,DPs).
 find_entries(Stats,Status,Type,default) ->
@@ -397,34 +409,42 @@ print([], _) ->
     io:fwrite("No Matching Stats~n");
 print(NewStats,DPs) ->
     lists:map(fun
-                  ({Names,_NDPs}) when DPs == disable_0 ->
-                      case lists:flatten([not_0(N,dis)||{N,_,_}<-Names]) of
-                          [] -> io:fwrite("No Stats with Value 0~n");
-                          _V -> ok
-                      end;
-                  ({Names,NDPs}) when DPs == show_0->
-                      case lists:flatten([not_0(N,NDPs)||{N,_,_}<-Names]) of
-                          [] -> print([],[]);
-                          V -> io:fwrite("~p: ~p~n",[Names, V])
-                      end;
+          ({Names, _NDPs}) when DPs == disable_0 ->
+              case lists:flatten([not_0(N, dis) ||
+                  {N, _, _} <- Names]) of
 
-                  ({N,_T,_S}) when DPs == [] -> get_value(N);
-                  ({N,_T,_S}) ->                find_stats_info(N,DPs);
+                  [] -> io:fwrite("No Stats with Value 0~n");
+                  _V -> ok
+              end;
+          ({Names, NDPs}) when DPs == show_0 ->
+              case lists:flatten([not_0(N, NDPs) ||
+                  {N, _, _} <- Names]) of
 
-                  %% legacy pattern
-                  (Legacy) ->
-                      lists:map(fun
-                                    ({LP,[]}) ->
-                                        io:fwrite(
-                                            "== ~s (Legacy pattern): No matching stats ==~n", [LP]);
-                                    ({LP, Matches}) ->
-                                        io:fwrite("== ~s (Legacy pattern): ==~n", [LP]),
-                                        [[io:fwrite("~p: ~p (~p/~p)~n", [N, V, E, DP])
-                                            || {DP, V, N} <- LDPs] || {E, LDPs} <- Matches];
-                                    (_) ->
-                                        []
-                                end, Legacy)
-              end,NewStats).
+                  [] -> print([], []);
+                  V -> io:fwrite("~p: ~p~n", [Names, V])
+              end;
+
+          ({N, _T, _S}) when DPs == [] -> get_value(N);
+          ({N, _T, _S}) -> find_stats_info(N, DPs);
+
+          %% legacy pattern
+          (Legacy) ->
+              lists:map(fun
+                            ({LP, []}) ->
+                                io:fwrite(
+                                    "== ~s (Legacy pattern): No matching stats ==~n",
+                                    [LP]);
+                            ({LP, Matches}) ->
+                                io:fwrite("== ~s (Legacy pattern): ==~n",
+                                    [LP]),
+                                [[io:fwrite("~p: ~p (~p/~p)~n",
+                                    [N, V, E, DP]) ||
+                                    {DP, V, N} <- LDPs] ||
+                                    {E, LDPs} <- Matches];
+                            (_) ->
+                                []
+                        end, Legacy)
+      end, NewStats).
 
 not_0(StatName,dis) ->
     case not_0_(StatName,[]) of
@@ -454,7 +474,7 @@ get_value(N) ->
         {ok,Val} ->
             case lists:foldl(fun
                           ({_,{error,_}},A) -> A;
-                          (D,A) -> io:fwrite("                      ~p~n",[D]),[ok|A]
+                          (D,A) -> io:fwrite("  ~p~n",[D]),[ok|A]
                       end, [],Val) of
                 [] -> [];
                 R ->  io:fwrite("~p : ~n",[N]),
@@ -473,7 +493,7 @@ find_stats_info(Stats, Info) ->
                           ({_DP, undefined}) -> [];
                           ({_DP, {error,_}}) -> [];
                           (DP) ->
-                              io:fwrite("                 ~p~n", [DP])
+                              io:fwrite("             ~p~n", [DP])
                       end, V);
         {error,_} -> get_info_2_electric_boogaloo(Stats, Info)
     end.
@@ -496,8 +516,8 @@ get_info_2_electric_boogaloo(N,Attrs) ->
 -ifdef(TEST).
 -export([data_sanitise_test/0]).
 
--define(setup(Fun),        {setup,    fun setup/0,          fun cleanup/1, Fun}).
--define(foreach(Funs),     {foreach,  fun setup/0,          fun cleanup/1, Funs}).
+-define(setup(Fun),        {setup,  fun setup/0,fun cleanup/1, Fun}).
+-define(foreach(Funs),     {foreach,fun setup/0,fun cleanup/1, Funs}).
 -define(setuptest(Desc, Test), {Desc, ?setup(fun(_) -> Test end)}).
 
 -define(new(Mod),                   meck:new(Mod)).
@@ -514,55 +534,62 @@ cleanup(_Pid) ->
 
 data_sanitise_test() ->
     ?setuptest("Data Sanitise test",
-        [
-            {"riak.**",                         fun tests_riak_star_star/0},
-            {"riak.riak_kv.**",                 fun tests_riak_kv_star_star/0},
-            {"riak.riak_kv.*",                  fun tests_riak_kv_star/0},
-            {"riak.riak_kv.node.*",             fun tests_riak_kv_node_star/0},
-            {"node_gets",                       fun tests_node_gets/0},
-            {"riak.riak_kv.node.gets/max",      fun tests_node_gets_dp/0},
-            {"riak.riak_kv.**/type=spiral",     fun tests_riak_kv_type_spiral/0},
-            {"riak.riak_kv.**/status=disabled", fun tests_riak_kv_status_dis/0},
-            {"true",                            fun tests_true/0}
-        ]).
+    [{"riak.**",                         fun tests_riak_star_star/0},
+     {"riak.riak_kv.**",                 fun tests_riak_kv_star_star/0},
+     {"riak.riak_kv.*",                  fun tests_riak_kv_star/0},
+     {"riak.riak_kv.node.*",             fun tests_riak_kv_node_star/0},
+     {"node_gets",                       fun tests_node_gets/0},
+     {"riak.riak_kv.node.gets/max",      fun tests_node_gets_dp/0},
+     {"riak.riak_kv.**/type=spiral",     fun tests_riak_kv_type_spiral/0},
+     {"riak.riak_kv.**/status=disabled", fun tests_riak_kv_status_dis/0},
+     {"true",                            fun tests_true/0}        ]).
 
 tests_riak_star_star() ->
-    {Name,_T,_S,_DP} = data_sanitise(["riak.**"]),
+    {Name,_T,_S,_DP} =
+        data_sanitise(["riak.**"]),
     ?assertEqual([riak|'_'],Name).
 
 tests_riak_kv_star_star() ->
-    {Name,_T,_S,_DP} = data_sanitise(["riak.riak_kv.**"]),
+    {Name,_T,_S,_DP} =
+        data_sanitise(["riak.riak_kv.**"]),
     ?assertEqual([riak,riak_kv|'_'],Name).
 
 tests_riak_kv_star() ->
-    {Name,_T,_S,_DP} = data_sanitise(["riak.riak_kv.*"]),
+    {Name,_T,_S,_DP} =
+        data_sanitise(["riak.riak_kv.*"]),
     ?assertEqual(Name, [riak,riak_kv,'_']).
 
 tests_riak_kv_node_star() ->
-    {Name,_T,_S,_DP} = data_sanitise(["riak.riak_kv.node.*"]),
+    {Name,_T,_S,_DP} =
+        data_sanitise(["riak.riak_kv.node.*"]),
     ?assertEqual(Name, [riak,riak_kv,node,'_']).
 
 tests_node_gets() ->
-    {Name,_T,_S,_DP} = data_sanitise(["node_gets"]),
+    {Name,_T,_S,_DP} =
+        data_sanitise(["node_gets"]),
     ?assertEqual([node_gets],Name).
 
 tests_node_gets_dp() ->
-    {Name,_T,_S,DPs} = data_sanitise(["riak.riak_kv.node.gets/max"]),
+    {Name,_T,_S,DPs} =
+        data_sanitise(["riak.riak_kv.node.gets/max"]),
     ?assertEqual(Name, [riak,riak_kv,node,gets]),
     ?assertEqual([max],DPs).
 
 tests_riak_kv_type_spiral() ->
-    {Name,Type,_St,_DP} = data_sanitise(["riak.riak_kv.**/type=spiral"]),
+    {Name,Type,_St,_DP} =
+        data_sanitise(["riak.riak_kv.**/type=spiral"]),
     ?assertEqual(Name, [riak,riak_kv|'_']),
     ?assertEqual(Type, spiral).
 
 tests_riak_kv_status_dis() ->
-    {Name,_Type,Status,_DP} = data_sanitise(["riak.riak_kv.**/status=disabled"]),
+    {Name,_Type,Status,_DP} =
+        data_sanitise(["riak.riak_kv.**/status=disabled"]),
     ?assertEqual(Name, [riak,riak_kv|'_']),
     ?assertEqual(Status, disabled).
 
 tests_true() ->
-    {Arg,_t,_S,_D} = data_sanitise(["true"]),
+    {Arg,_t,_S,_D} =
+        data_sanitise(["true"]),
     ?assertEqual(Arg, [true]).
 
 -endif.
