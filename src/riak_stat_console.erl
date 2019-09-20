@@ -73,8 +73,8 @@ show_stat_0(Arg) ->
 -spec(stat_info(data()) -> value()).
 stat_info(Arg) ->
     {Attrs, RestArg} = pick_info_attrs(Arg),
-    {S,T,ST,_DPS} = data_sanitise(RestArg),
-    print(find_entries({S,T,ST,Attrs})).
+    {Stat,Type,Status,_DPS} = data_sanitise(RestArg),
+    print(find_entries({Stat,Type,Status,Attrs})).
 
 -spec(pick_info_attrs(data()) -> value()).
 %% @doc get list of attrs to print @end
@@ -178,9 +178,11 @@ enable_metadata(Arg) ->
 data_sanitise(Arg) ->
     data_sanitise(check_args(Arg), ?TYPE, ?STATUS, ?DPs).
 
+%% separate Status from Type with fun of same arity
 data_sanitise(Arg, Status) when Status == enabled
     orelse Status == disabled orelse Status == '_' ->
     data_sanitise(check_args(Arg), ?TYPE, Status, ?DPs);
+
 data_sanitise(Arg, Type) ->
     data_sanitise(check_args(Arg), Type, ?STATUS, ?DPs).
 
@@ -446,6 +448,7 @@ not_0_(Stat, _DPs) ->
 
 %%%-------------------------------------------------------------------
 
+%% todo: formatting for stats return
 get_value(N) ->
     case riak_stat_exom:get_value(N) of
         {ok,Val} ->
