@@ -42,8 +42,6 @@
 -define(JSON_HEADER,             [{?CONTENT_TYPE, ?JSON_CONTENT_TYPE}]).
 -define(DEFAULT_ENCODINGS, riak_kv_wm_utils:default_encodings()).
 
-
-
 %%--------------------------------------------------------------------
 
 -spec(init(props()) -> {ok, context()}).
@@ -75,7 +73,8 @@ encodings_provided(Req, Ctx) ->
 
 %%--------------------------------------------------------------------
 
--spec(content_types_provided(rd(), context()) -> {ctype(), rd(), context()}).
+-spec(content_types_provided(rd(), context()) ->
+                                        {ctype(), rd(), context()}).
 %% @doc
 %% Return the list of pairs -> the media in ctype() being a string
 %% of content-type format (such as jsonheader) and the handler being
@@ -88,7 +87,8 @@ content_types_provided(Req, Ctx) ->
 
 %%--------------------------------------------------------------------
 
--spec(service_available(rd(), context()) -> {boolean() | halt(), rd(), context()}).
+-spec(service_available(rd(), context()) ->
+                                {boolean() | halt(), rd(), context()}).
 %% @doc
 %% Determine a connection to riak
 %% @end
@@ -97,7 +97,8 @@ service_available(Req, Ctx=#ctx{}) ->
 
 %%--------------------------------------------------------------------
 
--spec(forbidden(rd(), context()) -> {boolean() | halt(), rd(), context()}).
+-spec(forbidden(rd(), context()) ->
+                                {boolean() | halt(), rd(), context()}).
 %% @doc
 %% determines whether the request is forbidden
 %% @end

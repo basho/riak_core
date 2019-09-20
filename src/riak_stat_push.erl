@@ -43,7 +43,6 @@ setup(Arg) ->
 start_server(Child, Arg) ->
     riak_core_stats_sup:start_server(Child, Arg).
 
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% Kill the udp servers currently running and pushing stats to an endpoint.

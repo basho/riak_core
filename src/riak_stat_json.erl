@@ -17,10 +17,6 @@
     encode/1
 ]).
 
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
-
 %%--------------------------------------------------------------------
 %% @doc
 %% Metrics to JSON
@@ -31,33 +27,44 @@ metrics_to_json(Metrics, AdditionalFields, ExcludedDataPoints) ->
     Dict1 = lists:foldl(fun({Metric, DataPoints}, Dict) ->
         group_data(Metric, DataPoints, Dict)
                         end, dict:new(), Metrics),
-    JsonStats = lists:reverse(to_json(dict:to_list(Dict1), [], 0, ExcludedDataPoints)),
+    JsonStats = lists:reverse(
+        to_json(
+            dict:to_list(Dict1), [], 0, ExcludedDataPoints)),
 
     case JsonStats of
         [] ->
             [];
         _ ->
             DateTime = format_time(),
-            [${, format_fields(AdditionalFields, []), $,, quote("timestamp"), $:, quote(DateTime), $,, JsonStats, $}, "\n"]
+            [${, format_fields(AdditionalFields, []), $,,
+                quote("timestamp"),
+                $:, quote(DateTime), $,,
+                JsonStats, $}, "\n"]
     end.
 
 metrics_to_json(Metrics, ExcludedDataPoints) ->
     Dict1 = lists:foldl(fun({Metric, DataPoints}, Dict) ->
         group_data(Metric, DataPoints, Dict)
                         end, dict:new(), Metrics),
-    JsonStats = lists:reverse(to_json(dict:to_list(Dict1), [], 0, ExcludedDataPoints)),
+    JsonStats = lists:reverse(
+        to_json(
+            dict:to_list(Dict1), [], 0, ExcludedDataPoints)),
 
     case JsonStats of
         [] ->
             [];
         _ ->
             DateTime = format_time(),
-            [${, quote("timestamp"), $:, quote(DateTime), $,, JsonStats, $}, "\n"]
+            [${, quote("timestamp"),
+                $:, quote(DateTime), $,,
+                    JsonStats, $}, "\n"]
     end.
 
 
 group_data([Metric], DataPoints, Dict) ->
-    dict:update(Metric, fun(A) -> lists:append(DataPoints, A) end, DataPoints, Dict);
+    dict:update(Metric, fun(A) ->
+        lists:append(DataPoints, A)
+                        end, DataPoints, Dict);
 group_data([Metric|Metrics], DataPoints, Dict) ->
     NewDict = case dict:find(Metric, Dict) of
                   {ok, Value} ->
@@ -70,15 +77,27 @@ group_data([Metric|Metrics], DataPoints, Dict) ->
 
 to_json([], Acc, _, _ExcludedDataPoints) ->
     Acc;
-to_json([{Name, [{_DataPoint,_Value}|_] = DataPoints}|Others], Acc, _Count, ExcludedDataPoints) ->
+to_json([{Name, [{_DataPoint,_Value}|_] = DataPoints}|Others],
+    Acc, _Count, ExcludedDataPoints) ->
     case Others of
         [] ->
-            to_json(Others, [[$", metric_elem_to_binary(Name), $", $:, ${, datapoint_to_json(DataPoints, [], ExcludedDataPoints), $}]|Acc], 0, ExcludedDataPoints);
+            to_json(Others, [
+                [$", metric_elem_to_binary(Name), $",
+                    $:,
+                    ${, datapoint_to_json(DataPoints, [], ExcludedDataPoints), $}]|Acc],
+                0, ExcludedDataPoints);
         _ ->
-            to_json(Others, [[$", metric_elem_to_binary(Name), $", $:, ${, datapoint_to_json(DataPoints, [], ExcludedDataPoints), $},$,]|Acc], 0, ExcludedDataPoints)
+            to_json(Others, [
+                [$", metric_elem_to_binary(Name), $",
+                    $:,
+                    ${, datapoint_to_json(DataPoints, [], ExcludedDataPoints), $},$,]|Acc],
+                0, ExcludedDataPoints)
     end;
 to_json([{Metric, Dict}|Others], Acc, Count, ExcludedDataPoints) ->
-    Acc1 = to_json(dict:to_list(Dict), [[$", metric_elem_to_binary(Metric), $", $:, ${]|Acc], Count + 1, ExcludedDataPoints),
+    Acc1 = to_json(
+        dict:to_list(Dict),
+        [[$", metric_elem_to_binary(Metric), $", $:, ${]|Acc],
+            Count + 1, ExcludedDataPoints),
     case Others of
         [] ->
             to_json(Others, [[$}]|Acc1], 0, ExcludedDataPoints);
@@ -89,9 +108,11 @@ to_json([{Metric, Dict}|Others], Acc, Count, ExcludedDataPoints) ->
 format_fields([], Json) ->
     lists:reverse(Json);
 format_fields([{K,V}], Json) ->
-    lists:reverse([[quote(to_list(K)), $:, quote_value(V)]| Json]);
+    lists:reverse([[quote(to_list(K)), $:,
+        quote_value(V)]| Json]);
 format_fields([{K,V}|KVs], Json) ->
-    format_fields(KVs, [[quote(to_list(K)), $:, quote_value(V), $,]| Json]).
+    format_fields(KVs, [[quote(to_list(K)), $:,
+        quote_value(V), $,]| Json]).
 
 %% @doc surround argument with quotes @end
 quote(X) ->
@@ -213,5 +234,6 @@ encode(Arg) ->
     mochijson:encode(Arg).
 
 -ifdef(TEST).
-
+-include_lib("eunit/include/eunit.hrl").
 -endif.
+

@@ -10,27 +10,26 @@
 
 %% Main API
 -export([
-    maybe_meta/2, reload_metadata/1,
+    maybe_meta/2,
+    reload_metadata/1,
 
-%% Registration API
     register/1,
 
-%% Reading API
-    read_stats/4, find_entries/4, aggregate/2, find_entries_exom/4,
+    read_stats/4,
+    find_entries/4,
+    aggregate/2,
+    find_entries_exom/4,
 
-%% Updating API
     change_status/1,
 
-%% Deleting/Resetting API
-    reset_stat/1, unregister/1,
+    reset_stat/1,
+    unregister/1,
 
-%% Profile API
-    save_profile/1, load_profile/1, delete_profile/1, reset_profile/0
+    save_profile/1,
+    load_profile/1,
+    delete_profile/1,
+    reset_profile/0
 ]).
-
--ifdef(EUNIT).
--compile([export_all]).
--endif.
 
 %%%===================================================================
 %%% Main API
@@ -400,7 +399,7 @@ reset_profile() ->
 
 -ifdef(EUNIT).
 -include_lib("eunit/include/eunit.hrl").
-
+-compile([export_all]).
 
 -endif.
 

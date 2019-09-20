@@ -15,7 +15,8 @@
 %%% Loaded metadata-val  : [<<"profile-name">>]
 %%%
 %%% Stats metadata-pkey: {{stats, nodeid()}, [riak,riak_kv,...]}
-%%% Stats metadata-val : {enabled, spiral, [{resets,...},{vclock,...}], [Aliases]}
+%%% Stats metadata-val :
+%%%     {enabled, spiral, [{resets,...},{vclock,...}], [Aliases]}
 %%%
 %%% @end
 %%%-------------------------------------------------------------------
@@ -24,19 +25,22 @@
 -include_lib("riak_core/include/riak_core_metadata.hrl").
 
 %% Registration API
--export([register/1, register/4,
+-export([
+    register/1,
+    register/4,
 
-%% Basic API
     find_entries/3,
 
-%% Updating API
-    change_status/1, change_status/2,
+    change_status/1,
+    change_status/2,
 
-%% Resetting/Deleting API
-    reset_stat/1, reset_resets/0, unregister/1,
+    reset_stat/1,
+    reset_resets/0,
+    unregister/1,
 
-%% Profile API
-    save_profile/1, load_profile/1, delete_profile/1,
+    save_profile/1,
+    load_profile/1,
+    delete_profile/1,
     reset_profile/0
 ]).
 
@@ -55,15 +59,10 @@
 -define(LOADEDKEY,             ?NODEID).
 -define(LOADEDPKEY,           {?LOADEDPFX, ?LOADEDKEY}).
 
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
-
 
 %%%===================================================================
 %%% Basic API
 %%%===================================================================
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% Get the data from the riak_core_metadata, If not Opts are passed
@@ -74,7 +73,8 @@
 %% Which is pulled out in riak_core_metadata and used in an ets:select,
 %% @end
 %%%-------------------------------------------------------------------
--spec(get(metadata_prefix(), metadata_key()) -> metadata_value() | undefined).
+-spec(get(metadata_prefix(), metadata_key()) ->
+                                    metadata_value() | undefined).
 get(Prefix, Key) ->
     get(Prefix, Key, []).
 get(Prefix, Key, Opts) ->
@@ -92,7 +92,8 @@ get_all(Prefix) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% put the data into the metadata, options contain the {match, Match_spec}
+%% put the data into the metadata, options contain the
+%%          {match, Match_spec}
 %% @end
 %%%-------------------------------------------------------------------
 -spec(put(metadata_prefix(), metadata_key(),
@@ -115,7 +116,6 @@ delete(Prefix, Key) ->
 %%%===================================================================
 %%% Main API
 %%%===================================================================
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% Use riak_core_metadata:fold(_) to fold over the path in the metadata
@@ -150,25 +150,26 @@ find_entries(Stats,Status,Type) ->
 %%%-------------------------------------------------------------------
 fold(Stat, Status0, Type0) ->
     {Stats, Status0, Type0} =
-        riak_core_metadata:fold(fun %%          tuple/4
-                                    ({Name, [{MStatus, MType, _O, _A}]}, {Acc, Status, Type})
-                                        when (Status == '_' orelse Status == MStatus)
-                                        andalso (MType == Type orelse Type == '_')->
-                                        {[{Name, MType, MStatus} | Acc], Status, Type};
-                                    %%          tuple/3
-                                    ({Name, [{MStatus, MType, _O}]}, {Acc, Status, Type})
-                                        when (Status == '_' orelse Status == MStatus)
-                                        andalso (MType == Type orelse Type == '_')->
-                                        {[{Name, MType, MStatus} | Acc], Status, Type};
-                                    %%          tuple/2
-                                    ({Name, [{MStatus, MType}]}, {Acc, Status, Type})
-                                        when (Status == '_' orelse Status == MStatus)
-                                        andalso (MType == Type orelse Type == '_')->
-                                        {[{Name, MType, MStatus} | Acc], Status, Type};
+        riak_core_metadata:fold(fun
+                %%          tuple/4
+                ({Name, [{MStatus, MType, _O, _A}]},{Acc,Status,Type})
+                    when (Status == '_' orelse Status == MStatus)
+                    andalso (MType == Type orelse Type == '_')->
+                    {[{Name, MType, MStatus} | Acc], Status, Type};
+                %%          tuple/3
+                ({Name, [{MStatus, MType, _O}]}, {Acc, Status, Type})
+                    when (Status == '_' orelse Status == MStatus)
+                    andalso (MType == Type orelse Type == '_')->
+                    {[{Name, MType, MStatus} | Acc], Status, Type};
+                %%          tuple/2
+                ({Name, [{MStatus, MType}]}, {Acc, Status, Type})
+                    when (Status == '_' orelse Status == MStatus)
+                    andalso (MType == Type orelse Type == '_')->
+                    {[{Name, MType, MStatus} | Acc], Status, Type};
 
-                                    (_Other, {Acc, Status, Type}) ->
-                                        {Acc, Status, Type}
-                                end, {[], Status0, Type0}, ?STATPFX, [{match, Stat}]),
+                (_Other, {Acc, Status, Type}) ->
+                    {Acc, Status, Type}
+            end, {[], Status0, Type0}, ?STATPFX, [{match, Stat}]),
     Stats.
 
 %%%-------------------------------------------------------------------
@@ -192,11 +193,11 @@ check_meta({Prefix, Key}) ->
             end
     end.
 
-find_unregister_status(_K, '$deleted') ->
+find_unregister_status(_Key, '$deleted') ->
     unregistered;
-find_unregister_status(_SN, {Status, _T, _Opts, _A}) ->
+find_unregister_status(_StatName, {Status, _Type, _Opts, _Aliases}) ->
     Status; % enabled | disabled =/= unregistered
-find_unregister_status(_PN, _Stats) ->
+find_unregister_status(_ProfileName, _Stats) ->
     false.
 
 
@@ -205,9 +206,9 @@ find_unregister_status(_PN, _Stats) ->
 %%%-------------------------------------------------------------------
 %% @doc
 %% In the case where one list should take precedent, which is most
-%% likely the case when registering in both exometer and metadata, the options
-%% hardcoded into the stats may change, or the primary kv for stats statuses
-%% switches, in every case, there must be an alpha.
+%% likely the case when registering in both exometer and metadata, the
+%% options hardcoded into the stats may change, or the primary kv for
+%% stats statuses switches, in every case, there must be an alpha.
 %%
 %% For this, the lists are compared, and when a difference is found
 %% (i.e. the stat tuple is not in the betalist, but is in the alphalist)
@@ -240,8 +241,8 @@ the_alpha_map([]) -> [];
 the_alpha_map([A_B]) when is_list(A_B) -> the_alpha_map(A_B);
 the_alpha_map([A|B]) when is_tuple(A) ->
     lists:foldl(fun
-                  ({Stat, {Atom, Val}},Acc) -> [{Stat, {Atom, Val}}|Acc];
-                  ({Stat, Val},Acc)         -> [{Stat, {atom, Val}}|Acc];
+                  ({Stat, {Atom, Val}},Acc)->[{Stat, {Atom, Val}}|Acc];
+                  ({Stat, Val},Acc)        ->[{Stat, {atom, Val}}|Acc];
                     (_,Acc) -> Acc
               end,[], [A|B]).
 
@@ -254,11 +255,9 @@ find_all_entries() ->
 
 %%%-------------------------------------------------------------------
 
-
 %%%===================================================================
 %%% Registration API
 %%%===================================================================
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% Checks if the stat is already registered in the metadata, if not it
@@ -277,7 +276,8 @@ register(StatName,Type, Opts, Aliases) ->
             MOpts;
         unregistered -> [];
         {MStatus,Type,MOpts,Aliases} -> %% is registered
-            {Status,NewMOpts,NewOpts} = find_status(re_reg,{Opts,MStatus,MOpts}),
+            {Status,NewMOpts,NewOpts} =
+                find_status(re_reg,{Opts,MStatus,MOpts}),
             re_register(StatName, {Status,Type, NewMOpts,Aliases}),
             NewOpts;
         _ -> lager:debug(
@@ -308,7 +308,6 @@ re_register(StatName, Value) -> %% ok
 %%%===================================================================
 %%% Updating API
 %%%===================================================================
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% Changes the status of stats in the metadata
@@ -357,7 +356,8 @@ fresh_clock(Opts) ->
         false ->
             [{vclock, clock_fresh(?NODEID, 0)} | Opts];
         {value, {vclock, [{Node, {Count, _VC}}]}} ->
-            lists:keyreplace(vclock, 1, Opts, {vclock, clock_fresh(Node, Count)});
+            lists:keyreplace(vclock, 1, Opts,
+                {vclock, clock_fresh(Node, Count)});
         _ ->
             [{vclock, clock_fresh(?NODEID, 0)} | Opts]
     end.
@@ -367,7 +367,7 @@ clock_fresh(Node, Count) ->
 vc_inc(Count) -> Count + 1.
 
 
-%%%==================================================================
+%%%===================================================================
 %%% Deleting/Resetting Stats API
 %%%===================================================================
 %%%-------------------------------------------------------------------
@@ -383,7 +383,8 @@ reset_stat(Statname) ->
         {_Status, Type, Opts, Aliases} ->
             Resets= proplists:get_value(resets, Opts),
             Options = [{resets, reset_inc(Resets)}],
-            set_options({Statname, {enabled, Type, Opts, Aliases}}, Options)
+            set_options({Statname,
+                {enabled, Type, Opts, Aliases}}, Options)
     end.
 
 reset_inc(Count) -> Count + 1.
@@ -403,15 +404,17 @@ reset_resets() ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% Marks the stats as unregistered, that way when a node is restarted and registers the
-%% stats it will ignore stats that are marked unregistered
+%% Marks the stats as unregistered, that way when a node is restarted
+%% and registers the stats it will ignore stats that are marked
+%% unregistered
 %% @end
 %%%-------------------------------------------------------------------
 -spec(unregister(metadata_key()) -> ok).
 unregister(Statname) ->
     case check_meta(?STATKEY(Statname)) of
         {_Status, Type, MetaOpts, Aliases} ->
-            re_register(Statname, {unregistered, Type, MetaOpts, Aliases});
+            re_register(Statname,
+                {unregistered, Type, MetaOpts, Aliases});
         _ -> ok
     end.
 
@@ -447,8 +450,9 @@ load_profile(ProfileName) ->
         ProfileStats ->
             CurrentStats = find_all_entries(),
             ToChange = the_alpha_stat(ProfileStats, CurrentStats),
-            %% delete stats that are already enabled/disabled, any duplicates
-            %% with different statuses will be replaced with the profile one
+            %% delete stats that are already enabled/disabled, any
+            %% duplicates with different statuses will be replaced
+            %% with the profile one
             change_stat_list_to_status(ToChange),
             put(?LOADEDPFX, ?LOADEDKEY, ProfileName),
             io:format("Loaded Profile: ~s~n",[ProfileName])
@@ -456,8 +460,8 @@ load_profile(ProfileName) ->
         %% the reason a profile is not checked to see if it is already
         %% loaded is because it is easier to "reload" an already loaded
         %% profile in the case the stats configuration is changed,
-        %% rather than "unloading" the profile and reloading it to change
-        %% many stats statuses unnecessarily
+        %% rather than "unloading" the profile and reloading it to
+        %% change many stats statuses unnecessarily
 
     end.
 
@@ -467,10 +471,11 @@ change_stat_list_to_status(StatusList) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% Deletes the profile from the metadata, however currently the metadata
-%% returns a tombstone for the profile, it can be overwritten when a new profile
-%% is made of the same name, and in the profile gen_server the name of the
-%% profile is "unregistered" so it can not be reloaded again after deletion
+%% Deletes the profile from the metadata, however currently the
+%% metadata returns a tombstone for the profile, it can be overwritten
+%% when a new profile is made of the same name, and in the profile
+%% gen_server the name of the profile is "unregistered" so it can not
+%% be reloaded again after deletion
 %% @end
 %%%-------------------------------------------------------------------
 -spec(delete_profile(profilename()) -> ok).
@@ -491,12 +496,11 @@ delete_profile(ProfileName) ->
             end
     end.
 
-
 %%%-------------------------------------------------------------------
 %% @doc
-%% resets the profile by enabling all the stats, pulling out all the stats that
-%% are disabled in the metadata and then changing them to enabled in both the
-%% metadata and exometer
+%% resets the profile by enabling all the stats, pulling out all the
+%% stats that are disabled in the metadata and then changing them to
+%% enabled in both the metadata and exometer
 %% @end
 %%%-------------------------------------------------------------------
 -spec(reset_profile() -> ok | error()).
@@ -510,14 +514,17 @@ reset_profile() ->
 change_stats_from(Stats, Status) ->
     change_stat_list_to_status(
         lists:foldl(fun
-                        ({Stat, {status, St}}, Acc) when St == Status ->
-                            NewSt =
-                                case Status of
-                                    enabled -> disabled;
-                                    disabled -> enabled
-                                end,
-                            [{Stat, {status, NewSt}} | Acc];
-                        ({_Stat, {status, St}}, Acc) when St =/= Status ->
-                            Acc
+                    ({Stat, {status, St}}, Acc) when St == Status ->
+                        NewSt =
+                            case Status of
+                                enabled -> disabled;
+                                disabled -> enabled
+                            end,
+                        [{Stat, {status, NewSt}} | Acc];
+                    ({_Stat, {status, St}}, Acc) when St =/= Status ->
+                        Acc
                     end, [], Stats)).
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
