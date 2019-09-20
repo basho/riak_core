@@ -1177,9 +1177,8 @@ stat_show(Arg) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% Check all the stats in exometer that are not being updated by testing
-%% or otherwise,
-%% This helps disable stats that are unused.
+%% Check all the stats in exometer that are not being updated by
+%% testing or otherwise, This helps disable stats that are unused.
 %% behaves similar to stat show
 %% @end
 %%%-------------------------------------------------------------------
@@ -1189,8 +1188,8 @@ stat_0(Arg) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% behaves the same as stat_0 but will disable all the stats that are not
-%% updating as well, returns ok unless there is an error.
+%% behaves the same as stat_0 but will disable all the stats that are
+%% not updating as well, returns ok unless there is an error.
 %% @end
 %%%-------------------------------------------------------------------
 -spec(stat_disable_0(Arg :: term()) -> ok | term()).
@@ -1227,7 +1226,8 @@ stat_disable(Arg) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% resets the stats in exometer, the number of resets is kept in the metadata
+%% resets the stats in exometer, the number of resets is kept in the
+%% metadata
 %% @end
 %%%-------------------------------------------------------------------
 -spec(stat_reset(Arg :: term()) -> ok | term()).
@@ -1240,8 +1240,9 @@ stat_reset(Arg) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% Loads the profile of that name, and then will enable/disable all the stats
-%% in exometer and in the metadata that need enabling/disabling
+%% Loads the profile of that name, and then will enable/disable all
+%% the stats in exometer and in the metadata that need
+%% enabling/disabling
 %% @end
 %%%-------------------------------------------------------------------
 -spec(load_profile(FileName :: term()) -> term()).
@@ -1250,9 +1251,10 @@ load_profile(ProfileName) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% Saves the current configuration of the stats in the metadata with the
-%% profile name entered as the key, the stats and their status as the value.
-%% Profiles can be overwritten if the new profile is saved under the same name.
+%% Saves the current configuration of the stats in the metadata with
+%% the profile name entered as the key, the stats and their status as
+%% the value. Profiles can be overwritten if the new profile is saved
+%% under the same name.
 %% @end
 %%%-------------------------------------------------------------------
 -spec(add_profile(FileName :: term()) -> term()).
