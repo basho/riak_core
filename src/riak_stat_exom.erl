@@ -25,9 +25,9 @@
     alias/1, aliases/2, find_alias/1,
     timestamp/0]).
 
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
+%% NB : DP = DataPoint
+%%      Alias : Name of a datapoint in a Stat.
+
 
 %%%===================================================================
 %%% Registration API
@@ -111,8 +111,8 @@ alias_dp({DP, Alias}) ->
 %%%-------------------------------------------------------------------
 %% @doc
 %% The Path is the start or full name of the stat(s) you wish to find,
-%% i.e. [riak,riak_kv] as a path will return stats with those to elements
-%% in their path. and uses exometer:find_entries and above function
+%% i.e. [riak,riak_kv|'_'] as a path will return stats with those to
+%% elements in their path. and uses exometer:find_entries
 %% @end
 %%%-------------------------------------------------------------------
 -spec(get_values(arg()) -> exo_value() | error()).
@@ -140,7 +140,8 @@ find_entries(Stats, Status) ->
     lists:foldl(
         fun(Stat, Found) ->
             case find_entries(Stat) of
-                [{Name, _Type, EStatus}] when EStatus == Status; Status == '_' ->
+                [{Name, _Type, EStatus}]
+                    when EStatus == Status orelse Status == '_' ->
                     [{Name, Status} | Found];
                 [{_Name, _Type, _EStatus}] -> % Different status
                     Found;
@@ -166,7 +167,7 @@ get_value(Name) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% Find the stat in exometer using this pattern
+%% Find the stat in exometer using pattern :: ets:match_spec()
 %% @end
 %%%-------------------------------------------------------------------
 -spec(select(pattern()) -> value()).
@@ -234,7 +235,11 @@ do_aggregate(Pattern, DataPoints) ->
         {DP, exometer:aggregate(Pattern, DP)}
               end, DataPoints).
 
-%% @doc In case the aggregation is for the average of certain values @end
+%%%-------------------------------------------------------------------
+%% @doc
+%% In case the aggregation is for the average of certain values
+%% @end
+%%%-------------------------------------------------------------------
 aggregate_average(DataPoints) ->
     lists:foldl(fun(DP, {Avg, Other}) ->
         {agg_avg(DP, Other, Avg), lists:delete(DP, Other)}
@@ -255,6 +260,8 @@ do_average(Num, DataValues) ->
 
 metric_names(Pattern) ->
     [Name || {Name, _Type, _Status} <- select(Pattern)].
+
+%% todo: aggregation across nodes
 
 
 %%%===================================================================
@@ -280,7 +287,7 @@ update(Name, Val, Type, Opts) ->
 -spec(change_status(Stats :: list() | term()) -> ok | term()).
 change_status(Stats) when is_list(Stats) ->
     lists:map(fun
-                  ({Stat, {status, Status}}) -> change_status(Stat, Status);
+                  ({Stat,{status,Status}}) -> change_status(Stat,Status);
                   ({Stat, Status}) -> change_status(Stat, Status)
               end, Stats);
 change_status({Stat, Status}) ->
@@ -297,6 +304,7 @@ change_status(Stat, Status) ->
 -spec(set_opts(statname(), options()) -> ok | error()).
 set_opts(StatName, Opts) ->
     exometer:setopts(StatName, Opts).
+
 
 %%%===================================================================
 %%% Deleting/Resetting Stats API
@@ -332,5 +340,6 @@ timestamp() ->
     exometer_util:timestamp().
 
 -ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
 
 -endif.
