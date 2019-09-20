@@ -175,6 +175,7 @@ enable_metadata(Arg) ->
 %%%===================================================================
 %%% Helper API
 %%%===================================================================
+%% todo: more expressive name for the function, parse stat entry <- data_sanitise
 %%%-------------------------------------------------------------------
 %%% @doc
 %%% Arguments coming in from the console or _stat modules arrive at
@@ -292,6 +293,7 @@ statname("["++_ = Expr) -> %% legacy code?
 statname(Arg) when is_binary(Arg) ->
     Parts = re:split(Arg, "\\.", [{return,list}]),
     replace_parts(Parts);
+
 statname(_) ->
     print("Illegal Argument Type in riak_stat_data:statname~n").
 
