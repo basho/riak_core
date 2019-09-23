@@ -35,14 +35,9 @@
 -define(TYPE,   '_').     %% default type
 -define(DPs,    default). %% default Datapoints
 
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
-
 %%%===================================================================
 %%% API
 %%%===================================================================
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% riak admin stat show
@@ -174,7 +169,6 @@ enable_metadata(Arg) ->
 %%%===================================================================
 %%% Helper API
 %%%===================================================================
-%% todo: more expressive name for the function, parse stat entry <- data_sanitise
 %%%-------------------------------------------------------------------
 %%% @doc
 %%% Arguments coming in from the console or _stat modules arrive at
@@ -184,18 +178,18 @@ enable_metadata(Arg) ->
 %%%-------------------------------------------------------------------
 -spec(data_sanitise(data()) -> sanitised()).
 data_sanitise(Arg) ->
-    data_sanitise(check_args(Arg), ?TYPE, ?STATUS, ?DPs).
+    parse_stat_entry(check_args(Arg), ?TYPE, ?STATUS, ?DPs).
 
 %% separate Status from Type with fun of same arity
 data_sanitise(Arg, Status) when Status == enabled
     orelse Status == disabled orelse Status == '_' ->
-    data_sanitise(check_args(Arg), ?TYPE, Status, ?DPs);
+    parse_stat_entry(check_args(Arg), ?TYPE, Status, ?DPs);
 
 data_sanitise(Arg, Type) ->
-    data_sanitise(check_args(Arg), Type, ?STATUS, ?DPs).
+    parse_stat_entry(check_args(Arg), Type, ?STATUS, ?DPs).
 
 data_sanitise(Arg, Type, Status) ->
-    data_sanitise(check_args(Arg), Type, Status, ?DPs).
+    parse_stat_entry(check_args(Arg), Type, Status, ?DPs).
 %%%-------------------------------------------------------------------
 
 check_args([]) ->
@@ -224,12 +218,13 @@ check_args(_) ->
     print("Illegal Argument Type ~n"), [].
 %%%-------------------------------------------------------------------
 
-data_sanitise(BinArgs, Type, Status, DPs) ->
+parse_stat_entry(BinArgs, Type, Status, DPs) ->
     [Bin | Args] = re:split(BinArgs, "/"), %% separate type etc...
     {NewType, NewStatus, NewDPs} =
         type_status_and_dps(Args, Type, Status, DPs),
     StatName = statname(Bin),
     {StatName, NewStatus, NewType, NewDPs}.
+
 %% legacy code \/
 type_status_and_dps([], Type, Status, DPs) ->
     {Type, Status, DPs};
@@ -373,8 +368,7 @@ pads() ->
 %% created
 %% @end
 %%%-------------------------------------------------------------------
--spec(find_entries(statname(),status(),type(),datapoint()) ->
-    statslist()).
+-spec(find_entries(statname(),status(),type(),datapoint()) -> stats()).
 find_entries({Stat,Status,Type,DPs}) ->
     find_entries(Stat,Status,Type,DPs).
 find_entries(Stats,Status,Type,default) ->
@@ -515,6 +509,7 @@ get_info_2_electric_boogaloo(N,Attrs) ->
 
 
 -ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
 -export([data_sanitise_test/0]).
 
 -define(setup(Fun),        {setup,  fun setup/0,fun cleanup/1, Fun}).
