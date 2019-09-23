@@ -77,7 +77,6 @@
                                                     {cache,5000})).
                   %% default can be changed in config this way.
 
-
 %%%===================================================================
 %%% Registration API
 %%%===================================================================
@@ -95,9 +94,11 @@ register(App, Stats) ->
                       ({N,T,O,A}) -> register_(App,N,T,O , A)
                   end, Stats).
 
+%%          NB : {N,T,O,A} == {Name,Type,Options,Aliases}
+
 register_(App, N,Type,O,Aliases) ->
     StatName = stat_name(prefix(),App,N),
-    Opts = add_cache(O),
+    Opts     = add_cache(O),
     register_stats({StatName,Type,Opts,Aliases}).
 
 %% All stats of App are appended onto the prefix
@@ -203,7 +204,6 @@ aggregate_(Pattern, DPs) ->
 sample(StatName) ->
     riak_stat_exom:sample(StatName).
 
-
 %%%===================================================================
 %%% Updating Stats API
 %%%===================================================================
@@ -219,7 +219,6 @@ sample(StatName) ->
 -spec(update(statname(), incrvalue(), type()) -> ok | error()).
 update(Name, Inc, Type) ->
     ok = riak_stat_exom:update(Name, Inc, Type).
-
 
 %%%===================================================================
 %%% Deleting/Resetting Stats API
@@ -259,7 +258,6 @@ unreg_stats(StatName) ->
 -spec(reset(metricname()) -> ok | error()).
 reset(StatName) ->
     riak_stat_mgr:reset_stat(StatName).
-
 
 %%%===================================================================
 %%% Additional API
