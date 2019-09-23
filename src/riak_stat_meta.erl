@@ -146,7 +146,7 @@ find_entries(Stats,Status,Type) ->
 %% the Status can be anything, it is always guarded for, the type is
 %% not required, and there are no datapoints requested. Only return the
 %% name of the stat and the status it has in the metadata.
-%% @end
+%% @end todo: this description needs updating (no datapoints)
 %%%-------------------------------------------------------------------
 fold(Stat, Status0, Type0) ->
     {Stats, Status0, Type0} =
@@ -191,12 +191,12 @@ check_meta({Prefix, Key}) ->
                 unregistered -> unregistered;
                 _Otherwise   -> Value
             end
-    end.
+    end. %% todo: use riak_core_metadata:fold(X)
 
 find_unregister_status(_Key, '$deleted') ->
     unregistered;
 find_unregister_status(_StatName, {Status, _Type, _Opts, _Aliases}) ->
-    Status; % enabled | disabled =/= unregistered
+    Status; % enabled | disabled or =/= unregistered
 find_unregister_status(_ProfileName, _Stats) ->
     false.
 
@@ -274,7 +274,7 @@ register(StatName,Type, Opts, Aliases) ->
             {Status, MOpts} = find_status(fresh, Opts),
             re_register(StatName,{Status,Type,MOpts,Aliases}),
             MOpts;
-        unregistered -> [];
+        unregistered -> []; %% do nothing
         {MStatus,Type,MOpts,Aliases} -> %% is registered
             {Status,NewMOpts,NewOpts} =
                 find_status(re_reg,{Opts,MStatus,MOpts}),
@@ -286,6 +286,19 @@ register(StatName,Type, Opts, Aliases) ->
             [StatName,undefined,Type,Opts,Aliases]),[]
     end.
 
+%%%-------------------------------------------------------------------
+%% @doc
+%% Find the status of a stat coming into the metadata.
+%% If it is the first time registering then 'fresh' is the one hit,
+%% and the status is pulled out of the Options() given, if no
+%% status can be found, assume enabled - like exometer.
+%%
+%% Otherwise it is being re-registered and the status in the metadata
+%% will take precedence as the status is persisted.
+%% @end
+%%%-------------------------------------------------------------------
+-spec(find_status(fresh | re_reg, options()) ->
+    {status(),options(),options()}).
 find_status(fresh, Opts) ->
     case proplists:get_value(status,Opts) of
         undefined -> {enabled, Opts};
@@ -325,10 +338,8 @@ change_status({StatName, Status}) ->
     change_status(StatName, Status).
 change_status(Statname, ToStatus) ->
     case check_meta(?STATKEY(Statname)) of
-        [] ->
-            [];
-        unregistered ->
-            [];
+        []           -> []; %% doesn't exist
+        unregistered -> []; %% unregistered
         {_Status, Type, Opts, Aliases} ->
             put(?STATPFX, Statname, {ToStatus, Type, Opts, Aliases})
     end.
@@ -378,7 +389,7 @@ vc_inc(Count) -> Count + 1.
 -spec(reset_stat(metadata_key()) -> ok | error()).
 reset_stat(Statname) ->
     case check_meta(?STATKEY(Statname)) of
-        [] -> ok;
+        [] -> ok; %% doesn't exist
         unregistered -> {error, unregistered};
         {_Status, Type, Opts, Aliases} ->
             Resets= proplists:get_value(resets, Opts),
@@ -392,7 +403,8 @@ reset_inc(Count) -> Count + 1.
 %%%-------------------------------------------------------------------
 %% @doc
 %% sometimes the reset count just gets too high, and for every single
-%% stat its a bit much
+%% stat its a bit much, reset the reset count in the metadata. for a
+%% fresh stat
 %% @end
 %%%-------------------------------------------------------------------
 -spec(reset_resets() -> ok).
@@ -413,6 +425,7 @@ reset_resets() ->
 unregister(Statname) ->
     case check_meta(?STATKEY(Statname)) of
         {_Status, Type, MetaOpts, Aliases} ->
+            %% Stat exists, re-register with unregister "status"
             re_register(Statname,
                 {unregistered, Type, MetaOpts, Aliases});
         _ -> ok
@@ -482,9 +495,11 @@ change_stat_list_to_status(StatusList) ->
 delete_profile(ProfileName) ->
     case check_meta(?LOADEDPKEY) of
         ProfileName ->
-            put(?LOADEDPFX, ?LOADEDKEY, [<<"none">>]),
+            put(?LOADEDPFX, ?LOADEDKEY, ["none"]),
             delete(?PROFPFX, ProfileName),
             io:format("Profile Deleted : ~s~n",[ProfileName]);
+        %% Load "none" in case the profile deleted is the one currently
+        %% loaded. Does not change the status of the stats however.
         _Other ->
             case check_meta(?PROFILEKEY(ProfileName)) of
                 [] ->
@@ -493,6 +508,7 @@ delete_profile(ProfileName) ->
                 _ ->
                     delete(?PROFPFX, ProfileName),
                     io:format("Profile Deleted : ~s~n",[ProfileName])
+        %% Otherwise the profile is found and deleted
             end
     end.
 
@@ -506,10 +522,10 @@ delete_profile(ProfileName) ->
 -spec(reset_profile() -> ok | error()).
 reset_profile() ->
     CurrentStats = find_all_entries(),
-        put(?LOADEDPFX, ?LOADEDKEY, [<<"none">>]),
+    put(?LOADEDPFX, ?LOADEDKEY, ["none"]),
     change_stats_from(CurrentStats, disabled),
     io:format("All Stats set to 'enabled'~n").
-% change from disabled to enabled
+% change from only disabled to enabled
 
 change_stats_from(Stats, Status) ->
     change_stat_list_to_status(
@@ -527,4 +543,5 @@ change_stats_from(Stats, Status) ->
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
+%% todo: testing
 -endif.

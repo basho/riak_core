@@ -65,7 +65,7 @@ init({{MonitorLatencyPort, Instance, Sip}, Stats}) ->
 
     self() ! refresh_monitor_server_ip,
     send_after(?STATS_UPDATE_INTERVAL, {dispatch_stats, Stats}),
-
+    %% todo: store the information in a method that is persisted
     {ok, #state{
         socket        = Socket,
         latency_port  = MonitorLatencyPort,

@@ -1,6 +1,6 @@
 %%%-------------------------------------------------------------------
 %%% @doc
-%%% From "riak admin stat setup ___" to this module, you cna poll the stats
+%%% From "riak admin push setup ___" to this module, you cna poll the stats
 %%% from exometer and setup a server to push those stats to an udp endpoint.
 %%% The server can be terminated to stop the pushing of stats.
 %%% @end
@@ -14,11 +14,13 @@
     setdown/1,
     setdown/0,
     get_stats/0,
-    sanitise_data/1]).
+    sanitise_data/1
+]).
 
 %% todo: make it so the sip instance and port should be added in,
 %% should not be undefined in the gen_server, otherwise fail.
 
+%% todo: add choice of protocol for udp or tcp
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -40,10 +42,16 @@
 -spec(setup(arg()) -> ok).
 setup(Arg) ->
     case sanitise_data(Arg) of
-        ok -> ok;
+        ok -> ok; %% io:format output
         SanitisedData ->
             start_server(riak_stat_push_udp,SanitisedData)
-    end.
+    end. %% todo start a server based on the protocol, udp/tcp
+
+%% todo: store the information about the setting up of stats, similar to
+%% the profiles in the riak_core_metadata.
+
+%% saving it as a profile is helpful for the specific stats set up of
+%% that cluster of riak etc....
 
 start_server(Child, Arg) ->
     riak_core_stats_sup:start_server(Child, Arg).
@@ -67,7 +75,7 @@ terminate_server() ->
 
 %%--------------------------------------------------------------------
 
--spec(sanitise_data(arg()) -> sanitised_data()).
+-spec(sanitise_data(arg()) -> sanitised()).
 %% @doc
 %% Sanitise the data coming in, into the necessary arguments for setting
 %% up an endpoint, This is specific to the endpoint functions
@@ -88,7 +96,9 @@ sanitise_data(Arg) ->
         Data ->
             {data_sanitise_2_electric_boogaloo(List),
                 riak_stat_console:data_sanitise(Data)}
-    end.
+    end. %% sanitise the data and look for the protocol, if there is no
+        %% todo: if no protocol (udp/tcp) is not specified, return error.
+        %% todo: in the sanitisation perform the staritng of the server?
 
 break_up(Arg, Str) ->
     re:split(Arg, Str).

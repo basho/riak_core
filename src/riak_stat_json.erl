@@ -23,23 +23,8 @@
 %% @end
 %%--------------------------------------------------------------------
 -spec(metrics_to_json(stats(), list(), list()) -> jsonprops()).
-
-metrics_to_json(Metrics,Fields,ExcludedDataPoints) ->
-    Dict = make_dict_of_stats(Metrics),
-    ok.
-
-make_dict_of_stats(Metrics) ->
-    lists:foldl(fun
-                    ({Stat,DataPoints},Dict) ->
-                        group_data(Stat, DataPoints, Dict)
-                end, dict:new(), Metrics).
-
-de_nest_stats([Stat],DataPoints,Dict) ->
-    dict:update(Stat,fun(D) ->
-    lists:append(DataPoints,D)
-                     end,DataPoints,Dict)
-
-
+%% todo: consolidate this function, and create a bunch of helper functions
+%% to help create a json object from a stat in exometer
 metrics_to_json(Metrics, AdditionalFields, ExcludedDataPoints) ->
     Dict1 = lists:foldl(fun
                             ({Metric, DataPoints}, Dict) ->
@@ -254,17 +239,3 @@ encode(Arg) ->
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
-
-funx() ->
-Dict =
-    lists:foldl(fun
-                    ({[Metric],DataPoints},Dict) ->
-                        dict:update(Metric,fun(A) ->
-                            lists:append(DataPoints,A) end,DataPoints,Dict);
-                    ({[Metric|Metrics],DataPoints},Dict) ->
-                        NewDict = case dict:find(Metric,Dict) of
-                                      {ok,Value} ->
-                                          io:format("first one~n"),
-                                          lists:foldl(fun({[Stat],DPs},Dic) ->
-                                              dict:update(Stat,fun(A)-> lists:append(DPs,A) end,DPs,Dic);
-                                              ({[Stat|Stats],DPs},Dic) -> NewDic = case dict:find(Stat,Dic) of {ok,_} -> io:format("Too Nested~n"),Dic;	error -> io:format("Im not recursing again~n"),Dic end,	dict:store(Stat,NewDic,Dic)end, Value, Metrics);error -> io:format("second one~n"),lists:foldl(fun({[Stat],DPs},Dic) ->	dict:update(Stat,fun(A)-> lists:append(DPs,A) end,DPs,Dic);({[Stat|Stats],DPs},Dic) -> NewDic = case dict:find(Stat,Dic) of {ok,_} -> io:format("Too Nested~n"),Dic; error -> io:format("Im not recursing again~n"),Dic end,dict:store(Stat,NewDic,Dic) end, dict:new(), Metrics) end, dict:store(Metric,NewDict,Dict).

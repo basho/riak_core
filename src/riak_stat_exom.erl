@@ -263,7 +263,6 @@ metric_names(Pattern) ->
 
 %% todo: aggregation across nodes
 
-
 %%%===================================================================
 %%% Updating Stats API
 %%%===================================================================
@@ -341,5 +340,5 @@ timestamp() ->
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
-
+%% todo: testing
 -endif.

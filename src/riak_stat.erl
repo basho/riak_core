@@ -229,8 +229,8 @@ update(Name, Inc, Type) ->
 %% {status, unregistered}, and deletes the metric from exometer
 %% @end
 %%%-------------------------------------------------------------------
--spec(unregister({app(),Idx :: term(),type(),app()}) -> ok | error()).
--spec(unregister(metricname()) -> ok | error()).
+-spec(unregister({app(),Idx :: term(),type(),app()} | metricname()) ->
+    ok | error()).
 unregister({Mod, Idx, Type, App}) -> %% specific to riak_core vnode
     unregister_vnode(Mod, Idx, Type, App);
 unregister(StatName) -> %% generic
@@ -289,5 +289,5 @@ print(Entries, Attr) ->
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
-
+%% todo: testing
 -endif.

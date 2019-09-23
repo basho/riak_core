@@ -24,7 +24,7 @@
     riak        %% local | {node(), atom()}
 }).
 
--type props()  :: proplists:proplist().
+-type props()       :: proplists:proplist().
 -type context()     :: #ctx{}.
 -type rd ()         :: webmachine:wrq().
 -type encoding()    :: string().
@@ -44,25 +44,28 @@
 
 %%--------------------------------------------------------------------
 
--spec(init(props()) -> {ok, context()}).
+%%%-------------------------------------------------------------------
 %% @doc
 %% receives a config property list from dispatcher as the Arg, for
 %% every request to this module, if successful should return {ok, Context},
 %% Initialise the resource and pull out needed properties
 %% @end
+%%%-------------------------------------------------------------------
+-spec(init(props()) -> {ok, context()}).
 init(Props) ->
     {ok, #ctx{prefix = proplists:get_value(prefix, Props),
         riak   = proplists:get_value(riak,   Props)
     }}.
 
-%%--------------------------------------------------------------------
 
--spec(encodings_provided(rd(), context()) -> {enc_prov(), rd(), context()}).
+%%%-------------------------------------------------------------------
 %% @doc
 %% Get a list of encodings that this resource provides,
 %% "identity" -> all methods
 %% "gzip"     -> GET method
 %% @end
+%%%-------------------------------------------------------------------
+-spec(encodings_provided(rd(), context()) -> {enc_prov(), rd(), context()}).
 encodings_provided(Req, Ctx) ->
     case wrq:method(Req) of
         'GET' ->
@@ -71,57 +74,61 @@ encodings_provided(Req, Ctx) ->
             {[{"identity", fun(X) -> X end}], Req, Ctx}
     end.
 
-%%--------------------------------------------------------------------
 
--spec(content_types_provided(rd(), context()) ->
-                                        {ctype(), rd(), context()}).
+%%%-------------------------------------------------------------------
 %% @doc
 %% Return the list of pairs -> the media in ctype() being a string
 %% of content-type format (such as jsonheader) and the handler being
 %% and atom of the function that can provide a representation of the media
 %% @end
+%%%-------------------------------------------------------------------
+-spec(content_types_provided(rd(), context()) ->
+                                          {ctype(), rd(), context()}).
 content_types_provided(Req, Ctx) ->
     {[{?JSON_CONTENT_TYPE, produce_body},
         {?PLAIN_TEXT_CONTENT_TYPE, pretty_print}],
         Req, Ctx}.
 
-%%--------------------------------------------------------------------
-
--spec(service_available(rd(), context()) ->
-                                {boolean() | halt(), rd(), context()}).
+%%%-------------------------------------------------------------------
 %% @doc
 %% Determine a connection to riak
 %% @end
+%%%-------------------------------------------------------------------
+-spec(service_available(rd(), context()) ->
+                               {boolean() | halt(), rd(), context()}).
 service_available(Req, Ctx=#ctx{}) ->
     {true, Req, Ctx}.
 
-%%--------------------------------------------------------------------
 
--spec(forbidden(rd(), context()) ->
-                                {boolean() | halt(), rd(), context()}).
+%%%-------------------------------------------------------------------
 %% @doc
 %% determines whether the request is forbidden
 %% @end
+%%%-------------------------------------------------------------------
+-spec(forbidden(rd(), context()) ->
+                               {boolean() | halt(), rd(), context()}).
 forbidden(Req, Ctx) ->
     {riak_kv_wm_utils:is_forbidden(Req), Req, Ctx}.
 
-%%--------------------------------------------------------------------
 
--spec(produce_body(rd(), context()) -> {iodata(), rd(), context()}).
+%%%-------------------------------------------------------------------
 %% @doc
 %% Retrieve the stats and return an encoded json object to send back
 %% @end
+%%%-------------------------------------------------------------------
+-spec(produce_body(rd(), context()) -> {iodata(), rd(), context()}).
 produce_body(ReqData, Ctx) ->
     Stats = get_stats(),
     Body  = riak_stat_json:encode({struct, Stats}),
     {Body, ReqData, Ctx}.
 
-%%--------------------------------------------------------------------
 
--spec(pretty_print(rd(), context()) -> {string(), rd(), context()}).
+%%%-------------------------------------------------------------------
 %% @doc
 %% Format the response JSON object in a "pretty-printed" style.
 %% @end
+%%%-------------------------------------------------------------------
+-spec(pretty_print(rd(), context()) -> {string(), rd(), context()}).
 pretty_print(RD1, C1=#ctx{}) ->
     {Json, RD2, C2} = produce_body(RD1, C1),
     {json_pp:print(binary_to_list(list_to_binary(Json))), RD2, C2}.

@@ -26,7 +26,6 @@
     data_sanitise/1,
     data_sanitise/2,
     data_sanitise/3,
-    data_sanitise/4,
     print/1,
     print/2
 ]).

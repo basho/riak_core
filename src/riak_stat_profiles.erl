@@ -65,16 +65,15 @@
 
 %% API
 -export([
-    save_profile/1, load_profile/1, delete_profile/1, reset_profile/0
+    save_profile/1,
+    load_profile/1,
+    delete_profile/1,
+    reset_profile/0
 ]).
-
 
 -define(timestamp, os:timestamp()).
 -define(NODEID, term_to_binary(node())).
 
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
 
 %%%===================================================================
 %%% API
@@ -151,7 +150,6 @@ delete_profile(ProfileName) ->
 reset_profile() ->
     riak_stat_mgr:reset_profile().
 
-
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
@@ -174,5 +172,5 @@ check_args(_) ->
     check_args([]).
 
 -ifdef(TEST).
-
+-include_lib("eunit/include/eunit.hrl").
 -endif.

@@ -25,7 +25,8 @@ json_stats(ComponentHostname, Instance, Stats) ->
 get_stats(Stats) ->
     riak_stat_exom:get_values(Stats).
 
-
+%% starting up endpoint servers in tcp and udp
+%% todo: create in this module
 
 %% todo: create a function to save the configuration of the endpoint pushing
 %% of the stats. could save it in the metadata to persist? with a profile

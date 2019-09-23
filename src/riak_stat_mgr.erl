@@ -51,13 +51,13 @@ maybe_meta(Function, Arguments) ->
                      {U,D}     -> Function(U,D);
                      {U,D,T}   -> Function(U,D,T);
                      {U,D,T,C} -> Function(U,D,T,C);
-                     U -> Function(U)
+                     U         -> Function(U)
                  end
     end.
 
 
 reload_metadata(Stats) ->
-    change_meta_status([{Stat,Status} || {Stat,_,Status}<-Stats]).
+    change_meta_status([{Stat,Status} || {Stat,_Type,Status}<-Stats]).
 
 %%%===================================================================
 %%% Registration API
@@ -82,7 +82,8 @@ register_both(Stat,Type,Options,Aliases) ->
 register_both(StatInfo) ->
     case register_meta(StatInfo) of
         [] -> ok; %% stat is deleted or recorded as unregistered in meta
-        NewOpts -> {Name, Type, _Opts, Aliases} = StatInfo,
+        NewOpts ->
+            {Name, Type, _Opts, Aliases} = StatInfo,
             register_exom({Name, Type, NewOpts, Aliases})
     end.
 
@@ -277,7 +278,7 @@ aggregate(Pattern, DPs) ->
 %%%===================================================================
 %%%-------------------------------------------------------------------
 %% @doc
-%% change status in metadata and then in exometer if metadata]
+%% change status in metadata and then in exometer if metadata
 %% is enabled.
 %% @end
 %%%-------------------------------------------------------------------
@@ -400,7 +401,7 @@ reset_profile() ->
 -ifdef(EUNIT).
 -include_lib("eunit/include/eunit.hrl").
 -compile([export_all]).
-
+%% todo: testing
 -endif.
 
 
