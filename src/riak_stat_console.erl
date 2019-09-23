@@ -94,8 +94,7 @@ pick_info_attrs(Arg) ->
             (P, {As, Ps}) -> {As, [P | Ps]}
         end, {[], []}, split_arg(Arg)) of
         {[], Rest} ->
-            {[name, type, module, value, cache,
-                status, timestamp, options], Rest};
+            {?INFOSTAT, Rest};
         Other ->
             Other
     end.

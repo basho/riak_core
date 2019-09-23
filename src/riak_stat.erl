@@ -77,9 +77,6 @@
                                                     {cache,5000})).
                   %% default can be changed in config this way.
 
--define(INFOSTAT,  [name,type,module,value,cache,
-                    status,timestamp,options]).
-                  %% attributes for all the metrics stored in exometer
 
 %%%===================================================================
 %%% Registration API

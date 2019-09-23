@@ -72,6 +72,9 @@
 
 -define(PFX,             riak_stat:prefix()).
 
+-define(INFOSTAT,  [name,type,module,value,cache,
+                    status,timestamp,options]).
+%% attributes for all the metrics stored in exometer
 
 %% Endpoint Polling Macros
 
