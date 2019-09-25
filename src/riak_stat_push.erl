@@ -127,14 +127,15 @@ fold(Protocol,{{Port,Instance,ServerIp},_Stats}) ->
                 andalso (AServerIP == MSip  orelse AServerIP == '_') ->
                 {[{{MDate,MTime,MProtocol},{MPort,MSip,MInst,MPid,MRunTuple,MStats}}|Acc],
                     APort,AInstance,AServerIP};
-            
+
             ({{MDate,MTime,MProtocol},[#{
-                port := MPort,
+                port     := MPort,
                 serverip := MSip,
                 instance := MInst,
-                pid := MPid,
+                pid      := MPid,
                 runnning := MRun,
-                stats := MStats}]}, {Acc,APort,AInstance,AServerIP})
+                stats    := MStats}]},
+                                    {Acc,APort,AInstance,AServerIP})
                 when    (    APort == MPort orelse     APort == '_')
                 andalso (AInstance == MInst orelse AInstance == '_')
                 andalso (AServerIP == MSip  orelse AServerIP == '_') ->
