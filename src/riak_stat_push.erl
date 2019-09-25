@@ -119,13 +119,25 @@ stop_server(ChildrenInfo) ->
 
 fold(Protocol,{{Port,Instance,ServerIp},_Stats}) ->
     riak_core_metadata:fold(
-        fun              %% K-V in metadata todo: change to map
+        fun              %% K-V in metadata (legacy)
             ({{MDate,MTime,MProtocol}, [{MPort,MSip,MInst,MPid,MRunTuple,MStats}]},
                 {Acc, APort,AInstance,AServerIP})
                 when    (    APort == MPort orelse     APort == '_')
                 andalso (AInstance == MInst orelse AInstance == '_')
                 andalso (AServerIP == MSip  orelse AServerIP == '_') ->
                 {[{{MDate,MTime,MProtocol},{MPort,MSip,MInst,MPid,MRunTuple,MStats}}|Acc],
+                    APort,AInstance,AServerIP};
+            ({{MDate,MTime,MProtocol},[#{
+                port := MPort,
+                serverip := MSip,
+                instance := MInst,
+                pid := MPid,
+                runnning := MRun,
+                stats := MStats}]}, {Acc,APort,AInstance,AServerIP})
+                when    (    APort == MPort orelse     APort == '_')
+                andalso (AInstance == MInst orelse AInstance == '_')
+                andalso (AServerIP == MSip  orelse AServerIP == '_') ->
+                {[{{MDate,MTime,MProtocol},{MPort,MSip,MInst,MPid,MRun,MStats}}|Acc],
                     APort,AInstance,AServerIP};
 
             ({_K,_V},{Acc,APort,AInstance,AServerIP}) ->
