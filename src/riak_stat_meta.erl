@@ -26,6 +26,10 @@
 
 %% Registration API
 -export([
+    get/2, get/3,
+    get_all/1,
+    put/3, put/4,
+
     register/1,
     register/4,
 
