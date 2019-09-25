@@ -25,6 +25,22 @@ json_stats(ComponentHostname, Instance, Stats) ->
 get_stats(Stats) ->
     riak_stat_exom:get_values(Stats).
 
+%%%-------------------------------------------------------------------
+%% @doc
+%% retrieve all the stats out of riak_kv_status
+%% todo: improve the stat collection method
+%% @end
+%%%-------------------------------------------------------------------
+-spec(get_stats() -> stats()).
+get_stats() ->
+    case application:get_env(riak_core, push_defaults_type, classic) of
+        classic ->
+            riak_kv_status:get_stats(web);
+        beta ->  %% get all stats and their values
+            riak_stat_exom:get_values(['_'])
+    end.
+
+
 %% starting up endpoint servers in tcp and udp
 %% todo: create in this module
 
