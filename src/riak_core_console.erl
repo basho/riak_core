@@ -34,7 +34,7 @@
 	       stat_show/1, stat_info/1, stat_enable/1, stat_disable/1, stat_reset/1,
          stat_disable_0/1, stat_0/1,
          load_profile/1, add_profile/1, remove_profile/1, reset_profile/0, reset_profile/1,
-         enable_metadata/1, setup_endpoint/1, setdown_endpoint/1]).
+         enable_metadata/1, setup_endpoint/1, setdown_endpoint/1, find_push_stats/1]).
 
 %% New CLI API
 -export([command/1]).
@@ -1316,7 +1316,7 @@ enable_metadata(Arg) ->
 %%%-------------------------------------------------------------------
 -spec(setup_endpoint(term()) -> ok).
 setup_endpoint(Arg) ->
-    riak_stat_latency:setup(Arg).
+    riak_stat_push:setup(Arg).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -1326,4 +1326,15 @@ setup_endpoint(Arg) ->
 %%%-------------------------------------------------------------------
 -spec(setdown_endpoint(term()) -> ok).
 setdown_endpoint(Arg) ->
-    riak_stat_latency:setdown(Arg).
+    riak_stat_push:setdown(Arg).
+
+%%%-------------------------------------------------------------------
+%% @doc
+%% Get information on the stats polling, as in the date and time the
+%% stats pushing began, and the port, serverip, instance etc that was
+%% given at the time of setup
+%% @end
+%%%-------------------------------------------------------------------
+-spec(find_push_stats(term()) -> ok).
+find_push_stats(Arg) ->
+    riak_stat_push:find_persisted_data(Arg).
