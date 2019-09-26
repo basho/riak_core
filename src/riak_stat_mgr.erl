@@ -42,7 +42,7 @@
 %% length of time (i.e. testing)
 %% @end
 %%%-------------------------------------------------------------------
--spec(maybe_meta(function(), arguments()) -> false | ok | error() | arg()).
+-spec(maybe_meta(function(), arguments()) -> error() | response()).
 maybe_meta(Function, Arguments) ->
     case ?IS_ENABLED(?METADATA_ENABLED) of
         false -> false; %% it's disabled
@@ -55,7 +55,13 @@ maybe_meta(Function, Arguments) ->
                  end
     end.
 
-
+%%%-------------------------------------------------------------------
+%% @doc
+%% reload the metadata after it has been disabled, to match the
+%% current configuration of status status' in exometer
+%% @end
+%%%-------------------------------------------------------------------
+-spec(reload_metadata(stats()) -> ok | error()).
 reload_metadata(Stats) ->
     change_meta_status([{Stat,Status} || {Stat,_Type,Status}<-Stats]).
 
@@ -81,7 +87,7 @@ register_both(Stat,Type,Options,Aliases) ->
     register_both({Stat,Type,Options,Aliases}).
 register_both(StatInfo) ->
     case register_meta(StatInfo) of
-        [] -> ok; %% stat is deleted or recorded as unregistered in meta
+        [] -> ok; %% stat is deleted or recorded as unregistered
         NewOpts ->
             {Name, Type, _Opts, Aliases} = StatInfo,
             register_exom({Name, Type, NewOpts, Aliases})
@@ -135,13 +141,13 @@ find_entries(Stats,Status,Type,DPs) ->
                 Return ->
                     Return
             end;
-        NewStats ->
-            {NewStats, DPs}
+        [NewStats] ->  NewStats; %% alias' search
+        Otherwise -> Otherwise   %% legacy search
     end.
 
 %%%-------------------------------------------------------------------
 %%% @doc
-%%% legacy search looks for the alias in exomter_alias to return the
+%%% legacy search looks for the alias in exometer_alias to return the
 %%% stat name and its value.
 %%% @end
 %%%-------------------------------------------------------------------
@@ -152,16 +158,15 @@ legacy_search(Stats, Status, Type) ->
         legacy_search_(S, Status, Type)
               end, Stats)).
 
-%% todo : revamp
 legacy_search_(Stat, Status, Type) ->
     try re:run(Stat, "\\.",[]) of
-        {match, _} -> %% wrong format, does not match
+        {match, _} -> %% wrong format, should not match
             [];
         nomatch ->
             Re = <<"^", (make_re(Stat))/binary, "$">>,
                 [{Stat, legacy_search_cont(Re, Status, Type)}]
     catch _:_ ->
-        []
+        find_through_alias(Stat,Status,Type)
     end.
 
 make_re(Stat) ->
@@ -233,6 +238,24 @@ get_datapoint(Entry, DPs) ->
     end.
 get_info(Name, Info) ->
     riak_stat_exom:get_info(Name, Info).
+
+%%%-------------------------------------------------------------------
+%% @doc
+%% like legacy search we use the alias of the stat to find it's entry
+%% and datapoint
+%% @end
+%%%-------------------------------------------------------------------
+-spec(find_through_alias(stats(),status(),type()) -> response()).
+find_through_alias([Alias],Status,Type) ->
+    case riak_stat_exom:resolve(Alias) of
+        error -> {[],[]};
+        {Entry,DP} ->
+            case find_entries_exom([Entry],Status,Type,[DP]) of
+                [] -> {[],[]};
+                NewStat ->
+                    NewStat
+            end
+    end.
 
 %%%-------------------------------------------------------------------
 
