@@ -189,7 +189,7 @@ stat_info(Stat) ->
 %%%-------------------------------------------------------------------
 -spec(aggregate(metricname(), datapoint()) -> stats()).
 aggregate(Stats, DPs) ->
-    Pattern = [{{Stats, '_', '_'}, [], ['$_']}],
+    Pattern = [{{Stats, '_', '_'}, [], ['$_']}], %% Match_spec
     print(aggregate_(Pattern, DPs)).
 
 aggregate_(Pattern, DPs) ->
@@ -287,7 +287,7 @@ print(Entries, Attr) ->
 %%% EUNIT Testing
 %%%===================================================================
 
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
-%% todo: testing
--endif.
+%%-ifdef(TEST).
+%%-include_lib("eunit/include/eunit.hrl").
+%%%% todo: testing
+%%-endif.
