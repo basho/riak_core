@@ -129,10 +129,7 @@ delete(Prefix, Key) ->
 -spec(find_entries(statslist(),status(),type()) -> statslist()).
 find_entries(Stats,Status,Type) ->
     lists:flatten(lists:map(
-        fun(Stat) ->
-            fold(Stat,Status,Type)
-        end, Stats
-    )).
+        fun(Stat) -> fold(Stat,Status,Type) end, Stats)).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -148,9 +145,9 @@ find_entries(Stats,Status,Type) ->
 %%%-------------------------------------------------------------------
 %% @doc
 %% the Status can be anything, it is always guarded for, the type is
-%% not required, and there are no datapoints requested. Only return the
-%% name of the stat and the status it has in the metadata.
-%% @end todo: this description needs updating (no datapoints)
+%% not required. Returns the same as exometer:find_entries ->
+%%          [{Name,Type,Status|...}]
+%% @end
 %%%-------------------------------------------------------------------
 fold(Stat, Status0, Type0) ->
     {Stats, Status0, Type0} =
@@ -195,7 +192,7 @@ check_meta({Prefix, Key}) ->
                 unregistered -> unregistered;
                 _Otherwise   -> Value
             end
-    end. %% todo: use riak_core_metadata:fold(X)
+    end.
 
 find_unregister_status(_Key, '$deleted') ->
     unregistered;
