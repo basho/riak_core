@@ -1,12 +1,12 @@
 %%%-------------------------------------------------------------------
 %%% @doc
-%%% Data given from riak_stat_push through console/config, passed
-%%% into this gen_server to open a udp socket on a Port. Values from
-%%% Exometer are retrieved and sent as a Json object to a latency monitoring
-%%% server
+%%% Data from riak_stat_push through console, passed into this
+%%% gen_server to open up a tcp socket on a port, Values from exometer
+%%% are retrieved and sent as a json object to a latency monitoring
+%%% server of "your" choice.
 %%% @end
 %%%-------------------------------------------------------------------
--module(riak_stat_push_udp).
+-module(riak_stat_push_tcp).
 -include_lib("riak_core/include/riak_stat.hrl").
 
 -behaviour(gen_server).
@@ -34,23 +34,29 @@
     instance      :: instance()
 }).
 
--define(UDP_OPEN_PORT,         10029).
--define(UDP_OPTIONS,           [?UDP_OPEN_BUFFER,
-                                ?UDP_OPEN_SNDBUFF,
-                                ?UDP_OPEN_ACTIVE]).
--define(UDP_OPEN_BUFFER,       {buffer, 100*1024*1024}).
--define(UDP_OPEN_SNDBUFF,      {sndbuf,   5*1024*1024}).
--define(UDP_OPEN_ACTIVE,       {active,         false}).
+-define(TCP_PORT,         8005).
+-define(TCP_ADDRESS,      inet_db:gethostname()).
+-define(TCP_OPTIONS,      [?TCP_BUFFER,?TCP_SNDBUFF,?TCP_ACTIVE]).
+
+-define(TCP_BUFFER,       {buffer, 100*1024*1024}).
+-define(TCP_SNDBUFF,      {sndbuf,   5*1024*1024}).
+-define(TCP_ACTIVE,       {active,         false}).
 
 %%%===================================================================
 %%% API
 %%%===================================================================
 
 %%--------------------------------------------------------------------
--spec(start_link(Term::arg()) ->
+%% @doc
+%% Starts the server
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec(start_link(Arg :: term()) ->
     {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 start_link(Obj) ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, Obj, []).
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -59,24 +65,24 @@ start_link(Obj) ->
 -spec(init(Args :: term()) ->
     {ok, State :: #state{}} | {ok, State :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term()} | ignore).
-init({{MonitorLatencyPort, Instance, Sip}, Stats}) ->
+init({{MontiorLatencyPort,Instance,Sip},Stats}) ->
 
-    MonitorStatsPort   = ?MONITORSTATSPORT,
-    MonitorServer      = ?MONITORSERVER,
-    Hostname           = inet_db:gethostname(),
-    Socket             = open(),
+    MonitorStatsPort = ?MONITORSTATSPORT,
+    MonitorServer    = ?MONITORSERVER,
+    Hostname         = ?TCP_ADDRESS,
+    Socket           = open(),
 
     self() ! refresh_monitor_server_ip,
-    send_after(?STATS_UPDATE_INTERVAL, self(), {dispatch_stats, Stats}),
+    send_after(?STATS_UPDATE_INTERVAL, {dispatch_stats, Stats}),
 
     {ok, #state{
-        socket        = Socket,
-        latency_port  = MonitorLatencyPort,
-        server        = MonitorServer,
-        server_ip     = Sip,
-        stats_port    = MonitorStatsPort,
-        hostname      = Hostname,
-        instance      = Instance}
+        socket       = Socket,
+        latency_port = MontiorLatencyPort,
+        server       = MonitorServer,
+        server_ip    = Sip,
+        stats_port   = MonitorStatsPort,
+        hostname     = Hostname,
+        instance     = Instance}
     }.
 %%--------------------------------------------------------------------
 -spec(handle_call(Request :: term(), From :: {pid(), Tag :: term()},
@@ -116,18 +122,17 @@ handle_info(refresh_monitor_server_ip, State = #state{server = MonitorServer}) -
                end,
     send_after(?REFRESH_INTERVAL, refresh_monitor_server_ip),
     {noreply, NewState};
-handle_info({dispatch_stats, Stats}, #state{socket=Socket, stats_port = Port,
-    server_ip = undefined, server = Server, hostname = Hostname,
+handle_info({dispatch_stats, Stats}, #state{
+    socket=Socket, server_ip = undefined, hostname = Hostname,
     instance = Instance} = State) ->
-    dispatch_stats(Socket, Hostname, Instance, Server, Port, Stats),
+    dispatch_stats(Socket, Hostname, Instance, Stats),
     {noreply, State};
-handle_info({dispatch_stats, Stats}, #state{socket=Socket, stats_port = Port,
-    server_ip = ServerIp, hostname = Hostname, instance = Instance} = State) ->
-    dispatch_stats(Socket, Hostname, Instance, ServerIp, Port, Stats),
+handle_info({dispatch_stats, Stats}, #state{
+    socket=Socket, hostname = Hostname, instance = Instance} = State) ->
+    dispatch_stats(Socket, Hostname, Instance, Stats),
     {noreply, State};
 handle_info(_Info, State) ->
     {noreply, State}.
-
 
 %%--------------------------------------------------------------------
 -spec(terminate(Reason :: (normal | shutdown | {shutdown, term()} | term()),
@@ -146,27 +151,25 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
-send(Socket, Host, Port, Data) ->
-    gen_udp:send(Socket, Host, Port, Data).
+send(Socket, Data) ->
+    gen_tcp:send(Socket, Data).
 
 send_after(Interval, Arg) ->
     send_after(Interval,self(),Arg).
 
 open() ->
-    {ok, Socket} =
-        gen_udp:open(?UDP_OPEN_PORT, ?UDP_OPTIONS),
+    {ok,Socket} =
+        gen_tcp:connect(?TCP_ADDRESS,?TCP_PORT,?TCP_OPTIONS),
     Socket.
 
-
-dispatch_stats(Socket, ComponentHostname, Instance, MonitoringHostname, Port, Stats) ->
+dispatch_stats(Socket, ComponentHostname, Instance, Stats) ->
     case riak_stat_push_util:json_stats(ComponentHostname, Instance, Stats) of
         ok ->
             send_after(?STATS_UPDATE_INTERVAL, {dispatch_stats, Stats});
         JsonStats ->
-            send(Socket, MonitoringHostname, Port, JsonStats),
+            send(Socket, JsonStats),
             send_after(?STATS_UPDATE_INTERVAL, {dispatch_stats, Stats})
     end.
-
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").

@@ -84,18 +84,8 @@
 %%%%% Endpoint Polling Macros %%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-        %% default instance name
--define(INSTANCE,               app_helper:get_env(riak_core,riak_stat_instance,
-                                "riak_stat-polling")).
-        %% default to localhost for hostname
--define(MONITOR_SERVER,         app_helper:get_env(riak_core,riak_stat_server,
-                                "127.0.0.1")).
-        %% default port for the gen_server to open on
--define(MONITOR_LATENCY_PORT,   app_helper:get_env(riak_core,riak_stat_port,
-                                10099)).
-        %% default port to send stats to
--define(MONITOR_STATS_PORT,     app_helper:get_env(riak_core,riak_end_port,
-                                10066)).
+-define(MONITORSTATSPORT,       app_helper:get_env(riak_stat,monitor_stats_port,8001)).
+-define(MONITORSERVER,          app_helper:get_env(riak_stat,monitor_server,"127.0.0.1")).
 
 -define(REFRESH_INTERVAL,       30000).
 

@@ -13,7 +13,8 @@
     setup/1,
     setdown/1,
     sanitise_data/1,
-    find_persisted_data/1
+    find_persisted_data/1,
+    find_persisted_data/2
 ]).
 
 -define(PUSHPREFIX, {riak_stat_push, term_to_binary(node())}).
@@ -38,7 +39,7 @@ setup(Arg) ->
                 ok -> ok;
                 {Protocol,SanitisedData} ->
                     Pid = start_server(Protocol,SanitisedData),
-                    store_setup_info(Pid, Protocol,SanitisedData)
+                    store_setup_info(Pid, Protocol, SanitisedData)
             end
     end.
 
@@ -49,6 +50,7 @@ store_setup_info(Pid, Protocol, {{Port, Instance, Sip},Stats}) ->
     Key = {Date,Time,Protocol}, %% Key is tuple-object
     Value =
         #{port     => Port,
+          server   => undefined,
           serverip => Sip,
           instance => Instance,
           pid      => Pid,
@@ -66,7 +68,7 @@ start_server(http, _Arg) ->
 start_server(Protocol, _Arg) ->
     io:format("Error wrong type : ~p~n",[Protocol]).
 
-check_args('_', {{_P, _I, _S}, _St}) ->
+check_args('_', {{_P,  _I, _S}, _St}) ->
     io:format("No Protocol type entered~n");
 check_args(_Pr, {{'_', _I, _S},_St}) ->
     io:format("No Port type entered~n");
@@ -153,7 +155,9 @@ fold(Protocol,{{Port,Instance,ServerIp},_Stats}) ->
 
 find_persisted_data(Arg) ->
     {Protocol, SanitisedData} = sanitise_data(Arg),
-     print_info(fold(Protocol,SanitisedData)).
+     print_info(find_persisted_data(Protocol,SanitisedData)).
+find_persisted_data(Protocol,{{Port,Instance,ServerIp},Stats}) ->
+    fold(Protocol,{{Port,Instance,ServerIp},Stats}).
 
 print_info([]) ->
     io:fwrite("Nothing found~n");
