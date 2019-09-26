@@ -180,8 +180,10 @@ data_sanitise(Arg) ->
     parse_stat_entry(check_args(Arg), ?TYPE, ?STATUS, ?DPs).
 
 %% separate Status from Type with fun of same arity
-data_sanitise(Arg, Status) when Status == enabled
-    orelse Status == disabled orelse Status == '_' ->
+data_sanitise(Arg, Status)
+    when   Status == enabled
+    orelse Status == disabled
+    orelse Status == '_' ->
     parse_stat_entry(check_args(Arg), ?TYPE, Status, ?DPs);
 
 data_sanitise(Arg, Type) ->
@@ -260,7 +262,6 @@ type_status_and_dps([DPsBin | Rest], Type, Status, DPs) ->
 merge([_ | _] = DPs, default) ->
     DPs;
 merge([H | T], DPs) ->
-    io:format("H: ~p, T: ~p, DPs : ~p~n",[H,T,DPs]),
     case lists:member(H, DPs) of
         true -> merge(T, DPs);
         false -> merge(T, DPs ++ [H])
@@ -407,14 +408,14 @@ print(NewStats,DPs) ->
               case lists:flatten([not_0(N, dis) ||
                   {N, _, _} <- Names]) of
 
-                  [] -> io:fwrite("No Stats with Value 0~n");
+                  [] -> print([]);
                   _V -> ok
               end;
           ({Names, NDPs}) when DPs == show_0 ->
               case lists:flatten([not_0(N, NDPs) ||
                   {N, _, _} <- Names]) of
 
-                  [] -> print([], []);
+                  [] -> print([]);
                   V -> io:fwrite("~p: ~p~n", [Names, V])
               end;
 
@@ -462,17 +463,16 @@ not_0_(Stat, _DPs) ->
 
 %%%-------------------------------------------------------------------
 
-%% todo: formatting for stats return
 get_value(N) ->
     case riak_stat_exom:get_value(N) of
         {ok,Val} ->
             case lists:foldl(fun
                           ({_,{error,_}},A) -> A;
-                          (D,A) -> io:fwrite("  ~p~n",[D]),[ok|A]
+                          (D,A) ->
+                              [D|A]
                       end, [],Val) of
                 [] -> [];
-                R ->  io:fwrite("~p : ~n",[N]),
-                    [io:fwrite("~p~n",[D])||D<-R]
+                R ->  io:fwrite("~p : ~p ~n",[N,R])
             end;
         {error, _} -> []
     end.
@@ -481,25 +481,28 @@ find_stats_info(Stats, Info) ->
     case riak_stat_exom:get_datapoint(Stats, Info) of
         [] -> [];
         {ok, V} ->
-            io:fwrite("~p :~n",[Stats]),
-            lists:map(fun
-                          ([]) -> [];
-                          ({_DP, undefined}) -> [];
-                          ({_DP, {error,_}}) -> [];
-                          (DP) ->
-                              io:fwrite("             ~p~n", [DP])
-                      end, V);
+            case lists:foldl(fun
+                          ([],A) -> A;
+                          ({_DP, undefined},A) -> A;
+                          ({_DP, {error,_}},A) -> A;
+                          (DP,A) -> [DP|A]
+                      end, [], V) of
+                [] -> [];
+                O  -> io:fwrite("~p : ~p~n",[Stats,O])
+            end;
         {error,_} -> get_info_2_electric_boogaloo(Stats, Info)
     end.
 
 get_info_2_electric_boogaloo(N,Attrs) ->
-    lists:flatten(io_lib:fwrite("~p: ", [N])),
-    lists:map(fun
-                  (undefined) -> [];
-                  ([]) -> [];
-                  ({_,{error,_ }}) -> [];
-                  (A) -> io:fwrite("~p~n",[A])
-              end, [riak_stat_exom:get_info(N,Attrs)]).
+    case lists:foldl(fun
+                  (undefined,A) -> A;
+                  ([],A) -> A;
+                  ({_,{error,_ }},A) -> A;
+                  (D,A) -> [D|A]
+              end, [],[riak_stat_exom:get_info(N,Attrs)]) of
+        [] -> [];
+        O  -> io:fwrite("~p : ~p~n",[N,O])
+    end.
 
 
 %%%===================================================================
