@@ -13,7 +13,7 @@
 %% Read API
     get_values/1, get_info/2, find_entries/2, find_entries/1,
     get_datapoint/2, get_value/1, select/1, sample/1,
-    find_stats_info/2, aggregate/2,
+    find_stats_info/2, aggregate/2, resolve/1,
 
 %% Update API
     update/3, update/4, change_status/1, change_status/2,
@@ -107,6 +107,15 @@ alias_dp({DP, Alias}) ->
 %%%===================================================================
 %%% Reading Stats API
 %%%===================================================================
+
+%%%-------------------------------------------------------------------
+%% @doc
+%% find the entry and dp for an alias given
+%% @end
+%%%-------------------------------------------------------------------
+-spec(resolve(aliases()) -> stats() | error).
+resolve(Alias) ->
+    exometer_alias:resolve(Alias).
 
 %%%-------------------------------------------------------------------
 %% @doc
