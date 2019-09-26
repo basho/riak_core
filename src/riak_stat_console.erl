@@ -420,7 +420,7 @@ print(NewStats,DPs) ->
               end;
 
           ({N, _T, _S}) when DPs == [] -> get_value(N);
-          ({N, _T, _S}) -> find_stats_info(N, DPs);
+          ({N, _T, _S}) ->  find_stats_info(N, DPs);
 
           %% legacy pattern
           (Legacy) ->
