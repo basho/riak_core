@@ -6,7 +6,9 @@
 -module(riak_stat_push_util).
 
 %% API
--export([send_after/3, json_stats/3, get_stats/1]).
+-export([
+    json_stats/3,
+    get_stats/1]).
 
 -define(EXCLUDED_DATAPOINTS,   [ms_since_reset]).
 

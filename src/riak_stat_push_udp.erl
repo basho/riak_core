@@ -67,7 +67,7 @@ init({{MonitorLatencyPort, Instance, Sip}, Stats}) ->
     Socket             = open(),
 
     self() ! refresh_monitor_server_ip,
-    send_after(?STATS_UPDATE_INTERVAL, self(), {dispatch_stats, Stats}),
+    send_after(?STATS_UPDATE_INTERVAL, {dispatch_stats, Stats}),
 
     {ok, #state{
         socket        = Socket,
@@ -150,7 +150,7 @@ send(Socket, Host, Port, Data) ->
     gen_udp:send(Socket, Host, Port, Data).
 
 send_after(Interval, Arg) ->
-    send_after(Interval,self(),Arg).
+    erlang:send_after(Interval,self(),Arg).
 
 open() ->
     {ok, Socket} =

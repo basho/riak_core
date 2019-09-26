@@ -155,7 +155,7 @@ send(Socket, Data) ->
     gen_tcp:send(Socket, Data).
 
 send_after(Interval, Arg) ->
-    send_after(Interval,self(),Arg).
+    erlang:send_after(Interval,self(),Arg).
 
 open() ->
     {ok,Socket} =
