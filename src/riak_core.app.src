@@ -21,6 +21,7 @@
                   poolboy,
                   exometer_core,
                   clique,
+                  cluster_info,
                   gen_fsm_compat
                  ]},
   {mod, {riak_core_app, []}},
