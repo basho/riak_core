@@ -119,7 +119,8 @@ forbidden(Req, Ctx) ->
 -spec(produce_body(rd(), context()) -> {iodata(), rd(), context()}).
 produce_body(ReqData, Ctx) ->
     Stats = get_stats(),
-    Body  = riak_stat_json:encode({struct, Stats}),
+    Body = riak_stat_json:metrics_to_json(Stats, [ms_since_reset]),
+%%    Body  = riak_stat_json:encode({struct, Stats}),
     {Body, ReqData, Ctx}.
 
 
@@ -137,4 +138,5 @@ pretty_print(RD1, C1=#ctx{}) ->
 %%--------------------------------------------------------------------
 
 get_stats() ->
-    riak_stat:get_stats([riak|'_']).
+    {Stats,_} = riak_stat:get_stats([[riak|'_']]),
+    riak_stat_exom:get_values([Stat || {Stat, _, _} <- Stats]).

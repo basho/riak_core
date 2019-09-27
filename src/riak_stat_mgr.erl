@@ -246,16 +246,18 @@ get_info(Name, Info) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(find_through_alias(stats(),status(),type()) -> response()).
-find_through_alias([Alias],Status,Type) ->
+find_through_alias([Alias],Status,Type) when is_atom(Alias)->
     case riak_stat_exom:resolve(Alias) of
-        error -> {[],[]};
+        error -> [];
         {Entry,DP} ->
             case find_entries_exom([Entry],Status,Type,[DP]) of
-                [] -> {[],[]};
+                [] -> [];
                 NewStat ->
                     NewStat
             end
-    end.
+    end;
+find_through_alias(_Aliases,_Status,_Type) ->
+    [].
 
 %%%-------------------------------------------------------------------
 

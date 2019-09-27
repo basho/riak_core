@@ -46,7 +46,8 @@ metrics_to_json(Metrics, AdditionalFields, ExcludedDataPoints) ->
     end.
 
 metrics_to_json(Metrics, ExcludedDataPoints) ->
-    Dict1 = lists:foldl(fun({Metric, DataPoints}, Dict) ->
+    Dict1 = lists:foldl(fun
+                            ({Metric, DataPoints}, Dict) ->
         group_data(Metric, DataPoints, Dict)
                         end, dict:new(), Metrics),
     JsonStats = lists:reverse(
