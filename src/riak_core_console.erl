@@ -1290,7 +1290,7 @@ reset_profile() ->
 %%%-------------------------------------------------------------------
 %% @doc
 %% enable the metadata, arg should be true or false, if false then the
-%% communication to the metadata ends, unpon re-enabling the metadata
+%% communication to the metadata ends, upon re-enabling the metadata
 %% will "re-register" the stats, therefore the configuration remains
 %% consistent between both metadata and exometer, any profile that was
 %% loaded before will not be loaded upon re-enabling to prevent errors
@@ -1320,7 +1320,7 @@ setup_endpoint(Arg) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% disable the connection, Port given doesn't always matter - unless
+%% disable the connection, Port given always matters - unless
 %% multiple ports are open terminates gen_servers
 %% @end
 %%%-------------------------------------------------------------------

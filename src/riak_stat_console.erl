@@ -170,9 +170,9 @@ enable_metadata(Arg) ->
 %%%===================================================================
 %%%-------------------------------------------------------------------
 %%% @doc
-%%% Arguments coming in from the console or _stat modules arrive at
-%%% this function, data is transformed into a metrics name and type
-%%% status/datapoints if they have been given.
+%%% Arguments coming in from the console arrive at this function, data
+%%% is transformed into a metrics name and type status/datapoints if
+%%% they have been given.
 %%% @end
 %%%-------------------------------------------------------------------
 -spec(data_sanitise(data()) -> sanitised()).
