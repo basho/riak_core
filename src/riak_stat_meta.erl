@@ -8,11 +8,11 @@
 %%% Loaded Prefix:  {profiles, loaded}
 %%% Stats Prefix:   {stats,    nodeid()}
 %%%
-%%% Profile metadata-pkey: {{profiles, list}, [<<"profile-name">>]}
+%%% Profile metadata-pkey: {{profiles, list}, ["profile-name"]}
 %%% Profile metadata-val : [{Stat, {status, Status},...]
 %%%
 %%% Loaded metadata-pkey : {{profiles, loaded}, nodeid()}
-%%% Loaded metadata-val  : [<<"profile-name">>]
+%%% Loaded metadata-val  : ["profile-name"]
 %%%
 %%% Stats metadata-pkey: {{stats, nodeid()}, [riak,riak_kv,...]}
 %%% Stats metadata-val :
@@ -476,6 +476,10 @@ load_profile(ProfileName) ->
         %% profile in the case the stats configuration is changed,
         %% rather than "unloading" the profile and reloading it to
         %% change many stats statuses unnecessarily
+
+        %% or alternatively, save -> load -> change -> load again
+        %% would mean no stats would change if the profile is already
+        %% loaded
 
     end.
 

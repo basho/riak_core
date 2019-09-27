@@ -490,10 +490,10 @@ find_stats_info(Stats, Info) ->
                 [] -> [];
                 O  -> io:fwrite("~p : ~p~n",[Stats,O])
             end;
-        {error,_} -> get_info_2_electric_boogaloo(Stats, Info)
+        {error,_} -> get_info_2(Stats, Info)
     end.
 
-get_info_2_electric_boogaloo(N,Attrs) ->
+get_info_2(N,Attrs) ->
     case lists:foldl(fun
                   (undefined,A) -> A;
                   ([],A) -> A;

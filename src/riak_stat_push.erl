@@ -192,13 +192,13 @@ break_up(Arg, Str) ->
     re:split(Arg, Str).
 
 data_sanitise_2(List,[]) ->
-    case data_sanitise_2_electric_boogaloo(List) of
+    case parse_args(List) of
         ok -> ok;
         {Protocol, Port, Instance, ServerIp} ->
             {Protocol, {{Port, Instance, ServerIp},['_']}}
     end;
 data_sanitise_2(List,Stats) ->
-    case data_sanitise_2_electric_boogaloo(List) of
+    case parse_args(List) of
         ok -> ok;
         {Protocol, Port, Instance, ServerIp} ->
             {Names,_,_,_} =
@@ -207,10 +207,10 @@ data_sanitise_2(List,Stats) ->
                 Names}}
     end.
 
-data_sanitise_2_electric_boogaloo(Arg) ->
-    data_sanitise_2_electric_boogaloo(
+parse_args(Arg) ->
+    parse_args(
         Arg, '_','_','_','_').
-data_sanitise_2_electric_boogaloo([<<"protocol=", Pr/binary>>|Rest],
+parse_args([<<"protocol=", Pr/binary>>|Rest],
     Protocol, Port, Instance, ServerIp) ->
     NewProtocol =
     case Pr of
@@ -219,28 +219,28 @@ data_sanitise_2_electric_boogaloo([<<"protocol=", Pr/binary>>|Rest],
         <<"http">> -> http;
         _         -> Protocol
     end,
-    data_sanitise_2_electric_boogaloo(Rest,
+    parse_args(Rest,
         NewProtocol,Port, Instance,ServerIp);
-data_sanitise_2_electric_boogaloo([<<"port=", Po/binary>> | Rest],
+parse_args([<<"port=", Po/binary>> | Rest],
     Protocol, Port, Instance, ServerIp) ->
     NewPort =
         try binary_to_integer(Po) of
             Int -> Int
         catch _e:_r -> Port
         end,
-    data_sanitise_2_electric_boogaloo(Rest,
+    parse_args(Rest,
         Protocol, NewPort, Instance, ServerIp);
 
-data_sanitise_2_electric_boogaloo([<<"instance=", I/binary>> | Rest],
+parse_args([<<"instance=", I/binary>> | Rest],
     Protocol, Port, _Instance, ServerIp) ->
     NewInstance = binary_to_list(I),
-    data_sanitise_2_electric_boogaloo(Rest, Protocol, Port, NewInstance, ServerIp);
+    parse_args(Rest, Protocol, Port, NewInstance, ServerIp);
 
-data_sanitise_2_electric_boogaloo([<<"sip=", S/binary>> | Rest],
+parse_args([<<"sip=", S/binary>> | Rest],
     Protocol, Port, Instance, _ServerIp) ->
     NewIP = re:split(S, "\\s", [{return, list}]),
-    data_sanitise_2_electric_boogaloo(Rest,Protocol,Port, Instance, NewIP);
-data_sanitise_2_electric_boogaloo([],Protocol, Port, Instance, ServerIp) ->
+    parse_args(Rest,Protocol,Port, Instance, NewIP);
+parse_args([],Protocol, Port, Instance, ServerIp) ->
     {Protocol,Port, Instance, ServerIp}.
 
 -ifdef(TEST).
