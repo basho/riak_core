@@ -346,8 +346,3 @@ unregister(StatName) ->
 -spec(timestamp() -> timestamp()).
 timestamp() ->
     exometer_util:timestamp().
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
-%% todo: testing
--endif.

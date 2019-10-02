@@ -119,8 +119,7 @@ forbidden(Req, Ctx) ->
 -spec(produce_body(rd(), context()) -> {iodata(), rd(), context()}).
 produce_body(ReqData, Ctx) ->
     Stats = get_stats(),
-    Body = riak_stat_json:metrics_to_json(Stats, [ms_since_reset]),
-%%    Body  = riak_stat_json:encode({struct, Stats}),
+    Body  = riak_stat_json:encode({struct, Stats}),
     {Body, ReqData, Ctx}.
 
 
@@ -138,5 +137,52 @@ pretty_print(RD1, C1=#ctx{}) ->
 %%--------------------------------------------------------------------
 
 get_stats() ->
-    {Stats,_} = riak_stat:get_stats([[riak|'_']]),
-    riak_stat_exom:get_values([Stat || {Stat, _, _} <- Stats]).
+    Stats = riak_stat_exom:get_values(['_']),
+    lists:map(fun({N,V}) ->
+        NewName = parse_name(N),
+        NewValues = parse_values(V),
+        {NewName,NewValues}
+              end, Stats).
+
+
+parse_name([riak | Name]) ->
+    parse_name(Name);
+parse_name(Name) ->
+    [App | Stat] = Name,
+    S = atom_to_list(App),
+    T = ": ",
+    R = stringifier(Stat),
+    S++T++R.
+
+stringifier(Stat) ->
+    lists:foldr(fun
+                    (S,Acc) when is_list(S) ->
+                        S++" "++Acc;
+                    (I,Acc) when is_integer(I) ->
+                        integer_to_list(I)++" "++Acc;
+                    ({IpAddr,Port},Acc) when is_tuple(IpAddr)->
+                        T = ip_maker(IpAddr),
+                        P = integer_to_list(Port),
+                        "{"++T++","++P++"}"++" "++Acc;
+                    ({IpAddr,Port},Acc) when is_list(IpAddr)->
+                        T = IpAddr,
+                        P = integer_to_list(Port),
+                        "{"++T++","++P++"}"++" "++Acc;
+                    (T,Acc) when is_tuple(T) ->
+                        tuple_to_list(T)++" "++Acc;
+                    (L,Acc) ->
+                        atom_to_list(L)++" "++Acc;
+                    (_Other,Acc) ->
+                        Acc
+                end, " = ",Stat).
+
+ip_maker(IpAddr) ->
+    Ip = tuple_to_list(IpAddr),
+    NewIp = [integer_to_list(N) || N <- Ip],
+    lists:join(".",NewIp).
+
+parse_values(Values) ->
+    lists:foldl(fun
+                    ({ms_since_reset,_V},Acc) -> Acc;
+                    (V,Acc) -> [V|Acc]
+                end, [],Values).

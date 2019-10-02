@@ -75,7 +75,7 @@
 
 -define(STATCACHE, app_helper:get_env(riak_core,exometer_cache,
                                                     {cache,5000})).
-                  %% default can be changed in config this way.
+                  %% default can be changed
 
 %%%===================================================================
 %%% Registration API
@@ -283,11 +283,3 @@ print(Entries, Attr) when is_list(Entries) ->
 print(Entries, Attr) ->
     riak_stat_console:print(Entries, Attr).
 
-%%%===================================================================
-%%% EUNIT Testing
-%%%===================================================================
-
-%%-ifdef(TEST).
-%%-include_lib("eunit/include/eunit.hrl").
-%%%% todo: testing
-%%-endif.

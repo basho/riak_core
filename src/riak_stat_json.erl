@@ -26,30 +26,29 @@
 %% todo: consolidate this function, and create a bunch of helper functions
 %% to help create a json object from a stat in exometer
 metrics_to_json(Metrics, AdditionalFields, ExcludedDataPoints) ->
-    Dict1 = lists:foldl(fun
-                            ({Metric, DataPoints}, Dict) ->
-        group_data(Metric, DataPoints, Dict)
-                        end, dict:new(), Metrics),
-    JsonStats = lists:reverse(
-        to_json(
-            dict:to_list(Dict1), [], 0, ExcludedDataPoints)),
-
-    case JsonStats of
-        [] ->
-            [];
-        _ ->
-            DateTime = format_time(),
+    Dict1 = fold_dict(Metrics),
+    JsonStats = json_stats(Dict1, ExcludedDataPoints),
+    case json_stats(Dict1, ExcludedDataPoints) of
+        [] -> [];
+        _ -> DateTime = format_time(),
             [${, format_fields(AdditionalFields, []), $,,
                 quote("timestamp"),
                 $:, quote(DateTime), $,,
                 JsonStats, $}, "\n"]
     end.
+fold_dict(Metrics) ->
+    lists:foldl(fun
+                    ({Metric, DataPoint}, DictAcc) ->
+                        group_data(Metric, DataPoint, DictAcc)
+                end, dict:new(), Metrics).
+
+json_stats(Dict, ExcludedDataPoints) ->
+    lists:reverse(to_json(dict:to_list(Dict),[],0, ExcludedDataPoints)).
+
+
 
 metrics_to_json(Metrics, ExcludedDataPoints) ->
-    Dict1 = lists:foldl(fun
-                            ({Metric, DataPoints}, Dict) ->
-        group_data(Metric, DataPoints, Dict)
-                        end, dict:new(), Metrics),
+    Dict1 = fold_dict(Metrics),
     JsonStats = lists:reverse(
         to_json(
             dict:to_list(Dict1), [], 0, ExcludedDataPoints)),
@@ -235,8 +234,4 @@ format_time({ _, _, MicroSeconds} = Now) ->
         [Year, Month, Day, Hour, Min, Sec, MicroSeconds div ?MILLISECONDS_MICROSECONDS_DIVISOR])).
 
 encode(Arg) ->
-    mochijson:encode(Arg).
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
+    mochijson2:encode(Arg).
