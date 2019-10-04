@@ -170,7 +170,3 @@ check_args([Args]) ->
     Args;
 check_args(_) ->
     check_args([]).
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
