@@ -23,3 +23,5 @@ json_stats(ComponentHostname, Instance, Stats) ->
 
 get_stats(Stats) ->
     riak_stat_exom:get_values(Stats).
+
+%% todo: make a udp and tcp endpoint to collect json objects
