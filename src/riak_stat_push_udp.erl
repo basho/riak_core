@@ -166,8 +166,3 @@ dispatch_stats(Socket, ComponentHostname, Instance, MonitoringHostname, Port, St
             send(Socket, MonitoringHostname, Port, JsonStats),
             send_after(?STATS_UPDATE_INTERVAL, {dispatch_stats, Stats})
     end.
-
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
