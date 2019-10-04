@@ -149,9 +149,9 @@ find_entries(Stats, Status) ->
     lists:foldl(
         fun(Stat, Found) ->
             case find_entries(Stat) of
-                [{Name, _Type, EStatus}]
+                [{Name, Type, EStatus}]
                     when EStatus == Status orelse Status == '_' ->
-                    [{Name, Status} | Found];
+                    [{Name, Type, Status} | Found];
                 [{_Name, _Type, _EStatus}] -> % Different status
                     Found;
                 [] ->
