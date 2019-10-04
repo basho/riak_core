@@ -122,14 +122,6 @@ stop_server(ChildrenInfo) ->
 fold(Protocol,{{Port,Instance,ServerIp},_Stats}) ->
     riak_core_metadata:fold(
         fun              %% K-V in metadata (legacy)
-            ({{MDate,MTime,MProtocol}, [{MPort,MSip,MInst,MPid,MRunTuple,MStats}]},
-                {Acc, APort,AInstance,AServerIP})
-                when    (    APort == MPort orelse     APort == '_')
-                andalso (AInstance == MInst orelse AInstance == '_')
-                andalso (AServerIP == MSip  orelse AServerIP == '_') ->
-                {[{{MDate,MTime,MProtocol},{MPort,MSip,MInst,MPid,MRunTuple,MStats}}|Acc],
-                    APort,AInstance,AServerIP};
-
             ({{MDate,MTime,MProtocol},[#{
                 port     := MPort,
                 serverip := MSip,
@@ -242,7 +234,3 @@ parse_args([<<"sip=", S/binary>> | Rest],
     parse_args(Rest,Protocol,Port, Instance, NewIP);
 parse_args([],Protocol, Port, Instance, ServerIp) ->
     {Protocol,Port, Instance, ServerIp}.
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
