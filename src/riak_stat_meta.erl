@@ -256,6 +256,8 @@ find_all_entries() ->
 
 %%%-------------------------------------------------------------------
 
+%% todo: aggregation of stats across nodes.
+
 %%%===================================================================
 %%% Registration API
 %%%===================================================================
@@ -545,8 +547,3 @@ change_stats_from(Stats, Status) ->
                     ({_Stat, {status, St}}, Acc) when St =/= Status ->
                         Acc
                     end, [], Stats)).
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
-%% todo: testing
--endif.
