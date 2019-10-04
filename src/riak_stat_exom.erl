@@ -270,7 +270,6 @@ do_average(Num, DataValues) ->
 metric_names(Pattern) ->
     [Name || {Name, _Type, _Status} <- select(Pattern)].
 
-%% todo: aggregation across nodes
 
 %%%===================================================================
 %%% Updating Stats API

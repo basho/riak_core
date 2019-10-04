@@ -298,7 +298,6 @@ make_exo_ms(Stats,Status,Type) ->
 aggregate(Pattern, DPs) ->
     riak_stat_exom:aggregate(Pattern, DPs).
 
-%% todo: Aggregation across all nodes
 
 %%%===================================================================
 %%% Updating Stats API

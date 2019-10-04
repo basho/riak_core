@@ -254,9 +254,6 @@ find_all_entries() ->
     [{Name, {status, Status}} ||
         {Name,_Type, Status} <- find_entries([[riak|'_']], '_', '_')].
 
-%%%-------------------------------------------------------------------
-
-%% todo: aggregation of stats across nodes.
 
 %%%===================================================================
 %%% Registration API
