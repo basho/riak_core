@@ -20,7 +20,8 @@
 
 -behaviour(gen_server).
 
--export([behaviour_info/1]).
+-include("riak_core_vnode.hrl").
+
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
         code_change/3]).
 -export([start_link/1, handle_work/3, handle_work/4]).
@@ -37,12 +38,16 @@
         modstate :: any()
     }).
 
--spec behaviour_info(atom()) -> 'undefined' | [{atom(), arity()}].
-behaviour_info(callbacks) ->
-    [{init_worker,3},
-     {handle_work,3}];
-behaviour_info(_Other) ->
-    undefined.
+-callback init_worker(VnodeIDx :: partition(),
+                        Args :: list(any()),
+                        Props :: list(tuple())) ->
+                            {ok, WorkerState :: any()}.
+
+-callback handle_work(Work :: any(),
+                        From :: sender(),
+                        WorkerState :: any()) ->
+                            {noreply, UpdWorkerState :: any()} |
+                            {reply, Reply :: any(), UpdWorkerState :: any()}.
 
 start_link(Args) ->
     WorkerMod = proplists:get_value(worker_callback_mod, Args),

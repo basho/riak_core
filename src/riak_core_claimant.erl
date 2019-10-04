@@ -68,7 +68,7 @@
           %% applying a set of staged cluster changes. When commiting
           %% changes, the computed ring must match the previous planned
           %% ring to be allowed.
-          next_ring :: riak_core_ring(),
+          next_ring :: riak_core_ring()|undefined,
 
           %% Random number seed passed to remove_node to ensure the
           %% current randomized remove algorithm is deterministic
@@ -367,8 +367,6 @@ generate_plan([], _, State) ->
     {{ok, [], []}, State};
 generate_plan(Changes, Ring, State=#state{seed=Seed}) ->
     case compute_all_next_rings(Changes, Seed, Ring) of
-        legacy ->
-            {{error, legacy}, State};
         {error, invalid_resize_claim} ->
             {{error, invalid_resize_claim}, State};
         {ok, NextRings} ->
@@ -404,8 +402,6 @@ maybe_commit_staged(State) ->
 maybe_commit_staged(Ring, State=#state{changes=Changes, seed=Seed}) ->
     Changes2 = filter_changes(Changes, Ring),
     case compute_next_ring(Changes2, Seed, Ring) of
-        {legacy, _} ->
-            {ignore, legacy};
         {error, invalid_resize_claim} ->
             {ignore, invalid_resize_claim};
         {ok, NextRing} ->
@@ -910,8 +906,6 @@ compute_all_next_rings(Changes, Seed, Ring) ->
 %% @private
 compute_all_next_rings(Changes, Seed, Ring, Acc) ->
     case compute_next_ring(Changes, Seed, Ring) of
-        {legacy, _} ->
-            legacy;
         {error, invalid_resize_claim}=Err ->
             Err;
         {ok, NextRing} ->
@@ -928,19 +922,13 @@ compute_all_next_rings(Changes, Seed, Ring, Acc) ->
 %% @private
 compute_next_ring(Changes, Seed, Ring) ->
     Replacing = [{Node, NewNode} || {Node, {replace, NewNode}} <- Changes],
-
     Ring2 = apply_changes(Ring, Changes),
     {_, Ring3} = maybe_handle_joining(node(), Ring2),
     {_, Ring4} = do_claimant_quiet(node(), Ring3, Replacing, Seed),
-    {Valid, Ring5} = maybe_compute_resize(Ring, Ring4),
-    Members = riak_core_ring:all_members(Ring5),
-    AnyLegacy = riak_core_gossip:any_legacy_gossip(Ring5, Members),
-    case {Valid, AnyLegacy} of
-        {false, _} ->
+    case maybe_compute_resize(Ring, Ring4) of
+        {false, _Ring5} ->
             {error, invalid_resize_claim};
-        {true, true} ->
-            {legacy, Ring};
-        {true, false} ->
+        {true, Ring5} ->
             {ok, Ring5}
     end.
 

@@ -504,13 +504,14 @@ choose_claim_v3(Ring, _ClaimNode, Params) ->
 
     %% Seed the random number generator for predictable results
     %% run the claim, then put it back if possible
-    OldSeed = rand:seed(proplists:get_value(seed, Params, {1,2,3})),
+    OldSeedState = rand:export_seed(),
+    _ = rand:seed(exs64, proplists:get_value(seed, Params, {1,2,3})),
     {NewOwners, NewMetrics} = claim_v3(Wants, Owners, Params),
-    case OldSeed of
+    case OldSeedState of
         undefined ->
             ok;
         _ ->
-            {_,_,_} = rand:seed(OldSeed),
+            _ = rand:seed(OldSeedState),
             ok
     end,
 
@@ -1350,20 +1351,20 @@ test_nodes(Count) ->
 test_nodes(Count, StartNode) ->
     [list_to_atom(lists:concat(["n_", N])) || N <- lists:seq(StartNode, StartNode + Count)].
 
-prop_claim_ensures_unique_nodes_v2_test_() ->
-    Prop = eqc:testing_time(30, ?QC_OUT(prop_claim_ensures_unique_nodes(choose_claim_v2))),
+claim_ensures_unique_nodes_v2_test_() ->
+    Prop = eqc:testing_time(30, ?QC_OUT(prop_claim_ensures_unique_nodes_v2())),
     {timeout, 120, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
 
-prop_claim_ensures_unique_nodes_adding_groups_v2_test_() ->
+claim_ensures_unique_nodes_adding_groups_v2_test_() ->
     Prop = eqc:testing_time(30, ?QC_OUT(prop_claim_ensures_unique_nodes_adding_groups(choose_claim_v2))),
     {timeout, 120, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
 
-prop_claim_ensures_unique_nodes_adding_singly_v2_test_() ->
+claim_ensures_unique_nodes_adding_singly_v2_test_() ->
     Prop = eqc:testing_time(30, ?QC_OUT(prop_claim_ensures_unique_nodes_adding_singly(choose_claim_v2))),
     {timeout, 120, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
 
-%% @TODO this is very few tests. This is broken afaict.
-prop_claim_ensures_unique_nodes_v3_test_() ->
+%% Run few tests in eunit and more if needed by calling "./rebar3 eqc"
+claim_ensures_unique_nodes_v3_test_() ->
     Prop = eqc:numtests(5, ?QC_OUT(prop_claim_ensures_unique_nodes_old(choose_claim_v3))),
     {timeout, 240, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
 

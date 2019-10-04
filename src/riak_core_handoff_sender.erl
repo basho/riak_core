@@ -63,12 +63,12 @@
           item_queue_byte_size :: non_neg_integer(),
 
           acksync_threshold    :: non_neg_integer(),
-          acksync_timer        :: timer:tref(),
+          acksync_timer        :: timer:tref() | undefined,
 
           type                 :: ho_type(),
 
-          notsent_acc          :: term(),
-          notsent_fun          :: function()
+          notsent_acc          :: term() | undefined,
+          notsent_fun          :: function()| undefined
         }).
 
 %%%===================================================================
@@ -417,10 +417,10 @@ visit_item2(K, V, Acc) ->
                        notsent_acc=NewNotSentAcc}
     end.
 
-handle_not_sent_item(undefined, _, _) ->
-    undefined;
 handle_not_sent_item(NotSentFun, Acc, Key) when is_function(NotSentFun) ->
-    NotSentFun(Key, Acc).
+    NotSentFun(Key, Acc);
+handle_not_sent_item(undefined, _, _) ->
+    undefined.
 
 send_objects([], Acc) ->
     Acc;

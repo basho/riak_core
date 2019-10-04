@@ -73,9 +73,9 @@
          }).
 
 -record(metadata_iterator, {
-          prefix :: metadata_prefix(),
-          match  :: term(),
-          pos    :: term(),
+          prefix :: metadata_prefix() | undefined,
+          match  :: term() | undefined,
+          pos    :: term() |undefined,
           obj    :: {metadata_key(), metadata_object()} | undefined,
           done   :: boolean(),
           tab    :: ets:tab()
