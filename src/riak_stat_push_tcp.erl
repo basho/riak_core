@@ -47,11 +47,6 @@
 %%%===================================================================
 
 %%--------------------------------------------------------------------
-%% @doc
-%% Starts the server
-%%
-%% @end
-%%--------------------------------------------------------------------
 -spec(start_link(Arg :: term()) ->
     {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 start_link(Obj) ->
@@ -170,7 +165,3 @@ dispatch_stats(Socket, ComponentHostname, Instance, Stats) ->
             send(Socket, JsonStats),
             send_after(?STATS_UPDATE_INTERVAL, {dispatch_stats, Stats})
     end.
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
