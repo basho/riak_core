@@ -12,7 +12,6 @@
 %%
 %% @end
 -module(riak_core_exo_monitor).
--behaviour(exometer_folsom_monitor).
 -behaviour(exometer_entry).
 -export([copy_folsom/3]).
 -export([behaviour/0,
