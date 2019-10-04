@@ -232,7 +232,7 @@ update(Name, Inc, Type) ->
 -spec(unregister({app(),Idx :: term(),type(),app()} | metricname()) ->
     ok | error()).
 unregister({Mod, Idx, Type, App}) -> %% specific to riak_core vnode
-    unregister_vnode(Mod, Idx, Type, App);
+    unregister_vnode(App, Mod, Idx, Type);
 unregister(StatName) -> %% generic
     unregister_stat(StatName).
 
