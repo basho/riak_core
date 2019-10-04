@@ -91,7 +91,7 @@ register_vnode_stats(Module, Index, Pid) ->
 %%%----------------------------------------------------------------%%%
 
 unregister_vnode_stats(Module, Index) ->
-    riak_stat:unregister(Module, Index, vnodeq, ?APP).
+    riak_stat:unregister({Module, Index, vnodeq, ?APP}).
 
 %%%----------------------------------------------------------------%%%
 
