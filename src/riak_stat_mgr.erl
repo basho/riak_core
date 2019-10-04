@@ -298,6 +298,8 @@ make_exo_ms(Stats,Status,Type) ->
 aggregate(Pattern, DPs) ->
     riak_stat_exom:aggregate(Pattern, DPs).
 
+%% todo: Aggregation across all nodes
+
 %%%===================================================================
 %%% Updating Stats API
 %%%===================================================================
@@ -418,15 +420,3 @@ reset_profile() ->
         false -> ?DISABLED_METADATA;
         Other -> Other
     end.
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%%%%%%%%%%%%%%%%%%%%%%%% EUNIT TESTS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
--ifdef(EUNIT).
--include_lib("eunit/include/eunit.hrl").
--compile([export_all]).
-%% todo: testing
--endif.
-
-
