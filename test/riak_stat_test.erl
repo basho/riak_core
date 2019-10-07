@@ -5,7 +5,10 @@
 %%%-------------------------------------------------------------------
 -module(riak_stat_test).
 -include_lib("eunit/include/eunit.hrl").
+-export([test_stat_polling/0]).
+-ifdef(TEST).
 -compile([export_all]).
+-endif.
 
 -define(new(Mod),                   meck:new(Mod)).
 -define(expect(Mod,Fun,Func),       meck:expect(Mod,Fun,Func)).
@@ -38,9 +41,11 @@
 
 -define(TestStatNum, 1000).
 
--define(TestPort,       8189).
+-define(TestUPort,       8080).
+-define(TestTPort,       8082).
 -define(TestSip,        "127.0.0.1").
--define(TestInstance,   "testinstance").
+-define(TestUInstance,   "test-udp-instance").
+-define(TestTInstance,   "test-tcp-instance").
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -174,8 +179,6 @@ endpoint_test_() ->
     ?setuppushtest("Test stuff specific to pushing stats to an endpoint",
         [
             {"Set up stat polling to an udp endpoint",   fun test_stat_polling/0},
-            {"Set down stat polling to an udp endpoint", fun test_stop_stat_polling/0},
-            {"Test Json objects from metrics",           fun test_udp_json/0}
         ]).
 
 
@@ -441,23 +444,28 @@ test_reset_dis_stat() ->
 
 test_stat_polling() ->
     %% set up an endpoint and see if stats are sent as a json object
-    ArgUDP = ["protocol=udp,port=8080,sip=127.0.0.1,instance=udp-testing/riak.riak_pipe.**"],
-    ArgTCP = ["protocol=tcp,port=8082,sip=127.0.0.1,instance=tcp-testing/riak.riak_api.**"],
+%%    UDPArg = {udp, {{?TestUPort,?TestUInstance,?TestSip},[riak,riak_repl|'_']}},
+%%    TCPArg = {tcp, {{?TestTPort,?TestTInstance,?TestSip},[riak,riak_api|'_']}},
+%%    ArgUDP = ["protocol=udp,port=8080,sip=127.0.0.1,instance=udp-testing/riak.riak_pipe.**"],
+%%    ArgTCP = ["protocol=tcp,port=8082,sip=127.0.0.1,instance=tcp-testing/riak.riak_api.**"],
     %% not a lot of stats to be polled
-    [USocket, TSocket] =
-        [setup_endpoint(Protocol,Port,ServerIp) || {Protocol,{{Port,_,ServerIp},_}} <-
-            [riak_stat_push:sanitise_data(ArgUDP),riak_stat_push:sanitise_data(ArgTCP)]],
+%%    [USocket, TSocket] =
+%%        [setup_endpoint(Protocol,Port,ServerIp) || {Protocol,{{Port,_,ServerIp},_}} <-
+%%            [riak_stat_push:sanitise_data(ArgUDP),riak_stat_push:sanitise_data(ArgTCP)]],
+
+%%    USocket = setup_endpoint(udp, ?TestUPort, ?TestSip),
+%%    TSocket = setup_endpoint(tcp, ?TestTPort, ?TestSip),
     %% start up the endpoint
-    ?_assert(USocket =/= error),
-    ?_assert(TSocket =/= error),
+%%    ?_assert(USocket =/= error),
+%%    ?_assert(TSocket =/= error),
         %% then start up the pushing.
-    [riak_stat_push:setup(Arg) || Arg <- [ArgTCP,ArgUDP]],
+%%    [riak_stat_push:setup(Arg) || Arg <- [ArgTCP,ArgUDP]],
 
     %% Pull the json object from the endpoint.
-    case get_object() of
-        no_objects -> false;
-        _Otherwise -> true
-    end.
+%%    case get_object() of
+%%        no_objects -> false;
+%%        _Otherwise -> true
+%%    end.
 
 setup_endpoint(Protocol, Port, ServerIP) ->
     riak_stat_endpoint_test:open_socket(Protocol, Port, ServerIP).
@@ -465,15 +473,6 @@ setup_endpoint(Protocol, Port, ServerIP) ->
 get_object() ->
     riak_stat_endpoint_test:get_objects().
 
-test_stop_stat_polling() ->
-    %% set up endpoint and monitor
-    %% setdown the pushing of stats and see if the polling stops
-    ok.
-
-test_udp_json() ->
-    %% test the json object created for the udp endpoint pushing
-    %% is of the correct format
-    ok.
 
 
 %%% --------------------------------------------------------------

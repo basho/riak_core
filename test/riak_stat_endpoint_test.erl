@@ -1,6 +1,6 @@
 %%%-------------------------------------------------------------------
 %%% @doc
-%%%
+%%% Test the polling of stats and pushing to a udp amd tcp endpoint
 %%% @end
 %%%-------------------------------------------------------------------
 -module(riak_stat_endpoint_test).
@@ -27,6 +27,8 @@
     ets_table_name = ?ETS_TABLE,
     ets_table_tid,
     udp_socket,
+    udp_serverip,
+    udp_port,
     tcp_socket
 }).
 
@@ -41,7 +43,8 @@ open_socket(tcp, Port, HostName) ->
 open_socket(_Protocol, _Port, _HostName) ->
     io:format(user, "Wrong protocol from test~n").
 
-get_objects() -> ok.
+get_objects() ->
+    gen_server:call(?MODULE, get_objects).
 
 %%--------------------------------------------------------------------
 -spec(start_link() -> {ok, pid()} | {error, {already_started, pid()}}).
@@ -84,6 +87,22 @@ handle_call({open_socket, tcp, Port, HostName}, _From, State) ->
             {error, State}
     end,
     {reply, Reply, NewState};
+handle_call(get_objects, _From, State = #state{
+    udp_port =      UDPPort,
+    udp_serverip =  UDPServerIP,
+    udp_socket =    UDPSocket,
+    tcp_socket =    TCPSocket,
+    ets_table_tid = Tid
+}) ->
+    Objects = ets:tab2list(Tid),
+    LengthUDPObjs = length(proplists:get_value(
+        {udp, UDPSocket, UDPServerIP, UDPPort}, Objects,[])),
+
+    LengthTCPObjs = length(proplists:get_value(
+        {tcp, TCPSocket}, Objects,[])),
+
+    Reply = LengthTCPObjs + LengthUDPObjs,
+    {ok, Reply, State};
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {ok, Reply, State}.
@@ -100,7 +119,6 @@ handle_cast(_Request, State) ->
     Reply = ok,
     {ok, Reply, State}.
 
-%% todo: handle info for messages from udp and tcp
 %%--------------------------------------------------------------------
 -spec(handle_info(Info :: term(), State :: #state{}) ->
     {ok, NewState :: #state{}} |
@@ -108,9 +126,16 @@ handle_cast(_Request, State) ->
     {swap_handler, Args1 :: term(), NewState :: #state{},
         Handler2 :: (atom() | {atom(), Id :: term()}), Args2 :: term()} |
     remove_handler).
+handle_info({udp, Socket, IP, Port, Data}, State = #state{ets_table_tid = Tid}) ->
+    Object = ets:lookup(Tid, {udp, Socket, IP, Port}),
+    ets:insert(Tid, {{udp, Socket, IP, Port}, [Data|Object]}),
+    {ok, State#state{udp_socket = Socket, udp_serverip = IP, udp_port = Port}};
+handle_info({tcp, Socket, Data}, State = #state{ets_table_tid = Tid}) ->
+    Object =  ets:lookup(Tid, {tcp, Socket}),
+    ets:insert(Tid, {{tcp, Socket}, [Data|Object]}),
+    {ok, State#state{tcp_socket = Socket}};
 handle_info(_Info, State) ->
     {ok, State}.
-%% todo: store the objects down to ets
 
 %%--------------------------------------------------------------------
 -spec(terminate(Args :: (term() | {stop, Reason :: term()} | stop |

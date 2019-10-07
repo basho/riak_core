@@ -34,7 +34,8 @@
 	       stat_show/1, stat_info/1, stat_enable/1, stat_disable/1, stat_reset/1,
          stat_disable_0/1, stat_0/1,
          load_profile/1, add_profile/1, remove_profile/1, reset_profile/0, reset_profile/1,
-         enable_metadata/1, setup_endpoint/1, setdown_endpoint/1, find_push_stats/1]).
+         enable_metadata/1, setup_endpoint/1, setdown_endpoint/1, find_push_stats/1,
+         test_push_stats/1]).
 
 %% New CLI API
 -export([command/1]).
@@ -1338,3 +1339,14 @@ setdown_endpoint(Arg) ->
 -spec(find_push_stats(term()) -> ok).
 find_push_stats(Arg) ->
     riak_stat_push:find_persisted_data(Arg).
+
+%%%-------------------------------------------------------------------
+%% @doc
+%% Test the polling of stats from to an endpoint given, to a gen_server.
+%% if the stats are being sent then the console will return OK.
+%% Otherwise the console will return {error, no_stats}
+%% @end
+%%%-------------------------------------------------------------------
+-spec(test_push_stats(arg()) -> ok | error()).
+test_push_stats(Arg) ->
+    riak_stat_push:test_push(Arg).
