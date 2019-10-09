@@ -34,13 +34,15 @@
     instance      :: instance()
 }).
 
--define(TCP_PORT,         8005).
+-define(TCP_PORT,         8009).
 -define(TCP_ADDRESS,      inet_db:gethostname()).
--define(TCP_OPTIONS,      [?TCP_BUFFER,?TCP_SNDBUFF,?TCP_ACTIVE]).
+-define(TCP_OPTIONS,      []).
 
 -define(TCP_BUFFER,       {buffer, 100*1024*1024}).
 -define(TCP_SNDBUFF,      {sndbuf,   5*1024*1024}).
--define(TCP_ACTIVE,       {active,         false}).
+-define(TCP_ACTIVE,       {active,          true}).
+-define(TCP_MODE,         {mode,binray}).
+-define(TCP_PACKET,       {packet,0}).
 
 %%%===================================================================
 %%% API
@@ -50,7 +52,7 @@
 -spec(start_link(Arg :: term()) ->
     {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 start_link(Obj) ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, Obj, []).
+    gen_server:start_link({global, ?SERVER}, ?MODULE, Obj, []).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -60,7 +62,7 @@ start_link(Obj) ->
 -spec(init(Args :: term()) ->
     {ok, State :: #state{}} | {ok, State :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term()} | ignore).
-init({{MontiorLatencyPort,Instance,Sip},Stats}) ->
+init([{{MontiorLatencyPort,Instance,[Sip]},Stats}]) ->
 
     MonitorStatsPort = ?MONITORSTATSPORT,
     MonitorServer    = ?MONITORSERVER,
@@ -154,8 +156,8 @@ send_after(Interval, Arg) ->
 
 open() ->
     {ok,Socket} =
-        gen_tcp:connect(?TCP_ADDRESS,?TCP_PORT,?TCP_OPTIONS),
-    Socket.
+        gen_tcp:listen(?TCP_PORT,?TCP_OPTIONS),
+                Socket.
 
 dispatch_stats(Socket, ComponentHostname, Instance, Stats) ->
     case riak_stat_push_util:json_stats(ComponentHostname, Instance, Stats) of

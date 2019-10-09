@@ -170,7 +170,7 @@ stringifier(Stat) ->
                         "{"++T++","++P++"}"++" "++Acc;
                     (T,Acc) when is_tuple(T) ->
                         tuple_to_list(T)++" "++Acc;
-                    (L,Acc) ->
+                    (L,Acc) when is_atom(L) ->
                         atom_to_list(L)++" "++Acc;
                     (_Other,Acc) ->
                         Acc

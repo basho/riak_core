@@ -34,7 +34,7 @@
     instance      :: instance()
 }).
 
--define(UDP_OPEN_PORT,         10029).
+-define(UDP_OPEN_PORT,         8080).
 -define(UDP_OPTIONS,           [?UDP_OPEN_BUFFER,
                                 ?UDP_OPEN_SNDBUFF,
                                 ?UDP_OPEN_ACTIVE]).
@@ -116,12 +116,12 @@ handle_info(refresh_monitor_server_ip, State = #state{server = MonitorServer}) -
                end,
     send_after(?REFRESH_INTERVAL, refresh_monitor_server_ip),
     {noreply, NewState};
-handle_info({dispatch_stats, Stats}, #state{socket=Socket, stats_port = Port,
+handle_info({dispatch_stats, Stats}, #state{socket=Socket, latency_port = Port,
     server_ip = undefined, server = Server, hostname = Hostname,
     instance = Instance} = State) ->
     dispatch_stats(Socket, Hostname, Instance, Server, Port, Stats),
     {noreply, State};
-handle_info({dispatch_stats, Stats}, #state{socket=Socket, stats_port = Port,
+handle_info({dispatch_stats, Stats}, #state{socket=Socket, latency_port = Port,
     server_ip = ServerIp, hostname = Hostname, instance = Instance} = State) ->
     dispatch_stats(Socket, Hostname, Instance, ServerIp, Port, Stats),
     {noreply, State};

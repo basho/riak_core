@@ -12,9 +12,7 @@
 -export([
     setup/1,
     setdown/1,
-    test_push/1,
     sanitise_data/1,
-    get_objects/0,
     find_persisted_data/1,
     find_persisted_data/2
 ]).
@@ -37,7 +35,7 @@ setup(Arg) ->
     case sanitise_and_check_args(Arg) of
         ok -> ok;
         {Protocol,SanitisedData} ->
-            Pid = start_server(Protocol,SanitisedData),
+            Pid = start_server(Protocol,[SanitisedData]),
             store_setup_info(Pid, Protocol, SanitisedData)
     end.
 
@@ -57,10 +55,10 @@ store_setup_info(Pid, Protocol, {{Port, Instance, Sip},Stats}) ->
     riak_stat_meta:put(Prefix,Key,Value).
 
 
-start_server(udp, Data) ->
-    riak_core_stats_sup:start_server(riak_stat_push_udp, Data);
+start_server(udp, Arg) ->
+    riak_stat_push_sup:start_server(udp, Arg);
 start_server(tcp, Arg) ->
-    riak_core_stats_sup:start_server(riak_stat_push_tcp, Arg);
+    riak_stat_push_sup:start_server(tcp, Arg);
 start_server(http, _Arg) ->
     io:format("Error Unsupported : ~p~n",[http]);
 start_server(Protocol, _Arg) ->
@@ -172,45 +170,6 @@ print_info(Info) ->
                       (_) -> ok
                   end, Info).
 
-
-%%--------------------------------------------------------------------
-test_push(_Arg) ->
-  {UDPProtocol,UDPArg} = {udp, {{8080,"test-udp","127.0.0.1"},[riak,riak_repl|'_']}},
-  {TCPProtocol,TCPArg} = {tcp, {{8082,"test_tcp","127.0.0.1"},[riak, riak_api|'_']}},
-    Pid =
-    case riak_stat_push_test_handler:start_link() of
-      {ok, SPid} ->
-        io:fwrite("Push Test Handler Started ~n"), SPid;
-      ignore ->
-        io:fwrite("Push Test Handler Started*~n");
-      {error, Reason} ->
-        io:fwrite("Push Test Handler could not start due to: ~p~n", [Reason])
-    end,
-    ResponseUDP = setup_endpoint({UDPProtocol, UDPArg}),
-    io:fwrite("UDP Endpoint setup : ~p~n", [ResponseUDP]),
-    _UPid = start_server(UDPProtocol, UDPArg),
-    io:fwrite("UDP Polling has begun~n"),
-    ResponseTCP = setup_endpoint({TCPProtocol,TCPArg}),
-    io:fwrite("TCP Endpoint setup : ~p~n", [ResponseTCP]),
-    _TPid = start_server(TCPProtocol, TCPArg),
-    io:fwrite("TCP Polling has begun~n"),
-  {ok, TRef} =
-    timer:apply_interval(5000, ?MODULE, get_objects,[]),
-    timer:sleep(30000),
-    timer:cancel(TRef),
-    io:fwrite("Test Complete~n").
-
-get_objects() ->
-  Objects = riak_stat_endpoint_test:get_objects(),
-  case length(Objects) of
-    0 ->
-      io:fwrite("No Objects Recieved~n");
-    Length ->
-      io:fwrite("Objects Recieved: ~p~n",[Length])
-  end.
-
-setup_endpoint({Protocol, {{Port, _Instance, Sip}, _Stats}}) ->
-  riak_stat_endpoint_test:open_socket(Protocol, Port, Sip).
 
 %%--------------------------------------------------------------------
 %% @doc

@@ -110,21 +110,12 @@ setup() ->
         riak_stat:register_stats(stat_generator())
                   end, lists:seq(1, rand:uniform(?TestStatNum))).
 
-setup_push() ->
-    setup(),
-    {ok, Pid} = riak_stat_push_test_handler:start_link(),
-    Pid.
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%% CLEANUP TEST %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 cleanup(_) ->
     exometer:stop().
-
-cleanup_push(Pid) ->
-    cleanup(Pid),
-    riak_stat_push_test_handler:terminate_child(Pid).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%% TEST FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -178,7 +169,7 @@ stat_admin_test_() ->
 endpoint_test_() ->
     ?setuppushtest("Test stuff specific to pushing stats to an endpoint",
         [
-            {"Set up stat polling to an udp endpoint",   fun test_stat_polling/0},
+            {"Set up stat polling to an udp endpoint",   fun test_stat_polling/0}
         ]).
 
 
@@ -466,12 +457,13 @@ test_stat_polling() ->
 %%        no_objects -> false;
 %%        _Otherwise -> true
 %%    end.
+    ok.
 
 setup_endpoint(Protocol, Port, ServerIP) ->
-    riak_stat_endpoint_test:open_socket(Protocol, Port, ServerIP).
+    ok.
 
 get_object() ->
-    riak_stat_endpoint_test:get_objects().
+   ok.
 
 
 
