@@ -5,7 +5,6 @@
 %%%-------------------------------------------------------------------
 -module(riak_stat_test).
 -include_lib("eunit/include/eunit.hrl").
--export([test_stat_polling/0]).
 -ifdef(TEST).
 -compile([export_all]).
 -endif.
@@ -16,7 +15,6 @@
 -define(unload(Mod),                meck:unload(Mod)).
 
 -define(setup(Fun),        {setup,    fun setup/0,          fun cleanup/1, Fun}).
--define(setuppush(Fun),    {setup,    fun setup_push/0,     fun cleanup_push/1, Fun}).
 -define(foreach(Funs),     {foreach,  fun setup/0,          fun cleanup/1, Funs}).
 
 -define(spawn(Test),       {spawn,        Test}).
@@ -25,7 +23,6 @@
 -define(inparallel(Test),  {inparallel,   Test}).
 
 -define(setuptest(Desc, Test), {Desc, ?setup(fun(_) -> Test end)}).
--define(setuppushtest(Desc, Test), {Desc, ?setuppush(fun(_) -> Test end)}).
 %%%---------------------------------------------------------------------------------
 -define(PREFIX,       riak).
 
@@ -166,12 +163,6 @@ stat_admin_test_() ->
 
 %%% --------------------------------------------------------------
 
-endpoint_test_() ->
-    ?setuppushtest("Test stuff specific to pushing stats to an endpoint",
-        [
-            {"Set up stat polling to an udp endpoint",   fun test_stat_polling/0}
-        ]).
-
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -259,7 +250,7 @@ test_save_profile_for_two() ->
     %% Save a profile with different stats configuration on two separate
     %% nodes at the same time, see which becomes the alpha
     %%
-    %% This test was one manually, the profile is consistent with only one
+    %% This test was done manually, the profile is consistent with only one
     %% node always, therefore that node is the alpha.
     %% However the node that "wins" the main profile stat configuration
     %% is random.
@@ -427,56 +418,3 @@ test_reset_dis_stat() ->
     update_again(Stat,1,counter,24601),
     riak_stat_console:status_change(Stat,disabled),
     ?_assertEqual(ok,riak_stat:reset(Stat)).
-
-
-%%% --------------------------------------------------------------
-
-%% @see endpoint_test_/0
-
-test_stat_polling() ->
-    %% set up an endpoint and see if stats are sent as a json object
-%%    UDPArg = {udp, {{?TestUPort,?TestUInstance,?TestSip},[riak,riak_repl|'_']}},
-%%    TCPArg = {tcp, {{?TestTPort,?TestTInstance,?TestSip},[riak,riak_api|'_']}},
-%%    ArgUDP = ["protocol=udp,port=8080,sip=127.0.0.1,instance=udp-testing/riak.riak_pipe.**"],
-%%    ArgTCP = ["protocol=tcp,port=8082,sip=127.0.0.1,instance=tcp-testing/riak.riak_api.**"],
-    %% not a lot of stats to be polled
-%%    [USocket, TSocket] =
-%%        [setup_endpoint(Protocol,Port,ServerIp) || {Protocol,{{Port,_,ServerIp},_}} <-
-%%            [riak_stat_push:sanitise_data(ArgUDP),riak_stat_push:sanitise_data(ArgTCP)]],
-
-%%    USocket = setup_endpoint(udp, ?TestUPort, ?TestSip),
-%%    TSocket = setup_endpoint(tcp, ?TestTPort, ?TestSip),
-    %% start up the endpoint
-%%    ?_assert(USocket =/= error),
-%%    ?_assert(TSocket =/= error),
-        %% then start up the pushing.
-%%    [riak_stat_push:setup(Arg) || Arg <- [ArgTCP,ArgUDP]],
-
-    %% Pull the json object from the endpoint.
-%%    case get_object() of
-%%        no_objects -> false;
-%%        _Otherwise -> true
-%%    end.
-    ok.
-
-setup_endpoint(Protocol, Port, ServerIP) ->
-    ok.
-
-get_object() ->
-   ok.
-
-
-
-%%% --------------------------------------------------------------
-
-%% @see wm_test_/0
-
-test_stats_http() ->
-    %% test the precision of the http requesting of stats
-    ok.
-
-test_json_objects_wm() ->
-    %% test the mochiweb encoding for the metrics,
-    %% compare to the json_to_metric
-    ok.
-

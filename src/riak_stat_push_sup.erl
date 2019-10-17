@@ -21,6 +21,9 @@
 -define(TCP_CHILD, riak_stat_push_tcp).
 -define(UDP_CHILD, riak_stat_push_udp).
 -define(CHILD(Mod,Arg), {Mod,{Mod,start_link,[Arg]},transient,?TIMEOUT,worker,[Mod]}).
+-define(CHILD(Name,Mod,Arg), {Name,{Mod,start_link,[Arg]},transient,?TIMEOUT,worker,[Mod]}).
+
+-define(PUSHPREFIX, {riak_stat_push, term_to_binary(node())}).
 
 %%%===================================================================
 %%% API functions
@@ -32,12 +35,16 @@
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
-start_server(udp, Data) ->
-    UDPCHILD = ?CHILD(?UDP_CHILD,Data),
-    start_child(UDPCHILD);
-start_server(tcp, Data) ->
-    TCPCHILD = ?CHILD(?TCP_CHILD,Data),
-    start_child(TCPCHILD).
+start_server(Protocol, Data) ->
+    UDPCHILD = child_name(Data,Protocol),
+    start_child(UDPCHILD).
+
+child_name(Data,udp) ->
+    {{_Port, ServerName, _ServerIP},_Stats} = Data,
+    ?CHILD(ServerName,?UDP_CHILD,[Data]);
+child_name(Data,tcp) ->
+    {{_Port, ServerName, _ServerIP},_Stats} = Data,
+    ?CHILD(ServerName,?TCP_CHILD,[Data]).
 
 start_child(Child) ->
     case supervisor:start_child(?MODULE, Child) of
@@ -47,9 +54,13 @@ start_child(Child) ->
     end.
 
 stop_server(Child) ->
-    supervisor:terminate_child(?MODULE, Child),
-    supervisor:delete_child(?MODULE, Child),
+    io:format("Stopping Child Server: ~p~n",[Child]),
+    Terminate = supervisor:terminate_child(?MODULE, Child),
+    Delete = supervisor:delete_child(?MODULE, Child),
+    io:format("Terminated Child : ~p~n",[Terminate]),
+    io:format("Deleted Child : ~p~n",[Delete]),
     ok.
+
 
 %%%===================================================================
 %%% Supervisor callbacks
@@ -68,10 +79,28 @@ init([]) ->
     MaxRestarts = 1000,
     MaxSecondsBetweenRestarts = 3600,
 
+    Children = restart_children(),
+%%    Children =
+%%        ListOfKids = riak_stat_push:find_persisted_data('_',{{'_','_','_'},'_'}),
+%%    lists:foldl(fun
+%%                    ({_Date,_Time,Protocol},{Port,_Server,Sip,ServerName,_Pid,{running,true},Stats},Acc) ->
+%%                        [child_name({{Port,ServerName,Sip},Stats},Protocol)|Acc];
+%%                    (_,Acc) -> Acc
+%%                end, [], ListOfKids),
+
     SupFlags = {RestartStrategy, MaxRestarts, MaxSecondsBetweenRestarts},
 
-    {ok, {SupFlags, []}}.
+    {ok, {SupFlags, Children}}.
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+restart_children() ->
+    ListOfKids = riak_stat_push:find_persisted_data('_',{{'_','_','_'},'_'}),
+    lists:ukeysort(1,lists:foldl(fun
+                      ({{_Date,_Time,Protocol},{Port,_Server,Sip,ServerName,_Pid,{running,true},Stats}},Acc) ->
+                         [child_name({{Port,ServerName,Sip},Stats},Protocol)|Acc];
+                      (_,Acc) -> Acc
+                  end, [], ListOfKids)).
+

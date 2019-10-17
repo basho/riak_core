@@ -14,6 +14,7 @@
 
 
 json_stats(ComponentHostname, Instance, Stats) ->
+    lager:info("Dispatching Stats~n"),
     Metrics = get_stats(Stats),
     case riak_stat_json:metrics_to_json(Metrics,
         [{instance, Instance},{hostname, ComponentHostname}], ?EXCLUDED_DATAPOINTS) of
@@ -24,4 +25,3 @@ json_stats(ComponentHostname, Instance, Stats) ->
 get_stats(Stats) ->
     riak_stat_exom:get_values(Stats).
 
-%% todo: make a udp and tcp endpoint to collect json objects

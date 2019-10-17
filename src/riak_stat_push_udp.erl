@@ -50,6 +50,7 @@
 -spec(start_link(Term::arg()) ->
     {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 start_link(Obj) ->
+    lager:info("UDP server Started...~n"),
     gen_server:start_link({local, ?SERVER}, ?MODULE, Obj, []).
 %%%===================================================================
 %%% gen_server callbacks
@@ -59,16 +60,16 @@ start_link(Obj) ->
 -spec(init(Args :: term()) ->
     {ok, State :: #state{}} | {ok, State :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term()} | ignore).
-init({{MonitorLatencyPort, Instance, Sip}, Stats}) ->
-
+init([{{MonitorLatencyPort, Instance, Sip}, Stats}]) ->
+    lager:info("UDP server Initiating...~n"),
     MonitorStatsPort   = ?MONITORSTATSPORT,
     MonitorServer      = ?MONITORSERVER,
     Hostname           = inet_db:gethostname(),
     Socket             = open(),
-
     self() ! refresh_monitor_server_ip,
+    lager:info("Request refresh monitor Server IP...~n"),
     send_after(?STATS_UPDATE_INTERVAL, {dispatch_stats, Stats}),
-
+    lager:info("After ~p milliseconds request dispatch stats...~n",[?STATS_UPDATE_INTERVAL]),
     {ok, #state{
         socket        = Socket,
         latency_port  = MonitorLatencyPort,
