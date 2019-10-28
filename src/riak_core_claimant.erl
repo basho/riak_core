@@ -35,6 +35,7 @@
          commit/0,
          clear/0,
          ring_changed/2,
+         pending_close/2,
          create_bucket_type/2,
          update_bucket_type/2,
          bucket_type_status/1,
@@ -148,6 +149,10 @@ resize_ring(NewRingSize) ->
 -spec abort_resize() -> ok | {error, atom()}.
 abort_resize() ->
     stage(node(), abort_resize).
+
+-spec pending_close(riak_core_ring(), any()) -> ok.
+pending_close(Ring, RingID) ->
+    gen_server:call(?MODULE, {pending_close, Ring, RingID}).
 
 %% @doc Clear the current set of staged transfers
 clear() ->
@@ -310,6 +315,10 @@ handle_call({activate_bucket_type, BucketType}, _From, State) ->
     Reply = maybe_activate_type(BucketType, Status, Existing),
     {reply, Reply, State};
 
+handle_call({pending_close, Ring, RingID}, _From, State) ->
+    State2 = tick(Ring, RingID, State),
+    {reply, ok, State2};
+
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
@@ -318,7 +327,7 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info(tick, State) ->
-    State2 = tick(State),
+    State2 = tick(none, riak_core_ring_manager:get_ring_id(), State),
     {noreply, State2};
 
 handle_info(reset_ring_id, State) ->
@@ -629,19 +638,33 @@ schedule_tick() ->
                               10000),
     erlang:send_after(Tick, ?MODULE, tick).
 
-tick(State=#state{last_ring_id=LastID}) ->
+tick(PreFetchRing, RingID, State=#state{last_ring_id=LastID}) ->
     maybe_enable_ensembles(),
-    case riak_core_ring_manager:get_ring_id() of
+    case RingID of
         LastID ->
             schedule_tick(),
             State;
         RingID ->
-            {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
-            maybe_bootstrap_root_ensemble(Ring),
-            maybe_force_ring_update(Ring),
-            schedule_tick(),
+            Ring = 
+                case PreFetchRing of
+                    none ->
+                        {ok, Ring0} = riak_core_ring_manager:get_raw_ring(),
+                        Ring0;
+                    PreFetchRing ->
+                        PreFetchRing
+                end,
+            case riak_core_ring:check_lastgasp(Ring) of
+                true ->
+                    lager:info("Ingoring fresh ring as shutting down"),
+                    ok;
+                false ->
+                    maybe_bootstrap_root_ensemble(Ring),
+                    maybe_force_ring_update(Ring),
+                    schedule_tick()
+            end,
             State#state{last_ring_id=RingID}
     end.
+
 
 maybe_force_ring_update(Ring) ->
     IsClaimant = (riak_core_ring:claimant(Ring) == node()),

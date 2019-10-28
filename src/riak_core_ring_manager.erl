@@ -375,17 +375,26 @@ handle_call({set_my_ring, RingIn}, _From, State) ->
     State2 = prune_write_notify_ring(Ring, State),
     {reply,ok,State2};
 handle_call(refresh_my_ring, _From, State) ->
+    %% Pompt the claimant before creating a fresh ring for shutdown, so that
+    %% any final actions can be taken
+    ok = riak_core_claimant:pending_close(State#state.raw_ring, get_ring_id()),
+
     %% This node is leaving the cluster so create a fresh ring file
     FreshRing = riak_core_ring:fresh(),
     State2 = set_ring(FreshRing, State),
     %% Make sure the fresh ring gets written before stopping
     ok = do_write_ringfile(FreshRing),
 
+    %% Mark the ring as last gasp so that services spotting the changed
+    %% ring may choose not to react to the change
+    LastGaspRing = riak_core_ring:set_lastgasp(FreshRing),
+    State3 = set_ring(LastGaspRing, State2),
+
     %% Handoff is complete and fresh ring is written
     %% so we can safely stop now.
     riak_core:stop("node removal completed, exiting."),
 
-    {reply,ok,State2};
+    {reply,ok,State3};
 handle_call({ring_trans, Fun, Args}, _From, State=#state{raw_ring=Ring}) ->
     case catch Fun(Ring, Args) of
         {new_ring, NewRing} ->
