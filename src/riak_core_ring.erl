@@ -61,8 +61,10 @@
          downgrade/2,
          set_tainted/1,
          check_tainted/2,
+         unset_tainted/1,
          set_lastgasp/1,
          check_lastgasp/1,
+         unset_lastgasp/1,
          nearly_equal/2,
          claimant/1,
          member_status/2,
@@ -268,6 +270,10 @@ check_tainted(Ring=?CHSTATE{}, Msg) ->
             ok
     end.
 
+-spec unset_tainted(chstate()) -> chstate().
+unset_tainted(Ring) ->
+    update_meta(riak_core_ring_tainted, false, Ring).
+
 -spec set_lastgasp(chstate()) -> chstate().
 set_lastgasp(Ring) ->
     update_meta(riak_core_ring_lastgasp, true, Ring).
@@ -280,6 +286,10 @@ check_lastgasp(Ring) ->
         _ ->
             false
     end.
+
+-spec unset_lastgasp(chstate()) -> chstate().
+unset_lastgasp(Ring) ->
+    update_meta(riak_core_ring_lastgasp, false, Ring).
 
 %% @doc Verify that the two rings are identical expect that metadata can
 %%      differ and RingB's vclock is allowed to be equal or a direct
@@ -2060,7 +2070,10 @@ lasgasp_test() ->
     RingA1 = set_lastgasp(RingA),
     ?assertMatch(false, check_lastgasp(RingA)),
     ?assertMatch(true, check_lastgasp(RingA1)),
-    ?assertMatch({no_change, RingB}, reconcile(RingA1, RingB)).
+    ?assertMatch({no_change, RingB}, reconcile(RingA1, RingB)),
+    
+    ?assertMatch(true, nearly_equal(RingA, unset_lastgasp(RingA1))),
+    ?assertMatch(false, check_lastgasp(unset_lastgasp(RingA1))).
 
 resize_xfer_test_() ->
     {setup,
