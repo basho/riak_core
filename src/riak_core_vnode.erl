@@ -46,6 +46,8 @@
          handoff_error/3]).
 -export([queue_work/4]).
 
+-include("stacktrace.hrl").
+
 -ifdef(TEST).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -929,9 +931,9 @@ terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState,
             _ ->
                 ok
         end
-    catch C:T ->
+    catch ?_exception_(C, T, StackToken) ->
         lager:error("Error while shutting down vnode worker pool ~p:~p trace : ~p",
-                    [C, T, erlang:get_stacktrace()])
+                    [C, T, ?_get_stacktrace_(StackToken)])
     after
         case ModState of
             %% Handoff completed, Mod:delete has been called, now terminate.

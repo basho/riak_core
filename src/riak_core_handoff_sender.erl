@@ -24,6 +24,7 @@
 -export([start_link/4, get_handoff_ssl_options/0]).
 -include("riak_core_vnode.hrl").
 -include("riak_core_handoff.hrl").
+-include("stacktrace.hrl").
 -define(ACK_COUNT, 1000).
 %% can be set with env riak_core, handoff_timeout
 -define(TCP_TIMEOUT, 60000).
@@ -278,9 +279,9 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
              exit({shutdown, {error, Reason}});
          throw:{be_quiet, Err, Reason} ->
              gen_fsm_compat:send_event(ParentPid, {handoff_error, Err, Reason});
-         Err:Reason ->
+         ?_exception_(Err, Reason, StackToken) ->
              ?log_fail("because of ~p:~p ~p",
-                       [Err, Reason, erlang:get_stacktrace()]),
+                       [Err, Reason, ?_get_stacktrace_(StackToken)]),
              gen_fsm_compat:send_event(ParentPid, {handoff_error, Err, Reason})
      end.
 

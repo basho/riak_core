@@ -35,6 +35,8 @@
 %% Field debugging
 -export([get_tab/0]).
 
+-include("stacktrace.hrl").
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -531,8 +533,9 @@ ensure_vnodes_started(Ring) ->
                   try
                       riak_core_ring_handler:ensure_vnodes_started(Ring)
                   catch
-                      T:R ->
-                          lager:error("~p", [{T, R, erlang:get_stacktrace()}])
+                      ?_exception_(T, R, StackToken) ->
+                          StackTrace = ?_get_stacktrace_(StackToken),
+                          lager:error("~p", [{T, R, StackTrace}])
                   end
           end).
 
