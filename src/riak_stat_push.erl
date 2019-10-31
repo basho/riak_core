@@ -13,13 +13,12 @@
     setup/1,
     setdown/1,
     sanitise_data/1,
-    find_persisted_data/1,
-    find_persisted_data/2
+    find_push_stats/2,
+    fold_through_meta/3
 ]).
 
-%% todo: on start up find the running server values and start up
-
--define(PUSHPREFIX, {riak_stat_push, term_to_binary(node())}).
+-define(NODE, node()).
+-define(PUSHPREFIX(Node), {riak_stat_push, Node}).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -34,45 +33,57 @@
 %%%-------------------------------------------------------------------
 -spec(setup(arg()) -> ok).
 setup(Arg) ->
-    io:format("Setting up Polling on that endpoint~n"),
     case sanitise_and_check_args(Arg) of
         ok -> ok;
         {Protocol, SanitisedData} ->
-            io:format("Data Sanitised~n"),
-            Pid = maybe_start_server(Protocol, SanitisedData),
-            io:format("Polling Initiated ~p~n",[Pid]),
-            store_setup_info(Pid, Protocol, SanitisedData),
-            io:format("Setup Stored~n"),
-            ok
+            maybe_start_server(Protocol, SanitisedData)
     end.
+
 store_setup_info(ok,_,_) ->
     ok;
 store_setup_info(Pid, Protocol, {{Port, Instance, Sip}, Stats}) ->
-    Prefix = ?PUSHPREFIX,
-    {Date0, Time0} = calendar:local_time(),
-    Date = tuple_to_list(Date0), Time = tuple_to_list(Time0),
-    Key = {Date, Time, Protocol}, %% Key is tuple-object
-    Value = {Port, undefined, % server
-        Sip, Instance, Pid, {running,true}, Stats},
+    Prefix = ?PUSHPREFIX(?NODE),
+    Key = key_maker(Protocol), %% Key is tuple-object
+    %% Save the stats in the same format as the argument given,
+    %% instead of the sanitised version.
+    Value = {Port,
+            ?NODE,     % Node
+            Sip,       % Server IP address
+            Instance,  % Name of instance, also name of the child gen_server
+            Pid,       % Pid of the Child started
+        {running,true}, % Status of the gen_server, will remain
+                        % true if the node goes down and this hasn't been
+                        % "setdown" - the gen_server will be reloaded on
+                        % reboot of the node.
+            Stats},
     riak_stat_meta:put(Prefix, Key, Value).
 
+key_maker(Protocol) ->
+    {Date0, Time0} = calendar:local_time(),
+    Date = tuple_to_list(Date0), Time = tuple_to_list(Time0),
+    {Date,Time,Protocol}.
+
 maybe_start_server(Protocol, {{Port,Instance,Sip},Stats}) ->
-    case find_persisted_data(Protocol,{{'_',Instance,'_'},'_'}) of
-        [] -> start_server(Protocol,{{Port,Instance,Sip},Stats});
+    case fold_through_meta(Protocol,{{'_',Instance,'_'},'_'}, ?NODE) of
+        [] ->
+            Pid = start_server(Protocol,{{Port,Instance,Sip},Stats}),
+            store_setup_info(Pid, Protocol, {{Port, Instance, Sip}, Stats});
         Otherwise ->
             lists:foreach(fun
-                              ({{_D,_T,_Pr},{_Po,_Se,_SIp,_In,_Pid,{running,true},_St}}) ->
+                              ({{_D, _T, _Pr}, {_Po, _No, _SIp, _In, _Pid, {running, true}, _St}}) ->
                                   io:fwrite("Server of that instance is already running~n");
-                              ({{_D,_T,_Pr},{_Po,_Se,_SIp,_In,_Pid,{running,false},_St}}) ->
-                                  NewPid = start_server(Protocol,{{Port,Instance,Sip},Stats}),
-                                  store_setup_info(NewPid,Protocol,{{Port,Instance,Sip},Stats})
+                              ({{_D, _T, _Pr}, {_Po, _No, _SIp, _In, _Pid, {running, false}, _St}}) ->
+                                  NewPid = start_server(Protocol, {{Port, Instance, Sip}, Stats}),
+                                  store_setup_info(NewPid, Protocol, {{Port, Instance, Sip}, Stats})
                           end, Otherwise)
     end.
 
 start_server(udp, Arg) ->
-    riak_stat_push_sup:start_server(udp, Arg);
+    Pid = riak_stat_push_sup:start_server(udp, Arg),
+    Pid;
 start_server(tcp, Arg) ->
-    riak_stat_push_sup:start_server(tcp, Arg);
+    Pid = riak_stat_push_sup:start_server(tcp, Arg),
+    Pid;
 start_server(http, _Arg) ->
     io:format("Error Unsupported : ~p~n", [http]);
 start_server(Protocol, _Arg) ->
@@ -109,96 +120,114 @@ check_args(Protocol, {{Port, Instance, ServerIp}, Stats}) ->
 %%%-------------------------------------------------------------------
 -spec(setdown(arg()) -> ok).
 setdown([]) ->
-    io:format("No Argument entered ~n");
+    io:fwrite("No Argument entered ~n");
 setdown(Arg) ->
-    {Protocol, SanitisedData} = sanitise_data(Arg),
-    terminate_server(Protocol, SanitisedData).
+        case sanitise_data(Arg) of
+            {error, Reason} -> print_info({error,Reason});
+            {Protocol, SanitisedData} -> terminate_server(Protocol, SanitisedData)
+        end.
 
 %% @doc change the undefined into
 -spec(terminate_server(arg(), arguments()) -> ok | error()).
 terminate_server(Protocol, SanitisedData) ->
-    stop_server(fold(Protocol, SanitisedData)).
+    stop_server(fold(Protocol, SanitisedData, ?NODE)).
 
 stop_server([]) ->
     io:fwrite("Error, Server not found~n");
 stop_server(ChildrenInfo) ->
-%%    io:format("Children: ~p~n",[ChildrenInfo]),
     lists:foreach(fun
                       ({{D, T, Pr}, {Po, Se, Sip, I, Pid, {running,true}, S}}) ->
                           riak_stat_push_sup:stop_server(I),
-                          riak_stat_meta:put(?PUSHPREFIX, {D,T,Pr},{Po,Se,Sip,I,Pid,{running,false},S});
+                          riak_stat_meta:put(?PUSHPREFIX(?NODE), {D,T,Pr},{Po,Se,Sip,I,Pid,{running,false},S});
                       ({{_D, _T, _Pr}, {_Po, _Se, _Sip, _I, _Pid, {running,false}, _S}}) ->
                           ok;
                       (Other) ->
                           io:format("Error, wrong return type in riak_stat_push:fold/2 = ~p~n", [Other])
                   end, ChildrenInfo).
 
-fold(Protocol, {{Port, Instance, ServerIp}, _Stats}) ->
-%%    io:format("Port:  ~p~nInstance: ~p~nServerIP: ~p~n",[Port, Instance, ServerIp]),
-    {Return, Port, Instance, ServerIp} =
+fold(Protocol, {{Port, Instance, ServerIp}, Stats}, Node) ->
+    {Return, Port, Instance, ServerIp, Stats} =
         riak_core_metadata:fold(
-            fun                     %% original using maps
-                ({{MDate, MTime, MProtocol}, [#{port     := MPort,
-                                                serverip := MSip,
-                                                instance := MInst,
-                                                pid      := MPid,
-                                                runnning := MRun,
-                                                stats    := MStats}]},
-                    {Acc, APort, AInstance, AServerIP})
-                    when (APort == MPort orelse APort == '_')
-                    andalso (AInstance == MInst orelse AInstance == '_')
-                    andalso (AServerIP == MSip orelse AServerIP == '_') ->
-%%                    io:format("1 MPort:  ~p~nMInstance: ~p~nMServerIP: ~p~n",[MPort, MInst, MSip]),
-                    {[{{MDate, MTime, MProtocol}, {MPort, MSip, MInst, MPid, MRun, MStats}} | Acc],
-                        APort, AInstance, AServerIP};
-
-                        %% New, Maps were not working to setdown
+            fun
                 ({{MDate, MTime, MProtocol}, [{MPort,
-                                               MServer,
+                                               MNode,
                                                MSip,
                                                MInst,
                                                MPid,
                                                MRun,
                                                MStats}]},
-                    {Acc, APort, AInstance, AServerIP})
-                    when (APort == MPort orelse APort == '_')
-                    and (AInstance == MInst orelse AInstance == '_')
-                    and (AServerIP == MSip orelse AServerIP == '_') ->
-%%                    io:format("2 MPort:  ~p~nMInstance: ~p~nMServerIP: ~p~n",[MPort, MInst, MSip]),
-                    {[{{MDate, MTime, MProtocol}, {MPort, MServer, MSip, MInst, MPid, MRun, MStats}} | Acc],
-                        APort, AInstance, AServerIP};
+                    {Acc, APort, AInstance, AServerIP, AStats})
+                    when (APort     == MPort  orelse APort     == '_')
+                    and  (AInstance == MInst  orelse AInstance == '_')
+                    and  (AServerIP == MSip   orelse AServerIP == '_')
+                    and  (AStats    == MStats orelse AStats    == '_') ->
+                    {[{{MDate, MTime, MProtocol}, {MPort, MNode, MSip, MInst, MPid, MRun, MStats}} | Acc],
+                        APort, AInstance, AServerIP, AStats};
 
-                ({_K, _V}, {Acc, APort, AInstance, AServerIP}) ->
-                    %%                    io:format("K: ~p    ",[K]),
-%%                    io:format("V: ~p~n",[V]),
-                    {Acc, APort, AInstance, AServerIP}
+                ({_K, _V}, {Acc, APort, AInstance, AServerIP,AStats}) ->
+                    {Acc, APort, AInstance, AServerIP,AStats}
             end,
-            {[], Port, Instance, ServerIp},
-            ?PUSHPREFIX, [{match, {'_', '_', Protocol}}]
+            {[], Port, Instance, ServerIp, Stats},
+            ?PUSHPREFIX(Node), [{match, {'_', '_', Protocol}}]
         ),
     Return.
 
 %%%-------------------------------------------------------------------
 
-find_persisted_data(Arg) ->
-    {Protocol, SanitisedData} = sanitise_data(Arg),
-    print_info(find_persisted_data(Protocol, SanitisedData)).
-find_persisted_data(Protocol, {{Port, Instance, ServerIp}, Stats}) ->
-    fold(Protocol, {{Port, Instance, ServerIp}, Stats}).
+find_push_stats(_Nodes,[]) ->
+    print_info({error,badarg});
+find_push_stats(Nodes, ["*"]) ->
+    print_info(fold_through_meta('_',{{'_','_','_'},'_'}, Nodes));
+find_push_stats(Nodes,Arg) ->
+    case sanitise_data(Arg) of
+        {error, Reason} -> print_info({error, Reason});
+        {Protocol, SanitisedData} ->
+            print_info(fold_through_meta(Protocol, SanitisedData, Nodes))
+    end.
+
+%% todo: find a way to search by date. By time might be too useless. as the key is a list
+%% it  can be done like [year,'_', day], to find all the times there was a stat push on like the
+%% 5th of every month in 2019, or ['_',may,'_'] find all the setups in may.
+
+fold_through_meta(Protocol, {{Port, Instance, ServerIp}, Stats}, Nodes) ->
+    [fold(Protocol, {{Port, Instance, ServerIp}, Stats}, Node) || Node <- Nodes].
 
 print_info([]) ->
     io:fwrite("Nothing found~n");
+print_info({error,badarg}) ->
+    io:fwrite("Invalid Argument Given~n");
+print_info({error,Reason}) ->
+    io:fwrite("Error: ~p~n",[Reason]);
 print_info(Info) ->
     lists:foreach(fun
-                      ({{Date, Time, Protocol}, {Port, Sip, Inst, Pid, Run, Stats}}) ->
-                          io:fwrite("~p/~p/~p ", Date),
-                          io:fwrite("~p:~p:~p ", Time),
-                          io:fwrite("~p       ", [Protocol]),
-                          io:fwrite("~p ~p ~p ~p ~p ~p~n",
-                              [Port, Sip, Inst, Pid, Run, Stats]);
-                      (_) -> ok
+                      ({{Date, Time, Protocol}, {Port,Server, Sip, Inst, Pid, Run, Stats}}) ->
+                          consistent_date(Date),
+                          consistent_time(Time),
+                          StatsString = io_lib:format("~p",[Stats]),
+                          io:fwrite("~p    ", [Protocol]),
+                          io:fwrite("~p ~p ~p ~p ~p ~p ~s~n",
+                              [Port, Server, Sip, Inst, Pid, Run, StatsString]);
+                      (_Other) -> ok
                   end, Info).
 
+%% the dates and time when printed have a different length, due to the
+%% integer being < 10, so the lack of digits makes the list of information
+%% printed out have a wonky effect.
+%% This is just another layer of pretty printing.
+
+consistent_date(Date) ->
+    NewDate = integers_to_strings(Date),
+    io:fwrite("~s/~s/~s ",NewDate).
+
+consistent_time(Time) ->
+    NewTime = integers_to_strings(Time),
+    io:fwrite("~s:~s:~s ",NewTime).
+
+integers_to_strings(IntegerList) ->
+    lists:map(fun
+                  (Num) when length(Num) < 2 -> "0"++Num;
+                  (Num) -> Num
+              end, [integer_to_list(N) || N <-IntegerList]).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -218,24 +247,30 @@ break_up(Arg, Str) ->
     re:split(Arg, Str).
 
 data_sanitise_2(List, []) ->
-    case parse_args(List) of
-        ok -> ok;
+    try parse_args(List) of
         {Protocol, Port, Instance, ServerIp} ->
             {Protocol, {{Port, Instance, ServerIp}, ['_']}}
+    catch
+        error:function_clause -> {error, badarg};
+        _:Reason -> {error, Reason}
     end;
 data_sanitise_2(List, Stats) ->
-    case parse_args(List) of
-        ok -> ok;
+    try parse_args(List) of
         {Protocol, Port, Instance, ServerIp} ->
             {Names, _, _, _} =
                 riak_stat_console:data_sanitise(Stats),
             {Protocol, {{Port, Instance, ServerIp},
                 Names}}
+    catch
+        error:function_clause -> {error, badarg};
+        _:Reason -> {error, Reason}
     end.
 
 parse_args(Arg) ->
     parse_args(
         Arg, '_', '_', '_', '_').
+parse_args(<<>>, Protocol, Port, Instance, ServerIp) ->
+    parse_args([],Protocol,Port,Instance,ServerIp);
 parse_args([<<"protocol=", Pr/binary>> | Rest],
     Protocol, Port, Instance, ServerIp) ->
     NewProtocol =
@@ -243,6 +278,7 @@ parse_args([<<"protocol=", Pr/binary>> | Rest],
             <<"udp">> -> udp;
             <<"tcp">> -> tcp;
             <<"http">> -> http;
+            <<"*">> -> '_';
             _ -> Protocol
         end,
     parse_args(Rest,
@@ -256,12 +292,10 @@ parse_args([<<"port=", Po/binary>> | Rest],
         end,
     parse_args(Rest,
         Protocol, NewPort, Instance, ServerIp);
-
 parse_args([<<"instance=", I/binary>> | Rest],
     Protocol, Port, _Instance, ServerIp) ->
     NewInstance = binary_to_list(I),
     parse_args(Rest, Protocol, Port, NewInstance, ServerIp);
-
 parse_args([<<"sip=", S/binary>> | Rest],
     Protocol, Port, Instance, _ServerIp) ->
     NewIP = re:split(S, "\\s", [{return, list}]),

@@ -34,7 +34,8 @@
 	       stat_show/1, stat_info/1, stat_enable/1, stat_disable/1, stat_reset/1,
          stat_disable_0/1, stat_0/1,
          load_profile/1, add_profile/1, remove_profile/1, reset_profile/0, reset_profile/1,
-         enable_metadata/1, setup_endpoint/1, setdown_endpoint/1, find_push_stats/1]).
+         stat_metadata/1, setup_endpoint/1, setdown_endpoint/1,
+         find_push_stats/1, find_push_stats_all/1]).
 
 %% New CLI API
 -export([command/1]).
@@ -1296,9 +1297,14 @@ reset_profile() ->
 %% loaded before will not be loaded upon re-enabling to prevent errors
 %% @end
 %%%-------------------------------------------------------------------
--spec(enable_metadata(term()) -> ok).
-enable_metadata(Arg) ->
-    riak_stat_console:enable_metadata(Arg).
+-spec(stat_metadata(term()) -> ok).
+stat_metadata(["enable"]) ->
+    riak_stat_console:stat_metadata(true);
+stat_metadata(["disable"]) ->
+    riak_stat_console:stat_metadata(false);
+stat_metadata(_) ->
+    io:fwrite("Invalid Argument~n").
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%% polling %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -1337,4 +1343,15 @@ setdown_endpoint(Arg) ->
 %%%-------------------------------------------------------------------
 -spec(find_push_stats(term()) -> ok).
 find_push_stats(Arg) ->
-    riak_stat_push:find_persisted_data(Arg).
+    riak_stat_push:find_push_stats([node()], Arg).
+
+%%%-------------------------------------------------------------------
+%% @doc
+%% Get information on the stats polling, as in the date and time the
+%% stats pushing began, and the port, serverip, instance etc that was
+%% given at the time of setup - but for all nodes in the cluster
+%% @end
+%%%-------------------------------------------------------------------
+-spec(find_push_stats_all(term()) -> ok).
+find_push_stats_all(Arg) ->
+    riak_stat_push:find_push_stats([node()|nodes()],Arg).

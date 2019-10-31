@@ -34,15 +34,20 @@
     instance      :: instance()
 }).
 
--define(TCP_PORT,         8009).
+-define(TCP_PORT,         8090).
 -define(TCP_ADDRESS,      inet_db:gethostname()).
--define(TCP_OPTIONS,      []).
+-define(TCP_OPTIONS,      [?TCP_BUFFER,
+                           ?TCP_SNDBUFF,
+                           ?TCP_ACTIVE,
+                           ?TCP_PACKET,
+                           ?TCP_REUSE
+]).
 
 -define(TCP_BUFFER,       {buffer, 100*1024*1024}).
 -define(TCP_SNDBUFF,      {sndbuf,   5*1024*1024}).
 -define(TCP_ACTIVE,       {active,          true}).
--define(TCP_MODE,         {mode,binray}).
 -define(TCP_PACKET,       {packet,0}).
+-define(TCP_REUSE,        {reuseaddr, true}).
 
 %%%===================================================================
 %%% API
@@ -52,7 +57,7 @@
 -spec(start_link(Arg :: term()) ->
     {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 start_link(Obj) ->
-    gen_server:start_link({global, ?SERVER}, ?MODULE, Obj, []).
+    gen_server:start_link(?MODULE, Obj, []).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -67,20 +72,24 @@ init([{{MontiorLatencyPort,Instance,[Sip]},Stats}]) ->
     MonitorStatsPort = ?MONITORSTATSPORT,
     MonitorServer    = ?MONITORSERVER,
     Hostname         = ?TCP_ADDRESS,
-    Socket           = open(),
 
-    self() ! refresh_monitor_server_ip,
-    send_after(?STATS_UPDATE_INTERVAL, {dispatch_stats, Stats}),
+    case gen_tcp:connect(Sip,?TCP_PORT,?TCP_OPTIONS) of
+        {ok, Socket} ->
+            self() ! refresh_monitor_server_ip,
+            send_after(?STATS_UPDATE_INTERVAL, {dispatch_stats, Stats}),
 
-    {ok, #state{
-        socket       = Socket,
-        latency_port = MontiorLatencyPort,
-        server       = MonitorServer,
-        server_ip    = Sip,
-        stats_port   = MonitorStatsPort,
-        hostname     = Hostname,
-        instance     = Instance}
-    }.
+            {ok, #state{
+                socket       = Socket,
+                latency_port = MontiorLatencyPort,
+                server       = MonitorServer,
+                server_ip    = Sip,
+                stats_port   = MonitorStatsPort,
+                hostname     = Hostname,
+                instance     = Instance}
+            };
+        Error ->
+            {stop, Error}
+    end.
 %%--------------------------------------------------------------------
 -spec(handle_call(Request :: term(), From :: {pid(), Tag :: term()},
     State :: #state{}) ->
@@ -153,11 +162,6 @@ send(Socket, Data) ->
 
 send_after(Interval, Arg) ->
     erlang:send_after(Interval,self(),Arg).
-
-open() ->
-    {ok,Socket} =
-        gen_tcp:listen(?TCP_PORT,?TCP_OPTIONS),
-                Socket.
 
 dispatch_stats(Socket, ComponentHostname, Instance, Stats) ->
     case riak_stat_push_util:json_stats(ComponentHostname, Instance, Stats) of

@@ -1,6 +1,7 @@
 %%%-------------------------------------------------------------------
 %%% @doc
-%%%
+%%% Superviser for the tcp and udp servers that will poll stats from
+%%% exometer and push them to an endpoint given
 %%% @end
 %%%-------------------------------------------------------------------
 -module(riak_stat_push_sup).
@@ -16,12 +17,16 @@
 %% Supervisor callbacks
 -export([init/1]).
 
+-define(STRATEGY,  one_for_one).
+-define(INTENSITY, 1000).
+-define(PERIOD,    5000).
+
+-define(RESTART,  transient).
+-define(SHUTDOWN, 5000).
+
 -define(SERVER, ?MODULE).
--define(TIMEOUT, 5000).
 -define(TCP_CHILD, riak_stat_push_tcp).
 -define(UDP_CHILD, riak_stat_push_udp).
--define(CHILD(Mod,Arg), {Mod,{Mod,start_link,[Arg]},transient,?TIMEOUT,worker,[Mod]}).
--define(CHILD(Name,Mod,Arg), {Name,{Mod,start_link,[Arg]},transient,?TIMEOUT,worker,[Mod]}).
 
 -define(PUSHPREFIX, {riak_stat_push, term_to_binary(node())}).
 
@@ -36,29 +41,14 @@ start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
 start_server(Protocol, Data) ->
-    UDPCHILD = child_name(Data,Protocol),
-    start_child(UDPCHILD).
+    CHILD = child_spec(Data,Protocol),
+    start_child(CHILD).
 
-child_name(Data,udp) ->
-    {{_Port, ServerName, _ServerIP},_Stats} = Data,
-    ?CHILD(ServerName,?UDP_CHILD,[Data]);
-child_name(Data,tcp) ->
-    {{_Port, ServerName, _ServerIP},_Stats} = Data,
-    ?CHILD(ServerName,?TCP_CHILD,[Data]).
-
-start_child(Child) ->
-    case supervisor:start_child(?MODULE, Child) of
-        {ok, Pid} -> Pid;
-        {error, {already_started, Pid}} -> Pid;
-        {error, Other} -> io:fwrite("Error : ~p~n", [Other])
-    end.
-
-stop_server(Child) ->
-    io:format("Stopping Child Server: ~p~n",[Child]),
-    Terminate = supervisor:terminate_child(?MODULE, Child),
-    Delete = supervisor:delete_child(?MODULE, Child),
-    io:format("Terminated Child : ~p~n",[Terminate]),
-    io:format("Deleted Child : ~p~n",[Delete]),
+stop_server(Child) when is_list(Child) ->
+    ChildName = list_to_atom(Child),
+    _Terminate = supervisor:terminate_child(?MODULE, ChildName),
+    _Delete = supervisor:delete_child(?MODULE, ChildName),
+    io:fwrite("Polling Stopped for: ~s~n",[Child]),
     ok.
 
 
@@ -75,32 +65,53 @@ stop_server(Child) ->
     ignore |
     {error, Reason :: term()}).
 init([]) ->
-    RestartStrategy = one_for_one,
-    MaxRestarts = 1000,
-    MaxSecondsBetweenRestarts = 3600,
-
-    Children = restart_children(),
-%%    Children =
-%%        ListOfKids = riak_stat_push:find_persisted_data('_',{{'_','_','_'},'_'}),
-%%    lists:foldl(fun
-%%                    ({_Date,_Time,Protocol},{Port,_Server,Sip,ServerName,_Pid,{running,true},Stats},Acc) ->
-%%                        [child_name({{Port,ServerName,Sip},Stats},Protocol)|Acc];
-%%                    (_,Acc) -> Acc
-%%                end, [], ListOfKids),
-
-    SupFlags = {RestartStrategy, MaxRestarts, MaxSecondsBetweenRestarts},
-
+    STRATEGY = ?STRATEGY,
+    INTENSITY = ?INTENSITY,
+    PERIOD = ?PERIOD,
+    SupFlags = {STRATEGY,INTENSITY,PERIOD},
+    Children = get_children(),
     {ok, {SupFlags, Children}}.
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
 
-restart_children() ->
-    ListOfKids = riak_stat_push:find_persisted_data('_',{{'_','_','_'},'_'}),
-    lists:ukeysort(1,lists:foldl(fun
-                      ({{_Date,_Time,Protocol},{Port,_Server,Sip,ServerName,_Pid,{running,true},Stats}},Acc) ->
-                         [child_name({{Port,ServerName,Sip},Stats},Protocol)|Acc];
-                      (_,Acc) -> Acc
-                  end, [], ListOfKids)).
+get_children() ->
+    ListOfKids = riak_stat_push:fold_through_meta('_', {{'_', '_', '_'}, '_'}, [node()]),
+    lists:foldl(
+        fun({{_Date, _Time, Protocol}, {Port, _Server, Sip, ServerName, _Pid, {running, true}, Stats}}, Acc) ->
+            Data = {{Port, ServerName, Sip}, Stats},
+            [child_spec(Data, Protocol) | Acc];
+            (_other,Acc) -> Acc
+        end, [], ListOfKids).
 
+
+child_spec(Data,Protocol) ->
+    ChildName = server_name(Data),
+    Module    = mod_name(Protocol),
+    Function  = start_link,
+    Args      = [Data],
+    Restart   = ?RESTART,
+    Shutdown  = ?SHUTDOWN,
+    Type      = worker,
+    MFArgs    = {Module, Function, [Args]},
+    {ChildName, MFArgs, Restart, Shutdown, Type, [Module]}.
+
+server_name({{_,ServerName,_},_}) -> list_to_atom(ServerName).
+
+mod_name(udp) -> ?UDP_CHILD;
+mod_name(tcp) -> ?TCP_CHILD.
+
+start_child(Child) ->
+    case supervisor:start_child(?MODULE, Child) of
+        {ok, Pid} ->
+            io:format("Polling Initiated~n",[]),
+            Pid;
+        {error, {already_started, Pid}} -> Pid;
+        {error, econnrefused} -> io:fwrite("Error - Connection Refused~n");
+        {error, Other} -> io:fwrite("Error : ~p~n", [Other])
+    end.
+
+
+%% todo: every day check for data in the metadata that is older than 6months ol and delete it ,
+%% it can be an appget value thing so the default is at like 5am etc....

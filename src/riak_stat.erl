@@ -279,7 +279,10 @@ prefix() ->
 print(Arg) ->
     print(Arg, []).
 print(Entries, Attr) when is_list(Entries) ->
-    lists:map(fun(E) -> print(E, Attr) end, Entries);
+    lists:map(fun
+                  (E) ->
+                      print(E, Attr)
+              end, Entries);
 print(Entries, Attr) ->
     riak_stat_console:print(Entries, Attr).
 

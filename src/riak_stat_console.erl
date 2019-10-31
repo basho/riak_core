@@ -18,7 +18,7 @@
     stat_info/1,
     status_change/2,
     reset_stat/1,
-    enable_metadata/1
+    stat_metadata/1
 ]).
 
 %% Additional API
@@ -142,14 +142,15 @@ reset_stat(Arg) ->
 %% stats and function work occurs in the riak_stat_coordinator
 %% @end
 %%%-------------------------------------------------------------------
--spec(enable_metadata(data()) -> ok).
-enable_metadata(Arg) ->
+-spec(stat_metadata(data()) -> ok).
+stat_metadata(Arg) ->
     Truth = ?IS_ENABLED(?METADATA_ENABLED),
-    {A,_,_,_} = data_sanitise(Arg),
-    [C] = lists:flatten(A),
-    case C of
+    case Arg of
         Truth ->
-            print("Metadata-enabled already set to ~s~n", [Arg]);
+            case Truth of
+                true -> print("Metadata already enabled~n");
+                false -> print("Metadata already disabled~n")
+            end;
         Bool ->
             case Bool of
                 true ->
@@ -418,6 +419,11 @@ print(NewStats,DPs) ->
                   [] -> print([]);
                   V -> io:fwrite("~p: ~p~n", [Names, V])
               end;
+          ({Names, Values}) when is_list(Names) ->
+              case lists:flatten(not_0(Names, Values)) of
+                  [] -> print([]);
+                  V -> io:fwrite("~p: ~p~n", [Names, V])
+              end;
 
           ({N, _T, _S}) when DPs == [] -> get_value(N);
           ({N, _T, _S}) ->  find_stats_info(N, DPs);
@@ -460,7 +466,8 @@ not_0_(Stat, _DPs) ->
                         end, [], V);
         _ -> []
     end.
-
+%% todo: got through this code and make sure it is all necessary. maybe move them
+%% to exometer?
 %%%-------------------------------------------------------------------
 
 get_value(N) ->

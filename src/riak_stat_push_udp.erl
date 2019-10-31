@@ -35,12 +35,14 @@
 }).
 
 -define(UDP_OPEN_PORT,         8080).
--define(UDP_OPTIONS,           [?UDP_OPEN_BUFFER,
-                                ?UDP_OPEN_SNDBUFF,
-                                ?UDP_OPEN_ACTIVE]).
--define(UDP_OPEN_BUFFER,       {buffer, 100*1024*1024}).
--define(UDP_OPEN_SNDBUFF,      {sndbuf,   5*1024*1024}).
--define(UDP_OPEN_ACTIVE,       {active,         false}).
+-define(UDP_OPTIONS,           [?UDP_BUFFER,
+                                ?UDP_SNDBUFF,
+                                ?UDP_ACTIVE,
+                                ?UDP_REUSE]).
+-define(UDP_BUFFER,       {buffer, 100*1024*1024}).
+-define(UDP_SNDBUFF,      {sndbuf,   5*1024*1024}).
+-define(UDP_ACTIVE,       {active,          false}).
+-define(UDP_REUSE,        {reuseaddr, true}).
 
 %%%===================================================================
 %%% API
@@ -50,8 +52,7 @@
 -spec(start_link(Term::arg()) ->
     {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 start_link(Obj) ->
-    lager:info("UDP server Started...~n"),
-    gen_server:start_link({local, ?SERVER}, ?MODULE, Obj, []).
+    gen_server:start_link(?MODULE, Obj, []).
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -61,24 +62,25 @@ start_link(Obj) ->
     {ok, State :: #state{}} | {ok, State :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term()} | ignore).
 init([{{MonitorLatencyPort, Instance, Sip}, Stats}]) ->
-    lager:info("UDP server Initiating...~n"),
     MonitorStatsPort   = ?MONITORSTATSPORT,
     MonitorServer      = ?MONITORSERVER,
     Hostname           = inet_db:gethostname(),
-    Socket             = open(),
-    self() ! refresh_monitor_server_ip,
-    lager:info("Request refresh monitor Server IP...~n"),
-    send_after(?STATS_UPDATE_INTERVAL, {dispatch_stats, Stats}),
-    lager:info("After ~p milliseconds request dispatch stats...~n",[?STATS_UPDATE_INTERVAL]),
-    {ok, #state{
-        socket        = Socket,
-        latency_port  = MonitorLatencyPort,
-        server        = MonitorServer,
-        server_ip     = Sip,
-        stats_port    = MonitorStatsPort,
-        hostname      = Hostname,
-        instance      = Instance}
-    }.
+    case gen_udp:open(?UDP_OPEN_PORT, ?UDP_OPTIONS) of
+        {ok, Socket} ->
+            self() ! refresh_monitor_server_ip,
+            send_after(?STATS_UPDATE_INTERVAL, {dispatch_stats, Stats}),
+            {ok, #state{
+                socket        = Socket,
+                latency_port  = MonitorLatencyPort,
+                server        = MonitorServer,
+                server_ip     = Sip,
+                stats_port    = MonitorStatsPort,
+                hostname      = Hostname,
+                instance      = Instance}
+            };
+        Error ->
+            {stop, Error}
+    end.
 %%--------------------------------------------------------------------
 -spec(handle_call(Request :: term(), From :: {pid(), Tag :: term()},
     State :: #state{}) ->
@@ -152,12 +154,6 @@ send(Socket, Host, Port, Data) ->
 
 send_after(Interval, Arg) ->
     erlang:send_after(Interval,self(),Arg).
-
-open() ->
-    {ok, Socket} =
-        gen_udp:open(?UDP_OPEN_PORT, ?UDP_OPTIONS),
-    Socket.
-
 
 dispatch_stats(Socket, ComponentHostname, Instance, MonitoringHostname, Port, Stats) ->
     case riak_stat_push_util:json_stats(ComponentHostname, Instance, Stats) of
