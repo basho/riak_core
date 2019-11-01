@@ -475,6 +475,7 @@ get_value(N) ->
         {ok,Val} ->
             case lists:foldl(fun
                           ({_,{error,_}},A) -> A;
+                          ({ms_since_reset,_Value},A) -> A;
                           (D,A) ->
                               [D|A]
                       end, [],Val) of
@@ -492,6 +493,7 @@ find_stats_info(Stats, Info) ->
                           ([],A) -> A;
                           ({_DP, undefined},A) -> A;
                           ({_DP, {error,_}},A) -> A;
+                          ({ms_since_reset, _Va},A) -> A;
                           (DP,A) -> [DP|A]
                       end, [], V) of
                 [] -> [];

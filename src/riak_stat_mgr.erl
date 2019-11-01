@@ -280,8 +280,7 @@ find_entries_exom(Stats, Status, Type, DPs) ->
             try riak_stat_exom:find_entries(Stats, Status) of
                 NewStats ->
                     {NewStats, DPs}
-            catch _:_ ->
-                {[],[]}
+            catch _:_ -> {[],[]}
             end;
         NewStats ->
             {NewStats,DPs}

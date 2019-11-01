@@ -130,7 +130,7 @@ setdown(Arg) ->
 %% @doc change the undefined into
 -spec(terminate_server(arg(), arguments()) -> ok | error()).
 terminate_server(Protocol, SanitisedData) ->
-    stop_server(fold(Protocol, SanitisedData, ?NODE)).
+    stop_server(fold({'_','_',Protocol}, SanitisedData, ?NODE)).
 
 stop_server([]) ->
     io:fwrite("Error, Server not found~n");
@@ -145,7 +145,7 @@ stop_server(ChildrenInfo) ->
                           io:format("Error, wrong return type in riak_stat_push:fold/2 = ~p~n", [Other])
                   end, ChildrenInfo).
 
-fold(Protocol, {{Port, Instance, ServerIp}, Stats}, Node) ->
+fold({Date, Time, Protocol}, {{Port, Instance, ServerIp}, Stats}, Node) ->
     {Return, Port, Instance, ServerIp, Stats} =
         riak_core_metadata:fold(
             fun
@@ -168,7 +168,7 @@ fold(Protocol, {{Port, Instance, ServerIp}, Stats}, Node) ->
                     {Acc, APort, AInstance, AServerIP,AStats}
             end,
             {[], Port, Instance, ServerIp, Stats},
-            ?PUSHPREFIX(Node), [{match, {'_', '_', Protocol}}]
+            ?PUSHPREFIX(Node), [{match, {Date, Time, Protocol}}]
         ),
     Return.
 
@@ -191,6 +191,28 @@ find_push_stats(Nodes,Arg) ->
 
 fold_through_meta(Protocol, {{Port, Instance, ServerIp}, Stats}, Nodes) ->
     [fold(Protocol, {{Port, Instance, ServerIp}, Stats}, Node) || Node <- Nodes].
+
+%%%-------------------------------------------------------------------
+
+%% exported function to delete the persisted data in the metadata.
+%% accessible through the remote_console
+
+delete_logs(Date) ->
+    NewDate = get_date(Date, {'_','_','_'}),
+    SelectDate = tuple_to_list(NewDate),
+    FoundList = fold_through_meta({SelectDate, '_', '_'}, {{'_','_','_'},'_'}, [node()]),
+    delete_from_meta(FoundList).
+
+%% todo: make a delete-logs-all function as well. or local/native as options
+%% so delete_logs(Date, all | local) default is local.
+
+get_date([Year|MonthDay], {TheYear,TheMonth,TheDay}) ->
+    ok.
+
+delete_from_meta(List) ->
+    ok.
+
+%%%-------------------------------------------------------------------
 
 print_info([]) ->
     io:fwrite("Nothing found~n");

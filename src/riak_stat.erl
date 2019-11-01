@@ -163,7 +163,8 @@ find_entries(Stats, Status, Type, DPs) ->
 %%%-------------------------------------------------------------------
 -spec(get_value(statslist()) -> arg()).
 get_value(Arg) ->
-    print(riak_stat_exom:get_values(Arg)).
+    Stat = riak_stat_exom:get_values(Arg),
+    io:fwrite("Stats : ~p~n",[Stat]).
 
 %%%-------------------------------------------------------------------
 %% @doc

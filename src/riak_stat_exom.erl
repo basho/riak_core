@@ -300,7 +300,8 @@ change_status(Stats) when is_list(Stats) ->
 change_status({Stat, Status}) ->
     change_status(Stat, Status).
 change_status(Stat, Status) ->
-    set_opts(Stat, [{status, Status}]).
+    set_opts(Stat, [{status, Status}]),
+    io:fwrite("~p : ~p~n",[Stat,Status]).
 
 %%%-------------------------------------------------------------------
 %% @doc
