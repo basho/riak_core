@@ -381,20 +381,18 @@ handle_call(refresh_my_ring, _From, State) ->
 
     %% This node is leaving the cluster so create a fresh ring file
     FreshRing = riak_core_ring:fresh(),
-    State2 = set_ring(FreshRing, State),
-    %% Make sure the fresh ring gets written before stopping
-    ok = do_write_ringfile(FreshRing),
-
-    %% Mark the ring as last gasp so that services spotting the changed
-    %% ring may choose not to react to the change
     LastGaspRing = riak_core_ring:set_lastgasp(FreshRing),
-    State3 = set_ring(LastGaspRing, State2),
+    State2 = set_ring(LastGaspRing, State),
+    %% Make sure the fresh ring gets written before stopping, that the updated
+    %% state global ring has the last gasp, but not the persisted ring (so that
+    %% on restart there will be no last gasp indicator. 
+    ok = do_write_ringfile(FreshRing),
 
     %% Handoff is complete and fresh ring is written
     %% so we can safely stop now.
     riak_core:stop("node removal completed, exiting."),
 
-    {reply,ok,State3};
+    {reply,ok,State2};
 handle_call({ring_trans, Fun, Args}, _From, State=#state{raw_ring=Ring}) ->
     case catch Fun(Ring, Args) of
         {new_ring, NewRing} ->
