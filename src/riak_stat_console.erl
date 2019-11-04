@@ -403,30 +403,24 @@ print(Arg) ->
 
 print([], _) ->
     io:fwrite("No Matching Stats~n");
-print(NewStats,DPs) ->
+print(NewStats,Args) ->
     lists:map(fun
-          ({Names, _NDPs}) when DPs == disable_0 ->
-              case lists:flatten([not_0(N, dis) ||
-                  {N, _, _} <- Names]) of
-
+          ({Names, _NDPs}) when Args == disable_0 ->
+             case lists:flatten([print_if_0(N,disable_0) || {N,_,_} <- Names]) of
+                 [] -> print([]);
+                 _ -> ok
+             end;
+          ({Names, NDPs}) when Args == show_0 ->
+              case lists:flatten([print_if_0(N, NDPs) || {N,_,_} <- Names]) of
                   [] -> print([]);
-                  _V -> ok
+                  _ -> ok
               end;
-          ({Names, NDPs}) when DPs == show_0 ->
-              case lists:flatten([not_0(N, NDPs) ||
-                  {N, _, _} <- Names]) of
 
-                  [] -> print([]);
-                  V -> io:fwrite("~p: ~p~n", [Names, V])
-              end;
           ({Names, Values}) when is_list(Names) ->
-              case lists:flatten(not_0(Names, Values)) of
-                  [] -> print([]);
-                  V -> io:fwrite("~p: ~p~n", [Names, V])
-              end;
+              print_if_0(Names, Values);
 
-          ({N, _T, _S}) when DPs == [] -> get_value(N);
-          ({N, _T, _S}) ->  find_stats_info(N, DPs);
+          ({N, _T, _S}) when Args == [] -> get_value(N);
+          ({N, _T, _S}) ->  find_stats_info(N, Args);
 
           %% legacy pattern
           (Legacy) ->
@@ -447,47 +441,53 @@ print(NewStats,DPs) ->
                         end, Legacy)
       end, NewStats).
 
-not_0(StatName,dis) ->
-    case not_0_(StatName,[]) of
+print_if_0(StatName,disable_0) ->
+    case not_0(StatName,[]) of
         [] -> [];
-        _Vals -> change_status([{StatName,{status,disabled}}])
+        _Vals -> change_status([{StatName,{status,disabled}}]),
+            io:fwrite("~p : disabled~n",[StatName])
     end;
-not_0(StatName,DPs) ->
-    not_0_(StatName,DPs).
+print_if_0(StatName, DPs) ->
+    case not_0(StatName, DPs) of
+        [] -> [];
+        Values ->
+            io:fwrite("~p : ~p~n", [StatName, Values])
+    end.
 
-not_0_(Stat, _DPs) ->
+not_0(Stat, _DPs) ->
     case riak_stat_exom:get_value(Stat) of
         {ok, V} ->
             lists:foldl(fun
                             ({Va,0},Acc) -> [{Va,0}|Acc];
                             ({Va,[]},Acc) ->[{Va,0}|Acc];
-                            ({_Va,{error,_}},Acc)->Acc;
                             (_, Acc) -> Acc
                         end, [], V);
         _ -> []
     end.
-%% todo: got through this code and make sure it is all necessary. maybe move them
-%% to exometer?
+
+
 %%%-------------------------------------------------------------------
 
 get_value(N) ->
     case riak_stat_exom:get_value(N) of
+        {ok, disabled} -> io:fwrite("~p : disabled~n",[N]);
         {ok,Val} ->
             case lists:foldl(fun
                           ({_,{error,_}},A) -> A;
                           ({ms_since_reset,_Value},A) -> A;
-                          (D,A) ->
-                              [D|A]
-                      end, [],Val) of
+                          (D,A) -> [D|A]
+                      end, [], Val) of
                 [] -> [];
                 R ->  io:fwrite("~p : ~p ~n",[N,R])
             end;
-        {error, _} -> []
+        {error, _} -> [];
+        _ -> []
     end.
 
 find_stats_info(Stats, Info) ->
     case riak_stat_exom:get_datapoint(Stats, Info) of
         [] -> [];
+        {ok, disabled} -> io:fwrite("~p : disabled~n",[Stats]);
         {ok, V} ->
             case lists:foldl(fun
                           ([],A) -> A;
@@ -516,87 +516,3 @@ get_info_2(N,Attrs) ->
 
 %%%===================================================================
 %%%===================================================================
-
-
-
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--export([data_sanitise_test/0]).
-
--define(setup(Fun),        {setup,  fun setup/0,fun cleanup/1, Fun}).
--define(foreach(Funs),     {foreach,fun setup/0,fun cleanup/1, Funs}).
--define(setuptest(Desc, Test), {Desc, ?setup(fun(_) -> Test end)}).
-
--define(new(Mod),                   meck:new(Mod)).
--define(unload(Mod),                meck:unload(Mod)).
-
-
-setup() ->
-    ?unload(riak_stat_data),
-    ?new(riak_stat_data).
-
-cleanup(_Pid) ->
-    catch?unload(riak_stat_data),
-    ok.
-
-data_sanitise_test() ->
-    ?setuptest("Data Sanitise test",
-    [{"riak.**",                         fun tests_riak_star_star/0},
-     {"riak.riak_kv.**",                 fun tests_riak_kv_star_star/0},
-     {"riak.riak_kv.*",                  fun tests_riak_kv_star/0},
-     {"riak.riak_kv.node.*",             fun tests_riak_kv_node_star/0},
-     {"node_gets",                       fun tests_node_gets/0},
-     {"riak.riak_kv.node.gets/max",      fun tests_node_gets_dp/0},
-     {"riak.riak_kv.**/type=spiral",     fun tests_riak_kv_type_spiral/0},
-     {"riak.riak_kv.**/status=disabled", fun tests_riak_kv_status_dis/0},
-     {"true",                            fun tests_true/0}        ]).
-
-tests_riak_star_star() ->
-    {Name,_T,_S,_DP} =
-        data_sanitise(["riak.**"]),
-    ?assertEqual([riak|'_'],Name).
-
-tests_riak_kv_star_star() ->
-    {Name,_T,_S,_DP} =
-        data_sanitise(["riak.riak_kv.**"]),
-    ?assertEqual([riak,riak_kv|'_'],Name).
-
-tests_riak_kv_star() ->
-    {Name,_T,_S,_DP} =
-        data_sanitise(["riak.riak_kv.*"]),
-    ?assertEqual(Name, [riak,riak_kv,'_']).
-
-tests_riak_kv_node_star() ->
-    {Name,_T,_S,_DP} =
-        data_sanitise(["riak.riak_kv.node.*"]),
-    ?assertEqual(Name, [riak,riak_kv,node,'_']).
-
-tests_node_gets() ->
-    {Name,_T,_S,_DP} =
-        data_sanitise(["node_gets"]),
-    ?assertEqual([node_gets],Name).
-
-tests_node_gets_dp() ->
-    {Name,_T,_S,DPs} =
-        data_sanitise(["riak.riak_kv.node.gets/max"]),
-    ?assertEqual(Name, [riak,riak_kv,node,gets]),
-    ?assertEqual([max],DPs).
-
-tests_riak_kv_type_spiral() ->
-    {Name,Type,_St,_DP} =
-        data_sanitise(["riak.riak_kv.**/type=spiral"]),
-    ?assertEqual(Name, [riak,riak_kv|'_']),
-    ?assertEqual(Type, spiral).
-
-tests_riak_kv_status_dis() ->
-    {Name,_Type,Status,_DP} =
-        data_sanitise(["riak.riak_kv.**/status=disabled"]),
-    ?assertEqual(Name, [riak,riak_kv|'_']),
-    ?assertEqual(Status, disabled).
-
-tests_true() ->
-    {Arg,_t,_S,_D} =
-        data_sanitise(["true"]),
-    ?assertEqual(Arg, [true]).
-
--endif.
