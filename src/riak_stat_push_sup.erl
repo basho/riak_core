@@ -79,8 +79,8 @@ init([]) ->
 get_children() ->
     ListOfKids = riak_stat_push:fold_through_meta('_', {{'_', '_', '_'}, '_'}, [node()]),
     lists:foldl(
-        fun({{_Date, _Time, Protocol}, {Port, _Server, Sip, ServerName, _Pid, {running, true}, Stats}}, Acc) ->
-            Data = {{Port, ServerName, Sip}, Stats},
+        fun({{Protocol,Instance}, {_ODate,_MDate,_Pid,{running, true},_Node,Port,Sip,Stats}}, Acc) ->
+            Data = {{Port, Instance, Sip}, Stats},
             [child_spec(Data, Protocol) | Acc];
             (_other,Acc) -> Acc
         end, [], ListOfKids).
@@ -107,11 +107,13 @@ start_child(Child) ->
         {ok, Pid} ->
             io:format("Polling Initiated~n",[]),
             Pid;
-        {error, {already_started, Pid}} -> Pid;
-        {error, econnrefused} -> io:fwrite("Error - Connection Refused~n");
-        {error, Other} -> io:fwrite("Error : ~p~n", [Other])
-    end.
+        {error, Reason} ->
+            case Reason of
+                {already_started, Pid} -> Pid;
+                econnrefused ->               io:fwrite("Error : Connection Refused~n");
+                {{error, econnrefused}, _} -> io:fwrite("Error : Connection Refused~n");
+                {error, Other} ->             io:fwrite("Error : ~p~n", [Other]);
+                Other ->                      io:fwrite("Error : ~p~n", [Other])
 
-
-%% todo: every day check for data in the metadata that is older than 6months ol and delete it ,
-%% it can be an appget value thing so the default is at like 5am etc....
+            end
+end .
