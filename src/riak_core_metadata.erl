@@ -121,13 +121,10 @@ fold(Fun, Acc0, FullPrefix) ->
            metadata_prefix(),
            fold_opts()) -> any().
 fold(Fun, Acc0, FullPrefix, Opts) ->
-%%    io:format("Stat in fold for DPs~n"),
-
     It = iterator(FullPrefix, Opts),
     fold_it(Fun, Acc0, It).
 
 fold_it(Fun, Acc, It) ->
-%%    io:format("Stat in fold_it for DPs~n"),
     case itr_done(It) of
         true ->
             ok = itr_close(It),
@@ -352,7 +349,7 @@ delete(FullPrefix, Key) ->
     delete(FullPrefix, Key, []).
 
 %% @doc Removes the value associated with the given prefix and key locally and then
-%% triggers a broradcast to notify other nodes in the cluster. Currently there are
+%% triggers a broadcast to notify other nodes in the cluster. Currently there are
 %% no delete options
 %%
 %% NOTE: currently deletion is logical and no GC is performed.
