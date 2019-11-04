@@ -337,6 +337,7 @@ change_exom_status(Arg) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(reset_stat(statname()) -> ok).
+reset_stat([]) -> io:fwrite("No Stats found~n");
 reset_stat(StatName) ->
     Fun = fun reset_in_both/1,
     case maybe_meta(Fun, StatName) of
