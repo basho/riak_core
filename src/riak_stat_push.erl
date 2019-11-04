@@ -17,8 +17,8 @@
     fold_through_meta/3
 ]).
 
--define(NODE, node()).
--define(PUSHPREFIX(Node), {riak_stat_push, Node}).
+-define(NODE, [node()]).
+-define(PUSHPREFIX(Node), {riak_stat_push, node()}).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -42,26 +42,18 @@ setup(Arg) ->
 store_setup_info(ok,_,_) ->
     ok;
 store_setup_info(Pid, Protocol, {{Port, Instance, Sip}, Stats}) ->
-    Prefix = ?PUSHPREFIX(?NODE),
-    Key = key_maker(Protocol), %% Key is tuple-object
-    %% Save the stats in the same format as the argument given,
-    %% instead of the sanitised version.
-    Value = {Port,
-            ?NODE,     % Node
-            Sip,       % Server IP address
-            Instance,  % Name of instance, also name of the child gen_server
-            Pid,       % Pid of the Child started
+    Prefix = ?PUSHPREFIX(node()),
+    Key = {Protocol,Instance},
+    Value = {
+        calendar:universal_time(),
+        calendar:universal_time(),
+        Pid,            % Pid of the Child started
         {running,true}, % Status of the gen_server, will remain
-                        % true if the node goes down and this hasn't been
-                        % "setdown" - the gen_server will be reloaded on
-                        % reboot of the node.
-            Stats},
+        node(),         % Node
+        Port,
+        Sip,            % Server IP address
+        Stats},
     riak_stat_meta:put(Prefix, Key, Value).
-
-key_maker(Protocol) ->
-    {Date0, Time0} = calendar:local_time(),
-    Date = tuple_to_list(Date0), Time = tuple_to_list(Time0),
-    {Date,Time,Protocol}.
 
 maybe_start_server(Protocol, {{Port,Instance,Sip},Stats}) ->
     case fold_through_meta(Protocol,{{'_',Instance,'_'},'_'}, ?NODE) of
@@ -70,9 +62,9 @@ maybe_start_server(Protocol, {{Port,Instance,Sip},Stats}) ->
             store_setup_info(Pid, Protocol, {{Port, Instance, Sip}, Stats});
         Otherwise ->
             lists:foreach(fun
-                              ({{_D, _T, _Pr}, {_Po, _No, _SIp, _In, _Pid, {running, true}, _St}}) ->
+                              ({{_Pr,_In}, {_ODT,_MDT,_Pid,{running,true},_Node,_Port,_Sip,_St}}) ->
                                   io:fwrite("Server of that instance is already running~n");
-                              ({{_D, _T, _Pr}, {_Po, _No, _SIp, _In, _Pid, {running, false}, _St}}) ->
+                              ({{_Pr,_In}, {_ODT,_MDT,_Pid,{running,false},_Node,_Port,_Sip,_St}}) ->
                                   NewPid = start_server(Protocol, {{Port, Instance, Sip}, Stats}),
                                   store_setup_info(NewPid, Protocol, {{Port, Instance, Sip}, Stats})
                           end, Otherwise)
@@ -99,6 +91,8 @@ sanitise_and_check_args(Arg) ->
             end
     end.
 
+check_args(error, Reason) ->
+    io:format("Error : ~p~n",[Reason]);
 check_args('_', {{_P, _I, _S}, _St}) ->
     io:format("No Protocol type entered~n");
 check_args(_Pr, {{'_', _I, _S}, _St}) ->
@@ -106,14 +100,13 @@ check_args(_Pr, {{'_', _I, _S}, _St}) ->
 check_args(_Pr, {{_P, '_', _S}, _St}) ->
     io:format("No Instance entered~n");
 check_args(_Pr, {{_P, _I, '_'}, _St}) ->
-    io:format("Wrong Server Ip entered~n");
+    io:format("No Server Ip entered~n");
 check_args(Protocol, {{Port, Instance, ServerIp}, Stats}) ->
     {Protocol, {{Port, Instance, ServerIp}, Stats}}.
 
 %%%-------------------------------------------------------------------
 %% @doc
 %% Kill the udp servers currently running and pushing stats to an endpoint.
-
 %% Stop the pushing of stats by taking the setup of the udp gen_server
 %% down
 %% @end
@@ -129,46 +122,60 @@ setdown(Arg) ->
 
 %% @doc change the undefined into
 -spec(terminate_server(arg(), arguments()) -> ok | error()).
-terminate_server(Protocol, SanitisedData) ->
-    stop_server(fold({'_','_',Protocol}, SanitisedData, ?NODE)).
+terminate_server(Protocol, {{Port, Instance, Sip},Stats}) ->
+    stop_server(fold(Protocol, Port, Instance, Sip, Stats, node())).
 
 stop_server([]) ->
     io:fwrite("Error, Server not found~n");
 stop_server(ChildrenInfo) ->
     lists:foreach(fun
-                      ({{D, T, Pr}, {Po, Se, Sip, I, Pid, {running,true}, S}}) ->
-                          riak_stat_push_sup:stop_server(I),
-                          riak_stat_meta:put(?PUSHPREFIX(?NODE), {D,T,Pr},{Po,Se,Sip,I,Pid,{running,false},S});
-                      ({{_D, _T, _Pr}, {_Po, _Se, _Sip, _I, _Pid, {running,false}, _S}}) ->
+                      ({{Protocol, Instance},{OrigDT,_DT,_Pid,{running,true},Node,Port,SIp,Stats}}) ->
+                          riak_stat_push_sup:stop_server(Instance),
+                          riak_stat_meta:put(?PUSHPREFIX(node()),
+                              {Protocol, Instance},
+                              {OrigDT, calendar:universal_time(),undefined,{running,false},Node,Port,SIp,Stats});
+                      ({{_Protocol, _Instance}, {_ODT,_DT,_Pid,{running,false},_Node,_Port,_SIp,_Stats}}) ->
                           ok;
                       (Other) ->
                           io:format("Error, wrong return type in riak_stat_push:fold/2 = ~p~n", [Other])
                   end, ChildrenInfo).
 
-fold({Date, Time, Protocol}, {{Port, Instance, ServerIp}, Stats}, Node) ->
-    {Return, Port, Instance, ServerIp, Stats} =
+fold(Protocol, Port, Instance, ServerIp, Stats, Node) ->
+    {Return, Port, ServerIp, Stats} =
         riak_core_metadata:fold(
             fun
-                ({{MDate, MTime, MProtocol}, [{MPort,
-                                               MNode,
-                                               MSip,
-                                               MInst,
-                                               MPid,
-                                               MRun,
-                                               MStats}]},
-                    {Acc, APort, AInstance, AServerIP, AStats})
+                ({{MProtocol, MInstance},   %% KEY
+                    [{OriginalDateTime,     %% VALUE
+                        ModifiedDateTime,
+                        Pid,
+                        RunningTuple, %% {running, boolean()}
+                        MNode,
+                        MPort,
+                        MSip,
+                        MStats}]},
+                    {Acc, APort, AServerIP, AStats}) %% Acc and Guard
                     when (APort     == MPort  orelse APort     == '_')
-                    and  (AInstance == MInst  orelse AInstance == '_')
                     and  (AServerIP == MSip   orelse AServerIP == '_')
                     and  (AStats    == MStats orelse AStats    == '_') ->
-                    {[{{MDate, MTime, MProtocol}, {MPort, MNode, MSip, MInst, MPid, MRun, MStats}} | Acc],
-                        APort, AInstance, AServerIP, AStats};
+                    %% Matches all the Guards given in Acc
+                    {[{{MProtocol,MInstance}, {OriginalDateTime, %% First start
+                                                ModifiedDateTime,%% date last changed.
+                                                Pid,
+                                                RunningTuple,
+                                                MNode,
+                                                MPort,
+                                                MSip,
+                                                MStats}} | Acc],
 
-                ({_K, _V}, {Acc, APort, AInstance, AServerIP,AStats}) ->
-                    {Acc, APort, AInstance, AServerIP,AStats}
+                                                APort, AServerIP, AStats};
+
+                %% Doesnt Match Guards above
+                ({_K, _V}, {Acc, APort, AServerIP,AStats}) ->
+                    {Acc, APort, AServerIP,AStats}
             end,
-            {[], Port, Instance, ServerIp, Stats},
-            ?PUSHPREFIX(Node), [{match, {Date, Time, Protocol}}]
+            {[], Port, ServerIp, Stats}, %% Accumulator
+            ?PUSHPREFIX(Node), %% Prefix to Iterate over
+            [{match, {Protocol, Instance}}] %% Key to Object match
         ),
     Return.
 
@@ -177,7 +184,7 @@ fold({Date, Time, Protocol}, {{Port, Instance, ServerIp}, Stats}, Node) ->
 find_push_stats(_Nodes,[]) ->
     print_info({error,badarg});
 find_push_stats(Nodes, ["*"]) ->
-    print_info(fold_through_meta('_',{{'_','_','_'},'_'}, Nodes));
+    print_info(fold_through_meta('_','_','_','_','_', Nodes));
 find_push_stats(Nodes,Arg) ->
     case sanitise_data(Arg) of
         {error, Reason} -> print_info({error, Reason});
@@ -185,32 +192,13 @@ find_push_stats(Nodes,Arg) ->
             print_info(fold_through_meta(Protocol, SanitisedData, Nodes))
     end.
 
-%% todo: find a way to search by date. By time might be too useless. as the key is a list
-%% it  can be done like [year,'_', day], to find all the times there was a stat push on like the
-%% 5th of every month in 2019, or ['_',may,'_'] find all the setups in may.
 
 fold_through_meta(Protocol, {{Port, Instance, ServerIp}, Stats}, Nodes) ->
-    [fold(Protocol, {{Port, Instance, ServerIp}, Stats}, Node) || Node <- Nodes].
+    fold_through_meta(Protocol,Port,Instance,ServerIp,Stats,Nodes).
+fold_through_meta(Protocol, Port, Instance, ServerIp, Stats, Nodes) ->
+    lists:flatten([fold(Protocol, Port, Instance, ServerIp, Stats, Node) || Node <- Nodes]).
 
 %%%-------------------------------------------------------------------
-
-%% exported function to delete the persisted data in the metadata.
-%% accessible through the remote_console
-
-delete_logs(Date) ->
-    NewDate = get_date(Date, {'_','_','_'}),
-    SelectDate = tuple_to_list(NewDate),
-    FoundList = fold_through_meta({SelectDate, '_', '_'}, {{'_','_','_'},'_'}, [node()]),
-    delete_from_meta(FoundList).
-
-%% todo: make a delete-logs-all function as well. or local/native as options
-%% so delete_logs(Date, all | local) default is local.
-
-get_date([Year|MonthDay], {TheYear,TheMonth,TheDay}) ->
-    ok.
-
-delete_from_meta(List) ->
-    ok.
 
 %%%-------------------------------------------------------------------
 
@@ -222,13 +210,23 @@ print_info({error,Reason}) ->
     io:fwrite("Error: ~p~n",[Reason]);
 print_info(Info) ->
     lists:foreach(fun
-                      ({{Date, Time, Protocol}, {Port,Server, Sip, Inst, Pid, Run, Stats}}) ->
-                          consistent_date(Date),
-                          consistent_time(Time),
+                      ({{Protocol,Instance},
+                          {OriginalDateTime,     %% VALUE
+                           ModifiedDateTime,
+                           Pid,
+                           RunningTuple, %% {running, boolean()}
+                           Node,
+                           Port,
+                           Sip,
+                           Stats}}) ->
+                          {ODate,OTime} = OriginalDateTime,
+                          {MDate,MTime} = ModifiedDateTime,
+                          io:fwrite("~s ~s",[consistent_date(MDate),consistent_time(MTime)]),
+                          io:fwrite("~p ~s ", [Protocol, Instance]),
                           StatsString = io_lib:format("~p",[Stats]),
-                          io:fwrite("~p    ", [Protocol]),
-                          io:fwrite("~p ~p ~p ~p ~p ~p ~s~n",
-                              [Port, Server, Sip, Inst, Pid, Run, StatsString]);
+                          io:fwrite("~s ~s",[consistent_date(ODate),consistent_time(OTime)]),
+                          io:fwrite("~p ~p ~p ~p ~p ~s~n",
+                              [Node, Sip, Port, RunningTuple, Pid, StatsString]);
                       (_Other) -> ok
                   end, Info).
 
@@ -237,13 +235,18 @@ print_info(Info) ->
 %% printed out have a wonky effect.
 %% This is just another layer of pretty printing.
 
-consistent_date(Date) ->
+consistent_date(Date) when is_tuple(Date) ->
+    consistent_date(tuple_to_list(Date));
+consistent_date(Date) when is_list(Date) ->
     NewDate = integers_to_strings(Date),
-    io:fwrite("~s/~s/~s ",NewDate).
+    io_lib:format("~s/~s/~s ",NewDate).
 
-consistent_time(Time) ->
+
+consistent_time(Time) when is_tuple(Time) ->
+    consistent_date(tuple_to_list(Time));
+consistent_time(Time) when is_list(Time)->
     NewTime = integers_to_strings(Time),
-    io:fwrite("~s:~s:~s ",NewTime).
+    io_lib:format("~s:~s:~s ",NewTime).
 
 integers_to_strings(IntegerList) ->
     lists:map(fun
