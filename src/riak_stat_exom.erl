@@ -57,7 +57,9 @@ register(StatName, Type, Opts, Aliases) ->
 %% goes to exometer_alias and performs the type of alias function specified
 %% @end
 %%%-------------------------------------------------------------------
--spec(aliases(aliastype(), list()) -> ok | acc() | error()).
+-type alias_fun_type()  :: new | prefix_foldl | regexp_foldr.
+
+-spec(aliases(alias_fun_type(), list()) -> ok | acc() | error()).
 aliases(new, [Alias,StatName,DP]) ->
     exometer_alias:new(Alias,StatName,DP);
 aliases(prefix_foldl,[]) ->
