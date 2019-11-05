@@ -126,7 +126,7 @@ delete(Prefix, Key) ->
 %% and pull out the stats that match the Status and Type given.
 %% @end
 %%%-------------------------------------------------------------------
--spec(find_entries(statslist(),status(),type()) -> statslist()).
+-spec(find_entries(metrics(),status(),type()) -> listofstats()).
 find_entries(Stats,Status,Type) ->
     lists:flatten(lists:map(
         fun(Stat) -> fold(Stat,Status,Type) end, Stats)).
@@ -141,7 +141,7 @@ find_entries(Stats,Status,Type) ->
 %% it will be guarded and then returned in the accumulator.
 %% @end
 %%%-------------------------------------------------------------------
--spec(fold(statname(),(enabled | disabled | '_'),(type() | '_')) -> acc()).
+-spec(fold(metricname(),status(),(type() | '_')) -> acc()).
 %%%-------------------------------------------------------------------
 %% @doc
 %% the Status can be anything, it is always guarded for, the type is
@@ -217,7 +217,7 @@ find_unregister_status(_ProfileName, _Stats) ->
 %% returned in order to change the status of that stat key-value.
 %% @end
 %%%-------------------------------------------------------------------
--spec(the_alpha_stat(Alpha :: list(), Beta :: list()) -> term()).
+-spec(the_alpha_stat(Alpha :: list(), Beta :: list()) -> list()).
 the_alpha_stat(Alpha, Beta) ->
     AlphaList = the_alpha_map([Alpha]),
     BetaList  = the_alpha_map(Beta),
@@ -265,7 +265,7 @@ find_all_entries() ->
 %% back to go into exometer
 %% @end
 %%%-------------------------------------------------------------------
--spec(register(statinfo()) -> options() | []).
+-spec(register(tuple_stat()) -> options()).
 register({StatName, Type, Opts, Aliases}) ->
     register(StatName, Type, Opts, Aliases).
 register(StatName,Type, Opts, Aliases) ->
@@ -297,8 +297,9 @@ register(StatName,Type, Opts, Aliases) ->
 %% will take precedence as the status is persisted.
 %% @end
 %%%-------------------------------------------------------------------
--spec(find_status(fresh | re_reg, options()) ->
-    {status(),options(),options()}).
+-type find_status_type() :: fresh | re_reg.
+-spec(find_status(find_status_type(), options()) ->
+                                     {status(),options(),options()}).
 find_status(fresh, Opts) ->
     case proplists:get_value(status,Opts) of
         undefined -> {enabled, Opts};
@@ -316,7 +317,6 @@ find_status(re_reg, {Opts, MStatus, MOpts}) ->
 
 re_register(StatName, Value) -> %% ok
     put(?STATPFX, StatName, Value).
-
 
 %%%===================================================================
 %%% Updating API
