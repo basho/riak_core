@@ -11,6 +11,7 @@
 %% Main API
 -export([
     maybe_meta/2,
+    reload_metadata/0,
     reload_metadata/1,
 
     register/1,
@@ -42,7 +43,14 @@
 %% length of time (i.e. testing)
 %% @end
 %%%-------------------------------------------------------------------
--spec(maybe_meta(function(), arguments()) -> error() | response()).
+-type arg()                  :: any().
+-type meta_arguments()       :: [] |
+                                arg() |
+                               {arg(),arg()} |
+                               {arg(),arg(),arg()} |
+                               {arg(),arg(),arg(),arg()}.
+
+-spec(maybe_meta(function(), meta_arguments()) -> error()).
 maybe_meta(Function, Arguments) ->
     case ?IS_ENABLED(?METADATA_ENABLED) of
         false -> false; %% it's disabled
@@ -61,7 +69,9 @@ maybe_meta(Function, Arguments) ->
 %% current configuration of status status' in exometer
 %% @end
 %%%-------------------------------------------------------------------
--spec(reload_metadata(stats()) -> ok | error()).
+-spec(reload_metadata(metrics()) -> ok | error()).
+reload_metadata() ->
+    reload_metadata(riak_stat_exom:find_entries([riak])).
 reload_metadata(Stats) ->
     change_meta_status([{Stat,Status} || {Stat,_Type,Status}<-Stats]).
 
@@ -74,7 +84,7 @@ reload_metadata(Stats) ->
 %% and send that status to exometer
 %% @end
 %%%-------------------------------------------------------------------
--spec(register(statinfo()) -> ok | error()).
+-spec(register(tuple_stat()) -> ok | error()).
 register(StatInfo) ->
     DefFun = fun register_both/4,
     ExoFun = fun register_exom/1,
@@ -128,7 +138,8 @@ read_exo_stats(Stats, Status, Type) ->
 %%% will look in exometer anyway, or if it cannot find it.
 %%% @end
 %%%-------------------------------------------------------------------
--spec(find_entries(statslist(), status(),type(),datapoint()) -> statslist()).
+-spec(find_entries(metrics(),status(),type(),datapoint()) ->
+                                                        listofstats()).
 find_entries(Stats,Status,Type,DPs) ->
     MFun = fun find_entries_meta/4,
     EFun = fun find_entries_exom/4,
@@ -151,7 +162,7 @@ find_entries(Stats,Status,Type,DPs) ->
 %%% stat name and its value.
 %%% @end
 %%%-------------------------------------------------------------------
--spec(legacy_search(statslist(), status(), type()) -> statslist()).
+-spec(legacy_search(metrics(), status(), type()) -> listofstats()).
 legacy_search(Stats, Status, Type) ->
     lists:flatten(
         lists:map(fun(S) ->
@@ -245,7 +256,7 @@ get_info(Name, Info) ->
 %% and datapoint
 %% @end
 %%%-------------------------------------------------------------------
--spec(find_through_alias(stats(),status(),type()) -> response()).
+-spec(find_through_alias(metrics(),status(),type()) -> error() | ok).
 find_through_alias([Alias],Status,Type) when is_atom(Alias)->
     case riak_stat_exom:resolve(Alias) of
         error -> [];
@@ -307,7 +318,7 @@ aggregate(Pattern, DPs) ->
 %% is enabled.
 %% @end
 %%%-------------------------------------------------------------------
--spec(change_status(stats()) -> ok | error()).
+-spec(change_status(n_s_stats()) -> ok | error()).
 change_status([]) ->
     io:format("No stats need changing~n");
 change_status(StatsList) ->
@@ -336,7 +347,7 @@ change_exom_status(Arg) ->
 %% reset the stat in exometer and in the metadata
 %% @end
 %%%-------------------------------------------------------------------
--spec(reset_stat(statname()) -> ok).
+-spec(reset_stat(metricname() | []) -> ok).
 reset_stat([]) -> io:fwrite("No Stats found~n");
 reset_stat(StatName) ->
     Fun = fun reset_in_both/1,
@@ -364,7 +375,7 @@ reset_exom_stat(Arg) ->
 %% in exometer
 %% @end
 %%%-------------------------------------------------------------------
--spec(unregister(statname()) -> ok | error()).
+-spec(unregister(metricname()) -> ok | error()).
 unregister(StatName) ->
     Fun = fun unregister_in_both/1,
     case maybe_meta(Fun, StatName) of
