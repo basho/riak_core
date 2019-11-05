@@ -48,7 +48,7 @@
 %% otherwise use: riak-admin stat show <entry>/status=* | disabled
 %% @end
 %%%-------------------------------------------------------------------
--spec(show_stat(arg()) -> statslist()).
+-spec(show_stat(consolearg()) -> print()).
 show_stat(Arg) ->
     print(find_entries(data_sanitise(Arg))).
 
@@ -57,7 +57,7 @@ show_stat(Arg) ->
 %% Check which stats in exometer are not updating (checks enabled)
 %% @end
 %%%-------------------------------------------------------------------
--spec(show_stat_0(data()) -> value()).
+-spec(show_stat_0(consolearg()) -> print()).
 show_stat_0(Arg) ->
     {Stats,_Status,Type,DPs}=data_sanitise(Arg),
     print({[find_entries({Stats,enabled,Type,DPs})],show_0}).
@@ -67,42 +67,44 @@ show_stat_0(Arg) ->
 %% Returns all the stats information
 %% @end
 %%%-------------------------------------------------------------------
--spec(stat_info(data()) -> value()).
+-spec(stat_info(consolearg()) -> print()).
 stat_info(Arg) ->
     {Attrs, RestArg} = pick_info_attrs(Arg),
     {Stat,Type,Status,_DPS} = data_sanitise(RestArg),
     print(find_entries({Stat,Type,Status,Attrs})).
 
--spec(pick_info_attrs(data()) -> value()).
+-spec(pick_info_attrs(consolearg()) -> {attributes(), consolearg()}).
 %% @doc get list of attrs to print @end
 pick_info_attrs(Arg) ->
     case lists:foldr(
-        fun("-name", {As, Ps}) -> {[name | As], Ps};
-            ("-type", {As, Ps}) -> {[type | As], Ps};
-            ("-module", {As, Ps}) -> {[module | As], Ps};
-            ("-value", {As, Ps}) -> {[value | As], Ps};
-            ("-cache", {As, Ps}) -> {[cache | As], Ps};
-            ("-status", {As, Ps}) -> {[status | As], Ps};
-            ("-timestamp", {As, Ps}) -> {[timestamp | As], Ps};
-            ("-options", {As, Ps}) -> {[options | As], Ps};
-            (P, {As, Ps}) -> {As, [P | Ps]}
+        fun("-name",     {As, Ps}) -> {[name      | As], Ps};
+           ("-type",     {As, Ps}) -> {[type      | As], Ps};
+           ("-module",   {As, Ps}) -> {[module    | As], Ps};
+           ("-value",    {As, Ps}) -> {[value     | As], Ps};
+           ("-cache",    {As, Ps}) -> {[cache     | As], Ps};
+           ("-status",   {As, Ps}) -> {[status    | As], Ps};
+           ("-timestamp",{As, Ps}) -> {[timestamp | As], Ps};
+           ("-options",  {As, Ps}) -> {[options   | As], Ps};
+           (P,           {As, Ps}) -> {As, [P | Ps]}
         end, {[], []}, split_arg(Arg)) of
-        {[], Rest} ->
-            {?INFOSTAT, Rest};
+        {[], Rest} ->          %% If no arguments given
+            {?INFOSTAT, Rest}; %% use all, and return arg
         Other ->
-            Other
+            Other %% Otherwise = {[name,type...],["riak.**"]}
     end.
 
 split_arg(Str) ->
+    %% separate the argument by the spaces
+    %% i.e. ["riak.** -type -status"] -> ["riak.**","-type","-status"]
     re:split(Str, "\\s", [{return, list}]).
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% Similar to the function above, but will disable all the stats that
+%% Similar to @see show_stat_0, but will disable all the stats that
 %% are not updating
 %% @end
 %%%-------------------------------------------------------------------
--spec(disable_stat_0(data()) -> ok).
+-spec(disable_stat_0(consolearg()) -> print()).
 disable_stat_0(Arg) ->
     {Stats,_Status,Type,DPs} = data_sanitise(Arg),
     print({[find_entries({Stats,enabled,Type,DPs})],disable_0}).
@@ -112,7 +114,7 @@ disable_stat_0(Arg) ->
 %% change the status of the stat (in metadata and) in exometer
 %% @end
 %%%-------------------------------------------------------------------
--spec(status_change(data(), status()) -> ok).
+-spec(status_change(consolearg(), status()) -> print()).
 status_change(Arg, ToStatus) ->
     {Entries,_DP} = % if disabling stats, pull only enabled ones
     case ToStatus of
@@ -128,7 +130,7 @@ status_change(Arg, ToStatus) ->
 %% the stat has been reset
 %% @end
 %%%-------------------------------------------------------------------
--spec(reset_stat(data()) -> ok).
+-spec(reset_stat(consolearg()) -> ok).
 reset_stat(Arg) ->
     {Found, _DPs} = find_entries(data_sanitise(Arg)),
     reset_stats([N || {N,_,_} <-Found]).
@@ -142,29 +144,37 @@ reset_stat(Arg) ->
 %% stats and function work occurs in the riak_stat_coordinator
 %% @end
 %%%-------------------------------------------------------------------
--spec(stat_metadata(data()) -> ok).
-stat_metadata(Arg) ->
-    Truth = ?IS_ENABLED(?METADATA_ENABLED),
-    case Arg of
-        Truth ->
-            case Truth of
-                true -> print("Metadata already enabled~n");
-                false -> print("Metadata already disabled~n")
-            end;
-        Bool ->
-            case Bool of
-                true ->
-                    riak_stat_mgr:reload_metadata(
-                        riak_stat_exom:find_entries([riak])),
-                    application:set_env(riak_core,
-                        ?METADATA_ENABLED, Bool);
-                false ->
-                    application:set_env(riak_core,
-                        ?METADATA_ENABLED, Bool);
-                Other ->
-                    print("Wrong argument entered: ~p~n", [Other])
-            end
-    end.
+-define(Metadata_Enabled, ?IS_ENABLED(?METADATA_ENABLED)).
+
+-spec(stat_metadata(Argument :: boolean() | status) -> print()).
+stat_metadata(Argument) -> stat_metadata(Argument, ?Metadata_Enabled).
+
+-spec(stat_metadata(Argument :: boolean() | status,
+                    MetadataStatus :: true | false) -> print()).
+stat_metadata(true, true) ->
+    print_response("Metadata already enabled~n");
+
+stat_metadata(true, false) ->
+    riak_stat_mgr:reload_metadata(),
+    set_metadata(true),
+    print_response("Metadata enabled~n");
+
+stat_metadata(false, true) ->
+    set_metadata(false),
+    print_response("Metadata disabled~n");
+
+stat_metadata(false, false) ->
+    print_response("Metadata already disabled~n");
+
+stat_metadata(status, true)  -> print_response("Metadata Is enabled~n");
+stat_metadata(status, false) -> print_response("Metadata Is disabled~n").
+
+set_metadata(Boolean) ->
+    application:set_env(riak_core, ?METADATA_ENABLED, Boolean).
+
+print_response(String) -> print_response(String,[]).
+print_response(String, Args) -> io:fwrite(String, Args).
+
 
 %%%===================================================================
 %%% Helper API
@@ -176,7 +186,7 @@ stat_metadata(Arg) ->
 %%% they have been given.
 %%% @end
 %%%-------------------------------------------------------------------
--spec(data_sanitise(data()) -> sanitised()).
+-spec(data_sanitise(consolearg()) -> sanitised_stat()).
 data_sanitise(Arg) ->
     parse_stat_entry(check_args(Arg), ?TYPE, ?STATUS, ?DPs).
 
@@ -194,8 +204,7 @@ data_sanitise(Arg, Type, Status) ->
     parse_stat_entry(check_args(Arg), Type, Status, ?DPs).
 %%%-------------------------------------------------------------------
 
-check_args([]) ->
-    print([]);
+check_args([]) -> print([]);
 check_args([Args]) when is_atom(Args) ->
     check_args(atom_to_binary(Args, latin1));
 check_args([Args]) when is_list(Args) ->
@@ -221,7 +230,7 @@ check_args(_) ->
 %%%-------------------------------------------------------------------
 
 parse_stat_entry(BinArgs, Type, Status, DPs) ->
-    [Bin | Args] = re:split(BinArgs, "/"), %% separate type etc...
+    [Bin | Args] = re:split(BinArgs, "/"), %% separate /type=*.. etc...
     {NewType, NewStatus, NewDPs} =
         type_status_and_dps(Args, Type, Status, DPs),
     StatName = statname(Bin),
@@ -369,7 +378,7 @@ pads() ->
 %% created
 %% @end
 %%%-------------------------------------------------------------------
--spec(find_entries(statname(),status(),type(),datapoint()) -> stats()).
+-spec(find_entries(sanitised_stat()) -> listofstats()).
 find_entries({Stat,Status,Type,DPs}) ->
     find_entries(Stat,Status,Type,DPs).
 find_entries(Stats,Status,Type,default) ->
@@ -392,14 +401,12 @@ reset_stats(Name) ->
 %% stat show will pass in an empty list into the Attributes field.
 %% @end
 %%%-------------------------------------------------------------------
-print(undefined) ->
-    print([]);
-print([undefined]) ->
-    print([]);
-print({Stats,DPs}) ->
-    print(Stats,DPs);
-print(Arg) ->
-    print(Arg, []).
+-spec(print(atom() | string() | list()
+         | {listofstats(),datapoints()}) -> print()).
+print(undefined)   -> print([]);
+print([undefined]) -> print([]);
+print({Stats,DPs}) -> print(Stats,DPs);
+print(Arg)         -> print(Arg, []).
 
 print([], _) ->
     io:fwrite("No Matching Stats~n");
@@ -512,7 +519,3 @@ get_info_2(N,Attrs) ->
         [] -> [];
         O  -> io:fwrite("~p : ~p~n",[N,O])
     end.
-
-
-%%%===================================================================
-%%%===================================================================
