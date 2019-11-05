@@ -28,7 +28,7 @@
     get_stats/0, get_stats/1, get_value/1,
     get_info/0, update/1,
     register_stats/0, vnodeq_stats/0,
-	  register_stats/2, aggregate/2,
+	  register_stats/2,
 	  register_vnode_stats/3, unregister_vnode_stats/2,
 	  vnodeq_stats/1
 ]).
@@ -108,11 +108,6 @@ get_value(Arg) ->
 
 get_info() ->
     riak_stat:get_info(?APP).
-
-%%%----------------------------------------------------------------%%%
-
-aggregate(Stats, DPS) ->
-    riak_stat:aggregate(Stats, DPS).
 
 %%%----------------------------------------------------------------%%%
 
