@@ -6,7 +6,7 @@
 %%% @end
 %%%-------------------------------------------------------------------
 -module(riak_stat_push).
--include_lib("riak_core/include/riak_stat.hrl").
+-include_lib("riak_core/include/riak_stat_push.hrl").
 
 %% API
 -export([
@@ -31,7 +31,7 @@
 %% another will start up another gen_server.
 %% @end
 %%%-------------------------------------------------------------------
--spec(setup(arg()) -> ok).
+-spec(setup(consolearg()) -> print()).
 setup(Arg) ->
     case sanitise_and_check_args(Arg) of
         ok -> ok;
@@ -39,6 +39,8 @@ setup(Arg) ->
             maybe_start_server(Protocol, SanitisedData)
     end.
 
+-spec(store_setup_info(ok | pid(), protocol(), sanitised_push())
+                                          -> ok | print() | error()).
 store_setup_info(ok,_,_) ->
     ok;
 store_setup_info(Pid, Protocol, {{Port, Instance, Sip}, Stats}) ->
@@ -70,6 +72,8 @@ maybe_start_server(Protocol, {{Port,Instance,Sip},Stats}) ->
                           end, Otherwise)
     end.
 
+-spec(start_server(protocol(), sanitised_push())
+        -> print() | error()).
 start_server(udp, Arg) ->
     Pid = riak_stat_push_sup:start_server(udp, Arg),
     Pid;
@@ -111,7 +115,7 @@ check_args(Protocol, {{Port, Instance, ServerIp}, Stats}) ->
 %% down
 %% @end
 %%%-------------------------------------------------------------------
--spec(setdown(arg()) -> ok).
+-spec(setdown(consolearg()) -> print()).
 setdown([]) ->
     io:fwrite("No Argument entered ~n");
 setdown(Arg) ->
@@ -121,7 +125,7 @@ setdown(Arg) ->
         end.
 
 %% @doc change the undefined into
--spec(terminate_server(arg(), arguments()) -> ok | error()).
+-spec(terminate_server(protocol(), sanitised_push()) -> ok | error()).
 terminate_server(Protocol, {{Port, Instance, Sip},Stats}) ->
     stop_server(fold(Protocol, Port, Instance, Sip, Stats, node())).
 
@@ -140,6 +144,7 @@ stop_server(ChildrenInfo) ->
                           io:format("Error, wrong return type in riak_stat_push:fold/2 = ~p~n", [Other])
                   end, ChildrenInfo).
 
+-spec(fold(protocol(),port(),instance(),server_ip(),metrics(),node()) -> listofpush()).
 fold(Protocol, Port, Instance, ServerIp, Stats, Node) ->
     {Return, Port, ServerIp, Stats} =
         riak_core_metadata:fold(
@@ -181,6 +186,7 @@ fold(Protocol, Port, Instance, ServerIp, Stats, Node) ->
 
 %%%-------------------------------------------------------------------
 
+-spec(find_push_stats(node_or_nodes(), consolearg()) -> print()).
 find_push_stats(_Nodes,[]) ->
     print_info({error,badarg});
 find_push_stats(Nodes, ["*"]) ->
@@ -192,7 +198,7 @@ find_push_stats(Nodes,Arg) ->
             print_info(fold_through_meta(Protocol, SanitisedData, Nodes))
     end.
 
-
+-spec(fold_through_meta(protocol(),sanitised_push(),node_or_nodes()) -> listofpush()).
 fold_through_meta(Protocol, {{Port, Instance, ServerIp}, Stats}, Nodes) ->
     fold_through_meta(Protocol,Port,Instance,ServerIp,Stats,Nodes).
 fold_through_meta(Protocol, Port, Instance, ServerIp, Stats, Nodes) ->
@@ -200,8 +206,7 @@ fold_through_meta(Protocol, Port, Instance, ServerIp, Stats, Nodes) ->
 
 %%%-------------------------------------------------------------------
 
-%%%-------------------------------------------------------------------
-
+-spec(print_info(pusharg() | any()) -> print() | error()).
 print_info([]) ->
     io:fwrite("Nothing found~n");
 print_info({error,badarg}) ->
@@ -260,7 +265,7 @@ integers_to_strings(IntegerList) ->
 %% up an endpoint, This is specific to the endpoint functions
 %% @end
 %%--------------------------------------------------------------------
--spec(sanitise_data(arg()) -> sanitised()).
+-spec(sanitise_data(consolearg()) -> sanitised()).
 sanitise_data([]) ->
     io:fwrite("No argument given~n");
 sanitise_data(Arg) ->
