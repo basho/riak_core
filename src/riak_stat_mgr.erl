@@ -305,7 +305,7 @@ make_exo_ms(Stats,Status,Type) ->
     [{{Stat,Type,Status},[],['$_']} || Stat <- Stats].
 
 
--spec(aggregate(pattern(), datapoint()) -> stats()).
+-spec(aggregate(pattern(), datapoint()) -> listofstats()).
 aggregate(Pattern, DPs) ->
     riak_stat_exom:aggregate(Pattern, DPs).
 

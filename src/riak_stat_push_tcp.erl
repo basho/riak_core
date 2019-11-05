@@ -3,7 +3,7 @@
 %%% Data from riak_stat_push through console, passed into this
 %%% gen_server to open up a tcp socket on a port, Values from exometer
 %%% are retrieved and sent as a json object to a latency monitoring
-%%% server 
+%%% server
 %%% @end
 %%%-------------------------------------------------------------------
 -module(riak_stat_push_tcp).

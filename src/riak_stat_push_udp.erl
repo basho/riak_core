@@ -50,7 +50,7 @@
 %%%===================================================================
 
 %%--------------------------------------------------------------------
--spec(start_link(Term::arg()) ->
+-spec(start_link(Arg :: term()) ->
     {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 start_link(Obj) ->
     gen_server:start_link(?MODULE, Obj, []).

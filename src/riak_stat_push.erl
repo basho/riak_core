@@ -146,7 +146,7 @@ stop_server(ChildrenInfo) ->
 
 -spec(fold(protocol(),port(),instance(),server_ip(),metrics(),node()) -> listofpush()).
 fold(Protocol, Port, Instance, ServerIp, Stats, Node) ->
-    {Return, Port, ServerIp, Stats} =
+    {Return, Port, ServerIp, Stats, Node} =
         riak_core_metadata:fold(
             fun
                 ({{MProtocol, MInstance},   %% KEY
@@ -158,9 +158,10 @@ fold(Protocol, Port, Instance, ServerIp, Stats, Node) ->
                         MPort,
                         MSip,
                         MStats}]},
-                    {Acc, APort, AServerIP, AStats}) %% Acc and Guard
+                    {Acc, APort, AServerIP, AStats, ANode}) %% Acc and Guard
                     when (APort     == MPort  orelse APort     == '_')
                     and  (AServerIP == MSip   orelse AServerIP == '_')
+                    and   ANode     == MNode
                     and  (AStats    == MStats orelse AStats    == '_') ->
                     %% Matches all the Guards given in Acc
                     {[{{MProtocol,MInstance}, {OriginalDateTime, %% First start
@@ -172,13 +173,13 @@ fold(Protocol, Port, Instance, ServerIp, Stats, Node) ->
                                                 MSip,
                                                 MStats}} | Acc],
 
-                                                APort, AServerIP, AStats};
+                                                APort, AServerIP, AStats,ANode};
 
                 %% Doesnt Match Guards above
-                ({_K, _V}, {Acc, APort, AServerIP,AStats}) ->
-                    {Acc, APort, AServerIP,AStats}
+                ({_K, _V}, {Acc, APort, AServerIP,AStats,ANode}) ->
+                    {Acc, APort, AServerIP,AStats,ANode}
             end,
-            {[], Port, ServerIp, Stats}, %% Accumulator
+            {[], Port, ServerIp, Stats, Node}, %% Accumulator
             ?PUSHPREFIX(Node), %% Prefix to Iterate over
             [{match, {Protocol, Instance}}] %% Key to Object match
         ),
@@ -265,7 +266,7 @@ integers_to_strings(IntegerList) ->
 %% up an endpoint, This is specific to the endpoint functions
 %% @end
 %%--------------------------------------------------------------------
--spec(sanitise_data(consolearg()) -> sanitised()).
+-spec(sanitise_data(consolearg()) -> {protocol(),sanitised_push()} | error()).
 sanitise_data([]) ->
     io:fwrite("No argument given~n");
 sanitise_data(Arg) ->
