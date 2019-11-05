@@ -5,7 +5,7 @@
 %%% @end
 %%%-------------------------------------------------------------------
 -module(riak_stat_push_sup).
-
+-include_lib("riak_core/include/riak_stat_push.hrl").
 -behaviour(supervisor).
 
 %% API
@@ -40,10 +40,23 @@
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
+%%%-------------------------------------------------------------------
+%% @doc
+%% Start up a gen server for the pushing of stats to an endpoint.
+%% @end
+%%%-------------------------------------------------------------------
+-spec(start_server(protocol(),sanitised_push()) -> ok | print() | error()).
 start_server(Protocol, Data) ->
     CHILD = child_spec(Data,Protocol),
     start_child(CHILD).
 
+%%%-------------------------------------------------------------------
+%% @doc
+%% Stop the persisting of stats by terminating and deleting the server
+%% pushing the stats to an endpoint
+%% @end
+%%%-------------------------------------------------------------------
+-spec(stop_server([pid()] | [atom()] | list()) -> ok | print() | error()).
 stop_server(Child) when is_list(Child) ->
     ChildName = list_to_atom(Child),
     _Terminate = supervisor:terminate_child(?MODULE, ChildName),
@@ -76,6 +89,13 @@ init([]) ->
 %%% Internal functions
 %%%===================================================================
 
+%%%-------------------------------------------------------------------
+%% @doc
+%% Retrieve the information stored in the metadata about any gen_servers
+%% that may have been running before the node was stopped.
+%% @end
+%%%-------------------------------------------------------------------
+-spec(get_children() -> listofpush()).
 get_children() ->
     ListOfKids = riak_stat_push:fold_through_meta('_', {{'_', '_', '_'}, '_'}, [node()]),
     lists:foldl(
@@ -86,6 +106,12 @@ get_children() ->
         end, [], ListOfKids).
 
 
+%%%-------------------------------------------------------------------
+%% @doc
+%% Create a child spec out of the information given.
+%% @end
+%%%-------------------------------------------------------------------
+-spec(child_spec(sanitised_push(),protocol()) -> supervisor:child_spec()).
 child_spec(Data,Protocol) ->
     ChildName = server_name(Data),
     Module    = mod_name(Protocol),
@@ -102,6 +128,13 @@ server_name({{_,ServerName,_},_}) -> list_to_atom(ServerName).
 mod_name(udp) -> ?UDP_CHILD;
 mod_name(tcp) -> ?TCP_CHILD.
 
+%%%-------------------------------------------------------------------
+%% @doc
+%% Start up the gen_server responsible for pushing stats and their values
+%% to an endpoint. Passing in the Data needed.
+%% @end
+%%%-------------------------------------------------------------------
+-spec(start_child(supervisor:child_spec()) -> ok | print() | error() | pid()).
 start_child(Child) ->
     case supervisor:start_child(?MODULE, Child) of
         {ok, Pid} ->
@@ -116,4 +149,4 @@ start_child(Child) ->
                 Other ->                      io:fwrite("Error : ~p~n", [Other])
 
             end
-end .
+    end.
