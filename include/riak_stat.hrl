@@ -3,73 +3,80 @@
 %%% Common specification types and definitions used in riak_stat
 %%% @end
 %%%-------------------------------------------------------------------
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%% Stat Specification Types %%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%%%%%%%%%%%%%%%%%%%%%%
-%%%%% Stat Types %%%%%
-%%%%%%%%%%%%%%%%%%%%%%
+%%% Arguments
+% StatName :: [prefix(),app()|[statname()]]
+-type metrics()         :: [metricname()].
+-type metricname()      :: [prefix() | [app() | [statname()]]] | [statname()].
+-type prefix()          :: atom(). %% 'riak'
+-type app()             :: atom(). %% i.e. 'riak_core'
+-type statname()        :: [atom()] | atom() | mfa(). %% [riak,stat|'_']
 
--type app()             :: atom() | [].
--type metricname()      :: [atom()] | atom().
--type statname()        :: metricname().
--type statslist()       :: [statname()].
+-type listofstats()     :: [metricname()].
 
--type statinfo()        :: {metricname(),type(),options(),aliases()}.
+-type datapoints()      :: [datapoint()] | [].
+-type datapoint()       :: mean | max | min | mean | mode | 99 | 95 | 90
+                         | 100 | 75 | 50 | value | default | other().
+
+-type consolearg()      :: [string()] | list() | [].
+-type profilename()     :: list() | [string()].
+
+
+% StatInfo :: {Statname, Type, Status, Aliases}
+-type tuple_stat()      :: {metricname(),type(),options(),aliases()}.
+-type type()            :: exometer:type().
+-type options()         :: [exometer:options()|[statusopts()|[cacheopts()]]] | [] | list().
+-type aliases()         :: exometer_alias:alias().
+
+-type statusopts()      :: [{status,status()}].
 -type status()          :: enabled | disabled | unregistered | '_'.
--type type()            :: atom() | any().
--type options()         :: list() | [] | opt_tup().
--type aliases()         :: list() | [].
--type datapoint()       :: info() | list() | integer().
 
--type data()            :: any().
--type sanitised()       :: {metricname(),status(),type(),datapoint()}.
--type opt_tup()         :: {atom(), any()}.
+-type cacheopts()       :: [{cache,cache()}].
+-type cache()           :: non_neg_integer().
+
+% function specific
+-type pattern()         :: ets:match_spec().
+-type incrvalue()       :: non_neg_integer() | integer() | float().
 
 
--type arg()             :: any().
--type arguments()       :: [] | arg() |
-                           {arg(),arg()}|
-                           {arg(),arg(),arg()}|
-                           {arg(),arg(),arg(),arg()}.
+%%% Responses
 
--type aliastype()       :: new | prefix_foldl | regexp_foldr.
--type value()           :: any().
--type exo_value()       :: {ok, value()}.
--type info()            :: name | type | module | value | cache| status |
-                         timestamp | options | ref | datapoints | entry.
--type acc()             :: any().
+% VALUES
+-type nts_stats()       :: [{metricname(),type(),status()}]. %% nts = {Name, Type, Status}
+-type n_v_stats()       :: [{metricname(),stat_value()}].    %% n_v = {Name, Value/Values}
+-type n_i_stats()       :: [{metricname(),stat_info()}].     %% n_i = {Name,  Information}
+-type n_s_stats()       :: [{metricname(),(status() |statusopts())}].
 
--type profilename()     :: [list()] | [binary()] | any().
+-type stat_value()      :: exo_value() | values().
+-type exo_value()       :: {ok, values()}.
+-type values()          :: [value()] | [] | value().
+-type value()           :: integer() | list() | atom() | binary().
 
+-type stat_info()       :: [{info(),values()}] | [].        %% [{value,0}...]
+-type info()            :: name | type | module | value | cache| status
+                         | timestamp | options | ref | datapoints | entry.
+-type attributes()      :: [info()] | [].
+-type sanitised_stat()  :: {metricname(),status(),type(),datapoints()}.
+
+% RETURNS
+-type print()           :: list() | string() | [] | ok.
+-type error()           :: {error, reason()} | error.
+-type reason()          :: generalerror() | exometererror() | profileerror() | metaerror().
 -type exometererror()   :: no_template | exists | not_found.
 -type profileerror()    :: profile_exists_already | no_stats | no_data | no_profile.
 -type metaerror()       :: unregistered | no_stat | no_status.
--type error()           :: {error, reason()}.
--type reason()          :: any() | exometererror() | profileerror() | metaerror().
+-type generalerror()    :: badarg | econnrefused | other().
+-type other()           :: any().
+-type acc()             :: any().
 
--type pattern()         :: ets:match_spec().
--type timestamp()       :: non_neg_integer().
--type ttl()             :: atom() | integer().
+-type timestamp()       :: erlang:timestamp().
 
--type print()           :: any().
--type attr()            :: [info()].
--type stats()           :: list() | tuple().
-
--type incrvalue()       :: non_neg_integer().
--type response()        :: ok | term() | error().
-
-%%%%%%%%%%%%% riak_stat_push %%%%%%%%%%%%%%%%
--type socket()          :: inet:socket().
--type server()          :: inet:ip4_address().
--type latency_port()    :: inet:port_number().
--type server_ip()       :: inet:ip4_address().
--type stats_port()      :: inet:port_number().
--type hostname()        :: inet:hostname().
--type instance()        :: string().
--type jsonprops()       :: [{atom(), any()}].
--type serviceid()       :: string() | binary().
--type correlationid()   :: string() | binary().
-
-%% Stat Macros
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%% Stat Macros %%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -define(IS_ENABLED(Arg),    app_helper:get_env(riak_core,Arg,true)).
 -define(METADATA_ENABLED,   metadata_enabled).
@@ -79,18 +86,3 @@
 -define(INFOSTAT,           [name,type,module,value,cache,
                              status,timestamp,options]).
 %%                  attributes for all the metrics stored in exometer
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%%%% Endpoint Polling Macros %%%%%
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
--define(MONITORSTATSPORT,       app_helper:get_env(riak_stat,monitor_stats_port,8001)).
--define(MONITORSERVER,          app_helper:get_env(riak_stat,monitor_server,"127.0.0.1")).
-
--define(REFRESH_INTERVAL,       30000).
-
--define(SPIRAL_TIME_SPAN,       1000).
--define(HISTOGRAM_TIME_SPAN,    1000).
--define(WM_KEY,                 http_socket).
--define(STATS_LISTEN_PORT,      9000).
--define(STATS_UPDATE_INTERVAL,  1000).
