@@ -3,11 +3,11 @@
 %%% Data from riak_stat_push through console, passed into this
 %%% gen_server to open up a tcp socket on a port, Values from exometer
 %%% are retrieved and sent as a json object to a latency monitoring
-%%% server of "your" choice.
+%%% server 
 %%% @end
 %%%-------------------------------------------------------------------
 -module(riak_stat_push_tcp).
--include_lib("riak_core/include/riak_stat.hrl").
+-include_lib("riak_core/include/riak_stat_push.hrl").
 
 -behaviour(gen_server).
 
@@ -26,22 +26,21 @@
 
 -record(state, {
     socket        :: socket(),
-    server        :: server(),
-    latency_port  :: latency_port(),
+    server        :: server_ip(),
+    latency_port  :: push_port(),
     server_ip     :: server_ip(),
-    stats_port    :: stats_port(),
+    stats_port    :: push_port(),
     hostname      :: hostname(),
     instance      :: instance()
 }).
 
--define(TCP_PORT,         8090).
+-define(TCP_PORT,         0).
 -define(TCP_ADDRESS,      inet_db:gethostname()).
 -define(TCP_OPTIONS,      [?TCP_BUFFER,
                            ?TCP_SNDBUFF,
                            ?TCP_ACTIVE,
                            ?TCP_PACKET,
-                           ?TCP_REUSE
-]).
+                           ?TCP_REUSE]).
 
 -define(TCP_BUFFER,       {buffer, 100*1024*1024}).
 -define(TCP_SNDBUFF,      {sndbuf,   5*1024*1024}).
@@ -52,7 +51,6 @@
 %%%===================================================================
 %%% API
 %%%===================================================================
-
 %%--------------------------------------------------------------------
 -spec(start_link(Arg :: term()) ->
     {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
@@ -68,11 +66,9 @@ start_link(Obj) ->
     {ok, State :: #state{}} | {ok, State :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term()} | ignore).
 init([{{MontiorLatencyPort,Instance,[Sip]},Stats}]) ->
-
     MonitorStatsPort = ?MONITORSTATSPORT,
     MonitorServer    = ?MONITORSERVER,
     Hostname         = ?TCP_ADDRESS,
-
     case gen_tcp:connect(Sip,?TCP_PORT,?TCP_OPTIONS) of
         {ok, Socket} ->
             self() ! refresh_monitor_server_ip,
@@ -88,7 +84,7 @@ init([{{MontiorLatencyPort,Instance,[Sip]},Stats}]) ->
                 instance     = Instance}
             };
         Error ->
-            {stop, Error}
+            {stop, Error} %% Cannot Start because Socket was not returned.
     end.
 %%--------------------------------------------------------------------
 -spec(handle_call(Request :: term(), From :: {pid(), Tag :: term()},
@@ -157,12 +153,20 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
+-spec(send(socket(),jsonstats()) -> ok | error()).
 send(Socket, Data) ->
     gen_tcp:send(Socket, Data).
 
 send_after(Interval, Arg) ->
     erlang:send_after(Interval,self(),Arg).
 
+%%--------------------------------------------------------------------
+%% @doc
+%% Retrieve the stats from exometer and convert to json object, to
+%% send to the endpoint. Repeat.
+%% @end
+%%--------------------------------------------------------------------
+-spec(dispatch_stats(socket(),hostname(),instance(),metrics()) -> ok | error()).
 dispatch_stats(Socket, ComponentHostname, Instance, Stats) ->
     case riak_stat_push_util:json_stats(ComponentHostname, Instance, Stats) of
         ok ->

@@ -7,7 +7,7 @@
 %%% @end
 %%%-------------------------------------------------------------------
 -module(riak_stat_push_udp).
--include_lib("riak_core/include/riak_stat.hrl").
+-include_lib("riak_core/include/riak_stat_push.hrl").
 
 -behaviour(gen_server).
 
@@ -26,19 +26,20 @@
 
 -record(state, {
     socket        :: socket(),
-    server        :: server(),
-    latency_port  :: latency_port(),
+    server        :: server_ip(),
+    latency_port  :: push_port(),
     server_ip     :: server_ip(),
-    stats_port    :: stats_port(),
+    stats_port    :: push_port(),
     hostname      :: hostname(),
     instance      :: instance()
 }).
 
--define(UDP_OPEN_PORT,         8080).
+-define(UDP_OPEN_PORT,         0).
 -define(UDP_OPTIONS,           [?UDP_BUFFER,
                                 ?UDP_SNDBUFF,
                                 ?UDP_ACTIVE,
                                 ?UDP_REUSE]).
+
 -define(UDP_BUFFER,       {buffer, 100*1024*1024}).
 -define(UDP_SNDBUFF,      {sndbuf,   5*1024*1024}).
 -define(UDP_ACTIVE,       {active,          false}).
@@ -79,7 +80,7 @@ init([{{MonitorLatencyPort, Instance, Sip}, Stats}]) ->
                 instance      = Instance}
             };
         Error ->
-            {stop, Error}
+            {stop, Error} %% Cannot Start because Socket was not returned.
     end.
 %%--------------------------------------------------------------------
 -spec(handle_call(Request :: term(), From :: {pid(), Tag :: term()},
@@ -155,6 +156,14 @@ send(Socket, Host, Port, Data) ->
 send_after(Interval, Arg) ->
     erlang:send_after(Interval,self(),Arg).
 
+%%--------------------------------------------------------------------
+%% @doc
+%% Retrieve the stats from exometer and convert to json object, to
+%% send to the endpoint. Repeat.
+%% @end
+%%--------------------------------------------------------------------
+-spec(dispatch_stats(socket(),hostname(),instance(),hostname(),port(),metrics())
+        -> ok | error()).
 dispatch_stats(Socket, ComponentHostname, Instance, MonitoringHostname, Port, Stats) ->
     case riak_stat_push_util:json_stats(ComponentHostname, Instance, Stats) of
         ok ->
