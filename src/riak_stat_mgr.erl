@@ -71,7 +71,8 @@ maybe_meta(Function, Arguments) ->
 %%%-------------------------------------------------------------------
 -spec(reload_metadata(metrics()) -> ok | error()).
 reload_metadata() ->
-    reload_metadata(riak_stat_exom:find_entries([riak])).
+    {Stats,_DPs} = riak_stat_exom:find_entries([riak],'_'),
+    reload_metadata(Stats).
 reload_metadata(Stats) ->
     change_meta_status([{Stat,Status} || {Stat,_Type,Status}<-Stats]).
 
