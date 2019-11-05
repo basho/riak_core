@@ -1,14 +1,15 @@
 %%%-------------------------------------------------------------------
 %%% @doc
-%%% Exometer Man, the Manager for all things exometer, any function calls
+%%% Manages all things exometer, any function calls
 %%% to exometer go through here.
 %%% @end
 %%%-------------------------------------------------------------------
 -module(riak_stat_exom).
 -include_lib("riak_core/include/riak_stat.hrl").
 
+-export([
 %% Registration API
--export([register/1,
+    register/1,
 
 %% Read API
     get_values/1, get_info/2, find_entries/2, find_entries/1,
@@ -22,12 +23,13 @@
     reset_stat/1, unregister/1,
 
 %% Other
-    alias/1, aliases/2, find_alias/1,
-    timestamp/0]).
+    alias/1, aliases/2, find_alias/1, timestamp/0]).
 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% NB : DP = DataPoint
 %%      Alias : Name of a datapoint in a Stat.
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%===================================================================
 %%% Registration API
@@ -40,7 +42,7 @@
 %% is registered.
 %% @end
 %%%-------------------------------------------------------------------
--spec(register(statinfo()) -> ok | error()).
+-spec(register(tuple_stat()) -> ok | error()).
 register({StatName, Type, Opts, Aliases}) ->
     register(StatName, Type, Opts, Aliases).
 register(StatName, Type, Opts, Aliases) ->
@@ -68,7 +70,7 @@ alias_fun() ->
         orddict:append(Entry, {DP, Alias}, Acc)
     end.
 
--spec(alias(Group :: term()) -> ok | acc()).
+-spec(alias(Group :: orddict:orddict()) -> ok | acc()).
 alias(Group) ->
     lists:keysort(
         1,
@@ -107,13 +109,12 @@ alias_dp({DP, Alias}) ->
 %%%===================================================================
 %%% Reading Stats API
 %%%===================================================================
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% find the entry and dp for an alias given
 %% @end
 %%%-------------------------------------------------------------------
--spec(resolve(aliases()) -> stats() | error).
+-spec(resolve(aliases()) -> listofstats() | error()).
 resolve(Alias) ->
     exometer_alias:resolve(Alias).
 
@@ -124,7 +125,7 @@ resolve(Alias) ->
 %% elements in their path. and uses exometer:find_entries
 %% @end
 %%%-------------------------------------------------------------------
--spec(get_values(arg()) -> exo_value() | error()).
+-spec(get_values(metricname()) -> n_v_stats() | error()).
 get_values(Path) ->
     exometer:get_values(Path).
 
@@ -133,7 +134,7 @@ get_values(Path) ->
 %% find information about a stat on a specific item
 %% @end
 %%%-------------------------------------------------------------------
--spec(get_info(statname(), info()) -> value()).
+-spec(get_info(metricname(), (info() | attributes())) -> stat_value()).
 get_info(Stat, Info) ->
     exometer:info(Stat, Info).
 
@@ -144,7 +145,7 @@ get_info(Stat, Info) ->
 %% a list to be returned
 %% @end
 %%%-------------------------------------------------------------------
--spec(find_entries(stats(), status()) -> stats()).
+-spec(find_entries(metricname(), status()) -> listofstats()).
 find_entries(Stats, Status) ->
     lists:foldl(
         fun(Stat, Found) ->
@@ -167,7 +168,7 @@ find_entries(Stat) ->
 %% Retrieves the datapoint value from exometer
 %% @end
 %%%-------------------------------------------------------------------
--spec(get_datapoint(statname(), datapoint()) -> exo_value() | error()).
+-spec(get_datapoint(metricname(), datapoints()) -> stat_value() | error()).
 get_datapoint(Name, Datapoint) ->
     exometer:get_value(Name, Datapoint).
 
@@ -179,11 +180,12 @@ get_value(Name) ->
 %% Find the stat in exometer using pattern :: ets:match_spec()
 %% @end
 %%%-------------------------------------------------------------------
--spec(select(pattern()) -> value()).
+-spec(select(pattern()) -> stat_value()).
 select(Pattern) ->
     exometer:select(Pattern).
 
 %%%-------------------------------------------------------------------
+-spec(sample(metricname()) -> ok | error()).
 sample(Stat) ->
     exometer:sample(Stat).
 
@@ -192,7 +194,7 @@ sample(Stat) ->
 %% Find the stats and the info for that stat
 %% @end
 %%%-------------------------------------------------------------------
--spec(find_stats_info(stats(), datapoint()) -> stats()).
+-spec(find_stats_info(metricname(), datapoints()) -> listofstats()).
 find_stats_info(Stats, Info) when is_atom(Info) ->
     find_stats_info(Stats, [Info]);
 find_stats_info(Stat, Info) when is_list(Info) ->
@@ -225,7 +227,7 @@ find_stats_info(Stat, Info) when is_list(Info) ->
 %% .
 %% @end
 %%%-------------------------------------------------------------------
--spec(aggregate(pattern(), datapoint()) -> stats()).
+-spec(aggregate(pattern(), datapoints()) -> listofstats()).
 aggregate(Pattern, Datapoints) ->
     Entries = metric_names(Pattern),
     Num = length(Entries),
@@ -280,7 +282,7 @@ metric_names(Pattern) ->
 %% crude version of the metric
 %% @end
 %%%-------------------------------------------------------------------
--spec(update(metricname(),arg(),type(),options()) -> ok).
+-spec(update(metricname(),incrvalue(),type(),options()) -> ok).
 update(Name, Val, Type) ->
     update(Name, Val, Type, []).
 update(Name, Val, Type, Opts) ->
@@ -291,7 +293,7 @@ update(Name, Val, Type, Opts) ->
 %% enable or disable the stats in the list
 %% @end
 %%%-------------------------------------------------------------------
--spec(change_status(Stats :: list() | term()) -> ok | term()).
+-spec(change_status(n_s_stats()) -> print()).
 change_status(Stats) when is_list(Stats) ->
     lists:map(fun
                   ({Stat,{status,Status}}) -> change_status(Stat,Status);
@@ -309,7 +311,7 @@ change_status(Stat, Status) ->
 %% disabled in it's options in exometer will change its status in the entry
 %% @end
 %%%-------------------------------------------------------------------
--spec(set_opts(statname(), options()) -> ok | error()).
+-spec(set_opts(metricname(), options()) -> ok | error()).
 set_opts(StatName, Opts) ->
     exometer:setopts(StatName, Opts).
 
@@ -322,7 +324,7 @@ set_opts(StatName, Opts) ->
 %% resets the stat in exometer
 %% @end
 %%%-------------------------------------------------------------------
--spec(reset_stat(statname()) -> ok | error()).
+-spec(reset_stat(metricname()) -> ok | error()).
 reset_stat(StatName) ->
     exometer:reset(StatName).
 
@@ -331,7 +333,7 @@ reset_stat(StatName) ->
 %% deletes the stat entry from exometer
 %% @end
 %%%-------------------------------------------------------------------
--spec(unregister(statname()) -> ok | error()).
+-spec(unregister(metricname()) -> ok | error()).
 unregister(StatName) ->
     exometer:delete(StatName).
 
