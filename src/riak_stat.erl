@@ -137,7 +137,7 @@ sample(StatName) ->
 %%%-------------------------------------------------------------------
 -spec(stats() -> print()).
 stats() ->
-    print(get_stats([prefix()|'_'])).
+    print(get_stats([[prefix()|'_']])).
 
 %%%-------------------------------------------------------------------
 %% @doc (Shell function - not used internally).
@@ -147,7 +147,7 @@ stats() ->
 %%%-------------------------------------------------------------------
 -spec(app_stats(app()) -> print()).
 app_stats(App) ->
-    print(get_stats([prefix(),App|'_'])).
+    print(get_stats([[prefix(),App|'_']])).
 
 %%%-------------------------------------------------------------------
 %% @doc (Shell function - not used internally)
@@ -164,12 +164,12 @@ get_value(Arg) ->
 %% (enabled metrics only)
 %% @end
 %%%-------------------------------------------------------------------
--spec(get_info(app() | listofstats()) -> print()).
+-spec(get_info(app() | metrics()) -> print()).
 get_info(Arg) when is_atom(Arg) ->
     get_info([prefix(),Arg |'_']); %% assumed arg is the app (atom)
 get_info(Arg) ->
-    print([{Stat, stat_info(Stat)} ||
-        {Stat, _Status} <- get_stats(Arg)]).
+    {Stats, _DPs} = get_stats([Arg]),
+    print([{Stat, stat_info(Stat)} || {Stat,_T,_S} <- Stats]).
 
 stat_info(Stat) ->
     riak_stat_exom:get_info(Stat, ?INFOSTAT).
@@ -269,13 +269,5 @@ prefix() -> app_helper:get_env(riak_core, stat_prefix, riak).
            (nts_stats() %% [{Name,Type,Status}]
           | n_v_stats() %% [{Name,Value/Values}]
           | n_i_stats() %% [{Name, Information}]
-          | stat_value()), Attributes :: attributes()) -> ok).
-print(Entries) ->
-    print(Entries, []).
-print(Entries, Attr) when is_list(Entries) ->
-    lists:map(fun
-                  (E) ->
-                      print(E, Attr)
-              end, Entries);
-print(Entries, Attr) -> %% Single Entry
-    riak_stat_console:print(Entries, Attr).
+          | stat_value())) -> ok).
+print(Entries) -> riak_stat_console:print(Entries).

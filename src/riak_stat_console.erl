@@ -77,14 +77,14 @@ stat_info(Arg) ->
 %% @doc get list of attrs to print @end
 pick_info_attrs(Arg) ->
     case lists:foldr(
-        fun("-name",     {As, Ps}) -> {[name      | As], Ps};
-           ("-type",     {As, Ps}) -> {[type      | As], Ps};
-           ("-module",   {As, Ps}) -> {[module    | As], Ps};
-           ("-value",    {As, Ps}) -> {[value     | As], Ps};
-           ("-cache",    {As, Ps}) -> {[cache     | As], Ps};
-           ("-status",   {As, Ps}) -> {[status    | As], Ps};
-           ("-timestamp",{As, Ps}) -> {[timestamp | As], Ps};
-           ("-options",  {As, Ps}) -> {[options   | As], Ps};
+        fun("name",     {As, Ps}) -> {[name      | As], Ps};
+           ("type",     {As, Ps}) -> {[type      | As], Ps};
+           ("module",   {As, Ps}) -> {[module    | As], Ps};
+           ("value",    {As, Ps}) -> {[value     | As], Ps};
+           ("cache",    {As, Ps}) -> {[cache     | As], Ps};
+           ("status",   {As, Ps}) -> {[status    | As], Ps};
+           ("timestamp",{As, Ps}) -> {[timestamp | As], Ps};
+           ("options",  {As, Ps}) -> {[options   | As], Ps};
            (P,           {As, Ps}) -> {As, [P | Ps]}
         end, {[], []}, split_arg(Arg)) of
         {[], Rest} ->          %% If no arguments given
@@ -96,7 +96,8 @@ pick_info_attrs(Arg) ->
 split_arg(Str) ->
     %% separate the argument by the spaces
     %% i.e. ["riak.** -type -status"] -> ["riak.**","-type","-status"]
-    re:split(Str, "\\s", [{return, list}]).
+    A = re:split(Str, "\\-", [{return, list}]),
+    io:format("A :~p~n",[A]),A.
 
 %%%-------------------------------------------------------------------
 %% @doc
