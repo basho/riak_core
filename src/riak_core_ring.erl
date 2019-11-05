@@ -61,6 +61,10 @@
          downgrade/2,
          set_tainted/1,
          check_tainted/2,
+         unset_tainted/1,
+         set_lastgasp/1,
+         check_lastgasp/1,
+         unset_lastgasp/1,
          nearly_equal/2,
          claimant/1,
          member_status/2,
@@ -265,6 +269,27 @@ check_tainted(Ring=?CHSTATE{}, Msg) ->
         _ ->
             ok
     end.
+
+-spec unset_tainted(chstate()) -> chstate().
+unset_tainted(Ring) ->
+    update_meta(riak_core_ring_tainted, false, Ring).
+
+-spec set_lastgasp(chstate()) -> chstate().
+set_lastgasp(Ring) ->
+    update_meta(riak_core_ring_lastgasp, true, Ring).
+
+-spec check_lastgasp(chstate()) -> boolean().
+check_lastgasp(Ring) ->
+    case get_meta(riak_core_ring_lastgasp, Ring) of
+        {ok, true} ->
+            true;
+        _ ->
+            false
+    end.
+
+-spec unset_lastgasp(chstate()) -> chstate().
+unset_lastgasp(Ring) ->
+    update_meta(riak_core_ring_lastgasp, false, Ring).
 
 %% @doc Verify that the two rings are identical expect that metadata can
 %%      differ and RingB's vclock is allowed to be equal or a direct
@@ -505,11 +530,16 @@ reconcile(ExternState, MyState) ->
     check_tainted(MyState,
                   "Error: riak_core_ring/reconcile :: "
                   "reconciling tainted internal ring"),
-    case internal_reconcile(MyState, ExternState) of
-        {false, State} ->
-            {no_change, State};
-        {true, State} ->
-            {new_ring, State}
+    case check_lastgasp(ExternState) of
+        true ->
+            {no_change, MyState};
+        false ->
+            case internal_reconcile(MyState, ExternState) of
+                {false, State} ->
+                    {no_change, State};
+                {true, State} ->
+                    {new_ring, State}
+            end
     end.
 
 %% @doc  Rename OldNode to NewNode in a Riak ring.
@@ -2033,6 +2063,17 @@ resize_test() ->
     %% for non-resize transitions index should be the same
     ?assertEqual(OrigIdx, future_index(Key, OrigIdx, undefined, Ring0)),
     ?assertEqual(element(1, hd(preflist(Key, Ring2))), future_index(Key, OrigIdx, undefined, Ring3)).
+
+lasgasp_test() ->
+    RingA = fresh(4, a),
+    RingB = fresh(4, b),
+    RingA1 = set_lastgasp(RingA),
+    ?assertMatch(false, check_lastgasp(RingA)),
+    ?assertMatch(true, check_lastgasp(RingA1)),
+    ?assertMatch({no_change, RingB}, reconcile(RingA1, RingB)),
+    
+    ?assertMatch(true, nearly_equal(RingA, unset_lastgasp(RingA1))),
+    ?assertMatch(false, check_lastgasp(unset_lastgasp(RingA1))).
 
 resize_xfer_test_() ->
     {setup,

@@ -375,10 +375,17 @@ handle_call({set_my_ring, RingIn}, _From, State) ->
     State2 = prune_write_notify_ring(Ring, State),
     {reply,ok,State2};
 handle_call(refresh_my_ring, _From, State) ->
+    %% Pompt the claimant before creating a fresh ring for shutdown, so that
+    %% any final actions can be taken
+    ok = riak_core_claimant:pending_close(State#state.raw_ring, get_ring_id()),
+
     %% This node is leaving the cluster so create a fresh ring file
     FreshRing = riak_core_ring:fresh(),
-    State2 = set_ring(FreshRing, State),
-    %% Make sure the fresh ring gets written before stopping
+    LastGaspRing = riak_core_ring:set_lastgasp(FreshRing),
+    State2 = set_ring(LastGaspRing, State),
+    %% Make sure the fresh ring gets written before stopping, that the updated
+    %% state global ring has the last gasp, but not the persisted ring (so that
+    %% on restart there will be no last gasp indicator. 
     ok = do_write_ringfile(FreshRing),
 
     %% Handoff is complete and fresh ring is written
