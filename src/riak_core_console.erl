@@ -19,6 +19,7 @@
 %% -------------------------------------------------------------------
 
 -module(riak_core_console).
+-include_lib("riak_core/include/riak_stat.hrl").
 %% Legacy exports - unless needed by other modules, only expose
 %% functionality via command/1
 -export([member_status/1, ring_status/1, print_member_status/2,
@@ -1166,13 +1167,13 @@ parse_cidr(CIDR) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% riak-admin stat riak.**
+%% riak admin stat show riak.**
 %% the enabled stats are shown by default but the status can be chosen
 %% i.e. riak.riak_kv.**/status=disabled to show <disabled> stats
 %% pulls out of the metadata by default
 %% @end
 %%%-------------------------------------------------------------------
--spec(stat_show(Arg :: term()) -> ok | term()).
+-spec(stat_show(consolearg()) -> ok | error()).
 stat_show(Arg) ->
     riak_stat_console:show_stat(Arg).
 
@@ -1183,7 +1184,7 @@ stat_show(Arg) ->
 %% behaves similar to stat show
 %% @end
 %%%-------------------------------------------------------------------
--spec(stat_0(Arg :: term()) -> ok | term()).
+-spec(stat_0(consolearg()) -> ok | error()).
 stat_0(Arg) ->
     riak_stat_console:show_stat_0(Arg).
 
@@ -1193,7 +1194,7 @@ stat_0(Arg) ->
 %% not updating as well, returns ok unless there is an error.
 %% @end
 %%%-------------------------------------------------------------------
--spec(stat_disable_0(Arg :: term()) -> ok | term()).
+-spec(stat_disable_0(consolearg()) -> ok | error()).
 stat_disable_0(Arg) ->
     riak_stat_console:disable_stat_0(Arg).
 
@@ -1203,7 +1204,7 @@ stat_disable_0(Arg) ->
 %% can be specific : -type -status etc...
 %% @end
 %%%-------------------------------------------------------------------
--spec(stat_info(Arg :: term()) -> ok | term()).
+-spec(stat_info(consolearg()) -> ok | error()).
 stat_info(Arg) ->
     riak_stat_console:stat_info(Arg).
 
@@ -1212,7 +1213,7 @@ stat_info(Arg) ->
 %% enable the stats, if the stat is already enabled does nothing
 %% @end
 %%%-------------------------------------------------------------------
--spec(stat_enable(Arg :: term()) -> ok | term()).
+-spec(stat_enable(consolearg()) -> ok | error()).
 stat_enable(Arg) ->
     riak_stat_console:status_change(Arg, enabled).
 
@@ -1221,17 +1222,17 @@ stat_enable(Arg) ->
 %% disable the stats - if already disabled does nothing
 %% @end
 %%%-------------------------------------------------------------------
--spec(stat_disable(Arg :: term()) -> ok | term()).
+-spec(stat_disable(consolearg()) -> ok | error()).
 stat_disable(Arg) ->
     riak_stat_console:status_change(Arg, disabled).
 
 %%%-------------------------------------------------------------------
 %% @doc
 %% resets the stats in exometer, the number of resets is kept in the
-%% metadata
+%% metadata and in exometer
 %% @end
 %%%-------------------------------------------------------------------
--spec(stat_reset(Arg :: term()) -> ok | term()).
+-spec(stat_reset(consolearg()) -> ok | error()).
 stat_reset(Arg) ->
     riak_stat_console:reset_stat(Arg).
 
@@ -1246,7 +1247,7 @@ stat_reset(Arg) ->
 %% enabling/disabling
 %% @end
 %%%-------------------------------------------------------------------
--spec(load_profile(FileName :: term()) -> term()).
+-spec(load_profile(consolearg()) -> ok | error()).
 load_profile(ProfileName) ->
     riak_stat_profiles:load_profile(ProfileName).
 
@@ -1258,7 +1259,7 @@ load_profile(ProfileName) ->
 %% under the same name.
 %% @end
 %%%-------------------------------------------------------------------
--spec(add_profile(FileName :: term()) -> term()).
+-spec(add_profile(consolearg()) -> ok | error()).
 add_profile(ProfileName) ->
     riak_stat_profiles:save_profile(ProfileName).
 
@@ -1267,7 +1268,7 @@ add_profile(ProfileName) ->
 %% remove the profile from the metadata if it is not longer necessary
 %% @end
 %%%-------------------------------------------------------------------
--spec(remove_profile(FileName :: term()) -> term()).
+-spec(remove_profile(consolearg()) -> ok | error()).
 remove_profile(ProfileName) ->
     riak_stat_profiles:delete_profile(ProfileName).
 
@@ -1280,7 +1281,7 @@ reset_profile(_Arg) ->
 %% unloads from the current profile, so all the stats are re-enabled.
 %% @end
 %%%-------------------------------------------------------------------
--spec(reset_profile() -> term()).
+-spec(reset_profile() -> ok | error()).
 reset_profile() ->
     riak_stat_profiles:reset_profile().
 
@@ -1290,37 +1291,39 @@ reset_profile() ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% enable the metadata, arg should be true or false, if false then the
-%% communication to the metadata ends, upon re-enabling the metadata
-%% will "re-register" the stats, therefore the configuration remains
-%% consistent between both metadata and exometer, any profile that was
-%% loaded before will not be loaded upon re-enabling to prevent errors
+%% enable the metadata, arg should be true, false or status, if false
+%% then the communication to the metadata ends, upon re-enabling the
+%% metadata will "re-register" the stats, therefore the configuration
+%% remains consistent between both metadata and exometer, any profile
+%% that was loaded before will not be loaded upon re-enabling to
+%% prevent errors
 %% @end
 %%%-------------------------------------------------------------------
--spec(stat_metadata(term()) -> ok).
+-spec(stat_metadata(consolearg()) -> ok | error()).
 stat_metadata(["enable"]) ->
     riak_stat_console:stat_metadata(true);
 stat_metadata(["disable"]) ->
     riak_stat_console:stat_metadata(false);
+stat_metadata(["status"]) ->
+    riak_stat_console:stat_metadata(status);
+stat_metadata([]) ->
+    riak_stat_console:stat_metadata(status);
 stat_metadata(_) ->
     io:fwrite("Invalid Argument~n").
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%% polling %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%% riak_stat_push %%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% Setup the port, similar to how riak-admin stat show takes in
 %% riak.riak_kv.**/status=*, setup_port takes the argument
 %% "port=8089/sip=127.0.0.1" and sets up the socket from the
-%% argument given.
-%%
-%% Can be used to restart the port as well as change the port
+%% argument given. port, protocol, serverip, instance needed.
 %% @end
 %%%-------------------------------------------------------------------
--spec(setup_endpoint(term()) -> ok).
+-spec(setup_endpoint(consolearg()) -> ok | error()).
 setup_endpoint(Arg) ->
     riak_stat_push:setup(Arg).
 
@@ -1330,7 +1333,7 @@ setup_endpoint(Arg) ->
 %% multiple ports are open terminates gen_servers
 %% @end
 %%%-------------------------------------------------------------------
--spec(setdown_endpoint(term()) -> ok).
+-spec(setdown_endpoint(consolearg()) -> ok | error()).
 setdown_endpoint(Arg) ->
     riak_stat_push:setdown(Arg).
 
@@ -1341,7 +1344,7 @@ setdown_endpoint(Arg) ->
 %% given at the time of setup
 %% @end
 %%%-------------------------------------------------------------------
--spec(find_push_stats(term()) -> ok).
+-spec(find_push_stats(consolearg()) -> ok | error()).
 find_push_stats(Arg) ->
     riak_stat_push:find_push_stats([node()], Arg).
 
@@ -1352,6 +1355,6 @@ find_push_stats(Arg) ->
 %% given at the time of setup - but for all nodes in the cluster
 %% @end
 %%%-------------------------------------------------------------------
--spec(find_push_stats_all(term()) -> ok).
+-spec(find_push_stats_all(consolearg()) -> ok | error()).
 find_push_stats_all(Arg) ->
     riak_stat_push:find_push_stats([node()|nodes()],Arg).
