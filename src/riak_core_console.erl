@@ -32,6 +32,7 @@
          print_users/1, print_user/1, print_sources/1,
          print_groups/1, print_group/1, print_grants/1,
          security_enable/1, security_disable/1, security_status/1, ciphers/1,
+        %% Riak Stat :
 	       stat_show/1, stat_info/1, stat_enable/1, stat_disable/1, stat_reset/1,
          stat_disable_0/1, stat_0/1,
          load_profile/1, add_profile/1, remove_profile/1, reset_profile/0, reset_profile/1,
@@ -1159,7 +1160,7 @@ parse_cidr(CIDR) ->
 
 
 %%%-------------------------------------------------------------------
-%%% Stat functions
+%%%                        Stat functions
 %%%-------------------------------------------------------------------
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%% console %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -1288,7 +1289,6 @@ reset_profile() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Other %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% enable the metadata, arg should be true, false or status, if false
@@ -1305,7 +1305,7 @@ stat_metadata(["enable"]) ->
 stat_metadata(["disable"]) ->
     riak_stat_console:stat_metadata(false);
 stat_metadata(["status"]) ->
-    riak_stat_console:stat_metadata(status);
+    stat_metadata([]);
 stat_metadata([]) ->
     riak_stat_console:stat_metadata(status);
 stat_metadata(_) ->

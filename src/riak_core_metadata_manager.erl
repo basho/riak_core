@@ -253,7 +253,6 @@ merge(Node, {PKey, _Context}, Obj) ->
 
 -spec select(metadata_prefix(), ets:match_spec()) -> metadata_value().
 select(Prefix, MS) ->
-%%    io:format("ffff"),
 
     case ets_tab(Prefix) of
         undefined -> io_lib:format("Prefix not in Metadata : ~p~n", [Prefix]), undefined;
@@ -465,17 +464,14 @@ next_iterator(It=#metadata_iterator{done=true}) ->
     It;
 next_iterator(It=#metadata_iterator{prefix=undefined,match=undefined,tab=Tab,pos=Pos}) ->
     %% full-prefix iterator
-%%  io:format("ets:next: ~p~n",[ets:next(Tab, Pos)]),
 
   next_iterator(It, ets:next(Tab, Pos));
 next_iterator(It=#metadata_iterator{prefix=undefined,pos=Pos}) ->
     %% sub-prefix iterator
-%%  io:format("ets:select: ~p~n",[ets:select(Pos)]),
 
   next_iterator(It, ets:select(Pos));
 next_iterator(It=#metadata_iterator{pos=Pos}) ->
     %% key/value iterator
-%%  io:format("ets:match_obj: ~p~n",[ets:match_object(Pos)]),
     next_iterator(It, ets:match_object(Pos)).
 
 next_iterator(Ref, #state{iterators=Iterators}) when is_reference(Ref) ->
@@ -522,8 +518,6 @@ new_iterator(undefined, Prefix, Tab) ->
 new_iterator(FullPrefix, KeyMatch, Tab) ->
     %% key/value iterator
     ObjectMatch = iterator_match(KeyMatch),
-%%  io:format("OBjectMatch: ~p~n",[ObjectMatch]),
-%%  io:format("ets:match_obj/3: ~p~n",[ets:match_object(Tab, ObjectMatch, 1)]),
 
   new_iterator(FullPrefix, KeyMatch, Tab, ets:match_object(Tab, ObjectMatch, 1)).
 
@@ -593,13 +587,11 @@ store({FullPrefix, Key}=PKey, Metadata, State) ->
     Objs = [{Key, Metadata}],
     Hash = riak_core_metadata_object:hash(Metadata),
     ets:insert(ets_tab(FullPrefix), Objs),
-%%    io:format("ObJ:s ~p~n", Key),
     riak_core_metadata_hashtree:insert(PKey, Hash),
     ok = dets_insert(dets_tabname(FullPrefix), Objs),
     {Metadata, State}.
 
 read({FullPrefix, Key}) ->
-%%  io:format("read~n"),
     case ets_tab(FullPrefix) of
         undefined -> undefined;
         TabId -> read(Key, TabId)
@@ -632,7 +624,6 @@ init_from_file(TabName, State) ->
     State.
 
 ets_tab(FullPrefix) ->
-%%  io:format("ets_tab: ~p~n", [FullPrefix]),
     case ets:lookup(?ETS, FullPrefix) of
         [] -> undefined;
         [{FullPrefix, TabId}] -> TabId

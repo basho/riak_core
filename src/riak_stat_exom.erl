@@ -149,18 +149,15 @@ get_info(Stat, Info) ->
 %%%-------------------------------------------------------------------
 -spec(find_entries(metricname(), status()) -> listofstats()).
 find_entries(Stats, Status) ->
-    lists:foldl(
-        fun(Stat, Found) ->
-            case find_entries(Stat) of
-                [{Name, Type, EStatus}]
-                    when EStatus == Status orelse Status == '_' ->
-                    [{Name, Type, Status} | Found];
-                [{_Name, _Type, _EStatus}] -> % Different status
-                    Found;
-                [] ->
-                    Found
-            end
-        end, [], Stats).
+    [lists:foldl(fun
+                     ({Name, Type, EStatus}, Found)
+                         when EStatus == Status orelse Status == '_' ->
+                         [{Name, Type, Status} | Found];
+                     ({_Name, _Type, _EStatus}, Found) -> % Different status
+                         Found;
+                     (_, Found) ->
+                         Found
+                 end,[], find_entries(Stat)) || Stat <- Stats].
 
 find_entries(Stat) ->
     exometer:find_entries(Stat).

@@ -161,7 +161,7 @@ fold(Protocol, Port, Instance, ServerIp, Stats, Node) ->
                     {Acc, APort, AServerIP, AStats, ANode}) %% Acc and Guard
                     when (APort     == MPort  orelse APort     == '_')
                     and  (AServerIP == MSip   orelse AServerIP == '_')
-                    and   ANode     == MNode
+                    and  (ANode     == MNode  orelse ANode     == node()) %% default compare to own node
                     and  (AStats    == MStats orelse AStats    == '_') ->
                     %% Matches all the Guards given in Acc
                     {[{{MProtocol,MInstance}, {OriginalDateTime, %% First start
