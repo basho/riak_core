@@ -27,10 +27,9 @@
 behaviour() ->
     entry.
 
-%% todo: remove the folsom functionality. This and new/3 dont appear to be used elsewhere.
 copy_folsom(Name, Type, Opts) when is_tuple(Name) ->
     Prefix = riak_stat:prefix(),
-    {[Prefix | tuple_to_list(Name)], ad_hoc, [{stat_name, Name},
+    {[Prefix | tuple_to_list(Name)], ad_hoc, [{folsom_name, Name},
         {module, ?MODULE},
         {type, Type}
         | options(Type, Opts)]};
@@ -39,7 +38,7 @@ copy_folsom(_, _, _) ->
 
 new(N, _, Opts) ->
     {ok, {proplists:get_value(type, Opts, unknown),
-        proplists:get_value(stat_name, Opts, N)}}.
+        proplists:get_value(folsom_name, Opts, N)}}.
 
 update(_, Value, counter, {_, Name}) ->
     riak_stat:update(Name, Value, counter);

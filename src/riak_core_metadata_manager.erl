@@ -38,9 +38,7 @@
          iterator_done/1,
          iterator_close/1,
          put/3,
-         merge/3,
-    replace/2,
-    select/2]).
+         merge/3]).
 
 %% riak_core_broadcast_handler callbacks
 -export([broadcast_data/1,
@@ -250,21 +248,6 @@ put({{Prefix, SubPrefix}, _Key}=PKey, Context, ValueOrFun)
 -spec merge(node(), {metadata_pkey(), undefined | metadata_context()}, metadata_object()) -> boolean().
 merge(Node, {PKey, _Context}, Obj) ->
     gen_server:call({?SERVER, Node}, {merge, PKey, Obj}, infinity).
-
--spec select(metadata_prefix(), ets:match_spec()) -> metadata_value().
-select(Prefix, MS) ->
-
-    case ets_tab(Prefix) of
-        undefined -> io_lib:format("Prefix not in Metadata : ~p~n", [Prefix]), undefined;
-        Tab -> ets:select(Tab, MS)
-    end.
-
--spec replace(metadata_prefix(), ets:match_spec()) -> metadata_value().
-replace(Prefix, MS) ->
-    case ets_tab(Prefix) of
-        undefined -> io_lib:format("Prefix not in Metadata : ~p~n", [Prefix]), undefined;
-        Tab -> ets:select_replace(Tab, MS)
-    end.
 
 
 %%%===================================================================
