@@ -51,9 +51,6 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
-%%test funs
--export([data_root/1]).
-
 -export_type([metadata_iterator/0]).
 
 -include("riak_core_metadata.hrl").
@@ -248,7 +245,6 @@ put({{Prefix, SubPrefix}, _Key}=PKey, Context, ValueOrFun)
 -spec merge(node(), {metadata_pkey(), undefined | metadata_context()}, metadata_object()) -> boolean().
 merge(Node, {PKey, _Context}, Obj) ->
     gen_server:call({?SERVER, Node}, {merge, PKey, Obj}, infinity).
-
 
 %%%===================================================================
 %%% riak_core_broadcast_handler callbacks
@@ -447,16 +443,13 @@ next_iterator(It=#metadata_iterator{done=true}) ->
     It;
 next_iterator(It=#metadata_iterator{prefix=undefined,match=undefined,tab=Tab,pos=Pos}) ->
     %% full-prefix iterator
-
   next_iterator(It, ets:next(Tab, Pos));
 next_iterator(It=#metadata_iterator{prefix=undefined,pos=Pos}) ->
     %% sub-prefix iterator
-
   next_iterator(It, ets:select(Pos));
 next_iterator(It=#metadata_iterator{pos=Pos}) ->
     %% key/value iterator
     next_iterator(It, ets:match_object(Pos)).
-
 next_iterator(Ref, #state{iterators=Iterators}) when is_reference(Ref) ->
     %% remote iterator
     case ets:lookup(Iterators, Ref) of
@@ -688,7 +681,5 @@ data_root(Opts) ->
 default_data_root() ->
     case application:get_env(riak_core, platform_data_dir) of
         {ok, PRoot} -> filename:join(PRoot, "cluster_meta");
-        undefined ->
-%%            undefined
-            "data"
+        undefined -> undefined
     end.

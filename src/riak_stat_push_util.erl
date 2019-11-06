@@ -16,10 +16,10 @@
 
 
 json_stats(Stats) ->
-    json_stats({hostname,inet_db:gethostname()},{instance,"web"},Stats).
+    json_stats([],{instance,"web"},Stats).
 json_stats(ComponentHostname, Instance, Stats) ->
     Metrics = get_stats(Stats),
-    AdditionalFields = [ComponentHostname, Instance],
+    AdditionalFields = lists:flatten([ComponentHostname, Instance]),
     JsonStats = mochijson2:encode({struct, Metrics}),
     DateTime = format_time(os:timestamp()),
     [${, format_fields(AdditionalFields, []), $,,

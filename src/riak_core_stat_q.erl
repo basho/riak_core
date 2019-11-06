@@ -52,7 +52,7 @@
 %% in `Path' as a wild card.
 -spec get_stats(path()) -> stats().
 get_stats(Path) ->
-    riak_core_stat:get_value(Path).
+    get_stat(Path).
     %% %% get all the stats that are at Path
     %% calculate_stats(exometer:select(
     %%                     [{ {Path ++ '_','_',enabled}, [], ['$_'] }])).
@@ -62,7 +62,7 @@ calculate_stats(NamesAndTypes) ->
 
 %% Create/lookup a cache/calculation process
 get_stat(Stat) ->
-    riak_core_stat:get_stat(Stat).
+    riak_stat:get_value(Stat).
 
 %% Encapsulate getting a stat value from exometer.
 %%

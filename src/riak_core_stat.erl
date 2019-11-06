@@ -64,29 +64,31 @@ register_stats(App, Stats) ->
   riak_stat:register(App, Stats).
 
 register_vnode_stats(Module, Index, Pid) ->
-  F = fun vnodeq_atom/2,
-  Stat1 =
-    {[vnodes_running, Module],
-    {function, exometer, select_count,
-      [[{ {[vnodeq, Module, '_'], '_', '_'},
-        [], [true] }]], match, value },
-    [{aliases,[{value, F(Module, <<"s_running">>)}]}]},
+    F = fun vnodeq_atom/2,
+    Vnode_Stat_1 =
+        {[vnodes_running, Module],
+            {function, exometer, select_count,
+                [[{{[vnodeq, Module, '_'], '_', '_'},
+                    [], [true]}]], match, value},
+            [{aliases,
+                [{value, F(Module, <<"s_running">>)}]}]},
 
-  Stat2 =
-    {[vnodeq, Module],
-    {function, riak_core_stat, vnodeq_stats, [Module],
-      histogram, [mean,median,min,max,total]},
-    [{aliases, [{mean  , F(Module, <<"q_mean">>)},
-      {median, F(Module, <<"q_median">>)},
-      {min   , F(Module, <<"q_min">>)},
-      {max   , F(Module, <<"q_max">>)},
-      {total , F(Module, <<"q_total">>)}]}]},
+    Vnode_Stat_2 =
+        {[vnodeq, Module],
+            {function, riak_core_stat, vnodeq_stats, [Module],
+                histogram, [mean, median, min, max, total]},
+            [{aliases,
+                [{mean,  F(Module, <<"q_mean">>)},
+                 {median,F(Module, <<"q_median">>)},
+                 {min,   F(Module, <<"q_min">>)},
+                 {max,   F(Module, <<"q_max">>)},
+                 {total, F(Module, <<"q_total">>)}]}]},
 
-  Stat3 = {[vnodeq, Module, Index],
-    function, [{ arg, {erlang, process_info, [Pid, message_queue_len], match, {'_', value} }}]},
+    Vnode_Stat_3 = {[vnodeq, Module, Index],
+        function, [{arg, {erlang, process_info, [Pid, message_queue_len], match, {'_', value}}}]},
 
-  RegisterStats = [Stat1, Stat2, Stat3],
-  register_stats(?APP, RegisterStats).
+    RegisterStats = [Vnode_Stat_1, Vnode_Stat_2, Vnode_Stat_3],
+    register_stats(?APP, RegisterStats).
 
 %%%----------------------------------------------------------------%%%
 
