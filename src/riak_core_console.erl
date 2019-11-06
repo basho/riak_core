@@ -20,6 +20,7 @@
 
 -module(riak_core_console).
 -include_lib("riak_core/include/riak_stat.hrl").
+
 %% Legacy exports - unless needed by other modules, only expose
 %% functionality via command/1
 -export([member_status/1, ring_status/1, print_member_status/2,
@@ -1165,7 +1166,6 @@ parse_cidr(CIDR) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%% console %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% riak admin stat show riak.**
@@ -1240,7 +1240,6 @@ stat_reset(Arg) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%% profile %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% Loads the profile of that name, and then will enable/disable all

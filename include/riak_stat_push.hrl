@@ -38,8 +38,11 @@
 %%%%% Endpoint Polling Macros %%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
--define(MONITORSTATSPORT,       app_helper:get_env(riak_stat,monitor_stats_port,8001)).
--define(MONITORSERVER,          app_helper:get_env(riak_stat,monitor_server,"127.0.0.1")).
+-define(DEFAULTPORT,            8005).
+-define(DEFAULTSERVER,          "127.0.0.1").
+
+-define(MONITORSTATSPORT,       app_helper:get_env(riak_stat,monitor_stats_port,?DEFAULTPORT)).
+-define(MONITORSERVER,          app_helper:get_env(riak_stat,monitor_server,?DEFAULTSERVER)).
 
 -define(REFRESH_INTERVAL,       30000).
 

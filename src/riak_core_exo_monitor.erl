@@ -16,7 +16,8 @@
 -behaviour(exometer_entry).
 
 -export([copy_folsom/3]).
--export([behaviour/0,
+-export([
+    behaviour/0,
     delete/3,
     get_datapoints/3,
     get_value/4,
