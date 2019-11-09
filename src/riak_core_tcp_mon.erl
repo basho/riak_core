@@ -458,7 +458,7 @@ ssl_test_() ->
         spawn(fun () ->
             %% server
             {ok, S} = ssl:transport_accept(LS),
-            ok = ssl:ssl_accept(S),
+            ok = ssl:handshake(S),
             ssl_recv_loop(S)
         end),
 
