@@ -458,8 +458,8 @@ ssl_test_() ->
         spawn(fun () ->
             %% server
             {ok, S} = ssl:transport_accept(LS),
-            ok = ssl:handshake(S),
-            ssl_recv_loop(S)
+            {ok, SslSock} = ssl:handshake(S),
+            ssl_recv_loop(SslSock)
         end),
 
         {ok, Socket} = ssl:connect("localhost", Port, [binary, {active, true}, {certfile, "test/site2-cert.pem"}, {keyfile, "test/site2-key.pem"}]),
