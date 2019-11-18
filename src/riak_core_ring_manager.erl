@@ -710,11 +710,13 @@ refresh_my_ring_test() ->
      end || {AppKey, Val} <- Core_Settings],
     riak_core_ring_events:start_link(),
     riak_core_ring_manager:start_link(test),
+    riak_core_claimant:start_link(),
     riak_core_vnode_sup:start_link(),
     riak_core_vnode_master:start_link(riak_core_vnode),
     riak_core_test_util:setup_mockring1(),
     ?assertEqual(ok, riak_core_ring_manager:refresh_my_ring()),
     riak_core_ring_manager:stop(),
+    riak_core_claimant:stop(),
     %% Cleanup the ring file created for this test
     {ok, RingFile} = find_latest_ringfile(),
     file:delete(RingFile),
