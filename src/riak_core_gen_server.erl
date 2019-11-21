@@ -178,6 +178,18 @@
                       Extra :: term()) ->
     {ok, NewState :: term()} | {error, Reason :: term()}.
 
+%%%=========================================================================
+%%%  Preprocessor
+%%%=========================================================================
+
+-ifdef(deprecated_21).
+get_log(Debug) ->
+    sys:get_log(Debug).
+-else.
+get_log(Debug) ->
+    sys:get_debug(log, Debug, []).
+-endif.
+
 %%%  -----------------------------------------------------------------
 %%% Starts a generic server.
 %%% start(Mod, Args, Options)
@@ -1015,7 +1027,7 @@ format_status(Opt, StatusData) ->
 		      Name
 	      end,
     Header = lists:concat(["Status for generic server ", NameTag]),
-    Log = sys:get_log(Debug),
+    Log = get_log(Debug),
     Specfic =
 	case erlang:function_exported(Mod, format_status, 2) of
 	    true ->
