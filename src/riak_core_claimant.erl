@@ -84,6 +84,16 @@
 %%% API
 %%%===================================================================
 
+
+-ifdef(TEST).
+
+-export([stop/0]).
+
+stop() ->
+    gen_server:call(claimant(), stop).
+
+-endif.
+
 %% @doc Spawn and register the riak_core_claimant server
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
@@ -223,6 +233,8 @@ bucket_type_iterator() ->
     riak_core_metadata:iterator(?BUCKET_TYPE_PREFIX, [{default, undefined},
                                               {resolver, fun riak_core_bucket_props:resolve/2}]).
 
+
+
 %%%===================================================================
 %%% Claim sim helpers until refactor
 %%%===================================================================
@@ -318,6 +330,9 @@ handle_call({activate_bucket_type, BucketType}, _From, State) ->
 handle_call({pending_close, Ring, RingID}, _From, State) ->
     State2 = tick(Ring, RingID, State),
     {reply, ok, State2};
+
+handle_call(stop, _From, State) ->
+    {stop, normal, ok, State};
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
