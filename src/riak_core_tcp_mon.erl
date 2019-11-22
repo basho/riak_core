@@ -66,6 +66,14 @@
                ts_hist = [],      %% History of timestamps for readings
                hist = []}).       %% History of readings
 
+-ifdef(deprecated_21).
+ssl_handshake(Socket) ->
+    ssl:handshake(Socket).
+-else.
+ssl_handshake(Socket) ->
+    ssl:ssl_accept(Socket).
+-endif.
+
 
 start_link() ->
     start_link([]).
@@ -458,7 +466,14 @@ ssl_test_() ->
         spawn(fun () ->
             %% server
             {ok, S} = ssl:transport_accept(LS),
-            {ok, SslSock} = ssl:handshake(S),
+            {ok, SslSock} = case ssl_handshake(S) of
+                ok ->
+                    {ok, S};
+                {ok, NewSocket} ->
+                    {ok, NewSocket};
+                Error = {error, _} ->
+                    Error
+            end,
             ssl_recv_loop(SslSock)
         end),
 
