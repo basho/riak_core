@@ -94,8 +94,9 @@ pick_info_attrs(Arg) ->
     end.
 
 split_arg(Str) ->
-    %% separate the argument by the spaces
-    %% i.e. ["riak.** -type -status"] -> ["riak.**","-type","-status"]
+    %% separate the argument by the "-"
+    %% i.e. ["riak.** -type -status"] -> ["riak.**","type","status"]
+                %% Spaces are concatenated in riak-admin
     A = re:split(Str, "\\-", [{return, list}]),
     io:format("A :~p~n",[A]),A.
 
@@ -117,7 +118,7 @@ disable_stat_0(Arg) ->
 %%%-------------------------------------------------------------------
 -spec(status_change(consolearg(), status()) -> print()).
 status_change(Arg, ToStatus) ->
-    {Entries,_DP} = % if disabling stats, pull only enabled ones
+    {Entries,_DP} = % if disabling stats, pull only enabled ones &vv
     case ToStatus of
         enabled  -> find_entries(data_sanitise(Arg, '_', disabled));
         disabled -> find_entries(data_sanitise(Arg, '_', enabled))
@@ -138,11 +139,11 @@ reset_stat(Arg) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% enabling the metadata allows the stats configuration and the stats
-%% values to be persisted, disabling the metadata returns riak to its
+%% enabling the metadata allows the stats configuration to be
+%% persisted, disabling the metadata returns riak to its
 %% original functionality of only using the exometer functions.
 %% Enabling and disabling the metadata occurs here, directing the
-%% stats and function work occurs in the riak_stat_coordinator
+%% stats and function work occurs in the riak_stat_mgr
 %% @end
 %%%-------------------------------------------------------------------
 -define(Metadata_Enabled, ?IS_ENABLED(?METADATA_ENABLED)).
@@ -150,26 +151,28 @@ reset_stat(Arg) ->
 -spec(stat_metadata(Argument :: boolean() | status) -> print()).
 stat_metadata(Argument) -> stat_metadata(Argument, ?Metadata_Enabled).
 
--spec(stat_metadata(Argument :: boolean() | status,
-                    MetadataStatus :: true | false) -> print()).
+-spec(stat_metadata(ToStatus :: boolean() | status,
+                    CurrentStatus :: true | false) -> print()).
+%% Enable the metadata when it is already enabled:
 stat_metadata(true, true) ->
     print_response("Metadata already enabled~n");
-
+%% Enable the metadata when it is disabled:
 stat_metadata(true, false) ->
     riak_stat_mgr:reload_metadata(),
     set_metadata(true),
     print_response("Metadata enabled~n");
-
+%% Disabled the metadata when it is enabled:
 stat_metadata(false, true) ->
     set_metadata(false),
     print_response("Metadata disabled~n");
-
+%% Disable the metadata when it is already disabled:
 stat_metadata(false, false) ->
     print_response("Metadata already disabled~n");
-
+%% Find the status of the metadata
 stat_metadata(status, true)  -> print_response("Metadata Is enabled~n");
 stat_metadata(status, false) -> print_response("Metadata Is disabled~n").
 
+%- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 set_metadata(Boolean) ->
     application:set_env(riak_core, ?METADATA_ENABLED, Boolean).
 
@@ -191,13 +194,13 @@ print_response(String, Args) -> io:fwrite(String, Args).
 data_sanitise(Arg) ->
     parse_stat_entry(check_args(Arg), ?TYPE, ?STATUS, ?DPs).
 
-%% separate Status from Type with fun of same arity
+%% separate Status from Type with function of same arity
 data_sanitise(Arg, Status)
     when   Status == enabled
     orelse Status == disabled
     orelse Status == '_' ->
     parse_stat_entry(check_args(Arg), ?TYPE, Status, ?DPs);
-
+%% If doesn't match the clause above, it must be the Type given.
 data_sanitise(Arg, Type) ->
     parse_stat_entry(check_args(Arg), Type, ?STATUS, ?DPs).
 
@@ -205,7 +208,8 @@ data_sanitise(Arg, Type, Status) ->
     parse_stat_entry(check_args(Arg), Type, Status, ?DPs).
 %%%-------------------------------------------------------------------
 
-check_args([]) -> print([]);
+%% @doc make sure all Args are Binaries in a list: [<<Args>>]
+%% sanitised for parse_stat_entry @end
 check_args([Args]) when is_atom(Args) ->
     check_args(atom_to_binary(Args, latin1));
 check_args([Args]) when is_list(Args) ->
@@ -233,6 +237,8 @@ check_args(_) ->
 parse_stat_entry(BinArgs, Type, Status, DPs) ->
     [Bin | Args] = re:split(BinArgs, "/"), %% separate /type=*.. etc...
     {NewType, NewStatus, NewDPs} =
+    %% pull the type, status and datapoints from the argument given
+    %% if nothing was given then the default is returned.
         type_status_and_dps(Args, Type, Status, DPs),
     StatName = statname(Bin),
     {StatName, NewStatus, NewType, NewDPs}.
@@ -260,6 +266,7 @@ type_status_and_dps([<<"status=", S/binary>> | Rest],Type,_St,DPs) ->
     type_status_and_dps(Rest, Type, NewStatus, DPs);
 type_status_and_dps([DPsBin | Rest], Type, Status, DPs) ->
     Atoms =
+    %% creates a list of the datapoints given from the command line.
         lists:map(fun(D) ->
             try binary_to_existing_atom(D, latin1) of
                 DP -> DP
@@ -270,8 +277,12 @@ type_status_and_dps([DPsBin | Rest], Type, Status, DPs) ->
     NewDPs = merge(lists:flatten(Atoms),DPs),
     type_status_and_dps(Rest, Type, Status, NewDPs).
 
+%% @doc If 'default' then
+%% it will be given as 'default' to exometer anyway
 merge([_ | _] = DPs, default) ->
     DPs;
+%% Otherwise checks if the H from Arg is a member of the DPs list,
+%% and will skip if they are already in there. @end
 merge([H | T], DPs) ->
     case lists:member(H, DPs) of
         true -> merge(T, DPs);
@@ -280,11 +291,12 @@ merge([H | T], DPs) ->
 merge([], DPs) ->
     DPs.
 
+%% @doc creates a path for the stat name @end
 statname([]) ->
     [riak_stat:prefix()] ++ '_' ;
 statname("*") ->
     statname([]);
-statname("["++_ = Expr) -> %% legacy code?
+statname("["++_ = Expr) ->
     case erl_scan:string(ensure_trailing_dot(Expr)) of
         {ok, Toks, _} ->
             case erl_parse:parse_exprs(Toks) of
@@ -298,7 +310,6 @@ statname("["++_ = Expr) -> %% legacy code?
 statname(Arg) when is_binary(Arg) ->
     Parts = re:split(Arg, "\\.", [{return,list}]),
     replace_parts(Parts);
-
 statname(_) ->
     print("Illegal Argument Type in riak_stat_data:statname~n").
 
@@ -328,6 +339,13 @@ replace_parts(Parts) ->
             Tail = replace_parts_1(After),
             [Head ++ Pad ++ Tail || Pad <- pads()]
         %% case of "**" in between elements in metric name
+        %% a Pad ('_') is added in between the terms given
+        %% in the arg, up to 10 times, and inserted into the
+        %% list; as in:
+        %% [[riak,'_',time],
+        %% [riak,'_','_',time],
+        %% [riak,'_','_','_',time],...];
+        %% If the Argument: riak.**.time was given.
     end.
 
 split([H | T], H, Acc) ->
@@ -402,6 +420,8 @@ reset_stats(Name) ->
 %% stat show will pass in an empty list into the Attributes field.
 %% @end
 %%%-------------------------------------------------------------------
+%% TODO: consolidate the function below or create separate functions
+%% for each specific request
 -spec(print(atom() | string() | list()
          | {listofstats(),datapoints()}) -> print()).
 print(undefined)   -> print([]);

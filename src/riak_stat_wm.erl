@@ -4,7 +4,7 @@
 %%% @end
 %%%-------------------------------------------------------------------
 -module(riak_stat_wm).
-%%-include_lib("webmachine/include/webmachine.hrl").
+-include_lib("webmachine/include/webmachine.hrl").
 
 %% wm resource exports
 -export([
@@ -15,9 +15,6 @@
     forbidden/2,
     produce_body/2,
     pretty_print/2]).
--export([
-    get_stats/0
-]).
 
 -record(ctx, {
     prefix,     %% prefix for resource uris
@@ -118,8 +115,8 @@ forbidden(Req, Ctx) ->
 %%%-------------------------------------------------------------------
 -spec(produce_body(rd(), context()) -> {iodata(), rd(), context()}).
 produce_body(ReqData, Ctx) ->
-    Stats = get_stats(),
-    Body  = riak_stat_json:encode({struct, Stats}),
+    Stats = riak_stat_push_util:get_stats([riak]),
+    Body  = riak_stat_push_util:encode({struct, Stats}),
     {Body, ReqData, Ctx}.
 
 
@@ -135,6 +132,3 @@ pretty_print(RD1, C1=#ctx{}) ->
 
 
 %%--------------------------------------------------------------------
-
-get_stats() ->
-    riak_stat_push_util:json_stats([riak]).

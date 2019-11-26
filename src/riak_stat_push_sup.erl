@@ -18,8 +18,8 @@
 -export([init/1]).
 
 -define(STRATEGY,  one_for_one).
--define(INTENSITY, 1000).
--define(PERIOD,    5000).
+-define(INTENSITY, 1).
+-define(PERIOD,    5).
 
 -define(RESTART,  transient).
 -define(SHUTDOWN, 5000).
@@ -99,7 +99,13 @@ init([]) ->
 get_children() ->
     ListOfKids = riak_stat_push:fold_through_meta('_', {{'_', '_', '_'}, '_'}, [node()]),
     lists:foldl(
-        fun({{Protocol,Instance}, {_ODate,_MDate,_Pid,{running, true},_Node,Port,Sip,Stats}}, Acc) ->
+        fun
+            ({{Protocol,Instance}, {_ODate,_MDate,_Pid,{running, true},_Node,Port,Sip,Stats}}, Acc) ->
+            Data = {{Port, Instance, Sip}, Stats},
+            [child_spec(Data, Protocol) | Acc];
+
+            %% MAPS
+            ({{Protocol,Instance}, #{running := true, port := Port, server_ip := Sip, stats := Stats}}, Acc) ->
             Data = {{Port, Instance, Sip}, Stats},
             [child_spec(Data, Protocol) | Acc];
             (_other,Acc) -> Acc
@@ -139,14 +145,19 @@ start_child(Child) ->
     case supervisor:start_child(?MODULE, Child) of
         {ok, Pid} ->
             io:format("Polling Initiated~n",[]),
+            lager:info("Child Started : ~p",[Child]),
             Pid;
         {error, Reason} ->
             case Reason of
                 {already_started, Pid} -> Pid;
-                econnrefused ->               io:fwrite("Error : Connection Refused~n");
-                {{error, econnrefused}, _} -> io:fwrite("Error : Connection Refused~n");
-                {error, Other} ->             io:fwrite("Error : ~p~n", [Other]);
-                Other ->                      io:fwrite("Error : ~p~n", [Other])
-
+                econnrefused ->               io:fwrite("Error : Connection Refused~n"),
+                    lager:info("Child Refused to start because Connection was refused : ~p",[Child]);
+                {{error, econnrefused}, _} -> io:fwrite("Error : Connection Refused~n"),
+                    lager:info("Child Refused to start because Connection was refused : ~p",[Child]);
+                {error, Other} ->             io:fwrite("Error : ~p~n", [Other]),
+                    lager:info("Child Refused to start because ~p : ~p",[Other,Child]);
+                Other ->                      io:fwrite("Error : ~p~n", [Other]),
+                    lager:info("Child Refused to start because  : ~p",[Other,Child])
             end
     end.
+

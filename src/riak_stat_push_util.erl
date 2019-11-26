@@ -14,16 +14,47 @@
 -define(Excluded_Datapoints,   [ms_since_reset]).
 -define(PUSHPREFIX(Node), {riak_stat_push, node()}).
 
+%% todo: write a manual json object encoder for the stats http and endpoint.
 
 json_stats(Stats) ->
     json_stats([],{instance,"web"},Stats).
 json_stats(ComponentHostname, Instance, Stats) ->
     Metrics = get_stats(Stats),
-    AdditionalFields = lists:flatten([ComponentHostname, Instance]),
-    JsonStats = mochijson2:encode({struct, Metrics}),
+    AdditionalFields = flatten_components(ComponentHostname, Instance),
+    JsonStats = encode(Metrics),
     DateTime = format_time(os:timestamp()),
     [${, format_fields(AdditionalFields, []), $,,
         quote("timestamp"), $:, quote(DateTime), $,, JsonStats, $}, "\n"].
+
+encode(Metrics) ->
+    New = lists:foldl(fun({Name, Value}, Acc) ->
+        case proplists:get_value(value, Value) of
+            {error, not_found} -> Acc;
+            _Other -> [{Name, Value} | Acc]
+        end
+                      end, [], Metrics),
+    mochijson2:encode({struct, New}).
+
+flatten_components(Hostname, Instance) ->
+    NewHostname = lists:flatten(Hostname),
+    NewInstance = lists:flatten(Instance),
+    flatten_components(NewHostname, NewInstance, []).
+
+flatten_components(Hostname, Instance, Acc) when is_tuple(Hostname) ->
+    flatten_components([],Instance,[{hostname,Hostname}|Acc]);
+flatten_components(Hostname, Instance, Acc) when is_tuple(Instance) ->
+    flatten_components(Hostname, [], [{instance,Instance}|Acc]);
+flatten_components([{HostnameAtom,Hostname}], Instance, Acc) ->
+    flatten_components([], Instance, [{HostnameAtom, Hostname} | Acc]);
+flatten_components(Hostname, [{InstanceAtom, Instance}], Acc) ->
+    flatten_components(Hostname, [], [{InstanceAtom, Instance} | Acc]);
+flatten_components([],[],Acc) -> Acc;
+flatten_components(Hostname, Instance, Acc)
+    when is_list(Hostname) andalso is_list(Instance) ->
+    flatten_components([],[],[{hostname, Hostname},{instance,Instance}|Acc]).
+
+
+
 
 format_fields([], Json) ->
     lists:reverse(Json);
