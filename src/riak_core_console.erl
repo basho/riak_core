@@ -1304,8 +1304,6 @@ stat_metadata(["enable"]) ->
 stat_metadata(["disable"]) ->
     riak_stat_console:stat_metadata(false);
 stat_metadata(["status"]) ->
-    stat_metadata([]);
-stat_metadata([]) ->
     riak_stat_console:stat_metadata(status);
 stat_metadata(_) ->
     io:fwrite("Invalid Argument~n").
