@@ -48,7 +48,7 @@ start_link() ->
 %% Supervisor callbacks
 %% ===================================================================
 
-init([]) ->
+init([]) -> %% todo: add riak_stat_push_sup in here?
     %% Note that exometer_core starts folsom now, so it is not needed here
     Children = lists:flatten(
                  [

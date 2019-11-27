@@ -21,16 +21,22 @@
 -module(riak_core_stat).
 
 -behaviour(gen_server).
+-include_lib("riak_core/include/riak_stat.hrl").
 
 %% API
 -export([
     start_link/0,
-    get_stats/0, get_stats/1, get_value/1,
-    get_info/0, update/1,
-    register_stats/0, vnodeq_stats/0,
+    get_stats/0,
+    get_stats/1,
+    get_value/1,
+    get_info/0,
+    update/1,
+    register_stats/0,
 	  register_stats/2,
-	  register_vnode_stats/3, unregister_vnode_stats/2,
-	  vnodeq_stats/1
+    vnodeq_stats/0,
+    vnodeq_stats/1,
+    register_vnode_stats/3,
+    unregister_vnode_stats/2
 ]).
 
 %% gen_server callbacks
@@ -48,21 +54,32 @@
 -define(APP, riak_core).
 -define(PFX, riak_stat:prefix()).
 
-
+%%%===================================================================
+%%% API
+%%%===================================================================
+-spec(start_link() ->
+    {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
-%%%----------------------------------------------------------------%%%
+%%%-------------------------------------------------------------------
 
+-spec(register_stats() -> ok).
 register_stats() ->
     register_stats(common, system_stats()),
     register_stats(?APP, stats()).
 
-%% @spec register_stats(App, Stats) -> ok
-%% @doc (Re-)Register a list of metrics for App.
+%%%-------------------------------------------------------------------
+%% @doc
+%% (Re-)Register a list of metrics for this app and the common host
+%% metrics into exometer
+%% @end
+%%%-------------------------------------------------------------------
+-spec(register_stats(app(), listofstats()) -> ok).
 register_stats(App, Stats) ->
   riak_stat:register(App, Stats).
 
+%% todo: the SPec for this function
 register_vnode_stats(Module, Index, Pid) ->
     F = fun vnodeq_atom/2,
     Vnode_Stat_1 =
@@ -87,16 +104,27 @@ register_vnode_stats(Module, Index, Pid) ->
     Vnode_Stat_3 = {[vnodeq, Module, Index],
         function, [{arg, {erlang, process_info, [Pid, message_queue_len], match, {'_', value}}}]},
 
+    %% todo: explanation as to what the function call does for these
+    %% stats, why it is stored in exometer when the stat is only
+    %% required when it is requested, as in when the stat is
+    %% requested it does the function call to get the answer.
     RegisterStats = [Vnode_Stat_1, Vnode_Stat_2, Vnode_Stat_3],
     register_stats(?APP, RegisterStats).
 
 %%%----------------------------------------------------------------%%%
 
+%% todo: spec for this function and a @doc to explain why it is
+%% needed to unregister the vnodes, as far as you know it is only called on
+%% shut down
 unregister_vnode_stats(Module, Index) ->
     riak_stat:unregister({Module, Index, vnodeq, ?APP}).
 
 %%%----------------------------------------------------------------%%%
 
+%% todo: see if these functions are actually necessary and can they be removed?
+%% they are basically a mimic of the exometer functions any way,
+
+%% todo: redo the spec and docs for all these functions
 %% @spec get_stats() -> proplist()
 %% @doc Get the current aggregation of stats.
 get_stats() ->
@@ -113,11 +141,14 @@ get_info() ->
 
 %%%----------------------------------------------------------------%%%
 
+%% todo: A spec and @doc for this function. i.e. it is a gen_server:cast
+%% so it is non blocking.
 update(Arg) ->
     gen_server:cast(?SERVER, {update, Arg}).
 
 %% gen_server
 
+%% todo: add the spec for the init.
 init([]) ->
     register_stats(),
     {ok, ok}.
@@ -174,10 +205,9 @@ stats() ->
     [{ignored_gossip_total,   counter, [], [{value, ignored_gossip_total}]},
      {rings_reconciled,       spiral,  [], [{count, rings_reconciled_total},
                                             {one, rings_reconciled}]},
-     {ring_creation_size,
-      {function, app_helper, get_env,
-          [riak_core, ring_creation_size],
-       match, value},                  [], [{value, ring_creation_size}]},
+     {ring_creation_size, %% todo: make this a macro?
+      {function, app_helper, get_env, [riak_core, ring_creation_size], match, value},
+                                       [], [{value, ring_creation_size}]},
      {gossip_received,        spiral,  [], [{one, gossip_received}]},
      {rejected_handoffs,      counter, [], [{value, rejected_handoffs}]},
      {handoff_timeouts,       counter, [], [{value, handoff_timeouts}]},
@@ -221,6 +251,10 @@ system_stats() ->
            {code          , memory_code},
            {ets           , memory_ets}]}
     ].
+
+%% todo: add a spec and @doc to explain this is not something called when a stat
+%% is requested from exometer, more this is actually a function that is called
+%% in the shell.
 
 %% Provide aggregate stats for vnode queues.  Compute instantaneously for now,
 %% may need to cache if stats are called heavily (multiple times per seconds)

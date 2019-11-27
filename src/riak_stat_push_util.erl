@@ -15,6 +15,11 @@
 -define(PUSHPREFIX(Node), {riak_stat_push, node()}).
 
 %% todo: write a manual json object encoder for the stats http and endpoint.
+%% todo: write specs and docs for the functions in this module
+%% todo: add default functions for both the tcp gen server and udp gen server to use
+%% as in: when the gen_server is started have it so it so the gen_server stores the
+%% information into the metadata, not riak_stat_push, and the same for when the server is
+%% terminated.
 
 json_stats(Stats) ->
     json_stats([],{instance,"web"},Stats).

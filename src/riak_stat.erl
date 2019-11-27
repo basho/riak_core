@@ -7,7 +7,7 @@
 %%% UPDATE, DELETE or RESET the stats.
 %%%
 %%%
-%%% As of AUGUST 2019 -> the aggregate function is a test function and
+%%% As of 2019 -> the aggregate function is a test function and
 %%% works in a very basic way, i.e. it will produce the sum of any
 %%% counter datapoints for any stats given, or the average of any
 %%% "average" datapoints such as mean/median/one/value etc...

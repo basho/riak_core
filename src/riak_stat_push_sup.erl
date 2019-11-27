@@ -83,6 +83,11 @@ init([]) ->
     PERIOD = ?PERIOD,
     SupFlags = {STRATEGY,INTENSITY,PERIOD},
     Children = get_children(),
+    %% todo: create function that will start up servers. If it and it will
+    %% try to restart incrementally.
+
+    %% That way the whole system does not fall over should the genserver
+    %% not start.
     {ok, {SupFlags, Children}}.
 
 %%%===================================================================

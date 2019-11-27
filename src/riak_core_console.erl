@@ -1166,6 +1166,7 @@ parse_cidr(CIDR) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%% console %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% TODO: Read through the @doc for each function and change if necessary
 %%%-------------------------------------------------------------------
 %% @doc
 %% riak admin stat show riak.**
@@ -1175,8 +1176,7 @@ parse_cidr(CIDR) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(stat_show(consolearg()) -> ok | error()).
-stat_show(Arg) ->
-    riak_stat_console:show_stat(Arg).
+stat_show(Arg) -> riak_stat_console:show_stat(Arg).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -1186,8 +1186,7 @@ stat_show(Arg) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(stat_0(consolearg()) -> ok | error()).
-stat_0(Arg) ->
-    riak_stat_console:show_stat_0(Arg).
+stat_0(Arg) -> riak_stat_console:show_stat_0(Arg).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -1196,8 +1195,7 @@ stat_0(Arg) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(stat_disable_0(consolearg()) -> ok | error()).
-stat_disable_0(Arg) ->
-    riak_stat_console:disable_stat_0(Arg).
+stat_disable_0(Arg) -> riak_stat_console:disable_stat_0(Arg).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -1206,8 +1204,7 @@ stat_disable_0(Arg) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(stat_info(consolearg()) -> ok | error()).
-stat_info(Arg) ->
-    riak_stat_console:stat_info(Arg).
+stat_info(Arg) -> riak_stat_console:stat_info(Arg).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -1215,8 +1212,7 @@ stat_info(Arg) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(stat_enable(consolearg()) -> ok | error()).
-stat_enable(Arg) ->
-    riak_stat_console:status_change(Arg, enabled).
+stat_enable(Arg) -> riak_stat_console:status_change(Arg, enabled).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -1224,8 +1220,7 @@ stat_enable(Arg) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(stat_disable(consolearg()) -> ok | error()).
-stat_disable(Arg) ->
-    riak_stat_console:status_change(Arg, disabled).
+stat_disable(Arg) -> riak_stat_console:status_change(Arg, disabled).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -1234,8 +1229,7 @@ stat_disable(Arg) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(stat_reset(consolearg()) -> ok | error()).
-stat_reset(Arg) ->
-    riak_stat_console:reset_stat(Arg).
+stat_reset(Arg) -> riak_stat_console:reset_stat(Arg).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%% profile %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -1273,15 +1267,13 @@ remove_profile(ProfileName) ->
     riak_stat_profiles:delete_profile(ProfileName).
 
 %%%-------------------------------------------------------------------
--spec(reset_profile(Arg :: term()) -> term()).
-reset_profile(_Arg) ->
-    reset_profile().
-%%%-------------------------------------------------------------------
 %% @doc
 %% unloads from the current profile, so all the stats are re-enabled.
 %% @end
 %%%-------------------------------------------------------------------
+-spec(reset_profile(Arg :: term()) -> term()).
 -spec(reset_profile() -> ok | error()).
+reset_profile(_Arg) -> reset_profile().
 reset_profile() ->
     riak_stat_profiles:reset_profile().
 
@@ -1299,14 +1291,10 @@ reset_profile() ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(stat_metadata(consolearg()) -> ok | error()).
-stat_metadata(["enable"]) ->
-    riak_stat_console:stat_metadata(true);
-stat_metadata(["disable"]) ->
-    riak_stat_console:stat_metadata(false);
-stat_metadata(["status"]) ->
-    riak_stat_console:stat_metadata(status);
-stat_metadata(_) ->
-    io:fwrite("Invalid Argument~n").
+stat_metadata(["enable" ]) -> riak_stat_console:stat_metadata(true);
+stat_metadata(["disable"]) -> riak_stat_console:stat_metadata(false);
+stat_metadata(["status" ]) -> riak_stat_console:stat_metadata(status);
+stat_metadata(Arg) -> io:fwrite("Invalid Argument Given :~p~n",[Arg]).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -1321,8 +1309,7 @@ stat_metadata(_) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(setup_endpoint(consolearg()) -> ok | error()).
-setup_endpoint(Arg) ->
-    riak_stat_push:setup(Arg).
+setup_endpoint(Arg) -> riak_stat_push:setup(Arg).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -1331,8 +1318,7 @@ setup_endpoint(Arg) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(setdown_endpoint(consolearg()) -> ok | error()).
-setdown_endpoint(Arg) ->
-    riak_stat_push:setdown(Arg).
+setdown_endpoint(Arg) -> riak_stat_push:setdown(Arg).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -1342,8 +1328,7 @@ setdown_endpoint(Arg) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(find_push_stats(consolearg()) -> ok | error()).
-find_push_stats(Arg) ->
-    riak_stat_push:find_push_stats([node()], Arg).
+find_push_stats(Arg) -> riak_stat_push:find_push_stats([node()], Arg).
 
 %%%-------------------------------------------------------------------
 %% @doc

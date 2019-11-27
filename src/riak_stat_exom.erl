@@ -8,27 +8,33 @@
 -include_lib("riak_core/include/riak_stat.hrl").
 
 -export([
-%% Registration API
     register/1,
-
-%% Read API
-    get_values/1, get_info/2, find_entries/2, find_entries/1,
-    get_datapoint/2, get_value/1, select/1, sample/1,
-    find_stats_info/2, aggregate/2, resolve/1,
-
-%% Update API
-    update/3, update/4, change_status/1, change_status/2,
-
-%% Deleting/Resetting API
-    reset_stat/1, unregister/1,
-
-%% Other
-    alias/1, aliases/2, find_alias/1, timestamp/0]).
+    get_values/1,
+    get_info/2,
+    find_entries/2,
+    find_entries/1,
+    get_datapoint/2,
+    get_value/1,
+    select/1,
+    sample/1,
+    find_stats_info/2,
+    aggregate/2,
+    resolve/1,
+    update/3,
+    update/4,
+    change_status/1,
+    change_status/2,
+    reset_stat/1,
+    unregister/1,
+    alias/1,
+    aliases/2,
+    find_alias/1,
+    timestamp/0]).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% NB : DP = DataPoint
-%%      Alias : Name of a datapoint in a Stat.
+%%      Alias : Name of a datapoint of a Stat.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %%%===================================================================
