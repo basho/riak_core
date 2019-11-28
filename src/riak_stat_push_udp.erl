@@ -31,25 +31,14 @@
     server_ip     :: server_ip(),
     stats_port    :: push_port(),
     hostname      :: hostname(),
-    instance      :: instance()
+    instance      :: instance(),
+    stats         :: listofstats()
 }).
-
--define(UDP_OPEN_PORT,         0).
--define(UDP_OPTIONS,           [?UDP_BUFFER,
-                                ?UDP_SNDBUFF,
-                                ?UDP_ACTIVE,
-                                ?UDP_REUSE]).
-
--define(UDP_BUFFER,       {buffer, 100*1024*1024}).
--define(UDP_SNDBUFF,      {sndbuf,   5*1024*1024}).
--define(UDP_ACTIVE,       {active,          false}).
--define(UDP_REUSE,        {reuseaddr, true}).
 
 %%%===================================================================
 %%% API
 %%%===================================================================
 
-%%--------------------------------------------------------------------
 -spec(start_link(Arg :: term()) ->
     {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 start_link(Obj) ->
@@ -58,30 +47,18 @@ start_link(Obj) ->
 %%% gen_server callbacks
 %%%===================================================================
 
-%%--------------------------------------------------------------------
 -spec(init(Args :: term()) ->
     {ok, State :: #state{}} | {ok, State :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term()} | ignore).
-init([{{MonitorLatencyPort, Instance, Sip}, Stats}]) ->
-    MonitorStatsPort   = ?MONITORSTATSPORT,
-    MonitorServer      = ?MONITORSERVER,
-    Hostname           = inet_db:gethostname(),
-    case gen_udp:open(?UDP_OPEN_PORT, ?UDP_OPTIONS) of
-        {ok, Socket} ->
-            self() ! refresh_monitor_server_ip,
-            send_after(?STATS_UPDATE_INTERVAL, {dispatch_stats, Stats}),
-            {ok, #state{
-                socket        = Socket,
-                latency_port  = MonitorLatencyPort,
-                server        = MonitorServer,
-                server_ip     = Sip,
-                stats_port    = MonitorStatsPort,
-                hostname      = Hostname,
-                instance      = Instance}
-            };
-        Error ->
-            {stop, Error} %% Cannot Start because Socket was not returned.
+init([Options]) ->
+    case open(Options) of
+        {ok, State} ->
+            {ok, State};
+        {error, Error} ->
+            lager:error("Error starting ~p because: ~p", [?MODULE, Error]),
+            {stop, Error}
     end.
+
 %%--------------------------------------------------------------------
 -spec(handle_call(Request :: term(), From :: {pid(), Tag :: term()},
     State :: #state{}) ->
@@ -118,16 +95,16 @@ handle_info(refresh_monitor_server_ip, State = #state{server = MonitorServer}) -
                            [Other, ?REFRESH_INTERVAL]),
                        State
                end,
-    send_after(?REFRESH_INTERVAL, refresh_monitor_server_ip),
+    refresh_monitor_server_ip(),
     {noreply, NewState};
-handle_info({dispatch_stats, Stats}, #state{socket=Socket, latency_port = Port,
+handle_info(push_stats, #state{socket=Socket, latency_port = Port, stats = Stats,
     server_ip = undefined, server = Server, hostname = Hostname,
     instance = Instance} = State) ->
-    dispatch_stats(Socket, Hostname, Instance, Server, Port, Stats),
+    push_stats(Socket, Hostname, Instance, Server, Port, Stats),
     {noreply, State};
-handle_info({dispatch_stats, Stats}, #state{socket=Socket, latency_port = Port,
+handle_info(push_stats, #state{socket=Socket, latency_port = Port, stats = Stats,
     server_ip = ServerIp, hostname = Hostname, instance = Instance} = State) ->
-    dispatch_stats(Socket, Hostname, Instance, ServerIp, Port, Stats),
+    push_stats(Socket, Hostname, Instance, ServerIp, Port, Stats),
     {noreply, State};
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -150,6 +127,43 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
+open({{Port, _Instance, _Sip}, _Stats}=Info) ->
+    Options = ?OPTIONS,
+    case gen_udp:open(Port, Options) of
+        {ok, Socket} ->
+            State = create_state(Socket, Info),
+            store_setup_info(State),
+            refresh_monitor_server_ip(),
+            push_stats(),
+            {ok, State};
+        Error ->
+            {error, Error}
+    end.
+
+create_state(Socket, {{MonitorLatencyPort, Instance, Sip}, Stats}) ->
+    MonitorStatsPort  = ?MONITORSTATSPORT,
+    MonitorServer     = ?MONITORSERVER,
+    Hostname          = inet_db:gethostname(),
+    #state{
+        socket        = Socket,
+        latency_port  = MonitorLatencyPort,
+        server        = MonitorServer,
+        server_ip     = Sip,
+        stats_port    = MonitorStatsPort,
+        hostname      = Hostname,
+        instance      = Instance,
+        stats         = Stats}.
+
+store_setup_info(State) ->
+    riak_stat_push_util:store_setup_info(State).
+
+refresh_monitor_server_ip() ->
+    send_after(?REFRESH_INTERVAL, refresh_monitor_server_ip).
+
+
+
+%%--------------------------------------------------------------------
+
 send(Socket, Host, Port, Data) ->
     gen_udp:send(Socket, Host, Port, Data).
 
@@ -162,13 +176,16 @@ send_after(Interval, Arg) ->
 %% send to the endpoint. Repeat.
 %% @end
 %%--------------------------------------------------------------------
--spec(dispatch_stats(socket(),hostname(),instance(),hostname(),port(),metrics())
+-spec(push_stats(socket(),hostname(),instance(),hostname(),port(),metrics())
         -> ok | error()).
-dispatch_stats(Socket, ComponentHostname, Instance, MonitoringHostname, Port, Stats) ->
+push_stats(Socket, ComponentHostname, Instance, MonitoringHostname, Port, Stats) ->
     case riak_stat_push_util:json_stats(ComponentHostname, Instance, Stats) of
         ok ->
-            send_after(?STATS_UPDATE_INTERVAL, {dispatch_stats, Stats});
+            push_stats();
         JsonStats ->
             send(Socket, MonitoringHostname, Port, JsonStats),
-            send_after(?STATS_UPDATE_INTERVAL, {dispatch_stats, Stats})
+            push_stats()
     end.
+
+push_stats() ->
+    send_after(?STATS_UPDATE_INTERVAL, push_stats).

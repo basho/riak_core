@@ -32,7 +32,7 @@
     stats_port    :: push_port(),
     hostname      :: hostname(),
     instance      :: instance(),
-    stats         :: list()
+    stats         :: listofstats()
 }).
 
 -define(TCP_PORT,         0).
@@ -48,6 +48,8 @@
 -define(TCP_ACTIVE,       {active,          true}).
 -define(TCP_PACKET,       {packet,0}).
 -define(TCP_REUSE,        {reuseaddr, true}).
+
+%%TODO copy UDP server
 
 %%%===================================================================
 %%% API

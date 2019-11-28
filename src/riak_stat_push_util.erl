@@ -14,6 +14,21 @@
 -define(Excluded_Datapoints,   [ms_since_reset]).
 -define(PUSHPREFIX(Node), {riak_stat_push, node()}).
 
+%%%===================================================================
+%%% gen_server's functions
+%%%===================================================================
+
+store_setup_info(State) ->
+    ok.
+
+
+
+
+
+
+%%%===================================================================
+%%%===================================================================
+
 %% todo: write a manual json object encoder for the stats http and endpoint.
 %% todo: write specs and docs for the functions in this module
 %% todo: add default functions for both the tcp gen server and udp gen server to use
