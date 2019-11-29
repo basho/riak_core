@@ -35,22 +35,6 @@
     stats         :: listofstats()
 }).
 
--define(TCP_PORT,         0).
--define(TCP_ADDRESS,      inet_db:gethostname()).
--define(TCP_OPTIONS,      [?TCP_BUFFER,
-                           ?TCP_SNDBUFF,
-                           ?TCP_ACTIVE,
-                           ?TCP_PACKET,
-                           ?TCP_REUSE]).
-
--define(TCP_BUFFER,       {buffer, 100*1024*1024}).
--define(TCP_SNDBUFF,      {sndbuf,   5*1024*1024}).
--define(TCP_ACTIVE,       {active,          true}).
--define(TCP_PACKET,       {packet,0}).
--define(TCP_REUSE,        {reuseaddr, true}).
-
-%%TODO copy UDP server
-
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -67,29 +51,15 @@ start_link(Obj) ->
 -spec(init(Args :: term()) ->
     {ok, State :: #state{}} | {ok, State :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term()} | ignore).
-init([{{MontiorLatencyPort,Instance,[Sip]},Stats}]) ->
-    MonitorStatsPort = ?MONITORSTATSPORT,
-    MonitorServer    = ?MONITORSERVER,
-    Hostname         = ?TCP_ADDRESS,
-    State = #state{latency_port = MontiorLatencyPort,
-                    server_ip = Sip,
-        server = MonitorServer,
-        hostname = Hostname,
-        instance = Instance,
-        stats_port = MonitorStatsPort,
-        stats = Stats},
-    case gen_tcp:connect(Sip,MontiorLatencyPort,?TCP_OPTIONS) of
-        {ok, Socket} ->
-            lager:info("Server Started: ~p",[Instance]),
-            self() ! refresh_monitor_server_ip,
-            send_after(?STATS_UPDATE_INTERVAL, {dispatch_stats, Stats}),
-
-            {ok, State#state{socket = Socket}
-            };
-        Error ->
-            lager:info("Gen server stopped Setting up : ~p  because : ~p",[Instance,Error]),
-            {stop,Error} %% Cannot Start because Socket was not returned.
+init([Options]) ->
+    case open(Options) of
+        {ok, State} ->
+            {ok, State};
+        {error, Error} ->
+            lager:error("Error starting ~p because of : ~p",[?MODULE,Error]),
+            {stop, Error}
     end.
+
 %%--------------------------------------------------------------------
 -spec(handle_call(Request :: term(), From :: {pid(), Tag :: term()},
     State :: #state{}) ->
@@ -126,19 +96,18 @@ handle_info(refresh_monitor_server_ip, State = #state{server = MonitorServer}) -
                            [Other, ?REFRESH_INTERVAL]),
                        State
                end,
-    send_after(?REFRESH_INTERVAL, refresh_monitor_server_ip),
+    refresh_monitor_server_ip(),
     {noreply, NewState};
-handle_info({dispatch_stats, Stats}, #state{
-    socket=Socket, server_ip = undefined, hostname = Hostname,
+handle_info(push_stats, #state{
+    socket=Socket, server_ip = undefined, hostname = Hostname, stats = Stats,
     instance = Instance} = State) ->
-    dispatch_stats(Socket, Hostname, Instance, Stats),
+    push_stats(Socket, Hostname, Instance, Stats),
     {noreply, State};
-handle_info({dispatch_stats, Stats}, #state{
-    socket=Socket, hostname = Hostname, instance = Instance} = State) ->
-    dispatch_stats(Socket, Hostname, Instance, Stats),
+handle_info(push_stats, #state{
+    socket=Socket, hostname = Hostname, instance = Instance, stats = Stats} = State) ->
+    push_stats(Socket, Hostname, Instance, Stats),
     {noreply, State};
 handle_info(tcp_closed,State) ->
-    %% todo: try to initiate connection again move the open socket to its own function
     {stop, endpoint_closed, State};
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -153,11 +122,7 @@ terminate(endpoint_closed, #state{instance = Instance}) ->
 terminate(manual, #state{instance = Instance}) ->
     terminate_server(Instance),
     ok;
-terminate(restart_failed, _State) ->
-    %% todo: running , restart failed.
-    ok;
 terminate(_Reason, _State) ->
-    %% todo: close TCP connection %% do the same for udp
     ok.
 
 %%--------------------------------------------------------------------
@@ -171,7 +136,54 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
+open({{Port, _Instance, Sip}, _Stats}=Info) ->
+    Options = ?OPTIONS,
+    case gen_tcp:connect(Sip,Port,Options) of
+        {ok, Socket} ->
+            State = create_state(Socket, Info),
+            store_setup_info(State),
+            refresh_monitor_server_ip(),
+            push_stats(),
+            {ok, State};
+        Error ->
+            {error, Error}
+    end.
 
+create_state(Socket, {{MonitorLatencyPort, Instance, Sip}, Stats}) ->
+    MonitorStatsPort  = ?MONITORSTATSPORT,
+    MonitorServer     = ?MONITORSERVER,
+    Hostname          = inet_db:gethostname(),
+    #state{
+        socket        = Socket,
+        latency_port  = MonitorLatencyPort,
+        server        = MonitorServer,
+        server_ip     = Sip,
+        stats_port    = MonitorStatsPort,
+        hostname      = Hostname,
+        instance      = Instance,
+        stats         = Stats}.
+
+store_setup_info(State) ->
+    riak_stat_push_util:store_setup_info(State).
+
+refresh_monitor_server_ip() ->
+    send_after(?REFRESH_INTERVAL, refresh_monitor_server_ip).
+
+%%--------------------------------------------------------------------
+
+terminate_server(Instance) ->
+    Protocol = tcp,
+    Key = {Protocol, Instance},
+    Prefix = {riak_stat_push, node()},
+    Fun = set_running_false_fun(),
+    riak_stat_meta:put(Prefix,Key,Fun).
+
+set_running_false_fun() ->
+    fun({ODT,_MDT,_Pid,{running,true},Node,Port,Sip,Stats}) ->
+        {ODT,calendar:universal_time(),undefined,{running,false},Node,Port,Sip,Stats}
+    end.
+
+%%--------------------------------------------------------------------
 
 -spec(send(socket(),jsonstats()) -> ok | error()).
 send(Socket, Data) ->
@@ -186,24 +198,15 @@ send_after(Interval, Arg) ->
 %% send to the endpoint. Repeat.
 %% @end
 %%--------------------------------------------------------------------
--spec(dispatch_stats(socket(),hostname(),instance(),metrics()) -> ok | error()).
-dispatch_stats(Socket, ComponentHostname, Instance, Stats) ->
-    case riak_stat_push_util:json_stats(ComponentHostname, Instance, Stats) of
+-spec(push_stats(socket(),hostname(),instance(),metrics()) -> ok | error()).
+push_stats(Socket, Hostname, Instance, Stats) ->
+    case riak_stat_push_util:json_stats(Hostname, Instance, Stats) of
         ok ->
-            send_after(?STATS_UPDATE_INTERVAL, {dispatch_stats, Stats});
+            push_stats();
         JsonStats ->
             send(Socket, JsonStats),
-            send_after(?STATS_UPDATE_INTERVAL, {dispatch_stats, Stats})
+            push_stats()
     end.
 
-set_running_false_fun() ->
-    fun({ODT,_MDT,_Pid,{running,true},Node,Port,Sip,Stats}) ->
-        {ODT,calendar:universal_time(),undefined,{running,false},Node,Port,Sip,Stats}
-    end.
-
-terminate_server(Instance) ->
-    Protocol = tcp,
-    Key = {Protocol, Instance},
-    Prefix = {riak_stat_push, node()},
-    Fun = set_running_false_fun(),
-    riak_stat_meta:put(Prefix,Key,Fun).
+push_stats() ->
+    send_after(?STATS_UPDATE_INTERVAL, push_stats).

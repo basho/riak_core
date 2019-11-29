@@ -106,6 +106,8 @@ handle_info(push_stats, #state{socket=Socket, latency_port = Port, stats = Stats
     server_ip = ServerIp, hostname = Hostname, instance = Instance} = State) ->
     push_stats(Socket, Hostname, Instance, ServerIp, Port, Stats),
     {noreply, State};
+handle_info(shutdown, State) ->
+    {stop, manual, State};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -159,6 +161,8 @@ store_setup_info(State) ->
 
 refresh_monitor_server_ip() ->
     send_after(?REFRESH_INTERVAL, refresh_monitor_server_ip).
+
+%%--------------------------------------------------------------------
 
 
 
