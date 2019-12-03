@@ -12,7 +12,8 @@
 -export([
     start_link/0,
     start_server/2,
-    stop_server/1]).
+    stop_server/1,
+    restart_children/3]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -29,6 +30,9 @@
 -define(UDP_CHILD, riak_stat_push_udp).
 
 -define(PUSHPREFIX, {riak_stat_push, term_to_binary(node())}).
+-define(ATTEMPTS, app_helper:get_env(riak_stat_push, restart_attempts, 50)).
+-define(TIMINGS, app_helper:get_env(riak_stat_push, restart_timings,
+    [X*1000 || X <- timings()])).
 
 %%%===================================================================
 %%% API functions
@@ -82,13 +86,14 @@ init([]) ->
     INTENSITY = ?INTENSITY,
     PERIOD = ?PERIOD,
     SupFlags = {STRATEGY,INTENSITY,PERIOD},
-    Children = get_children(),
+%%    Children = get_children(),
     %% todo: create function that will start up servers. If it and it will
     %% try to restart incrementally.
 
+    restart_children(),
     %% That way the whole system does not fall over should the genserver
     %% not start.
-    {ok, {SupFlags, Children}}.
+    {ok, {SupFlags, []}}.
 
 %%%===================================================================
 %%% Internal functions
@@ -146,15 +151,17 @@ mod_name(tcp) -> ?TCP_CHILD.
 %% @end
 %%%-------------------------------------------------------------------
 -spec(start_child(supervisor:child_spec()) -> ok | print() | error() | pid()).
+start_child(Children) when is_list(Children) ->
+    [start_child(Child)|| Child <- Children];
 start_child(Child) ->
     case supervisor:start_child(?MODULE, Child) of
         {ok, Pid} ->
             io:format("Polling Initiated~n",[]),
             lager:info("Child Started : ~p",[Child]),
-            Pid;
+            {Child, Pid};
         {error, Reason} ->
             case Reason of
-                {already_started, Pid} -> Pid;
+                {already_started, Pid} -> {Child,Pid};
                 econnrefused ->               io:fwrite("Error : Connection Refused~n"),
                     lager:info("Child Refused to start because Connection was refused : ~p",[Child]);
                 {{error, econnrefused}, _} -> io:fwrite("Error : Connection Refused~n"),
@@ -165,4 +172,56 @@ start_child(Child) ->
                     lager:info("Child Refused to start because  : ~p",[Other,Child])
             end
     end.
+
+restart_children() ->
+    Children = get_children(),
+    Attempts = ?ATTEMPTS, %% 100 Attempts at restarting the Children
+    Timings  = ?TIMINGS,
+    {Pid, Ref} =
+        spawn_monitor(riak_stat_push_sup, restart_children, [Attempts, Timings, Children]),
+    ok.
+
+restart_children(_Attempts, _Timings, []) ->
+    ok;
+restart_children(0, _Timings, Children) ->
+    lager:error("Could not restart Children : ~p, No attempts remaining",
+        [[Name || {Name, _, _, _,_,_} <- Children]]),
+    %% Setting running = false:
+    Keys = make_key(Children),
+    riak_stat_push_util:stop_running_server(Keys);
+restart_children(Attempts, [Timing|Timings], Children) ->
+    timer:sleep(Timing),
+    ToStart = lists:foldl(fun
+                              ({Child, econnrefused}, Acc) ->
+                                  riak_stat_push_util:stop_running_server(make_key([Child])),
+                                  Acc;
+                              ({Child,Pid}, Acc) when is_pid(Pid) ->
+                                  Key = make_key(Child),
+                                  %% todo: store in meta,
+                                  Acc;
+                              ({Child,_Other}, Acc) ->
+                                  [Child|Acc]
+                          end, [], start_child(Children)),
+    restart_children(Attempts-1,Timings,ToStart).
+
+
+make_key(Child) ->
+    lists:foldl(
+        fun({Name, {Mod, _Fun, _Args}, _R, _S, _T, _M}, Acc) ->
+            Protocol =
+                case Mod of
+                    riak_stat_push_tcp -> tcp;
+                    riak_stat_push_udp -> udp
+                end,
+            [{Protocol, atom_to_list(Name)} | Acc]
+        end, [], Child).
+
+timings() ->
+    timings(1,[]).
+
+timings([], Timings) -> lists:reverse(lists:flatten(Timings));
+timings(128,Timings) ->
+    timings([],[[N=128*2,N,N,N]|Timings]);
+timings(Time, Timings) ->
+    timings(N=Time*2, [[N,N,N,N]|Timings]).
 

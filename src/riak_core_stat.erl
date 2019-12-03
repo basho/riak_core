@@ -104,29 +104,17 @@ register_vnode_stats(Module, Index, Pid) ->
     Vnode_Stat_3 = {[vnodeq, Module, Index],
         function, [{arg, {erlang, process_info, [Pid, message_queue_len], match, {'_', value}}}]},
 
-    %% todo: explanation as to what the function call does for these
-    %% stats, why it is stored in exometer when the stat is only
-    %% required when it is requested, as in when the stat is
-    %% requested it does the function call to get the answer.
+
     RegisterStats = [Vnode_Stat_1, Vnode_Stat_2, Vnode_Stat_3],
     register_stats(?APP, RegisterStats).
 
 %%%----------------------------------------------------------------%%%
 
-%% todo: spec for this function and a @doc to explain why it is
-%% needed to unregister the vnodes, as far as you know it is only called on
-%% shut down
 unregister_vnode_stats(Module, Index) ->
     riak_stat:unregister({Module, Index, vnodeq, ?APP}).
 
 %%%----------------------------------------------------------------%%%
 
-%% todo: see if these functions are actually necessary and can they be removed?
-%% they are basically a mimic of the exometer functions any way,
-
-%% todo: redo the spec and docs for all these functions
-%% @spec get_stats() -> proplist()
-%% @doc Get the current aggregation of stats.
 get_stats() ->
     get_stats(?APP).
 
@@ -139,16 +127,16 @@ get_value(Arg) ->
 get_info() ->
     riak_stat:get_info(?APP).
 
-%%%----------------------------------------------------------------%%%
-
-%% todo: A spec and @doc for this function. i.e. it is a gen_server:cast
-%% so it is non blocking.
+%%%-------------------------------------------------------------------
+%% @doc
+%% update is a gen_server:cast so it is non-blocking
+%% @end
+%%%-------------------------------------------------------------------
+-spec(update(Arg :: tuple_stat() | statname()) -> ok).
 update(Arg) ->
     gen_server:cast(?SERVER, {update, Arg}).
 
-%% gen_server
-
-%% todo: add the spec for the init.
+-spec(init([]) -> {ok, ok}).
 init([]) ->
     register_stats(),
     {ok, ok}.
@@ -180,13 +168,11 @@ code_change(_OldVsn, State, _Extra) ->
 exometer_update(Name, Value, Type) ->
       riak_stat:update(Name, Value, Type).
 
-
 update_metric(converge_timer_begin ) -> converge_delay;
 update_metric(converge_timer_end   ) -> converge_delay;
 update_metric(rebalance_timer_begin) -> rebalance_delay;
 update_metric(rebalance_timer_end  ) -> rebalance_delay;
 update_metric(Arg) -> Arg.
-
 
 update_value(converge_timer_begin ) -> timer_start;
 update_value(rebalance_timer_begin) -> timer_start;
@@ -252,12 +238,12 @@ system_stats() ->
            {ets           , memory_ets}]}
     ].
 
-%% todo: add a spec and @doc to explain this is not something called when a stat
-%% is requested from exometer, more this is actually a function that is called
-%% in the shell.
-
+%%%-----------------------------------------------------------------------------
+%% @doc
 %% Provide aggregate stats for vnode queues.  Compute instantaneously for now,
 %% may need to cache if stats are called heavily (multiple times per seconds)
+%% @end
+%%%-----------------------------------------------------------------------------
 vnodeq_stats() ->
     VnodesInfo = [{Service, vnodeq_len(Pid)} ||
                      {Service, _Index, Pid} <- riak_core_vnode_manager:all_vnodes()],

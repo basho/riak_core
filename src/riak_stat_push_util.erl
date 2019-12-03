@@ -5,6 +5,11 @@
 %%%-------------------------------------------------------------------
 -module(riak_stat_push_util).
 
+-export([
+    stop_running_server/1,
+    stop_running_server/2]).
+
+
 %% API
 -export([
     json_stats/1,
@@ -18,10 +23,26 @@
 %%% gen_server's functions
 %%%===================================================================
 
-store_setup_info(State) ->
-    ok.
+stop_running_server(Keys) when is_list(Keys)->
+    [stop_running_server(Key) || Key <- Keys];
+stop_running_server(Key) when is_tuple(Key)->
+    stop_running_server(?PUSHPREFIX(node()),Key).
+stop_running_server(Prefix, Key) ->
+    Fun = set_running_false_fun(),
+    riak_stat_meta:put(Prefix,Key,Fun).
 
+set_running_false_fun() ->
+    fun
+        ({ODT, _MDT, _Pid, {running, true}, Node, Port, Sip, Stats}) ->
+            {ODT, calendar:universal_time(), undefined,
+                {running, false}, Node, Port, Sip, Stats};
 
+        (#{running := true} = MapValue) ->
+            MapValue#{
+                running => false,
+                pid => undefined,
+                modified_dt => calendar:universal_time()}
+    end.
 
 
 
@@ -35,6 +56,8 @@ store_setup_info(State) ->
 %% as in: when the gen_server is started have it so it so the gen_server stores the
 %% information into the metadata, not riak_stat_push, and the same for when the server is
 %% terminated.
+
+
 
 json_stats(Stats) ->
     json_stats([],{instance,"web"},Stats).

@@ -35,6 +35,8 @@
     stats         :: listofstats()
 }).
 
+-define(PROTOCOL, udp).
+
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -115,6 +117,10 @@ handle_info(_Info, State) ->
 %%--------------------------------------------------------------------
 -spec(terminate(Reason :: (normal | shutdown | {shutdown, term()} | term()),
     State :: #state{}) -> term()).
+terminate(manual, #state{instance = Instance}) ->
+    lager:info("Stopping ~p",[Instance]),
+    terminate_server(Instance),
+    ok;
 terminate(_Reason, _State) ->
     ok.
 
@@ -134,7 +140,6 @@ open({{Port, _Instance, _Sip}, _Stats}=Info) ->
     case gen_udp:open(Port, Options) of
         {ok, Socket} ->
             State = create_state(Socket, Info),
-            store_setup_info(State),
             refresh_monitor_server_ip(),
             push_stats(),
             {ok, State};
@@ -156,15 +161,15 @@ create_state(Socket, {{MonitorLatencyPort, Instance, Sip}, Stats}) ->
         instance      = Instance,
         stats         = Stats}.
 
-store_setup_info(State) ->
-    riak_stat_push_util:store_setup_info(State).
-
 refresh_monitor_server_ip() ->
     send_after(?REFRESH_INTERVAL, refresh_monitor_server_ip).
 
 %%--------------------------------------------------------------------
 
-
+terminate_server(Instance) ->
+    Key = {?PROTOCOL, Instance},
+    Prefix = {riak_stat_push, node()},
+    riak_stat_push_util:stop_running_server(Prefix,Key).
 
 %%--------------------------------------------------------------------
 

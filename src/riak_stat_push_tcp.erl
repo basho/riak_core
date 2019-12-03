@@ -35,6 +35,8 @@
     stats         :: listofstats()
 }).
 
+-define(PROTOCOL, tcp).
+
 %%%===================================================================
 %%% API
 %%%===================================================================
@@ -47,7 +49,6 @@ start_link(Obj) ->
 %%% gen_server callbacks
 %%%===================================================================
 
-%%--------------------------------------------------------------------
 -spec(init(Args :: term()) ->
     {ok, State :: #state{}} | {ok, State :: #state{}, timeout() | hibernate} |
     {stop, Reason :: term()} | ignore).
@@ -120,6 +121,7 @@ terminate(endpoint_closed, #state{instance = Instance}) ->
     terminate_server(Instance),
     ok;
 terminate(manual, #state{instance = Instance}) ->
+    lager:info("Stopping ~p",[Instance]),
     terminate_server(Instance),
     ok;
 terminate(_Reason, _State) ->
@@ -141,7 +143,6 @@ open({{Port, _Instance, Sip}, _Stats}=Info) ->
     case gen_tcp:connect(Sip,Port,Options) of
         {ok, Socket} ->
             State = create_state(Socket, Info),
-            store_setup_info(State),
             refresh_monitor_server_ip(),
             push_stats(),
             {ok, State};
@@ -163,25 +164,15 @@ create_state(Socket, {{MonitorLatencyPort, Instance, Sip}, Stats}) ->
         instance      = Instance,
         stats         = Stats}.
 
-store_setup_info(State) ->
-    riak_stat_push_util:store_setup_info(State).
-
 refresh_monitor_server_ip() ->
     send_after(?REFRESH_INTERVAL, refresh_monitor_server_ip).
 
 %%--------------------------------------------------------------------
 
 terminate_server(Instance) ->
-    Protocol = tcp,
-    Key = {Protocol, Instance},
+    Key = {?PROTOCOL, Instance},
     Prefix = {riak_stat_push, node()},
-    Fun = set_running_false_fun(),
-    riak_stat_meta:put(Prefix,Key,Fun).
-
-set_running_false_fun() ->
-    fun({ODT,_MDT,_Pid,{running,true},Node,Port,Sip,Stats}) ->
-        {ODT,calendar:universal_time(),undefined,{running,false},Node,Port,Sip,Stats}
-    end.
+    riak_stat_push_util:stop_running_server(Prefix, Key).
 
 %%--------------------------------------------------------------------
 

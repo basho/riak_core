@@ -51,35 +51,24 @@ setup(Arg) ->
             maybe_start_server(Protocol, SanitisedData)
     end.
 
--spec(store_setup_info((new | existing), (ok | pid()), protocol(), sanitised_push())
+-spec(store_setup_info(push_key(),push_value(), (new | existing))
                                           -> ok | print() | error()).
-%%% With addition of maps
-store_setup_info(Key, MapValues, Options) ->
+store_setup_info({_Key,Instance}, #{pid := NotPid}, _Type) when is_pid(NotPid) == false ->
+    lager:error("~p was not started", [Instance]),
+    ok;
+store_setup_info(Key, MapValues, new) ->
     Prefix = ?PUSHPREFIX,
-    case proplists:get_value(setup, Options) of
-        new ->
-            riak_stat_meta:put(Prefix, Key, [MapValues]);
-        existing ->
-            NewMap = MapValues#{modified_dt => calendar:universal_time()},
-            riak_stat_meta:put(Prefix, Key, [NewMap])
-    end.
+    riak_stat_meta:put(Prefix, Key, [MapValues]);
+store_setup_info(Key, MapValues, existing) ->
+    Prefix = ?PUSHPREFIX,
+    NewMap = MapValues#{modified_dt => calendar:universal_time()},
+    riak_stat_meta:put(Prefix, Key, [NewMap]).
 
-
-
-
+%%%%
 store_setup_info(_,ok,_,_) -> ok;
 store_setup_info(new, Pid, Protocol, {{Port, Instance, Sip}, Stats}) ->
     Prefix = ?PUSHPREFIX(node()),
     Key = {Protocol,Instance},
-%%    Value = {
-%%        calendar:universal_time(),
-%%        calendar:universal_time(),
-%%        Pid,            % Pid of the Child started
-%%        {running,true}, % Status of the gen_server, will remain
-%%        node(),         % Node
-%%        Port,
-%%        Sip,            % Server IP address
-%%        Stats},
     MapValue =
     #{original_dt => calendar:universal_time(),
         modified_dt => calendar:universal_time(),
@@ -89,33 +78,31 @@ store_setup_info(new, Pid, Protocol, {{Port, Instance, Sip}, Stats}) ->
         port => Port,
         server_ip => Sip,
         stats => Stats},
-    riak_stat_meta:put(Prefix, Key, MapValue);
-store_setup_info(existing, _Pid, _Protocol, {{_Port, _Instance, _Sip}, _Stats}) ->
-    ok.
+    riak_stat_meta:put(Prefix, Key, MapValue).
+%%%%
 
 maybe_start_server(Protocol, {{Port,Instance,Sip},Stats}) ->
     case fold_through_meta(Protocol,{{'_',Instance,'_'},'_'}, ?NODE) of
         [] ->
             Pid = start_server(Protocol,{{Port,Instance,Sip},Stats}),
-%%            store_setup_info(new, Pid, Protocol, {{Port, Instance, Sip}, Stats});
             NewMap = ?NEWMAP,
             store_setup_info({Protocol, Instance},
-                NewMap#{pid=> Pid,server_ip=>Sip,port => Port,stats => Stats},[{setup, new}]);
+                NewMap#{pid=> Pid,server_ip=>Sip,port => Port,stats => Stats},new);
         Otherwise ->
             lists:foreach(fun
                               ({{_Pr,_In}, {_ODT,_MDT,_Pid,{running,true},_Node,_Port,_Sip,_St}}) ->
                                   io:fwrite("Server of that instance is already running~n");
                               ({{_Pr,_In}, {_ODT,_MDT,_Pid,{running,false},_Node,_Port,_Sip,_St}}) ->
-                                  NewPid = start_server(Protocol, {{Port, Instance, Sip}, Stats}),
+                                  {_,NewPid} = start_server(Protocol, {{Port, Instance, Sip}, Stats}),
                                   store_setup_info(existing, NewPid, Protocol, {{Port, Instance, Sip}, Stats});
 
                               %% Map attempt
                               ({{_Pr,_In}, #{running := true}}) ->
                                   io:fwrite("Server of that instance is already running~n");
                               ({{_Pr,_In}, #{running := false}= ExistingMap}) ->
-                                  NewPid = start_server(Protocol, {{Port, Instance, Sip}, Stats}),
+                                  {_,NewPid} = start_server(Protocol, {{Port, Instance, Sip}, Stats}),
                                   NewMap = ExistingMap#{pid => NewPid, port => Port, server_ip => Sip, stats => Stats},
-                                  store_setup_info({Protocol, Instance}, NewMap, [{setup, existing}])
+                                  store_setup_info({Protocol, Instance}, NewMap, existing)
                           end, Otherwise)
     end.
 

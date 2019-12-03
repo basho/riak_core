@@ -25,7 +25,15 @@
                             node(),
                             push_port(),
                             server_ip(),
-                            metrics()}.
+                            metrics()} | push_map().
+-type push_map()        :: #{original_dt := calendar:datetime(),
+                            modified_dt  := calendar:datetime(),
+                            pid          := pid(),
+                            running      := (true | false),
+                            node         := node(),
+                            port         := push_port(),
+                            server_ip    := server_ip(),
+                            stats        := listofstats()}.
 
 -type runnning_tuple()  :: {running, boolean()}.
 

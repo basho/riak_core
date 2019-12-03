@@ -96,8 +96,7 @@ get_all(Prefix) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% put the data into the metadata, options contain the
-%%          {match, Match_spec}
+%% put the data into the metadata,
 %% @end
 %%%-------------------------------------------------------------------
 -spec(put(metadata_prefix(), metadata_key(),
