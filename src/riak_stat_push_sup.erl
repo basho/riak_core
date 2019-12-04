@@ -29,10 +29,10 @@
 -define(TCP_CHILD, riak_stat_push_tcp).
 -define(UDP_CHILD, riak_stat_push_udp).
 
--define(PUSHPREFIX, {riak_stat_push, term_to_binary(node())}).
+-define(PUSHPREFIX, {riak_stat_push, node()}).
 -define(ATTEMPTS, app_helper:get_env(riak_stat_push, restart_attempts, 50)).
--define(TIMINGS, app_helper:get_env(riak_stat_push, restart_timings,
-    [X*1000 || X <- timings()])).
+-define(TIMINGS,  app_helper:get_env(riak_stat_push, restart_timings,
+                        [X*1000 || X <- timings()])).
 
 %%%===================================================================
 %%% API functions
