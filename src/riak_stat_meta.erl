@@ -2,22 +2,7 @@
 %%% @doc
 %%% riak_stat_meta is the middle-man for stats and
 %%% riak_core_metadata. All information that needs to go into or out
-%%% of the metadata will always go through this module.
-%%%
-%%% Profile Prefix: {profiles, list}
-%%% Loaded Prefix:  {profiles, loaded}
-%%% Stats Prefix:   {stats,    nodeid()}
-%%%
-%%% Profile metadata-pkey: {{profiles, list}, ["profile-name"]}
-%%% Profile metadata-val : [{Stat, {status, Status},...]
-%%%
-%%% Loaded metadata-pkey : {{profiles, loaded}, nodeid()}
-%%% Loaded metadata-val  : ["profile-name"]
-%%%
-%%% Stats metadata-pkey: {{stats, nodeid()}, [riak,riak_kv,...]}
-%%% Stats metadata-val :
-%%%     {enabled, spiral, [{resets,...},{vclock,...}], [Aliases]}
-%%%
+%%% of the metadata for riak_stat will go through this module.
 %%% @end
 %%%-------------------------------------------------------------------
 -module(riak_stat_meta).
@@ -26,22 +11,20 @@
 
 %% Registration API
 -export([
+    %% STATS:
     get/2, get/3,
     get_all/1,
     put/3, put/4,
-
     register/1,
     register/4,
-
     find_entries/3,
-
     change_status/1,
     change_status/2,
-
     reset_stat/1,
     reset_resets/0,
     unregister/1,
 
+    %% PROFILES:
     save_profile/1,
     load_profile/1,
     delete_profile/1,
@@ -55,32 +38,24 @@
 -define(NODEID,                term_to_binary(node())).
 
 %% Profiles are Globally shared
--define(PROF,                  profiles).
--define(PROFID,                list).
--define(PROFPFX,              {?PROF, ?PROFID}).
+-define(PROFPFX,              {profiles, list}).
 -define(PROFILEKEY(Profile),  {?PROFPFX, Profile}).
--define(LOADEDPFX,            {?PROF, loaded}).
+-define(LOADEDPFX,            {profiles, loaded}).
 -define(LOADEDKEY,             ?NODEID).
 -define(LOADEDPKEY,           {?LOADEDPFX, ?LOADEDKEY}).
 
--define(STATMAP,               #{status => enabled,
-                                 type => undefined,
+-define(STATMAP,               #{status  => enabled,
+                                 type    => undefined,
                                  options => [{resets,0}],
                                  aliases => [],
-                                 vclock => undefined}).
-
+                                 vclock  => undefined}).
 
 %%%===================================================================
-%%% Basic API
+%%% Metadata API
 %%%===================================================================
 %%%-------------------------------------------------------------------
 %% @doc
-%% Get the data from the riak_core_metadata, If not Opts are passed
-%% then an empty list is given and the defaults are set in the
-%% riak_core_metadata. it's possible to do a select pattern in the
-%% options under the form:
-%%      {match, ets:match_spec}
-%% Which is pulled out in riak_core_metadata and used in an ets:select,
+%% Pulls out information from riak_core_metadata
 %% @end
 %%%-------------------------------------------------------------------
 -spec(get(metadata_prefix(), metadata_key()) ->
@@ -102,7 +77,7 @@ get_all(Prefix) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% put the data into the metadata,
+%% Put the data into the metadata,
 %% @end
 %%%-------------------------------------------------------------------
 -spec(put(metadata_prefix(), metadata_key(),
@@ -127,48 +102,43 @@ delete(Prefix, Key) ->
 %%%===================================================================
 %%%-------------------------------------------------------------------
 %% @doc
-%% Use riak_core_metadata:fold(_) to fold over the path in the metadata
-%% and pull out the stats that match the Status and Type given.
+%% Use riak_core_metadata:fold(A) -> B to fold over the path in the
+%% metadata and pull out the stats that match the STATUS and TYPE.
 %% @end
 %%%-------------------------------------------------------------------
 -spec(find_entries(metrics(),status(),type()) -> listofstats()).
 find_entries(Stats,Status,Type) ->
-    lists:flatten(lists:map(
-        fun(Stat) ->
-            fold(Stat,Status,Type)
-        end, Stats)).
+    lists:flatten(
+        lists:map(
+              fun(Stat) -> fold(Stat,Status,Type) end, Stats)).
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% Using riak_core_metadata the statname(s) is passed in a tuple:
-%% {match,Name} which will return the objects that match in the metadata
-%% in order to fold through in the iterator, this iterates over the
-%% ?STATPFX : {stats,term_to_binary(node())}, and fold over the objects
-%% returned and depending on the Status or Type requested,
-%% it will be guarded and then returned in the accumulator.
-%% @end
+%% Pass the StatName into the fold, to match ({match,Stat}) the objects
+%% stored in the metadata, in the Prefix: @see :  ?STATPFX
+%%
+%% Guard is passed in with the Accumulator to pattern match to, in
+%% order to return the stats needed.
 %%%-------------------------------------------------------------------
 -spec(fold(metricname(),status(),(type() | '_')) -> acc()).
 %%%-------------------------------------------------------------------
-%% @doc
-%% the Status can be anything, it is always guarded for, the type is
-%% not required. Returns the same as exometer:find_entries ->
-%%          [{Name,Type,Status|...}]
+%% Returns the same as exometer:find_entries ->
+%%          [{Name,Type,Status}|...]
 %% @end
 %%%-------------------------------------------------------------------
 fold(Stat, Status0, Type0) ->
     {Stats, Status0, Type0} =
         riak_core_metadata:fold(
-            fun
-                ({Name, [#{status := MStatus, type := MType}]},
+            fun({Name, [#{status := MStatus, type := MType}]},
                     {Acc, Status, Type})
-                    when (Status == '_' orelse Status == MStatus)
-                    andalso (MType == Type orelse Type == '_')->
+                when    (Status == MStatus  orelse Status == '_')
+                andalso (MType  == Type     orelse Type   == '_')->
                     {[{Name, MType, MStatus}|Acc],Status,Type};
 
-                    (_Other, {Acc, Status, Type}) ->
+                (_Other, {Acc, Status, Type}) ->
                     {Acc, Status, Type}
-            end, {[], Status0, Type0}, ?STATPFX, [{match, Stat}]),
+            end,
+                {[], Status0, Type0}, ?STATPFX, [{match, Stat}]),
     Stats.
 
 %%%-------------------------------------------------------------------
@@ -185,34 +155,29 @@ check_meta({Prefix, Key}) ->
         undefined -> % Not found, return empty list
             [];
         Value ->
-            case find_unregister_status(Key, Value) of
+            case find_unregister_status(Value) of
                 false        -> Value;
                 unregistered -> unregistered;
-                _Other       -> Value
+                Other        -> Other
             end
     end.
 
-%% todo: add docs and a spec for this:
-find_unregister_status(_Key, '$deleted') ->
-    unregistered;
-find_unregister_status(_Key,  #{status := unregistered}) ->
-    unregistered;
-find_unregister_status(_Key,  #{status := Status}) ->
-    Status;
-find_unregister_status(_ProfileName, _Stats) ->
-    false.
+find_unregister_status('$deleted')                -> unregistered;
+find_unregister_status(#{status := unregistered}) -> unregistered;
+find_unregister_status(Map) when is_map(Map)      -> Map;
+find_unregister_status(_)                         -> false.
 
 %%%-------------------------------------------------------------------
 %% @doc
 %% In the case where one list should take precedent, which is most
 %% likely the case when registering in both exometer and metadata, the
 %% options hardcoded into the stats may change, or the primary kv for
-%% stats statuses switches, in every case, there must be an alpha.
+%% stats' statuses switches, in every case, there must be an alpha.
 %%
 %% For this, the lists are compared, and when a difference is found
 %% (i.e. the stat tuple is not in the betalist, but is in the alphalist)
-%% it means that the alpha stat, with the newest key-value needs to
-%% returned in order to change the status of that stat key-value.
+%% it means that the alpha stat, with the key-value needs to
+%% returned in order to Keep order in the stats' configuration
 %% @end
 %%%-------------------------------------------------------------------
 -spec(the_alpha_stat(Alpha :: list(), Beta :: list()) -> list()).
@@ -222,7 +187,7 @@ the_alpha_stat(Alpha, Beta) ->
     {_LeftOvers, AlphaStatList} =
         lists:foldl(fun
                         (AlphaStat, {BetaAcc, TheAlphaStats}) ->
-                            %% is the stat from Alpha in Beta?
+                            %% is the Alpha stat also in Beta?
                             case lists:member(AlphaStat, BetaAcc) of
                                 true ->
                                     %% nothing to be done.
@@ -251,7 +216,6 @@ the_alpha_map([A|B]) when is_tuple(A) ->
 find_all_entries() ->
     [{Name, {status, Status}} ||
         {Name,_Type, Status} <- find_entries([[riak|'_']], '_', '_')].
-
 
 %%%===================================================================
 %%% Registration API
@@ -321,7 +285,7 @@ find_status(re_reg, {MetaOpts, MStatus, InOpts}) ->
 %% options that are not stored in the metadata are ignored
 %%
 %% The main options stored in the metadata are the same options that
-%% are given on .
+%% are given on . @see : the_alpha_stat
 %% @end
 %%%-------------------------------------------------------------------
 the_alpha_opts(MetadataOptions, IncomingOptions) ->
@@ -368,8 +332,6 @@ change_status(Statname, ToStatus) ->
     case check_meta(?STATKEY(Statname)) of
         []           -> []; %% doesn't exist
         unregistered -> []; %% unregistered
-%%        {_Status, Type, Opts, Aliases} ->
-%%            put(?STATPFX, Statname, {ToStatus, Type, Opts, Aliases});
         MapValue ->
             put(?STATPFX,Statname,MapValue#{status=>ToStatus})
     end.
@@ -383,7 +345,7 @@ change_status(Statname, ToStatus) ->
 -spec(set_options(metadata_key(), options()) -> ok).
 set_options(StatInfo, NewOpts) when is_list(NewOpts) ->
     lists:foreach(fun({Key, NewVal}) ->
-        set_options(StatInfo, {Key, NewVal})
+                        set_options(StatInfo, {Key, NewVal})
                   end, NewOpts);
 set_options({Statname, {Status, Type, Opts, Aliases}}, {Key, NewVal}) ->
     NewOpts = lists:keyreplace(Key, 1, Opts, {Key, NewVal}),
@@ -396,19 +358,16 @@ fresh_clock() ->
     fresh_clock([]).
 fresh_clock(Opts) ->
     case lists:keysearch(vclock, 1, Opts) of
-        false ->
-            [{vclock, clock_fresh(?NODEID, 0)} | Opts];
+        false -> [{vclock, clock_fresh(?NODEID, 0)} | Opts];
         {value, {vclock, [{Node, {Count, _VC}}]}} ->
             lists:keyreplace(vclock, 1, Opts,
                 {vclock, clock_fresh(Node, Count)});
-        _ ->
-            [{vclock, clock_fresh(?NODEID, 0)} | Opts]
+        _ -> [{vclock, clock_fresh(?NODEID, 0)} | Opts]
     end.
 
 clock_fresh(Node, Count) ->
     vclock:fresh(Node, vc_inc(Count)).
 vc_inc(Count) -> Count + 1.
-
 
 %%%===================================================================
 %%% Deleting/Resetting Stats API
@@ -427,32 +386,19 @@ reset_stat(Statname) ->
             NewOpts = resets(Options),
             put(?STATPFX,Statname,MapValue#{options => NewOpts});
         _Otherwise -> ok %% If the stat is disabled it shouldn't be reset
-
-
-%%        MapValue = #{type := Type, options := Opts, aliases := Aliases} ->
-%%            Resets = proplists:get_value(resets,Opts,0),
-%%            NewOpts = [{resets,reset_inc(Resets)}],
-%%            put(Statname,MapValue#{options})
-%%        {_Status, Type, Opts, Aliases} ->
-%%            Resets= proplists:get_value(resets, Opts),
-%%            Options = [{resets, reset_inc(Resets)}],
-%%            set_options({Statname,
-%%                {enabled, Type, Opts, Aliases}}, Options)
     end.
 
 resets(Options) ->
     case proplists:get_value(resets,Options,0) of
-        0 ->
-            [{resets,1}|Options];
-        V ->
-            lists:keyreplace(resets,1,Options,{resets,reset_inc(V)})
+        0 -> [{resets,1}|Options];
+        V -> lists:keyreplace(resets,1,Options,{resets,reset_inc(V)})
     end.
 
 reset_inc(Count) -> Count + 1.
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% sometimes the reset count just gets too high, and for every single
+%% Eventually the rest counter will get too high, and for every single
 %% stat its a bit much, reset the reset count in the metadata. for a
 %% fresh stat
 %% @end
@@ -470,18 +416,15 @@ reset_resets() ->
 %%%-------------------------------------------------------------------
 %% @doc
 %% Marks the stats as unregistered, that way when a node is restarted
-%% and registers the stats it will ignore stats that are marked
-%% unregistered
+%% and registers the stats it will be ignored
 %% @end
 %%%-------------------------------------------------------------------
 -spec(unregister(metadata_key()) -> ok).
 unregister(Statname) ->
     case check_meta(?STATKEY(Statname)) of
-        MapValue = #{status := Status} when Status =/= unregistered->
-            %% Stat exists, re-register with unregister "status"
+        MapValue = #{status := Status} when Status =/= unregistered ->
+            %% Stat exists, re-register with unregistered - "status"
             put(Statname,MapValue#{status=>unregistered});
-%%            re_register(Statname,
-%%                {unregistered, Type, MetaOpts, Aliases});
         _ -> ok
     end.
 
@@ -539,7 +482,6 @@ load_profile(ProfileName) ->
 change_stat_list_to_status(StatusList) ->
     riak_stat_mgr:change_status(StatusList).
 
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% Deletes the profile from the metadata, however currently the
@@ -583,8 +525,8 @@ reset_profile() ->
     put(?LOADEDPFX, ?LOADEDKEY, ["none"]),
     change_stats_from(CurrentStats, disabled),
     io:format("All Stats set to 'enabled'~n").
-% change from only disabled to enabled
 
+%% @doc change only disabled to enabled and vice versa @end
 change_stats_from(Stats, Status) ->
     change_stat_list_to_status(
         lists:foldl(fun
