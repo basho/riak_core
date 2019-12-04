@@ -35,7 +35,7 @@
 -define(STAT,                  stats).
 -define(STATPFX,              {?STAT, ?NODEID}).
 -define(STATKEY(StatName),    {?STATPFX, StatName}).
--define(NODEID,                term_to_binary(node())).
+-define(NODEID,                node()).
 
 %% Profiles are Globally shared
 -define(PROFPFX,              {profiles, list}).
