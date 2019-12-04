@@ -132,5 +132,3 @@ pretty_print(RD1, C1=#ctx{}) ->
 
 
 %%--------------------------------------------------------------------
-
-%% todo: create function to get stats
