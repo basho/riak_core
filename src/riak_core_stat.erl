@@ -52,7 +52,6 @@
 -define(SERVER, ?MODULE).
 
 -define(APP, riak_core).
--define(PFX, riak_stat:prefix()).
 
 %%%===================================================================
 %%% API
@@ -79,7 +78,6 @@ register_stats() ->
 register_stats(App, Stats) ->
   riak_stat:register(App, Stats).
 
-%% todo: the SPec for this function
 register_vnode_stats(Module, Index, Pid) ->
     F = fun vnodeq_atom/2,
     Vnode_Stat_1 =

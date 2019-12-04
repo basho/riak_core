@@ -1,6 +1,6 @@
 %%%-------------------------------------------------------------------
 %%% @doc
-%%% Superviser for the tcp and udp servers that will poll stats from
+%%% Supervisor for the tcp and udp servers that will poll stats from
 %%% exometer and push them to an endpoint given
 %%% @end
 %%%-------------------------------------------------------------------
@@ -52,7 +52,8 @@ start_link() ->
 -spec(start_server(protocol(),sanitised_push()) -> ok | print() | error()).
 start_server(Protocol, Data) ->
     CHILD = child_spec(Data,Protocol),
-    start_child(CHILD).
+    Respond = start_child(CHILD),
+    log_and_respond(Respond).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -82,17 +83,16 @@ stop_server(Child) when is_list(Child) ->
     ignore |
     {error, Reason :: term()}).
 init([]) ->
-    STRATEGY = ?STRATEGY,
-    INTENSITY = ?INTENSITY,
-    PERIOD = ?PERIOD,
-    SupFlags = {STRATEGY,INTENSITY,PERIOD},
-%%    Children = get_children(),
-    %% todo: create function that will start up servers. If it and it will
-    %% try to restart incrementally.
-
+    Strategy = ?STRATEGY,
+    Intensity = ?INTENSITY,
+    Period = ?PERIOD,
+%%    SupFlags = {STRATEGY,INTENSITY,PERIOD},
+    SupFlags = #{
+        strategy => Strategy,
+        intensity => Intensity,
+        period => Period},
     restart_children(),
-    %% That way the whole system does not fall over should the genserver
-    %% not start.
+
     {ok, {SupFlags, []}}.
 
 %%%===================================================================
@@ -137,7 +137,16 @@ child_spec(Data,Protocol) ->
     Shutdown  = ?SHUTDOWN,
     Type      = worker,
     MFArgs    = {Module, Function, [Args]},
-    {ChildName, MFArgs, Restart, Shutdown, Type, [Module]}.
+    #{
+        id => ChildName,
+        start => MFArgs,
+        restart => Restart,
+        shutdown => Shutdown,
+        type => Type,
+        modules => [Module]
+    }.
+%%        {ChildName, MFArgs, Restart, Shutdown, Type, [Module]}.
+
 
 server_name({{_,ServerName,_},_}) -> list_to_atom(ServerName).
 
@@ -155,29 +164,38 @@ start_child(Children) when is_list(Children) ->
     [start_child(Child)|| Child <- Children];
 start_child(Child) ->
     case supervisor:start_child(?MODULE, Child) of
-        {ok, Pid} ->
-            io:format("Polling Initiated~n",[]),
-            lager:info("Child Started : ~p",[Child]),
-            {Child, Pid};
-        {error, Reason} ->
-            case Reason of
-                {already_started, Pid} -> {Child,Pid};
-                econnrefused ->               io:fwrite("Error : Connection Refused~n"),
-                    lager:info("Child Refused to start because Connection was refused : ~p",[Child]);
-                {{error, econnrefused}, _} -> io:fwrite("Error : Connection Refused~n"),
-                    lager:info("Child Refused to start because Connection was refused : ~p",[Child]);
-                {error, Other} ->             io:fwrite("Error : ~p~n", [Other]),
-                    lager:info("Child Refused to start because ~p : ~p",[Other,Child]);
-                Other ->                      io:fwrite("Error : ~p~n", [Other]),
-                    lager:info("Child Refused to start because  : ~p",[Other,Child])
-            end
+        {ok, Pid}                       -> {Child, Pid};
+        {error, {already_started, Pid}} -> {Child, Pid};
+        {error, econnrefused}           -> {Child, econnrefused};
+        {error, {error, Reason}}        -> {Child, Reason};
+        {error, Reason}                 -> {Child, Reason}
     end.
 
+log_and_respond({Child, Response}) ->
+    log(Child, Response),
+    respond(Response).
+
+log(Child, Pid) when is_pid(Pid)->
+    lager:info("Child started : ~p with Pid : ~p",[Child,Pid]);
+log(Child, econnrefused) ->
+    lager:error("Child refused to start - Connection refused. Child : ~p",[Child]);
+log(Child, Error) ->
+    lager:error("Child refused to start - ~p. Child : ~p",[Error,Child]).
+
+respond(Pid) when is_pid(Pid) ->
+    io:fwrite("Polling Started~n");
+respond(econnrefused) ->
+    io:fwrite("Could not initiate Polling, Connection refused~n");
+respond(Error) ->
+    io:fwrite("Could not initiate Polling, ~p~n",[Error]).
+
 restart_children() ->
+    %% todo: use stop children if it is running,
+    %% todo: make it start children up
     Children = get_children(),
     Attempts = ?ATTEMPTS, %% 100 Attempts at restarting the Children
     Timings  = ?TIMINGS,
-    {Pid, Ref} =
+    {_Pid, _Ref} =
         spawn_monitor(riak_stat_push_sup, restart_children, [Attempts, Timings, Children]),
     ok.
 
@@ -196,7 +214,7 @@ restart_children(Attempts, [Timing|Timings], Children) ->
                                   riak_stat_push_util:stop_running_server(make_key([Child])),
                                   Acc;
                               ({Child,Pid}, Acc) when is_pid(Pid) ->
-                                  Key = make_key(Child),
+                                  make_key(Child),
                                   %% todo: store in meta,
                                   Acc;
                               ({Child,_Other}, Acc) ->
@@ -221,7 +239,10 @@ timings() ->
 
 timings([], Timings) -> lists:reverse(lists:flatten(Timings));
 timings(128,Timings) ->
-    timings([],[[N=128*2,N,N,N]|Timings]);
+    N=128*2,
+    Next = [N,N,N,N],
+    timings([],[Next|Timings]);
 timings(Time, Timings) ->
-    timings(N=Time*2, [[N,N,N,N]|Timings]).
+    N=Time*2,
+    timings(N, [[N,N,N,N]|Timings]).
 

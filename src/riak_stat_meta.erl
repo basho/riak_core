@@ -63,6 +63,12 @@
 -define(LOADEDKEY,             ?NODEID).
 -define(LOADEDPKEY,           {?LOADEDPFX, ?LOADEDKEY}).
 
+-define(STATMAP,               #{status => enabled,
+                                 type => undefined,
+                                 options => [{resets,0}],
+                                 aliases => [],
+                                 vclock => undefined}).
+
 
 %%%===================================================================
 %%% Basic API
@@ -128,7 +134,9 @@ delete(Prefix, Key) ->
 -spec(find_entries(metrics(),status(),type()) -> listofstats()).
 find_entries(Stats,Status,Type) ->
     lists:flatten(lists:map(
-        fun(Stat) -> fold(Stat,Status,Type) end, Stats)).
+        fun(Stat) ->
+            fold(Stat,Status,Type)
+        end, Stats)).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -150,24 +158,15 @@ find_entries(Stats,Status,Type) ->
 %%%-------------------------------------------------------------------
 fold(Stat, Status0, Type0) ->
     {Stats, Status0, Type0} =
-        riak_core_metadata:fold(fun
-                %%          tuple/4
-                ({Name, [{MStatus, MType, _O, _A}]},{Acc,Status,Type})
+        riak_core_metadata:fold(
+            fun
+                ({Name, [#{status := MStatus, type := MType}]},
+                    {Acc, Status, Type})
                     when (Status == '_' orelse Status == MStatus)
                     andalso (MType == Type orelse Type == '_')->
-                    {[{Name, MType, MStatus} | Acc], Status, Type};
-                %%          tuple/3
-                ({Name, [{MStatus, MType, _O}]}, {Acc, Status, Type})
-                    when (Status == '_' orelse Status == MStatus)
-                    andalso (MType == Type orelse Type == '_')->
-                    {[{Name, MType, MStatus} | Acc], Status, Type};
-                %%          tuple/2
-                ({Name, [{MStatus, MType}]}, {Acc, Status, Type})
-                    when (Status == '_' orelse Status == MStatus)
-                    andalso (MType == Type orelse Type == '_')->
-                    {[{Name, MType, MStatus} | Acc], Status, Type};
+                    {[{Name, MType, MStatus}|Acc],Status,Type};
 
-                (_Other, {Acc, Status, Type}) ->
+                    (_Other, {Acc, Status, Type}) ->
                     {Acc, Status, Type}
             end, {[], Status0, Type0}, ?STATPFX, [{match, Stat}]),
     Stats.
@@ -189,19 +188,19 @@ check_meta({Prefix, Key}) ->
             case find_unregister_status(Key, Value) of
                 false        -> Value;
                 unregistered -> unregistered;
-                _Otherwise   -> Value
+                _Other       -> Value
             end
     end.
 
+%% todo: add docs and a spec for this:
 find_unregister_status(_Key, '$deleted') ->
     unregistered;
-find_unregister_status(_StatName, {Status, _Type, _Opts, _Aliases}) ->
-    Status; % enabled | disabled or =/= unregistered
+find_unregister_status(_Key,  #{status := unregistered}) ->
+    unregistered;
+find_unregister_status(_Key,  #{status := Status}) ->
+    Status;
 find_unregister_status(_ProfileName, _Stats) ->
     false.
-
-
-%%%===================================================================
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -269,20 +268,23 @@ register({StatName, Type, Opts, Aliases}) ->
     register(StatName, Type, Opts, Aliases).
 register(StatName,Type, Opts, Aliases) ->
     case check_meta(?STATKEY(StatName)) of
-        [] ->
+        [] -> %% Cannot find
             {Status, MOpts} = find_status(fresh, Opts),
             re_register(StatName,{Status,Type,MOpts,Aliases}),
-            MOpts;
+            [{status,Status}|MOpts];
         unregistered -> []; %% do nothing
-        {MStatus,Type,MOpts,Aliases} -> %% is registered
-            {Status,NewMOpts,NewOpts} =
-                find_status(re_reg,{Opts,MStatus,MOpts}),
-            re_register(StatName, {Status,Type, NewMOpts,Aliases}),
-            NewOpts;
+
+        MapValue = #{options := MOptions,status := MStatus} ->
+            {Status, NewOpts} =
+                find_status(re_reg,{MOptions,MStatus,Opts}),
+            re_register(StatName,MapValue#{status=>Status,
+                options => NewOpts}),
+        NewOpts;
         _ -> lager:debug(
             "riak_stat_meta:register(StatInfo) ->
             Could not register stat:~n{~p,[{~p,~p,~p,~p}]}~n",
-            [StatName,undefined,Type,Opts,Aliases]),[]
+            [StatName,undefined,Type,Opts,Aliases]),
+            []
     end.
 
 %%%-------------------------------------------------------------------
@@ -298,22 +300,49 @@ register(StatName,Type, Opts, Aliases) ->
 %%%-------------------------------------------------------------------
 -type find_status_type() :: fresh | re_reg.
 -spec(find_status(find_status_type(), options()) ->
-                                     {status(),options(),options()}).
+                                     {status(),options()}).
 find_status(fresh, Opts) ->
     case proplists:get_value(status,Opts) of
         undefined -> {enabled, Opts};
-        Status    -> {Status,  Opts}
+        Status    -> {{status,Status},  Opts}
     end;
-find_status(re_reg, {Opts, MStatus, MOpts}) ->
-    case proplists:get_value(status, Opts) of
+find_status(re_reg, {MetaOpts, MStatus, InOpts}) ->
+    case proplists:get_value(status, InOpts) of
         undefined ->
-            {MStatus, the_alpha_stat(MOpts, Opts),
-                [{status,MStatus}|Opts]};
+            {MStatus, the_alpha_opts([{status,MStatus}|MetaOpts], InOpts)};
         _Status ->
-            {MStatus, the_alpha_stat(MOpts, Opts),
-                lists:keyreplace(status,1,Opts,{status,MStatus})}
+            {MStatus, the_alpha_opts([{status,MStatus}|MetaOpts], InOpts)}
     end.
 
+%%%-------------------------------------------------------------------
+%% @doc
+%% Combining Metadata's Options -> Replacing the current tuples in the
+%% incoming options with the new tuples in the metadata, all the other
+%% options that are not stored in the metadata are ignored
+%%
+%% The main options stored in the metadata are the same options that
+%% are given on .
+%% @end
+%%%-------------------------------------------------------------------
+the_alpha_opts(MetadataOptions, IncomingOptions) ->
+    lists:foldl(fun
+                    ({Option,Value},Acc) ->
+                        case lists:keyfind(Option, 1,Acc) of
+                            false -> [{Option,Value}|Acc];
+                            {Option,_OtherVal} ->
+                                lists:keyreplace(Option,1,Acc,{Option,Value})
+                        end
+                end, IncomingOptions, MetadataOptions).
+
+re_register(StatName,{Status,Type,Options,Aliases}) ->
+    StatMap = ?STATMAP,
+    Value = StatMap#{
+        status => Status,
+        type => Type,
+        options => Options,
+        aliases => Aliases,
+        vclock => fresh_clock()},
+    re_register(StatName,Value);
 re_register(StatName, Value) -> %% ok
     put(?STATPFX, StatName, Value).
 
@@ -339,8 +368,10 @@ change_status(Statname, ToStatus) ->
     case check_meta(?STATKEY(Statname)) of
         []           -> []; %% doesn't exist
         unregistered -> []; %% unregistered
-        {_Status, Type, Opts, Aliases} ->
-            put(?STATPFX, Statname, {ToStatus, Type, Opts, Aliases})
+%%        {_Status, Type, Opts, Aliases} ->
+%%            put(?STATPFX, Statname, {ToStatus, Type, Opts, Aliases});
+        MapValue ->
+            put(?STATPFX,Statname,MapValue#{status=>ToStatus})
     end.
 
 %%%-------------------------------------------------------------------
@@ -361,6 +392,8 @@ set_options({Statname, {Status, Type, Opts, Aliases}}, {Key, NewVal}) ->
 set_options(StatName, {Status, Type, NewOpts, Aliases}) ->
     re_register(StatName, {Status, Type, NewOpts, Aliases}).
 
+fresh_clock() ->
+    fresh_clock([]).
 fresh_clock(Opts) ->
     case lists:keysearch(vclock, 1, Opts) of
         false ->
@@ -390,11 +423,29 @@ reset_stat(Statname) ->
     case check_meta(?STATKEY(Statname)) of
         [] -> ok; %% doesn't exist
         unregistered -> {error, unregistered};
-        {_Status, Type, Opts, Aliases} ->
-            Resets= proplists:get_value(resets, Opts),
-            Options = [{resets, reset_inc(Resets)}],
-            set_options({Statname,
-                {enabled, Type, Opts, Aliases}}, Options)
+        MapValue = #{status := enabled,options := Options} ->
+            NewOpts = resets(Options),
+            put(?STATPFX,Statname,MapValue#{options => NewOpts});
+        _Otherwise -> ok %% If the stat is disabled it shouldn't be reset
+
+
+%%        MapValue = #{type := Type, options := Opts, aliases := Aliases} ->
+%%            Resets = proplists:get_value(resets,Opts,0),
+%%            NewOpts = [{resets,reset_inc(Resets)}],
+%%            put(Statname,MapValue#{options})
+%%        {_Status, Type, Opts, Aliases} ->
+%%            Resets= proplists:get_value(resets, Opts),
+%%            Options = [{resets, reset_inc(Resets)}],
+%%            set_options({Statname,
+%%                {enabled, Type, Opts, Aliases}}, Options)
+    end.
+
+resets(Options) ->
+    case proplists:get_value(resets,Options,0) of
+        0 ->
+            [{resets,1}|Options];
+        V ->
+            lists:keyreplace(resets,1,Options,{resets,reset_inc(V)})
     end.
 
 reset_inc(Count) -> Count + 1.
@@ -409,8 +460,11 @@ reset_inc(Count) -> Count + 1.
 -spec(reset_resets() -> ok).
 reset_resets() ->
     lists:foreach(fun({Stat, _Val}) ->
-        {Status, Type, Opts, Aliases} = check_meta(?STATKEY(Stat)),
-        set_options({Stat, {Status, Type, Opts, Aliases}}, {resets, 0})
+        #{status := Status,
+            type := Type,
+            options := Options,
+            aliases := Aliases} = check_meta(?STATKEY(Stat)),
+        set_options({Stat, {Status,Type,Options,Aliases}}, {resets, 0})
                   end, get_all(?STATPFX)).
 
 %%%-------------------------------------------------------------------
@@ -423,10 +477,11 @@ reset_resets() ->
 -spec(unregister(metadata_key()) -> ok).
 unregister(Statname) ->
     case check_meta(?STATKEY(Statname)) of
-        {_Status, Type, MetaOpts, Aliases} ->
+        MapValue = #{status := Status} when Status =/= unregistered->
             %% Stat exists, re-register with unregister "status"
-            re_register(Statname,
-                {unregistered, Type, MetaOpts, Aliases});
+            put(Statname,MapValue#{status=>unregistered});
+%%            re_register(Statname,
+%%                {unregistered, Type, MetaOpts, Aliases});
         _ -> ok
     end.
 

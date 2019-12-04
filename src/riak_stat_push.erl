@@ -64,21 +64,21 @@ store_setup_info(Key, MapValues, existing) ->
     NewMap = MapValues#{modified_dt => calendar:universal_time()},
     riak_stat_meta:put(Prefix, Key, [NewMap]).
 
-%%%%
-store_setup_info(_,ok,_,_) -> ok;
-store_setup_info(new, Pid, Protocol, {{Port, Instance, Sip}, Stats}) ->
-    Prefix = ?PUSHPREFIX(node()),
-    Key = {Protocol,Instance},
-    MapValue =
-    #{original_dt => calendar:universal_time(),
-        modified_dt => calendar:universal_time(),
-        pid => Pid,
-        running => true,
-        node => node(),
-        port => Port,
-        server_ip => Sip,
-        stats => Stats},
-    riak_stat_meta:put(Prefix, Key, MapValue).
+%%%%%%
+%%store_setup_info(_,ok,_,_) -> ok;
+%%store_setup_info(new, Pid, Protocol, {{Port, Instance, Sip}, Stats}) ->
+%%    Prefix = ?PUSHPREFIX(node()),
+%%    Key = {Protocol,Instance},
+%%    MapValue =
+%%    #{original_dt => calendar:universal_time(),
+%%        modified_dt => calendar:universal_time(),
+%%        pid => Pid,
+%%        running => true,
+%%        node => node(),
+%%        port => Port,
+%%        server_ip => Sip,
+%%        stats => Stats},
+%%    riak_stat_meta:put(Prefix, Key, MapValue).
 %%%%
 
 maybe_start_server(Protocol, {{Port,Instance,Sip},Stats}) ->
@@ -90,11 +90,11 @@ maybe_start_server(Protocol, {{Port,Instance,Sip},Stats}) ->
                 NewMap#{pid=> Pid,server_ip=>Sip,port => Port,stats => Stats},new);
         Otherwise ->
             lists:foreach(fun
-                              ({{_Pr,_In}, {_ODT,_MDT,_Pid,{running,true},_Node,_Port,_Sip,_St}}) ->
-                                  io:fwrite("Server of that instance is already running~n");
-                              ({{_Pr,_In}, {_ODT,_MDT,_Pid,{running,false},_Node,_Port,_Sip,_St}}) ->
-                                  {_,NewPid} = start_server(Protocol, {{Port, Instance, Sip}, Stats}),
-                                  store_setup_info(existing, NewPid, Protocol, {{Port, Instance, Sip}, Stats});
+%%                              ({{_Pr,_In}, {_ODT,_MDT,_Pid,{running,true},_Node,_Port,_Sip,_St}}) ->
+%%                                  io:fwrite("Server of that instance is already running~n");
+%%                              ({{_Pr,_In}, {_ODT,_MDT,_Pid,{running,false},_Node,_Port,_Sip,_St}}) ->
+%%                                  {_,NewPid} = start_server(Protocol, {{Port, Instance, Sip}, Stats}),
+%%                                  store_setup_info(existing, NewPid, Protocol, {{Port, Instance, Sip}, Stats});
 
                               %% Map attempt
                               ({{_Pr,_In}, #{running := true}}) ->
@@ -108,14 +108,10 @@ maybe_start_server(Protocol, {{Port,Instance,Sip},Stats}) ->
 
 -spec(start_server(protocol(), sanitised_push())
         -> print() | error()).
-start_server(udp, Arg) ->
-    Pid = riak_stat_push_sup:start_server(udp, Arg),
-    Pid;
-start_server(tcp, Arg) ->
-    Pid = riak_stat_push_sup:start_server(tcp, Arg),
-    Pid;
 start_server(http, _Arg) ->
     io:format("Error Unsupported : ~p~n", [http]);
+start_server(Protocol, Arg) when Protocol == tcp orelse Protocol == udp ->
+    riak_stat_push_sup:start_server(Protocol, Arg);
 start_server(Protocol, _Arg) ->
     io:format("Error wrong type : ~p~n", [Protocol]).
 
