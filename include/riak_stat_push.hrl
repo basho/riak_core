@@ -59,10 +59,13 @@
 -define(STATS_LISTEN_PORT,      app_helper:get_env(riak_stat,stat_listen_port,9000)).
 -define(STATS_UPDATE_INTERVAL,  app_helper:get_env(riak_stat,stat_update_interval,1000)).
 
--define(BUFFER,     {buffer, 100*1024*1024}).
--define(SNDBUF,     {sndbuf,   5*1024*1024}).
--define(ACTIVE,     {active,          true}).
--define(REUSE,      {reuseaddr,       true}).
+-define(BUFFER,                 app_helper:get_env(riak_stat,buffer, 100*1024*1024)).
+-define(SNDBUF,                 app_helper:get_env(riak_stat,sndbuf,   5*1024*1024)).
+-define(ACTIVE,                 app_helper:get_env(riak_stat,active,          true)).
+-define(REUSE,                  app_helper:get_env(riak_stat,reuseaddr,       true)).
 
--define(OPTIONS,   [?BUFFER, ?SNDBUF, ?ACTIVE, ?REUSE]).
+-define(OPTIONS,   [{buffer,    ?BUFFER},
+                    {sndbuf,    ?SNDBUF},
+                    {active,    ?ACTIVE},
+                    {reuseaddr, ?REUSE}]).
 
