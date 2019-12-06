@@ -29,8 +29,7 @@
          reconcile/2,
          resolve/2,
          is_stale/2,
-         equal_context/2
-]).
+         equal_context/2]).
 
 -include("riak_core_metadata.hrl").
 
