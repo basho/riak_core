@@ -40,7 +40,6 @@ register_app(App, ProduceMFA) ->
     gen_server:call(?MODULE, {register, App, ProduceMFA}),
     ok.
 
-%% todo: change this @doc, why would wiger delete this
 %% This function should not be called by code that's been adapted to
 %% exometer. Thus, it must return the old format, and assume that the
 %%
