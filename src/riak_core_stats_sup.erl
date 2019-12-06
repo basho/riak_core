@@ -19,29 +19,24 @@
 -module(riak_core_stats_sup).
 -behaviour(supervisor).
 -export([start_link/0, init/1]).
--export([start_server/1, start_server/2, stop_server/1]).
+-export([start_server/1, stop_server/1]).
 
 %% Helper macro for declaring children of supervisor
 -define(CHILD(I, Type, Timeout), {I, {I, start_link, []}, permanent, Timeout, Type, [I]}).
 -define(CHILD(I, Type), ?CHILD(I, Type, 5000)).
--define(CHILD(I, Type, Timeout, Arg), {I, {I, start_link, [Arg]}, permanent, Timeout, Type, [I]}).
 
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-    Children = [stat_server(Mod,[]) || {_App, Mod} <- riak_core:stat_mods()],
+    Children = [stat_server(Mod) || {_App, Mod} <- riak_core:stat_mods()],
     {ok, {{one_for_one, 5, 10}, [?CHILD(riak_core_stat_cache, worker)|Children]}}.
 
-
 start_server(Mod) ->
-    start_server(Mod,[]).
-start_server(Mod,Arg) ->
-    Ref = stat_server(Mod,Arg),
+    Ref = stat_server(Mod),
     case supervisor:start_child(?MODULE, Ref) of
         {ok, Child} -> Child;
-        {error, {already_started, Child}} -> Child;
-        Error -> io:format("Error : ~p~n",[Error])
+        {error, {already_started, Child}} -> Child
     end.
 
 stop_server(Mod) ->
@@ -50,7 +45,5 @@ stop_server(Mod) ->
     ok.
 
 %% @private
-stat_server(Mod,[]) ->
-    ?CHILD(Mod,worker);
-stat_server(Mod,Arg) ->
-    ?CHILD(Mod,worker,5000,Arg).
+stat_server(Mod) ->
+    ?CHILD(Mod,worker).
