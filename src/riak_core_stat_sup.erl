@@ -30,8 +30,6 @@
 %% Supervisor callbacks
 -export([init/1]).
 
--define(SUPERVISOR, ?MODULE).
-
 %% Helper macro for declaring children of supervisor
 -define(CHILD(I, Type, Timeout), {I, {I, start_link, []}, permanent, Timeout, Type, [I]}).
 -define(CHILD(I, Type), ?CHILD(I, Type, 5000)).
@@ -43,16 +41,13 @@
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
-
 %% ===================================================================
 %% Supervisor callbacks
 %% ===================================================================
 
-init([]) -> %% todo: add riak_stat_push_sup in here?
+init([]) ->
     %% Note that exometer_core starts folsom now, so it is not needed here
     Children = lists:flatten(
-                 [
-                   ?CHILD(riak_core_stats_sup, supervisor)
-                   ]),
+                 [?CHILD(riak_core_stats_sup, supervisor)]),
 
     {ok, {{rest_for_one, 10, 10}, Children}}.
