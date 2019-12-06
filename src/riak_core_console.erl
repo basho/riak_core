@@ -1166,10 +1166,8 @@ parse_cidr(CIDR) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%% console %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% TODO: Read through the @doc for each function and change if necessary
 %%%-------------------------------------------------------------------
 %% @doc
-%% riak admin stat show riak.**
 %% the enabled stats are shown by default but the status can be chosen
 %% i.e. riak.riak_kv.**/status=disabled to show <disabled> stats
 %% pulls out of the metadata by default
@@ -1180,8 +1178,8 @@ stat_show(Arg) -> riak_stat_console:show_stat(Arg).
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% Check all the stats in exometer that are not being updated by
-%% testing or otherwise, This helps disable stats that are unused.
+%% Check all the stats in exometer that are not being,
+%% This helps disable stats that are unused,
 %% behaves similar to stat show
 %% @end
 %%%-------------------------------------------------------------------
@@ -1259,7 +1257,7 @@ add_profile(ProfileName) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% remove the profile from the metadata if it is not longer necessary
+%% remove the profile from the metadata if it is no longer necessary
 %% @end
 %%%-------------------------------------------------------------------
 -spec(remove_profile(consolearg()) -> ok | error()).
@@ -1304,7 +1302,7 @@ stat_metadata(Arg) -> io:fwrite("Invalid Argument Given :~p~n",[Arg]).
 %% @doc
 %% Setup the port, similar to how riak-admin stat show takes in
 %% riak.riak_kv.**/status=*, setup_port takes the argument
-%% "port=8089/sip=127.0.0.1" and sets up the socket from the
+%% "port=8089,sip=127.0.0.1" and sets up the socket from the
 %% argument given. port, protocol, serverip, instance needed.
 %% @end
 %%%-------------------------------------------------------------------
