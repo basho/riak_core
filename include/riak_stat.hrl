@@ -42,7 +42,7 @@
 -type incrvalue()       :: non_neg_integer() | integer() | float().
 
 
-%%% Responses
+%%% Return arguments
 
 % VALUES
 -type nts_stats()       :: [{metricname(),type(),status()}]. %% nts = {Name, Type, Status}
@@ -61,7 +61,6 @@
 -type attributes()      :: [info()] | [].
 -type sanitised_stat()  :: {metricname(),status(),type(),datapoints()}.
 
-% RETURNS
 -type print()           :: list() | string() | [] | ok.
 -type error()           :: {error, reason()} | error.
 -type reason()          :: generalerror() | exometererror() | profileerror() | metaerror().
@@ -82,6 +81,7 @@
 -define(METADATA_ENABLED,   metadata_enabled).
 
 -define(PFX,                riak_stat:prefix()).
+-define(NODEID,             term_to_binary(node())).
 
 -define(INFOSTAT,           [name,type,module,value,cache,
                              status,timestamp,options]).
