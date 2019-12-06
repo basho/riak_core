@@ -100,12 +100,10 @@ handle_info(refresh_monitor_server_ip, State = #state{server = MonitorServer}) -
     refresh_monitor_server_ip(),
     {noreply, NewState};
 handle_info(push_stats, #state{
-    socket=Socket, server_ip = undefined, hostname = Hostname, stats = Stats,
-    instance = Instance} = State) ->
-    push_stats(Socket, Hostname, Instance, Stats),
-    {noreply, State};
-handle_info(push_stats, #state{
-    socket=Socket, hostname = Hostname, instance = Instance, stats = Stats} = State) ->
+                                socket   = Socket,
+                                hostname = Hostname,
+                                instance = Instance,
+                                stats    = Stats} = State) ->
     push_stats(Socket, Hostname, Instance, Stats),
     {noreply, State};
 handle_info(tcp_closed,State) ->
@@ -120,7 +118,7 @@ terminate(endpoint_closed, #state{instance = Instance}) ->
     lager:error("Connection Closed on other end, terminating : ~p",[Instance]),
     terminate_server(Instance),
     ok;
-terminate(manual, #state{instance = Instance}) ->
+terminate(shutdown, #state{instance = Instance}) ->
     lager:info("Stopping ~p",[Instance]),
     terminate_server(Instance),
     ok;
@@ -168,7 +166,10 @@ refresh_monitor_server_ip() ->
     send_after(?REFRESH_INTERVAL, refresh_monitor_server_ip).
 
 %%--------------------------------------------------------------------
-
+%% @doc
+%% Register the server as running => false.
+%% @end
+%%--------------------------------------------------------------------
 terminate_server(Instance) ->
     Key = {?PROTOCOL, Instance},
     Prefix = {riak_stat_push, node()},

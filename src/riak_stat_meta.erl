@@ -35,7 +35,6 @@
 -define(STAT,                  stats).
 -define(STATPFX,              {?STAT, ?NODEID}).
 -define(STATKEY(StatName),    {?STATPFX, StatName}).
--define(NODEID,                node()).
 
 %% Profiles are Globally shared
 -define(PROFPFX,              {profiles, list}).
@@ -102,7 +101,7 @@ delete(Prefix, Key) ->
 %%%===================================================================
 %%%-------------------------------------------------------------------
 %% @doc
-%% Use riak_core_metadata:fold(A) -> B to fold over the path in the
+%% Use riak_core_metadata:fold/4 to fold over the path in the
 %% metadata and pull out the stats that match the STATUS and TYPE.
 %% @end
 %%%-------------------------------------------------------------------
@@ -176,7 +175,7 @@ find_unregister_status(_)                         -> false.
 %%
 %% For this, the lists are compared, and when a difference is found
 %% (i.e. the stat tuple is not in the betalist, but is in the alphalist)
-%% it means that the alpha stat, with the key-value needs to
+%% it means that the alpha stat, with the key-value needs to be
 %% returned in order to Keep order in the stats' configuration
 %% @end
 %%%-------------------------------------------------------------------
@@ -236,7 +235,7 @@ register(StatName,Type, Opts, Aliases) ->
             {Status, MOpts} = find_status(fresh, Opts),
             re_register(StatName,{Status,Type,MOpts,Aliases}),
             [{status,Status}|MOpts];
-        unregistered -> []; %% do nothing
+        unregistered -> []; %% return empty list for options
 
         MapValue = #{options := MOptions,status := MStatus} ->
             {Status, NewOpts} =
@@ -273,9 +272,11 @@ find_status(fresh, Opts) ->
 find_status(re_reg, {MetaOpts, MStatus, InOpts}) ->
     case proplists:get_value(status, InOpts) of
         undefined ->
-            {MStatus, the_alpha_opts([{status,MStatus}|MetaOpts], InOpts)};
+            {MStatus,
+                the_alpha_opts([{status,MStatus}|MetaOpts], InOpts)};
         _Status ->
-            {MStatus, the_alpha_opts([{status,MStatus}|MetaOpts], InOpts)}
+            {MStatus,
+                the_alpha_opts([{status,MStatus}|MetaOpts], InOpts)}
     end.
 
 %%%-------------------------------------------------------------------
@@ -289,14 +290,15 @@ find_status(re_reg, {MetaOpts, MStatus, InOpts}) ->
 %% @end
 %%%-------------------------------------------------------------------
 the_alpha_opts(MetadataOptions, IncomingOptions) ->
-    lists:foldl(fun
-                    ({Option,Value},Acc) ->
-                        case lists:keyfind(Option, 1,Acc) of
-                            false -> [{Option,Value}|Acc];
-                            {Option,_OtherVal} ->
-                                lists:keyreplace(Option,1,Acc,{Option,Value})
-                        end
-                end, IncomingOptions, MetadataOptions).
+    lists:foldl(
+        fun
+            ({Option,Value},Acc) ->
+                case lists:keyfind(Option, 1,Acc) of
+                    false -> [{Option,Value}|Acc];
+                    {Option,_OtherVal} ->
+                        lists:keyreplace(Option,1,Acc,{Option,Value})
+                end
+        end, IncomingOptions, MetadataOptions).
 
 re_register(StatName,{Status,Type,Options,Aliases}) ->
     StatMap = ?STATMAP,
@@ -385,7 +387,7 @@ reset_stat(Statname) ->
         MapValue = #{status := enabled,options := Options} ->
             NewOpts = resets(Options),
             put(?STATPFX,Statname,MapValue#{options => NewOpts});
-        _Otherwise -> ok %% If the stat is disabled it shouldn't be reset
+        _Otherwise -> ok %% If the stat is disabled it shouldn't reset
     end.
 
 resets(Options) ->

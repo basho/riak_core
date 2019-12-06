@@ -13,19 +13,14 @@
     maybe_meta/2,
     reload_metadata/0,
     reload_metadata/1,
-
     register/1,
-
     read_stats/4,
     find_entries/4,
     aggregate/2,
     find_entries_exom/4,
-
     change_status/1,
-
     reset_stat/1,
     unregister/1,
-
     save_profile/1,
     load_profile/1,
     delete_profile/1,
@@ -38,7 +33,7 @@
 %%%-------------------------------------------------------------------
 %% @doc
 %% Check the apps env for the status of the metadata, the persistence
-%% of stat configuration can be disabled as a fail safe, or in case
+%% of stat configuration can be disabled, for example: in case
 %% the stats configuration doesn't need to be semi-permanent for a
 %% length of time (i.e. testing)
 %% @end
@@ -89,10 +84,10 @@ reload_metadata(Stats) ->
 register(StatInfo) ->
     DefFun = fun register_both/4,
     ExoFun = fun register_exom/1,
-    case maybe_meta(DefFun, StatInfo) of
-        false     -> ExoFun(StatInfo);
-        Otherwise -> Otherwise
-    end.
+        case maybe_meta(DefFun, StatInfo) of
+            false     -> ExoFun(StatInfo);
+            Otherwise -> Otherwise
+        end.
 
 register_both(Stat,Type,Options,Aliases) ->
     register_both({Stat,Type,Options,Aliases}).
@@ -122,8 +117,7 @@ read_stats(Stats,Status,Type,DPs) ->
                     find_entries_meta(Stats,Status,Type,DPs);
                 Ans -> Ans
             end;
-        Stat ->
-            Stat
+        Stat -> Stat
     end.
 
 read_exo_stats(Stats, Status, Type) ->
@@ -222,7 +216,8 @@ legacy_search_cont(Re, Status, Type) ->
                             Status == disabled ->
                             [{Entry, zip_disabled(DPs)} | Acc];
                         _ ->
-                            [{Entry, [{D, undefined} || D <- DPnames]} | Acc]
+                            [{Entry, [{D, undefined}
+                                || D <- DPnames]} | Acc]
                     end;
                 false ->
                     Acc
@@ -409,25 +404,19 @@ unregister_in_exometer(StatName) ->
 -define(DISABLED_METADATA,  io:fwrite("Metadata is Disabled~n")).
 
 save_profile(Profile) ->
-    case maybe_meta(fun riak_stat_meta:save_profile/1, Profile) of
-        false -> ?DISABLED_METADATA;
-        Other -> Other
-    end.
+    profile_fun(Profile,fun riak_stat_meta:save_profile/1).
 
 load_profile(Profile) ->
-    case maybe_meta(fun riak_stat_meta:load_profile/1, Profile) of
-        false -> ?DISABLED_METADATA;
-        Other -> Other
-    end.
+    profile_fun(Profile,fun riak_stat_meta:load_profile/1).
 
 delete_profile(Profile) ->
-    case maybe_meta(fun riak_stat_meta:delete_profile/1, Profile) of
-        false -> ?DISABLED_METADATA;
-        Other -> Other
-    end.
+    profile_fun(Profile,fun riak_stat_meta:delete_profile/1).
 
 reset_profile() ->
-    case maybe_meta(fun riak_stat_meta:reset_profile/0, []) of
+    profile_fun([],     fun riak_stat_meta:reset_profile/0).
+
+profile_fun(Profile, Fun) ->
+    case maybe_meta(Fun, Profile) of
         false -> ?DISABLED_METADATA;
-        Other -> Other
+        Return -> Return
     end.

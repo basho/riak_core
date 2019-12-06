@@ -13,7 +13,7 @@
     start_link/0,
     start_server/2,
     stop_server/1,
-    restart_children/3]).
+    start_child/1]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -29,11 +29,6 @@
 -define(TCP_CHILD, riak_stat_push_tcp).
 -define(UDP_CHILD, riak_stat_push_udp).
 
--define(PUSHPREFIX, {riak_stat_push, node()}).
--define(ATTEMPTS, app_helper:get_env(riak_stat_push, restart_attempts, 50)).
--define(TIMINGS,  app_helper:get_env(riak_stat_push, restart_timings,
-                        [X*1000 || X <- timings()])).
-
 %%%===================================================================
 %%% API functions
 %%%===================================================================
@@ -41,8 +36,7 @@
 %%--------------------------------------------------------------------
 -spec(start_link() ->
     {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
-start_link() ->
-    supervisor:start_link({local, ?SERVER}, ?MODULE, []).
+start_link() -> supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -51,9 +45,10 @@ start_link() ->
 %%%-------------------------------------------------------------------
 -spec(start_server(protocol(),sanitised_push()) -> ok | print() | error()).
 start_server(Protocol, Data) ->
-    CHILD = child_spec(Data,Protocol),
-    Respond = start_child(CHILD),
-    log_and_respond(Respond).
+    CHILD   = child_spec(Data,Protocol),
+    {Child,Pid} = start_child(CHILD),
+    log_and_respond({Child,Pid}),
+    Pid.
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -64,17 +59,17 @@ start_server(Protocol, Data) ->
 -spec(stop_server([pid()] | [atom()] | list()) -> ok | print() | error()).
 stop_server(Child) when is_list(Child) ->
     ChildName = list_to_atom(Child),
-    _Terminate = supervisor:terminate_child(?MODULE, ChildName),
-    _Delete = supervisor:delete_child(?MODULE, ChildName),
-    io:fwrite("Polling Stopped for: ~s~n",[Child]),
-    ok.
+    Terminate = supervisor:terminate_child(?MODULE, ChildName),
+    Delete    = supervisor:delete_child(?MODULE, ChildName),
+    log_and_respond({Child,{Terminate,Delete}}).
 
+log_and_respond(Arg) ->
+    riak_stat_push_util:log_and_respond(Arg).
 
 %%%===================================================================
 %%% Supervisor callbacks
 %%%===================================================================
 
-%%--------------------------------------------------------------------
 -spec(init(Args :: term()) ->
     {ok, {SupFlags :: {RestartStrategy :: supervisor:strategy(),
         MaxR :: non_neg_integer(), MaxT :: non_neg_integer()},
@@ -86,18 +81,22 @@ init([]) ->
     Strategy = ?STRATEGY,
     Intensity = ?INTENSITY,
     Period = ?PERIOD,
-%%    SupFlags = {STRATEGY,INTENSITY,PERIOD},
-    SupFlags = #{
-        strategy => Strategy,
-        intensity => Intensity,
-        period => Period},
+    SupFlags = #{strategy => Strategy,
+                 intensity => Intensity,
+                 period => Period},
     restart_children(),
-
-    {ok, {SupFlags, []}}.
+    Children = get_children(),
+    {ok, {SupFlags, Children}}.
 
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+restart_children() ->
+    %% Get the children that were still running on shutdown.
+    Children = get_children(),
+    spawn(riak_stat_push_util,restart_children,[Children]),
+    ok.
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -107,20 +106,19 @@ init([]) ->
 %%%-------------------------------------------------------------------
 -spec(get_children() -> listofpush()).
 get_children() ->
-    ListOfKids = riak_stat_push:fold_through_meta('_', {{'_', '_', '_'}, '_'}, [node()]),
+    ListOfKids =
+        riak_stat_push:fold_through_meta('_', {{'_', '_', '_'}, '_'},
+            [node()]),
     lists:foldl(
         fun
-            ({{Protocol,Instance}, {_ODate,_MDate,_Pid,{running, true},_Node,Port,Sip,Stats}}, Acc) ->
-            Data = {{Port, Instance, Sip}, Stats},
-            [child_spec(Data, Protocol) | Acc];
-
-            %% MAPS
-            ({{Protocol,Instance}, #{running := true, port := Port, server_ip := Sip, stats := Stats}}, Acc) ->
-            Data = {{Port, Instance, Sip}, Stats},
-            [child_spec(Data, Protocol) | Acc];
+            ({{Protocol,Instance}, #{running := true,
+                                     port := Port,
+                                     server_ip := Sip,
+                                     stats := Stats}}, Acc) ->
+                Data = {{Port, Instance, Sip}, Stats},
+                [child_spec(Data, Protocol) | Acc];
             (_other,Acc) -> Acc
         end, [], ListOfKids).
-
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -137,16 +135,12 @@ child_spec(Data,Protocol) ->
     Shutdown  = ?SHUTDOWN,
     Type      = worker,
     MFArgs    = {Module, Function, [Args]},
-    #{
-        id => ChildName,
-        start => MFArgs,
-        restart => Restart,
-        shutdown => Shutdown,
-        type => Type,
-        modules => [Module]
-    }.
-%%        {ChildName, MFArgs, Restart, Shutdown, Type, [Module]}.
-
+    #{id      => ChildName,
+     start    => MFArgs,
+     restart  => Restart,
+     shutdown => Shutdown,
+     type     => Type,
+     modules  => [Module]}.
 
 server_name({{_,ServerName,_},_}) -> list_to_atom(ServerName).
 
@@ -170,79 +164,4 @@ start_child(Child) ->
         {error, {error, Reason}}        -> {Child, Reason};
         {error, Reason}                 -> {Child, Reason}
     end.
-
-log_and_respond({Child, Response}) ->
-    log(Child, Response),
-    respond(Response).
-
-log(Child, Pid) when is_pid(Pid)->
-    lager:info("Child started : ~p with Pid : ~p",[Child,Pid]);
-log(Child, econnrefused) ->
-    lager:error("Child refused to start - Connection refused. Child : ~p",[Child]);
-log(Child, Error) ->
-    lager:error("Child refused to start - ~p. Child : ~p",[Error,Child]).
-
-respond(Pid) when is_pid(Pid) ->
-    io:fwrite("Polling Started~n");
-respond(econnrefused) ->
-    io:fwrite("Could not initiate Polling, Connection refused~n");
-respond(Error) ->
-    io:fwrite("Could not initiate Polling, ~p~n",[Error]).
-
-restart_children() ->
-    %% todo: use stop children if it is running,
-    %% todo: make it start children up
-    Children = get_children(),
-    Attempts = ?ATTEMPTS, %% 100 Attempts at restarting the Children
-    Timings  = ?TIMINGS,
-    {_Pid, _Ref} =
-        spawn_monitor(riak_stat_push_sup, restart_children, [Attempts, Timings, Children]),
-    ok.
-
-restart_children(_Attempts, _Timings, []) ->
-    ok;
-restart_children(0, _Timings, Children) ->
-    lager:error("Could not restart Children : ~p, No attempts remaining",
-        [[Name || {Name, _, _, _,_,_} <- Children]]),
-    %% Setting running = false:
-    Keys = make_key(Children),
-    riak_stat_push_util:stop_running_server(Keys);
-restart_children(Attempts, [Timing|Timings], Children) ->
-    timer:sleep(Timing),
-    ToStart = lists:foldl(fun
-                              ({Child, econnrefused}, Acc) ->
-                                  riak_stat_push_util:stop_running_server(make_key([Child])),
-                                  Acc;
-                              ({Child,Pid}, Acc) when is_pid(Pid) ->
-                                  make_key(Child),
-                                  %% todo: store in meta,
-                                  Acc;
-                              ({Child,_Other}, Acc) ->
-                                  [Child|Acc]
-                          end, [], start_child(Children)),
-    restart_children(Attempts-1,Timings,ToStart).
-
-
-make_key(Child) ->
-    lists:foldl(
-        fun({Name, {Mod, _Fun, _Args}, _R, _S, _T, _M}, Acc) ->
-            Protocol =
-                case Mod of
-                    riak_stat_push_tcp -> tcp;
-                    riak_stat_push_udp -> udp
-                end,
-            [{Protocol, atom_to_list(Name)} | Acc]
-        end, [], Child).
-
-timings() ->
-    timings(1,[]).
-
-timings([], Timings) -> lists:reverse(lists:flatten(Timings));
-timings(128,Timings) ->
-    N=128*2,
-    Next = [N,N,N,N],
-    timings([],[Next|Timings]);
-timings(Time, Timings) ->
-    N=Time*2,
-    timings(N, [[N,N,N,N]|Timings]).
 

@@ -39,13 +39,9 @@
 %%%===================================================================
 %%%-------------------------------------------------------------------
 %% @doc
-%% riak admin stat show
-%%      <entry>/type=(type())/status=(enabled|disabled|*)/[dps].
 %% Show enabled or disabled stats
 %% when using riak-admin stat show riak.** enabled stats will
 %% show by default
-%%
-%% otherwise use: riak-admin stat show <entry>/status=* | disabled
 %% @end
 %%%-------------------------------------------------------------------
 -spec(show_stat(consolearg()) -> print()).
@@ -90,6 +86,7 @@ pick_info_attrs(Arg) ->
         {[], Rest} ->          %% If no arguments given
             {?INFOSTAT, Rest}; %% use all, and return arg
         Other ->
+            lager:info("Other : ~p",[Other]),
             Other %% Otherwise = {[name,type...],["riak.**"]}
     end.
 
@@ -97,8 +94,7 @@ split_arg(Str) ->
     %% separate the argument by the "-"
     %% i.e. ["riak.** -type -status"] -> ["riak.**","type","status"]
                 %% Spaces are concatenated in riak-admin
-    A = re:split(Str, "\\-", [{return, list}]),
-    io:format("A :~p~n",[A]),A.
+    re:split(Str, "\\-", [{return, list}]).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -205,7 +201,7 @@ data_sanitise(Arg, Type) ->
     parse_stat_entry(check_args(Arg), Type, ?STATUS, ?DPs).
 
 data_sanitise(Arg, Type, Status) ->
-    parse_stat_entry(check_args(Arg), Type, Status, ?DPs).
+    parse_stat_entry(check_args(Arg), Type,  Status, ?DPs).
 %%%-------------------------------------------------------------------
 
 %% @doc make sure all Args are Binaries in a list: [<<Args>>]
@@ -420,8 +416,6 @@ reset_stats(Name) ->
 %% stat show will pass in an empty list into the Attributes field.
 %% @end
 %%%-------------------------------------------------------------------
-%% TODO: consolidate the function below or create separate functions
-%% for each specific request
 -spec(print(atom() | string() | list()
          | {listofstats(),datapoints()}) -> print()).
 print(undefined)   -> print([]);
@@ -433,110 +427,112 @@ print([], _) ->
     io:fwrite("No Matching Stats~n");
 print(NewStats,Args) ->
     lists:map(fun
-          ({Names, _NDPs}) when Args == disable_0 ->
-             case lists:flatten([print_if_0(N,disable_0) || {N,_,_} <- Names]) of
-                 [] -> print([]);
-                 _ -> ok
-             end;
+          ({Names,_NDPs}) when Args == disable_0 ->
+              fun_0_stats(Names,disable_0);
+
           ({Names, NDPs}) when Args == show_0 ->
-              case lists:flatten([print_if_0(N, NDPs) || {N,_,_} <- Names]) of
-                  [] -> print([]);
-                  _ -> ok
-              end;
+              fun_0_stats(Names,NDPs);
 
           ({Names, Values}) when is_list(Names) ->
               print_if_0(Names, Values);
 
-          ({N, _T, _S}) when Args == [] -> get_value(N);
-          ({N, _T, _S}) ->  find_stats_info(N, Args);
+          ({N,_T,_S}) when Args == [] -> get_value(N);
+          ({N, T, S}) ->  find_stats_info({N,T,S}, Args);
 
           %% legacy pattern
-          (Legacy) ->
-              lists:map(fun
-                            ({LP, []}) ->
-                                io:fwrite(
-                                    "== ~s (Legacy pattern): No matching stats ==~n",
-                                    [LP]);
-                            ({LP, Matches}) ->
-                                io:fwrite("== ~s (Legacy pattern): ==~n",
-                                    [LP]),
-                                [[io:fwrite("~p: ~p (~p/~p)~n",
-                                    [N, V, E, DP]) ||
-                                    {DP, V, N} <- LDPs] ||
-                                    {E, LDPs} <- Matches];
-                            (_) ->
-                                []
-                        end, Legacy)
+          (Legacy) -> legacy_map(Legacy)
       end, NewStats).
+
+legacy_map(Legacy) ->
+    lists:map(fun
+                  ({LP,[]}) ->
+                      io:fwrite(
+                          "== ~s (Legacy pattern): No matching stats ==~n",
+                          [LP]);
+                  ({LP, Matches}) ->
+                      io:fwrite("== ~s (Legacy pattern): ==~n",
+                          [LP]),
+                      [[io:fwrite("~p: ~p (~p/~p)~n",
+                          [N, V, E, DP]) ||
+                          {DP, V, N} <- LDPs] ||
+                          {E, LDPs} <- Matches];
+                  (_) ->
+                      []
+              end, Legacy).
+
+fun_0_stats(Stats,DPs) ->
+    case lists:flatten([print_if_0(Name,DPs) || {Name,_,_} <- Stats]) of
+        [] -> print([]);
+        _ -> ok
+    end.
 
 print_if_0(StatName,disable_0) ->
     case not_0(StatName,[]) of
         [] -> [];
-        _Vals -> change_status([{StatName,{status,disabled}}]),
-            io:fwrite("~p : disabled~n",[StatName])
+        _Vals ->
+            change_status([{StatName,{status,disabled}}]),
+            print_stat_args(StatName, disabled)
     end;
 print_if_0(StatName, DPs) ->
-    case not_0(StatName, DPs) of
-        [] -> [];
-        Values ->
-            io:fwrite("~p : ~p~n", [StatName, Values])
-    end.
+    Values = not_0(StatName,DPs),
+    print_stat_args(StatName, Values).
 
 not_0(Stat, _DPs) ->
     case riak_stat_exom:get_value(Stat) of
-        {ok, V} ->
-            lists:foldl(fun
-                            ({Va,0},Acc) -> [{Va,0}|Acc];
-                            ({Va,[]},Acc) ->[{Va,0}|Acc];
-                            (_, Acc) -> Acc
-                        end, [], V);
+        {ok, V} -> fold_0_values(V);
         _ -> []
     end.
 
+fold_0_values(Values) ->
+    lists:foldl(fun
+                    ({Value,0}, Acc) -> [{Value,0}|Acc];
+                    ({Value,[]},Acc) -> [{Value,0}|Acc];
+                    (__________,Acc) -> Acc
+                end, [],Values).
 
 %%%-------------------------------------------------------------------
 
-get_value(N) ->
-    case riak_stat_exom:get_value(N) of
-        {ok, disabled} -> io:fwrite("~p : disabled~n",[N]);
-        {ok,Val} ->
-            case lists:foldl(fun
-                          ({_,{error,_}},A) -> A;
-                          ({ms_since_reset,_Value},A) -> A;
-                          (D,A) -> [D|A]
-                      end, [], Val) of
-                [] -> [];
-                R ->  io:fwrite("~p : ~p ~n",[N,R])
-            end;
-        {error, _} -> [];
-        _ -> []
-    end.
+get_value(Name) ->
+    Values = riak_stat_exom:get_value(Name),
+    Folded = fold_values(Values),
+    print_stat_args(Name, Folded).
 
-find_stats_info(Stats, Info) ->
-    case riak_stat_exom:get_datapoint(Stats, Info) of
-        [] -> [];
-        {ok, disabled} -> io:fwrite("~p : disabled~n",[Stats]);
-        {ok, V} ->
-            case lists:foldl(fun
-                          ([],A) -> A;
-                          ({_DP, undefined},A) -> A;
-                          ({_DP, {error,_}},A) -> A;
-                          ({ms_since_reset, _Va},A) -> A;
-                          (DP,A) -> [DP|A]
-                      end, [], V) of
-                [] -> [];
-                O  -> io:fwrite("~p : ~p~n",[Stats,O])
-            end;
-        {error,_} -> get_info_2(Stats, Info)
-    end.
+find_stats_info({Name,Type,Status}, Info) ->
+    Values = riak_stat_exom:get_datapoint(Name, Info),
+    Folded = fold_values(Values),
+    print_stat_args({Name,Type,Status,Info},Folded).
 
-get_info_2(N,Attrs) ->
-    case lists:foldl(fun
-                  (undefined,A) -> A;
-                  ([],A) -> A;
-                  ({_,{error,_ }},A) -> A;
-                  (D,A) -> [D|A]
-              end, [],[riak_stat_exom:get_info(N,Attrs)]) of
-        [] -> [];
-        O  -> io:fwrite("~p : ~p~n",[N,O])
-    end.
+get_info_2(Statname,Attrs) ->
+    fold_values([riak_stat_exom:get_info(Statname,Attrs)]).
+
+print_stat_args(_StatName, []) -> [];
+print_stat_args(StatName, disabled) ->
+    io:fwrite("~p : disabled", [StatName]);
+print_stat_args({StatName,Type,Status,Info},{error,_}) ->
+    NewValues = get_info_2(StatName,Info),
+    NewArgs = replace_type_and_status(Type,Status,NewValues),
+    print_stat_args(StatName,NewArgs);
+print_stat_args({Statname, Type, Status,_Info}, Args) ->
+    NewArgs = replace_type_and_status(Type,Status,Args),
+    print_stat_args(Statname,NewArgs);
+print_stat_args(StatName, Args) ->
+    io:fwrite("~p : ~p~n",[StatName,Args]).
+
+fold_values([]) -> [];
+fold_values(Values) when is_list(Values) ->
+    lists:foldl(fun
+                    (undefined,A)           -> A;
+                    ([], A)                 -> A;
+                    ({type,_},A)            -> [{type,undef}|A];
+                    ({status,_},A)          -> [{status,undef}|A];
+                    ({_,undefined},A)       -> A;
+                    ({_,{error,_}},A)       -> A;
+                    ({ms_since_reset,_V},A) -> A;
+                    (DP,A)                  -> [DP|A]
+                end, [], Values);
+fold_values({ok,Values}) -> fold_values(Values);
+fold_values(Values) -> Values.
+
+replace_type_and_status(Type,Status,List) ->
+    NewList = lists:keyreplace(type,1,List,{type,Type}),
+    lists:keyreplace(status,1,NewList, {status,Status}).

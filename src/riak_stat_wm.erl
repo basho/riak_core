@@ -1,6 +1,6 @@
 %%%-------------------------------------------------------------------
 %%% @doc
-%%% A mimic of riak_kv_wm_stats,
+%%% A mimic of riak_kv_wm_stats, specifically for using riak_stat
 %%% @end
 %%%-------------------------------------------------------------------
 -module(riak_stat_wm).
@@ -38,8 +38,6 @@
 -define(PLAIN_TEXT_HEADER, [{?CONTENT_TYPE, ?PLAIN_TEXT_CONTENT_TYPE}]).
 -define(JSON_HEADER,             [{?CONTENT_TYPE, ?JSON_CONTENT_TYPE}]).
 -define(DEFAULT_ENCODINGS, riak_kv_wm_utils:default_encodings()).
-
-%%--------------------------------------------------------------------
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -129,6 +127,3 @@ produce_body(ReqData, Ctx) ->
 pretty_print(RD1, C1=#ctx{}) ->
     {Json, RD2, C2} = produce_body(RD1, C1),
     {json_pp:print(binary_to_list(list_to_binary(Json))), RD2, C2}.
-
-
-%%--------------------------------------------------------------------

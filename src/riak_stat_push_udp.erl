@@ -99,17 +99,15 @@ handle_info(refresh_monitor_server_ip, State = #state{server = MonitorServer}) -
                end,
     refresh_monitor_server_ip(),
     {noreply, NewState};
-handle_info(push_stats, #state{socket=Socket, latency_port = Port, stats = Stats,
-    server_ip = undefined, server = Server, hostname = Hostname,
-    instance = Instance} = State) ->
-    push_stats(Socket, Hostname, Instance, Server, Port, Stats),
-    {noreply, State};
-handle_info(push_stats, #state{socket=Socket, latency_port = Port, stats = Stats,
-    server_ip = ServerIp, hostname = Hostname, instance = Instance} = State) ->
+handle_info(push_stats, #state{
+                            socket       =Socket,
+                            latency_port = Port,
+                            stats        = Stats,
+                            server_ip    = ServerIp,
+                            hostname     = Hostname,
+                            instance     = Instance} = State) ->
     push_stats(Socket, Hostname, Instance, ServerIp, Port, Stats),
     {noreply, State};
-handle_info(shutdown, State) ->
-    {stop, manual, State};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -117,7 +115,7 @@ handle_info(_Info, State) ->
 %%--------------------------------------------------------------------
 -spec(terminate(Reason :: (normal | shutdown | {shutdown, term()} | term()),
     State :: #state{}) -> term()).
-terminate(manual, #state{instance = Instance}) ->
+terminate(shutdown, #state{instance = Instance}) ->
     lager:info("Stopping ~p",[Instance]),
     terminate_server(Instance),
     ok;
@@ -188,11 +186,11 @@ send_after(Interval, Arg) ->
 -spec(push_stats(socket(),hostname(),instance(),hostname(),port(),metrics())
         -> ok | error()).
 push_stats(Socket, ComponentHostname, Instance, MonitoringHostname, Port, Stats) ->
-    case riak_stat_push_util:json_stats(ComponentHostname, Instance, Stats) of
+    case riak_stat_push_util:json_stats(MonitoringHostname, Instance, Stats) of
         ok ->
             push_stats();
         JsonStats ->
-            send(Socket, MonitoringHostname, Port, JsonStats),
+            send(Socket, ComponentHostname, Port, JsonStats),
             push_stats()
     end.
 

@@ -5,21 +5,11 @@
 %%%
 %%% These _stat modules call into this module to REGISTER, READ,
 %%% UPDATE, DELETE or RESET the stats.
-%%%
-%%%
-%%% As of 2019 -> the aggregate function is a test function and
-%%% works in a very basic way, i.e. it will produce the sum of any
-%%% counter datapoints for any stats given, or the average of any
-%%% "average" datapoints such as mean/median/one/value etc...
-%%% This only works on a single nodes stats list, there will be
-%%% updates in future to aggregate the stats for all the nodes.
 %%% @end
 %%%-------------------------------------------------------------------
-
 -module(riak_stat).
 -include_lib("riak_core/include/riak_stat.hrl").
 
-%% Internally Used
 -export([
     register/2,
     register_stats/1,
@@ -29,11 +19,7 @@
     unregister/1,
     unregister_vnode/4,
     reset/1,
-    prefix/0
-]).
-
-%% Externally Used
--export([
+    prefix/0,
     find_entries/2,
     stats/0,
     app_stats/1,
@@ -50,7 +36,7 @@
 %%%===================================================================
 %%%-------------------------------------------------------------------
 %% @doc
-%%% For registration the stats call into this module to become a
+%%% For registration the stats call into this module to become an
 %%% uniform format in a list to be "re-registered" in the metadata
 %%% and in exometer. Unless the metadata is disabled (it is enabled
 %%% by default), the stats are sent to both to be registered. The
@@ -69,7 +55,6 @@ register(App, Stats) ->
       ({Name,Type,Option,Aliases}) -> register_(App,Name,Type,Option,Aliases)
                   end, Stats).
 
-
 register_(App, Name, Type, Options, Aliases) ->
     StatName   = stat_name(prefix(),App,Name),
     NewOptions = add_cache(Options),
@@ -79,9 +64,7 @@ register_(App, Name, Type, Options, Aliases) ->
 stat_name(Prefix, App, Name) when is_atom(Name) ->
     stat_name_([Prefix, App, Name]);
 stat_name(Prefix, App, Name) when is_list(Name) ->
-    stat_name_([Prefix, App | Name]);
-stat_name(_,_,Name) ->
-    lager:error("Stat Name illegal ~p ",[Name]).
+    stat_name_([Prefix, App | Name]).
 
 stat_name_([P, [] | Rest]) -> [P | Rest];
 stat_name_(N) -> N.
@@ -103,15 +86,13 @@ register_stats(StatInfo) -> riak_stat_mgr:register(StatInfo).
 %%%-------------------------------------------------------------------
 %% @doc
 %% Give a path to a stat such as : [riak,riak_kv,node,gets,time]
-%% to retrieve the stats' as [{Name,Type,Status}]
+%% to retrieve the stats' as : [{Name, Type, Status}]
 %% @end
 %%%-------------------------------------------------------------------
 -spec(get_stats(metricname()) -> nts_stats()).
-get_stats(Path) ->
-    find_entries(Path, '_').
+get_stats(Path) -> find_entries(Path, '_').
 
-find_entries(Stats, Status) ->
-    find_entries(Stats, Status, '_', []).
+find_entries(Stats, Status) -> find_entries(Stats, Status, '_', []).
 
 find_entries(Stats, Status, Type, DPs) ->
     riak_stat_mgr:find_entries(Stats, Status, Type, DPs).
@@ -136,8 +117,7 @@ sample(StatName) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(stats() -> print()).
-stats() ->
-    print(get_stats([[prefix()|'_']])).
+stats() -> print(get_stats([[prefix()|'_']])).
 
 %%%-------------------------------------------------------------------
 %% @doc (Shell function - not used internally).
@@ -146,8 +126,7 @@ stats() ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(app_stats(app()) -> print()).
-app_stats(App) ->
-    print(get_stats([[prefix(),App|'_']])).
+app_stats(App) -> print(get_stats([[prefix(),App|'_']])).
 
 %%%-------------------------------------------------------------------
 %% @doc (Shell function - not used internally)
@@ -155,8 +134,7 @@ app_stats(App) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(get_value(listofstats()) -> print()).
-get_value(Arg) ->
-    print(riak_stat_exom:get_values(Arg)).
+get_value(Arg) -> print(riak_stat_exom:get_values(Arg)).
 
 %%%-------------------------------------------------------------------
 %% @doc (Shell function - not used internally)
@@ -179,6 +157,13 @@ stat_info(Stat) ->
 %% @see exometer:aggregate/2
 %% Does the average of stats averages, called manually, not used
 %% internally or automatically.
+%%
+%%% As of 2019 -> the aggregate function is a test function and
+%%% works in a very basic way, i.e. it will produce the sum of any
+%%% counter datapoints for any stats given, or the average of any
+%%% "average" datapoints such as mean/median/one/value etc...
+%%% This only works on a single nodes stats list, there will be
+%%% updates in future to aggregate the stats for all the nodes.
 %% @end
 %%%-------------------------------------------------------------------
 -spec(aggregate(metricname(), datapoints()) -> print()).
@@ -188,7 +173,6 @@ aggregate(Stats, DPs) ->
 
 aggregate_(Pattern, DPs) ->
     riak_stat_mgr:aggregate(Pattern, DPs).
-
 
 %%%===================================================================
 %%% Updating Stats API
@@ -242,7 +226,7 @@ unreg_stats(StatName) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% Resetting the stats change the values back to 0, and it's reset
+%% Resetting the stats; change the values back to 0, and it's reset
 %% counter in the metadata and in the exometer are updated +1
 %% (enabled only)
 %% @end
@@ -261,13 +245,13 @@ reset(StatName) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(prefix() -> prefix()).
-prefix() -> app_helper:get_env(riak_core, stat_prefix, riak).
+prefix() -> app_helper:get_env(riak_stat, prefix, riak).
 
 %%%-------------------------------------------------------------------
 
 -spec(print(Entries ::
-           (nts_stats() %% [{Name,Type,Status}]
-          | n_v_stats() %% [{Name,Value/Values}]
-          | n_i_stats() %% [{Name, Information}]
+           (nts_stats() %% [{Name,  Type,Status}]
+          | n_v_stats() %% [{Name, Value/Values}]
+          | n_i_stats() %% [{Name,  Information}]
           | stat_value())) -> ok).
 print(Entries) -> riak_stat_console:print(Entries).

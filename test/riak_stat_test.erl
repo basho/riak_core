@@ -118,6 +118,200 @@ cleanup(_) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%% TEST FUNCTIONS %%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+console_test_() ->
+    ?setuptest("Testing all the riak-admin console commands",
+        [
+            {"riak admin stat ____",        fun test_riak_admin_stat/0},
+            {"riak admin push ____",        fun test_riak_admin_push/0},
+            {"riak admin profiles ____",    fun test_riak_admin_profiles/0},
+            {"riak admin <enter>  ____",    fun test_riak_admin_extra/0}
+        ]).
+
+test_riak_admin_stat() ->
+    Names = namesarg(),
+    %% All the functions use Names
+
+    Types = typesarg(),
+    %% Enable/Disable/Show/Show-0/Disable-0/Reset
+
+    Statuses = statusarg(),
+    %% Show/Show-0
+
+    DPs = dparg(),
+    %% Show/Show-0
+
+    Infos = infoarg(),
+    %% Info
+
+    En = "enable",
+    Dis = "disable",
+
+    ShowArgs     = make_args({Names,Types,Statuses,DPs},15,[]),
+    Show0Args    = make_args({Names,Types,Statuses,DPs},15,[]),
+    InfoArgs     = make_args({Names,Infos},15,[]),
+    EnableArgs   = make_args({Names,Types},15,[]),
+    DisableArgs  = make_args({Names,Types},15,[]),
+    ResetArgs    = make_args({Names,Types},15,[]),
+    MetadataArgs = [En,Dis,En,En,Dis,Dis,En,En,Dis,En,Dis,En],
+
+    ?assert(test_random(show,ShowArgs)),
+    ?assert(test_random(show0,Show0Args)),
+    ?assert(test_random(info,InfoArgs)),
+    ?assert(test_random(enable,EnableArgs)),
+    ?assert(test_random(disable,DisableArgs)),
+    ?assert(test_random(reset,ResetArgs)),
+    ?assert(test_random(metadata,MetadataArgs)),
+    ok.
+
+namesarg() ->
+    ["riak.**",
+        "riak.riak_kv.**",
+        "riak.**.time",
+        "riak.*",
+        "riak.*.*.*",
+        "node_gets",
+        "riak_repl.**.sent"].
+
+typesarg() ->
+    ["/type=spiral",
+        "/type=gauge",
+        "/type=duration",
+        "/type=histogram",
+        "/type=counter",
+        "/type=fast_counter",
+        "/type=probe",
+        ""].
+
+statusarg() ->
+    ["/status=enabled",
+        "/status=disabled",
+        "/status=*",
+        "/status=unregistered",
+        ""].
+
+dparg() ->
+    ["/mean",
+        "/min,max",
+        "/value,type",
+        "/resets,status",
+        "/median,mode",
+        "/name,module",
+        "/ ",
+        ""].
+
+infoarg() ->
+    ["-type-status",
+        "-type",
+        "-value",
+        "-cache",
+        "-name-timestamp",
+        "-options",
+        ""].
+
+test_riak_admin_push() ->
+    Ports     = portsarg(),
+    Protocols = protocolarg(),
+    Instances = instancearg(),
+    ServerIps = serveriparg(),
+
+    SetupArgs   = make_args({Protocols,Ports,Instances,ServerIps},10,[]),
+    SetdownArgs = make_args({[""|Protocols],[""|Ports],[""|Instances],[""|ServerIps]},20,[]),
+    InfoArgs    = make_args({[""|Protocols],[""|Ports],[""|Instances],[""|ServerIps]},10,[]),
+
+    ?assert(test_random(setup,SetupArgs)),
+    ?assert(test_random(setdown,SetdownArgs)),
+    ?assert(test_random(infopush,InfoArgs)),
+    ?assert(test_random(infopushall,InfoArgs)),
+    ok.
+
+portsarg() ->
+    [",port=" ++ Str || Str <-
+        ["8080", "9090", "9090", "0", "1234"
+            "24999","57863", "30030303"]].
+
+protocolarg() ->
+    ["protocol=tcp","protocol=udp"].
+
+instancearg() ->
+    [",instance=" ++ Str || Str <-
+        ["help","help","test","isthisglutenfree",
+            "tunasandwich","cheese","test","dairy"]].
+
+serveriparg() ->
+    [",sip=" ++ Str || Str <-
+        ["127.0.0.1","0.0.0.0","localhost","chicken"]].
+
+test_riak_admin_profiles() ->
+    Profiles = profilearg(),
+    ?assert(test_random(save,Profiles)),
+    ?assert(test_random(load,Profiles)),
+    ?assert(test_random(delete,Profiles)),
+    ?assert(test_random(profreset,Profiles)),
+    ok.
+
+profilearg() ->
+    ["profilename","testprofile","profiletest",
+        "testagain","name","abcde",
+        "riak_stat","help","useful",
+        "stats","pushprofile","testing"].
+
+test_riak_admin_extra() ->
+    %% test all the riak stat stuff together
+
+    ok.
+
+make_args(_Lists,0,Acc) -> Acc;
+make_args({Name,Info},Times,Acc) ->
+    make_args({Name,Info},Times-1,
+        [(r(Name)++r(Info))|Acc]);
+make_args({Name,Type,Statuses,DPs},Times,Acc) ->
+    make_args({Name,Type,Statuses,DPs},Times-1,
+        [(r(Name)++r(Type)++r(Statuses)++r(DPs))|Acc]).
+
+r(N) ->
+    lists:nth(rand:uniform(length(N)),N).
+
+test_random(Type,Args) ->
+    lists:foreach(fun(Arg) ->
+        ?debugFmt("Arg: ~p",[Arg]),
+        test_fun(Type,Arg)
+                  end, Args).
+
+test_fun(show,Arg) ->
+    ok == riak_core_console:stat_show(Arg);
+test_fun(show0,Arg) ->
+    ok == riak_core_console:stat_0(Arg);
+test_fun(info,Arg) ->
+    ok == riak_core_console:stat_info(Arg);
+test_fun(enable,Arg) ->
+    ok == riak_core_console:stat_enable(Arg);
+test_fun(disable,Arg) ->
+    ok == riak_core_console:stat_disable(Arg);
+test_fun(reset,Arg) ->
+    ok == riak_core_console:stat_reset(Arg);
+test_fun(metadata,Arg) ->
+    ok == riak_core_console:stat_metadata(Arg);
+
+test_fun(setup,Arg) ->
+    ok == riak_core_console:setup_endpoint(Arg);
+test_fun(setdown,Arg) ->
+    ok == riak_core_console:setdown_endpoint(Arg);
+test_fun(infopush,Arg) ->
+    ok == riak_core_console:find_push_stats(Arg);
+test_fun(infopushall,Arg) ->
+    ok == riak_core_console:find_push_stats_all(Arg);
+
+test_fun(save,Arg) ->
+    ok == riak_core_console:add_profile(Arg);
+test_fun(load,Arg) ->
+    ok == riak_core_console:load_profile(Arg);
+test_fun(delete,Arg) ->
+    ok == riak_core_console:remove_profile(Arg);
+test_fun(profreset,Arg) ->
+    ok == riak_core_console:reset_profile(Arg).
+
+
+
 data_sanitisation_tests_() ->
     ?setuptest("data_sanitise(Arg) when Arg == from Console",
         [
@@ -191,16 +385,16 @@ test_data_sanitise_console() ->
     {N7,_T7,_S7, B7} = riak_stat_console:data_sanitise(A7),
     {N8, T8, S8, B8} = riak_stat_console:data_sanitise(A8),
     {N9,_T9,_S9,_B9} = riak_stat_console:data_sanitise(A9),
-    ?_assertEqual([[riak|'_']],N1),
-    ?_assertEqual([[riak,riak_kv|'_']],N2),
-    ?_assertEqual([[riak,riak_kv,node,gets|'_']],N3),
-    ?_assertEqual([[riak,riak_kv,node,gets]],N4),
-    ?_assertEqual([[node_gets]],N5),
-    ?_assertEqual([[riak|'_']],N6), ?_assertEqual(duration,T6),
-    ?_assertEqual([[riak|'_']],N7), ?_assertEqual([mean,max],B7),
-    ?_assertEqual([[riak,riak_kv|'_']],N8),?_assertEqual(spiral,T8),
-        ?_assertEqual('_',S8),?_assertEqual([one],B8),
-    ?_assertEqual([[riak,'_',time],
+    ?assertEqual([[riak|'_']],N1),
+    ?assertEqual([[riak,riak_kv|'_']],N2),
+    ?assertEqual([[riak,riak_kv,node,gets|'_']],N3),
+    ?assertEqual([[riak,riak_kv,node,gets]],N4),
+    ?assertEqual([[node_gets]],N5),
+    ?assertEqual([[riak|'_']],N6), ?_assertEqual(duration,T6),
+    ?assertEqual([[riak|'_']],N7), ?_assertEqual([mean,max],B7),
+    ?assertEqual([[riak,riak_kv|'_']],N8),?_assertEqual(spiral,T8),
+    ?assertEqual('_',S8),?_assertEqual([one],B8),
+    ?assertEqual([[riak,'_',time],
                     [riak,'_','_',time],
                     [riak,'_','_','_',time],
                     [riak,'_','_','_','_',time],

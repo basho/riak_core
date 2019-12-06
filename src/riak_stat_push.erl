@@ -1,7 +1,8 @@
 %%%-------------------------------------------------------------------
 %%% @doc
-%%% From "riak admin push setup ___" to this module, you can poll the stats
-%%% from exometer and setup a server to push those stats to an udp endpoint.
+%%% From "riak admin push setup ___" to this module, you can poll the
+%%% stats from exometer and setup a server to push those stats to an
+%%% udp endpoint.
 %%% The server can be terminated to stop the pushing of stats.
 %%% @end
 %%%-------------------------------------------------------------------
@@ -14,12 +15,9 @@
     setdown/1,
     sanitise_data/1,
     find_push_stats/2,
-    fold_through_meta/3
+    fold_through_meta/3,
+    store_setup_info/3
 ]).
-
--define(NODE, [node()]).
--define(PUSHPREFIX,         {riak_stat_push, node()}).
--define(PUSHPREFIX(Node),   {riak_stat_push, Node}).
 
 -define(NEWMAP, #{
     original_dt => calendar:universal_time(),
@@ -32,6 +30,14 @@
     stats => ['_']
     }).
 
+-define(PUTMAP(Pid,Port,Server,Stats,Map),
+    Map#{pid => Pid,
+         port => Port,
+         server_ip => Server,
+         stats => Stats}).
+-define(STARTMAP(Map),
+    Map#{modified_dt => calendar:universal_time(),
+         running => true}).
 %%%-------------------------------------------------------------------
 %% @doc
 %% the default operation of this function is to start up the pushing
@@ -53,64 +59,43 @@ setup(Arg) ->
 
 -spec(store_setup_info(push_key(),push_value(), (new | existing))
                                           -> ok | print() | error()).
-store_setup_info({_Key,Instance}, #{pid := NotPid}, _Type) when is_pid(NotPid) == false ->
-    lager:error("~p was not started", [Instance]),
-    ok;
+store_setup_info({_Key,_Instance},
+    #{pid := NotPid}, _Type) when is_pid(NotPid) == false -> ok;
 store_setup_info(Key, MapValues, new) ->
-    Prefix = ?PUSHPREFIX,
-    riak_stat_meta:put(Prefix, Key, [MapValues]);
-store_setup_info(Key, MapValues, existing) ->
-    Prefix = ?PUSHPREFIX,
-    NewMap = MapValues#{modified_dt => calendar:universal_time()},
-    riak_stat_meta:put(Prefix, Key, [NewMap]).
-
-%%%%%%
-%%store_setup_info(_,ok,_,_) -> ok;
-%%store_setup_info(new, Pid, Protocol, {{Port, Instance, Sip}, Stats}) ->
-%%    Prefix = ?PUSHPREFIX(node()),
-%%    Key = {Protocol,Instance},
-%%    MapValue =
-%%    #{original_dt => calendar:universal_time(),
-%%        modified_dt => calendar:universal_time(),
-%%        pid => Pid,
-%%        running => true,
-%%        node => node(),
-%%        port => Port,
-%%        server_ip => Sip,
-%%        stats => Stats},
-%%    riak_stat_meta:put(Prefix, Key, MapValue).
-%%%%
+    riak_stat_meta:put(?PUSHPREFIX, Key, MapValues);
+store_setup_info(Key, MapValues = #{running := _Bool}, existing) ->
+    NewMap = ?STARTMAP(MapValues),
+    riak_stat_meta:put(?PUSHPREFIX, Key, NewMap).
 
 maybe_start_server(Protocol, {{Port,Instance,Sip},Stats}) ->
-    case fold_through_meta(Protocol,{{'_',Instance,'_'},'_'}, ?NODE) of
+    case fold_through_meta(Protocol,{{'_',Instance,'_'},'_'}, [node()]) of
         [] ->
             Pid = start_server(Protocol,{{Port,Instance,Sip},Stats}),
-            NewMap = ?NEWMAP,
-            store_setup_info({Protocol, Instance},
-                NewMap#{pid=> Pid,server_ip=>Sip,port => Port,stats => Stats},new);
-        Otherwise ->
-            lists:foreach(fun
-%%                              ({{_Pr,_In}, {_ODT,_MDT,_Pid,{running,true},_Node,_Port,_Sip,_St}}) ->
-%%                                  io:fwrite("Server of that instance is already running~n");
-%%                              ({{_Pr,_In}, {_ODT,_MDT,_Pid,{running,false},_Node,_Port,_Sip,_St}}) ->
-%%                                  {_,NewPid} = start_server(Protocol, {{Port, Instance, Sip}, Stats}),
-%%                                  store_setup_info(existing, NewPid, Protocol, {{Port, Instance, Sip}, Stats});
+            MapValue = ?PUTMAP(Pid,Port,Sip,Stats,?NEWMAP),
+            store_setup_info({Protocol, Instance},MapValue,new);
+        Servers ->
+            maybe_start_server(Servers,Protocol,{{Port,Instance,Sip},Stats})
 
-                              %% Map attempt
-                              ({{_Pr,_In}, #{running := true}}) ->
-                                  io:fwrite("Server of that instance is already running~n");
-                              ({{_Pr,_In}, #{running := false}= ExistingMap}) ->
-                                  {_,NewPid} = start_server(Protocol, {{Port, Instance, Sip}, Stats}),
-                                  NewMap = ExistingMap#{pid => NewPid, port => Port, server_ip => Sip, stats => Stats},
-                                  store_setup_info({Protocol, Instance}, NewMap, existing)
-                          end, Otherwise)
     end.
+maybe_start_server(ServersFound,Protocol,{{Port,Instance,Sip},Stats}) ->
+    lists:foreach(
+        fun
+            ({{_Pr,_In}, #{running := true}}) ->
+                io:fwrite("Server of that instance is already running~n");
+            ({{_Pr,_In}, #{running := false} = ExistingMap}) ->
+                Pid =
+                    start_server(Protocol, {{Port, Instance, Sip}, Stats}),
+                MapValue = ?PUTMAP(Pid,Port,Sip,Stats,ExistingMap),
+                store_setup_info({Protocol, Instance}, MapValue, existing)
+        end, ServersFound).
 
 -spec(start_server(protocol(), sanitised_push())
         -> print() | error()).
 start_server(http, _Arg) ->
     io:format("Error Unsupported : ~p~n", [http]);
-start_server(Protocol, Arg) when Protocol == tcp orelse Protocol == udp ->
+start_server(Protocol, Arg)
+    when   Protocol == tcp
+    orelse Protocol == udp ->
     riak_stat_push_sup:start_server(Protocol, Arg);
 start_server(Protocol, _Arg) ->
     io:format("Error wrong type : ~p~n", [Protocol]).
@@ -140,18 +125,17 @@ check_args(Protocol, {{Port, Instance, ServerIp}, Stats}) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% Kill the udp servers currently running and pushing stats to an endpoint.
-%% Stop the pushing of stats by taking the setup of the udp gen_server
-%% down
+%% Kill the udp servers currently running and pushing stats to an
+%% endpoint. Stop the pushing of stats by taking the setup of the udp
+%% gen_server down
 %% @end
 %%%-------------------------------------------------------------------
 -spec(setdown(consolearg()) -> print()).
-setdown([]) ->
-    io:fwrite("No Argument entered ~n");
 setdown(Arg) ->
         case sanitise_data(Arg) of
             {error, Reason} -> print_info({error,Reason});
-            {Protocol, SanitisedData} -> terminate_server(Protocol, SanitisedData)
+            {Protocol, SanitisedData} ->
+                terminate_server(Protocol, SanitisedData)
         end.
 
 %% @doc change the undefined into
@@ -159,66 +143,26 @@ setdown(Arg) ->
 terminate_server(Protocol, {{Port, Instance, Sip},Stats}) ->
     stop_server(fold(Protocol, Port, Instance, Sip, Stats, node())).
 
-stop_server([]) ->
-    io:fwrite("Error, Server not found~n");
 stop_server(ChildrenInfo) ->
-    lists:foreach(fun
-                      ({{Protocol, Instance},{OrigDT,_DT,_Pid,{running,true},Node,Port,SIp,Stats}}) ->
-                          riak_stat_push_sup:stop_server(Instance),
-                          riak_stat_meta:put(?PUSHPREFIX,
-                              {Protocol, Instance},
-                              {OrigDT, calendar:universal_time(),undefined,{running,false},Node,Port,SIp,Stats});
-                      ({{_Protocol, _Instance}, {_ODT,_DT,_Pid,{running,false},_Node,_Port,_SIp,_Stats}}) ->
-                          ok;
+    lists:foreach(
+        fun
+            ({{Protocol, Instance},#{running := true} = MapValue}) ->
+                riak_stat_push_sup:stop_server(Instance),
+                riak_stat_meta:put(?PUSHPREFIX,
+                    {Protocol, Instance},
+                    MapValue#{
+                        modified_dt => calendar:universal_time(),
+                        pid => undefined,
+                        running => false});
+            (_) -> ok
+        end, ChildrenInfo).
 
-                      %%% Map Attempt
-                      ({{Protocol, Instance},#{running := true} = MapValue}) ->
-                          riak_stat_push_sup:stop_server(Instance),
-                          riak_stat_meta:put(?PUSHPREFIX,
-                              {Protocol, Instance},
-                              MapValue#{
-                                  modified_dt => calendar:universal_time(),
-                                  pid => undefined,
-                                  running => false});
-
-
-                      ({{_Protocol, _Instance}, #{running := false}}) ->
-                          ok;
-                      (Other) ->
-                          io:format("Error, wrong return type in riak_stat_push:fold/2 = ~p~n", [Other])
-                  end, ChildrenInfo).
-
--spec(fold(protocol(),port(),instance(),server_ip(),metrics(),node()) -> listofpush()).
+-spec(fold(protocol(),port(),instance(),server_ip(),metrics(),node()) ->
+    listofpush()).
 fold(Protocol, Port, Instance, ServerIp, Stats, Node) ->
     {Return, Port, ServerIp, Stats, Node} =
         riak_core_metadata:fold(
             fun
-                ({{MProtocol, MInstance},   %% KEY
-                    [{OriginalDateTime,     %% VALUE
-                        ModifiedDateTime,
-                        Pid,
-                        RunningTuple, %% {running, boolean()}
-                        MNode,
-                        MPort,
-                        MSip,
-                        MStats}]},
-                    {Acc, APort, AServerIP, AStats, ANode}) %% Acc and Guard
-                    when (APort     == MPort  orelse APort     == '_')
-                    and  (AServerIP == MSip   orelse AServerIP == '_')
-                    and  (ANode     == MNode  orelse ANode     == node()) %% default compare to own node
-                    and  (AStats    == MStats orelse AStats    == '_') ->
-                    %% Matches all the Guards given in Acc
-                    {[{{MProtocol,MInstance}, {OriginalDateTime, %% First start
-                                                ModifiedDateTime,%% date last changed.
-                                                Pid,
-                                                RunningTuple,
-                                                MNode,
-                                                MPort,
-                                                MSip,
-                                                MStats}} | Acc],
-
-                                                APort, AServerIP, AStats,ANode};
-                %%% Attempts at using maps
                 ({{MProtocol, MInstance},   %% KEY would be the same
                      [#{node := MNode,
                         port := MPort,
@@ -228,7 +172,7 @@ fold(Protocol, Port, Instance, ServerIp, Stats, Node) ->
                     {Acc, APort, AServerIP, AStats, ANode}) %% Acc and Guard
                     when (APort     == MPort  orelse APort     == '_')
                     and  (AServerIP == MSip   orelse AServerIP == '_')
-                    and  (ANode     == MNode  orelse ANode     == node()) %% default compare to own node
+                    and  (ANode     == MNode  orelse ANode     == node())
                     and  (AStats    == MStats orelse AStats    == '_') ->
                     %% Matches all the Guards given in Acc
                     {[{{MProtocol,MInstance}, MapValue} | Acc],
@@ -239,12 +183,11 @@ fold(Protocol, Port, Instance, ServerIp, Stats, Node) ->
                     {Acc, APort, AServerIP,AStats,ANode}
             end,
             {[], Port, ServerIp, Stats, Node}, %% Accumulator
-            ?PUSHPREFIX(Node), %% Prefix to Iterate over
+            ?PUSHPREFIX, %% Prefix to Iterate over
             [{match, {Protocol, Instance}}] %% Key to Object match
         ),
     Return.
 
-%% todo: look into using maps for the guard as well.
 %%%-------------------------------------------------------------------
 
 -spec(find_push_stats(node_or_nodes(), consolearg()) -> print()).
@@ -259,11 +202,14 @@ find_push_stats(Nodes,Arg) ->
             print_info(fold_through_meta(Protocol, SanitisedData, Nodes))
     end.
 
--spec(fold_through_meta(protocol(),sanitised_push(),node_or_nodes()) -> listofpush()).
+-spec(fold_through_meta(protocol(),sanitised_push(),node_or_nodes()) ->
+    listofpush()).
 fold_through_meta(Protocol, {{Port, Instance, ServerIp}, Stats}, Nodes) ->
     fold_through_meta(Protocol,Port,Instance,ServerIp,Stats,Nodes).
 fold_through_meta(Protocol, Port, Instance, ServerIp, Stats, Nodes) ->
-    lists:flatten([fold(Protocol, Port, Instance, ServerIp, Stats, Node) || Node <- Nodes]).
+    lists:flatten(
+        [fold(Protocol, Port, Instance, ServerIp, Stats, Node)
+            || Node <- Nodes]).
 
 %%%-------------------------------------------------------------------
 
@@ -275,48 +221,30 @@ print_info({error,badarg}) ->
 print_info({error,Reason}) ->
     io:fwrite("Error: ~p~n",[Reason]);
 print_info(Info) ->
-    io:fwrite("~10s ~8s ~8s ~16s ~10s ~8s ~20s ~16s ~6s ~16s ~16s ~s~n",
-        ["LastDate","LastTime","Protocol","Name","Date","Time","Node","Server IP","Port","Running?",
-            "Pid","Stats"]),
-    lists:foreach(fun
-                      ({{Protocol,Instance},
-                          {OriginalDateTime,     %% VALUE
-                           ModifiedDateTime,
-                           Pid,
-                           RunningTuple, %% {running, boolean()}
-                           Node,
-                           Port,
-                           Sip,
-                           Stats}}) ->
-                          {ODate,OTime} = OriginalDateTime,
-                          {MDate,MTime} = ModifiedDateTime,
-                          io:fwrite("~10s ~8s ",[consistent_date(MDate),consistent_time(MTime)]),
-                          io:fwrite("~8p ~16s ", [Protocol, Instance]),
-                          StatsString = io_lib:format("~p",[Stats]),
-                          io:fwrite("~10s ~8s ",[consistent_date(ODate),consistent_time(OTime)]),
-                          io:fwrite("~20p ~16p ~6p ~16p ~16p ~s~n",
-                              [Node, Sip, Port, RunningTuple, Pid, StatsString]);
-
-                      %%% Attempt to use maps
-                      ({{Protocol,Instance},
-                          #{original_dt := OriginalDateTime,
-                              modified_dt := ModifiedDateTime,
-                              pid := Pid,
-                              running := RunningTuple,
-                              node := Node,
-                              port := Port,
-                              server_ip := Sip,
-                              stats := Stats}
-                           }) ->
-                          {ODate,OTime} = OriginalDateTime,
-                          {MDate,MTime} = ModifiedDateTime,
-                          io:fwrite("~10s ~8s ",[consistent_date(MDate),consistent_time(MTime)]),
-                          io:fwrite("~8p ~16s ", [Protocol, Instance]),
-                          StatsString = io_lib:format("~p",[Stats]),
-                          io:fwrite("~10s ~8s ",[consistent_date(ODate),consistent_time(OTime)]),
-                          io:fwrite("~20p ~16p ~6p ~16p ~16p ~s~n",
-                              [Node, Sip, Port, RunningTuple, Pid, StatsString]);
-                      (_Other) -> ok
+    io:fwrite("~10s ~8s ~8s ~10s ~10s ~8s ~20s ~16s ~6s ~16s ~16s ~s~n",
+        ["LastDate","LastTime","Protocol","Name","Date","Time","Node",
+            "Server IP","Port","Running?","Pid","Stats"]),
+    lists:foreach(
+        fun
+            ({{Protocol,Instance},
+                #{original_dt := OriginalDateTime,
+                    modified_dt := ModifiedDateTime,
+                    pid := Pid,
+                    running := RunningTuple,
+                    node := Node,
+                    port := Port,
+                    server_ip := Sip,
+                    stats := Stats}
+            }) ->
+                {ODate,OTime} = OriginalDateTime,
+                {MDate,MTime} = ModifiedDateTime,
+                io:fwrite("~10s ~8s ",[consistent_date(MDate),consistent_time(MTime)]),
+                io:fwrite("~8p ~16s ", [Protocol, Instance]),
+                StatsString = io_lib:format("~p",[Stats]),
+                io:fwrite("~10s ~8s ",[consistent_date(ODate),consistent_time(OTime)]),
+                io:fwrite("~20p ~16p ~6p ~16p ~16p ~s~n",
+                    [Node, Sip, Port, RunningTuple, Pid, StatsString]);
+            (_Other) -> ok
                   end, Info).
 
 %% the dates and time when printed have a different length, due to the

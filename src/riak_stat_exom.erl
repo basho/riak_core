@@ -31,7 +31,6 @@
     find_alias/1,
     timestamp/0]).
 
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% NB : DP = DataPoint
 %%      Alias : Name of a datapoint of a Stat.
@@ -42,8 +41,8 @@
 %%%===================================================================
 %%%-------------------------------------------------------------------
 %% @doc
-%% Registers all stats, using  exometer:re_register/3, any stat that is
-%% re_registered overwrites the previous entry, works the same as
+%% Registers all stats, using  exometer:re_register/3, any stat that
+%% is re_registered overwrites the previous entry, works the same as
 %% exometer:new/3 except it wont return an error if the stat already
 %% is registered.
 %% @end
@@ -60,7 +59,8 @@ register(StatName, Type, Opts, Aliases) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% goes to exometer_alias and performs the type of alias function specified
+%% goes to exometer_alias and performs the type of alias function
+%% specified
 %% @end
 %%%-------------------------------------------------------------------
 -type alias_fun_type()  :: new | prefix_foldl | regexp_foldr.
@@ -159,10 +159,7 @@ find_entries(Stats, Status) ->
                      ({Name, Type, EStatus}, Found)
                          when EStatus == Status orelse Status == '_' ->
                          [{Name, Type, Status} | Found];
-                     ({_Name, _Type, _EStatus}, Found) -> % Different status
-                         Found;
-                     (_, Found) ->
-                         Found
+                     (_, Found) -> Found % Different status
                  end,[], find_entries(Stat)) || Stat <- Stats].
 
 find_entries(Stat) ->
@@ -173,7 +170,8 @@ find_entries(Stat) ->
 %% Retrieves the datapoint value from exometer
 %% @end
 %%%-------------------------------------------------------------------
--spec(get_datapoint(metricname(), datapoints()) -> stat_value() | error()).
+-spec(get_datapoint(metricname(), datapoints()) ->
+                                            stat_value() | error()).
 get_datapoint(Name, Datapoint) ->
     exometer:get_value(Name, Datapoint).
 
@@ -204,18 +202,14 @@ find_stats_info(Stats, Info) when is_atom(Info) ->
     find_stats_info(Stats, [Info]);
 find_stats_info(Stat, Info) when is_list(Info) ->
     lists:foldl(fun(DP, Acc) ->
-        case get_datapoint(Stat, DP) of
-            {ok, [{DP, _Error}]} ->
-                Acc;
-            {ok, Value} ->
-                [{DP, Value} | Acc];
-            {error, _R} ->
-                Acc;
-            {DP, undefined} ->
-                Acc
-        end
+                    case get_datapoint(Stat, DP) of
+                        {ok, [{DP, _Error}]} ->
+                            Acc;
+                        {ok, Value} ->
+                            [{DP, Value} | Acc];
+                        _ -> Acc
+                    end
                 end, [], Info).
-
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -257,9 +251,10 @@ do_aggregate(Pattern, DataPoints) ->
 %% @end
 %%%-------------------------------------------------------------------
 aggregate_average(DataPoints) ->
+    Averages = [one, mean, median, 95, 99, 100, max],
     lists:foldl(fun(DP, {Avg, Other}) ->
         {agg_avg(DP, Other, Avg), lists:delete(DP, Other)}
-                end, {[], DataPoints}, [one, mean, median, 95, 99, 100, max]).
+                end, {[], DataPoints}, Averages).
 
 agg_avg(DP, DataPoints, AvgAcc) ->
     case lists:member(DP, DataPoints) of
@@ -301,8 +296,8 @@ update(Name, Val, Type, Opts) ->
 -spec(change_status(n_s_stats()) -> print()).
 change_status(Stats) when is_list(Stats) ->
     lists:map(fun
-                  ({Stat,{status,Status}}) -> change_status(Stat,Status);
-                  ({Stat, Status}) -> change_status(Stat, Status)
+              ({Stat,{status,Status}}) -> change_status(Stat,Status);
+              ({Stat, Status}) -> change_status(Stat, Status)
               end, Stats);
 change_status({Stat, Status}) ->
     change_status(Stat, Status).
@@ -312,8 +307,9 @@ change_status(Stat, Status) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% Set the options for a stat in exometer, setting the status as either enabled or
-%% disabled in it's options in exometer will change its status in the entry
+%% Set the options for a stat in exometer, setting the status as
+%% either enabled or disabled in it's options in exometer will change
+%% its status in the entry
 %% @end
 %%%-------------------------------------------------------------------
 -spec(set_opts(metricname(), options()) -> ok | error()).
