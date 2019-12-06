@@ -21,8 +21,7 @@
                   poolboy,
                   exometer_core,
                   clique,
-                  cluster_info,
-                  gen_fsm_compat
+                  webmachine
                  ]},
   {mod, {riak_core_app, []}},
   {env, [
@@ -69,13 +68,15 @@
          {dist_send_buf_size, 393216},
          {dist_recv_buf_size, 786432},
 
-	 %% Exometer defaults
-	 {exometer_defaults,
-	  [
-	   {['_'], histogram, [{options,
-				[{histogram_module, exometer_slot_slide},
-				 {keep_high, 500}]}
-			    ]}
-	  ]}
+        %% Exometer defaults
+        {exometer_defaults,
+            [
+                {['_'], histogram, [
+                    {options,[
+                        {histogram_module, exometer_slot_slide},
+                        {keep_high, 500}
+                    ]}
+                ]}
+            ]}
         ]}
- ]}.
+]}.

@@ -18,7 +18,7 @@
 %% -------------------------------------------------------------------
 -module('riak_core_vnode').
 -behaviour(gen_fsm_compat).
--include("riak_core_vnode.hrl").
+-include_lib("riak_core/include/riak_core_vnode.hrl").
 -export([start_link/3,
          start_link/4,
          wait_for_init/1,
@@ -232,7 +232,6 @@ do_init(State = #state{index=Index, mod=Mod, forward=Forward}) ->
         {error, Reason} ->
             {error, Reason};
         _ ->
-            ModState0 = 
                 case lists:keyfind(pool, 1, Props) of
                     {pool, WorkerMod, PoolSize, WorkerArgs}=PoolConfig ->
                         lager:info("Starting vnode worker pool " ++ 

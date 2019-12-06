@@ -52,7 +52,7 @@
 %% in `Path' as a wild card.
 -spec get_stats(path()) -> stats().
 get_stats(Path) ->
-    exometer:get_values(Path).
+    get_stat(Path).
     %% %% get all the stats that are at Path
     %% calculate_stats(exometer:select(
     %%                     [{ {Path ++ '_','_',enabled}, [], ['$_'] }])).
@@ -62,7 +62,7 @@ calculate_stats(NamesAndTypes) ->
 
 %% Create/lookup a cache/calculation process
 get_stat(Stat) ->
-    exometer:get_value(Stat).
+    riak_stat:get_value(Stat).
 
 %% Encapsulate getting a stat value from exometer.
 %%
@@ -72,9 +72,9 @@ get_stat(Stat) ->
 %% broken it stays that way. Should we delete
 %% stats that are broken?
 calc_stat({Name, _Type}) when is_tuple(Name) ->
-    stat_return(exometer:get_value([riak_core_stat:prefix()|tuple_to_list(Name)]));
+    stat_return(get_stat([tuple_to_list(Name)]));
 calc_stat({[_|_] = Name, _Type}) ->
-    stat_return(exometer:get_value([riak_core_stat:prefix()|Name])).
+    stat_return(get_stat([Name])).
 
 stat_return({error,not_found}) -> unavailable;
 stat_return({ok, Value}) -> Value.

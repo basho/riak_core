@@ -229,7 +229,7 @@ iterator_close(#metadata_iterator{prefix=undefined,match=undefined,tab=Tab}) ->
 iterator_close(It) -> finish_iterator(It).
 
 %% @doc Sets the value of a prefixed key. The most recently read context (see get/1)
-%% should be passed as the second argument to prevent unneccessary siblings.
+%% should be passed as the second argument to prevent unnecessary siblings.
 -spec put(metadata_pkey(),
           metadata_context() | undefined,
           metadata_value() | metadata_modifier()) -> metadata_object().
@@ -443,14 +443,13 @@ next_iterator(It=#metadata_iterator{done=true}) ->
     It;
 next_iterator(It=#metadata_iterator{prefix=undefined,match=undefined,tab=Tab,pos=Pos}) ->
     %% full-prefix iterator
-    next_iterator(It, ets:next(Tab, Pos));
+  next_iterator(It, ets:next(Tab, Pos));
 next_iterator(It=#metadata_iterator{prefix=undefined,pos=Pos}) ->
     %% sub-prefix iterator
-    next_iterator(It, ets:select(Pos));
+  next_iterator(It, ets:select(Pos));
 next_iterator(It=#metadata_iterator{pos=Pos}) ->
     %% key/value iterator
     next_iterator(It, ets:match_object(Pos)).
-
 next_iterator(Ref, #state{iterators=Iterators}) when is_reference(Ref) ->
     %% remote iterator
     case ets:lookup(Iterators, Ref) of

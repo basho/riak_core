@@ -19,6 +19,8 @@
 %% -------------------------------------------------------------------
 
 -module(riak_core_console).
+-include_lib("riak_core/include/riak_stat.hrl").
+
 %% Legacy exports - unless needed by other modules, only expose
 %% functionality via command/1
 -export([member_status/1, ring_status/1, print_member_status/2,
@@ -31,7 +33,12 @@
          print_users/1, print_user/1, print_sources/1,
          print_groups/1, print_group/1, print_grants/1,
          security_enable/1, security_disable/1, security_status/1, ciphers/1,
-	 stat_show/1, stat_info/1, stat_enable/1, stat_disable/1, stat_reset/1]).
+        %% Riak Stat :
+	       stat_show/1, stat_info/1, stat_enable/1, stat_disable/1, stat_reset/1,
+         stat_disable_0/1, stat_0/1,
+         load_profile/1, add_profile/1, remove_profile/1, reset_profile/0, reset_profile/1,
+         stat_metadata/1, setup_endpoint/1, setdown_endpoint/1,
+         find_push_stats/1, find_push_stats_all/1]).
 
 %% New CLI API
 -export([command/1]).
@@ -1146,388 +1153,181 @@ parse_cidr(CIDR) ->
     {Addr, list_to_integer(Mask)}.
 
 
-stat_show(Arg) ->
-    print_stats(find_entries(Arg)).
+%%%-------------------------------------------------------------------
+%%%                        Stat functions
+%%%-------------------------------------------------------------------
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%% console %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%-------------------------------------------------------------------
+%% @doc
+%% the enabled stats are shown by default but the status can be chosen
+%% i.e. riak.riak_kv.**/status=disabled to show <disabled> stats
+%% pulls out of the metadata by default
+%% @end
+%%%-------------------------------------------------------------------
+-spec(stat_show(consolearg()) -> ok | error()).
+stat_show(Arg) -> riak_stat_console:show_stat(Arg).
 
-find_entries(Arg) ->
-    find_entries(Arg, enabled).
+%%%-------------------------------------------------------------------
+%% @doc
+%% Check all the stats in exometer that are not being,
+%% This helps disable stats that are unused,
+%% behaves similar to stat show
+%% @end
+%%%-------------------------------------------------------------------
+-spec(stat_0(consolearg()) -> ok | error()).
+stat_0(Arg) -> riak_stat_console:show_stat_0(Arg).
 
-find_entries(Arg, Status0) ->
-    lists:map(
-      fun(A) ->
-	      {S, Type, Status, DPs} = type_status_and_dps(A, Status0),
-	      case S of
-		  "[" ++ _ ->
-		      {find_entries_1(S, Type, Status), DPs};
-		  _ ->
-		      case legacy_search(S, Type, Status) of
-			  false ->
-			      {find_entries_1(S, Type, Status), DPs};
-			  Found ->
-			      {Found, DPs}
-		      end
-	      end
-      end, Arg).
+%%%-------------------------------------------------------------------
+%% @doc
+%% behaves the same as stat_0 but will disable all the stats that are
+%% not updating as well, returns ok unless there is an error.
+%% @end
+%%%-------------------------------------------------------------------
+-spec(stat_disable_0(consolearg()) -> ok | error()).
+stat_disable_0(Arg) -> riak_stat_console:disable_stat_0(Arg).
 
-type_status_and_dps(S, Status0) ->
-    [S1|Rest] = re:split(S, "/"),
-    {Type, Status, DPs} = type_status_and_dps(Rest, '_', Status0, default),
-    {S1, Type, Status, DPs}.
+%%%-------------------------------------------------------------------
+%% @doc
+%% information on the stat, default is all information, however it
+%% can be specific : -type -status etc...
+%% @end
+%%%-------------------------------------------------------------------
+-spec(stat_info(consolearg()) -> ok | error()).
+stat_info(Arg) -> riak_stat_console:stat_info(Arg).
 
-type_status_and_dps([<<"type=", T/binary>>|Rest], _Type, Status, DPs) ->
-    NewType = case T of
-		  <<"*">> -> '_';
-		  _ ->
-		      try binary_to_existing_atom(T, latin1)
-		      catch error:_ -> T
-		      end
-	      end,
-    type_status_and_dps(Rest, NewType, Status, DPs);
-type_status_and_dps([<<"status=", St/binary>>|Rest], Type, _Status, DPs) ->
-    NewStatus = case St of
-		    <<"enabled">>  -> enabled;
-		    <<"disabled">> -> disabled;
-		    <<"*">>        -> '_'
-		end,
-    type_status_and_dps(Rest, Type, NewStatus, DPs);
-type_status_and_dps([DPsBin|Rest], Type, Status, DPs) ->
-    NewDPs = merge([binary_to_existing_atom(D,latin1)
-		    || D <- re:split(DPsBin, ",")], DPs),
-    type_status_and_dps(Rest, Type, Status, NewDPs);
-type_status_and_dps([], Type, Status, DPs) ->
-    {Type, Status, DPs}.
+%%%-------------------------------------------------------------------
+%% @doc
+%% enable the stats, if the stat is already enabled does nothing
+%% @end
+%%%-------------------------------------------------------------------
+-spec(stat_enable(consolearg()) -> ok | error()).
+stat_enable(Arg) -> riak_stat_console:status_change(Arg, enabled).
 
-merge([_|_] = DPs, default) ->
-    DPs;
-merge([H|T], DPs) ->
-    case lists:member(H, DPs) of
-	true  -> merge(T, DPs);
-	false -> merge(T, DPs ++ [H])
-    end;
-merge([], DPs) ->
-    DPs.
+%%%-------------------------------------------------------------------
+%% @doc
+%% disable the stats - if already disabled does nothing
+%% @end
+%%%-------------------------------------------------------------------
+-spec(stat_disable(consolearg()) -> ok | error()).
+stat_disable(Arg) -> riak_stat_console:status_change(Arg, disabled).
 
+%%%-------------------------------------------------------------------
+%% @doc
+%% resets the stats in exometer, the number of resets is kept in the
+%% metadata and in exometer
+%% @end
+%%%-------------------------------------------------------------------
+-spec(stat_reset(consolearg()) -> ok | error()).
+stat_reset(Arg) -> riak_stat_console:reset_stat(Arg).
 
-find_entries_1(S, Type, Status) ->
-    Patterns = lists:flatten([parse_stat_entry(S, Type, Status)]),
-    exometer:select(Patterns).
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%% profile %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%-------------------------------------------------------------------
+%% @doc
+%% Loads the profile of that name, and then will enable/disable all
+%% the stats in exometer and in the metadata that need
+%% enabling/disabling
+%% @end
+%%%-------------------------------------------------------------------
+-spec(load_profile(consolearg()) -> ok | error()).
+load_profile(ProfileName) ->
+    riak_stat_profiles:load_profile(ProfileName).
 
+%%%-------------------------------------------------------------------
+%% @doc
+%% Saves the current configuration of the stats in the metadata with
+%% the profile name entered as the key, the stats and their status as
+%% the value. Profiles can be overwritten if the new profile is saved
+%% under the same name.
+%% @end
+%%%-------------------------------------------------------------------
+-spec(add_profile(consolearg()) -> ok | error()).
+add_profile(ProfileName) ->
+    riak_stat_profiles:save_profile(ProfileName).
 
-legacy_search(S, Type, Status) ->
-    case re:run(S, "\\.", []) of
-	{match,_} ->
-	    false;
-	nomatch ->
-	    Re = <<"^", (make_re(S))/binary, "$">>,
-	    [{S, legacy_search_1(Re, Type, Status)}]
-    end.
+%%%-------------------------------------------------------------------
+%% @doc
+%% remove the profile from the metadata if it is no longer necessary
+%% @end
+%%%-------------------------------------------------------------------
+-spec(remove_profile(consolearg()) -> ok | error()).
+remove_profile(ProfileName) ->
+    riak_stat_profiles:delete_profile(ProfileName).
 
-make_re(S) ->
-    repl(split_pattern(S, [])).
+%%%-------------------------------------------------------------------
+%% @doc
+%% unloads from the current profile, so all the stats are re-enabled.
+%% @end
+%%%-------------------------------------------------------------------
+-spec(reset_profile(Arg :: term()) -> term()).
+-spec(reset_profile() -> ok | error()).
+reset_profile(_Arg) -> reset_profile().
+reset_profile() ->
+    riak_stat_profiles:reset_profile().
 
-
-repl([single|T]) ->
-    <<"[^_]*", (repl(T))/binary>>;
-repl([double|T]) ->
-    <<".*", (repl(T))/binary>>;
-repl([H|T]) ->
-    <<H/binary, (repl(T))/binary>>;
-repl([]) ->
-    <<>>.
-
-
-split_pattern(<<>>, Acc) ->
-    lists:reverse(Acc);
-split_pattern(<<"**", T/binary>>, Acc) ->
-    split_pattern(T, [double|Acc]);
-split_pattern(<<"*", T/binary>>, Acc) ->
-    split_pattern(T, [single|Acc]);
-split_pattern(B, Acc) ->
-    case binary:match(B, <<"*">>) of
-	{Pos,_} ->
-	    <<Bef:Pos/binary, Rest/binary>> = B,
-	    split_pattern(Rest, [Bef|Acc]);
-	nomatch ->
-	    lists:reverse([B|Acc])
-    end.
-
-legacy_search_1(N, Type, Status) ->
-    Found = exometer_alias:regexp_foldr(N, fun(Alias, Entry, DP, Acc) ->
-                                                   orddict:append(Entry, {DP,Alias}, Acc)
-                                           end, orddict:new()),
-    lists:foldr(
-      fun({Entry, DPs}, Acc) ->
-              case match_type(Entry, Type) of
-                  true ->
-                      DPnames = [D || {D,_} <- DPs],
-                      case exometer:get_value(Entry, DPnames) of
-                          {ok, Values} when is_list(Values) ->
-                              [{Entry, zip_values(Values, DPs)} | Acc];
-                          {ok, disabled} when Status=='_';
-                                              Status==disabled ->
-                              [{Entry, zip_disabled(DPs)} | Acc];
-                          _ ->
-                              [{Entry, [{D,undefined} || D <- DPnames]}|Acc]
-                      end;
-                  false ->
-                      Acc
-              end
-      end, [], orddict:to_list(Found)).
-
-match_type(_, '_') ->
-    true;
-match_type(Name, T) ->
-    T == exometer:info(Name, type).
-
-zip_values([{D,V}|T], DPs) ->
-    {_,N} = lists:keyfind(D, 1, DPs),
-    [{D,V,N}|zip_values(T, DPs)];
-zip_values([], _) ->
-    [].
-
-zip_disabled(DPs) ->
-    [{D,disabled,N} || {D,N} <- DPs].
-
-print_stats([]) ->
-    io:fwrite("No matching stats~n", []);
-print_stats(Entries) ->
-      lists:foreach(
-	fun({[{LP, []}], _}) ->
-		io:fwrite(
-		  "== ~s (Legacy pattern): No matching stats ==~n", [LP]);
-	   ({[{LP, Matches}], _}) ->
-		io:fwrite("== ~s (Legacy pattern): ==~n", [LP]),
-		[[io:fwrite("~p: ~p (~p/~p)~n", [N, V, E, DP])
-		  || {DP,V,N} <- DPs] || {E, DPs} <- Matches];
-	   ({[], _}) ->
-		io:fwrite("No matching stats~n", []);
-	   ({Entries1, DPs}) ->
-		[io:fwrite("~p: ~p~n", [E, get_value(E, Status, DPs)])
-		 || {E, _, Status} <- Entries1]
-	end, Entries).
-
-get_value(_, disabled, _) ->
-    disabled;
-get_value(E, _Status, DPs) ->
-    case exometer:get_value(E, DPs) of
-	{ok, V} -> V;
-	{error,_} -> unavailable
-    end.
-
-stat_change(Arg, ToStatus) ->
-      lists:foreach(
-	fun({[{LP, []}], _}) ->
-		io:fwrite(
-		  "== ~s (Legacy pattern): No matching stats ==~n", [LP]);
-	   ({[{LP, Matches}], _}) ->
-		io:fwrite("== ~s (Legacy pattern): ==~n", [LP]),
-		[io:fwrite("~p: ~p~n", [N, change_status(N, ToStatus)])
-		   || {N, _} <- Matches];
-	   ({[], _}) ->
-		io:fwrite("No matching stats~n", []);
-	   ({Entries, _}) ->
-		[io:fwrite("~p: ~p~n", [N, change_status(N, ToStatus)])
-		 || {N, _, _} <- Entries]
-	end, find_entries(Arg, '_')).
-
-stat_enable(Arg) ->
-    stat_change(Arg, enabled).
-
-stat_disable(Arg) ->
-    stat_change(Arg, disabled).
-
-stat_reset(Arg) ->
-      lists:foreach(
-	fun({[{LP, []}], _}) ->
-		io:fwrite(
-		  "== ~s (Legacy pattern): No matching stats ==~n", [LP]);
-	   ({[{LP, Matches}], _}) ->
-		io:fwrite("== ~s (Legacy pattern): ==~n", [LP]),
-		[io:fwrite("~p: ~p~n", [N, exometer:reset(N)])
-		   || {N, _} <- Matches];
-	   ({Entries, _}) ->
-		[io:fwrite("~p: ~p~n", [N, exometer:reset(N)])
-		 || {N, _, _} <- Entries]
-	end, find_entries(Arg, enabled)).
-
-change_status(N, St) ->
-    case exometer:setopts(N, [{status, St}]) of
-	ok ->
-	    St;
-	Error ->
-	    Error
-    end.
-
-stat_info(Arg) ->
-    {Attrs, RestArg} = pick_info_attrs(split_arg(Arg)),
-    [print_info(E, Attrs) || E <- find_entries(RestArg, '_')].
-
-pick_info_attrs(Arg) ->
-    case lists:foldr(
-           fun("-name"     , {As, Ps}) -> {[name     |As], Ps};
-              ("-type"     , {As, Ps}) -> {[type     |As], Ps};
-              ("-module"   , {As, Ps}) -> {[module   |As], Ps};
-              ("-value"    , {As, Ps}) -> {[value    |As], Ps};
-              ("-cache"    , {As, Ps}) -> {[cache    |As], Ps};
-              ("-status"   , {As, Ps}) -> {[status   |As], Ps};
-              ("-timestamp", {As, Ps}) -> {[timestamp|As], Ps};
-              ("-options"  , {As, Ps}) -> {[options  |As], Ps};
-              (P, {As, Ps}) -> {As, [P|Ps]}
-           end, {[], []}, Arg) of
-        {[], Rest} ->
-            {[name, type, module, value, cache, status, timestamp, options], Rest};
-        Other ->
-            Other
-    end.
-
-print_info({[{LP, []}], _}, _) ->
-    io:fwrite("== ~s (Legacy pattern): No matching stats ==~n", [LP]);
-print_info({[{LP, Matches}], _}, Attrs) ->
-    io:fwrite("== ~s (Legacy pattern): ==~n", [LP]),
-     lists:foreach(
-       fun({N, _}) ->
-	       print_info_1(N, Attrs)
-       end, Matches);
-print_info({[], _}, _) ->
-    io_lib:fwrite("No matching stats~n", []);
-print_info({Entries, _}, Attrs) ->
-    lists:foreach(
-      fun({N,_,_}) ->
-	      print_info_1(N, Attrs)
-      end, Entries).
-
-print_info_1(N, [A|Attrs]) ->
-    Hdr = lists:flatten(io_lib:fwrite("~p: ", [N])),
-    Pad = lists:duplicate(length(Hdr), $\s),
-    Info = exometer:info(N),
-    Status = proplists:get_value(status, Info, enabled),
-    Body = [io_lib:fwrite("~w = ~p~n", [A, proplists:get_value(A, Info)])
-	    | lists:map(fun(value) ->
-				io_lib:fwrite(Pad ++ "~w = ~p~n",
-					      [value, get_value(N, Status, default)]);
-			   (Ax) ->
-				io_lib:fwrite(Pad ++ "~w = ~p~n",
-					      [Ax, proplists:get_value(Ax, Info)])
-			end, Attrs)],
-    io:put_chars([Hdr, Body]).
-
-split_arg([Str]) ->
-    re:split(Str, "\\s", [{return,list}]).
-
-parse_stat_entry([], Type, Status) ->
-    {{[riak_core_stat:prefix()] ++ '_', Type, '_'}, [{'=:=','$status',Status}], ['$_']};
-parse_stat_entry("*", Type, Status) ->
-    parse_stat_entry([], Type, Status);
-parse_stat_entry("[" ++ _ = Expr, _Type, _Status) ->
-    case erl_scan:string(ensure_trailing_dot(Expr)) of
-	{ok, Toks, _} ->
-	    case erl_parse:parse_exprs(Toks) of
-		{ok, [Abst]} ->
-		    partial_eval(Abst);
-		Error ->
-		    io:fwrite("(Parse error for ~p: ~p~n", [Expr, Error]),
-		    []
-	    end;
-	ScanErr ->
-	    io:fwrite("(Scan error for ~p: ~p~n", [Expr, ScanErr]),
-	    []
-    end;
-parse_stat_entry(Str, Type, Status) when Status==enabled; Status==disabled ->
-    Parts = re:split(Str, "\\.", [{return,list}]),
-    Heads = replace_parts(Parts),
-    [{{H,Type,Status}, [], ['$_']} || H <- Heads];
-parse_stat_entry(Str, Type, '_') ->
-    Parts = re:split(Str, "\\.", [{return,list}]),
-    Heads = replace_parts(Parts),
-    [{{H,Type,'_'}, [], ['$_']} || H <- Heads];
-parse_stat_entry(_, _, Status) ->
-    io:fwrite("(Illegal status: ~p~n", [Status]).
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Other %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%-------------------------------------------------------------------
+%% @doc
+%% enable the metadata, arg should be true, false or status, if false
+%% then the communication to the metadata ends, upon re-enabling the
+%% metadata will "re-register" the stats, therefore the configuration
+%% remains consistent between both metadata and exometer, any profile
+%% that was loaded before will not be loaded upon re-enabling to
+%% prevent errors
+%% @end
+%%%-------------------------------------------------------------------
+-spec(stat_metadata(consolearg()) -> ok | error()).
+stat_metadata(["enable" ]) -> riak_stat_console:stat_metadata(true);
+stat_metadata(["disable"]) -> riak_stat_console:stat_metadata(false);
+stat_metadata(["status" ]) -> riak_stat_console:stat_metadata(status);
+stat_metadata(Arg) -> io:fwrite("Invalid Argument Given :~p~n",[Arg]).
 
 
-ensure_trailing_dot(Str) ->
-    case lists:reverse(Str) of
-	"." ++ _ ->
-	    Str;
-	_ ->
-	    Str ++ "."
-    end.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%% riak_stat_push %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%-------------------------------------------------------------------
+%% @doc
+%% Setup the port, similar to how riak-admin stat show takes in
+%% riak.riak_kv.**/status=*, setup_port takes the argument
+%% "port=8089,sip=127.0.0.1" and sets up the socket from the
+%% argument given. port, protocol, serverip, instance needed.
+%% @end
+%%%-------------------------------------------------------------------
+-spec(setup_endpoint(consolearg()) -> ok | error()).
+setup_endpoint(Arg) -> riak_stat_push:setup(Arg).
 
-partial_eval({cons,_,H,T}) ->
-    [partial_eval(H) | partial_eval(T)];
-%% partial_eval({nil,_}) ->
-%%     [];
-partial_eval({tuple,_,Elems}) ->
-    list_to_tuple([partial_eval(E) || E <- Elems]);
-%% partial_eval({T,_,X}) when T==atom; T==integer; T==float ->
-%%     X;
-partial_eval({op,_,'++',L1,L2}) ->
-    partial_eval(L1) ++ partial_eval(L2);
-partial_eval(X) ->
-    erl_parse:normalise(X).
+%%%-------------------------------------------------------------------
+%% @doc
+%% disable the connection, Port given always matters - unless
+%% multiple ports are open terminates gen_servers
+%% @end
+%%%-------------------------------------------------------------------
+-spec(setdown_endpoint(consolearg()) -> ok | error()).
+setdown_endpoint(Arg) -> riak_stat_push:setdown(Arg).
 
-replace_parts(Parts) ->
-    case split("**", Parts) of
-	{_, []} ->
-	    [replace_parts_1(Parts)];
-	{Before, After} ->
-	    Head = replace_parts_1(Before),
-	    Tail = replace_parts_1(After),
-	    [Head ++ Pad ++ Tail || Pad <- pads()]
-    end.
+%%%-------------------------------------------------------------------
+%% @doc
+%% Get information on the stats polling, as in the date and time the
+%% stats pushing began, and the port, serverip, instance etc that was
+%% given at the time of setup
+%% @end
+%%%-------------------------------------------------------------------
+-spec(find_push_stats(consolearg()) -> ok | error()).
+find_push_stats(Arg) -> riak_stat_push:find_push_stats([node()], Arg).
 
-pads() ->
-    [['_'],
-     ['_','_'],
-     ['_','_','_'],
-     ['_','_','_','_'],
-     ['_','_','_','_','_'],
-     ['_','_','_','_','_','_'],
-     ['_','_','_','_','_','_','_'],
-     ['_','_','_','_','_','_','_','_'],
-     ['_','_','_','_','_','_','_','_','_'],
-     ['_','_','_','_','_','_','_','_','_','_'],
-     ['_','_','_','_','_','_','_','_','_','_','_'],
-     ['_','_','_','_','_','_','_','_','_','_','_','_'],
-     ['_','_','_','_','_','_','_','_','_','_','_','_','_'],
-     ['_','_','_','_','_','_','_','_','_','_','_','_','_','_'],
-     ['_','_','_','_','_','_','_','_','_','_','_','_','_','_','_'],
-     ['_','_','_','_','_','_','_','_','_','_','_','_','_','_','_','_']].
-
-split(X, L) ->
-    split(L, X, []).
-
-split([H|T], H, Acc) ->
-    {lists:reverse(Acc), T};
-split([H|T], X, Acc) ->
-    split(T, X, [H|Acc]);
-split([], _, Acc) ->
-    {lists:reverse(Acc), []}.
-
-
-
-replace_parts_1([H|T]) ->
-    R = replace_part(H),
-    case T of
-	["**"] -> [R] ++ '_';
-	_ -> [R|replace_parts_1(T)]
-    end;
-replace_parts_1([]) ->
-    [].
-
-replace_part(H) ->
-    case H of
-	"*" -> '_';
-	"'" ++ _ ->
-	    case erl_scan:string(H) of
-		{ok, [{atom, _, A}], _} ->
-		    A;
-		Error ->
-		    error(Error)
-	    end;
-	[C|_] when C >= $0, C =< $9 ->
-	    try list_to_integer(H)
-	    catch
-		error:_ -> list_to_atom(H)
-	    end;
-	_ -> list_to_atom(H)
-    end.
+%%%-------------------------------------------------------------------
+%% @doc
+%% Get information on the stats polling, as in the date and time the
+%% stats pushing began, and the port, serverip, instance etc that was
+%% given at the time of setup - but for all nodes in the cluster
+%% @end
+%%%-------------------------------------------------------------------
+-spec(find_push_stats_all(consolearg()) -> ok | error()).
+find_push_stats_all(Arg) ->
+    riak_stat_push:find_push_stats([node()|nodes()],Arg).

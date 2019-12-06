@@ -34,11 +34,10 @@ init([]) ->
 
 start_server(Mod) ->
     Ref = stat_server(Mod),
-    Pid = case supervisor:start_child(?MODULE, Ref) of
-              {ok, Child} -> Child;
-              {error, {already_started, Child}} -> Child
-          end,
-    Pid.
+    case supervisor:start_child(?MODULE, Ref) of
+        {ok, Child} -> Child;
+        {error, {already_started, Child}} -> Child
+    end.
 
 stop_server(Mod) ->
     _ = supervisor:terminate_child(?MODULE, Mod),
@@ -47,4 +46,4 @@ stop_server(Mod) ->
 
 %% @private
 stat_server(Mod) ->
-    ?CHILD(Mod, worker).
+    ?CHILD(Mod,worker).
