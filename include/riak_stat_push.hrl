@@ -46,6 +46,8 @@
 %%%%% Endpoint Polling Macros %%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+-define(PUSHPREFIX, {riak_stat_push, ?NODEID}).
+
 -define(DEFAULTPORT,            app_helper:get_env(riak_stat,default_port,8005)).
 -define(DEFAULTSERVER,          app_helper:get_env(riak_stat,default_server,"127.0.0.1")).
 
@@ -68,4 +70,6 @@
                     {sndbuf,    ?SNDBUF},
                     {active,    ?ACTIVE},
                     {reuseaddr, ?REUSE}]).
+
+-define(ATTEMPTS,               app_helper:get_env(riak_stat_push, restart_attempts, 50)).
 
