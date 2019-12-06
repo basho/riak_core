@@ -66,7 +66,6 @@
                ts_hist = [],      %% History of timestamps for readings
                hist = []}).       %% History of readings
 
-
 start_link() ->
     start_link([]).
 
@@ -389,6 +388,15 @@ format_socket_stats([{K,V}|T], Buf) ->
     format_socket_stats(T, [{K, V} | Buf]).
 
 -ifdef(TEST).
+
+-ifdef(deprecated_21).
+ssl_handshake(Socket) ->
+    ssl:handshake(Socket).
+-else.
+ssl_handshake(Socket) ->
+    ssl:ssl_accept(Socket).
+-endif.
+
 updown() ->
     %% Set the stat gathering interval to 100ms
     {ok, TCPMonPid} = riak_core_tcp_mon:start_link([{interval, 100}]),
@@ -458,8 +466,15 @@ ssl_test_() ->
         spawn(fun () ->
             %% server
             {ok, S} = ssl:transport_accept(LS),
-            ok = ssl:ssl_accept(S),
-            ssl_recv_loop(S)
+            {ok, SslSock} = case ssl_handshake(S) of
+                ok ->
+                    {ok, S};
+                {ok, NewSocket} ->
+                    {ok, NewSocket};
+                Error = {error, _} ->
+                    Error
+            end,
+            ssl_recv_loop(SslSock)
         end),
 
         {ok, Socket} = ssl:connect("localhost", Port, [binary, {active, true}, {certfile, "test/site2-cert.pem"}, {keyfile, "test/site2-key.pem"}]),

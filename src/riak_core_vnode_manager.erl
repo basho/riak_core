@@ -35,6 +35,8 @@
 %% Field debugging
 -export([get_tab/0]).
 
+-include("stacktrace.hrl").
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -527,14 +529,20 @@ maybe_ensure_vnodes_started(Ring) ->
     end.
 
 ensure_vnodes_started(Ring) ->
-    spawn(fun() ->
+    case riak_core_ring:check_lastgasp(Ring) of
+        true ->
+            lager:info("Don't start vnodes - last gasp ring");
+        false ->    
+            spawn(fun() ->
                   try
                       riak_core_ring_handler:ensure_vnodes_started(Ring)
                   catch
-                      T:R ->
-                          lager:error("~p", [{T, R, erlang:get_stacktrace()}])
+                      ?_exception_(T, R, StackToken) ->
+                          StackTrace = ?_get_stacktrace_(StackToken),
+                          lager:error("~p", [{T, R, StackTrace}])
                   end
-          end).
+            end)
+    end.
 
 schedule_management_timer() ->
     ManagementTick = app_helper:get_env(riak_core,
@@ -882,9 +890,14 @@ update_never_started(Mod, Indices, State) ->
     State#state{known_modules=KnownModules, never_started=NeverStarted3}.
 
 maybe_start_vnodes(Ring, State) ->
-    State2 = update_never_started(Ring, State),
-    State3 = maybe_start_vnodes(State2),
-    State3.
+    case riak_core_ring:check_lastgasp(Ring) of
+        true ->
+            State;
+        false ->
+            State2 = update_never_started(Ring, State),
+            State3 = maybe_start_vnodes(State2),
+            State3
+    end.
 
 maybe_start_vnodes(State=#state{vnode_start_tokens=Tokens,
                                 never_started=NeverStarted}) ->

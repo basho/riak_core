@@ -46,6 +46,8 @@
          handoff_error/3]).
 -export([queue_work/4]).
 
+-include("stacktrace.hrl").
+
 -ifdef(TEST).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -156,11 +158,11 @@
           modstate :: term(),
           forward :: node() | [{integer(), node()}],
           handoff_target=none :: none | {integer(), node()},
-          handoff_pid :: pid(),
-          handoff_type :: riak_core_handoff_manager:ho_type(),
+          handoff_pid :: pid() | undefined,
+          handoff_type :: riak_core_handoff_manager:ho_type() | undefined,
           pool_pid :: pid() | undefined,
           pool_config :: tuple() | undefined,
-          manager_event_timer :: reference(),
+          manager_event_timer :: reference() | undefined,
           inactivity_timeout :: non_neg_integer()
          }).
 
@@ -258,7 +260,7 @@ do_init(State = #state{index=Index, mod=Mod, forward=Forward}) ->
             riak_core_handoff_manager:remove_exclusion(Mod, Index),
             Timeout = app_helper:get_env(riak_core, vnode_inactivity_timeout, ?DEFAULT_TIMEOUT),
             Timeout2 = Timeout + rand:uniform(Timeout),
-            State2 = State#state{modstate=ModState, inactivity_timeout=Timeout2,
+            State2 = State#state{modstate=ModState0, inactivity_timeout=Timeout2,
                                  pool_pid=PoolPid, pool_config=PoolConfig},
             lager:debug("vnode :: ~p/~p :: ~p~n", [Mod, Index, Forward]),
             State3 = mod_set_forwarding(Forward, State2),
@@ -928,9 +930,9 @@ terminate(Reason, _StateName, #state{mod=Mod, modstate=ModState,
             _ ->
                 ok
         end
-    catch C:T ->
+    catch ?_exception_(C, T, StackToken) ->
         lager:error("Error while shutting down vnode worker pool ~p:~p trace : ~p",
-                    [C, T, erlang:get_stacktrace()])
+                    [C, T, ?_get_stacktrace_(StackToken)])
     after
         case ModState of
             %% Handoff completed, Mod:delete has been called, now terminate.

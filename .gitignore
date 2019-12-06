@@ -15,3 +15,5 @@ dialyzer_unhandled_warnings
 .rebar3
 _build
 rebar.lock
+.DS_Store
+nonode@nohost

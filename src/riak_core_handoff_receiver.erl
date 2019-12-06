@@ -30,21 +30,29 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--record(state, {sock :: port(),
-                peer :: term(),
+-record(state, {sock :: port() | undefined,
+                peer :: term() | undefined,
                 ssl_opts :: [] | list(),
                 tcp_mod :: atom(),
                 recv_timeout_len :: non_neg_integer(),
                 vnode_timeout_len :: non_neg_integer(),
-                partition :: non_neg_integer(),
-                vnode_mod = riak_kv_vnode:: module(),
-                vnode :: pid(),
+                partition :: non_neg_integer() | undefined,
+                vnode_mod = riak_kv_vnode :: module(),
+                vnode :: pid() | undefined,
                 count = 0 :: non_neg_integer()}).
 
 %% set the TCP receive timeout to five minutes to be conservative.
 -define(RECV_TIMEOUT, 300000).
 %% set the timeout for the vnode to process the handoff_data msg to 60s
 -define(VNODE_TIMEOUT, 60000).
+
+-ifdef(deprecated_21).
+ssl_handshake(Socket, SslOpts, Timeout) ->
+    ssl:handshake(Socket, SslOpts, Timeout).
+-else.
+ssl_handshake(Socket, SslOpts, Timeout) ->
+    ssl:ssl_accept(Socket, SslOpts, Timeout).
+-endif.
 
 start_link() ->
     start_link([]).
@@ -69,7 +77,7 @@ init([SslOpts]) ->
 handle_call({set_socket, Socket0}, _From, State = #state{ssl_opts = SslOpts}) ->
     SockOpts = [{active, once}, {packet, 4}, {header, 1}],
     Socket = if SslOpts /= [] ->
-                     {ok, Skt} = ssl:ssl_accept(Socket0, SslOpts, 30*1000),
+                     {ok, Skt} = ssl_handshake(Socket0, SslOpts, 30*1000),
                      ok = ssl:setopts(Skt, SockOpts),
                      Peer = safe_peername(Skt, ssl),
                      Skt;
