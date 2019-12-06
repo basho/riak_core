@@ -494,8 +494,7 @@ new_iterator(undefined, Prefix, Tab) ->
 new_iterator(FullPrefix, KeyMatch, Tab) ->
     %% key/value iterator
     ObjectMatch = iterator_match(KeyMatch),
-
-  new_iterator(FullPrefix, KeyMatch, Tab, ets:match_object(Tab, ObjectMatch, 1)).
+    new_iterator(FullPrefix, KeyMatch, Tab, ets:match_object(Tab, ObjectMatch, 1)).
 
 new_iterator(FullPrefix, KeyMatch, Tab, '$end_of_table') ->
     %% catch-all for empty iterator of all types
