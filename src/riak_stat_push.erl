@@ -221,29 +221,38 @@ print_info({error,badarg}) ->
 print_info({error,Reason}) ->
     io:fwrite("Error: ~p~n",[Reason]);
 print_info(Info) ->
-    io:fwrite("~10s ~8s ~8s ~10s ~10s ~8s ~20s ~16s ~6s ~16s ~16s ~s~n",
-        ["LastDate","LastTime","Protocol","Name","Date","Time","Node",
-            "Server IP","Port","Running?","Pid","Stats"]),
+    String = "~10s ~8s ~-8s ~-15s ~-10s  ~-8s  ~-16s ~-16s ~-6s ~-8s ~s~n",
+    ColumnArgs =
+        ["LastDate","LastTime","Protocol","Name","Date","Time",
+            "Node","ServerIp","Port","Running?","Stats"],
+    io:format(String,ColumnArgs),
     lists:foreach(
         fun
             ({{Protocol,Instance},
                 #{original_dt := OriginalDateTime,
                     modified_dt := ModifiedDateTime,
-                    pid := Pid,
-                    running := RunningTuple,
+                    running := Running,
                     node := Node,
                     port := Port,
-                    server_ip := Sip,
+                    server_ip := [Sip],
                     stats := Stats}
             }) ->
                 {ODate,OTime} = OriginalDateTime,
                 {MDate,MTime} = ModifiedDateTime,
-                io:fwrite("~10s ~8s ",[consistent_date(MDate),consistent_time(MTime)]),
-                io:fwrite("~8p ~16s ", [Protocol, Instance]),
+                LastDate = consistent_date(MDate),
+                LastTime = consistent_time(MTime),
+                SProtocol = atom_to_list(Protocol),
+                SInstance = Instance,
+                Date = consistent_date(ODate),
+                Time = consistent_time(OTime),
+                SNode = atom_to_list(Node),
+                ServerIp = Sip,
+                SPort = integer_to_list(Port),
+                SRunning = atom_to_list(Running),
                 StatsString = io_lib:format("~p",[Stats]),
-                io:fwrite("~10s ~8s ",[consistent_date(ODate),consistent_time(OTime)]),
-                io:fwrite("~20p ~16p ~6p ~16p ~16p ~s~n",
-                    [Node, Sip, Port, RunningTuple, Pid, StatsString]);
+                Args = [LastDate,LastTime,SProtocol,SInstance,Date,
+                    Time,SNode,ServerIp,SPort,SRunning,StatsString],
+                io:format(String,Args);
             (_Other) -> ok
                   end, Info).
 
@@ -260,7 +269,7 @@ consistent_date(Date) when is_list(Date) ->
 
 
 consistent_time(Time) when is_tuple(Time) ->
-    consistent_date(tuple_to_list(Time));
+    consistent_time(tuple_to_list(Time));
 consistent_time(Time) when is_list(Time)->
     NewTime = integers_to_strings(Time),
     io_lib:format("~s:~s:~s ",NewTime).
