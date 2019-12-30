@@ -46,8 +46,7 @@
 -define(STATMAP,               #{status  => enabled,
                                  type    => undefined,
                                  options => [{resets,0}],
-                                 aliases => [],
-                                 vclock  => undefined}).
+                                 aliases => []}).
 
 %%%===================================================================
 %%% Metadata API
@@ -306,8 +305,7 @@ re_register(StatName,{Status,Type,Options,Aliases}) ->
         status => Status,
         type => Type,
         options => Options,
-        aliases => Aliases,
-        vclock => fresh_clock()},
+        aliases => Aliases},
     re_register(StatName,Value);
 re_register(StatName, Value) -> %% ok
     put(?STATPFX, StatName, Value).
@@ -351,25 +349,10 @@ set_options(StatInfo, NewOpts) when is_list(NewOpts) ->
                   end, NewOpts);
 set_options({Statname, {Status, Type, Opts, Aliases}}, {Key, NewVal}) ->
     NewOpts = lists:keyreplace(Key, 1, Opts, {Key, NewVal}),
-    NewOpts2 = fresh_clock(NewOpts),
-    set_options(Statname, {Status, Type, NewOpts2, Aliases});
+    set_options(Statname, {Status, Type, NewOpts, Aliases});
 set_options(StatName, {Status, Type, NewOpts, Aliases}) ->
     re_register(StatName, {Status, Type, NewOpts, Aliases}).
 
-fresh_clock() ->
-    fresh_clock([]).
-fresh_clock(Opts) ->
-    case lists:keysearch(vclock, 1, Opts) of
-        false -> [{vclock, clock_fresh(?NODEID, 0)} | Opts];
-        {value, {vclock, [{Node, {Count, _VC}}]}} ->
-            lists:keyreplace(vclock, 1, Opts,
-                {vclock, clock_fresh(Node, Count)});
-        _ -> [{vclock, clock_fresh(?NODEID, 0)} | Opts]
-    end.
-
-clock_fresh(Node, Count) ->
-    vclock:fresh(Node, vc_inc(Count)).
-vc_inc(Count) -> Count + 1.
 
 %%%===================================================================
 %%% Deleting/Resetting Stats API
