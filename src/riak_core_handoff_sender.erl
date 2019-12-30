@@ -24,6 +24,7 @@
 -export([start_link/4, get_handoff_ssl_options/0]).
 -include("riak_core_vnode.hrl").
 -include("riak_core_handoff.hrl").
+-include("stacktrace.hrl").
 -define(ACK_COUNT, 1000).
 %% can be set with env riak_core, handoff_timeout
 -define(TCP_TIMEOUT, 60000).
@@ -63,12 +64,12 @@
           item_queue_byte_size :: non_neg_integer(),
 
           acksync_threshold    :: non_neg_integer(),
-          acksync_timer        :: timer:tref(),
+          acksync_timer        :: timer:tref() | undefined,
 
           type                 :: ho_type(),
 
-          notsent_acc          :: term(),
-          notsent_fun          :: function()
+          notsent_acc          :: term() | undefined,
+          notsent_fun          :: function()| undefined
         }).
 
 %%%===================================================================
@@ -278,9 +279,9 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
              exit({shutdown, {error, Reason}});
          throw:{be_quiet, Err, Reason} ->
              gen_fsm_compat:send_event(ParentPid, {handoff_error, Err, Reason});
-         Err:Reason ->
+         ?_exception_(Err, Reason, StackToken) ->
              ?log_fail("because of ~p:~p ~p",
-                       [Err, Reason, erlang:get_stacktrace()]),
+                       [Err, Reason, ?_get_stacktrace_(StackToken)]),
              gen_fsm_compat:send_event(ParentPid, {handoff_error, Err, Reason})
      end.
 
@@ -417,10 +418,10 @@ visit_item2(K, V, Acc) ->
                        notsent_acc=NewNotSentAcc}
     end.
 
-handle_not_sent_item(undefined, _, _) ->
-    undefined;
 handle_not_sent_item(NotSentFun, Acc, Key) when is_function(NotSentFun) ->
-    NotSentFun(Key, Acc).
+    NotSentFun(Key, Acc);
+handle_not_sent_item(undefined, _, _) ->
+    undefined.
 
 send_objects([], Acc) ->
     Acc;

@@ -35,6 +35,7 @@
          commit/0,
          clear/0,
          ring_changed/2,
+         pending_close/2,
          create_bucket_type/2,
          update_bucket_type/2,
          bucket_type_status/1,
@@ -68,7 +69,7 @@
           %% applying a set of staged cluster changes. When commiting
           %% changes, the computed ring must match the previous planned
           %% ring to be allowed.
-          next_ring :: riak_core_ring(),
+          next_ring :: riak_core_ring()|undefined,
 
           %% Random number seed passed to remove_node to ensure the
           %% current randomized remove algorithm is deterministic
@@ -82,6 +83,16 @@
 %%%===================================================================
 %%% API
 %%%===================================================================
+
+
+-ifdef(TEST).
+
+-export([stop/0]).
+
+stop() ->
+    gen_server:call(claimant(), stop).
+
+-endif.
 
 %% @doc Spawn and register the riak_core_claimant server
 start_link() ->
@@ -148,6 +159,10 @@ resize_ring(NewRingSize) ->
 -spec abort_resize() -> ok | {error, atom()}.
 abort_resize() ->
     stage(node(), abort_resize).
+
+-spec pending_close(riak_core_ring(), any()) -> ok.
+pending_close(Ring, RingID) ->
+    gen_server:call(?MODULE, {pending_close, Ring, RingID}).
 
 %% @doc Clear the current set of staged transfers
 clear() ->
@@ -217,6 +232,8 @@ update_bucket_type(BucketType, Props) ->
 bucket_type_iterator() ->
     riak_core_metadata:iterator(?BUCKET_TYPE_PREFIX, [{default, undefined},
                                               {resolver, fun riak_core_bucket_props:resolve/2}]).
+
+
 
 %%%===================================================================
 %%% Claim sim helpers until refactor
@@ -310,6 +327,13 @@ handle_call({activate_bucket_type, BucketType}, _From, State) ->
     Reply = maybe_activate_type(BucketType, Status, Existing),
     {reply, Reply, State};
 
+handle_call({pending_close, Ring, RingID}, _From, State) ->
+    State2 = tick(Ring, RingID, State),
+    {reply, ok, State2};
+
+handle_call(stop, _From, State) ->
+    {stop, normal, ok, State};
+
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
@@ -318,7 +342,7 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info(tick, State) ->
-    State2 = tick(State),
+    State2 = tick(none, riak_core_ring_manager:get_ring_id(), State),
     {noreply, State2};
 
 handle_info(reset_ring_id, State) ->
@@ -367,8 +391,6 @@ generate_plan([], _, State) ->
     {{ok, [], []}, State};
 generate_plan(Changes, Ring, State=#state{seed=Seed}) ->
     case compute_all_next_rings(Changes, Seed, Ring) of
-        legacy ->
-            {{error, legacy}, State};
         {error, invalid_resize_claim} ->
             {{error, invalid_resize_claim}, State};
         {ok, NextRings} ->
@@ -404,8 +426,6 @@ maybe_commit_staged(State) ->
 maybe_commit_staged(Ring, State=#state{changes=Changes, seed=Seed}) ->
     Changes2 = filter_changes(Changes, Ring),
     case compute_next_ring(Changes2, Seed, Ring) of
-        {legacy, _} ->
-            {ignore, legacy};
         {error, invalid_resize_claim} ->
             {ignore, invalid_resize_claim};
         {ok, NextRing} ->
@@ -633,19 +653,33 @@ schedule_tick() ->
                               10000),
     erlang:send_after(Tick, ?MODULE, tick).
 
-tick(State=#state{last_ring_id=LastID}) ->
+tick(PreFetchRing, RingID, State=#state{last_ring_id=LastID}) ->
     maybe_enable_ensembles(),
-    case riak_core_ring_manager:get_ring_id() of
+    case RingID of
         LastID ->
             schedule_tick(),
             State;
         RingID ->
-            {ok, Ring} = riak_core_ring_manager:get_raw_ring(),
-            maybe_bootstrap_root_ensemble(Ring),
-            maybe_force_ring_update(Ring),
-            schedule_tick(),
+            Ring = 
+                case PreFetchRing of
+                    none ->
+                        {ok, Ring0} = riak_core_ring_manager:get_raw_ring(),
+                        Ring0;
+                    PreFetchRing ->
+                        PreFetchRing
+                end,
+            case riak_core_ring:check_lastgasp(Ring) of
+                true ->
+                    lager:info("Ingoring fresh ring as shutting down"),
+                    ok;
+                false ->
+                    maybe_bootstrap_root_ensemble(Ring),
+                    maybe_force_ring_update(Ring),
+                    schedule_tick()
+            end,
             State#state{last_ring_id=RingID}
     end.
+
 
 maybe_force_ring_update(Ring) ->
     IsClaimant = (riak_core_ring:claimant(Ring) == node()),
@@ -910,8 +944,6 @@ compute_all_next_rings(Changes, Seed, Ring) ->
 %% @private
 compute_all_next_rings(Changes, Seed, Ring, Acc) ->
     case compute_next_ring(Changes, Seed, Ring) of
-        {legacy, _} ->
-            legacy;
         {error, invalid_resize_claim}=Err ->
             Err;
         {ok, NextRing} ->
@@ -928,19 +960,13 @@ compute_all_next_rings(Changes, Seed, Ring, Acc) ->
 %% @private
 compute_next_ring(Changes, Seed, Ring) ->
     Replacing = [{Node, NewNode} || {Node, {replace, NewNode}} <- Changes],
-
     Ring2 = apply_changes(Ring, Changes),
     {_, Ring3} = maybe_handle_joining(node(), Ring2),
     {_, Ring4} = do_claimant_quiet(node(), Ring3, Replacing, Seed),
-    {Valid, Ring5} = maybe_compute_resize(Ring, Ring4),
-    Members = riak_core_ring:all_members(Ring5),
-    AnyLegacy = riak_core_gossip:any_legacy_gossip(Ring5, Members),
-    case {Valid, AnyLegacy} of
-        {false, _} ->
+    case maybe_compute_resize(Ring, Ring4) of
+        {false, _Ring5} ->
             {error, invalid_resize_claim};
-        {true, true} ->
-            {legacy, Ring};
-        {true, false} ->
+        {true, Ring5} ->
             {ok, Ring5}
     end.
 

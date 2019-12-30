@@ -66,9 +66,6 @@
 
 -behaviour(gen_fsm_compat).
 
-%% API
--export([behaviour_info/1]).
-
 -export([start_link/3]).
 
 -ifdef(TEST).
@@ -87,22 +84,40 @@
          terminate/3,
          code_change/4]).
 
--spec behaviour_info(atom()) -> 'undefined' | [{atom(), arity()}].
-behaviour_info(callbacks) ->
-    [
-     {init, 2},
-     {process_results, 2},
-     {finish, 2}
-    ];
-behaviour_info(_) ->
-    undefined.
+
+-callback init(From :: from(), RequestArgs :: list(any())) ->
+                {Request :: tuple(),
+                    VNodeSelector :: all | allup,
+                    NVal :: pos_integer(),
+                    PrimaryVNodeCoverage :: all | pos_integer(),
+                    NodeCheckService :: module(),
+                    VNodeMaster :: atom(),
+                    Timeout :: pos_integer()|infinity,
+                    ModState :: tuple()}.
+
+-callback process_results(Results :: any(), ModState :: tuple()) ->
+                            {ok, UpdModState :: tuple()} |
+                            {done, UpModState :: tuple()} |
+                            {error, Error :: any()}.
+
+-callback process_results(Vnode :: from(),
+                            Results :: any(), ModState :: tuple()) ->
+                                {ok, UpdModState :: tuple()} |
+                                {done, UpModState :: tuple()} |
+                                {error, Error :: any()}.
+
+-callback finish(clean | {error, Reason :: any()}, ModState :: tuple()) -> 
+                    {stop, normal, any()}.
+
+-optional_callbacks([process_results/2, process_results/3]).
+    % must have one or the other
 
 -define(DEFAULT_TIMEOUT, 60000*8).
 
 -type req_id() :: non_neg_integer().
 -type from() :: {atom(), req_id(), pid()}.
 
--record(state, {coverage_vnodes :: [{non_neg_integer(), node()}],
+-record(state, {coverage_vnodes :: [{non_neg_integer(), node()}]|undefined,
                 mod :: atom(),
                 mod_state :: tuple(),
                 n_val :: pos_integer(),
@@ -111,7 +126,7 @@ behaviour_info(_) ->
                 pvc :: all | pos_integer(), % primary vnode coverage
                 request :: tuple(),
                 req_id :: req_id(),
-                required_responses :: pos_integer(),
+                required_responses :: pos_integer()|undefined,
                 response_count=0 :: non_neg_integer(),
                 timeout :: timeout(),
                 vnode_master :: atom(),

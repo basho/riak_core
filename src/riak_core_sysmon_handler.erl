@@ -31,7 +31,9 @@
 -export([init/1, handle_event/2, handle_call/2,
          handle_info/2, terminate/2, code_change/3]).
 
--record(state, {timer_ref :: reference()}).
+-include("stacktrace.hrl").
+
+-record(state, {timer_ref :: reference() | undefined}).
 
 -define(INACTIVITY_TIMEOUT, 5000).
 
@@ -179,9 +181,9 @@ format_pretty_proc_or_port_info(PidOrPort, Acf) ->
             Res ->
                 Res
         end
-    catch X:Y ->
+    catch ?_exception_(X, Y, StackToken) ->
         {"Pid ~w, ~W ~W at ~w\n",
-            [PidOrPort, X, 20, Y, 20, erlang:get_stacktrace()]}
+            [PidOrPort, X, 20, Y, 20, ?_get_stacktrace_(StackToken)]}
     end.
 
 %% Enabling warnings_as_errors prevents a build since this function is

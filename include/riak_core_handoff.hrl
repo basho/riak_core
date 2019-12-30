@@ -13,10 +13,10 @@
 
 -record(ho_stats,
         {
-          interval_end          :: erlang:timestamp(),
-          last_update           :: erlang:timestamp(),
-          objs=0                :: non_neg_integer(),
-          bytes=0               :: non_neg_integer()
+          interval_end                  :: erlang:timestamp(),
+          last_update = os:timestamp()  :: erlang:timestamp(),
+          objs=0                        :: non_neg_integer(),
+          bytes=0                       :: non_neg_integer()
         }).
 
 -type ho_stats() :: #ho_stats{}.
@@ -38,11 +38,11 @@
           status                :: any(),
           stats                 :: riak_core_handoff_dict(),
           vnode_pid             :: pid() | undefined,
-          vnode_mon             :: reference(),
-          type                  :: ho_type(),
+          vnode_mon             :: reference() | undefined,
+          type = undefined      :: ho_type() | undefined,
           req_origin            :: node(),
-          filter_mod_fun        :: {module(), atom()},
-          size                  :: {function(), dynamic} | {non_neg_integer(), bytes | objects}
+          filter_mod_fun        :: {module(), atom()} | undefined,
+          size = {0, objects}   :: {function(), dynamic} | {non_neg_integer(), bytes | objects}
         }).
 -type handoff_status() :: #handoff_status{}.
 

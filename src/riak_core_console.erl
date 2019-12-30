@@ -64,8 +64,8 @@ member_status([]) ->
 
 legacy_gossip(Ring) ->
     Members = riak_core_ring:all_members(Ring),
-    LegacyGossip =
-        [{Node, riak_core_gossip:legacy_gossip(Node)} || Node <- Members],
+    LegacyGossip = [{Node, false} || Node <- Members],
+        % No Nodes should now be using legacy gossip
     orddict:from_list(LegacyGossip).
 
 print_member_status(Ring, LegacyGossip) ->
@@ -80,7 +80,6 @@ print_member_status(Ring, LegacyGossip) ->
                         {Joining0, Valid0, Down0, Leaving0, Exiting0}) ->
                             StatusOut =
                                 case orddict:fetch(Node, LegacyGossip) of
-                                    true -> "(legacy)";
                                     false -> Status
                                 end,
 
@@ -115,18 +114,12 @@ print_member_status(Ring, LegacyGossip) ->
     ok.
 
 ring_status([]) ->
-    case riak_core_gossip:legacy_gossip() of
-        true ->
-            io:format("Currently in legacy gossip mode.~n"),
-            ok;
-        false ->
-            {Claimant, RingReady, Down, MarkedDown, Changes} =
-                riak_core_status:ring_status(),
-            claimant_status(Claimant, RingReady),
-            ownership_status(Down, Changes),
-            unreachable_status(Down -- MarkedDown),
-            ok
-    end.
+    {Claimant, RingReady, Down, MarkedDown, Changes} =
+        riak_core_status:ring_status(),
+    claimant_status(Claimant, RingReady),
+    ownership_status(Down, Changes),
+    unreachable_status(Down -- MarkedDown),
+    ok.
 
 claimant_status(Claimant, RingReady) ->
     io:format("~34..=s Claimant ~35..=s~n", ["", ""]),

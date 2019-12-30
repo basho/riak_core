@@ -55,13 +55,13 @@
           %% Initially trees rooted at each node are the same.
           %% Portions of that tree belonging to this node are
           %% shared in this set.
-          common_eagers :: ordsets:ordset(nodename()),
+          common_eagers = ordsets:new() :: ordsets:ordset(nodename()),
 
           %% Initially trees rooted at each node share the same lazy links.
           %% Typically this set will contain a single element. However, it may
           %% contain more in large clusters and may be empty for clusters with
           %% less than three nodes.
-          common_lazys  :: ordsets:ordset(nodename()),
+          common_lazys = ordsets:new() :: ordsets:ordset(nodename()),
 
           %% A mapping of sender node (root of each broadcast tree)
           %% to this node's portion of the tree. Elements are
@@ -69,32 +69,32 @@
           %% propogate to this node. Nodes that are never the
           %% root of a message will never have a key added to
           %% `eager_sets'
-          eager_sets    :: [{nodename(), ordsets:ordset(nodename())}],
+          eager_sets = [] :: [{nodename(), ordsets:ordset(nodename())}],
 
           %% A Mapping of sender node (root of each spanning tree)
           %% to this node's set of lazy peers. Elements are added
           %% to this structure as messages rooted at a node
           %% propogate to this node. Nodes that are never the root
           %% of a message will never have a key added to `lazy_sets'
-          lazy_sets     :: [{nodename(), ordsets:ordset(nodename())}],
+          lazy_sets = [] :: [{nodename(), ordsets:ordset(nodename())}],
 
           %% Lazy messages that have not been acked. Messages are added to
           %% this set when a node is sent a lazy message (or when it should be
           %% sent one sometime in the future). Messages are removed when the lazy
           %% pushes are acknowleged via graft or ignores. Entries are keyed by their
           %% destination
-          outstanding   :: [{nodename(), outstanding()}],
+          outstanding = orddict:new() :: [{nodename(), outstanding()}],
 
           %% Set of registered modules that may handle messages that
           %% have been broadcast
           mods          :: [module()],
 
           %% List of outstanding exchanges
-          exchanges     :: exchanges(),
+          exchanges = [] :: exchanges(),
 
           %% Set of all known members. Used to determine
           %% which members have joined and left during a membership update
-          all_members   :: ordsets:ordset(nodename())
+          all_members = ordsets:new() :: ordsets:ordset(nodename())
          }).
 
 %%%===================================================================
@@ -225,11 +225,7 @@ debug_get_tree(Root, Nodes) ->
 init([AllMembers, InitEagers, InitLazys, Mods]) ->
     schedule_lazy_tick(),
     schedule_exchange_tick(),
-    State1 =  #state{
-                 outstanding   = orddict:new(),
-                 mods = lists:usort(Mods),
-                 exchanges=[]
-                },
+    State1 = #state{mods = lists:usort(Mods)},
     State2 = reset_peers(AllMembers, InitEagers, InitLazys, State1),
     {ok, State2}.
 
