@@ -289,7 +289,7 @@ merge([], DPs) ->
 
 %% @doc creates a path for the stat name @end
 statname([]) ->
-    [riak_stat:prefix()] ++ '_' ;
+    [?Prefix] ++ '_' ;
 statname("*") ->
     statname([]);
 statname("["++_ = Expr) ->
