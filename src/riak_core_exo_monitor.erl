@@ -14,6 +14,7 @@
 -module(riak_core_exo_monitor).
 -behaviour(exometer_folsom_monitor).
 -behaviour(exometer_entry).
+-include_lib("riak_core/include/riak_stat.hrl").
 
 -export([copy_folsom/3]).
 -export([
@@ -30,8 +31,7 @@
 behaviour() -> entry.
 
 copy_folsom(Name, Type, Opts) when is_tuple(Name) ->
-    Prefix = riak_stat:prefix(),
-    {[Prefix | tuple_to_list(Name)], ad_hoc, [{folsom_name, Name},
+    {[?Prefix | tuple_to_list(Name)], ad_hoc, [{folsom_name, Name},
         {module, ?MODULE},
         {type, Type}
         | options(Type, Opts)]};

@@ -143,13 +143,13 @@ handle_call(_Req, _From, State) ->
     {reply, ok, State}.
 
 handle_cast({update, {worker_pool, vnode_pool}}, State) ->
-    exometer_update([?PFX, ?APP, vnode, worker_pool], 1, counter),
+    exometer_update([?Prefix, ?APP, vnode, worker_pool], 1, counter),
     {noreply, State};
 handle_cast({update, {worker_pool, Pool}}, State) ->
-    exometer_update([?PFX, ?APP, node, worker_pool, Pool], 1, counter),
+    exometer_update([?Prefix, ?APP, node, worker_pool, Pool], 1, counter),
     {noreply, State};
 handle_cast({update, Arg}, State) ->
-    exometer_update([?PFX, ?APP, update_metric(Arg)], update_value(Arg), update_type(Arg)),
+    exometer_update([?Prefix, ?APP, update_metric(Arg)], update_value(Arg), update_type(Arg)),
     {noreply, State};
 handle_cast(_Req, State) ->
     {noreply, State}.
@@ -274,8 +274,8 @@ vnodeq_aggregate(Service, MQLs0) ->
                  1 ->
                      lists:nth(Len div 2 + 1, MQLs)
              end,
-    [{[?PFX, riak_core, vnodeq_atom(Service,<<"s_running">>)], [{value, Len}]},
-     {[?PFX, riak_core, vnodeq_atom(Service,<<"q">>)],
+    [{[?Prefix, riak_core, vnodeq_atom(Service,<<"s_running">>)], [{value, Len}]},
+     {[?Prefix, riak_core, vnodeq_atom(Service,<<"q">>)],
       [{min, lists:nth(1, MQLs)}, {median, Median}, {mean, Mean},
        {max, lists:nth(Len, MQLs)}, {total, Total}]}].
 
@@ -298,32 +298,32 @@ vnodeq_aggregate_empty_test() ->
     ?assertEqual([], vnodeq_aggregate(service_vnode, [])).
 
 vnodeq_aggregate_odd1_test() ->
-    ?assertEqual([{[?PFX, riak_core, service_vnodes_running], [{value, 1}]},
-                  {[?PFX, riak_core, service_vnodeq],
+    ?assertEqual([{[?Prefix, riak_core, service_vnodes_running], [{value, 1}]},
+                  {[?Prefix, riak_core, service_vnodeq],
 		   [{min, 10}, {median, 10}, {mean, 10}, {max, 10}, {total, 10}]}],
                  vnodeq_aggregate(service_vnode, [10])).
 
 vnodeq_aggregate_odd3_test() ->
-    ?assertEqual([{[?PFX, riak_core, service_vnodes_running], [{value, 3}]},
-                  {[?PFX, riak_core, service_vnodeq],
+    ?assertEqual([{[?Prefix, riak_core, service_vnodes_running], [{value, 3}]},
+                  {[?Prefix, riak_core, service_vnodeq],
 		   [{min, 1}, {median, 2}, {mean, 2}, {max, 3}, {total, 6}]}],
                  vnodeq_aggregate(service_vnode, [1, 2, 3])).
 
 vnodeq_aggregate_odd5_test() ->
-    ?assertEqual([{[?PFX, riak_core, service_vnodes_running], [{value, 5}]},
-                  {[?PFX, riak_core, service_vnodeq],
+    ?assertEqual([{[?Prefix, riak_core, service_vnodes_running], [{value, 5}]},
+                  {[?Prefix, riak_core, service_vnodeq],
 		   [{min, 0}, {median, 1}, {mean, 2}, {max, 5}, {total, 10}]}],
                  vnodeq_aggregate(service_vnode, [1, 0, 5, 0, 4])).
 
 vnodeq_aggregate_even2_test() ->
-    ?assertEqual([{[?PFX, riak_core, service_vnodes_running], [{value, 2}]},
-                  {[?PFX, riak_core, service_vnodeq],
+    ?assertEqual([{[?Prefix, riak_core, service_vnodes_running], [{value, 2}]},
+                  {[?Prefix, riak_core, service_vnodeq],
 		   [{min, 10}, {median, 15}, {mean, 15}, {max, 20}, {total, 30}]}],
                  vnodeq_aggregate(service_vnode, [10, 20])).
 
 vnodeq_aggregate_even4_test() ->
-    ?assertEqual([{[?PFX, riak_core, service_vnodes_running], [{value, 4}]},
-                  {[?PFX, riak_core, service_vnodeq],
+    ?assertEqual([{[?Prefix, riak_core, service_vnodes_running], [{value, 4}]},
+                  {[?Prefix, riak_core, service_vnodeq],
 		   [{min, 0}, {median, 5}, {mean, 7}, {max, 20}, {total, 30}]}],
                  vnodeq_aggregate(service_vnode, [0, 10, 0, 20])).
 
