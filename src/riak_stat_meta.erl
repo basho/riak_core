@@ -180,8 +180,6 @@ find_unregister_status(_)                         -> false.
 %%%-------------------------------------------------------------------
 -spec(the_alpha_stat(Alpha :: list(), Beta :: list()) -> list()).
 the_alpha_stat(Alpha, Beta) ->
-    AlphaList = the_alpha_map([Alpha]),
-    BetaList  = the_alpha_map(Beta),
     {_LeftOvers, AlphaStatList} =
         lists:foldl(fun
                         (AlphaStat, {BetaAcc, TheAlphaStats}) ->
@@ -195,24 +193,13 @@ the_alpha_stat(Alpha, Beta) ->
                                     {lists:keydelete(AKey,1,BetaAcc),
                                         [AlphaStat|TheAlphaStats]}
                             end
-                    end, {BetaList, []}, AlphaList),
+                    end, {Beta, []}, Alpha),
     AlphaStatList.
-% The stats must fight, to become the alpha
-
-the_alpha_map([]) -> [];
-the_alpha_map([A_B]) when is_list(A_B) -> the_alpha_map(A_B);
-the_alpha_map([A|B]) when is_tuple(A) ->
-    lists:foldl(fun
-                  ({Stat, {Atom, Val}},Acc)->[{Stat, {Atom, Val}}|Acc];
-                  ({Stat, Val},Acc)        ->[{Stat, {atom, Val}}|Acc];
-                    (_,Acc) -> Acc
-              end,[], [A|B]).
-
 
 %%%-------------------------------------------------------------------
 
 find_all_entries() ->
-    [{Name, {status, Status}} ||
+    [{Name, Status} ||
         {Name,_Type, Status} <- find_entries([[riak|'_']], '_', '_')].
 
 %%%===================================================================
@@ -320,12 +307,7 @@ re_register(StatName, Value) -> %% ok
 %%%-------------------------------------------------------------------
 -spec(change_status(metadata_key(), status()) -> ok | acc()).
 change_status(Stats) when is_list(Stats) ->
-    lists:foldl(fun
-                    ({Stat, {status, Status}}, Acc) ->
-                        [change_status(Stat, Status) | Acc];
-                    ({Stat, Status}, Acc) ->
-                        [change_status(Stat, Status) | Acc]
-                end, [], Stats);
+    [change_status(Stat,Status)||{Stat,Status} <- Stats];
 change_status({StatName, Status}) ->
     change_status(StatName, Status).
 change_status(Statname, ToStatus) ->
@@ -458,7 +440,7 @@ load_profile(ProfileName) ->
         %% rather than "unloading" the profile and reloading it to
         %% change many stats statuses unnecessarily
 
-        %% or alternatively, save -> load -> change -> load again
+        %% consequentially, save -> load -> change -> load again
         %% would mean no stats would change if the profile is already
         %% loaded
 
@@ -515,13 +497,11 @@ reset_profile() ->
 change_stats_from(Stats, Status) ->
     change_stat_list_to_status(
         lists:foldl(fun
-                    ({Stat, {status, St}}, Acc) when St == Status ->
-                        NewSt =
-                            case Status of
-                                enabled -> disabled;
-                                disabled -> enabled
-                            end,
-                        [{Stat, {status, NewSt}} | Acc];
-                    ({_Stat, {status, St}}, Acc) when St =/= Status ->
-                        Acc
+                        ({Stat,CStatus},Acc) when CStatus == Status ->
+                            NewStatus = reverse_status(CStatus),
+                            [{Stat,NewStatus}|Acc];
+                        (_, Acc) -> Acc
                     end, [], Stats)).
+
+reverse_status(enabled) -> disabled;
+reverse_status(disabled) -> enabled.

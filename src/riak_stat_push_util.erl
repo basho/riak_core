@@ -176,16 +176,12 @@ stringifier(Stat) ->
                 end, " = ",Stat).
 
 ip_maker(IPAddr) when is_tuple(IPAddr)->
-    Ip = tuple_to_list(IPAddr),
-    NewIp = [integer_to_list(N) || N <- Ip],
-    lists:join(".",NewIp);
+    inet:ntoa(IPAddr);
 ip_maker(IPAddr) when is_list(IPAddr) ->
-    List = string:split(IPAddr,".",all),
-    IntegerList = [list_to_integer(N)|| N<-List],
-    list_to_tuple(IntegerList).
+    {ok, TupleAddress} = inet:parse_ipv4_address(IPAddr),
+    TupleAddress.
 
 parse_values(Values) ->
-%%    lager:info("Values : ~p", [Values]),
     lists:foldl(fun
                     ({value,{ok,Vals}},Acc) -> [parse_values(Vals)|Acc];
                     ({ok,Vals},Acc) -> [parse_values(Vals)|Acc];

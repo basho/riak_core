@@ -119,8 +119,7 @@ status_change(Arg, ToStatus) ->
         enabled  -> find_entries(data_sanitise(Arg, '_', disabled));
         disabled -> find_entries(data_sanitise(Arg, '_', enabled))
     end,
-    change_status([{Stat, {status, ToStatus}} ||
-        {Stat,_,_} <- Entries]).
+    change_status([{Stat, ToStatus} || {Stat,_,_} <- Entries]).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -470,7 +469,7 @@ print_if_0(StatName,disable_0) ->
     case not_0(StatName,[]) of
         [] -> [];
         _Vals ->
-            change_status([{StatName,{status,disabled}}]),
+            change_status([{StatName,disabled}]),
             print_stat_args(StatName, disabled)
     end;
 print_if_0(StatName, DPs) ->

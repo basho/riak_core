@@ -295,14 +295,11 @@ update(Name, Val, Type, Opts) ->
 %%%-------------------------------------------------------------------
 -spec(change_status(n_s_stats()) -> print()).
 change_status(Stats) when is_list(Stats) ->
-    lists:map(fun
-              ({Stat,{status,Status}}) -> change_status(Stat,Status);
-              ({Stat, Status}) -> change_status(Stat, Status)
-              end, Stats);
+    [change_status(Stat,Status)||{Stat,Status} <- Stats];
 change_status({Stat, Status}) ->
     change_status(Stat, Status).
 change_status(Stat, Status) ->
-    set_opts(Stat, [{status, Status}]),
+    set_opts(Stat, [{status,Status}]),
     io:fwrite("~p : ~p~n",[Stat,Status]).
 
 %%%-------------------------------------------------------------------
