@@ -81,7 +81,7 @@
 -define(METADATA_ENABLED,   metadata_enabled).
 
 -define(Prefix,             riak).
--define(NODEID,             term_to_binary(node())).
+-define(NODEID,             node()).
 
 -define(INFOSTAT,           [name,type,module,value,cache,
                              status,timestamp,options]).
