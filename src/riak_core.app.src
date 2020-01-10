@@ -17,6 +17,7 @@
                   os_mon,
                   basho_stats,
                   eleveldb,
+                  ranch,
                   pbkdf2,
                   poolboy,
                   exometer_core,
