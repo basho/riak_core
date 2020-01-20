@@ -10,7 +10,8 @@
     restart_children/1,
     stop_running_server/1,
     stop_running_server/2,
-    log_and_respond/1]).
+    log_and_respond/1,
+    encode/1]).
 
 -export([
     json_stats/1,
@@ -175,6 +176,8 @@ stringifier(Stat) ->
                         Acc
                 end, " = ",Stat).
 
+ip_maker([IPAddr]) ->
+    ip_maker(IPAddr);
 ip_maker(IPAddr) when is_tuple(IPAddr)->
     inet:ntoa(IPAddr);
 ip_maker(IPAddr) when is_list(IPAddr) ->
@@ -238,6 +241,7 @@ flatten_components(Hostname, Instance, Acc)
 
 format_fields([], Json) ->
     lists:reverse(Json);
+
 format_fields([{K,V}], Json) ->
     lists:reverse([[quote(to_list(K)), $:,
         quote_value(V)]| Json]);

@@ -16,6 +16,8 @@
     show_stat_0/1,
     disable_stat_0/1,
     stat_info/1,
+    stat_enable/1,
+    stat_disable/1,
     status_change/2,
     reset_stat/1,
     stat_metadata/1
@@ -109,6 +111,22 @@ disable_stat_0(Arg) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
+%% enable the stats, if the stat is already enabled does nothing
+%% @end
+%%%-------------------------------------------------------------------
+-spec(stat_enable(consolearg()) -> ok | error()).
+stat_enable(Arg) -> status_change(Arg, enabled).
+
+%%%-------------------------------------------------------------------
+%% @doc
+%% disable the stats - if already disabled does nothing
+%% @end
+%%%-------------------------------------------------------------------
+-spec(stat_disable(consolearg()) -> ok | error()).
+stat_disable(Arg) -> status_change(Arg, disabled).
+
+%%%-------------------------------------------------------------------
+%% @doc
 %% change the status of the stat (in metadata and) in exometer
 %% @end
 %%%-------------------------------------------------------------------
@@ -143,8 +161,22 @@ reset_stat(Arg) ->
 %%%-------------------------------------------------------------------
 -define(Metadata_Enabled, ?IS_ENABLED(?METADATA_ENABLED)).
 
+%%%-------------------------------------------------------------------
+%% @doc
+%% enable the metadata, arg should be true, false or status, if false
+%% then the communication to the metadata ends, upon re-enabling the
+%% metadata will "re-register" the stats, therefore the configuration
+%% remains consistent between both metadata and exometer, any profile
+%% that was loaded before will not be loaded upon re-enabling to
+%% prevent errors
+%% @end
+%%%-------------------------------------------------------------------
 -spec(stat_metadata(Argument :: boolean() | status) -> print()).
-stat_metadata(Argument) -> stat_metadata(Argument, ?Metadata_Enabled).
+stat_metadata(["enable" ]) -> stat_metadata(true);
+stat_metadata(["disable"]) -> stat_metadata(false);
+stat_metadata(["status" ]) -> stat_metadata(status);
+stat_metadata(Arg) when is_atom(Arg) ->
+                              stat_metadata(Arg, ?Metadata_Enabled).
 
 -spec(stat_metadata(ToStatus :: boolean() | status,
                     CurrentStatus :: true | false) -> print()).

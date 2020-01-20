@@ -14,7 +14,9 @@
     setup/1,
     setdown/1,
     sanitise_data/1,
+    find_push_stats/1,
     find_push_stats/2,
+    find_push_stats_all/1,
     fold_through_meta/3,
     store_setup_info/3
 ]).
@@ -189,6 +191,15 @@ fold(Protocol, Port, Instance, ServerIp, Stats, Node) ->
     Return.
 
 %%%-------------------------------------------------------------------
+%%%-------------------------------------------------------------------
+%% @doc
+%% Get information on the stats polling, as in the date and time the
+%% stats pushing began, and the port, serverip, instance etc that was
+%% given at the time of setup
+%% @end
+%%%-------------------------------------------------------------------
+-spec(find_push_stats(consolearg()) -> ok | error()).
+find_push_stats(Arg) -> find_push_stats([node()], Arg).
 
 -spec(find_push_stats(node_or_nodes(), consolearg()) -> print()).
 find_push_stats(_Nodes,[]) ->
@@ -201,6 +212,17 @@ find_push_stats(Nodes,Arg) ->
         {Protocol, SanitisedData} ->
             print_info(fold_through_meta(Protocol, SanitisedData, Nodes))
     end.
+
+%%%-------------------------------------------------------------------
+%% @doc
+%% Get information on the stats polling, as in the date and time the
+%% stats pushing began, and the port, serverip, instance etc that was
+%% given at the time of setup - but for all nodes in the cluster
+%% @end
+%%%-------------------------------------------------------------------
+-spec(find_push_stats_all(consolearg()) -> ok | error()).
+find_push_stats_all(Arg) ->
+    find_push_stats([node()|nodes()],Arg).
 
 -spec(fold_through_meta(protocol(),sanitised_push(),node_or_nodes()) ->
     listofpush()).

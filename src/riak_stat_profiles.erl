@@ -103,10 +103,7 @@
 %% -------------------------------------------------------------------
 -spec(save_profile(profilename()) -> ok | error()).
 save_profile(ProfileName) ->
-    case check_args(ProfileName) of
-        ok -> ok;
-        _ -> riak_stat_mgr:save_profile(ProfileName)
-    end.
+    riak_stat_mgr:save_profile(ProfileName).
 
 %% -------------------------------------------------------------------
 %% @doc
@@ -119,10 +116,7 @@ save_profile(ProfileName) ->
 %% -------------------------------------------------------------------
 -spec(load_profile(profilename()) -> ok | error()).
 load_profile(ProfileName) ->
-    case check_args(ProfileName) of
-        ok -> ok;
-        _ -> riak_stat_mgr:load_profile(ProfileName)
-    end.
+    riak_stat_mgr:load_profile(ProfileName).
 
 %% -------------------------------------------------------------------
 %% @doc
@@ -133,10 +127,7 @@ load_profile(ProfileName) ->
 %% -------------------------------------------------------------------
 -spec(delete_profile(profilename()) -> ok | error()).
 delete_profile(ProfileName) ->
-    case check_args(ProfileName) of
-        ok -> ok;
-        _ -> riak_stat_mgr:delete_profile(ProfileName)
-    end.
+    riak_stat_mgr:delete_profile(ProfileName).
 
 %% -------------------------------------------------------------------
 %% @doc
@@ -151,20 +142,3 @@ reset_profile() ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-
-print(ok,Args) ->
-    print("~s~n", [Args]);
-print({error, Reason},Args) ->
-    print("Error in ~p because ~p~n", [Args, Reason]);
-print([],_) ->
-    io:format("Error: Wrong Argument Format entered~n");
-print(String, Args) ->
-    io:format(String, Args).
-
-
-check_args([]) ->
-    print([],[]);
-check_args([Args]) ->
-    Args;
-check_args(_) ->
-    check_args([]).
