@@ -538,7 +538,7 @@ get_info_2(Statname,Attrs) ->
 
 print_stat_args(_StatName, []) -> [];
 print_stat_args(StatName, disabled) ->
-    io:fwrite("~p : disabled", [StatName]);
+    io:fwrite("~p : disabled~n", [StatName]);
 print_stat_args({StatName,Type,Status,Info},{error,_}) ->
     NewValues = get_info_2(StatName,Info),
     NewArgs = replace_type_and_status(Type,Status,NewValues),

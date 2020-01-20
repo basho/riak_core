@@ -73,7 +73,7 @@
     save_profile/1,
     load_profile/1,
     delete_profile/1,
-    reset_profile/0
+    reset_profile/0, reset_profile/1
 ]).
 
 -define(timestamp, os:timestamp()).
@@ -136,9 +136,6 @@ delete_profile(ProfileName) ->
 %% @end
 %% -------------------------------------------------------------------
 -spec(reset_profile() -> ok | error()).
+reset_profile(_) -> reset_profile().
 reset_profile() ->
     riak_stat_mgr:reset_profile().
-
-%%%===================================================================
-%%% Internal functions
-%%%===================================================================

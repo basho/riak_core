@@ -11,8 +11,8 @@
 
 %% API
 -export([
-    setup/1,
-    setdown/1,
+    setup/1,setup/5,
+    setdown/1,setdown/2, setdown/3,
     sanitise_data/1,
     find_push_stats/1,
     find_push_stats/2,
@@ -52,12 +52,24 @@
 %% @end
 %%%-------------------------------------------------------------------
 -spec(setup(consolearg()) -> print()).
-setup(Arg) ->
-    case sanitise_and_check_args(Arg) of
-        ok -> ok;
-        {Protocol, SanitisedData} ->
-            maybe_start_server(Protocol, SanitisedData)
+setup([HostPort,Protocol,Instance|Stats]) ->
+    {Host,Port} = host_port(HostPort),
+    setup(Host,Port,Protocol,Instance,Stats).
+setup(Host,Port,Protocol,Instance,Stats) ->
+    Port_Int = list_to_integer(Port),
+    Protocol_Atom = list_to_atom(Protocol),
+    %% Host and Instance remain lists
+    case Stats of
+        [] ->
+            maybe_start_server(Protocol_Atom,{{Port_Int,Instance,Host},['_']});
+        _ ->
+            PushStats = riak_stat_console:data_sanitise(Stats),
+            maybe_start_server(Protocol_Atom,{{Port_Int,Instance,Host},PushStats})
     end.
+
+host_port(HostPort) ->
+    [Host,Port] = re:split(HostPort,"\\:",[{return,list}]),
+    {Host,Port}.
 
 -spec(store_setup_info(push_key(),push_value(), (new | existing))
                                           -> ok | print() | error()).
@@ -93,37 +105,8 @@ maybe_start_server(ServersFound,Protocol,{{Port,Instance,Sip},Stats}) ->
 
 -spec(start_server(protocol(), sanitised_push())
         -> print() | error()).
-start_server(http, _Arg) ->
-    io:format("Error Unsupported : ~p~n", [http]);
-start_server(Protocol, Arg)
-    when   Protocol == tcp
-    orelse Protocol == udp ->
-    riak_stat_push_sup:start_server(Protocol, Arg);
-start_server(Protocol, _Arg) ->
-    io:format("Error wrong type : ~p~n", [Protocol]).
-
-sanitise_and_check_args(Arg) ->
-    case sanitise_data(Arg) of
-        ok -> ok; % ok == io:format output i.e. error msg
-        {Protocol, SanitisedData} ->
-            case check_args(Protocol, SanitisedData) of
-                ok -> ok;
-                OtherWise -> OtherWise
-            end
-    end.
-
-check_args(error, Reason) ->
-    io:format("Error : ~p~n",[Reason]);
-check_args('_', {{_P, _I, _S}, _St}) ->
-    io:format("No Protocol type entered~n");
-check_args(_Pr, {{'_', _I, _S}, _St}) ->
-    io:format("No Port type entered~n");
-check_args(_Pr, {{_P, '_', _S}, _St}) ->
-    io:format("No Instance entered~n");
-check_args(_Pr, {{_P, _I, '_'}, _St}) ->
-    io:format("No Server Ip entered~n");
-check_args(Protocol, {{Port, Instance, ServerIp}, Stats}) ->
-    {Protocol, {{Port, Instance, ServerIp}, Stats}}.
+start_server(Protocol, Arg) ->
+    riak_stat_push_sup:start_server(Protocol, Arg).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -133,6 +116,13 @@ check_args(Protocol, {{Port, Instance, ServerIp}, Stats}) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(setdown(consolearg()) -> print()).
+
+setdown(_Protocol,_HostPort) ->
+    ok.
+setdown(_Protocol,_HostPort, _Instance) ->
+    ok.
+setdown(Protocol) when is_atom(Protocol) ->
+    ok;
 setdown(Arg) ->
         case sanitise_data(Arg) of
             {error, Reason} -> print_info({error,Reason});
@@ -309,8 +299,8 @@ integers_to_strings(IntegerList) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec(sanitise_data(consolearg()) -> {protocol(),sanitised_push()} | error()).
-sanitise_data([]) ->
-    io:fwrite("No argument given~n");
+%%sanitise_data([]) ->
+%%    io:fwrite("No argument given~n");
 sanitise_data(Arg) ->
     [Opts | Stats] = break_up(Arg, "/"),
     List = break_up(Opts, ","),
