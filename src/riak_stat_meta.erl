@@ -408,7 +408,7 @@ unregister(Statname) ->
 -spec(save_profile(profilename()) -> ok | error()).
 save_profile(ProfileName) ->
     put(?PROFPFX, ProfileName, find_all_entries()),
-    io:fwrite("Profile: ~s Saved~n", [ProfileName]).
+    io:fwrite("Profile: ~s Saved~n", [profile_name(ProfileName)]).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -432,7 +432,7 @@ load_profile(ProfileName) ->
             %% with the profile one
             change_stat_list_to_status(ToChange),
             put(?LOADEDPFX, ?LOADEDKEY, ProfileName),
-            io:format("Loaded Profile: ~s~n",[ProfileName])
+            io:format("Loaded Profile: ~s~n",[profile_name(ProfileName)])
 
         %% the reason a profile is not checked to see if it is already
         %% loaded is because it is easier to "reload" an already loaded
@@ -449,6 +449,9 @@ load_profile(ProfileName) ->
 change_stat_list_to_status(StatusList) ->
     riak_stat_mgr:change_status(StatusList).
 
+profile_name(ProfileName) ->
+    string:join(ProfileName," ").
+
 %%%-------------------------------------------------------------------
 %% @doc
 %% Deletes the profile from the metadata, however currently the
@@ -464,7 +467,7 @@ delete_profile(ProfileName) ->
         ProfileName ->
             put(?LOADEDPFX, ?LOADEDKEY, ["none"]),
             delete(?PROFPFX, ProfileName),
-            io:format("Profile Deleted : ~s~n",[ProfileName]);
+            io:format("Profile Deleted : ~s~n",[profile_name(ProfileName)]);
         %% Load "none" in case the profile deleted is the one currently
         %% loaded. Does not change the status of the stats however.
         _Other ->
@@ -474,7 +477,8 @@ delete_profile(ProfileName) ->
                     no_profile;
                 _ ->
                     delete(?PROFPFX, ProfileName),
-                    io:format("Profile Deleted : ~s~n",[ProfileName])
+                    io:format("Profile Deleted : ~s~n",
+                        [profile_name(ProfileName)])
         %% Otherwise the profile is found and deleted
             end
     end.

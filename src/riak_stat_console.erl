@@ -288,19 +288,26 @@ type_status_and_dps([<<"status=", S/binary>> | Rest],Type,_St,DPs) ->
         case S of
             <<"*">> -> '_';
             <<"enabled">>  -> enabled;
-            <<"disabled">> -> disabled
+            <<"disabled">> -> disabled;
+            _ -> enabled
         end,
     type_status_and_dps(Rest, Type, NewStatus, DPs);
 type_status_and_dps([DPsBin | Rest], Type, Status, DPs) ->
     Atoms =
     %% creates a list of the datapoints given from the command line.
-        lists:map(fun(D) ->
-            try binary_to_existing_atom(D, latin1) of
-                DP -> DP
+        lists:foldl(fun(D,Acc) ->
+            try list_to_integer(D) of
+                DP -> [DP|Acc]
             catch _:_ ->
-                io:fwrite("Illegal datapoint name~n"),[]
+                try list_to_atom(D) of
+                    DP2 ->
+                        [DP2|Acc]
+                catch _:_ ->
+                        io:fwrite("Illegal datapoint name~n"),
+                        Acc
+                end
             end
-                  end, re:split(DPsBin,",")),
+                  end,[], re:split(DPsBin,",",[{return,list}])),
     NewDPs = merge(lists:flatten(Atoms),DPs),
     type_status_and_dps(Rest, Type, Status, NewDPs).
 

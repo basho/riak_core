@@ -11,8 +11,8 @@
 
 %% API
 -export([
-    setup/1,setup/5,
-    setdown/1,setdown/2, setdown/3,
+    setup/1,
+    setdown/1,
     sanitise_data/1,
     find_push_stats/1,
     find_push_stats/2,
@@ -52,24 +52,22 @@
 %% @end
 %%%-------------------------------------------------------------------
 -spec(setup(consolearg()) -> print()).
-setup([HostPort,Protocol,Instance|Stats]) ->
-    {Host,Port} = host_port(HostPort),
-    setup(Host,Port,Protocol,Instance,Stats).
-setup(Host,Port,Protocol,Instance,Stats) ->
-    Port_Int = list_to_integer(Port),
-    Protocol_Atom = list_to_atom(Protocol),
-    %% Host and Instance remain lists
-    case Stats of
-        [] ->
-            maybe_start_server(Protocol_Atom,{{Port_Int,Instance,Host},['_']});
-        _ ->
-            PushStats = riak_stat_console:data_sanitise(Stats),
-            maybe_start_server(Protocol_Atom,{{Port_Int,Instance,Host},PushStats})
-    end.
+setup(ListofArgs) ->
+    {Protocol, Data} = sanitise_data(ListofArgs),
+    maybe_start_server(Protocol, Data).
 
 host_port(HostPort) ->
-    [Host,Port] = re:split(HostPort,"\\:",[{return,list}]),
+    [Host|Port] = re:split(HostPort,"\\:",[{return,list}]),
     {Host,Port}.
+hostname([Host]) ->
+    hostname(Host);
+hostname(Host) ->
+    list_to_atom(Host).
+port([Port]) ->
+    port(Port);
+port(Port) ->
+    list_to_integer(Port).
+
 
 -spec(store_setup_info(push_key(),push_value(), (new | existing))
                                           -> ok | print() | error()).
@@ -81,6 +79,8 @@ store_setup_info(Key, MapValues = #{running := _Bool}, existing) ->
     NewMap = ?STARTMAP(MapValues),
     riak_stat_meta:put(?PUSHPREFIX, Key, NewMap).
 
+maybe_start_server(Protocol, {{Port, Instance,Sip},'_'}) ->
+    maybe_start_server(Protocol, {{Port,Instance,Sip},['_']});
 maybe_start_server(Protocol, {{Port,Instance,Sip},Stats}) ->
     case fold_through_meta(Protocol,{{'_',Instance,'_'},'_'}, [node()]) of
         [] ->
@@ -117,18 +117,9 @@ start_server(Protocol, Arg) ->
 %%%-------------------------------------------------------------------
 -spec(setdown(consolearg()) -> print()).
 
-setdown(_Protocol,_HostPort) ->
-    ok.
-setdown(_Protocol,_HostPort, _Instance) ->
-    ok.
-setdown(Protocol) when is_atom(Protocol) ->
-    ok;
-setdown(Arg) ->
-        case sanitise_data(Arg) of
-            {error, Reason} -> print_info({error,Reason});
-            {Protocol, SanitisedData} ->
-                terminate_server(Protocol, SanitisedData)
-        end.
+setdown(ListofArgs) ->
+    {Protocol, Data} = sanitise_data(ListofArgs),
+    terminate_server(Protocol, Data).
 
 %% @doc change the undefined into
 -spec(terminate_server(protocol(), sanitised_push()) -> ok | error()).
@@ -189,7 +180,8 @@ fold(Protocol, Port, Instance, ServerIp, Stats, Node) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(find_push_stats(consolearg()) -> ok | error()).
-find_push_stats(Arg) -> find_push_stats([node()], Arg).
+find_push_stats(Arg) ->
+    find_push_stats([node()], Arg).
 
 -spec(find_push_stats(node_or_nodes(), consolearg()) -> print()).
 find_push_stats(_Nodes,[]) ->
@@ -197,11 +189,8 @@ find_push_stats(_Nodes,[]) ->
 find_push_stats(Nodes, ["*"]) ->
     print_info(fold_through_meta('_','_','_','_','_', Nodes));
 find_push_stats(Nodes,Arg) ->
-    case sanitise_data(Arg) of
-        {error, Reason} -> print_info({error, Reason});
-        {Protocol, SanitisedData} ->
-            print_info(fold_through_meta(Protocol, SanitisedData, Nodes))
-    end.
+    {Protocol, SanitisedData} = sanitise_data(Arg),
+    print_info(fold_through_meta(Protocol, SanitisedData, Nodes)).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -241,13 +230,13 @@ print_info(Info) ->
     lists:foreach(
         fun
             ({{Protocol,Instance},
-                #{original_dt := OriginalDateTime,
+                #{original_dt   := OriginalDateTime,
                     modified_dt := ModifiedDateTime,
-                    running := Running,
-                    node := Node,
-                    port := Port,
-                    server_ip := [Sip],
-                    stats := Stats}
+                    running     := Running,
+                    node        := Node,
+                    port        := Port,
+                    server_ip   := Sip,
+                    stats       := Stats}
             }) ->
                 {ODate,OTime} = OriginalDateTime,
                 {MDate,MTime} = ModifiedDateTime,
@@ -299,69 +288,30 @@ integers_to_strings(IntegerList) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec(sanitise_data(consolearg()) -> {protocol(),sanitised_push()} | error()).
-%%sanitise_data([]) ->
-%%    io:fwrite("No argument given~n");
-sanitise_data(Arg) ->
-    [Opts | Stats] = break_up(Arg, "/"),
-    List = break_up(Opts, ","),
-    data_sanitise_2(List, Stats).
-
-break_up(Arg, Str) ->
-    re:split(Arg, Str).
-
-data_sanitise_2(List, []) ->
-    try parse_args(List) of
-        {Protocol, Port, Instance, ServerIp} ->
-            {Protocol, {{Port, Instance, ServerIp}, ['_']}}
-    catch
-        error:function_clause -> {error, badarg};
-        _:Reason -> {error, Reason}
-    end;
-data_sanitise_2(List, Stats) ->
-    try parse_args(List) of
-        {Protocol, Port, Instance, ServerIp} ->
-            {Names, _, _, _} =
-                riak_stat_console:data_sanitise(Stats),
-            {Protocol, {{Port, Instance, ServerIp},
-                Names}}
-    catch
-        error:function_clause -> {error, badarg};
-        _:Reason -> {error, Reason}
-    end.
-
-parse_args(Arg) ->
-    parse_args(
-        Arg, '_', '_', '_', '_').
-parse_args(<<>>, Protocol, Port, Instance, ServerIp) ->
-    parse_args([],Protocol,Port,Instance,ServerIp);
-parse_args([<<"protocol=", Pr/binary>> | Rest],
-    Protocol, Port, Instance, ServerIp) ->
-    NewProtocol =
-        case Pr of
-            <<"udp">> -> udp;
-            <<"tcp">> -> tcp;
-            <<"http">> -> http;
-            <<"*">> -> '_';
-            _ -> Protocol
-        end,
-    parse_args(Rest,
-        NewProtocol, Port, Instance, ServerIp);
-parse_args([<<"port=", Po/binary>> | Rest],
-    Protocol, Port, Instance, ServerIp) ->
-    NewPort =
-        try binary_to_integer(Po) of
-            Int -> Int
-        catch _e:_r -> Port
-        end,
-    parse_args(Rest,
-        Protocol, NewPort, Instance, ServerIp);
-parse_args([<<"instance=", I/binary>> | Rest],
-    Protocol, Port, _Instance, ServerIp) ->
-    NewInstance = binary_to_list(I),
-    parse_args(Rest, Protocol, Port, NewInstance, ServerIp);
-parse_args([<<"sip=", S/binary>> | Rest],
-    Protocol, Port, Instance, _ServerIp) ->
-    NewIP = re:split(S, "\\s", [{return, list}]),
-    parse_args(Rest, Protocol, Port, Instance, NewIP);
-parse_args([], Protocol, Port, Instance, ServerIp) ->
-    {Protocol, Port, Instance, ServerIp}.
+sanitise_data(ListofArgs) ->
+    lists:foldl(
+        fun
+    %% Protocol specified
+            ("tcp", {_ProAcc,{{PortAcc,InAcc,HostAcc},StatAcc}}) ->
+                {tcp,{{PortAcc,InAcc,HostAcc},StatAcc}};
+            ("udp", {_ProAcc,{{PortAcc,InAcc,HostAcc},StatAcc}}) ->
+                {udp,{{PortAcc,InAcc,HostAcc},StatAcc}};
+            %% Find the Host and Port
+            (HostPortOrNot, {ProAcc,{{PortAcc,InAcc,HostAcc},StatAcc}}) ->
+                case host_port(HostPortOrNot) of
+                    {NoHost, []} ->
+                        case string:find(NoHost, ".") of
+                            nomatch -> %% Then its instance
+                                TheInstance = NoHost,
+                                {ProAcc,{{PortAcc,TheInstance,HostAcc},StatAcc}};
+                            _ -> %% Its a stat request
+                                AStats = NoHost,
+                                {TheStats,_,_,_} = riak_stat_console:data_sanitise([AStats]),
+                                {ProAcc,{{PortAcc,InAcc,HostAcc},TheStats}}
+                        end;
+                    {AHost,APort} ->
+                        TheHost = hostname(AHost),
+                        ThePort = port(APort),
+                        {ProAcc,{{ThePort,InAcc,TheHost},StatAcc}}
+                end
+        end, {'_',{{'_','_','_'},'_'}}, ListofArgs).
