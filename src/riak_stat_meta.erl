@@ -165,39 +165,6 @@ find_unregister_status(#{status := unregistered}) -> unregistered;
 find_unregister_status(Map) when is_map(Map)      -> Map;
 find_unregister_status(_)                         -> false.
 
-%%%-------------------------------------------------------------------
-%% @doc
-%% In the case where one list should take precedent, which is most
-%% likely the case when registering in both exometer and metadata, the
-%% options hardcoded into the stats may change, or the primary kv for
-%% stats' statuses switches, in every case, there must be an alpha.
-%%
-%% For this, the lists are compared, and when a difference is found
-%% (i.e. the stat tuple is not in the betalist, but is in the alphalist)
-%% it means that the alpha stat, with the key-value needs to be
-%% returned in order to Keep order in the stats' configuration
-%% @end
-%%%-------------------------------------------------------------------
--spec(the_alpha_stat(Alpha :: list(), Beta :: list()) -> list()).
-the_alpha_stat(Alpha, Beta) ->
-    {_LeftOvers, AlphaStatList} =
-        lists:foldl(fun
-                        (AlphaStat, {BetaAcc, TheAlphaStats}) ->
-                            %% is the Alpha stat also in Beta?
-                            case lists:member(AlphaStat, BetaAcc) of
-                                true ->
-                                    %% nothing to be done.
-                                    {BetaAcc,TheAlphaStats};
-                                false ->
-                                    {AKey, _O} = AlphaStat,
-                                    {lists:keydelete(AKey,1,BetaAcc),
-                                        [AlphaStat|TheAlphaStats]}
-                            end
-                    end, {Beta, []}, Alpha),
-    AlphaStatList.
-
-%%%-------------------------------------------------------------------
-
 find_all_entries() ->
     [{Name, Status} ||
         {Name,_Type, Status} <- find_entries([[riak|'_']], '_', '_')].
@@ -426,7 +393,7 @@ load_profile(ProfileName) ->
             io:format("Error: Profile does not Exist~n");
         ProfileStats ->
             CurrentStats = find_all_entries(),
-            ToChange = the_alpha_stat(ProfileStats, CurrentStats),
+            ToChange = ProfileStats -- CurrentStats,
             %% delete stats that are already enabled/disabled, any
             %% duplicates with different statuses will be replaced
             %% with the profile one
