@@ -226,10 +226,10 @@ find_status(re_reg, {MetaOpts, MStatus, InOpts}) ->
     case proplists:get_value(status, InOpts) of
         undefined ->
             {MStatus,
-                the_alpha_opts([{status,MStatus}|MetaOpts], InOpts)};
+                merge_options([{status,MStatus}|MetaOpts], InOpts)};
         _Status ->
             {MStatus,
-                the_alpha_opts([{status,MStatus}|MetaOpts], InOpts)}
+                merge_options([{status,MStatus}|MetaOpts], InOpts)}
     end.
 
 %%%-------------------------------------------------------------------
@@ -242,16 +242,10 @@ find_status(re_reg, {MetaOpts, MStatus, InOpts}) ->
 %% are given on . @see : the_alpha_stat
 %% @end
 %%%-------------------------------------------------------------------
-the_alpha_opts(MetadataOptions, IncomingOptions) ->
-    lists:foldl(
-        fun
-            ({Option,Value},Acc) ->
-                case lists:keyfind(Option, 1,Acc) of
-                    false -> [{Option,Value}|Acc];
-                    {Option,_OtherVal} ->
-                        lists:keyreplace(Option,1,Acc,{Option,Value})
-                end
-        end, IncomingOptions, MetadataOptions).
+merge_options(MetadataOptions, IncomingOptions) ->
+    SortedMeta = lists:ukeysort(1,MetadataOptions),
+    SortedOpts = lists:ukeysort(1,IncomingOptions),
+    lists:ukeymerge(1,SortedMeta,SortedOpts).
 
 re_register(StatName,{Status,Type,Options,Aliases}) ->
     StatMap = ?STATMAP,

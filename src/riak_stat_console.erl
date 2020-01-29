@@ -13,8 +13,6 @@
 %% API
 -export([
     show_stat/1,
-    show_stat_0/1,
-    disable_stat_0/1,
     stat_info/1,
     stat_enable/1,
     stat_disable/1,
@@ -49,16 +47,6 @@
 -spec(show_stat(consolearg()) -> print()).
 show_stat(Arg) ->
     print(find_entries(data_sanitise(Arg))).
-
-%%%-------------------------------------------------------------------
-%% @doc
-%% Check which stats in exometer are not updating (checks enabled)
-%% @end
-%%%-------------------------------------------------------------------
--spec(show_stat_0(consolearg()) -> print()).
-show_stat_0(Arg) ->
-    {Stats,_Status,Type,DPs}=data_sanitise(Arg),
-    print({[find_entries({Stats,enabled,Type,DPs})],show_0}).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -97,17 +85,6 @@ split_arg(Str) ->
     %% i.e. ["riak.** -type -status"] -> ["riak.**","type","status"]
                 %% Spaces are concatenated in riak-admin
     re:split(Str, "\\-", [{return, list}]).
-
-%%%-------------------------------------------------------------------
-%% @doc
-%% Similar to @see show_stat_0, but will disable all the stats that
-%% are not updating
-%% @end
-%%%-------------------------------------------------------------------
--spec(disable_stat_0(consolearg()) -> print()).
-disable_stat_0(Arg) ->
-    {Stats,_Status,Type,DPs} = data_sanitise(Arg),
-    print({[find_entries({Stats,enabled,Type,DPs})],disable_0}).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -465,14 +442,6 @@ print([], _) ->
     io:fwrite("No Matching Stats~n");
 print(NewStats,Args) ->
     lists:map(fun
-          ({Names,_NDPs}) when Args == disable_0 ->
-              fun_0_stats(Names,disable_0);
-
-          ({Names, NDPs}) when Args == show_0 ->
-              fun_0_stats(Names,NDPs);
-
-          ({Names, Values}) when is_list(Names) ->
-              print_if_0(Names, Values);
 
           ({N,_T,_S}) when Args == [] -> get_value(N);
           ({N, T, S}) ->  find_stats_info({N,T,S}, Args);
@@ -497,36 +466,6 @@ legacy_map(Legacy) ->
                   (_) ->
                       []
               end, Legacy).
-
-fun_0_stats(Stats,DPs) ->
-    case lists:flatten([print_if_0(Name,DPs) || {Name,_,_} <- Stats]) of
-        [] -> print([]);
-        _ -> ok
-    end.
-
-print_if_0(StatName,disable_0) ->
-    case not_0(StatName,[]) of
-        [] -> [];
-        _Vals ->
-            change_status([{StatName,disabled}]),
-            print_stat_args(StatName, disabled)
-    end;
-print_if_0(StatName, DPs) ->
-    Values = not_0(StatName,DPs),
-    print_stat_args(StatName, Values).
-
-not_0(Stat, _DPs) ->
-    case riak_stat_exom:get_value(Stat) of
-        {ok, V} -> fold_0_values(V);
-        _ -> []
-    end.
-
-fold_0_values(Values) ->
-    lists:foldl(fun
-                    ({Value,0}, Acc) -> [{Value,0}|Acc];
-                    ({Value,[]},Acc) -> [{Value,0}|Acc];
-                    (__________,Acc) -> Acc
-                end, [],Values).
 
 %%%-------------------------------------------------------------------
 
