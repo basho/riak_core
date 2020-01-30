@@ -114,7 +114,7 @@ forbidden(Req, Ctx) ->
 -spec(produce_body(rd(), context()) -> {iodata(), rd(), context()}).
 produce_body(ReqData, Ctx) ->
     Stats = riak_stat_push_util:get_stats([riak]),
-    Body  = riak_stat_push_util:encode({struct, Stats}),
+    Body  = riak_stat_push_util:encode(Stats),
     {Body, ReqData, Ctx}.
 
 
