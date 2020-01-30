@@ -41,10 +41,7 @@
 %%%===================================================================
 %%%-------------------------------------------------------------------
 %% @doc
-%% Registers all stats, using  exometer:re_register/3, any stat that
-%% is re_registered overwrites the previous entry, works the same as
-%% exometer:new/3 except it wont return an error if the stat already
-%% is registered.
+%% Registers all stats, and their aliases
 %% @end
 %%%-------------------------------------------------------------------
 -spec(register(tuple_stat()) -> ok | error()).
@@ -313,23 +310,18 @@ change_status(Stat, Status) ->
 set_opts(StatName, Opts) ->
     exometer:setopts(StatName, Opts).
 
-
 %%%===================================================================
 %%% Deleting/Resetting Stats API
 %%%===================================================================
 %%%-------------------------------------------------------------------
-%% @doc
-%% resets the stat in exometer
-%% @end
+%% @doc resets the stat in exometer @end
 %%%-------------------------------------------------------------------
 -spec(reset_stat(metricname()) -> ok | error()).
 reset_stat(StatName) ->
     exometer:reset(StatName).
 
 %%%-------------------------------------------------------------------
-%% @doc
-%% deletes the stat entry from exometer
-%% @end
+%% @doc deletes the stat entry from exometer @end
 %%%-------------------------------------------------------------------
 -spec(unregister(metricname()) -> ok | error()).
 unregister(StatName) ->
@@ -339,9 +331,7 @@ unregister(StatName) ->
 %%% Deleting/Resetting Stats API
 %%%===================================================================
 %%%-------------------------------------------------------------------
-%% @doc
-%% Returns the timestamp to put in the stat entry
-%% @end
+%% @doc Returns the timestamp to put in the stat entry  @end
 %%%-------------------------------------------------------------------
 -spec(timestamp() -> timestamp()).
 timestamp() ->

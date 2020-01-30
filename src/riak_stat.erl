@@ -14,7 +14,6 @@
     register/2,
     register_stats/1,
     get_stats/1,
-    sample/1,
     update/3,
     unregister/1,
     unregister_vnode/4,
@@ -43,7 +42,7 @@
 %%% purpose of the metadata is to allow persistence of the stats
 %%% registration and configuration - whether the stat is
 %%% enabled/disabled/unregistered;
-%%% Exometer does not persist the stats values or information.
+%%% Exometer does not persist the stats information.
 %%% Metadata does not persist the stats values.
 %% @end
 %%%-------------------------------------------------------------------
@@ -90,21 +89,12 @@ register_stats(StatInfo) -> riak_stat_mgr:register(StatInfo).
 %% @end
 %%%-------------------------------------------------------------------
 -spec(get_stats(metricname()) -> nts_stats()).
-get_stats(Path) -> find_entries(Path, '_').
-
-find_entries(Stats, Status) -> find_entries(Stats, Status, '_', []).
-
+get_stats(Path) ->
+    find_entries(Path, '_').
+find_entries(Stats, Status) ->
+    find_entries(Stats, Status, '_', []).
 find_entries(Stats, Status, Type, DPs) ->
     riak_stat_mgr:find_entries(Stats, Status, Type, DPs).
-
-%%%-------------------------------------------------------------------
-%% @doc
-%% @see exometer:sample/1
-%% @end
-%%%-------------------------------------------------------------------
--spec(sample(metricname()) -> ok | error() | exo_value()).
-sample(StatName) ->
-    riak_stat_exom:sample(StatName).
 
 
 %%%===================================================================
@@ -162,17 +152,14 @@ stat_info(Stat) ->
 %%% works in a very basic way, i.e. it will produce the sum of any
 %%% counter datapoints for any stats given, or the average of any
 %%% "average" datapoints such as mean/median/one/value etc...
-%%% This only works on a single nodes stats list, there will be
-%%% updates in future to aggregate the stats for all the nodes.
+%%% This only works on a single nodes stats list.
 %% @end
 %%%-------------------------------------------------------------------
 -spec(aggregate(metricname(), datapoints()) -> print()).
 aggregate(Stats, DPs) ->
     Pattern = [{{Stats, '_', '_'}, [], ['$_']}], %% Match_spec
-    print(aggregate_(Pattern, DPs)).
+    print(riak_stat_mgr:aggregate(Pattern, DPs)).
 
-aggregate_(Pattern, DPs) ->
-    riak_stat_mgr:aggregate(Pattern, DPs).
 
 %%%===================================================================
 %%% Updating Stats API
@@ -228,7 +215,7 @@ unreg_stats(StatName) ->
 %% @doc
 %% Resetting the stats; change the values back to 0, and it's reset
 %% counter in the metadata and in the exometer are updated +1
-%% (enabled only)
+%% (enabled stats only)
 %% @end
 %%%-------------------------------------------------------------------
 -spec(reset(metricname()) -> ok | error()).

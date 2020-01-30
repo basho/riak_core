@@ -83,7 +83,6 @@ pick_info_attrs(Arg) ->
 split_arg(Str) ->
     %% separate the argument by the "-"
     %% i.e. ["riak.** -type -status"] -> ["riak.**","type","status"]
-                %% Spaces are concatenated in riak-admin
     re:split(Str, "\\-", [{return, list}]).
 
 %%%-------------------------------------------------------------------
@@ -105,11 +104,13 @@ stat_disable(Arg) -> status_change(Arg, disabled).
 %%%-------------------------------------------------------------------
 %% @doc
 %% change the status of the stat (in metadata and) in exometer
+%% Pulls only the enabled stats if the status(es) are to be disabled,
+%% and vice versa.
 %% @end
 %%%-------------------------------------------------------------------
 -spec(status_change(consolearg(), status()) -> print()).
 status_change(Arg, ToStatus) ->
-    {Entries,_DP} = % if disabling stats, pull only enabled ones &vv
+    {Entries,_DP} =
     case ToStatus of
         enabled  -> find_entries(data_sanitise(Arg, '_', disabled));
         disabled -> find_entries(data_sanitise(Arg, '_', enabled))

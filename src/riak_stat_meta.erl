@@ -75,7 +75,7 @@ get_all(Prefix) ->
 
 %%%-------------------------------------------------------------------
 %% @doc
-%% Put the data into the metadata,
+%% Put into the metadata
 %% @end
 %%%-------------------------------------------------------------------
 -spec(put(metadata_prefix(), metadata_key(),
@@ -184,11 +184,11 @@ register({StatName, Type, Opts, Aliases}) ->
     register(StatName, Type, Opts, Aliases).
 register(StatName,Type, Opts, Aliases) ->
     case check_meta(?STATKEY(StatName)) of
-        [] -> %% Cannot find
+        [] ->
             {Status, MOpts} = find_status(fresh, Opts),
             re_register(StatName,{Status,Type,MOpts,Aliases}),
             [{status,Status}|MOpts];
-        unregistered -> []; %% return empty list for options
+        unregistered -> [];
 
         MapValue = #{options := MOptions,status := MStatus} ->
             {Status, NewOpts} =
@@ -300,11 +300,6 @@ set_options(StatName, {Status, Type, NewOpts, Aliases}) ->
 %%%===================================================================
 %%% Deleting/Resetting Stats API
 %%%===================================================================
-%%%-------------------------------------------------------------------
-%% @doc
-%% reset the stat in exometer and notify metadata of its reset
-%% @end
-%%%-------------------------------------------------------------------
 -spec(reset_stat(metadata_key()) -> ok | error()).
 reset_stat(Statname) ->
     case check_meta(?STATKEY(Statname)) of
@@ -410,8 +405,7 @@ load_profile(ProfileName) ->
 change_stat_list_to_status(StatusList) ->
     riak_stat_mgr:change_status(StatusList).
 
-profile_name(ProfileName) ->
-    string:join(ProfileName," ").
+profile_name(ProfileName) -> string:join(ProfileName," ").
 
 %%%-------------------------------------------------------------------
 %% @doc

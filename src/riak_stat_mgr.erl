@@ -74,12 +74,6 @@ reload_metadata(Stats) ->
 %%%===================================================================
 %%% Registration API
 %%%===================================================================
-%%%-------------------------------------------------------------------
-%% @doc
-%% register in metadata and pull out the status,
-%% and send that status to exometer
-%% @end
-%%%-------------------------------------------------------------------
 -spec(register(tuple_stat()) -> ok | error()).
 register(StatInfo) ->
     DefFun = fun register_both/4,
@@ -365,11 +359,6 @@ reset_meta_stat(Arg) ->
 reset_exom_stat(Arg) ->
     riak_stat_exom:reset_stat(Arg).
 
-%%%-------------------------------------------------------------------
-%% @doc
-%% set status to unregister in metadata, and delete
-%% in exometer
-%% @end
 %%%-------------------------------------------------------------------
 -spec(unregister(metricname()) -> ok | error()).
 unregister(StatName) ->
