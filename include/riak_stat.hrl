@@ -77,12 +77,8 @@
 %%%%%%%%%%% Stat Macros %%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
--define(IS_ENABLED(Arg),    app_helper:get_env(riak_core,Arg,true)).
--define(METADATA_ENABLED,   metadata_enabled).
-
 -define(Prefix,             riak).
 -define(NODEID,             node()).
 
--define(INFOSTAT,           [name,type,module,value,cache,
-                             status,timestamp,options]).
+-define(INFOSTAT,[name,type,module,value,cache,status,timestamp,options]).
 %%                  attributes for all the metrics stored in exometer

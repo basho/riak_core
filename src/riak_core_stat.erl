@@ -77,7 +77,7 @@ register_stats() ->
 %%%-------------------------------------------------------------------
 -spec(register_stats(app(), listofstats()) -> ok).
 register_stats(App, Stats) ->
-  riak_stat:register(App, Stats).
+    riak_core_stats_mgr:register(App, Stats).
 
 register_vnode_stats(Module, Index, Pid) ->
     F = fun vnodeq_atom/2,
@@ -110,7 +110,7 @@ register_vnode_stats(Module, Index, Pid) ->
 %%%----------------------------------------------------------------%%%
 
 unregister_vnode_stats(Module, Index) ->
-    riak_stat:unregister({Module, Index, vnodeq, ?APP}).
+    riak_core_stats_mgr:unregister({Module, Index, vnodeq, ?APP}).
 
 %%%----------------------------------------------------------------%%%
 
@@ -118,13 +118,13 @@ get_stats() ->
     get_stats(?APP).
 
 get_stats(Arg) ->
-    riak_stat:get_stats(Arg).
+    riak_core_stats_mgr:get_stats(Arg).
 
 get_value(Arg) ->
-    riak_stat:get_value(Arg).
+    riak_core_stats_mgr:get_value(Arg).
 
 get_info() ->
-    riak_stat:get_info(?APP).
+    riak_core_stats_mgr:get_info(?APP).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -161,7 +161,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 exometer_update(Name, Value, Type) ->
     StatName = lists:flatten([?Prefix, ?APP | Name]),
-    riak_stat:update(StatName, Value, Type).
+    riak_core_stats_mgr:update(StatName, Value, Type).
 
 update_metric(converge_timer_begin ) -> converge_delay;
 update_metric(converge_timer_end   ) -> converge_delay;

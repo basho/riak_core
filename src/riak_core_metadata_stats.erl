@@ -3,101 +3,73 @@
 %%% riak_stat_meta is the middle-man for stats and
 %%% riak_core_metadata. All information that needs to go into or out
 %%% of the metadata for riak_stat will go through this module.
+%%%
+%%% As well as the API for the profiles used in riak_stat.
 %%% @end
 %%%-------------------------------------------------------------------
--module(riak_stat_meta).
--include_lib("riak_core/include/riak_stat.hrl").
--include_lib("riak_core/include/riak_core_metadata.hrl").
+-module(riak_core_metadata_stats).
+-include("riak_stat.hrl").
+-include("riak_core_metadata.hrl").
 
-%% Registration API
+
+%% Profile API
 -export([
-    %% STATS:
+    maybe_meta/2,
+    reload_metadata/0,
+    find_entries/3,
+
+    put/3, put/4,
     get/2, get/3,
     get_all/1,
-    put/3, put/4,
+    delete/2,
+
     register/1,
-    register/4,
-    find_entries/3,
     change_status/1,
-    change_status/2,
-    reset_stat/1,
-    reset_resets/0,
+    set_options/2,
     unregister/1,
 
-    %% PROFILES:
     save_profile/1,
     load_profile/1,
+    load_profile_all/1,
     delete_profile/1,
-    reset_profile/0
-]).
+    reset_profile/0]).
 
-%% Stats are on per node basis
--define(STAT,                  stats).
--define(STATPFX,              {?STAT, ?NODEID}).
--define(STATKEY(StatName),    {?STATPFX, StatName}).
-
-%% Profiles are Globally shared
--define(PROFPFX,              {profiles, list}).
--define(PROFILEKEY(Profile),  {?PROFPFX, Profile}).
--define(LOADEDPFX,            {profiles, loaded}).
--define(LOADEDKEY,             ?NODEID).
--define(LOADEDPKEY,           {?LOADEDPFX, ?LOADEDKEY}).
-
--define(STATMAP,               #{status  => enabled,
-                                 type    => undefined,
-                                 options => [{resets,0}],
-                                 aliases => []}).
-
-%%%===================================================================
-%%% Metadata API
-%%%===================================================================
-%%%-------------------------------------------------------------------
-%% @doc
-%% Pulls out information from riak_core_metadata
-%% @end
-%%%-------------------------------------------------------------------
--spec(get(metadata_prefix(), metadata_key()) ->
-                                    metadata_value() | undefined).
-get(Prefix, Key) ->
-    get(Prefix, Key, []).
-get(Prefix, Key, Opts) ->
-    riak_core_metadata:get(Prefix, Key, Opts).
-
-%%%-------------------------------------------------------------------
-%% @doc
-%% Give a Prefix for anything in the metadata and get a list of all the
-%% data stored under that prefix
-%% @end
-%%%-------------------------------------------------------------------
--spec(get_all(metadata_prefix()) -> metadata_value()).
-get_all(Prefix) ->
-    riak_core_metadata:to_list(Prefix).
-
-%%%-------------------------------------------------------------------
-%% @doc
-%% Put into the metadata
-%% @end
-%%%-------------------------------------------------------------------
--spec(put(metadata_prefix(), metadata_key(),
-    metadata_value() | metadata_modifier(), options()) -> ok).
-put(Prefix, Key, Value) ->
-    put(Prefix, Key, Value, []).
-put(Prefix, Key, Value, Opts) ->
-    riak_core_metadata:put(Prefix, Key, Value, Opts).
-
-%%%-------------------------------------------------------------------
-%% @doc
-%% deleting the key from the metadata replaces values with tombstone
-%% @end
-%%%-------------------------------------------------------------------
--spec(delete(metadata_prefix(), metadata_key()) -> ok).
-delete(Prefix, Key) ->
-    riak_core_metadata:delete(Prefix, Key).
-
+-define(METADATA_ENV, metadata_enabled).
 
 %%%===================================================================
 %%% Main API
 %%%===================================================================
+%%%-------------------------------------------------------------------
+%% @doc
+%% Check the apps env for the status of the metadata, the persistence
+%% of stat configuration can be disabled, for example: in case
+%% the stats configuration doesn't need to be semi-permanent for a
+%% length of time (i.e. testing)
+%% @end
+%%%-------------------------------------------------------------------
+-type meta_arguments()       :: [] | any().
+-spec(maybe_meta(function(), meta_arguments()) -> error()).
+maybe_meta(Function, Arguments) ->
+    case enabled() of
+        false -> false; %% it's disabled
+        true  -> Function(Arguments)
+    end.
+
+enabled() ->
+    app_helper:get_env(riak_core,?METADATA_ENV,true).
+
+%%%-------------------------------------------------------------------
+%% @doc
+%% reload the metadata after it has been disabled, to match the
+%% current configuration of status status' in exometer
+%% @end
+%%%-------------------------------------------------------------------
+-spec(reload_metadata() -> ok | error()).
+reload_metadata() ->
+    Stats = riak_core_exometer:find_entries([[riak]],'_'),
+    riak_core_metadata_stats:change_status(
+        [{Stat,Status} || {Stat,_Type,Status}<-Stats]).
+
 %%%-------------------------------------------------------------------
 %% @doc
 %% Use riak_core_metadata:fold/4 to fold over the path in the
@@ -108,7 +80,7 @@ delete(Prefix, Key) ->
 find_entries(Stats,Status,Type) ->
     lists:flatten(
         lists:map(
-              fun(Stat) -> fold(Stat,Status,Type) end, Stats)).
+            fun(Stat) -> fold(Stat,Status,Type) end, Stats)).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -128,15 +100,15 @@ fold(Stat, Status0, Type0) ->
     {Stats, Status0, Type0} =
         riak_core_metadata:fold(
             fun({Name, [#{status := MStatus, type := MType}]},
-                    {Acc, Status, Type})
+                {Acc, Status, Type})
                 when    (Status == MStatus  orelse Status == '_')
                 andalso (MType  == Type     orelse Type   == '_')->
-                    {[{Name, MType, MStatus}|Acc],Status,Type};
+                {[{Name, MType, MStatus}|Acc],Status,Type};
 
                 (_Other, {Acc, Status, Type}) ->
                     {Acc, Status, Type}
             end,
-                {[], Status0, Type0}, ?STATPFX, [{match, Stat}]),
+            {[], Status0, Type0}, ?STAT_PREFIX, [{match, Stat}]),
     Stats.
 
 %%%-------------------------------------------------------------------
@@ -164,14 +136,67 @@ find_unregister_status('$deleted')                -> unregistered;
 find_unregister_status(#{status := unregistered}) -> unregistered;
 find_unregister_status(Map) when is_map(Map)      -> Map;
 find_unregister_status(_)                         -> false.
+%% if the value is anything but '$deleted' or unregistered, it returns
+%% false -> i.e. it is not unregistered/deleted.
 
-find_all_entries() ->
-    [{Name, Status} ||
-        {Name,_Type, Status} <- find_entries([[riak|'_']], '_', '_')].
 
 %%%===================================================================
-%%% Registration API
+%%% Basic API
 %%%===================================================================
+%%%-------------------------------------------------------------------
+%% @doc
+%% Put into the metadata
+%% @end
+%%%-------------------------------------------------------------------
+-spec(put(metadata_prefix(), metadata_key(),
+    metadata_value() | metadata_modifier(), options()) -> ok).
+put(Prefix, Key, Value) ->
+    put(Prefix, Key, Value, []).
+put(Prefix, Key, Value, Opts) ->
+    riak_core_metadata:put(Prefix, Key, Value, Opts).
+
+%%%-------------------------------------------------------------------
+%% @doc
+%% Pulls out information from riak_core_metadata
+%% @end
+%%%-------------------------------------------------------------------
+-spec(get(metadata_prefix(), metadata_key()) ->
+    metadata_value() | undefined).
+get(Prefix, Key) ->
+    get(Prefix, Key, []).
+get(Prefix, Key, Opts) ->
+    riak_core_metadata:get(Prefix, Key, Opts).
+
+%%%-------------------------------------------------------------------
+%% @doc
+%% Give a Prefix for anything in the metadata and get a list of all the
+%% data stored under that prefix
+%% @end
+%%%-------------------------------------------------------------------
+-spec(get_all(metadata_prefix()) -> metadata_value()).
+get_all(Prefix) ->
+    riak_core_metadata:to_list(Prefix).
+
+%%%-------------------------------------------------------------------
+%% @doc
+%% deleting the key from the metadata replaces values with tombstone
+%% @end
+%%%-------------------------------------------------------------------
+-spec(delete(metadata_prefix(), metadata_key()) -> ok).
+delete(Prefix, Key) ->
+    riak_core_metadata:delete(Prefix, Key).
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Stats API %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+-define(STAT,                  stats).
+-define(STAT_PREFIX,              {?STAT, ?NODEID}).
+-define(STATKEY(StatName),    {?STAT_PREFIX, StatName}).
+-define(STATMAP,               #{status  => enabled,
+    type    => undefined,
+    options => [],
+    aliases => []}).
 %%%-------------------------------------------------------------------
 %% @doc
 %% Checks if the stat is already registered in the metadata, if not it
@@ -195,7 +220,7 @@ register(StatName,Type, Opts, Aliases) ->
                 find_status(re_reg,{MOptions,MStatus,Opts}),
             re_register(StatName,MapValue#{status=>Status,
                 options => NewOpts}),
-        NewOpts;
+            NewOpts;
         _ -> lager:debug(
             "riak_stat_meta:register(StatInfo) ->
             Could not register stat:~n{~p,[{~p,~p,~p,~p}]}~n",
@@ -216,7 +241,7 @@ register(StatName,Type, Opts, Aliases) ->
 %%%-------------------------------------------------------------------
 -type find_status_type() :: fresh | re_reg.
 -spec(find_status(find_status_type(), options()) ->
-                                     {status(),options()}).
+    {status(),options()}).
 find_status(fresh, Opts) ->
     case proplists:get_value(status,Opts) of
         undefined -> {enabled, Opts};
@@ -256,11 +281,8 @@ re_register(StatName,{Status,Type,Options,Aliases}) ->
         aliases => Aliases},
     re_register(StatName,Value);
 re_register(StatName, Value) -> %% ok
-    put(?STATPFX, StatName, Value).
+    put(?STAT_PREFIX, StatName, Value).
 
-%%%===================================================================
-%%% Updating API
-%%%===================================================================
 %%%-------------------------------------------------------------------
 %% @doc
 %% Changes the status of stats in the metadata
@@ -276,7 +298,7 @@ change_status(Statname, ToStatus) ->
         []           -> []; %% doesn't exist
         unregistered -> []; %% unregistered
         MapValue ->
-            put(?STATPFX,Statname,MapValue#{status=>ToStatus})
+            put(?STAT_PREFIX,Statname,MapValue#{status=>ToStatus})
     end.
 
 %%%-------------------------------------------------------------------
@@ -288,7 +310,7 @@ change_status(Statname, ToStatus) ->
 -spec(set_options(metadata_key(), options()) -> ok).
 set_options(StatInfo, NewOpts) when is_list(NewOpts) ->
     lists:foreach(fun({Key, NewVal}) ->
-                        set_options(StatInfo, {Key, NewVal})
+        set_options(StatInfo, {Key, NewVal})
                   end, NewOpts);
 set_options({Statname, {Status, Type, Opts, Aliases}}, {Key, NewVal}) ->
     NewOpts = lists:keyreplace(Key, 1, Opts, {Key, NewVal}),
@@ -296,45 +318,6 @@ set_options({Statname, {Status, Type, Opts, Aliases}}, {Key, NewVal}) ->
 set_options(StatName, {Status, Type, NewOpts, Aliases}) ->
     re_register(StatName, {Status, Type, NewOpts, Aliases}).
 
-
-%%%===================================================================
-%%% Deleting/Resetting Stats API
-%%%===================================================================
--spec(reset_stat(metadata_key()) -> ok | error()).
-reset_stat(Statname) ->
-    case check_meta(?STATKEY(Statname)) of
-        [] -> ok; %% doesn't exist
-        unregistered -> {error, unregistered};
-        MapValue = #{status := enabled,options := Options} ->
-            NewOpts = resets(Options),
-            put(?STATPFX,Statname,MapValue#{options => NewOpts});
-        _Otherwise -> ok %% If the stat is disabled it shouldn't reset
-    end.
-
-resets(Options) ->
-    case proplists:get_value(resets,Options,0) of
-        0 -> [{resets,1}|Options];
-        V -> lists:keyreplace(resets,1,Options,{resets,reset_inc(V)})
-    end.
-
-reset_inc(Count) -> Count + 1.
-
-%%%-------------------------------------------------------------------
-%% @doc
-%% Eventually the rest counter will get too high, and for every single
-%% stat its a bit much, reset the reset count in the metadata. for a
-%% fresh stat
-%% @end
-%%%-------------------------------------------------------------------
--spec(reset_resets() -> ok).
-reset_resets() ->
-    lists:foreach(fun({Stat, _Val}) ->
-        #{status := Status,
-            type := Type,
-            options := Options,
-            aliases := Aliases} = check_meta(?STATKEY(Stat)),
-        set_options({Stat, {Status,Type,Options,Aliases}}, {resets, 0})
-                  end, get_all(?STATPFX)).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -351,20 +334,110 @@ unregister(Statname) ->
         _ -> ok
     end.
 
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%% Profile API %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%%-------------------------------------------------------------------
-%% @doc
-%% Take the stats and their status out of the metadata for the current
-%% node and save it into the metadata as a profile - works on per node
+%%% @doc
+%%% Profiles are the "saved setup of stat configuration", basically,
+%%% if the current statuses of the stats are in a state you would like
+%%% to repeat either for testing or default preferences they can be
+%%% saved into the metadata and gossiped to all nodes. Thus allowing a
+%%% profile for one node to be mimic'ed on all nodes in the cluster.
+%%%
+%%% This means - unfortunately, trying to save the nodes setup (if the
+%%% state of the stats status is different on all or some nodes) at
+%%% once with the same name, the LWW and the nodes individual setup
+%%% could be overwritten, all setups are treated as a globally
+%%% registered setup that can be enabled on one or all nodes in a
+%%% cluster. i.e. saving a clusters setup should be done on a per node
+%%% basis
+%%%
+%%% save-profile <entry> ->
+%%%     Saves the current stats and their status as a value to the
+%%%     key: <entry>, in the metadata
+%%%
+%%% load-profile <entry> ->
+%%%     Loads a profile that is saved in the metadata with the key
+%%%     <entry>, pulls the stats and their status out of the metadata
+%%%     and sends to riak_core_stat_coordinator to change the statuses
+%%%
+%%% load-profile-all <entry> ->
+%%%     Same as the load profile but will load that profile on all
+%%%     the nodes in the cluster.
+%%%
+%%% delete-profile <entry> ->
+%%%     Delete a profile <entry> from the metadata, the metadata
+%%%     leaves the profile with a tombstone, does not effect the
+%%%     current configuration if it is the currently loaded profile
+%%%
+%%% reset-profile ->
+%%%     unloads the current profile and changes all the stats back to
+%%%     enabled, no entry needed. Does not delete any profiles
+%%%
+%%% pull_profiles() ->
+%%%     Pulls the list of all the profiles saved in the metadata and
+%%%     their [{Stat, {status, Status}}] list
+%%%
+%%% when pretty printing profile names -> [<<"profile-one">>] use ~s
+%%% token
+%%%
+%%% NOTE :
+%%%   When creating a profile, you can make changes and then overwrite
+%%%   the profile with the new stat configuration. However if the
+%%%   profile is saved and then loaded, upon re-write the new profile
+%%%   is different but still enabled as loaded, therefore it can not
+%%%   be loaded again until it is deleted and created again, or the
+%%%   profile is reset
+%%%
+%%%     for example:
+%%% N1: riak stat save-profile test-profile
+%%% -- saves the profile and the current setup in metadata --
+%%% N2: riak stat load-profile test-profile
+%%% -- loads the profile that is saved, is recognised as the
+%%%    current profile --
+%%% N1: riak stat disable riak.riak_kv.**
+%%% N1: riak stat save-profile test-profile
+%%% -- changes the setup of the stats and rewrites the current
+%%%     profile saved --
+%%% N2: riak stat load-profile test-profile
+%%%     > "profile already loaded"
+%%% -- even though the setup has changed this profile is currently
+%%%    loaded in the old configuration, it will not change the stats
+%%%    to the new save unless it is unloaded and reloaded again --
+%%%
+%% Profile names come in "as is" from riak_core_console, that is in
+%% the format [<<"profile-name">>] or ["profile-name"],
+%% meaning that saving a profile in the shell will work for any format
+%% as a name, as it is just the key, but it cannot be loaded from
+%% console unless the format is of the same form. i.e. saving it from
+%% console saves it in binary form, saving from shell can be of any
+%% format, if it is to be loaded from console then it must be of the
+%% same input format entered from "riak admin stat load-profile ...."
 %% @end
-%%%-------------------------------------------------------------------
--spec(save_profile(profilename()) -> ok | error()).
+%% -------------------------------------------------------------------
+
+-define(PROFILE_PREFIX,                 {profiles, list}).
+-define(PROFILEKEY(Profile),  {?PROFILE_PREFIX, Profile}).
+-define(LOADEDPFX,            {profiles, loaded}).
+-define(LOADEDKEY,             ?NODEID).
+-define(LOADEDPKEY,           {?LOADEDPFX, ?LOADEDKEY}).
+
+%% -------------------------------------------------------------------
+%% @doc
+%% Saves the profile name in the metadata with all the current stats
+%% and their status as the value; multiple saves of the same name
+%% overwrites the profile
+%% @end
+%% -------------------------------------------------------------------
+-spec(save_profile(profilename() | {profile_prefix(),profilename()}) -> ok | error()).
+save_profile({Profile_Prefix, ProfileName}) ->
+    put(Profile_Prefix, ProfileName, get_all(?STAT_PREFIX)),
+    io:fwrite("Profile: ~s Saved~n", [profile_name(ProfileName)]);
 save_profile(ProfileName) ->
-    put(?PROFPFX, ProfileName, find_all_entries()),
-    io:fwrite("Profile: ~s Saved~n", [profile_name(ProfileName)]).
+    case maybe_meta(fun save_profile/1, {?PROFILE_PREFIX,ProfileName}) of
+        false -> print("Cannot save profile : metadata is disabled~n");
+        Result -> Result
+    end.
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -381,12 +454,12 @@ load_profile(ProfileName) ->
         [] ->
             io:format("Error: Profile does not Exist~n");
         ProfileStats ->
-            CurrentStats = find_all_entries(),
+            CurrentStats = get_all(?STAT_PREFIX),
             ToChange = ProfileStats -- CurrentStats,
             %% delete stats that are already enabled/disabled, any
             %% duplicates with different statuses will be replaced
             %% with the profile one
-            change_stat_list_to_status(ToChange),
+            riak_core_stats_mgr:change_status(ToChange),
             put(?LOADEDPFX, ?LOADEDKEY, ProfileName),
             io:format("Loaded Profile: ~s~n",[profile_name(ProfileName)])
 
@@ -402,26 +475,21 @@ load_profile(ProfileName) ->
 
     end.
 
-change_stat_list_to_status(StatusList) ->
-    riak_stat_mgr:change_status(StatusList).
+load_profile_all(Profile) ->
+    Profile.
 
-profile_name(ProfileName) -> string:join(ProfileName," ").
-
-%%%-------------------------------------------------------------------
+%% -------------------------------------------------------------------
 %% @doc
-%% Deletes the profile from the metadata, however currently the
-%% metadata returns a tombstone for the profile, it can be overwritten
-%% when a new profile is made of the same name, and in the profile
-%% gen_server the name of the profile is "unregistered" so it can not
-%% be reloaded again after deletion
+%% deletes the profile from the metadata and all its values but it does
+%% not affect the status of the stats.
 %% @end
-%%%-------------------------------------------------------------------
--spec(delete_profile(profilename()) -> ok).
-delete_profile(ProfileName) ->
+%% -------------------------------------------------------------------
+-spec(delete_profile(profilename()) -> ok | error()).
+delete_profile({Profile_Prefix,ProfileName}) ->
     case check_meta(?LOADEDPKEY) of
         ProfileName ->
             put(?LOADEDPFX, ?LOADEDKEY, ["none"]),
-            delete(?PROFPFX, ProfileName),
+            delete(Profile_Prefix, ProfileName),
             io:format("Profile Deleted : ~s~n",[profile_name(ProfileName)]);
         %% Load "none" in case the profile deleted is the one currently
         %% loaded. Does not change the status of the stats however.
@@ -431,36 +499,45 @@ delete_profile(ProfileName) ->
                     io:format("Error : Profile does not Exist~n"),
                     no_profile;
                 _ ->
-                    delete(?PROFPFX, ProfileName),
+                    delete(Profile_Prefix, ProfileName),
                     io:format("Profile Deleted : ~s~n",
                         [profile_name(ProfileName)])
-        %% Otherwise the profile is found and deleted
+                %% Otherwise the profile is found and deleted
             end
+    end;
+delete_profile(ProfileName) ->
+    case maybe_meta(fun delete_profile/1, {?PROFILE_PREFIX,ProfileName}) of
+        false -> print("Cannot delete profile, metadata is disabled~n");
+        Result -> Result
     end.
 
-%%%-------------------------------------------------------------------
+%% -------------------------------------------------------------------
 %% @doc
-%% resets the profile by enabling all the stats, pulling out all the
-%% stats that are disabled in the metadata and then changing them to
-%% enabled in both the metadata and exometer
+%% resets the profile so no profile is loaded and will enable all the
+%% disabled stats.
 %% @end
-%%%-------------------------------------------------------------------
--spec(reset_profile() -> ok | error()).
-reset_profile() ->
-    CurrentStats = find_all_entries(),
+%% -------------------------------------------------------------------
+-spec(reset_profile() -> ok | error()).reset_profile() ->
+    CurrentStats = get_all(?STAT_PREFIX),
     put(?LOADEDPFX, ?LOADEDKEY, ["none"]),
     change_stats_from(CurrentStats, disabled),
     io:format("All Stats set to 'enabled'~n").
 
 %% @doc change only disabled to enabled and vice versa @end
-change_stats_from(Stats, Status) ->
-    change_stat_list_to_status(
-        lists:foldl(fun
-                        ({Stat,CStatus},Acc) when CStatus == Status ->
-                            NewStatus = reverse_status(CStatus),
-                            [{Stat,NewStatus}|Acc];
-                        (_, Acc) -> Acc
-                    end, [], Stats)).
+change_stats_from(Stats, FromStatus) ->
+    ToStatus = reverse_status(FromStatus),
+    riak_core_stats_mgr:change_status(
+        [{Stat,ToStatus} || {Stat,Status} <- Stats, Status == FromStatus]).
 
 reverse_status(enabled) -> disabled;
 reverse_status(disabled) -> enabled.
+
+profile_name(ProfileName) -> string:join(ProfileName," ").
+
+%%%===================================================================
+%%% Internal API
+%%%===================================================================
+
+print(String) ->
+    print(String, []).
+print(String,Args) -> riak_core_console:print(String,Args).

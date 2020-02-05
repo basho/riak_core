@@ -62,7 +62,7 @@ calculate_stats(NamesAndTypes) ->
 
 %% Create/lookup a cache/calculation process
 get_stat(Stat) ->
-    riak_stat:get_value(Stat).
+    riak_core_stats_mgr:get_value(Stat).
 
 %% Encapsulate getting a stat value from exometer.
 %%

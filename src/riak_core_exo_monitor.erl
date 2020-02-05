@@ -53,14 +53,11 @@ reset(Name, Type, Ref) ->
 get_value(_, Type, {_, Name}, DPs) ->
     exometer_folsom:get_value(Name, Type,[], DPs).
 
-sample(N, _, _) ->
-    riak_stat:sample(N).
-
 setopts(_, _, _) ->
     ok.
 
 delete(N, _, _) ->
-    riak_stat:unregister(N).
+    riak_core_stats_mgr:unregister(N).
 
 get_datapoints(Name, Type, _) ->
     exometer_folsom:get_datapoints(Name, Type,[]).
