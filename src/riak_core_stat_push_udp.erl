@@ -1,13 +1,10 @@
 %%%-------------------------------------------------------------------
 %%% @doc
-%%% Data given from riak_stat_push through console/config, passed
-%%% into this gen_server to open a udp socket on a Port. Values from
-%%% Exometer are retrieved and sent as a Json object to a latency monitoring
-%%% server
+%%%
 %%% @end
 %%%-------------------------------------------------------------------
--module(riak_stat_push_udp).
--include_lib("riak_core/include/riak_stat_push.hrl").
+-module(riak_core_stat_push_udp).
+-include("riak_stat_push.hrl").
 
 -behaviour(gen_server).
 
@@ -28,8 +25,6 @@
     socket        :: socket(),
     server        :: server_ip(),
     latency_port  :: push_port(),
-    server_ip     :: server_ip(),
-    stats_port    :: push_port(),
     hostname      :: hostname(),
     instance      :: instance(),
     stats         :: listofstats()
@@ -45,6 +40,7 @@
     {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 start_link(Obj) ->
     gen_server:start_link(?MODULE, Obj, []).
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -89,7 +85,7 @@ handle_cast(_Request, State) ->
 handle_info(refresh_monitor_server_ip, State = #state{server = MonitorServer}) ->
     NewState = case inet:gethostbyname(MonitorServer) of
                    {ok,{hostent,_Hostname,_,_,_, [MonitorServerIp]}} ->
-                       State#state{server_ip = MonitorServerIp};
+                       State#state{server = MonitorServerIp};
                    Other ->
                        lager:warning(
                            "Unable to refresh ip address of monitor server due to ~p,
@@ -100,13 +96,11 @@ handle_info(refresh_monitor_server_ip, State = #state{server = MonitorServer}) -
     refresh_monitor_server_ip(),
     {noreply, NewState};
 handle_info(push_stats, #state{
-                            socket       =Socket,
-                            latency_port = Port,
-                            stats        = Stats,
-                            server_ip    = ServerIp,
-                            hostname     = Hostname,
-                            instance     = Instance} = State) ->
-    push_stats(Socket, Hostname, Instance, ServerIp, Port, Stats),
+    socket       = Socket,
+    latency_port = Port,
+    stats        = Stats,
+    hostname     = Hostname} = State) ->
+    push_stats(Socket, Hostname, Port, Stats),
     {noreply, State};
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -133,6 +127,7 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
+
 open({{Port, _Instance, _Sip}, _Stats}=Info) ->
     Options = ?OPTIONS,
     case gen_udp:open(Port, Options) of
@@ -146,15 +141,11 @@ open({{Port, _Instance, _Sip}, _Stats}=Info) ->
     end.
 
 create_state(Socket, {{MonitorLatencyPort, Instance, Sip}, Stats}) ->
-    MonitorStatsPort  = ?MONITORSTATSPORT,
-    MonitorServer     = ?MONITORSERVER,
     Hostname          = inet_db:gethostname(),
     #state{
         socket        = Socket,
         latency_port  = MonitorLatencyPort,
-        server        = MonitorServer,
-        server_ip     = Sip,
-        stats_port    = MonitorStatsPort,
+        server        = Sip,
         hostname      = Hostname,
         instance      = Instance,
         stats         = Stats}.
@@ -167,7 +158,7 @@ refresh_monitor_server_ip() ->
 terminate_server(Instance) ->
     Key = {?PROTOCOL, Instance},
     Prefix = {riak_stat_push, node()},
-    riak_stat_push_util:stop_running_server(Prefix,Key).
+    riak_core_stat_push_sup:stop_running_server(Prefix,Key).
 
 %%--------------------------------------------------------------------
 
@@ -183,16 +174,10 @@ send_after(Interval, Arg) ->
 %% send to the endpoint. Repeat.
 %% @end
 %%--------------------------------------------------------------------
--spec(push_stats(socket(),hostname(),instance(),hostname(),port(),metrics())
-        -> ok | error()).
-push_stats(Socket, ComponentHostname, Instance, MonitoringHostname, Port, Stats) ->
-    case riak_stat_push_util:json_stats(MonitoringHostname, Instance, Stats) of
-        ok ->
-            push_stats();
-        JsonStats ->
-            send(Socket, ComponentHostname, Port, JsonStats),
-            push_stats()
-    end.
+push_stats(Socket, ComponentHostname, Port, Stats) ->
+    JsonStats = riak_core_stat_push_util:json_stats(Stats),
+    send(Socket, ComponentHostname, Port, JsonStats),
+    push_stats().
 
 push_stats() ->
     send_after(?STATS_UPDATE_INTERVAL, push_stats).

@@ -7,14 +7,13 @@
 %%% As well as the API for the profiles used in riak_stat.
 %%% @end
 %%%-------------------------------------------------------------------
--module(riak_core_metadata_stats).
+-module(riak_core_stat_persist).
 -include("riak_stat.hrl").
 -include("riak_core_metadata.hrl").
 
-
-%% Profile API
 -export([
     maybe_meta/2,
+    enabled/0,
     reload_metadata/0,
     find_entries/3,
 
@@ -34,7 +33,13 @@
     delete_profile/1,
     reset_profile/0]).
 
--define(METADATA_ENV, metadata_enabled).
+-define(STAT,                  stats).
+-define(STAT_PREFIX,           {?STAT, ?NODEID}).
+-define(STATKEY(StatName),     {?STAT_PREFIX, StatName}).
+-define(STATMAP,               #{status  => enabled,
+                                type    => undefined,
+                                options => [],
+                                aliases => []}).
 
 %%%===================================================================
 %%% Main API
@@ -48,7 +53,7 @@
 %% @end
 %%%-------------------------------------------------------------------
 -type meta_arguments()       :: [] | any().
--spec(maybe_meta(function(), meta_arguments()) -> error()).
+-spec(maybe_meta(function(), meta_arguments()) -> false | error() | any()).
 maybe_meta(Function, Arguments) ->
     case enabled() of
         false -> false; %% it's disabled
@@ -66,8 +71,8 @@ enabled() ->
 %%%-------------------------------------------------------------------
 -spec(reload_metadata() -> ok | error()).
 reload_metadata() ->
-    Stats = riak_core_exometer:find_entries([[riak]],'_'),
-    riak_core_metadata_stats:change_status(
+    Stats = riak_core_stats_mgr:exometer_find_entries([[riak]],'_'),
+    change_status(
         [{Stat,Status} || {Stat,_Type,Status}<-Stats]).
 
 %%%-------------------------------------------------------------------
@@ -117,7 +122,7 @@ fold(Stat, Status0, Type0) ->
 %% returns [] | Value
 %% @end
 %%%-------------------------------------------------------------------
--spec(check_meta(metadata_pkey()) -> metadata_value()).
+-spec(check_meta(metricname() | metadata_pkey()) -> metadata_value()).
 check_meta(Stat) when is_list(Stat) ->
     check_meta(?STATKEY(Stat));
 check_meta({Prefix, Key}) ->
@@ -190,13 +195,6 @@ delete(Prefix, Key) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%% Stats API %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
--define(STAT,                  stats).
--define(STAT_PREFIX,              {?STAT, ?NODEID}).
--define(STATKEY(StatName),    {?STAT_PREFIX, StatName}).
--define(STATMAP,               #{status  => enabled,
-    type    => undefined,
-    options => [],
-    aliases => []}).
 %%%-------------------------------------------------------------------
 %% @doc
 %% Checks if the stat is already registered in the metadata, if not it
@@ -288,7 +286,7 @@ re_register(StatName, Value) -> %% ok
 %% Changes the status of stats in the metadata
 %% @end
 %%%-------------------------------------------------------------------
--spec(change_status(metadata_key(), status()) -> ok | acc()).
+-spec(change_status(metricname(), status()) -> ok | acc()).
 change_status(Stats) when is_list(Stats) ->
     [change_status(Stat,Status)||{Stat,Status} <- Stats];
 change_status({StatName, Status}) ->
@@ -298,7 +296,8 @@ change_status(Statname, ToStatus) ->
         []           -> []; %% doesn't exist
         unregistered -> []; %% unregistered
         MapValue ->
-            put(?STAT_PREFIX,Statname,MapValue#{status=>ToStatus})
+            put(?STAT_PREFIX,Statname,MapValue#{status=>ToStatus}),
+            {Statname,ToStatus}
     end.
 
 %%%-------------------------------------------------------------------
@@ -307,7 +306,7 @@ change_status(Statname, ToStatus) ->
 %% resets etc...
 %% @end
 %%%-------------------------------------------------------------------
--spec(set_options(metadata_key(), options()) -> ok).
+-spec(set_options(metricname() | metadata_key(), options()) -> ok).
 set_options(StatInfo, NewOpts) when is_list(NewOpts) ->
     lists:foreach(fun({Key, NewVal}) ->
         set_options(StatInfo, {Key, NewVal})
@@ -416,10 +415,10 @@ unregister(Statname) ->
 %% @end
 %% -------------------------------------------------------------------
 
--define(PROFILE_PREFIX,                 {profiles, list}).
+-define(PROFILE_PREFIX,       {profiles, list}).
 -define(PROFILEKEY(Profile),  {?PROFILE_PREFIX, Profile}).
 -define(LOADEDPFX,            {profiles, loaded}).
--define(LOADEDKEY,             ?NODEID).
+-define(LOADEDKEY,            ?NODEID).
 -define(LOADEDPKEY,           {?LOADEDPFX, ?LOADEDKEY}).
 
 %% -------------------------------------------------------------------
@@ -517,7 +516,8 @@ delete_profile(ProfileName) ->
 %% disabled stats.
 %% @end
 %% -------------------------------------------------------------------
--spec(reset_profile() -> ok | error()).reset_profile() ->
+-spec(reset_profile() -> ok | error()).
+reset_profile() ->
     CurrentStats = get_all(?STAT_PREFIX),
     put(?LOADEDPFX, ?LOADEDKEY, ["none"]),
     change_stats_from(CurrentStats, disabled),

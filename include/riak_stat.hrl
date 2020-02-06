@@ -10,25 +10,29 @@
 %%% Arguments
 % StatName :: [prefix(),app()|[statname()]]
 -type metrics()         :: [metricname()].
--type metricname()      :: [prefix() | [app() | [statname()]]] | [statname()].
+-type metricname()      :: [prefix() | [app() | [statname()]]] | [statname()]
+                            | [tuple_stat()] | atom().
 -type prefix()          :: atom(). %% 'riak'
 -type app()             :: atom(). %% i.e. 'riak_core'
 -type statname()        :: [atom()] | atom() | mfa(). %% [riak,stat|'_']
 
--type listofstats()     :: [metricname()].
+-type listofstats()     :: [metricname()] | [atom()].
 
 -type datapoints()      :: [datapoint()] | [].
 -type datapoint()       :: mean | max | min | mean | mode | 99 | 95 | 90
                          | 100 | 75 | 50 | value | default | other().
 
--type consolearg()      :: [string()] | list() | [].
+-type consolearg()      :: [string()] | [atom()] | list() | [].
 -type profilename()     :: list() | [string()].
+-type profile_prefix()  :: {atom(), atom()}.
 
 
 % StatInfo :: {Statname, Type, Status, Aliases}
--type tuple_stat()      :: {metricname(),type(),options(),aliases()}.
+-type tuple_stat()      :: {metricname(),type(),options(),aliases()}
+                            | {atom(),atom()}.
 -type type()            :: exometer:type().
--type options()         :: [exometer:options()|[statusopts()|[cacheopts()]]] | [] | list().
+-type options()         :: [exometer:options()|[statusopts()|[cacheopts()]]]
+                            | [] | list() | any().
 -type aliases()         :: exometer_alias:alias().
 
 -type statusopts()      :: [{status,status()}].
@@ -77,8 +81,10 @@
 %%%%%%%%%%% Stat Macros %%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
--define(Prefix,             riak).
+-define(PREFIX,             riak).
 -define(NODEID,             node()).
+
+-define(METADATA_ENV, metadata_enabled).
 
 -define(INFOSTAT,[name,type,module,value,cache,status,timestamp,options]).
 %%                  attributes for all the metrics stored in exometer

@@ -15,13 +15,22 @@
     register/2,
     get_stats/1,
     find_entries/2,
+    find_entries/4,
+    exometer_find_entries/2,
     stats/0,
     app_stats/1,
+    get_datapoint/2,
     get_value/1,
-    get_info/1,
+    get_values/1,
+    get_info/1, get_info/2,
+    aliases_prefix_foldl/0,
+    alias/1,
     update/3,
     unregister/1,
-    reset/1
+    reset/1,
+    find_stats_info/2,
+    change_status/1,
+    timestamp/0
 ]).
 
 
@@ -93,10 +102,19 @@ register_both(StatInfo) ->
     end.
 
 register_meta(StatInfo) ->
-    riak_core_metadata_stats:register(StatInfo).
+    riak_core_stat_persist:register(StatInfo).
 
-register_exom(StatInfo) ->
-    riak_core_exometer:register(StatInfo).
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% NB : DP = DataPoint
+%%      Alias : Name of a datapoint of a Stat.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+register_exom({StatName, Type, Opts, Aliases}) ->
+    exometer:re_register(StatName, Type ,Opts),
+    lists:foreach(fun
+                      ({DP,Alias}) ->
+                          exometer_alias:new(Alias,StatName,DP)
+                  end,Aliases).
 
 %%%===================================================================
 
@@ -139,7 +157,7 @@ find_entries(Stats, Status, Type, DPs) ->
     end.
 
 find_entries_meta({Stats, Status, Type, DPs}) ->
-    case riak_core_metadata_stats:find_entries(Stats, Status, Type) of
+    case riak_core_stat_persist:find_entries(Stats, Status, Type) of
         [] -> %% it is not registered or "unregistered"
             find_entries_exom({Stats, Status, Type, DPs});
         {error, _Reason} ->
@@ -152,9 +170,9 @@ find_entries_meta({Stats, Status, Type, DPs}) ->
 
 find_entries_exom({Stats, Status, Type, DPs}) ->
     MS = make_exo_ms(Stats, Status, Type),
-    case exo_select(MS) of
+    case select(MS) of
         [] ->
-            try riak_core_exometer:find_entries(Stats, Status) of
+            try exometer_find_entries(Stats, Status) of
                 NewStats ->
                     {NewStats, DPs}
             catch _:_ -> {[],[]}
@@ -166,9 +184,33 @@ find_entries_exom({Stats, Status, Type, DPs}) ->
 make_exo_ms(Stats,Status,Type) ->
     [{{Stat,Type,Status},[],['$_']} || Stat <- Stats].
 
+%%%-------------------------------------------------------------------
+%% @doc
+%% Find the stat in exometer using pattern :: ets:match_spec()
+%% @end
+%%%-------------------------------------------------------------------
+-spec(select(pattern()) -> stat_value()).
+select(MatchSpec) ->
+    exometer:select(MatchSpec).
 
-exo_select(MatchSpec) ->
-    riak_core_exometer:select(MatchSpec).
+%%%-------------------------------------------------------------------
+%% @doc
+%% Use @see exometer:find_entries to get the name, type and status of
+%% a stat given, fo all the stats that match the Status given put into
+%% a list to be returned
+%% @end
+%%%-------------------------------------------------------------------
+-spec(exometer_find_entries(metricname(), status()) -> listofstats()).
+exometer_find_entries(Stats, Status) ->
+    [lists:foldl(fun
+                     ({Name, Type, EStatus}, Found)
+                         when EStatus == Status orelse Status == '_' ->
+                         [{Name, Type, Status} | Found];
+                     (_, Found) -> Found % Different status
+                 end,[], exometer_find_entries(Stat)) || Stat <- Stats].
+
+exometer_find_entries(Stat) ->
+    exometer:find_entries(Stat).
 
 make_re(Stat) ->
     repl(split_pattern(Stat, [])).
@@ -198,7 +240,7 @@ split_pattern(B, Acc) ->
     end.
 
 legacy_search_cont(Re, Status, Type) ->
-    Found = riak_stat_exom:aliases(regexp_foldl, [Re]),
+    Found = aliases_regexp_foldr([Re]),
     lists:foldl(
         fun({Entry, DPs}, Acc) ->
             case match_type(Entry, Type) of
@@ -219,6 +261,41 @@ legacy_search_cont(Re, Status, Type) ->
             end
         end, [], orddict:to_list(Found)).
 
+
+aliases_regexp_foldr([N]) ->
+    exometer_alias:regexp_foldr(N,alias_fun(),orddict:new()).
+
+aliases_prefix_foldl() ->
+    exometer_alias:prefix_foldl(<<>>,alias_fun(),orddict:new()).
+
+-spec(alias(Group :: orddict:orddict()) -> ok | acc()).
+alias(Group) ->
+    lists:keysort(
+        1,
+        lists:foldl(
+            fun({K, DPs}, Acc) ->
+                case get_datapoint(K, [D || {D, _} <- DPs]) of
+                    {ok, Vs} when is_list(Vs) ->
+                        lists:foldr(fun({D, V}, Acc1) ->
+                            {_, N} = lists:keyfind(D, 1, DPs),
+                            [{N, V} | Acc1]
+                                    end, Acc, Vs);
+                    Other ->
+                        Val = case Other of
+                                  {ok, disabled} -> undefined;
+                                  _ -> 0
+                              end,
+                        lists:foldr(fun({_, N}, Acc1) ->
+                            [{N, Val} | Acc1]
+                                    end, Acc, DPs)
+                end
+            end, [], orddict:to_list(Group))).
+
+alias_fun() ->
+    fun(Alias, Entry, DP, Acc) ->
+        orddict:append(Entry, {DP, Alias}, Acc)
+    end.
+
 match_type(_, '_') ->
     true;
 match_type(Name, T) ->
@@ -234,12 +311,12 @@ zip_disabled(DPs) ->
     [{D, disabled, N} || {D, N} <- DPs].
 
 get_datapoint(Entry, DPs) ->
-    case riak_core_exometer:get_datapoint(Entry, DPs) of
+    case exometer:get_value(Entry, DPs) of
         {ok, V} -> V;
         _ -> unavailable
     end.
 get_info(Name, Info) ->
-    riak_core_exometer:get_info(Name, Info).
+    exometer:info(Name, Info).
 
 %%%-------------------------------------------------------------------
 %%% @doc
@@ -273,10 +350,10 @@ legacy_search_(Stat, Status, Type) ->
 %%%-------------------------------------------------------------------
 -spec(find_through_alias(metrics(),status(),type()) -> error() | ok).
 find_through_alias([Alias],Status,Type) when is_atom(Alias)->
-    case riak_core_exometer:resolve(Alias) of
+    case exometer_alias:resolve(Alias) of
         error -> [];
         {Entry,DP} ->
-            case find_entries_exom([Entry],Status,Type,[DP]) of
+            case find_entries_exom({[Entry],Status,Type,[DP]}) of
                 [] -> [];
                 NewStat ->
                     NewStat
@@ -291,7 +368,7 @@ find_through_alias(_Aliases,_Status,_Type) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(stats() -> print()).
-stats() -> print(get_stats([[prefix()|'_']])).
+stats() -> get_stats([[prefix()|'_']]).
 
 %%%-------------------------------------------------------------------
 %% @doc (Shell function - not used internally).
@@ -299,16 +376,20 @@ stats() -> print(get_stats([[prefix()|'_']])).
 %% @end
 %%%-------------------------------------------------------------------
 -spec(app_stats(app()) -> print()).
-app_stats(App) -> print(get_stats([[prefix(),App|'_']])).
+app_stats(App) -> get_stats([[prefix(),App|'_']]).
 
 %%%-------------------------------------------------------------------
-%% @doc (Shell function - not used internally)
-%% get the value of the stat from exometer (returns enabled metrics)
+%% @doc
+%% The Path is the start or full name of the stat(s) you wish to find,
+%% i.e. [riak,riak_kv|'_'] as a path will return stats with those to
+%% elements in their path. and uses exometer:find_entries
 %% @end
 %%%-------------------------------------------------------------------
--spec(get_value(listofstats()) -> print()).
-get_value(Arg) -> print(riak_core_exometer:get_values(Arg)).
+-spec(get_values(listofstats()) -> print()).
+get_values(Arg) -> exometer:get_values(Arg).
 
+get_value(Name) ->
+    exometer:get_value(Name).
 %%%-------------------------------------------------------------------
 %% @doc (Shell function - not used internally)
 %% get the info of the stat/app-stats from exometer
@@ -323,9 +404,24 @@ get_info(Arg) ->
     print([{Stat, stat_info(Stat)} || {Stat,_T,_S} <- Stats]).
 
 stat_info(Stat) ->
-    riak_core_exometer:get_info(Stat, ?INFOSTAT).
+    exometer:info(Stat, ?INFOSTAT).
 
 %%%===================================================================
+
+-spec(find_stats_info(metricname(), datapoints()) -> listofstats()).
+find_stats_info(Stats, Info) when is_atom(Info) ->
+    find_stats_info(Stats, [Info]);
+find_stats_info(Stat, Info) when is_list(Info) ->
+    lists:foldl(fun(DP, Acc) ->
+        case get_datapoint(Stat, DP) of
+            {ok, [{DP, _Error}]} ->
+                Acc;
+            {ok, Value} ->
+                [{DP, Value} | Acc];
+            _ -> Acc
+        end
+                end, [], Info).
+
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -341,8 +437,10 @@ stat_info(Stat) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(update(metricname(), incrvalue(), type()) -> ok | error()).
-update(Name, Inc, Type) ->
-    ok = riak_core_exometer:update(Name, Inc, Type).
+update(Name, Val, Type) ->
+    update(Name, Val, Type, []).
+update(Name, Val, Type, Opts) ->
+    exometer:update_or_create(Name, Val,Type, Opts).
 
 %%%===================================================================
 
@@ -384,40 +482,10 @@ unregister_in_both(StatName) ->
     unregister_in_exometer(StatName).
 
 unregister_in_metadata(StatName) ->
-    riak_core_metadata_stats:unregister(StatName).
+    riak_core_stat_persist:unregister(StatName).
 
 unregister_in_exometer(StatName) ->
-    riak_core_exometer:unregister(StatName).
-
-%%%===================================================================
-
-%%%-------------------------------------------------------------------
-%% @doc
-%% Resetting the stats; change the values back to 0, and it's reset
-%% counter in the metadata and in the exometer are updated +1
-%% (enabled stats only)
-%% @end
-%%%-------------------------------------------------------------------
--spec(reset(metricname()) -> ok | error()).
-reset([]) -> io:fwrite("No Stats found~n");
-reset(StatName) ->
-    Fun = fun reset_in_both/1,
-    case maybe_meta(Fun, StatName) of
-        false ->
-            reset_exom_stat(StatName);
-        Ans ->
-            Ans
-    end.
-
-reset_in_both(StatName) ->
-    reset_meta_stat(StatName),
-    reset_exom_stat(StatName).
-
-reset_meta_stat(Arg) ->
-    riak_core_metadata_stats:reset_stat(Arg).
-
-reset_exom_stat(Arg) ->
-    riak_core_exometer:reset_stat(Arg).
+    exometer:delete(StatName).
 
 %%%===================================================================
 
@@ -443,11 +511,24 @@ change_both_status(StatsList) ->
     change_exom_status(StatsList).
 
 change_meta_status(Arg) ->
-    riak_core_metadata_stats:change_status(Arg).
+    lists:flatten(riak_core_stat_persist:change_status(Arg)).
 
-change_exom_status(Arg) ->
-    riak_core_exometer:change_status(Arg).
+change_exom_status(Stats)  when is_list(Stats) ->
+    lists:flatten(
+        [change_exom_status(Stat,Status)||{Stat,Status} <- Stats]);
+change_exom_status({Stat, Status}) ->
+    change_exom_status(Stat, Status).
+change_exom_status(Stat, Status) ->
+    set_opts(Stat, [{status,Status}]),
+    {Stat,Status}.
 
+set_opts(StatName, Opts) ->
+    exometer:setopts(StatName, Opts).
+
+
+-spec(reset(statname()) -> ok).
+reset(Stat) ->
+    exometer:reset(Stat).
 
 %%%===================================================================
 %%% Internal API
@@ -472,5 +553,12 @@ print(Entries) -> riak_core_console:print(Entries).
 %%%-------------------------------------------------------------------
 
 maybe_meta(Fun, Args) ->
-    riak_core_metadata_stats:maybe_meta(Fun,Args).
+    riak_core_stat_persist:maybe_meta(Fun,Args).
+
+%%%-------------------------------------------------------------------
+%% @doc Returns the timestamp to put in the stat entry  @end
+%%%-------------------------------------------------------------------
+-spec(timestamp() -> timestamp()).
+timestamp() ->
+    exometer_util:timestamp().
 

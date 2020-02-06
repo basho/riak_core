@@ -23,15 +23,15 @@
     get_datapoints/3,
     get_value/4,
     new/3,
-    reset/3,
     sample/3,
+    reset/3,
     setopts/3,
     update/4]).
 
 behaviour() -> entry.
 
 copy_folsom(Name, Type, Opts) when is_tuple(Name) ->
-    {[?Prefix | tuple_to_list(Name)], ad_hoc, [{folsom_name, Name},
+    {[?PREFIX | tuple_to_list(Name)], ad_hoc, [{folsom_name, Name},
         {module, ?MODULE},
         {type, Type}
         | options(Type, Opts)]};
@@ -55,6 +55,9 @@ get_value(_, Type, {_, Name}, DPs) ->
 
 setopts(_, _, _) ->
     ok.
+
+sample(_,_,_) ->
+    {error, not_supported}.
 
 delete(N, _, _) ->
     riak_core_stats_mgr:unregister(N).

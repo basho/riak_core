@@ -160,7 +160,7 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 exometer_update(Name, Value, Type) ->
-    StatName = lists:flatten([?Prefix, ?APP | Name]),
+    StatName = lists:flatten([?PREFIX, ?APP | Name]),
     riak_core_stats_mgr:update(StatName, Value, Type).
 
 update_metric(converge_timer_begin ) -> converge_delay;
@@ -271,8 +271,8 @@ vnodeq_aggregate(Service, MQLs0) ->
                  1 ->
                      lists:nth(Len div 2 + 1, MQLs)
              end,
-    [{[?Prefix, riak_core, vnodeq_atom(Service,<<"s_running">>)], [{value, Len}]},
-     {[?Prefix, riak_core, vnodeq_atom(Service,<<"q">>)],
+    [{[?PREFIX, riak_core, vnodeq_atom(Service,<<"s_running">>)], [{value, Len}]},
+     {[?PREFIX, riak_core, vnodeq_atom(Service,<<"q">>)],
       [{min, lists:nth(1, MQLs)}, {median, Median}, {mean, Mean},
        {max, lists:nth(Len, MQLs)}, {total, Total}]}].
 
@@ -295,32 +295,32 @@ vnodeq_aggregate_empty_test() ->
     ?assertEqual([], vnodeq_aggregate(service_vnode, [])).
 
 vnodeq_aggregate_odd1_test() ->
-    ?assertEqual([{[?Prefix, riak_core, service_vnodes_running], [{value, 1}]},
-                  {[?Prefix, riak_core, service_vnodeq],
+    ?assertEqual([{[?PREFIX, riak_core, service_vnodes_running], [{value, 1}]},
+                  {[?PREFIX, riak_core, service_vnodeq],
 		   [{min, 10}, {median, 10}, {mean, 10}, {max, 10}, {total, 10}]}],
                  vnodeq_aggregate(service_vnode, [10])).
 
 vnodeq_aggregate_odd3_test() ->
-    ?assertEqual([{[?Prefix, riak_core, service_vnodes_running], [{value, 3}]},
-                  {[?Prefix, riak_core, service_vnodeq],
+    ?assertEqual([{[?PREFIX, riak_core, service_vnodes_running], [{value, 3}]},
+                  {[?PREFIX, riak_core, service_vnodeq],
 		   [{min, 1}, {median, 2}, {mean, 2}, {max, 3}, {total, 6}]}],
                  vnodeq_aggregate(service_vnode, [1, 2, 3])).
 
 vnodeq_aggregate_odd5_test() ->
-    ?assertEqual([{[?Prefix, riak_core, service_vnodes_running], [{value, 5}]},
-                  {[?Prefix, riak_core, service_vnodeq],
+    ?assertEqual([{[?PREFIX, riak_core, service_vnodes_running], [{value, 5}]},
+                  {[?PREFIX, riak_core, service_vnodeq],
 		   [{min, 0}, {median, 1}, {mean, 2}, {max, 5}, {total, 10}]}],
                  vnodeq_aggregate(service_vnode, [1, 0, 5, 0, 4])).
 
 vnodeq_aggregate_even2_test() ->
-    ?assertEqual([{[?Prefix, riak_core, service_vnodes_running], [{value, 2}]},
-                  {[?Prefix, riak_core, service_vnodeq],
+    ?assertEqual([{[?PREFIX, riak_core, service_vnodes_running], [{value, 2}]},
+                  {[?PREFIX, riak_core, service_vnodeq],
 		   [{min, 10}, {median, 15}, {mean, 15}, {max, 20}, {total, 30}]}],
                  vnodeq_aggregate(service_vnode, [10, 20])).
 
 vnodeq_aggregate_even4_test() ->
-    ?assertEqual([{[?Prefix, riak_core, service_vnodes_running], [{value, 4}]},
-                  {[?Prefix, riak_core, service_vnodeq],
+    ?assertEqual([{[?PREFIX, riak_core, service_vnodes_running], [{value, 4}]},
+                  {[?PREFIX, riak_core, service_vnodeq],
 		   [{min, 0}, {median, 5}, {mean, 7}, {max, 20}, {total, 30}]}],
                  vnodeq_aggregate(service_vnode, [0, 10, 0, 20])).
 

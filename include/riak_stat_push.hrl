@@ -6,12 +6,12 @@
 %%%-------------------------------------------------------------------
 -include_lib("riak_core/include/riak_stat.hrl").
 
--type protocol()        :: tcp | udp | http.
--type server_ip()       :: inet:ip4_address().
+-type protocol()        :: tcp | udp | '_'.
+-type server_ip()       :: inet:ip4_address() | any().
 -type push_port()       :: inet:port_number() | port().
 -type socket()          :: inet:socket().
 -type hostname()        :: inet:hostname().
--type instance()        :: string() | list().
+-type instance()        :: any().
 
 -type sanitised_push()  :: {{push_port(),instance(),server_ip()},metrics()}.
 -type listofpush()      :: [pusharg()] | [].
@@ -25,7 +25,7 @@
                             node(),
                             push_port(),
                             server_ip(),
-                            metrics()} | push_map().
+                            metrics()} | push_map() | atom().
 -type push_map()        :: #{original_dt := calendar:datetime(),
                             modified_dt  := calendar:datetime(),
                             pid          := pid(),
@@ -38,7 +38,7 @@
 -type runnning_tuple()  :: {running, boolean()}.
 
 -type node_or_nodes()   :: node() | [node()].
--type pusharg()         :: {push_key(),push_value()}.
+-type pusharg()         :: {push_key(),push_value()} | list().
 
 -type jsonstats()       :: list().
 
@@ -46,10 +46,7 @@
 %%%%% Endpoint Polling Macros %%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
--define(PUSHPREFIX, {riak_stat_push, ?NODEID}).
-
--define(MONITORSTATSPORT,       app_helper:get_env(riak_stat,monitor_stats_port,    8005)).
--define(MONITORSERVER,          app_helper:get_env(riak_stat,monitor_server, "127.0.0.1")).
+-define(PUSH_PREFIX, {riak_stat_push, ?NODEID}).
 
 -define(REFRESH_INTERVAL,       app_helper:get_env(riak_stat,refresh_interval,     30000)).
 
@@ -64,6 +61,4 @@
 -define(REUSE,                  {reuseaddr, true}).
 
 -define(OPTIONS,                [?BUFFER, ?SNDBUF, ?ACTIVE, ?REUSE]).
-
--define(ATTEMPTS,               50).
 

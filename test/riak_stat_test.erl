@@ -279,8 +279,6 @@ test_random(Type,Args) ->
 
 test_fun(show,Arg) ->
     ok == riak_core_console:stat_show(Arg);
-test_fun(show0,Arg) ->
-    ok == riak_core_console:stat_0(Arg);
 test_fun(info,Arg) ->
     ok == riak_core_console:stat_info(Arg);
 test_fun(enable,Arg) ->
@@ -376,15 +374,15 @@ test_data_sanitise_console() ->
     A7 = ["riak.**/mean,max"],
     A8 = ["riak.riak_kv.**/status=*/type=spiral/one"],
     A9 = ["riak.**.time"], %% riak at beginning and time at end
-    {N1,_T1,_S1,_B1} = riak_stat_console:data_sanitise(A1),
-    {N2,_T2,_S2,_B2} = riak_stat_console:data_sanitise(A2),
-    {N3,_T3,_S3,_B3} = riak_stat_console:data_sanitise(A3),
-    {N4,_T4,_S4,_B4} = riak_stat_console:data_sanitise(A4),
-    {N5,_T5,_S5,_B5} = riak_stat_console:data_sanitise(A5),
-    {N6, T6,_S6,_B6} = riak_stat_console:data_sanitise(A6),
-    {N7,_T7,_S7, B7} = riak_stat_console:data_sanitise(A7),
-    {N8, T8, S8, B8} = riak_stat_console:data_sanitise(A8),
-    {N9,_T9,_S9,_B9} = riak_stat_console:data_sanitise(A9),
+    {N1,_T1,_S1,_B1} = riak_core_console:sanitise_stat_input(A1),
+    {N2,_T2,_S2,_B2} = riak_core_console:sanitise_stat_input(A2),
+    {N3,_T3,_S3,_B3} = riak_core_console:sanitise_stat_input(A3),
+    {N4,_T4,_S4,_B4} = riak_core_console:sanitise_stat_input(A4),
+    {N5,_T5,_S5,_B5} = riak_core_console:sanitise_stat_input(A5),
+    {N6, T6,_S6,_B6} = riak_core_console:sanitise_stat_input(A6),
+    {N7,_T7,_S7, B7} = riak_core_console:sanitise_stat_input(A7),
+    {N8, T8, S8, B8} = riak_core_console:sanitise_stat_input(A8),
+    {N9,_T9,_S9,_B9} = riak_core_console:sanitise_stat_input(A9),
     ?assertEqual([[riak|'_']],N1),
     ?assertEqual([[riak,riak_kv|'_']],N2),
     ?assertEqual([[riak,riak_kv,node,gets|'_']],N3),
@@ -438,7 +436,7 @@ test_data_sanitise_endpoint() ->
 test_save_profile() ->
     %% Save a profile
     ProfileName = ["test-profile"], %% input type from console
-    ?_assert(ok == riak_stat_profiles:save_profile(ProfileName)).
+    ?_assert(ok == riak_core_stat_persist:save_profile(ProfileName)).
 
 test_save_profile_for_two() ->
     %% Save a profile with different stats configuration on two separate
@@ -460,8 +458,8 @@ test_save_profile_for_them() ->
 test_load_profile() ->
     %% load a profile
     ProfileName = ["hellothere"],
-    riak_stat_profiles:save_profile(ProfileName),
-    ?_assert(ok == riak_stat_profiles:load_profile(ProfileName)).
+    riak_core_stat_persist:save_profile(ProfileName),
+    ?_assert(ok == riak_core_stat_persist:load_profile(ProfileName)).
 
 test_load_all_profiles() ->
     %% load a profile, onto multiple nodes
@@ -501,15 +499,15 @@ test_load_profile_again() ->
 test_delete_profile() ->
     %% Delete a profile
     ProfileName = ["obiwankenobi"],
-    riak_stat_profiles:save_profile(ProfileName),
-    ?_assert(ok == riak_stat_profiles:delete_profile(ProfileName)).
+    riak_core_stat_persist:save_profile(ProfileName),
+    ?_assert(ok == riak_core_stat_persist:delete_profile(ProfileName)).
 
 test_delete_un_profile() ->
     %% Delete a profile that has never existed,
     %% then delete a profile that used to exist
     ProfileName = ["Idonotexist"],
-    ?_assert(no_profile == riak_stat_profiles:delete_profile(ProfileName)),
-    ?_assert(no_profile == riak_stat_profiles:delete_profile(["anotheronebitesthedust"])).
+    ?_assert(no_profile == riak_core_stat_persist:delete_profile(ProfileName)),
+    ?_assert(no_profile == riak_core_stat_persist:delete_profile(["anotheronebitesthedust"])).
 
 
 test_unknown_delete_profile() ->
@@ -523,9 +521,9 @@ test_unknown_delete_profile() ->
 test_reset_profile() ->
     %% Reset profile . i.e. set all stats to enabled and unload a profile
     ProfileName = ["you-were-my-brother-anakin"],
-    riak_stat_profiles:save_profile(ProfileName),
-    ?_assert(ok == riak_stat_profiles:reset_profile()),
-    ?_assert([] == riak_stat_exom:select([{{[riak|'_'],'_',disabled},[],['$_']}])).
+    riak_core_stat_persist:save_profile(ProfileName),
+    ?_assert(ok == riak_core_stat_persist:reset_profile()),
+    ?_assert([] == riak_core_stats_mgr:select([{{[riak|'_'],'_',disabled},[],['$_']}])).
 
 %%% --------------------------------------------------------------
 
@@ -534,81 +532,81 @@ test_reset_profile() ->
 test_register_stat() ->
     %% Register a stat in the metadata and in exometer
     Stat = stat_generator(),
-    ?_assert(ok == riak_stat:register_stats(Stat)).
+    ?_assert(ok == riak_core_stats_mgr:register_stats(Stat)).
 
 test_register_stat_again() ->
     %% register a stat then register it again
     Stat = stat_generator(),
-    ok = riak_stat:register_stats(Stat),
-    ok = riak_stat:register_stats(Stat),
-    ?_assert(ok == riak_stat:register_stats(Stat)).
+    ok = riak_core_stats_mgr:register_stats(Stat),
+    ok = riak_core_stats_mgr:register_stats(Stat),
+    ?_assert(ok == riak_core_stats_mgr:register_stats(Stat)).
 
 test_register_raw_stat() ->
     %% register a stat with just its name and type
     Stat = {[riak,stat,test,name],counter,[],[]},
-    ?_assert(ok == riak_stat:register_stats(Stat)).
+    ?_assert(ok == riak_core_stats_mgr:register_stats(Stat)).
 
 test_read_app_stats() ->
     %% get stats using riak_stat:get_stats(App)
     App = riak_api,
     StatName = [?PREFIX,App|'_'],
-    riak_stat_console:status_change(StatName, enabled), %% ensure enabled
-    Stats = riak_stat:get_stats(StatName), %% as used in riak_stat
+    riak_core_console:status_change(StatName, enabled), %% ensure enabled
+    Stats = riak_core_stats_mgr:get_stats(StatName), %% as used in riak_stat
     ?_assertEqual(Stats, [{pbc_connects,spiral,enabled},
                             {[pbc_connects,active],{function,App,active_pbc_connects},enabled}]).
 
 test_read_path_stats() ->
     %% get a stats by passing in the path of the stat
     Path = [?PREFIX,riak_kv,node,gets,time],
-    riak_stat_console:status_change(Path, enabled), %% ensure enabled
-    Stat = riak_stat:get_stats(Path),
+    riak_core_console:status_change(Path, enabled), %% ensure enabled
+    Stat = riak_core_stats_mgr:get_stats(Path),
     ?_assertEqual([{[riak,riak_kv,node,gets,time],histogram,enabled}],Stat).
 
 test_read_stats_val() ->
     %% Get a stats value from exometer
     Stat = [?PREFIX,riak_stat,test,counter],
-    riak_stat:register_stats({Stat,spiral,[],[]}),
+    riak_core_stats_mgr:register_stats({Stat,spiral,[],[]}),
     ok = update_again(Stat,1.0,spiral,100),
-    {ok, Value} = riak_stat_exom:get_value(Stat),
+    {ok, Value} = riak_core_stats_mgr:get_value(Stat),
     Count = proplists:get_value(count, Value),
     ?_assertEqual(Count, 100.0).
 
 update_again(_,_,_,0) ->
     ok;
 update_again(Stat,Incr,Type,Num) ->
-    riak_stat:update(Stat,Incr,Type),
+    riak_core_stats_mgr:update(Stat,Incr,Type),
     update_again(Stat,Incr,Type,Num-1).
 
 test_update_stat() ->
     %% update a stat
     Stat = [?PREFIX,riak_stat,test,updates],
-    riak_stat:register_stats({Stat,counter,[],[]}),
+    riak_core_stats_mgr:register_stats({Stat,counter,[],[]}),
     update_again(Stat,1,counter,1).
 
 test_unregister_stat() ->
     %% unregister a stat
     Stat = [?PREFIX,riak_stat,unregister,test],
-    riak_stat:register_stats({Stat,counter,[],[]}),
-    ?_assertEqual(ok,riak_stat:unregister(Stat)).
+    riak_core_stats_mgr:register_stats({Stat,counter,[],[]}),
+    ?_assertEqual(ok,riak_core_stats_mgr:unregister(Stat)).
 
 test_unregister_stat_again() ->
     %% unregister a stat that has just been unregistered
     Stat = [?PREFIX,riak_stat,unregister,test],
-    riak_stat:register_stats({Stat,counter,[],[]}),
-    ?_assertEqual(ok,riak_stat:unregister(Stat)),
-    ?_assertEqual(ok,riak_stat:unregister(Stat)).
+    riak_core_stats_mgr:register_stats({Stat,counter,[],[]}),
+    ?_assertEqual(ok,riak_core_stats_mgr:unregister(Stat)),
+    ?_assertEqual(ok,riak_core_stats_mgr:unregister(Stat)).
 
 test_reset_stat() ->
     %% reset a stat (known to be enabled)
     Stat = [?PREFIX,riak_stat,reset,test],
-    riak_stat:register_stats({Stat,counter,[],[]}),
+    riak_core_stats_mgr:register_stats({Stat,counter,[],[]}),
     update_again(Stat,1,counter,24601),
-    ?_assertEqual(ok,riak_stat:reset(Stat)).
+    ?_assertEqual(ok,riak_core_stats_mgr:reset(Stat)).
 
 test_reset_dis_stat() ->
     %% try to reset a disabled stat (error)
     Stat = [?PREFIX,riak_stat,reset,test],
-    riak_stat:register_stats({Stat,counter,[],[]}),
+    riak_core_stats_mgr:register_stats({Stat,counter,[],[]}),
     update_again(Stat,1,counter,24601),
-    riak_stat_console:status_change(Stat,disabled),
-    ?_assertEqual(ok,riak_stat:reset(Stat)).
+    riak_core_console:status_change(Stat,disabled),
+    ?_assertEqual(ok,riak_core_stats_mgr:reset(Stat)).

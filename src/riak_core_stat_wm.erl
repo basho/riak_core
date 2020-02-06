@@ -3,7 +3,7 @@
 %%% A mimic of riak_kv_wm_stats, specifically for using riak_stat
 %%% @end
 %%%-------------------------------------------------------------------
--module(riak_stat_wm).
+-module(riak_core_stat_wm).
 -include_lib("webmachine/include/webmachine.hrl").
 
 %% wm resource exports
@@ -78,7 +78,7 @@ encodings_provided(Req, Ctx) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(content_types_provided(rd(), context()) ->
-                                          {ctype(), rd(), context()}).
+    {ctype(), rd(), context()}).
 content_types_provided(Req, Ctx) ->
     {[{?JSON_CONTENT_TYPE, produce_body},
         {?PLAIN_TEXT_CONTENT_TYPE, pretty_print}],
@@ -90,7 +90,7 @@ content_types_provided(Req, Ctx) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(service_available(rd(), context()) ->
-                               {boolean() | halt(), rd(), context()}).
+    {boolean() | halt(), rd(), context()}).
 service_available(Req, Ctx=#ctx{}) ->
     {true, Req, Ctx}.
 
@@ -101,7 +101,7 @@ service_available(Req, Ctx=#ctx{}) ->
 %% @end
 %%%-------------------------------------------------------------------
 -spec(forbidden(rd(), context()) ->
-                               {boolean() | halt(), rd(), context()}).
+    {boolean() | halt(), rd(), context()}).
 forbidden(Req, Ctx) ->
     {riak_kv_wm_utils:is_forbidden(Req), Req, Ctx}.
 
@@ -113,8 +113,7 @@ forbidden(Req, Ctx) ->
 %%%-------------------------------------------------------------------
 -spec(produce_body(rd(), context()) -> {iodata(), rd(), context()}).
 produce_body(ReqData, Ctx) ->
-    Stats = riak_stat_push_util:get_stats([riak]),
-    Body  = riak_stat_push_util:encode(Stats),
+    Body  = riak_core_stat_push_util:json_stats([riak]),
     {Body, ReqData, Ctx}.
 
 

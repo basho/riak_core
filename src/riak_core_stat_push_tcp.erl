@@ -6,10 +6,8 @@
 %%% server
 %%% @end
 %%%-------------------------------------------------------------------
--module(riak_stat_push_tcp).
--include_lib("riak_core/include/riak_stat_push.hrl").
-
--behaviour(gen_server).
+-module(riak_core_stat_push_tcp).
+-include("riak_stat_push.hrl").
 
 %% API
 -export([start_link/1]).
@@ -27,9 +25,7 @@
 -record(state, {
     socket        :: socket(),
     server        :: server_ip(),
-    latency_port  :: push_port(),
-    server_ip     :: server_ip(),
-    stats_port    :: push_port(),
+    port          :: push_port(),
     hostname      :: hostname(),
     instance      :: instance(),
     stats         :: listofstats()
@@ -89,7 +85,7 @@ handle_cast(_Request, State) ->
 handle_info(refresh_monitor_server_ip, State = #state{server = MonitorServer}) ->
     NewState = case inet:gethostbyname(MonitorServer) of
                    {ok,{hostent,_Hostname,_,_,_, [MonitorServerIp]}} ->
-                       State#state{server_ip = MonitorServerIp};
+                       State#state{server = MonitorServerIp};
                    Other ->
                        lager:warning(
                            "Unable to refresh ip address of monitor server due to ~p,
@@ -100,11 +96,9 @@ handle_info(refresh_monitor_server_ip, State = #state{server = MonitorServer}) -
     refresh_monitor_server_ip(),
     {noreply, NewState};
 handle_info(push_stats, #state{
-                                socket   = Socket,
-                                hostname = Hostname,
-                                instance = Instance,
-                                stats    = Stats} = State) ->
-    push_stats(Socket, Hostname, Instance, Stats),
+    socket   = Socket,
+    stats    = Stats} = State) ->
+    push_stats(Socket, Stats),
     {noreply, State};
 handle_info(tcp_closed,State) ->
     {stop, endpoint_closed, State};
@@ -149,15 +143,11 @@ open({{Port, _Instance, Sip}, _Stats}=Info) ->
     end.
 
 create_state(Socket, {{MonitorLatencyPort, Instance, Sip}, Stats}) ->
-    MonitorStatsPort  = ?MONITORSTATSPORT,
-    MonitorServer     = ?MONITORSERVER,
     Hostname          = inet_db:gethostname(),
     #state{
         socket        = Socket,
-        latency_port  = MonitorLatencyPort,
-        server        = MonitorServer,
-        server_ip     = Sip,
-        stats_port    = MonitorStatsPort,
+        port          = MonitorLatencyPort,
+        server        = Sip,
         hostname      = Hostname,
         instance      = Instance,
         stats         = Stats}.
@@ -173,7 +163,7 @@ refresh_monitor_server_ip() ->
 terminate_server(Instance) ->
     Key = {?PROTOCOL, Instance},
     Prefix = {riak_stat_push, node()},
-    riak_stat_push_util:stop_running_server(Prefix, Key).
+    riak_core_stat_push_sup:stop_running_server(Prefix, Key).
 
 %%--------------------------------------------------------------------
 
@@ -190,15 +180,10 @@ send_after(Interval, Arg) ->
 %% send to the endpoint. Repeat.
 %% @end
 %%--------------------------------------------------------------------
--spec(push_stats(socket(),hostname(),instance(),metrics()) -> ok | error()).
-push_stats(Socket, Hostname, Instance, Stats) ->
-    case riak_stat_push_util:json_stats(Hostname, Instance, Stats) of
-        ok ->
-            push_stats();
-        JsonStats ->
-            send(Socket, JsonStats),
-            push_stats()
-    end.
+push_stats(Socket, Stats) ->
+    JsonStats = riak_core_stat_push_util:json_stats(Stats),
+    send(Socket, JsonStats),
+    push_stats().
 
 push_stats() ->
     send_after(?STATS_UPDATE_INTERVAL, push_stats).

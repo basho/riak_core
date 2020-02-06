@@ -17,6 +17,8 @@
 %%
 %% -------------------------------------------------------------------
 -module(riak_core_stats_sup).
+-include("riak_stat_push.hrl").
+
 -behaviour(supervisor).
 -export([start_link/0, init/1]).
 -export([start_server/1, stop_server/1]).
@@ -25,12 +27,22 @@
 -define(CHILD(I, Type, Timeout), {I, {I, start_link, []}, permanent, Timeout, Type, [I]}).
 -define(CHILD(I, Type), ?CHILD(I, Type, 5000)).
 
+%%%===================================================================
+%%% API
+%%%===================================================================
+
+%%--------------------------------------------------------------------
+-spec(start_link() ->
+    {ok, Pid :: pid()} | ignore | {error, Reason :: term()}).
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-    Children = [stat_server(Mod) || {_App, Mod} <- riak_core:stat_mods()],
-    {ok, {{one_for_one, 5, 10}, [?CHILD(riak_core_stat_cache, worker)|Children]}}.
+    PushSupChild = ?CHILD(riak_core_stat_push_sup, supervisor),
+    StatCacheChild = ?CHILD(riak_core_stat_cache, worker),
+    StatChildren = [stat_server(Mod) || {_App, Mod} <- riak_core:stat_mods()],
+    Children = [PushSupChild,StatCacheChild|StatChildren],
+    {ok, {{one_for_one, 5, 10}, [Children]}}.
 
 start_server(Mod) ->
     Ref = stat_server(Mod),
@@ -47,3 +59,7 @@ stop_server(Mod) ->
 %% @private
 stat_server(Mod) ->
     ?CHILD(Mod,worker).
+
+%%%===================================================================
+%%% API functions
+%%%===================================================================
