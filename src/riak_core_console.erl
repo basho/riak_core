@@ -1209,16 +1209,16 @@ split_arg(Str) ->
 %% enable the stats, if the stat is already enabled does nothing
 %% @end
 %%%-------------------------------------------------------------------
--spec(stat_enable(consolearg()) -> ok | error()).
-stat_enable(Arg) -> status_change(Arg, enabled).
+-spec(stat_enable(consolearg()) -> print()).
+stat_enable(Arg) -> print(status_change(Arg, enabled)).
 
 %%%-------------------------------------------------------------------
 %% @doc
 %% disable the stats - if already disabled does nothing
 %% @end
 %%%-------------------------------------------------------------------
--spec(stat_disable(consolearg()) -> ok | error()).
-stat_disable(Arg) -> status_change(Arg, disabled).
+-spec(stat_disable(consolearg()) -> print()).
+stat_disable(Arg) -> print(status_change(Arg, disabled)).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -1227,15 +1227,15 @@ stat_disable(Arg) -> status_change(Arg, disabled).
 %% and vice versa.
 %% @end
 %%%-------------------------------------------------------------------
--spec(status_change(consolearg(), status()) -> print()).
+-spec(status_change(consolearg(), status()) -> listofstats()).
 status_change(Arg, ToStatus) ->
     {Entries,_DP} =
         case ToStatus of
             enabled  -> find_entries(sanitise_stat_input(Arg, '_', disabled));
             disabled -> find_entries(sanitise_stat_input(Arg, '_', enabled))
         end,
-    print(riak_core_stat_persist:change_status(
-        [{Stat, ToStatus} || {Stat,_,_} <- Entries])).
+    riak_core_stat_persist:change_status(
+        [{Stat, ToStatus} || {Stat,_,_} <- Entries]).
 
 %%%-------------------------------------------------------------------
 %% @doc

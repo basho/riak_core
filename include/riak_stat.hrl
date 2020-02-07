@@ -16,7 +16,7 @@
 -type app()             :: atom(). %% i.e. 'riak_core'
 -type statname()        :: [atom()] | atom() | mfa(). %% [riak,stat|'_']
 
--type listofstats()     :: [metricname()] | [atom()].
+-type listofstats()     :: [metricname()] | [atom()] | any().
 
 -type datapoints()      :: [datapoint()] | [].
 -type datapoint()       :: mean | max | min | mean | mode | 99 | 95 | 90
