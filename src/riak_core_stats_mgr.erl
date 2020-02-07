@@ -117,7 +117,6 @@ register_exom({StatName, Type, Opts, Aliases}) ->
                   end,Aliases).
 
 %%%===================================================================
-
 %%%-------------------------------------------------------------------
 %% @doc
 %% Give a path to a stat such as : [riak,riak_kv,node,gets,time]
