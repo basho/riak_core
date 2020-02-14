@@ -21,7 +21,6 @@
 -module(riak_core_stat).
 
 -behaviour(gen_server).
--include_lib("riak_core/include/riak_stat.hrl").
 
 %% API
 -export([
@@ -51,6 +50,7 @@
 
 -define(SERVER, ?MODULE).
 -define(APP, riak_core).
+-define(PREFIX, riak).
 -define(StatType(Stat),
     {function, app_helper, get_env, [?APP, Stat], match, value}).
 
@@ -75,9 +75,9 @@ register_stats() ->
 %% metrics into exometer
 %% @end
 %%%-------------------------------------------------------------------
--spec(register_stats(app(), listofstats()) -> ok).
-register_stats(App, Stats) ->
-    riak_core_stats_mgr:register(App, Stats).
+-spec(register_stats(atom(), any()) -> ok).
+register_stats(App,Stats) ->
+    lists:foreach(fun(Stat) -> stats:register([?PREFIX,App|Stat]) end, Stats).
 
 register_vnode_stats(Module, Index, Pid) ->
     F = fun vnodeq_atom/2,
@@ -110,7 +110,12 @@ register_vnode_stats(Module, Index, Pid) ->
 %%%----------------------------------------------------------------%%%
 
 unregister_vnode_stats(Module, Index) ->
-    riak_core_stats_mgr:unregister({Module, Index, vnodeq, ?APP}).
+    unregister_vnode_stats(Module, Index, vnodeq, ?APP).
+
+unregister_vnode_stats([Op, time], Index, Type, App) ->
+    stats:unregister([?PREFIX, App, Type,Op, time, Index]);
+unregister_vnode_stats(Module, Index, Type, App) ->
+    stats:unregister([?PREFIX, App, Type, Module, Index]).
 
 %%%----------------------------------------------------------------%%%
 
@@ -118,13 +123,13 @@ get_stats() ->
     get_stats(?APP).
 
 get_stats(Arg) ->
-    riak_core_stats_mgr:get_stats(Arg).
+    stats:get_stats(Arg).
 
 get_value(Arg) ->
-    riak_core_stats_mgr:get_value(Arg).
+    stats:get_value(Arg).
 
 get_info() ->
-    riak_core_stats_mgr:get_info(?APP).
+    stats:get_info(?APP).
 
 %%%-------------------------------------------------------------------
 %% @doc
@@ -161,7 +166,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 exometer_update(Name, Value, Type) ->
     StatName = lists:flatten([?PREFIX, ?APP | Name]),
-    riak_core_stats_mgr:update(StatName, Value, Type).
+    stats:update(StatName, Value, Type).
 
 update_metric(converge_timer_begin ) -> converge_delay;
 update_metric(converge_timer_end   ) -> converge_delay;
