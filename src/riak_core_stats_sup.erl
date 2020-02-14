@@ -17,7 +17,6 @@
 %%
 %% -------------------------------------------------------------------
 -module(riak_core_stats_sup).
--include("riak_stat_push.hrl").
 
 -behaviour(supervisor).
 -export([start_link/0, init/1]).
@@ -38,10 +37,9 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-    PushSupChild = ?CHILD(riak_core_stat_push_sup, supervisor),
     StatCacheChild = ?CHILD(riak_core_stat_cache, worker),
     StatChildren = [stat_server(Mod) || {_App, Mod} <- riak_core:stat_mods()],
-    Children = [PushSupChild,StatCacheChild|StatChildren],
+    Children = [StatCacheChild|StatChildren],
     {ok, {{one_for_one, 5, 10}, [Children]}}.
 
 start_server(Mod) ->
