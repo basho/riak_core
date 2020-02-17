@@ -20,8 +20,8 @@
                   ranch,
                   pbkdf2,
                   poolboy,
-                  stats,
                   cluster_metadata,
+                  stats,
                   exometer_core,
                   clique,
                   webmachine

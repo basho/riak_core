@@ -136,7 +136,7 @@ get_info() ->
 %% update is a gen_server:cast so it is non-blocking
 %% @end
 %%%-------------------------------------------------------------------
--spec(update(Arg :: tuple_stat() | statname()) -> ok).
+-spec(update(Arg::term()) -> ok).
 update({worker_pool, vnode_pool}) ->
     exometer_update([vnode, worker_pool], 1, counter);
 update({worker_pool, Pool}) ->
