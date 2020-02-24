@@ -28,7 +28,6 @@
     get_stats/0,
     get_stats/1,
     get_value/1,
-    get_info/0,
     update/1,
     register_stats/0,
 	  register_stats/2,
@@ -127,9 +126,6 @@ get_stats(Arg) ->
 
 get_value(Arg) ->
     stats:get_value(Arg).
-
-get_info() ->
-    stats:get_info(?APP).
 
 %%%-------------------------------------------------------------------
 %% @doc
