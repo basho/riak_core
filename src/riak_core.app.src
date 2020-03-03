@@ -21,8 +21,8 @@
                   pbkdf2,
                   poolboy,
                   cluster_metadata,
+%%                  exometer_core,
                   stats,
-                  exometer_core,
                   clique,
                   webmachine
                  ]},
@@ -69,17 +69,17 @@
          %% network and workload. In particular they're likely
          %% too small to be optimal for larger object sizes.
          {dist_send_buf_size, 393216},
-         {dist_recv_buf_size, 786432},
+         {dist_recv_buf_size, 786432}
 
-        %% Exometer defaults
-        {exometer_defaults,
-            [
-                {['_'], histogram, [
-                    {options,[
-                        {histogram_module, exometer_slot_slide},
-                        {keep_high, 500}
-                    ]}
-                ]}
-            ]}
+%%        %% Exometer defaults
+%%        {exometer_defaults,
+%%            [
+%%                {['_'], histogram, [
+%%                    {options,[
+%%                        {histogram_module, exometer_slot_slide},
+%%                        {keep_high, 500}
+%%                    ]}
+%%                ]}
+%%            ]}
         ]}
 ]}.
