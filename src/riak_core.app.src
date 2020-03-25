@@ -24,7 +24,9 @@
 %%                  exometer_core,
                   stats,
                   clique,
-                  webmachine
+                  cluster_info, 
+		  gen_fsm_compat,
+		  webmachine
                  ]},
   {mod, {riak_core_app, []}},
   {env, [

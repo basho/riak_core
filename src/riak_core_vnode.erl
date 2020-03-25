@@ -18,7 +18,7 @@
 %% -------------------------------------------------------------------
 -module('riak_core_vnode').
 -behaviour(gen_fsm_compat).
--include_lib("riak_core/include/riak_core_vnode.hrl").
+-include("riak_core_vnode.hrl").
 -export([start_link/3,
          start_link/4,
          wait_for_init/1,
