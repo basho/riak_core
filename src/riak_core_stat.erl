@@ -30,11 +30,12 @@
     get_value/1,
     update/1,
     register_stats/0,
-	  register_stats/2,
+    register_stats/2,
     vnodeq_stats/0,
     vnodeq_stats/1,
     register_vnode_stats/3,
-    unregister_vnode_stats/2
+    unregister_vnode_stats/2,
+    unregister_vnode_stats/4
 ]).
 
 %% gen_server callbacks
@@ -74,9 +75,14 @@ register_stats() ->
 %% metrics into exometer
 %% @end
 %%%-------------------------------------------------------------------
--spec(register_stats(atom(), any()) -> ok).
 register_stats(App,Stats) ->
-    lists:foreach(fun(Stat) -> stats:register([?PREFIX,App|Stat]) end, Stats).
+	FullStats = 
+	    lists:map(
+	      fun({S,T,O,A}) -> {[?PREFIX,App|S],T,O,A};
+		 ({S,T,O})   -> {[?PREFIX,App|S],T,O}
+	      end, Stats),
+
+	stats:register(FullStats).
 
 register_vnode_stats(Module, Index, Pid) ->
     F = fun vnodeq_atom/2,
@@ -106,7 +112,7 @@ register_vnode_stats(Module, Index, Pid) ->
     RegisterStats = [Vnode_Stat_1, Vnode_Stat_2, Vnode_Stat_3],
     register_stats(?APP, RegisterStats).
 
-%%%----------------------------------------------------------------%%%
+%%%----------------------------------------------------------------
 
 unregister_vnode_stats(Module, Index) ->
     unregister_vnode_stats(Module, Index, vnodeq, ?APP).
@@ -118,8 +124,9 @@ unregister_vnode_stats(Module, Index, Type, App) ->
 
 %%%----------------------------------------------------------------%%%
 
+-spec(get_stats() -> no_return()).
 get_stats() ->
-    get_stats(?APP).
+    get_stats([?APP]).
 
 get_stats(Arg) ->
     stats:get_stats(Arg).

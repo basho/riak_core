@@ -50,12 +50,9 @@
 %% stat that has `riak_kv' in the first element of its key tuple.
 %% You may use the atom '_' at any point
 %% in `Path' as a wild card.
--spec get_stats(path()) -> stats().
+-spec get_stats(path()) -> {error, term()} | {ok, stats()}.
 get_stats(Path) ->
     get_stat(Path).
-    %% %% get all the stats that are at Path
-    %% calculate_stats(exometer:select(
-    %%                     [{ {Path ++ '_','_',enabled}, [], ['$_'] }])).
 
 calculate_stats(NamesAndTypes) ->
     [{Name, get_stat(Name)} || {Name, _, _} <- NamesAndTypes].
