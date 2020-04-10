@@ -242,6 +242,7 @@ do_write_ringfile(Ring) ->
 do_write_ringfile(Ring, FN) ->
     ok = filelib:ensure_dir(FN),
     try
+        false = riak_core_ring:check_lastgasp(Ring),
         ok = riak_core_util:replace_file(FN, term_to_binary(Ring))
     catch
         _:Err ->
@@ -445,7 +446,6 @@ handle_cast(write_ringfile, test) ->
     {noreply,test};
 
 handle_cast(write_ringfile, State=#state{raw_ring=Ring}) ->
-    false = riak_core_ring:check_lastgasp(Ring),
     ok = do_write_ringfile(Ring),
     {noreply,State}.
 
