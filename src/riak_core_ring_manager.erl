@@ -274,8 +274,11 @@ find_latest_ringfile() ->
 read_ringfile(RingFile) ->
     case file:read_file(RingFile) of
         {ok, Binary} ->
-            binary_to_term(Binary);
-        {error, Reason} -> {error, Reason}
+            R = binary_to_term(Binary),
+            false = riak_core_ring:check_lastgasp(R),
+            R;
+        {error, Reason} ->
+            {error, Reason}
     end.
 
 %% @spec prune_ringfiles() -> ok | {error, Reason}
@@ -442,6 +445,7 @@ handle_cast(write_ringfile, test) ->
     {noreply,test};
 
 handle_cast(write_ringfile, State=#state{raw_ring=Ring}) ->
+    false = riak_core_ring:check_lastgasp(Ring),
     ok = do_write_ringfile(Ring),
     {noreply,State}.
 
