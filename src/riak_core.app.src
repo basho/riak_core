@@ -15,14 +15,13 @@
                   crypto,
                   riak_sysmon,
                   os_mon,
-                  basho_stats,
                   eleveldb,
                   pbkdf2,
                   poolboy,
                   exometer_core,
                   clique,
                   cluster_info,
-                  gen_fsm_compat
+                  basho_stats
                  ]},
   {mod, {riak_core_app, []}},
   {env, [

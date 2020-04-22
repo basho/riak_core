@@ -39,15 +39,21 @@
 %% confuse (or cause a race) with this module's checkout management.
 -module(riak_core_worker_pool).
 
--behaviour(gen_fsm_compat).
+-behaviour(gen_fsm).
 
-%% gen_fsm_compat callbacks
+-compile({nowarn_deprecated_function, 
+            [{gen_fsm, start_link, 3},
+                {gen_fsm, send_event, 2},
+                {gen_fsm, sync_send_all_state_event, 2},
+                {gen_fsm, sync_send_all_state_event, 3}]}).
+
+%% gen_fsm callbacks
 -export([init/1, handle_event/3, handle_sync_event/4, handle_info/3,
         terminate/3, code_change/4]).
 
 -export([start_link/2, handle_work/3, stop/2, shutdown_pool/2]).
 
-%% gen_fsm_compat states
+%% gen_fsm states
 -export([queueing/2, ready/2, ready/3, queueing/3, shutdown/2, shutdown/3]).
 
 -export([monitor_worker/4]).
@@ -55,7 +61,7 @@
 -ifdef(PULSE).
 -compile(export_all).
 -compile({parse_transform, pulse_instrument}).
--compile({pulse_replace_module, [{gen_fsm_compat, pulse_gen_fsm}]}).
+-compile({pulse_replace_module, [{gen_fsm, pulse_gen_fsm}]}).
 -endif.
 
 -define(SHUTDOWN_WAIT, 60000).
@@ -83,17 +89,17 @@
 
 
 start_link(PoolBoyArgs, CallbackMod) ->
-	gen_fsm_compat:start_link(?MODULE, [PoolBoyArgs, CallbackMod], []).
+	gen_fsm:start_link(?MODULE, [PoolBoyArgs, CallbackMod], []).
 
 handle_work(Pid, Work, From) ->
-    gen_fsm_compat:send_event(Pid, {work, Work, From}).
+    gen_fsm:send_event(Pid, {work, Work, From}).
 
 stop(Pid, Reason) ->
-    gen_fsm_compat:sync_send_all_state_event(Pid, {stop, Reason}).
+    gen_fsm:sync_send_all_state_event(Pid, {stop, Reason}).
 
 %% wait for all the workers to finish any current work
 shutdown_pool(Pid, Wait) ->
-    gen_fsm_compat:sync_send_all_state_event(Pid, {shutdown, Wait}, infinity).
+    gen_fsm:sync_send_all_state_event(Pid, {shutdown, Wait}, infinity).
 
 init([PoolBoyArgs, CallbackMod]) ->
 	{ok, Pid} = CallbackMod:do_init(PoolBoyArgs),
@@ -226,10 +232,10 @@ handle_info(_Info, StateName, State) ->
 terminate(shutdown, _StateName, #state{pool=Pool, queue=Q, callback_mod=Mod}) ->
     discard_queued_work(Q, Mod),
     %% stop poolboy
-    gen_fsm_compat:sync_send_all_state_event(Pool, stop),
+    gen_fsm:sync_send_all_state_event(Pool, stop),
     ok;
 terminate(_Reason, _StateName, #state{pool=Pool}) ->
-    gen_fsm_compat:sync_send_all_state_event(Pool, stop),
+    gen_fsm:sync_send_all_state_event(Pool, stop),
     ok.
 
 code_change(_OldVsn, StateName, State, _Extra) ->

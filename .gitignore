@@ -17,3 +17,4 @@ _build
 rebar.lock
 .DS_Store
 nonode@nohost
+data/*

@@ -22,6 +22,10 @@
 
 -module(riak_core_handoff_sender).
 -export([start_link/4, get_handoff_ssl_options/0]).
+
+-compile({nowarn_deprecated_function, 
+            [{gen_fsm, send_event, 2}]}).
+
 -include("riak_core_vnode.hrl").
 -include("riak_core_handoff.hrl").
 -include("stacktrace.hrl").
@@ -252,9 +256,9 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                              riak_core_format:human_size_fmt("~.2f", ThroughputBytes)]),
                  case Type of
                      repair -> ok;
-                     resize -> gen_fsm_compat:send_event(ParentPid, {resize_transfer_complete,
+                     resize -> gen_fsm:send_event(ParentPid, {resize_transfer_complete,
                                                                        NotSentAcc});
-                     _ -> gen_fsm_compat:send_event(ParentPid, handoff_complete)
+                     _ -> gen_fsm:send_event(ParentPid, handoff_complete)
                  end;
              {error, ErrReason} ->
                  if ErrReason == timeout ->
@@ -274,15 +278,15 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
              exit({shutdown, timeout});
          exit:{shutdown, {error, Reason}} ->
              ?log_fail("because of ~p", [Reason]),
-             gen_fsm_compat:send_event(ParentPid, {handoff_error,
+             gen_fsm:send_event(ParentPid, {handoff_error,
                                             fold_error, Reason}),
              exit({shutdown, {error, Reason}});
          throw:{be_quiet, Err, Reason} ->
-             gen_fsm_compat:send_event(ParentPid, {handoff_error, Err, Reason});
+             gen_fsm:send_event(ParentPid, {handoff_error, Err, Reason});
          ?_exception_(Err, Reason, StackToken) ->
              ?log_fail("because of ~p:~p ~p",
                        [Err, Reason, ?_get_stacktrace_(StackToken)]),
-             gen_fsm_compat:send_event(ParentPid, {handoff_error, Err, Reason})
+             gen_fsm:send_event(ParentPid, {handoff_error, Err, Reason})
      end.
 
 start_visit_item_timer() ->

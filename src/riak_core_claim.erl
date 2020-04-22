@@ -70,7 +70,7 @@
 -compile(export_all).
 -ifdef(EQC).
 -export([prop_claim_ensures_unique_nodes/1, prop_wants/0, prop_wants_counts/0,eqc_check/2,
-         prop_claim_ensures_unique_nodes_v2/0, prop_claim_ensures_unique_nodes_v3/0,
+         prop_claim_ensures_unique_nodes_v2/0, % prop_claim_ensures_unique_nodes_v3/0,
          prop_take_idxs/0]).
 -include_lib("eqc/include/eqc.hrl").
 -endif.
@@ -1364,15 +1364,27 @@ claim_ensures_unique_nodes_adding_singly_v2_test_() ->
     {timeout, 120, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
 
 %% Run few tests in eunit and more if needed by calling "./rebar3 eqc"
-claim_ensures_unique_nodes_v3_test_() ->
-    Prop = eqc:numtests(5, ?QC_OUT(prop_claim_ensures_unique_nodes_old(choose_claim_v3))),
-    {timeout, 240, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
+% claim_ensures_unique_nodes_v3_test_() ->
+%     Prop = eqc:numtests(5, ?QC_OUT(prop_claim_ensures_unique_nodes_old(choose_claim_v3))),
+%     {timeout, 240, fun() -> ?assert(eqc:quickcheck(Prop)) end}.
 
 prop_claim_ensures_unique_nodes_v2() ->
     prop_claim_ensures_unique_nodes(choose_claim_v2).
 
-prop_claim_ensures_unique_nodes_v3() ->
-    prop_claim_ensures_unique_nodes(choose_claim_v3).
+%% No longer test properties of claim_v3.
+%% Although claim_v3 continues to exist as a hidden configuration option, it
+%% is known to fail to meet the required properties, and claim_v2 should be
+%% used in all known circumstances.
+%%
+%% TODO : Remove claim_v3 from the code base
+%%
+%% This TODO is currently deferred due to the difficulty of understanding
+%% how to test the full possibility of cluster change scenarios.  Perhaps
+%% there may be circumstances where a probabilistic approach to planning
+%% cluster changes may still be beneficial
+%%
+% prop_claim_ensures_unique_nodes_v3() ->
+%    prop_claim_ensures_unique_nodes(choose_claim_v3).
 
 %% NOTE: this is a less than adequate test that has been re-instated
 %% so that we don't leave the code worse than we found it. Work that

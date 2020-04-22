@@ -19,16 +19,20 @@
 %% -------------------------------------------------------------------
 -module(riak_core_metadata_exchange_fsm).
 
--behaviour(gen_fsm_compat).
+-behaviour(gen_fsm).
+
+-compile({nowarn_deprecated_function, 
+            [{gen_fsm, start, 3},
+                {gen_fsm, send_event, 2}]}).
 
 %% API
 -export([start/2]).
 
-%% gen_fsm_compat callbacks
+%% gen_fsm callbacks
 -export([init/1, handle_event/3, handle_sync_event/4,
          handle_info/3, terminate/3, code_change/4]).
 
-%% gen_fsm_compat states
+%% gen_fsm states
 -export([prepare/2,
          prepare/3,
          update/2,
@@ -71,14 +75,14 @@
 %% to aqcuire the remote lock or to upate both trees.
 -spec start(node(), pos_integer()) -> {ok, pid()} | ignore | {error, term()}.
 start(Peer, Timeout) ->
-    gen_fsm_compat:start(?MODULE, [Peer, Timeout], []).
+    gen_fsm:start(?MODULE, [Peer, Timeout], []).
 
 %%%===================================================================
-%%% gen_fsm_compat callbacks
+%%% gen_fsm callbacks
 %%%===================================================================
 
 init([Peer, Timeout]) ->
-    gen_fsm_compat:send_event(self(), start),
+    gen_fsm:send_event(self(), start),
     {ok, prepare, #state{peer=Peer,built=0,timeout=Timeout}}.
 
 handle_event(_Event, StateName, State) ->
@@ -98,7 +102,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
 %%%===================================================================
-%%% gen_fsm_compat states
+%%% gen_fsm states
 %%%===================================================================
 prepare(start, State) ->
     %% get local lock
@@ -296,6 +300,6 @@ as_event(F) ->
     Self = self(),
     spawn_link(fun() ->
                        Result = F(),
-                       gen_fsm_compat:send_event(Self, Result)
+                       gen_fsm:send_event(Self, Result)
                end),
     ok.
