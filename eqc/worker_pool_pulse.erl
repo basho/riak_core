@@ -59,7 +59,7 @@ handle_work(Work, _From, State) ->
 
 %% @doc Any amount of work should complete through any size pool.
 prop_any_pool() ->
-    ?SETUP(fun setup_and_teardown/1,
+    ?SETUP(fun setup_and_teardown/0,
            ?FORALL({Seed, ExtraWork, WorkList},
                    {pulse:seed(),
                     frequency([{10,true},{1,false}]),
