@@ -22,6 +22,14 @@
 
 -module(riak_core_vnode_manager).
 
+%% There is a dialyzer issue within exometer_core, as a temporary solution
+%% there will be no warnings from these specific functions
+%% - https://github.com/basho/riak_core/issues/946
+-dialyzer({nowarn_function, [get_vnode/3, register_vnode_stats/3]}).
+
+-compile({nowarn_deprecated_function, 
+            [{gen_fsm, send_all_state_event, 2}]}).
+
 -behaviour(gen_server).
 
 -export([start_link/0, stop/0]).
@@ -472,11 +480,11 @@ handle_vnode_event(inactive, Mod, Idx, Pid, State) ->
     {noreply, State};
 handle_vnode_event(handoff_complete, Mod, Idx, Pid, State) ->
     NewHO = dict:erase({Mod, Idx}, State#state.handoff),
-    gen_fsm_compat:send_all_state_event(Pid, finish_handoff),
+    gen_fsm:send_all_state_event(Pid, finish_handoff),
     {noreply, State#state{handoff=NewHO}};
 handle_vnode_event(handoff_error, Mod, Idx, Pid, State) ->
     NewHO = dict:erase({Mod, Idx}, State#state.handoff),
-    gen_fsm_compat:send_all_state_event(Pid, cancel_handoff),
+    gen_fsm:send_all_state_event(Pid, cancel_handoff),
     {noreply, State#state{handoff=NewHO}}.
 
 %% @private

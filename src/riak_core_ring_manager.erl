@@ -242,6 +242,7 @@ do_write_ringfile(Ring) ->
 do_write_ringfile(Ring, FN) ->
     ok = filelib:ensure_dir(FN),
     try
+        false = riak_core_ring:check_lastgasp(Ring),
         ok = riak_core_util:replace_file(FN, term_to_binary(Ring))
     catch
         _:Err ->
@@ -274,8 +275,11 @@ find_latest_ringfile() ->
 read_ringfile(RingFile) ->
     case file:read_file(RingFile) of
         {ok, Binary} ->
-            binary_to_term(Binary);
-        {error, Reason} -> {error, Reason}
+            R = binary_to_term(Binary),
+            false = riak_core_ring:check_lastgasp(R),
+            R;
+        {error, Reason} ->
+            {error, Reason}
     end.
 
 %% @spec prune_ringfiles() -> ok | {error, Reason}
@@ -748,7 +752,9 @@ do_write_ringfile_test() ->
     %% Check rename fails
     ok = file:change_mode(?TEST_RINGDIR, 8#00444),
     ?assertMatch({error,_}, do_write_ringfile(GenR(ring_perms), ?TEST_RINGFILE)),
-    ok = file:change_mode(?TEST_RINGDIR, 8#00755).
+    ok = file:change_mode(?TEST_RINGDIR, 8#00755),
+    ok = file:change_mode(?TEST_RINGFILE, 8#00644),
+    ok = file:delete(?TEST_RINGFILE).
 
 is_stable_ring_test() ->
     {A,B,C} = Now = os:timestamp(),

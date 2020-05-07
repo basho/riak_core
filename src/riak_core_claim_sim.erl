@@ -554,7 +554,8 @@ run_test() ->
                           {analysis, [{failures, 2},{n_val, 3}]},
                           {print,Fh},
                           {return_ring, false}])),
-    file:close(Fh).
+    file:close(Fh),
+    file:delete("sim.out").
 
 
 %% Decided not to run by default, perhaps better as an

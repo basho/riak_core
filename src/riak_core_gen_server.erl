@@ -182,7 +182,7 @@
 %%%  Preprocessor
 %%%=========================================================================
 
--ifdef(deprecated_21).
+-ifdef(deprecated_22).
 get_log(Debug) ->
     sys:get_log(Debug).
 -else.

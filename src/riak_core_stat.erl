@@ -20,6 +20,11 @@
 
 -module(riak_core_stat).
 
+%% There is a dialyzer issue within exometer_core, as a temporary solution
+%% there will be no warnings from these specific functions
+%% - https://github.com/basho/riak_core/issues/946
+-dialyzer({nowarn_function, register_vnode_stats/3}).
+
 -behaviour(gen_server).
 
 %% API

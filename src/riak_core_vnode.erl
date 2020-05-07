@@ -17,7 +17,17 @@
 %%
 %% -------------------------------------------------------------------
 -module('riak_core_vnode').
--behaviour(gen_fsm_compat).
+-behaviour(gen_fsm).
+
+-compile({nowarn_deprecated_function, 
+            [{gen_fsm, start_link, 3},
+                {gen_fsm, send_event, 2},
+                {gen_fsm, send_event_after, 2},
+                {gen_fsm, sync_send_event, 3},
+                {gen_fsm, send_all_state_event, 2},
+                {gen_fsm, sync_send_all_state_event, 2},
+                {gen_fsm, cancel_timer, 1}]}).
+
 -include("riak_core_vnode.hrl").
 -export([start_link/3,
          start_link/4,
@@ -59,7 +69,7 @@
 -ifdef(PULSE).
 -compile(export_all).
 -compile({parse_transform, pulse_instrument}).
--compile({pulse_replace_module, [{gen_fsm_compat, pulse_gen_fsm},
+-compile({pulse_replace_module, [{gen_fsm, pulse_gen_fsm},
                                  {gen_server, pulse_gen_server}]}).
 -endif.
 
@@ -134,7 +144,7 @@
 %% message and the function signature is: handle_exit(Pid, Reason, State).
 %%
 %% It should return a tuple indicating the next state for the fsm. For a list of
-%% valid return types see the documentation for the gen_fsm_compat handle_info callback.
+%% valid return types see the documentation for the gen_fsm handle_info callback.
 %%
 %% Here is what the spec for handle_exit/3 would look like:
 %% -spec handle_exit(pid(), atom(), term()) ->
@@ -170,20 +180,20 @@ start_link(Mod, Index, Forward) ->
     start_link(Mod, Index, 0, Forward).
 
 start_link(Mod, Index, InitialInactivityTimeout, Forward) ->
-    gen_fsm_compat:start_link(?MODULE,
+    gen_fsm:start_link(?MODULE,
                        [Mod, Index, InitialInactivityTimeout, Forward], []).
 
 %% Send a command message for the vnode module by Pid -
 %% typically to do some deferred processing after returning yourself
 send_command(Pid, Request) ->
-    gen_fsm_compat:send_event(Pid, ?VNODE_REQ{request=Request}).
+    gen_fsm:send_event(Pid, ?VNODE_REQ{request=Request}).
 
 
 %% Sends a command to the FSM that called it after Time
 %% has passed.
 -spec send_command_after(integer(), term()) -> reference().
 send_command_after(Time, Request) ->
-    gen_fsm_compat:send_event_after(Time, ?VNODE_REQ{request=Request}).
+    gen_fsm:send_event_after(Time, ?VNODE_REQ{request=Request}).
 
 
 init([Mod, Index, InitialInactivityTimeout, Forward]) ->
@@ -269,28 +279,28 @@ do_init(State = #state{index=Index, mod=Mod, forward=Forward}) ->
     end.
 
 wait_for_init(Vnode) ->
-    gen_fsm_compat:sync_send_event(Vnode, wait_for_init, infinity).
+    gen_fsm:sync_send_event(Vnode, wait_for_init, infinity).
 
 handoff_error(Vnode, Err, Reason) ->
-    gen_fsm_compat:send_event(Vnode, {handoff_error, Err, Reason}).
+    gen_fsm:send_event(Vnode, {handoff_error, Err, Reason}).
 
 get_mod_index(VNode) ->
-    gen_fsm_compat:sync_send_all_state_event(VNode, get_mod_index).
+    gen_fsm:sync_send_all_state_event(VNode, get_mod_index).
 
 set_forwarding(VNode, ForwardTo) ->
-    gen_fsm_compat:send_all_state_event(VNode, {set_forwarding, ForwardTo}).
+    gen_fsm:send_all_state_event(VNode, {set_forwarding, ForwardTo}).
 
 trigger_handoff(VNode, TargetIdx, TargetNode) ->
-    gen_fsm_compat:send_all_state_event(VNode, {trigger_handoff, TargetIdx, TargetNode}).
+    gen_fsm:send_all_state_event(VNode, {trigger_handoff, TargetIdx, TargetNode}).
 
 trigger_handoff(VNode, TargetNode) ->
-    gen_fsm_compat:send_all_state_event(VNode, {trigger_handoff, TargetNode}).
+    gen_fsm:send_all_state_event(VNode, {trigger_handoff, TargetNode}).
 
 trigger_delete(VNode) ->
-    gen_fsm_compat:send_all_state_event(VNode, trigger_delete).
+    gen_fsm:send_all_state_event(VNode, trigger_delete).
 
 core_status(VNode) ->
-    gen_fsm_compat:sync_send_all_state_event(VNode, core_status).
+    gen_fsm:sync_send_all_state_event(VNode, core_status).
 
 continue(State) ->
     {next_state, active, State, State#state.inactivity_timeout}.
@@ -1061,13 +1071,13 @@ monitor(ignore) ->
 start_manager_event_timer(Event, State=#state{mod=Mod, index=Idx}) ->
     riak_core_vnode_manager:vnode_event(Mod, Idx, self(), Event),
     stop_manager_event_timer(State),
-    T2 = gen_fsm_compat:send_event_after(30000, {send_manager_event, Event}),
+    T2 = gen_fsm:send_event_after(30000, {send_manager_event, Event}),
     State#state{manager_event_timer=T2}.
 
 stop_manager_event_timer(#state{manager_event_timer=undefined}) ->
     ok;
 stop_manager_event_timer(#state{manager_event_timer=T}) ->
-    _ = gen_fsm_compat:cancel_timer(T),
+    _ = gen_fsm:cancel_timer(T),
     ok.
 
 is_request_forwardable(#riak_core_fold_req_v2{forwardable=false}) ->
@@ -1114,19 +1124,19 @@ queue_work(PoolName, Work, From, VnodeWrkPool) ->
 %% @doc Reveal the underlying module state for testing
 -spec(get_modstate(pid()) -> {atom(), #state{}}).
 get_modstate(Pid) ->
-    {_StateName, State} = gen_fsm_compat:sync_send_all_state_event(Pid, current_state),
+    {_StateName, State} = gen_fsm:sync_send_all_state_event(Pid, current_state),
     {State#state.mod, State#state.modstate}.
 
 -ifdef(TEST).
 
 %% Start the garbage collection server
 test_link(Mod, Index) ->
-    gen_fsm_compat:start_link(?MODULE, [Mod, Index, 0, node()], []).
+    gen_fsm:start_link(?MODULE, [Mod, Index, 0, node()], []).
 
 %% Get the current state of the fsm for testing inspection
 -spec current_state(pid()) -> {atom(), #state{}} | {error, term()}.
 current_state(Pid) ->
-    gen_fsm_compat:sync_send_all_state_event(Pid, current_state).
+    gen_fsm:sync_send_all_state_event(Pid, current_state).
 
 pool_death_test_() ->
     {timeout, 60, [

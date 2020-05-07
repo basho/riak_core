@@ -23,6 +23,10 @@
 -module(riak_core_handoff_receiver).
 -include("riak_core_handoff.hrl").
 -behaviour(riak_core_gen_server).
+
+-compile({nowarn_deprecated_function, 
+            [{gen_fsm, sync_send_all_state_event, 3}]}).
+
 -export([start_link/0,                          % Don't use SSL
          start_link/1,                          % SSL options list, empty=no SSL
          set_socket/2,
@@ -141,7 +145,7 @@ process_message(?PT_MSG_BATCH, MsgData, State) ->
 process_message(?PT_MSG_OBJ, MsgData, State=#state{vnode=VNode, count=Count,
                                                    vnode_timeout_len=VNodeTimeout}) ->
     Msg = {handoff_data, MsgData},
-    try gen_fsm_compat:sync_send_all_state_event(VNode, Msg, VNodeTimeout) of
+    try gen_fsm:sync_send_all_state_event(VNode, Msg, VNodeTimeout) of
         ok ->
             State#state{count=Count+1};
         E={error, _} ->

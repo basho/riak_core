@@ -17,3 +17,7 @@ _build
 rebar.lock
 .DS_Store
 nonode@nohost
+data/*
+test/*.beam
+log/*
+core_vnode_eqc.log
