@@ -179,8 +179,14 @@ handle_event(worker_start, StateName, #state{pool=Pool, queue=Q, monitors=Monito
                     {next_state, queueing, State#state{queue=Rem, monitors=NewMonitors}}
             end;
         {empty, _} ->
-            %% StateName might be either 'ready' or 'shutdown'
-            {next_state, StateName, State}
+	    {next_state,
+	     %% If we are in state queueing with nothing in the queue,
+	     %% move to the ready state so that the next incoming job
+	     %% checks out the new worker from poolboy.
+	     if StateName==queueing -> ready;
+		true -> StateName
+	     end,
+	     State}
     end;
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
