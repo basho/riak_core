@@ -154,16 +154,14 @@
          run_multiple/2,
          run_remote/0,
          run_remote/1]).
--endif. % TEST
 
 -ifdef(EQC).
 -export([prop_correct/0, prop_sha/0, prop_est/0]).
 -include_lib("eqc/include/eqc.hrl").
 -endif.
 
--ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
--endif.
+-endif. %% TEST
 
 -define(NUM_SEGMENTS, (1024*1024)).
 -define(WIDTH, 1024).
@@ -1584,6 +1582,7 @@ opened_closed_test() ->
 %%% EQC
 %%%===================================================================
 
+-ifdef(TEST).
 -ifdef(EQC).
 prop_sha() ->
     %% NOTE: Generating 1MB (1024 * 1024) size binaries is incredibly slow
@@ -1691,4 +1690,5 @@ prop_est() ->
                 ?assertEqual(true, MaxDiff > Diff),
                 true
             end).
+-endif.
 -endif.

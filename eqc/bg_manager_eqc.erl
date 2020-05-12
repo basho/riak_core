@@ -19,7 +19,6 @@
 
 -module(bg_manager_eqc).
 
--ifdef(TEST).
 -ifdef(EQC).
 
 -include("include/riak_core_bg_manager.hrl").
@@ -857,5 +856,4 @@ prop_bgmgr_parallel() ->
                                                 Res == ok))
                          end))).
 
--endif.
 -endif.

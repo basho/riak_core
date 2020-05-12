@@ -244,6 +244,9 @@ weight(_, _, _, _) ->
 -define(QC_OUT(P),
         eqc:on_output(fun(Str, Args) -> io:format(user, Str, Args) end, P)).
 
+claim_test() ->
+    eqc:quickcheck(?QC_OUT(prop_claim(with_ring_size(5)))).
+
 eqc_check(File, Prop) ->
     {ok, Bytes} = file:read_file(File),
     CE = binary_to_term(Bytes),
