@@ -134,9 +134,9 @@ format_transfer_type(resize) ->
 format_transfer_type(repair) ->
     "Rp".
 
-format_transfer_size({Num, objects}) ->
+format_transfer_size({Num, objects}) when is_integer(Num) ->
     io_lib:format("~B Objs", [Num]);
-format_transfer_size({Num, bytes}) ->
+format_transfer_size({Num, bytes}) when is_integer(Num) ->
     riak_core_format:human_size_fmt("~.2f", Num);
 format_transfer_size(_) ->
     "--".
@@ -405,6 +405,7 @@ transfer_bytes_test() ->
     ?assertMatch("1.00 B", format_transfer_size({1, bytes})),
     ?assertMatch("976.56 KB", format_transfer_size({1000000, bytes})),
     ?assertMatch("1.00 MB", format_transfer_size({1048576, bytes})),
-    ?assertMatch("1.86 GB", format_transfer_size({2000000000, bytes})).
+    ?assertMatch("1.86 GB", format_transfer_size({2000000000, bytes})),
+    ?assertMatch("--", format_transfer_size({23.4, bytes})).
 
 -endif.
