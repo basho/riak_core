@@ -21,6 +21,10 @@
 
 -include("riak_core_handoff.hrl").
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -export([handoff_summary/3,
          handoff_details/3,
          collect_node_transfer_data/0]).
@@ -130,10 +134,10 @@ format_transfer_type(resize) ->
 format_transfer_type(repair) ->
     "Rp".
 
-format_transfer_size({Num, objects}) ->
+format_transfer_size({Num, objects}) when is_integer(Num) ->
     io_lib:format("~B Objs", [Num]);
-format_transfer_size({Num, bytes}) ->
-    riak_core_format:human_size_fmt("~B", Num);
+format_transfer_size({Num, bytes}) when is_integer(Num) ->
+    riak_core_format:human_size_fmt("~.2f", Num);
 format_transfer_size(_) ->
     "--".
 
@@ -389,3 +393,19 @@ maybe_add_down_nodes(DownNodes, Output) ->
             NodesDown = clique_status:alert([clique_status:list("(unreachable)", DownNodes)]),
             Output ++ [NodesDown]
     end.
+
+
+
+%% ===================================================================
+%% EUnit tests
+%% ===================================================================
+-ifdef(TEST).
+
+transfer_bytes_test() ->
+    ?assertMatch("1.00 B", format_transfer_size({1, bytes})),
+    ?assertMatch("976.56 KB", format_transfer_size({1000000, bytes})),
+    ?assertMatch("1.00 MB", format_transfer_size({1048576, bytes})),
+    ?assertMatch("1.86 GB", format_transfer_size({2000000000, bytes})),
+    ?assertMatch("--", format_transfer_size({23.4, bytes})).
+
+-endif.
