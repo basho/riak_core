@@ -67,6 +67,7 @@ print_member_status(Ring, LegacyGossip) ->
     io:format("~79..-s~n", [""]),
     AllStatus = lists:keysort(2, riak_core_ring:all_member_status(Ring)),
     IsPending = ([] /= riak_core_ring:pending_changes(Ring)),
+    Locations = riak_core_ring:get_nodes_locations(Ring),
 
     {Joining, Valid, Down, Leaving, Exiting} =
         lists:foldl(fun({Node, Status},
@@ -78,15 +79,16 @@ print_member_status(Ring, LegacyGossip) ->
 
                             {RingPercent, NextPercent} =
                                 pending_claim_percentage(Ring, Node),
+                            DisplayNode = maybe_add_location(Node, Locations),
 
                             case IsPending of
                                 true ->
-                                    io:format("~-8s  ~5.1f%    ~5.1f%    ~p~n",
+                                    io:format("~-8s  ~5.1f%    ~5.1f%    ~s~n",
                                               [StatusOut, RingPercent,
-                                               NextPercent, Node]);
+                                               NextPercent, DisplayNode]);
                                 false ->
-                                    io:format("~-8s  ~5.1f%      --      ~p~n",
-                                              [StatusOut, RingPercent, Node])
+                                    io:format("~-8s  ~5.1f%      --      ~s~n",
+                                              [StatusOut, RingPercent, DisplayNode])
                             end,
                             case Status of
                                 joining ->
@@ -105,6 +107,14 @@ print_member_status(Ring, LegacyGossip) ->
     io:format("Valid:~b / Leaving:~b / Exiting:~b / Joining:~b / Down:~b~n",
               [Valid, Leaving, Exiting, Joining, Down]),
     ok.
+
+maybe_add_location(Node, Locations) ->
+    case riak_core_location:get_node_location(Node, Locations) of
+        unknown ->
+            atom_to_list(Node);
+        Location ->
+            atom_to_list(Node) ++ " (" ++ Location ++ ")"
+    end.
 
 ring_status([]) ->
     {Claimant, RingReady, Down, MarkedDown, Changes} =
@@ -649,7 +659,9 @@ print_plan(Changes, Ring, NextRings) ->
                       io:format("resize-ring    ~p to ~p partitions~n",[CurrentSize,NewRingSize]);
                  ({_, abort_resize}) ->
                       CurrentSize = riak_core_ring:num_partitions(Ring),
-                      io:format("resize-ring    abort. current size: ~p~n", [CurrentSize])
+                      io:format("resize-ring    abort. current size: ~p~n", [CurrentSize]);
+                 ({Node, {set_location, Location}}) ->
+                      io:format("set-location  ~p to ~s~n", [Node, Location])
               end, Changes),
     io:format("~79..-s~n", [""]),
     io:format("~n"),
