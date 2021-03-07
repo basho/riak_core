@@ -110,7 +110,7 @@ print_member_status(Ring, LegacyGossip) ->
 
 maybe_add_location(Node, Locations) ->
     case riak_core_location:get_node_location(Node, Locations) of
-        unknown ->
+        undefined ->
             atom_to_list(Node);
         Location ->
             atom_to_list(Node) ++ " (" ++ Location ++ ")"
@@ -707,6 +707,13 @@ output(Ring, NextRing) ->
             ok;
         _ ->
             io:format("WARNING: Not all replicas will be on distinct nodes~n~n")
+    end,
+
+    case riak_core_location:check_ring(FutureRing) of
+        [] ->
+            ok;
+        _ ->
+            io:format("WARNING: Not all replicas will be on distinct locations~n~n")
     end,
 
     Owners1 = riak_core_ring:all_owners(Ring),

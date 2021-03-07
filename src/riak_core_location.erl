@@ -3,13 +3,15 @@
 %% API
 -export([get_node_location/2,
          has_location_set_in_cluster/1,
-         stripe_nodes_by_location/2]).
+         stripe_nodes_by_location/2,
+         check_ring/1,
+         check_ring/2]).
 
--spec get_node_location(node(), dict:dict()) -> string() | unknown.
+-spec get_node_location(node(), dict:dict()) -> string() | undefined.
 get_node_location(Node, Locations) ->
   case dict:find(Node, Locations) of
     error ->
-      unknown;
+      undefined;
     {ok, Location} ->
       Location
   end.
@@ -21,7 +23,7 @@ has_location_set_in_cluster(NodesLocations) ->
 -spec get_location_nodes([node()|undefined], dict:dict()) -> dict:dict().
 get_location_nodes(Nodes, Locations) ->
   lists:foldl(fun(undefined, Acc) ->
-                   dict:append(unknown, undefined, Acc);
+                   dict:append(undefined, undefined, Acc);
                  (Node, Acc) ->
                    NodeLocation = get_node_location(Node, Locations),
                    dict:append(NodeLocation, Node, Acc)
@@ -32,10 +34,29 @@ get_location_nodes(Nodes, Locations) ->
   [node()|undefined].
 stripe_nodes_by_location(Nodes, NodesLocations) ->
   LocationsNodes = get_location_nodes(Nodes, NodesLocations),
-  Locations = dict:fetch_keys(LocationsNodes),
-  stripe_nodes_by_location(Locations, LocationsNodes, []).
+  stripe_nodes_by_location(get_locations(LocationsNodes), LocationsNodes, []).
 
--spec stripe_nodes_by_location([node()|undefined], dict:dict(), [node()|undefined]) ->
+-spec get_locations(dict:dict()) -> [node()|undefined].
+get_locations(LocationsNodes) ->
+  LocationNodesSorted = sort_by_node_count(dict:to_list(LocationsNodes)),
+  lists:map(fun({Location, _}) -> Location end, LocationNodesSorted).
+
+-spec sort_by_node_count(list()) -> list().
+sort_by_node_count(LocationsNodes) ->
+  lists:sort(fun compare/2, LocationsNodes).
+
+-spec compare({any(), list()}, {any(), list()}) -> boolean().
+compare({_, NodesA}, {_, NodesB}) ->
+  LengthA = length(NodesA),
+  LengthB = length(NodesB),
+  case LengthA =:= LengthB of
+    true ->
+      lists:last(NodesA) >= lists:last(NodesB);
+    _ ->
+      LengthA >= LengthB
+  end.
+
+-spec stripe_nodes_by_location([node()|undefined], dist:dict(), [node()|undefined]) ->
   [node()|undefined].
 stripe_nodes_by_location([], _LocationsNodes, NewNodeList)  ->
   lists:reverse(NewNodeList);
@@ -51,3 +72,33 @@ stripe_nodes_by_location(Locations, LocationsNodes, NewNodeList) ->
       NewLocationNodes = dict:store(CurrentLocation, RemNodes, LocationsNodes),
       stripe_nodes_by_location(Locations, NewLocationNodes, [Node | NewNodeList])
   end.
+
+-spec check_ring(riak_core_ring:riak_core_ring()) -> list().
+check_ring(Ring) ->
+  {ok, Props} = application:get_env(riak_core, default_bucket_props),
+  check_ring(Ring, proplists:get_value(n_val, Props)).
+
+-spec check_ring(riak_core_ring:riak_core_ring(), pos_integer()) -> list().
+check_ring(Ring, Nval) ->
+  Locations = riak_core_ring:get_nodes_locations(Ring),
+  case has_location_set_in_cluster(Locations) of
+    true ->
+      check_ring(Ring, Nval, Locations);
+    _ ->
+      [] % no location set, not needed to check
+  end.
+
+-spec check_ring(riak_core_ring:riak_core_ring(), pos_integer(), dict:dict()) ->
+  list().
+check_ring(Ring, Nval, Locations) ->
+  lists:foldl(fun(PL, Acc) ->
+                case length(get_unique_locations(PL, Locations)) of
+                  Nval -> Acc;
+                  _ -> [PL | Acc]
+                end
+              end, [], riak_core_ring:all_preflists(Ring, Nval)).
+
+-spec get_unique_locations(list(), dict:dict()) ->
+  list().
+get_unique_locations(PrefLists, Locations) ->
+  lists:usort([get_node_location(Node, Locations) || {_, Node} <- PrefLists]).

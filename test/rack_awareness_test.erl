@@ -12,7 +12,7 @@
 -define(RING_SIZES, [8, 64, 128, 256, 512]).
 -define(NODE_COUNTS, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 20]).
 
-sync_test_() ->
+ring_claim_test_() ->
     {setup,
      fun generate_rings/0,
      fun (_) -> ok end,
@@ -110,36 +110,64 @@ assert_vnode_location(Ring) ->
 assert_vnode_location(_Ring, []) ->
   true;
 assert_vnode_location(Ring, Locations) ->
-  Owners = riak_core_ring:all_owners(Ring),
-  CheckResult = check(Owners, Locations),
+  CheckResult = check(Ring, Locations),
   case CheckResult of
     false ->
-      Data = print_ring_partitions(Owners, Locations, "\r\n\r\n"),
+      Owners = riak_core_ring:all_owners(Ring),
+      Members = riak_core_ring:all_members(Ring),
+      Data = print_ring_partitions(Owners, Locations, ""),
       RSize = io_lib:format("Ring size: ~p~n", [length(Owners)]),
       LocationData = io_lib:format("Location data: ~p~n", [Locations]),
-      NewData = ["***********************\r\n", RSize, LocationData, "\r\n" |Data],
+      MemberCount = io_lib:format("Nodes: ~p~n", [length(Members)]),
+      RingErrors = io_lib:format("Check ring: ~p~n",
+                                 [riak_core_location:check_ring(Ring, 3)]),
+      NewData = ["\r\n *********************** \r\n", RSize, MemberCount,
+                 LocationData, RingErrors, "\r\n" | Data],
       file:write_file("ring_debug.txt", NewData, [append, write]);
     _ ->
       ok
   end,
   ?assert(CheckResult).
 
-check(Owners, Locations) ->
-  UniqueLoc = get_unique_locations(Locations),
-  MaxError = (length(Owners) - length(UniqueLoc)),
-  check(Owners, Locations, not_set, MaxError).
+check(Ring, Locations) ->
+  Owners = riak_core_ring:all_owners(Ring),
+  MemberCount = length(riak_core_ring:active_members(Ring)),
+  NVal = 3,
+  Rs = length(Owners),
+  UniqueLocCount = length(get_unique_locations(Locations)),
 
-check([], _Locations, _LastLoc, _MaxError) ->
-  true;
-check([{_Idx, Node} | Rem], Locations, LastLoc, MaxError) ->
-  case proplists:get_value(Node, Locations, not_set) of
-    LastLoc when MaxError > 0 ->
-      check(Rem, Locations, LastLoc, MaxError-1);
-    LastLoc ->
+  MaxError = get_max_error(NVal, Rs, MemberCount, UniqueLocCount),
+  case riak_core_location:check_ring(Ring, NVal) of
+    Errors when length(Errors) > MaxError ->
+      io:format("Max error; ~p > ~p | ~p~n",
+                [length(Errors), MaxError, {NVal, Rs, MemberCount,
+                                                    UniqueLocCount}]),
       false;
-    NewLoc ->
-      check(Rem, Locations, NewLoc, MaxError)
+    _ ->
+      true
   end.
+
+% @TODO better evaluation
+get_max_error(NVal, RingSize, MemberCount, UniqueLocationCount)
+  when UniqueLocationCount > NVal andalso
+       MemberCount == UniqueLocationCount andalso
+       RingSize rem MemberCount == 0 ->
+  0;
+get_max_error(NVal, _RingSize, MemberCount, UniqueLocationCount)
+  when UniqueLocationCount > NVal andalso
+       MemberCount == UniqueLocationCount ->
+  NVal;
+get_max_error(NVal, RingSize, MemberCount, UniqueLocationCount)
+  when RingSize rem MemberCount == 0 -> % no tail violations
+  MaxNodesOnSameLoc = (MemberCount - UniqueLocationCount)+1,
+  case MaxNodesOnSameLoc > NVal of
+    true ->
+      RingSize;
+    false  ->
+      (RingSize - ((NVal rem MaxNodesOnSameLoc))+1)
+  end;
+get_max_error(_NVal, RingSize, _MemberCount, _UniqueLocationCount) ->
+  RingSize.
 
 get_unique_locations(Locations) ->
   lists:foldl(fun({_, ActualLoc}, Acc) ->
@@ -155,7 +183,7 @@ print_ring_partitions(Owners, Locations) ->
   io:format(user, "~s", [print_ring_partitions(Owners, Locations, [])]).
 
 print_ring_partitions([], _Locations, Acc) ->
-  Acc;
+  lists:reverse(Acc);
 print_ring_partitions([{Idx, Node} | Rem], Locations, Acc) ->
   Location = proplists:get_value(Node, Locations, not_set),
   Line = io_lib:format("Node: ~p \t Loc: ~p \t idx: ~p ~n", [Node, Location, Idx]),
