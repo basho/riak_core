@@ -48,8 +48,7 @@ register_all_usage() ->
     clique:register_usage(["riak-admin", "cluster", "partitions"], partitions_usage()),
     clique:register_usage(["riak-admin", "cluster", "partition_count"], partition_count_usage()),
     clique:register_usage(["riak-admin", "cluster", "partition_count"], partition_count_usage()),
-    clique:register_usage(["riak-admin", "cluster", "location"], location_usage()),
-    clique:register_usage(["riak-admin", "cluster", "location", '*'], location_usage()).
+    clique:register_usage(["riak-admin", "cluster", "location"], location_usage()).
 
 register_all_commands() ->
     lists:foreach(fun(Args) -> apply(clique, register_command, Args) end,
