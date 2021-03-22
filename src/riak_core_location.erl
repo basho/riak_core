@@ -5,7 +5,8 @@
          has_location_set_in_cluster/1,
          stripe_nodes_by_location/2,
          check_ring/1,
-         check_ring/2]).
+         check_ring/2,
+         check_ring/3]).
 
 -spec get_node_location(node(), dict:dict()) -> string() | undefined.
 get_node_location(Node, Locations) ->
@@ -80,21 +81,27 @@ check_ring(Ring) ->
 
 -spec check_ring(riak_core_ring:riak_core_ring(), pos_integer()) -> list().
 check_ring(Ring, Nval) ->
+  check_ring(Ring, Nval, Nval).
+
+-spec check_ring(riak_core_ring:riak_core_ring(), pos_integer(), pos_integer()) -> list().
+check_ring(Ring, NVal, MinimumNumberOfDistinctLocations) ->
   Locations = riak_core_ring:get_nodes_locations(Ring),
   case has_location_set_in_cluster(Locations) of
     true ->
-      check_ring(Ring, Nval, Locations);
+      check_ring(Ring, NVal, MinimumNumberOfDistinctLocations, Locations);
     _ ->
       [] % no location set, not needed to check
   end.
 
--spec check_ring(riak_core_ring:riak_core_ring(), pos_integer(), dict:dict()) ->
+-spec check_ring(riak_core_ring:riak_core_ring(), pos_integer(), pos_integer(), dict:dict()) ->
   list().
-check_ring(Ring, Nval, Locations) ->
+check_ring(Ring, Nval, MinimumNumberOfDistinctLocations, Locations) ->
   lists:foldl(fun(PL, Acc) ->
-                case length(get_unique_locations(PL, Locations)) of
-                  Nval -> Acc;
-                  _ -> [PL | Acc]
+                case length(get_unique_locations(PL, Locations)) < MinimumNumberOfDistinctLocations of
+                  false -> Acc;
+                  _ ->
+                    Error = [{Idx, Node, get_node_location(Node, Locations)} || {Idx, Node} <- PL],
+                    [Error | Acc]
                 end
               end, [], riak_core_ring:all_preflists(Ring, Nval)).
 
