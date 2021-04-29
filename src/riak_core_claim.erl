@@ -187,7 +187,12 @@ wants_claim_v2(Ring, Node) ->
     Count = proplists:get_value(Node, Counts, 0),
     case Count < Avg of
         false ->
-            no;
+            case riak_core_ring:has_location_changed(Ring) of
+              true ->
+                {yes, 1};
+              false ->
+                no
+            end;
         true ->
             {yes, Avg - Count}
     end.
@@ -289,7 +294,8 @@ choose_claim_v2(Ring, Node) ->
     Params = default_choose_params(),
     choose_claim_v2(Ring, Node, Params).
 
-choose_claim_v2(Ring, Node, Params0) ->
+choose_claim_v2(RingOrig, Node, Params0) ->
+    Ring = riak_core_ring:clear_location_changed(RingOrig),
     Params = default_choose_params(Params0),
     %% Active::[node()]
     Active = riak_core_ring:claiming_members(Ring),
@@ -326,7 +332,8 @@ choose_claim_v2(Ring, Node, Params0) ->
             %% number of indices desired is less than the computed set.
             Padding = lists:duplicate(TargetN, undefined),
             Expanded = lists:sublist(Active ++ Padding, TargetN),
-            PreferredClaim = riak_core_claim:diagonal_stripe(Ring, Expanded),
+            ExpandedLocation = get_nodes_by_location(Expanded, Ring),
+            PreferredClaim = riak_core_claim:diagonal_stripe(Ring, ExpandedLocation),
             PreferredNth = [begin
                                 {Nth, Idx} = lists:keyfind(Idx, 2, AllIndices),
                                 Nth
@@ -343,8 +350,10 @@ choose_claim_v2(Ring, Node, Params0) ->
     Indices2 = prefilter_violations(Ring, Node, AllIndices, Indices,
                                     TargetN, RingSize),
     %% Claim indices from the remaining candidate set
-    Claim = select_indices(Owners, Deltas, Indices2, TargetN, RingSize),
-    Claim2 = lists:sublist(Claim, Want),
+    Claim2 = case select_indices(Owners, Deltas, Indices2, TargetN, RingSize) of
+                 [] -> [];
+                 Claim -> lists:sublist(Claim, Want)
+             end,
     NewRing = lists:foldl(fun(Idx, Ring0) ->
                                   riak_core_ring:transfer_node(Idx, Node, Ring0)
                           end, Ring, Claim2),
@@ -622,7 +631,8 @@ claim_diagonal(Wants, Owners, Params) ->
                               riak_core_ring:riak_core_ring().
 sequential_claim(Ring0, Node, TargetN) ->
     Ring = riak_core_ring:upgrade(Ring0),
-    Nodes = lists:usort([Node|riak_core_ring:claiming_members(Ring)]),
+    OrigNodes = lists:usort([Node|riak_core_ring:claiming_members(Ring)]),
+    Nodes = get_nodes_by_location(OrigNodes, Ring),
     NodeCount = length(Nodes),
     RingSize = riak_core_ring:num_partitions(Ring),
 
@@ -709,7 +719,8 @@ backfill_ring(RingSize, Nodes, Remaining, Acc) ->
 
 claim_rebalance_n(Ring0, Node) ->
     Ring = riak_core_ring:upgrade(Ring0),
-    Nodes = lists:usort([Node|riak_core_ring:claiming_members(Ring)]),
+    OrigNodes = lists:usort([Node|riak_core_ring:claiming_members(Ring)]),
+    Nodes = get_nodes_by_location(OrigNodes, Ring),
     Zipped = diagonal_stripe(Ring, Nodes),
 
     lists:foldl(fun({P, N}, Acc) ->
@@ -1269,6 +1280,19 @@ indices_within_n([This | Indices], TN, Last, Q, Acc) ->
 %% [a,b,c,a,b,c] - distance of a apart distance(0, 3) == 3
 circular_distance(I1, I2, Q) ->
     min((Q + I1 - I2) rem Q, (Q + I2 - I1) rem Q).
+
+%% @private
+%% Get active nodes ordered by take location parameters into account
+-spec get_nodes_by_location([node()|undefined], riak_core_ring:riak_core_ring()) ->
+  [node()|undefined].
+get_nodes_by_location(Nodes, Ring) ->
+  NodesLocations = riak_core_ring:get_nodes_locations(Ring),
+  case riak_core_location:has_location_set_in_cluster(NodesLocations) of
+    false ->
+      Nodes;
+    true ->
+      riak_core_location:stripe_nodes_by_location(Nodes, NodesLocations)
+  end.
 
 %% ===================================================================
 %% Unit tests

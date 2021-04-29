@@ -81,6 +81,10 @@
          set_member/4,
          set_member/5,
          members/2,
+         has_location_changed/1,
+         clear_location_changed/1,
+         set_node_location/3,
+         get_nodes_locations/1,
          set_claimant/2,
          increment_vclock/2,
          ring_version/1,
@@ -325,6 +329,28 @@ all_members(?CHSTATE{members=Members}) ->
 
 members(?CHSTATE{members=Members}, Types) ->
     get_members(Members, Types).
+
+-spec has_location_changed(chstate()) -> boolean().
+has_location_changed(State) ->
+  {ok, Value} = get_meta('$nodes_locations_changed', false, State),
+  Value.
+
+-spec clear_location_changed(chstate()) -> chstate().
+clear_location_changed(State) ->
+  update_meta('$nodes_locations_changed', false, State).
+
+-spec set_node_location(node(), string(), chstate()) -> chstate().
+set_node_location(Node, Location, State) ->
+  NodesLocations = get_nodes_locations(State),
+  NewNodesLocations = dict:store(Node, Location, NodesLocations),
+  NewState = update_meta('$nodes_locations_changed', true, State),
+  update_meta('$nodes_locations', NewNodesLocations, NewState).
+
+-spec get_nodes_locations(chstate()) -> dict:dict().
+get_nodes_locations(?CHSTATE{members =Members} = ChState) ->
+  {ok, Value} = get_meta('$nodes_locations', dict:new(), ChState),
+  Nodes = get_members(Members),
+  dict:filter(fun(Node, _) -> lists:member(Node, Nodes) end, Value).
 
 %% @doc Produce a list of all active (not marked as down) cluster members
 active_members(?CHSTATE{members=Members}) ->

@@ -46,12 +46,14 @@ register_all_usage() ->
     clique:register_usage(["riak-admin", "cluster", "status"], status_usage()),
     clique:register_usage(["riak-admin", "cluster", "partition"], partition_usage()),
     clique:register_usage(["riak-admin", "cluster", "partitions"], partitions_usage()),
-    clique:register_usage(["riak-admin", "cluster", "partition_count"], partition_count_usage()).
+    clique:register_usage(["riak-admin", "cluster", "partition_count"], partition_count_usage()),
+    clique:register_usage(["riak-admin", "cluster", "partition_count"], partition_count_usage()),
+    clique:register_usage(["riak-admin", "cluster", "location"], location_usage()).
 
 register_all_commands() ->
     lists:foreach(fun(Args) -> apply(clique, register_command, Args) end,
                   [status_register(), partition_count_register(),
-                   partitions_register(), partition_register()]).
+                   partitions_register(), partition_register(), location_register()]).
 
 %%%
 %% Cluster status
@@ -72,6 +74,7 @@ cluster_usage() ->
      "    partition        Map partition IDs to indexes\n",
      "    partitions       Display partitions on a node\n",
      "    partition-count  Display ring size or node partition count\n\n",
+     "    location         Set node location\n\n",
      "  Use --help after a sub-command for more details.\n"
     ].
 
@@ -111,12 +114,20 @@ status(_CmdBase, [], []) ->
     [T0,T1,Table,T2].
 
 format_status(Node, Status, Ring, RingStatus) ->
-    {Claimant, _RingReady, Down, MarkedDown, Changes} = RingStatus,
-    [{node, is_claimant(Node, Claimant)},
-     {status, Status},
-     {avail, node_availability(Node, Down, MarkedDown)},
-     {ring, claim_percent(Ring, Node)},
-     {pending, future_claim_percentage(Changes, Ring, Node)}].
+  NodesLocations = riak_core_ring:get_nodes_locations(Ring),
+  HasLocationInCluster = riak_core_location:has_location_set_in_cluster(NodesLocations),
+  format_status(Node, Status, Ring, RingStatus, HasLocationInCluster, NodesLocations).
+
+format_status(Node, Status, Ring, RingStatus, false, _) ->
+  {Claimant, _RingReady, Down, MarkedDown, Changes} = RingStatus,
+  [{node, is_claimant(Node, Claimant)},
+   {status, Status},
+   {avail, node_availability(Node, Down, MarkedDown)},
+   {ring, claim_percent(Ring, Node)},
+   {pending, future_claim_percentage(Changes, Ring, Node)}];
+format_status(Node, Status, Ring, RingStatus, true, NodesLocations) ->
+  Row = format_status(Node, Status, Ring, RingStatus, false, NodesLocations),
+  Row ++ [{location, riak_core_location:get_node_location(Node, NodesLocations)}].
 
 is_claimant(Node, Node) ->
     " (C) " ++ atom_to_list(Node) ++ " ";
@@ -262,6 +273,45 @@ id_out1(id, Id, Ring, RingSize) when Id < RingSize ->
     clique_status:table([[{index, Idx}, {id, Id}, {node, Owner}]]);
 id_out1(id, Id, _Ring, _RingSize) ->
     make_alert(["ERROR: Id ", integer_to_list(Id), " is invalid."]).
+
+
+%%%
+%% Location
+%%%
+location_usage() ->
+  ["riak-admin cluster location <new_location> [--node node]\n\n",
+   "  Set the node location parameter\n\n",
+   "Options\n",
+   "  -n <node>, --node <node>\n",
+   "      Set node location for the specified node.\n"
+  ].
+
+location_register() ->
+  [["riak-admin", "cluster", "location", '*'],  % Cmd
+   [], % KeySpecs
+   [{node, [{shortname, "n"}, {longname, "node"},
+            {typecast, fun clique_typecast:to_node/1}]}], % FlagSpecs
+    fun stage_set_location/3].                            % Implementation callback
+
+stage_set_location([_, _, _, Location], _, Flags) ->
+  Node = proplists:get_value(node, Flags, node()),
+  try
+    case riak_core_claimant:set_node_location(Node, Location) of
+      ok ->
+        [clique_status:text(
+          io_lib:format("Success: staged changing location of node ~p to ~s~n",
+                        [Node, Location]))];
+      {error, not_member} ->
+        make_alert(
+          io_lib:format("Failed: ~p is not a member of the cluster.~n", [Node])
+        )
+    end
+  catch
+    Exception:Reason ->
+      lager:error("Setting node location failed ~p:~p", [Exception, Reason]),
+      make_alert("Setting node location failed, see log for details~n")
+  end.
+
 
 %%%
 %% Internal
