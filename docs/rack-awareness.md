@@ -62,7 +62,15 @@ When Ring Size not divisible by Count Of Nodes.
 For example, there are 8 nodes on 3 distinct locations. 
 To ensure that every site/location has a piece of data, n_val must be at least 4.
 
-It can be checked: 
+It can be checked:
+
+Stages changes:
+```erlang 
+PlannedRing = element(1, lists:last(element(3, riak_core_claimant:plan()))).
+riak_core_location:check_ring(PlannedRing, Nval = 4, MinimumNumberOfDistinctLocations = 3).
+```
+ 
+Actual ring:
 ```erlang 
 {ok, Ring} = riak_core_ring_manager:get_my_ring(),
 riak_core_location:check_ring(Ring, Nval = 4, MinimumNumberOfDistinctLocations = 3).
