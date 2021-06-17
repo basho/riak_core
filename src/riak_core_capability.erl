@@ -148,12 +148,14 @@ get(Capability, Default) ->
     try
         case ets:lookup(?ETS, Capability) of
             [] ->
+                lager:info("Capability ~w not in lookup", [Capability]),
                 Default;
             [{Capability, Choice}] ->
                 Choice
         end
     catch
         _:_ ->
+            lager:info("ETS error for lookup of ~w", [Capability]),
             Default
     end.
 
@@ -606,6 +608,7 @@ query_capability(_, Capability, DefaultSup, undefined) ->
 query_capability(Node, Capability, DefaultSup, {App, Var, Map}) ->
     Default = {Capability, [DefaultSup]},
     Result = riak_core_util:safe_rpc(Node, application, get_env, [App, Var]),
+    lager:info("Result ~w from capability query ~w ~w ~w", [Result, Node, App, Var]),
     case Result of
         {badrpc, _} ->
             {false, Default};
