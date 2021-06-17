@@ -418,11 +418,23 @@ add_supported_to_ring(Node, Supported, Ring) ->
                       -> [{capability(), mode()}].
 preferred_modes(MyCaps, Capabilities, Registered, Override) ->
     N1 = reformat_capabilities(Registered, Capabilities),
+    log_obhv(N1, 1),
     N2 = intersect_capabilities(N1),
+    log_obhv(N2, 2),
     N3 = order_by_preference(MyCaps, N2),
+    log_obhv(N3, 3),
     N4 = override_capabilities(N3, Override),
+    log_obhv(N4, 4),
     N5 = [{Cap, hd(Common)} || {Cap, Common} <- N4],
     N5.
+
+log_obhv(Capabilities, Stage) ->
+    case lists:keyfind({riak_kv, object_hash_version}, 1, Capabilities) of
+        {K, V} ->
+            lager:info("Capability ~p at stage ~w", [{K, V}, Stage]);
+        _ ->
+            lager:info("No capability found at stage ~w", [Stage])
+    end.
 
 %% Given the current view of each node's supported capabilities, determine
 %% the most preferred mode for each capability that is supported by all nodes
