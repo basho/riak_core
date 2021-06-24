@@ -680,4 +680,59 @@ basic_test() ->
     ?assertEqual([{{riak_core, test}, x}], S8#state.negotiated),
     ok.
 
+object_hash_version_test() ->
+    S1 = init_state([]),
+    S2 = register_capability(n1, 
+                             {riak_kv, object_hash_version},
+                             capability_info([x,a,c,y], y, []),
+                             S1),
+    S3 = add_node_capabilities(n2,
+                               [{{riak_kv, object_hash_version}, [a,b,c,y]}],
+                               S2),
+    S4 = add_node_capabilities(n3,
+                               [{{riak_core, test}, [b]}],
+                               S3),
+    S5 = negotiate_capabilities(n1, [{riak_kv, []}], S4),
+    %% If one node doesn't have the capability use the default
+    ?assertEqual([{{riak_kv, object_hash_version}, y}], S5#state.negotiated),
+    S6 = add_node_capabilities(n3,
+                               [{{riak_kv, object_hash_version}, [a, b]}],
+                               S4),
+    %% Once the node has the capability it is negotiated 
+    S7 = negotiate_capabilities(n1, [{riak_kv, []}], S6),
+    ?assertEqual([{{riak_kv, object_hash_version}, a}], S7#state.negotiated),
+    %% Confirm that override default works regardless of capability being
+    %% on every node 
+    S8 = negotiate_capabilities(n1, 
+                                    [{riak_kv,
+                                        [{object_hash_version, [{use, c}]}]}],
+                                    S6),
+    ?assertEqual([{{riak_kv, object_hash_version}, c}], S8#state.negotiated),
+    S9 = negotiate_capabilities(n1,
+                                    [{riak_kv,
+                                        [{object_hash_version, [{use, c}]}]}],
+                                    S4),
+    ?assertEqual([{{riak_kv, object_hash_version}, c}], S9#state.negotiated),
+    
+    %% If the local node doesn't have the capability - override is irrelevant
+    %% and no capability is returned
+    S11 = init_state([]),
+    S12 = register_capability(n1, 
+                             {riak_core, test},
+                             capability_info([x,a,c,y], y, []),
+                             S11),
+    S13 = add_node_capabilities(n2,
+                               [{{riak_kv, object_hash_version}, [a,b,c,y]}],
+                               S12),
+    Caps = orddict:fetch(n1, S13#state.supported),
+    ?assertEqual( [{{riak_core,test},[x,a,c,y]}], Caps),
+    S14 = negotiate_capabilities(n1,
+                                    [{riak_core, []},
+                                        {riak_kv,
+                                            [{object_hash_version,
+                                                [{use, c}]}]}],
+                                    S13),
+    ?assertEqual([{{riak_core, test}, y}], S14#state.negotiated).
+
+
 -endif.
