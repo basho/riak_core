@@ -158,6 +158,7 @@ common_defaults() ->
      {pw, 0},
      {dw, quorum},
      {rw, quorum},
+     {sync_on_write, backend},
      {basic_quorum, false},
      {notfound_ok, true},
      {n_val,3},
