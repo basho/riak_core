@@ -64,7 +64,8 @@
          choose_claim_v2/1, choose_claim_v2/2, choose_claim_v2/3,
          choose_claim_v3/1, choose_claim_v3/2, choose_claim_v3/3,
          claim_rebalance_n/2, claim_diversify/3, claim_diagonal/3,
-         wants/1, wants_owns_diff/2, meets_target_n/2, diagonal_stripe/2]).
+         wants/1, wants_owns_diff/2, meets_target_n/2, diagonal_stripe/2,
+         sequential_claim/2]).
 
 -ifdef(TEST).
 -compile(export_all).
@@ -619,6 +620,10 @@ claim_diagonal(Wants, Owners, Params) ->
                    lists:sublist(Claiming, Tail)
            end,
     {lists:flatten([lists:duplicate(Reps, Claiming), Last]), [diagonalized]}.
+
+sequential_claim(Ring, Node) ->
+    TN = app_helper:get_env(riak_core, target_n_val, ?DEF_TARGET_N),
+    sequential_claim(Ring, Node, TN).
 
 %% @private fall back to diagonal striping vnodes across nodes in a
 %% sequential round robin (eg n1 | n2 | n3 | n4 | n5 | n1 | n2 | n3

@@ -388,7 +388,7 @@ remove_from_cluster(Ring, ExitingNode, Seed) ->
                              end,
                              Ring,
                              AllOwners),
-                riak_core_claim:claim_rebalance_n(TempRing, Other)
+                riak_core_claim:sequential_claim(TempRing, Other)
         end,
     ExitRing.
 
