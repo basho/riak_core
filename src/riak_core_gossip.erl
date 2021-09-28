@@ -400,7 +400,9 @@ attempt_simple_transfer(_Seed, _Ring, _Owners, _ExitingNode, true) ->
     always_rebalance_onleave;
 attempt_simple_transfer(Seed, Ring, Owners, ExitingNode, false) ->
     TargetN = app_helper:get_env(riak_core, target_n_val),
-    Counts = riak_core_claim:get_counts(Owners, Owners),
+    Counts =
+        riak_core_claim:get_counts(riak_core_ring:claiming_members(Ring),
+                                    Owners),
     attempt_simple_transfer(Seed, Ring, Owners,
                             TargetN,
                             ExitingNode, 0,
