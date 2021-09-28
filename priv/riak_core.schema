@@ -202,6 +202,16 @@
     hidden
 ]}.
 
+%% @doc On cluster leave - rebalance partitions
+%% By default on a cluster leave there will be an attempt to simply handoff
+%% vnodes in a random (and potentially unbalanced) way, which will also ignored
+%% location preferences
+{mapping, "always_rebalance_onleave", "riak_core.always_rebalance_onleave", [
+    {datatype, flag},
+    {default, off}
+]}.
+
+
 %% Async Job Management
 %%
 %% This is a translation for mappings that appear in other schema files.
