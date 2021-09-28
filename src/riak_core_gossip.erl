@@ -400,47 +400,70 @@ attempt_simple_transfer(_Seed, _Ring, _Owners, _ExitingNode, true) ->
     always_rebalance_onleave;
 attempt_simple_transfer(Seed, Ring, Owners, ExitingNode, false) ->
     TargetN = app_helper:get_env(riak_core, target_n_val),
+    Counts = riak_core_claim:get_counts(Owners, Owners),
     attempt_simple_transfer(Seed, Ring, Owners,
                             TargetN,
                             ExitingNode, 0,
                             [{O,-TargetN} || O <- riak_core_ring:claiming_members(Ring),
-                                             O /= ExitingNode]).
+                                             O /= ExitingNode],
+                            Counts).
 
-attempt_simple_transfer(Seed, Ring, [{P, Exit}|Rest], TargetN, Exit, Idx, Last) ->
-    %% handoff
+attempt_simple_transfer(Seed, Ring, [{P, Exit}|Rest],
+                        TargetN, Exit, Idx, Last, Counts) ->
     case [ N || {N, I} <- Last, Idx-I >= TargetN ] of
         [] ->
             target_n_fail;
         Candidates ->
-            %% these nodes don't violate target_n in the reverse direction
-            StepsToNext = fun(Node) ->
-                                  length(lists:takewhile(
-                                           fun({_, Owner}) -> Node /= Owner end,
-                                           Rest))
-                          end,
-            case lists:filter(fun(N) ->
-                                 Next = StepsToNext(N),
-                                 (Next+1 >= TargetN)
-                                          orelse (Next == length(Rest))
-                              end,
-                              Candidates) of
+            CheckNextFun =
+                %% these nodes don't violate target_n in the reverse direction
+                fun(Node) ->
+                    Next =
+                        length(
+                            lists:takewhile(
+                                fun({_, Owner}) -> Node /= Owner end,
+                                Rest)),
+                    (Next + 1 >= TargetN) orelse (Next == length(Rest))
+                end,
+            Qualifiers = lists:filter(CheckNextFun, Candidates),
+            ScoreFun =
+                fun(Node, {LowCount, LowNodes}) ->
+                    {Node, CurrentCount} = 
+                        lists:keyfind(Node, 1, Counts),
+                    case CurrentCount of
+                        LowCount ->
+                            {LowCount, [Node|LowNodes]};
+                        NewCount when NewCount < LowCount ->
+                            {NewCount, [Node]};
+                        _ ->
+                            {LowCount, LowNodes}
+                    end
+                end,
+            {PreferredCount, PreferredCandidates} =
+                lists:foldl(ScoreFun, {infinity, []}, Qualifiers),
+            case PreferredCandidates of
                 [] ->
                     target_n_fail;
-                Qualifiers ->
+                PreferredCandidates ->
                     %% these nodes don't violate target_n forward
-                    {Rand, Seed2} = rand:uniform_s(length(Qualifiers), Seed),
-                    Chosen = lists:nth(Rand, Qualifiers),
+                    {Rand, Seed2} =
+                        rand:uniform_s(length(PreferredCandidates), Seed),
+                    Chosen = lists:nth(Rand, PreferredCandidates),
                     %% choose one, and do the rest of the ring
                     attempt_simple_transfer(
                       Seed2,
                       riak_core_ring:transfer_node(P, Chosen, Ring),
                       Rest, TargetN, Exit, Idx+1,
-                      lists:keyreplace(Chosen, 1, Last, {Chosen, Idx}))
+                      lists:keyreplace(Chosen, 1, Last,
+                                        {Chosen, Idx}),
+                      lists:keyreplace(Chosen, 1, Counts,
+                                        {Chosen, PreferredCount + 1}))
             end
     end;
-attempt_simple_transfer(Seed, Ring, [{_, N}|Rest], TargetN, Exit, Idx, Last) ->
+attempt_simple_transfer(Seed, Ring, [{_, N}|Rest],
+                            TargetN, Exit, Idx, Last, Counts) ->
     %% just keep track of seeing this node
-    attempt_simple_transfer(Seed, Ring, Rest, TargetN, Exit, Idx+1,
-                            lists:keyreplace(N, 1, Last, {N, Idx}));
-attempt_simple_transfer(_, Ring, [], _, _, _, _) ->
+    attempt_simple_transfer(Seed, Ring, Rest, TargetN, Exit, Idx + 1,
+                            lists:keyreplace(N, 1, Last, {N, Idx}),
+                            Counts);
+attempt_simple_transfer(_, Ring, [], _, _, _, _, _) ->
     {ok, Ring}.
