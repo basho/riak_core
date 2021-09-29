@@ -689,7 +689,7 @@ print_plan(Changes, Ring, NextRings) ->
 
     case Leaves and app_helper:get_env(riak_core, full_rebalance_onleave) of
         true ->
-            io:format("WARNING: full rebalance forced through non-default "
+            io:format("WARNING: Full rebalance forced by non-default "
                         "option riak_core.full_rebalance_onleave = true~n~n");
         _ ->
             ok
