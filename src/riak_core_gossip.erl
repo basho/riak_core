@@ -375,7 +375,7 @@ remove_from_cluster(Ring, ExitingNode, Seed) ->
         case attempt_simple_transfer(Seed, Ring, AllOwners, ExitingNode) of
             {ok, NR} ->
                 NR;
-            Err when Err == target_n_fail; Err == always_rebalance_onleave ->
+            Err when Err == target_n_fail; Err == full_rebalance_onleave ->
                 %% re-diagonalize
                 %% first hand off all claims to *any* one else,
                 %% just so rebalance doesn't include exiting node
@@ -394,10 +394,10 @@ remove_from_cluster(Ring, ExitingNode, Seed) ->
 
 attempt_simple_transfer(Seed, Ring, Owners, ExitingNode) ->
     attempt_simple_transfer(Seed, Ring, Owners, ExitingNode,
-        app_helper:get_env(riak_core, always_rebalance_onleave, false)).
+        app_helper:get_env(riak_core, full_rebalance_onleave, false)).
 
 attempt_simple_transfer(_Seed, _Ring, _Owners, _ExitingNode, true) ->
-    always_rebalance_onleave;
+    full_rebalance_onleave;
 attempt_simple_transfer(Seed, Ring, Owners, ExitingNode, false) ->
     TargetN = app_helper:get_env(riak_core, target_n_val),
     Counts =
