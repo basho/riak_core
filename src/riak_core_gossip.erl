@@ -412,12 +412,26 @@ attempt_simple_transfer(Seed, Ring, Owners, ExitingNode, false) ->
 
 attempt_simple_transfer(Seed, Ring, [{P, Exit}|Rest],
                         TargetN, Exit, Idx, Last, Counts) ->
-    case [ N || {N, I} <- Last, Idx-I >= TargetN ] of
+    %% If a node has been allocated a partition, or been seen as the existing
+    %% owner of the partition within the last TargetN loops, then it cannot be
+    %% a candidate for this partition.
+    %%
+    %% If TargetN is 4, then this is the list of Nodes which have not been
+    %% allocated any of the last 3 partitions
+    NotLastTargetN = [ N || {N, I} <- Last, Idx-I >= TargetN ],
+
+    case NotLastTargetN of
         [] ->
             target_n_fail;
         Candidates ->
+            %% Look forward to see if this Node has been allocated already any
+            %% of the next (TargetN - 1) partitions - in which case, it is not
+            %% a safe home for this partition and will be filtered from the
+            %% Candidate list.
+            %%
+            %% If TargetN is 4, then this is the list of Nodes which have not
+            %% been allocated any of the next 3 partitions
             CheckNextFun =
-                %% these nodes don't violate target_n in the reverse direction
                 fun(Node) ->
                     Next =
                         length(
@@ -427,6 +441,10 @@ attempt_simple_transfer(Seed, Ring, [{P, Exit}|Rest],
                     (Next + 1 >= TargetN) orelse (Next == length(Rest))
                 end,
             Qualifiers = lists:filter(CheckNextFun, Candidates),
+
+            %% Look at the current allocated vnode counts for each qualifying
+            %% node, and choose one which has the lowest of these counts 
+            %% (choosing at random between ties on count)
             ScoreFun =
                 fun(Node, {LowCount, LowNodes}) ->
                     {Node, CurrentCount} = 
@@ -442,15 +460,17 @@ attempt_simple_transfer(Seed, Ring, [{P, Exit}|Rest],
                 end,
             {PreferredCount, PreferredCandidates} =
                 lists:foldl(ScoreFun, {infinity, []}, Qualifiers),
+            
+            %% Final selection of a node as a destination for this partition,
+            %% The node Counts must be updated to reflect any allocation, as
+            %% well as the "Last" list of already allocated partitions.
             case PreferredCandidates of
                 [] ->
                     target_n_fail;
                 PreferredCandidates ->
-                    %% these nodes don't violate target_n forward
                     {Rand, Seed2} =
                         rand:uniform_s(length(PreferredCandidates), Seed),
                     Chosen = lists:nth(Rand, PreferredCandidates),
-                    %% choose one, and do the rest of the ring
                     attempt_simple_transfer(
                       Seed2,
                       riak_core_ring:transfer_node(P, Chosen, Ring),
