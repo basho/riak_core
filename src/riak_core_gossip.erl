@@ -538,7 +538,6 @@ simple_transfer([], _Statics, Ring, _LoopAccs) ->
 -ifdef(TEST).
 
 test_ring_fun(P, N, R) ->
-    io:format("~p ~p ~p", [P, N, R]),
     lists:keyreplace(P, 1, R, {P, N}).
 
 count_nodes(TestRing) ->
@@ -558,14 +557,101 @@ simple_transfer_simple_test() ->
             {4, n4}, {5, n5}, {6, n3}, {7, n2}],
     SomeTime = {1632,989499,279637},
     FixedSeed = rand:seed(exrop, SomeTime),
-    Counts = lists:keydelete(n4, 1, count_nodes(R0)),
     {ok, R1} =
         simple_transfer(R0,
-                        {fun test_ring_fun/3, 2, n4},
+                        {fun test_ring_fun/3, 3, n4},
                         R0,
-                        {FixedSeed, [], Counts}),
-    ?assertMatch({4, n1}, lists:keyfind(4, 1, R1)).
+                        {FixedSeed,
+                            [],
+                            lists:keydelete(n4, 1, count_nodes(R0))}),
+    ?assertMatch({4, n1}, lists:keyfind(4, 1, R1)),
     
+    {ok, R2} =
+        simple_transfer(R0,
+                        {fun test_ring_fun/3, 3, n5},
+                        R0,
+                        {FixedSeed,
+                            [],
+                            lists:keydelete(n5, 1, count_nodes(R0))}),
+    ?assertMatch({0, n4}, lists:keyfind(0, 1, R2)),
+    ?assertMatch({5, n1}, lists:keyfind(5, 1, R2)),
+
+    {ok, R3} =
+        simple_transfer(R0,
+                        {fun test_ring_fun/3, 3, n1},
+                        R0,
+                        {FixedSeed,
+                            [],
+                            lists:keydelete(n1, 1, count_nodes(R0))}),
+    ?assertMatch({1, n4}, lists:keyfind(1, 1, R3)),
+
+    target_n_fail =
+        simple_transfer(R0,
+                        {fun test_ring_fun/3, 3, n3},
+                        R0,
+                        {FixedSeed,
+                            [],
+                            lists:keydelete(n3, 1, count_nodes(R0))}),
+    
+    target_n_fail =
+        simple_transfer(R0,
+                        {fun test_ring_fun/3, 3, n2},
+                        R0,
+                        {FixedSeed,
+                            [],
+                            lists:keydelete(n2, 1, count_nodes(R0))}),
+    
+    %% Target n failures due to wrap-around tail violations
+    R4 = [{0, n5}, {1, n1}, {2, n2}, {3, n3},
+            {4, n4}, {5, n2}, {6, n3}, {7, n4}],
+    
+    target_n_fail =
+        simple_transfer(R4,
+                        {fun test_ring_fun/3, 3, n5},
+                        R4,
+                        {FixedSeed,
+                            [],
+                            lists:keydelete(n5, 1, count_nodes(R4))}),
+    
+    target_n_fail =
+        simple_transfer(R4,
+                        {fun test_ring_fun/3, 3, n4},
+                        R4,
+                        {FixedSeed,
+                            [],
+                            lists:keydelete(n4, 1, count_nodes(R4))}).
+    
+simple_transfer_evendistribution_test() ->
+    R0 = [{0, n1}, {1, n2}, {2, n3}, {3, n4}, {4, n5}, 
+            {5, n6}, {6, n7}, {7, n8}, {8, n9}, {9, n10},
+            {10, n1}, {11, n2}, {12, n3}, {13, n4}, {14, n5},
+            {15, n6}, {16, n7}, {17, n8}, {18, n9}, {19, n10},
+            {20, n1}, {21, n2}, {22, n3}, {23, n4}, {24, n5}, 
+            {25, n6}, {26, n7}, {27, n8}, {28, n9}, {29, n10},
+            {30, n1}, {31, n2}, {32, n3}, {33, n4}, {34, n5},
+            {35, n6}, {36, n7}, {37, n8}, {38, n9}, {39, n10},
+            {40, n1}, {41, n2}, {42, n3}, {43, n4}, {44, n5}, 
+            {45, n6}, {46, n7}, {47, n8}, {48, n9}, {49, n10},
+            {50, n1}, {51, n2}, {52, n3}, {53, n4}, {54, n5},
+            {55, n6}, {56, n1}, {57, n2}, {58, n3}, {59, n10},
+            {60, n5}, {61, n6}, {62, n7}, {63, n8}],
+    
+    SomeTime = {1632,989499,279637},
+    FixedSeed = rand:seed(exrop, SomeTime),
+    {ok, R1} =
+        simple_transfer(R0,
+                        {fun test_ring_fun/3, 3, n1},
+                        R0,
+                        {FixedSeed,
+                            [],
+                            lists:keydelete(n1, 1, count_nodes(R0))}),
+    
+    NodeCounts = lists:keysort(2, count_nodes(R1)),
+    io:format("NodeCounts ~w~n", [NodeCounts]),
+    [{_LN, LC}|Rest] = NodeCounts,
+    [{_HN, HC}|_] = lists:reverse(Rest),
+    true = HC - LC == 2.
+
 
 -endif.
 
