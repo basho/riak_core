@@ -43,6 +43,10 @@
 
 -include("riak_core_ring.hrl").
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 %% Default gossip rate: allow at most 45 gossip messages every 10 seconds
 -define(DEFAULT_LIMIT, {45, 10000}).
 
@@ -367,80 +371,287 @@ remove_from_cluster(Ring, ExitingNode) ->
     remove_from_cluster(Ring, ExitingNode, rand:seed(exrop, os:timestamp())).
 
 remove_from_cluster(Ring, ExitingNode, Seed) ->
-    % Get a list of indices owned by the ExitingNode...
-    AllOwners = riak_core_ring:all_owners(Ring),
-
     % Transfer indexes to other nodes...
     ExitRing =
-        case attempt_simple_transfer(Seed, Ring, AllOwners, ExitingNode) of
+        case attempt_simple_transfer(Seed, Ring, ExitingNode) of
             {ok, NR} ->
                 NR;
-            Err when Err == target_n_fail; Err == always_rebalance_onleave ->
+            _ ->
                 %% re-diagonalize
                 %% first hand off all claims to *any* one else,
                 %% just so rebalance doesn't include exiting node
+                Owners = riak_core_ring:all_owners(Ring),
                 Members = riak_core_ring:claiming_members(Ring),
-                Other = hd(lists:delete(ExitingNode, Members)),
-                TempRing = lists:foldl(
-                             fun({I,N}, R) when N == ExitingNode ->
-                                     riak_core_ring:transfer_node(I, Other, R);
-                                (_, R) -> R
-                             end,
-                             Ring,
-                             AllOwners),
-                riak_core_claim:sequential_claim(TempRing, Other)
+                HN = hd(lists:delete(ExitingNode, Members)),
+                TempRing =
+                    lists:foldl(fun({I,N}, R) when N == ExitingNode ->
+                                        riak_core_ring:transfer_node(I, HN, R);
+                                    (_, R) ->
+                                        R
+                                end,
+                                Ring,
+                                Owners),
+                riak_core_claim:sequential_claim(TempRing, HN)
         end,
     ExitRing.
 
-attempt_simple_transfer(Seed, Ring, Owners, ExitingNode) ->
-    attempt_simple_transfer(Seed, Ring, Owners, ExitingNode,
-        app_helper:get_env(riak_core, always_rebalance_onleave, false)).
+-ifdef(TEST).
+-type transfer_ring() :: [{integer(), term()}].
+-else.
+-type transfer_ring() :: riak_core_ring:riak_core_ring().
+-endif.
 
-attempt_simple_transfer(_Seed, _Ring, _Owners, _ExitingNode, true) ->
-    always_rebalance_onleave;
-attempt_simple_transfer(Seed, Ring, Owners, ExitingNode, false) ->
-    TargetN = app_helper:get_env(riak_core, target_n_val),
-    attempt_simple_transfer(Seed, Ring, Owners,
-                            TargetN,
-                            ExitingNode, 0,
-                            [{O,-TargetN} || O <- riak_core_ring:claiming_members(Ring),
-                                             O /= ExitingNode]).
+%% @doc Simple transfer of leaving node's vnodes to safe place
+%% Where safe place is any node that satisfies target_n_val for that vnode -
+%% but with a preference to transfer to a node that has a lower number of 
+%% vnodes currently allocated.
+%% If safe places cannot be found for all vnodes returns `target_n_fail`
+%% Simple transfer is not location aware, but generally this wll be an initial
+%% phase of a plan, and hence a temporary home - so location awareness is not
+%% necessary.
+%% `riak_core.full_rebalance_onleave = true` may be used to avoid this step,
+%% although this may result in a large number of transfers
+-spec attempt_simple_transfer(random:ran(),
+                                transfer_ring(),
+                                term()) ->
+                                    {ok, transfer_ring()}|
+                                        target_n_fail|
+                                        force_rebalance.
+attempt_simple_transfer(Seed, Ring, ExitingNode) ->
+    ForceRebalance =
+        app_helper:get_env(riak_core, full_rebalance_onleave, false),
+    case ForceRebalance of
+        true ->
+            force_rebalance;
+        false ->
+            TargetN = app_helper:get_env(riak_core, target_n_val),
+            Owners = riak_core_ring:all_owners(Ring),
+            Counts =
+                riak_core_claim:get_counts(
+                    riak_core_ring:claiming_members(Ring),
+                    Owners),
+            RingFun = 
+                fun(Partition, Node, R) ->
+                    riak_core_ring:transfer_node(Partition, Node, R),
+                    R
+                end,
+            simple_transfer(Owners,
+                                    {RingFun, TargetN, ExitingNode},
+                                    Ring,
+                                    {Seed, [], Counts})
+    end.
 
-attempt_simple_transfer(Seed, Ring, [{P, Exit}|Rest], TargetN, Exit, Idx, Last) ->
-    %% handoff
-    case [ N || {N, I} <- Last, Idx-I >= TargetN ] of
+%% @doc Simple transfer of leaving node's vnodes to safe place
+-spec simple_transfer([{integer(), term()}],
+                        {fun((integer(),
+                                term(),
+                                transfer_ring()) -> transfer_ring()),
+                            pos_integer(),
+                            term()},
+                        transfer_ring(),
+                        {random:ran(),
+                            [{integer(), term()}],
+                            [{term(), non_neg_integer()}]}) ->
+                                {ok, transfer_ring()}|target_n_fail.
+simple_transfer([{P, ExitingNode}|Rest],
+                        {RingFun, TargetN, ExitingNode},
+                        Ring,
+                        {Seed, Prev, Counts}) ->
+    %% The ring is split into two parts:
+    %% Rest - this is forward looking from the current partition, in partition
+    %% order
+    %% Prev - this is the part of the ring that has already been processed, 
+    %% which is also in partition order
+    %%
+    %% With a ring size of 8, having looped to partition 3:
+    %% Rest = [{4, N4}, {5, N5}, {6, N6}, {7, N7}]
+    %% Prev = [{2, N2}, {1, N1}, {0, N0}]
+    %%
+    %% If we have a partition that is on the Exiting Node it is necessary to
+    %% look forward (TargetN - 1) allocations in Rest.  It is also necessary
+    %% to look backward (TargetN - 1) allocations in Prev (from the rear of the
+    %% Prev list).
+    %%
+    %% This must be treated as a Ring though - as we reach an end of the list
+    %% the search must wrap around to the other end of the alternate list (i.e.
+    %% from 0 -> 7 and from 7 -> 0).
+    CheckRingFun =
+        fun(ForwardL, BackL) ->
+            Steps = TargetN - 1,
+            UnsafeNodeTuples =
+                case length(ForwardL) of 
+                    L when L < Steps ->
+                        ForwardL ++
+                            lists:sublist(lists:reverse(BackL), Steps - L);
+                    _ ->
+                        lists:sublist(ForwardL, Steps)
+                end,
+            fun({Node, _Count}) ->
+                not lists:keymember(Node, 2, UnsafeNodeTuples)
+            end
+        end,
+    %% Filter candidate Nodes looking back in the ring at previous allocations
+    CandidatesB = lists:filter(CheckRingFun(Prev, Rest), Counts),
+    %% Filter candidate Nodes looking forward in the ring at existing
+    %% allocations
+    CandidatesF = lists:filter(CheckRingFun(Rest, Prev), CandidatesB),
+
+    %% Qualifying candidates will be tuples of {Node, Count} where the Count
+    %% is that node's current count of allocated vnodes
+    case CandidatesF of
         [] ->
             target_n_fail;
-        Candidates ->
-            %% these nodes don't violate target_n in the reverse direction
-            StepsToNext = fun(Node) ->
-                                  length(lists:takewhile(
-                                           fun({_, Owner}) -> Node /= Owner end,
-                                           Rest))
-                          end,
-            case lists:filter(fun(N) ->
-                                 Next = StepsToNext(N),
-                                 (Next+1 >= TargetN)
-                                          orelse (Next == length(Rest))
-                              end,
-                              Candidates) of
-                [] ->
-                    target_n_fail;
-                Qualifiers ->
-                    %% these nodes don't violate target_n forward
-                    {Rand, Seed2} = rand:uniform_s(length(Qualifiers), Seed),
-                    Chosen = lists:nth(Rand, Qualifiers),
-                    %% choose one, and do the rest of the ring
-                    attempt_simple_transfer(
-                      Seed2,
-                      riak_core_ring:transfer_node(P, Chosen, Ring),
-                      Rest, TargetN, Exit, Idx+1,
-                      lists:keyreplace(Chosen, 1, Last, {Chosen, Idx}))
-            end
+        Qualifiers ->
+            %% Look at the current allocated vnode counts for each qualifying
+            %% node, and find all qualifying nodes with the lowest of these
+            %% counts
+            [{Q0, BestCnt}|Others] = lists:keysort(2, Qualifiers),
+            PreferredCandidates =
+                [{Q0, BestCnt}|
+                    lists:takewhile(fun({_, C}) -> C == BestCnt end, Others)],
+            
+            %% Final selection of a node as a destination for this partition,
+            %% The node Counts must be updated to reflect this allocation, and
+            %% the RingFun applied to actually queue the transfer
+            {Rand, Seed2} = rand:uniform_s(length(PreferredCandidates), Seed),
+            {Chosen, BestCnt} = lists:nth(Rand, PreferredCandidates),
+            UpdRing = RingFun(P, Chosen, Ring),
+            UpdCounts =
+                lists:keyreplace(Chosen, 1, Counts, {Chosen, BestCnt + 1}),
+            simple_transfer(Rest,
+                            {RingFun, TargetN, ExitingNode},
+                            UpdRing,
+                            {Seed2, [{P, Chosen}|Prev], UpdCounts})
     end;
-attempt_simple_transfer(Seed, Ring, [{_, N}|Rest], TargetN, Exit, Idx, Last) ->
-    %% just keep track of seeing this node
-    attempt_simple_transfer(Seed, Ring, Rest, TargetN, Exit, Idx+1,
-                            lists:keyreplace(N, 1, Last, {N, Idx}));
-attempt_simple_transfer(_, Ring, [], _, _, _, _) ->
+simple_transfer([{P, N}|Rest], Statics, Ring, {Seed, Prev, Counts}) ->
+    %% This is already allocated to a node other than the exiting node, so
+    %% simply transition to the Previous ring accumulator
+    simple_transfer(Rest, Statics, Ring, {Seed, [{P, N}|Prev], Counts});
+simple_transfer([], _Statics, Ring, _LoopAccs) ->
     {ok, Ring}.
+
+
+%% ===================================================================
+%% Unit tests
+%% ===================================================================
+
+-ifdef(TEST).
+
+test_ring_fun(P, N, R) ->
+    lists:keyreplace(P, 1, R, {P, N}).
+
+count_nodes(TestRing) ->
+    CountFun =
+        fun({_P, N}, Acc) ->
+            case lists:keyfind(N, 1, Acc) of
+                false ->
+                    lists:ukeysort(1, [{N, 1}|Acc]);
+                {N, C} ->
+                    lists:ukeysort(1, [{N, C + 1}|Acc])
+            end
+        end,
+    lists:foldl(CountFun, [], TestRing).
+
+simple_transfer_simple_test() ->
+    R0 = [{0, n5}, {1, n1}, {2, n2}, {3, n3},
+            {4, n4}, {5, n5}, {6, n3}, {7, n2}],
+    SomeTime = {1632,989499,279637},
+    FixedSeed = rand:seed(exrop, SomeTime),
+    {ok, R1} =
+        simple_transfer(R0,
+                        {fun test_ring_fun/3, 3, n4},
+                        R0,
+                        {FixedSeed,
+                            [],
+                            lists:keydelete(n4, 1, count_nodes(R0))}),
+    ?assertMatch({4, n1}, lists:keyfind(4, 1, R1)),
+    
+    {ok, R2} =
+        simple_transfer(R0,
+                        {fun test_ring_fun/3, 3, n5},
+                        R0,
+                        {FixedSeed,
+                            [],
+                            lists:keydelete(n5, 1, count_nodes(R0))}),
+    ?assertMatch({0, n4}, lists:keyfind(0, 1, R2)),
+    ?assertMatch({5, n1}, lists:keyfind(5, 1, R2)),
+
+    {ok, R3} =
+        simple_transfer(R0,
+                        {fun test_ring_fun/3, 3, n1},
+                        R0,
+                        {FixedSeed,
+                            [],
+                            lists:keydelete(n1, 1, count_nodes(R0))}),
+    ?assertMatch({1, n4}, lists:keyfind(1, 1, R3)),
+
+    target_n_fail =
+        simple_transfer(R0,
+                        {fun test_ring_fun/3, 3, n3},
+                        R0,
+                        {FixedSeed,
+                            [],
+                            lists:keydelete(n3, 1, count_nodes(R0))}),
+    
+    target_n_fail =
+        simple_transfer(R0,
+                        {fun test_ring_fun/3, 3, n2},
+                        R0,
+                        {FixedSeed,
+                            [],
+                            lists:keydelete(n2, 1, count_nodes(R0))}),
+    
+    %% Target n failures due to wrap-around tail violations
+    R4 = [{0, n5}, {1, n1}, {2, n2}, {3, n3},
+            {4, n4}, {5, n2}, {6, n3}, {7, n4}],
+    
+    target_n_fail =
+        simple_transfer(R4,
+                        {fun test_ring_fun/3, 3, n5},
+                        R4,
+                        {FixedSeed,
+                            [],
+                            lists:keydelete(n5, 1, count_nodes(R4))}),
+    
+    target_n_fail =
+        simple_transfer(R4,
+                        {fun test_ring_fun/3, 3, n4},
+                        R4,
+                        {FixedSeed,
+                            [],
+                            lists:keydelete(n4, 1, count_nodes(R4))}).
+    
+simple_transfer_evendistribution_test() ->
+    R0 = [{0, n1}, {1, n2}, {2, n3}, {3, n4}, {4, n5}, 
+            {5, n6}, {6, n7}, {7, n8}, {8, n9}, {9, n10},
+            {10, n1}, {11, n2}, {12, n3}, {13, n4}, {14, n5},
+            {15, n6}, {16, n7}, {17, n8}, {18, n9}, {19, n10},
+            {20, n1}, {21, n2}, {22, n3}, {23, n4}, {24, n5}, 
+            {25, n6}, {26, n7}, {27, n8}, {28, n9}, {29, n10},
+            {30, n1}, {31, n2}, {32, n3}, {33, n4}, {34, n5},
+            {35, n6}, {36, n7}, {37, n8}, {38, n9}, {39, n10},
+            {40, n1}, {41, n2}, {42, n3}, {43, n4}, {44, n5}, 
+            {45, n6}, {46, n7}, {47, n8}, {48, n9}, {49, n10},
+            {50, n1}, {51, n2}, {52, n3}, {53, n4}, {54, n5},
+            {55, n6}, {56, n1}, {57, n2}, {58, n3}, {59, n10},
+            {60, n5}, {61, n6}, {62, n7}, {63, n8}],
+    
+    SomeTime = {1632,989499,279637},
+    FixedSeed = rand:seed(exrop, SomeTime),
+    {ok, R1} =
+        simple_transfer(R0,
+                        {fun test_ring_fun/3, 3, n1},
+                        R0,
+                        {FixedSeed,
+                            [],
+                            lists:keydelete(n1, 1, count_nodes(R0))}),
+    
+    NodeCounts = lists:keysort(2, count_nodes(R1)),
+    io:format("NodeCounts ~w~n", [NodeCounts]),
+    [{_LN, LC}|Rest] = NodeCounts,
+    [{_HN, HC}|_] = lists:reverse(Rest),
+    true = HC - LC == 2.
+
+
+-endif.
+

@@ -65,7 +65,7 @@
          choose_claim_v3/1, choose_claim_v3/2, choose_claim_v3/3,
          claim_rebalance_n/2, claim_diversify/3, claim_diagonal/3,
          wants/1, wants_owns_diff/2, meets_target_n/2, diagonal_stripe/2,
-         sequential_claim/2]).
+         sequential_claim/2, get_counts/2]).
 
 -ifdef(TEST).
 -compile(export_all).
