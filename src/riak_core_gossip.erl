@@ -459,9 +459,9 @@ simple_transfer([{P, ExitingNode}|Rest],
                         {Seed, Prev, Counts}) ->
     %% The ring is split into two parts:
     %% Rest - this is forward looking from the current partition, in partition
-    %% order
+    %% order (ascending by partition number)
     %% Prev - this is the part of the ring that has already been processed, 
-    %% which is also in partition order
+    %% which is also in partition order (but descending by index number)
     %%
     %% With a ring size of 8, having looped to partition 3:
     %% Rest = [{4, N4}, {5, N5}, {6, N6}, {7, N7}]
@@ -487,10 +487,14 @@ simple_transfer([{P, ExitingNode}|Rest],
                         lists:sublist(ForwardL, Steps)
                 end,
             fun({Node, _Count}) ->
+                %% Nodes will remian as candidates if they are not in the list
+                %% of unsafe nodes
                 not lists:keymember(Node, 2, UnsafeNodeTuples)
             end
         end,
-    %% Filter candidate Nodes looking back in the ring at previous allocations
+    %% Filter candidate Nodes looking back in the ring at previous allocations.
+    %% The starting list of candidates is the list the claiming members in
+    %% Counts.
     CandidatesB = lists:filter(CheckRingFun(Prev, Rest), Counts),
     %% Filter candidate Nodes looking forward in the ring at existing
     %% allocations
