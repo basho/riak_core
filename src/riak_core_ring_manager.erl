@@ -728,6 +728,8 @@ refresh_my_ring_test() ->
      || {AppKey, _Val} <- Core_Settings],
     ok.
 
+-ifndef(GITHUBEXCLUDE).
+
 -define(TEST_RINGDIR, "ring_manager_eunit").
 -define(TEST_RINGFILE, (?TEST_RINGDIR ++ "/test.ring")).
 -define(TMP_RINGFILE,  (?TEST_RINGFILE ++ ".tmp")).
@@ -755,6 +757,8 @@ do_write_ringfile_test() ->
     ok = file:change_mode(?TEST_RINGDIR, 8#00755),
     ok = file:change_mode(?TEST_RINGFILE, 8#00644),
     ok = file:delete(?TEST_RINGFILE).
+
+-endif.
 
 is_stable_ring_test() ->
     {A,B,C} = Now = os:timestamp(),
