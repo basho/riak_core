@@ -180,6 +180,14 @@ resolve_prop({w, W1}, {w, W2}) ->
     max(W1, W2);
 resolve_prop({young_vclock, Young1}, {young_vclock, Young2}) ->
     max(Young1, Young2);
+resolve_prop({sync_on_write, _}, {sync_on_write, all}) ->
+    all;
+resolve_prop({sync_on_write, all}, {sync_on_write, _}) ->
+    all;
+resolve_prop({sync_on_write, _}, {sync_on_write, one}) ->
+    one;
+resolve_prop({sync_on_write, one}, {sync_on_write, _}) ->
+    one;
 resolve_prop({_, V1}, {_, _V2}) ->
     V1.
 
@@ -213,6 +221,7 @@ simple_resolve_test() ->
               {rw,quorum},
               {small_vclock,50},
               {w,quorum},
+              {sync_on_write, one},
               {young_vclock,20}],
     Props2 = [{name,<<"test">>},
               {allow_mult, true},
@@ -233,6 +242,7 @@ simple_resolve_test() ->
               {r,3},
               {rw,3},
               {w,1},
+              {sync_on_write, all},
               {young_vclock,30}],
     Expected = [{name,<<"test">>},
                 {allow_mult,true},
@@ -254,8 +264,8 @@ simple_resolve_test() ->
                 {rw,quorum},
                 {small_vclock,50},
                 {w,quorum},
+                {sync_on_write, all},
                 {young_vclock,30}],
     ?assertEqual(lists:ukeysort(1, Expected), lists:ukeysort(1, resolve(Props1, Props2))).
 
 -endif.
-
