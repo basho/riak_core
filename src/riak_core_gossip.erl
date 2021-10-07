@@ -442,6 +442,9 @@ attempt_simple_transfer(Ring, ExitingNode, Seed, Owners, Members) ->
     end.
 
 %% @doc Simple transfer of leaving node's vnodes to safe place
+%% Iterates over Owners, which must be sorted by Index (from 0...), and
+%% attempts to safely re-allocate each ownerhsip which is currently set to
+%% the exiting node
 -spec simple_transfer([{integer(), term()}],
                         {fun((integer(),
                                 term(),
@@ -624,7 +627,23 @@ simple_transfer_simple_test() ->
                         {FixedSeed,
                             [],
                             lists:keydelete(n4, 1, count_nodes(R4))}).
-    
+
+simple_transfer_needstobesorted_test() ->
+    lists:foreach(fun transfer_needstobesorted_tester/1, lists:seq(1, 100)).
+
+transfer_needstobesorted_tester(I) ->
+    R0 = [{6,n3}, {13,n3}, {12,n6}, {11,n5}, {10,n4}, {9,n3}, {8,n2},
+            {7,n1}, {5,n6}, {4,n5}, {3,n4}, {2,n3}, {1,n2}, {0,n1}],
+    VariableSeed = rand:seed(exrop, {1632, 989499, I * 13}),
+    {ok, R1} =
+        simple_transfer(lists:keysort(1, R0),
+                        {fun test_ring_fun/3, 3, n3},
+                        R0,
+                        {VariableSeed,
+                            [],
+                            lists:keydelete(n3, 1, count_nodes(R0))}),
+    ?assertMatch({13, n4}, lists:keyfind(13, 1, R1)).
+
 simple_transfer_evendistribution_test() ->
     R0 = [{0, n1}, {1, n2}, {2, n3}, {3, n4}, {4, n5}, 
             {5, n6}, {6, n7}, {7, n8}, {8, n9}, {9, n10},
