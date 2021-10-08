@@ -685,6 +685,16 @@ print_plan(Changes, Ring, NextRings) ->
                       "cluster transitions~n~n", [Transitions])
     end,
 
+    Leaves = length(lists:filter(fun({_N, A}) -> A == leave end, Changes)) > 0,
+
+    case Leaves and app_helper:get_env(riak_core, full_rebalance_onleave) of
+        true ->
+            io:format("WARNING: Full rebalance forced by non-default "
+                        "option riak_core.full_rebalance_onleave = true~n~n");
+        _ ->
+            ok
+    end,
+
     _ = lists:foldl(fun({Ring1, Ring2}, I) ->
                            io:format("~79..#s~n", [""]),
                            io:format("~24.. s After cluster transition ~b/~b~n",

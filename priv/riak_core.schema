@@ -202,6 +202,22 @@
     hidden
 ]}.
 
+%% @doc On cluster leave - force full rebalance partitions
+%% By default on a cluster leave there will first be an attempt to handoff
+%% vnodes to safe (in terms of target_n_val) locations.  In small clusters,
+%% there may be insufficient safe locations, and a temporary state can be
+%% created where a single node has a large number of vnodes.
+%% To mitigate this, a full rebalance (a re-assignment that does not optimise
+%% based on the starting position), can be forced by setting this option on
+%% all nodes.
+%% Please carefully consider any cluster plan created with this option before
+%% committing
+{mapping, "full_rebalance_onleave", "riak_core.full_rebalance_onleave", [
+    {datatype, flag},
+    {default, off}
+]}.
+
+
 %% Async Job Management
 %%
 %% This is a translation for mappings that appear in other schema files.
