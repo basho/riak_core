@@ -1,6 +1,6 @@
 # Riak Core
 
-[![Build Status](https://secure.travis-ci.org/basho/riak_core.png)](http://travis-ci.org/basho/riak_core)
+[![Build Status](https://github.com/basho/riak_core/actions/workflows/erlang.yml/badge.svg?branch=develop-3.0)](https://github.com/basho/riak_core/actions)
 
 Riak Core is the distributed systems framework that forms the basis of
 how [Riak](http://github.com/basho/riak) distributes data and scales.
