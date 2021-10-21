@@ -26,6 +26,10 @@
 
 -module(riak_core_coverage_plan).
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 %% API
 -export([create_plan/5]).
 
@@ -120,7 +124,20 @@ create_plan(VNodeSelector, NVal, PVC, ReqId, Service) ->
 %% Internal functions
 %% ====================================================================
 
+-type vnode_covers() :: {non_neg_integer(), list(non_neg_integer())}.
+
 %% @private
+-spec find_coverage(list(non_neg_integer()), 
+                    non_neg_integer(),
+                    pos_integer(),
+                    pos_integer(),
+                    list(non_neg_integer()),
+                    pos_integer(),
+                    list(vnode_covers())) -> 
+                        {ok, list(vnode_covers())} | 
+                            {insufficient_vnodes_available, 
+                                list(non_neg_integer()), 
+                                list(vnode_covers())}.
 find_coverage(AllKeySpaces, Offset, NVal, PartitionCount, UnavailableKeySpaces, PVC, []) ->
     %% Calculate the available keyspaces.
     AvailableKeySpaces = [{((VNode+Offset) rem PartitionCount),
@@ -261,4 +278,110 @@ compare_next_vnode({CA, _VA, TBA}, {CB, _VB, TBB}) ->
 %% @doc Count how many of CoversKeys appear in KeySpace
 covers(KeySpace, CoversKeys) ->
     ordsets:size(ordsets:intersection(KeySpace, CoversKeys)).
+
+%%%============================================================================
+%%% Test
+%%%============================================================================
+
+-ifdef(TEST).
+
+%% Unit testing at moment, but there appear to be some obvious properties:
+%% - The output of find_coverage is [{A, [B]}] - where accumulation of all [B]
+%% should be equal to the KeySpaces
+%% - The accumulation of [A] should not include any unavailable KeySpaces
+%% - The length of the list should be optimal? 
+
+eight_vnode_test() ->
+    Offset = 0,
+    NVal = 3,
+    PartitionCount = 8,
+    KeySpaces = lists:seq(0, PartitionCount - 1),
+    UnavailableKeySpaces = [],
+    PVC = 1,
+    {ok, VnodeCovers0} =
+        find_coverage(KeySpaces,
+                        Offset, NVal, PartitionCount,
+                        UnavailableKeySpaces,
+                        PVC, []),
+    R0 = [{0, [5, 6, 7]}, {3, [0, 1, 2]}, {5, [3, 4]}],
+    ?assertMatch(R0, VnodeCovers0),
+    
+    UnavailableKeySpaces1 = [3, 7],
+    {ok, VnodeCovers1} =
+        find_coverage(KeySpaces,
+                        Offset, NVal, PartitionCount,
+                        UnavailableKeySpaces1,
+                        PVC, []),
+    % Is the result below the most efficient - still only 3 vnodes to be asked
+    % R1 = [{0, [5, 6, 7]}, {2, [0, 1]}, {5, [2, 3, 4]}],
+    % Actual result returned needs to cover 4 vnodes
+    R1 = [{0, [5, 6, 7]}, {1, [0]}, {4, [1, 2, 3]}, {5, [4]}],
+    ?assertMatch(R1, VnodeCovers1),
+    
+    Offset2 = 1,
+    {ok, VnodeCovers2} =
+        find_coverage(KeySpaces,
+                        Offset2, NVal, PartitionCount,
+                        UnavailableKeySpaces,
+                        PVC, []),
+    % The result here is effective - as we want the use of offset to lead to
+    % distinct choices of cover vnodes, and [2, 4, 7] is distinct to [0, 3, 5]
+    R2 = [{2, [0, 1, 7]}, {4, [2, 3]}, {7, [4, 5, 6]}],
+    ?assertMatch(R2, VnodeCovers2),
+    
+    Offset3 = 2,
+    {ok, VnodeCovers3} =
+        find_coverage(KeySpaces,
+                        Offset3, NVal, PartitionCount,
+                        UnavailableKeySpaces,
+                        PVC, []),
+    R3 = [{1, [0, 6, 7]}, {3, [1, 2]}, {6, [3, 4, 5]}],
+    ?assertMatch(R3, VnodeCovers3).
+
+
+sixtyfour_vnode_test() ->
+    Offset = 0,
+    NVal = 3,
+    PartitionCount = 64,
+    KeySpaces = lists:seq(0, PartitionCount - 1),
+    UnavailableKeySpaces = [],
+    PVC = 1,
+    {ok, VnodeCovers0} =
+        find_coverage(KeySpaces,
+                        Offset, NVal, PartitionCount,
+                        UnavailableKeySpaces,
+                        PVC, []),
+    R0 = 
+        [{0, [61, 62, 63]}, {3, [0, 1, 2]}, {6, [3, 4, 5]},
+         {9, [6, 7, 8]}, {12, [9, 10, 11]}, {15, [12, 13, 14]},
+         {18, [15, 16, 17]}, {21, [18, 19, 20]}, {24, [21, 22, 23]},
+         {27, [24, 25, 26]}, {30, [27, 28, 29]}, {33, [30, 31, 32]},
+         {36, [33, 34, 35]}, {39, [36, 37, 38]}, {42, [39, 40, 41]},
+         {45, [42, 43, 44]}, {48, [45, 46, 47]}, {51, [48, 49, 50]},
+         {54, [51, 52, 53]}, {57, [54, 55, 56]}, {60, [57, 58, 59]},
+         {61, [60]}],
+    ?assertMatch(R0, VnodeCovers0).
+
+
+bigring_test() ->
+    Offset = 0,
+    NVal = 3,
+    PartitionCount = 1024,
+    KeySpaces = lists:seq(0, PartitionCount - 1),
+    UnavailableKeySpaces = [],
+    PVC = 1,
+    {ok, VnodeCovers0} =
+        find_coverage(KeySpaces,
+                        Offset, NVal, PartitionCount,
+                        UnavailableKeySpaces,
+                        PVC, []),
+    AccFun =
+        fun({A, L}, {VnodeAcc, CoverAcc}) -> {[A|VnodeAcc], CoverAcc ++ L} end,
+    {Vnodes, Coverage} = lists:foldl(AccFun, {[], []}, VnodeCovers0),
+    CoveredKeySpaces = lists:sort(Coverage),
+    ExpVnodeCount = (PartitionCount div NVal) +  1,
+    ?assertMatch(KeySpaces, CoveredKeySpaces),
+    ?assertMatch(ExpVnodeCount, length(Vnodes)).
+
+-endif.
 
