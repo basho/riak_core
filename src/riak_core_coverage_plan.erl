@@ -217,15 +217,15 @@ develop_plan([HeadVnode|RestVnodes], NVal,
             % Add the vnode to the coverage plan
             VnodeCovers0 =
                 lists:sort([{HeadVnode, PartsCoveredAndWanted}|VnodeCovers]),
-            % Update the wants
+            % Update the wants, for each partition that has been added to the
+            % coverage plan
             UpdateWantsFun =
-                fun(P, PWA) ->
-                    array:set(P, array:get(P, PWA) - 1, PWA)
-                end,
+                fun(P, PWA) -> array:set(P, array:get(P, PWA) - 1, PWA) end,
             PartitionWants0 =
                 lists:foldl(UpdateWantsFun,
                             PartitionWants,
                             PartsCoveredAndWanted),
+            % Now loop, to find use of the remaining vnodes
             develop_plan(RestVnodes, NVal,
                             PartitionWants0, PartitionCountdown - L,
                             VnodeCovers0);
