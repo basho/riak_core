@@ -168,18 +168,19 @@ initiate_plan(AllVnodes, Offset, NVal, PartitionCount, UnavailableVnodes, PVC) -
     % 3rd vnode together e.g.
     % Offset 0 [0, 3, 6, 9, 12, 15, 1, 4, 7, 10, 13, 2, 5, 8, 11, 14]
     % Offset 1 [2, 5, 8, 11, 14, 0, 3, 6, 9, 12, 15, 1, 4, 7, 10, 13]
+    % Offset 2 [1, 4, 7, 10, 13, 2, 5, 8, 11, 14, 0, 3, 6, 9, 12, 15]
     NumberVnodesToNFun =
         fun(Vnode, Incr) ->
             {{Incr, Vnode}, (Incr + 1) rem NVal}
         end,
     {VnodeList, _Incr} = lists:mapfoldl(NumberVnodesToNFun, Offset, AllVnodes),
-    % Subtract any Unavailable vnodes.
+    % Subtract any Unavailable vnodes.  Must only assign available primary
+    % vnodes a role in the coverage plan
     AvailableVnodes =
         lists:subtract(
             lists:map(fun({_S, VN}) ->  VN end, lists:keysort(1, VnodeList)),
             UnavailableVnodes),
     
-    % We need to pet a count of PVC for each Partition in our VnodeCovers.
     % Setup an array for tracking which partition has "Wants" left, starting
     % with a value of PVC
     PartitionWants = array:new(PartitionCount, {default, PVC}),
@@ -529,6 +530,57 @@ eight_vnode_refactor_test() ->
     ?assertMatch(R4, lists:keysort(1, VnodeCovers4)).
 
 
+insufficient_test() ->
+    % Insufficient vnodes, requested r of 3 but one vnode is down
+    Offset = 0,
+    NVal = 3,
+    PartitionCount = 16,
+    KeySpaces = lists:seq(0, PartitionCount - 1),
+    UnavailableKeySpaces = [0],
+    PVC = 3,
+    {insufficient_vnodes_available, _KS, VnodeCovers0} = 
+        initiate_plan(KeySpaces,
+                        Offset, NVal, PartitionCount,
+                        UnavailableKeySpaces,
+                        PVC),
+    lists:foreach(fun({I, L}) ->
+                        ?assertEqual(3, length(L)),
+                        ?assertNotEqual(0, I)
+                    end,
+                    VnodeCovers0),
+    ?assertEqual(VnodeCovers0, lists:ukeysort(1, VnodeCovers0)),
+    
+    UnavailableKeySpaces1 = [0, 1],
+    PVC1 = 2,
+    {insufficient_vnodes_available, _KS, VnodeCovers1} = 
+        initiate_plan(KeySpaces,
+                        Offset, NVal, PartitionCount,
+                        UnavailableKeySpaces1,
+                        PVC1),
+    PC = array:new(PartitionCount, {default, 0}),
+    PC1 =
+        lists:foldl(
+            fun({I, L}, Acc) ->
+                ?assertMatch(false, lists:member(I, [0, 1])),
+                lists:foldl(fun(P, IA) ->
+                                    array:set(P, array:get(P, IA) + 1, IA)
+                                end,
+                                Acc,
+                                L)
+            end,
+            PC,
+            VnodeCovers1),
+    lists:foreach(fun({P, C}) ->
+                        case lists:member(P, [14, 15]) of
+                            true ->
+                                ?assertEqual(1, C);
+                            false ->
+                                ?assertEqual(2, C)
+                        end
+                    end,
+                    array:to_orddict(PC1)).
+
+
 sixtyfour_vnode_prefactor_test() ->
     sixtyfour_vnode_tester(fun find_coverage/6, 61).
 
@@ -559,22 +611,55 @@ sixtyfour_vnode_tester(CoverageFun, PartialVnode) ->
     ?assertMatch(R0, VnodeCovers0).
 
 
-prefactor_bigring_test() ->
+refactor_2048ring_test() ->
+    ring_tester(2048, fun initiate_plan/6).
+
+prefactor_1024ring_test() ->
     ring_tester(1024, fun find_coverage/6).
 
-refactor_bigring_test() ->
+prefactor_ns1024ring_test() ->
+    nonstandardring_tester(1024, fun find_coverage/6).
+
+refactor_1024ring_test() ->
     ring_tester(1024, fun initiate_plan/6).
 
-prefactor_midring_test() ->
+refactor_ns1024ring_test() ->
+    nonstandardring_tester(1024, fun initiate_plan/6).
+
+prefactor_512ring_test() ->
+    ring_tester(512, fun find_coverage/6).
+
+refactor_512ring_test() ->
+    ring_tester(512, fun initiate_plan/6).
+
+prefactor_256ring_test() ->
     ring_tester(256, fun find_coverage/6).
 
-refactor_midring_test() ->
+refactor_256ring_test() ->
     ring_tester(256, fun initiate_plan/6).
 
-prefactor_smallring_test() ->
+compare_vnodesused_test() ->
+    compare_tester(64),
+    compare_tester(128),
+    compare_tester(256).
+
+compare_tester(RingSize) ->
+    PFC = nonstandardring_tester(RingSize, fun find_coverage/6),
+    RFC = nonstandardring_tester(RingSize, fun initiate_plan/6),
+    % With a little wiggle room - we've not made the number of vnodes
+    % used worse
+    ?assertMatch(true, RFC =< (PFC +  1)).
+
+prefactor_128ring_test() ->
+    ring_tester(256, fun find_coverage/6).
+
+refactor_128ring_test() ->
+    ring_tester(256, fun initiate_plan/6).
+
+prefactor_64ring_test() ->
     ring_tester(64, fun find_coverage/6).
 
-refactor_smallring_test() ->
+refactor_64ring_test() ->
     ring_tester(64, fun initiate_plan/6).
 
 ring_tester(PartitionCount, CoverageFun) ->
@@ -596,6 +681,35 @@ ring_tester(PartitionCount, CoverageFun) ->
     ?assertMatch(KeySpaces, CoveredKeySpaces),
     ?assertMatch(ExpVnodeCount, length(Vnodes)).
 
+
+nonstandardring_tester(PartitionCount, CoverageFun) ->
+    Offset = 2,
+    NVal = 3,
+    KeySpaces = lists:seq(0, PartitionCount - 1),
+    OneDownVnode = rand:uniform(PartitionCount) - 1,
+    UnavailableKeySpaces = [OneDownVnode],
+    PVC = 2,
+    {ok, VnodeCovers} =
+        CoverageFun(KeySpaces,
+                        Offset, NVal, PartitionCount,
+                        UnavailableKeySpaces,
+                        PVC),
+    
+    PC = array:new(PartitionCount, {default, 0}),
+    PC1 =
+        lists:foldl(
+            fun({I, L}, Acc) ->
+                ?assertNotEqual(OneDownVnode, I),
+                lists:foldl(fun(P, IA) ->
+                                    array:set(P, array:get(P, IA) + 1, IA)
+                                end,
+                                Acc,
+                                L)
+            end,
+            PC,
+            VnodeCovers),
+    lists:foreach(fun(C) -> ?assertEqual(2, C) end, array:to_list(PC1)),
+    length(VnodeCovers).
 
 
 -endif.
