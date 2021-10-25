@@ -134,9 +134,8 @@ create_plan(VNodeSelector, NVal, PVC, ReqId, Service) ->
 %% @doc Produce a coverage plan
 %% The coverage plan should include all partitions at least PVC times
 %% Inputs:
-%% AllVnodes - a list of integers, one for each vnode ID
-%% Offset - used to produce different coverage plans, changing offset should
-%% change the plan, so not all queries for same nval got to same vnodes
+%% ReqId - a random integer identifier for the request which will be used to
+%% provide a randomise dinput to vary the plans.
 %% NVal - the n_val for the bucket used in the query
 %% PartitionCount - ring_size, should be the length of AllVnodes
 %% UnavailableVnodes - any primary vnodes not available, as either the node is
@@ -156,13 +155,24 @@ initiate_plan(ReqId, NVal, PartitionCount, UnavailableVnodes, PVC) ->
     % 0 and NVal - 1.  Then sort by this Offset, so that by default we visit
     % every NVal'th vnode first, then offset and repeat.
     %
-    % Splitting at a random place is critical to ensuring an even distribution
-    % of query load across vnodes.  If we always start at the front of the ring
-    % then those vnodes that cover the tail of the ring will be involved in a
-    % disproprtional number of queries.
+    % The use of the offset will tend to give an optimal coverage plan in the
+    % happy-day scenario (when all vnodes are available).  There is a balance
+    % between time of calculation, and how optimal the plan needs to be.  The
+    % plan is not necessarily optimal (in terms of involving the fewest number
+    % of vnodes).  Nor does it consider location (trying to query as a local
+    % to the planning node as possible).
+    %
+    % There does need to be an even spread of load across plans.  To achieve
+    % this we don't treat the ring as a list always starting at 0, instead the
+    % ring is first split at a random place.  If otherwise the planning were to
+    % always start at the front of the ring then those vnodes that cover the
+    % tail of the ring will be involved in a disproportionate number of
+    % queries.
     {L1, L2} =
         lists:split(ReqId rem PartitionCount,
                         lists:seq(0, PartitionCount - 1)),
+    % Use an array to hold a list for each offset, before flattening the array
+    % back to a list to rejoin together
     A0 = array:new(NVal, {default, []}),
     {A1, _} =
         lists:foldl(
@@ -235,7 +245,15 @@ develop_plan([HeadVnode|RestVnodes], NVal,
                             VnodeCovers)
     end.
     
-
+-spec find_coverage(non_neg_integer(),
+                    pos_integer(),
+                    pos_integer(),
+                    list(non_neg_integer()),
+                    pos_integer()) -> 
+                        {ok, list(vnode_covers())} | 
+                            {insufficient_vnodes_available, 
+                                list(non_neg_integer()), 
+                                list(vnode_covers())}.
 find_coverage(ReqId, NVal, PartitionCount, UnavailableKeySpaces, PVC) ->
     AllKeySpaces = lists:seq(0, PartitionCount - 1),
     %% Calculate an offset based on the request id to offer
