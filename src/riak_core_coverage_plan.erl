@@ -135,7 +135,7 @@ create_plan(VNodeSelector, NVal, PVC, ReqId, Service) ->
 %% The coverage plan should include all partitions at least PVC times
 %% Inputs:
 %% ReqId - a random integer identifier for the request which will be used to
-%% provide a randomise dinput to vary the plans.
+%% provide a randomised input to vary the plans.
 %% NVal - the n_val for the bucket used in the query
 %% PartitionCount - ring_size, should be the length of AllVnodes
 %% UnavailableVnodes - any primary vnodes not available, as either the node is
@@ -164,8 +164,8 @@ initiate_plan(ReqId, NVal, PartitionCount, UnavailableVnodes, PVC) ->
     %
     % There does need to be an even spread of load across plans.  To achieve
     % this we don't treat the ring as a list always starting at 0, instead the
-    % ring is first split at a random place.  If otherwise the planning were to
-    % always start at the front of the ring then those vnodes that cover the
+    % ring is first split at a random place.  Otherwise, if the planning were
+    % to always start at the front of the ring then those vnodes that cover the
     % tail of the ring will be involved in a disproportionate number of
     % queries.
     {L1, L2} =
@@ -484,17 +484,17 @@ eight_vnode_prefactor_test() ->
 
 
 changing_repeated_vnode_CODEFAIL_prefactor_test() ->
-    MaxCount = changing_repeated_vnode_tester(fun find_coverage/5, 100),
+    MaxCount = changing_repeated_vnode_tester(fun find_coverage/5, 200),
 
     % This assertion is bad!
     % This demonstrates that the prefactored code fails the test of providing
     % well distributed coverage plans
-    ?assertEqual(true, MaxCount > 50).
+    ?assertEqual(true, MaxCount > 100).
 
 changing_repeated_vnode_refactor_test() ->
-    MaxCount = changing_repeated_vnode_tester(fun initiate_plan/5, 100),
+    MaxCount = changing_repeated_vnode_tester(fun initiate_plan/5, 200),
 
-    ?assertEqual(true, MaxCount < 50).
+    ?assertEqual(true, MaxCount < 100).
 
 
 changing_repeated_vnode_tester(CoverageFun, Runs) ->
@@ -524,8 +524,8 @@ changing_repeated_vnode_tester(CoverageFun, Runs) ->
             lists:keysort(2, lists:foldl(CountVnodesFun, [], AllVnodes))),
     
     io:format(user,
-                "~nVnode=~w MaxCount=~w out of 100 queries~n",
-                [Vnode, MaxCount]),
+                "~nVnode=~w MaxCount=~w out of ~w queries~n",
+                [Vnode, MaxCount, Runs]),
 
     MaxCount.
 
@@ -632,6 +632,72 @@ nonstandardring_tester(PartitionCount, CoverageFun) ->
             VnodeCovers),
     lists:foreach(fun(C) -> ?assertEqual(2, C) end, array:to_list(PC1)),
     length(VnodeCovers).
+
+multifailure_r2_post_test() ->
+    multi_failure_tester(32, fun initiate_plan/5),
+    multi_failure_tester(64, fun initiate_plan/5),
+    multi_failure_tester(128, fun initiate_plan/5),
+    multi_failure_tester(256, fun initiate_plan/5),
+    multi_failure_tester(512, fun initiate_plan/5).
+
+multifailure_r2_pre_test() ->
+    multi_failure_tester(32, fun find_coverage/5),
+    multi_failure_tester(64, fun find_coverage/5),
+    multi_failure_tester(128, fun find_coverage/5),
+    multi_failure_tester(256, fun find_coverage/5),
+    multi_failure_tester(512, fun find_coverage/5).
+
+multifailure_r2_tester(PartitionCount, CoverageFun) when PartitionCount >= 32 ->
+    % If there are failures at least target_n_val appart, a r=2 coverage plan
+    % can still be produced
+    ReqId = rand:uniform(99999),
+    NVal = 3,
+    PVC = 2,
+    C = rand:uniform(PartitionCount div 8),
+    UnavailableKeySpaces = lists:map(fun(I) -> I * 4 - C end, lists:seq(1, 8)),
+    {ok, VnodeCovers} =
+        CoverageFun(ReqId, NVal, PartitionCount,
+                    UnavailableKeySpaces, PVC),
+    PC = array:new(PartitionCount, {default, 0}),
+    PC0 =
+        lists:foldl(
+            fun({I, L}, Acc) ->
+                ?assertNotEqual(true, lists:member(I, UnavailableKeySpaces)),
+                lists:foldl(fun(P, IA) ->
+                                    array:set(P, array:get(P, IA) + 1, IA)
+                                end,
+                                Acc,
+                                L)
+            end,
+            PC,
+            VnodeCovers),
+    lists:foreach(fun(Cnt) -> ?assertEqual(2, Cnt) end, array:to_list(PC0)),
+    
+    % Fail two vnodes together - now can only get partial coverage from a r=2
+    % plan
+    RVN = rand:uniform(PartitionCount),
+    UnavailableKeySpaces1 = [RVN - 1, (RVN - 2) rem PartitionCount],
+    {insufficient_vnodes_available, _, VnodeCovers1} =
+        CoverageFun(ReqId, NVal, PartitionCount,
+                    UnavailableKeySpaces1, PVC),
+    PC1 =
+        lists:foldl(
+            fun({I, L}, Acc) ->
+                ?assertNotEqual(true, lists:member(I, UnavailableKeySpaces1)),
+                lists:foldl(fun(P, IA) ->
+                                    array:set(P, array:get(P, IA) + 1, IA)
+                                end,
+                                Acc,
+                                L)
+            end,
+            PC,
+            VnodeCovers1),
+    Covered =
+        length(lists:filter(fun(Cnt) -> Cnt == 2 end, array:to_list(PC1))),
+    PartiallyCovered =
+        length(lists:filter(fun(Cnt) -> Cnt == 1 end, array:to_list(PC1))),
+    ?assertEqual(2, PartiallyCovered),
+    ?assertEqual(2, PartitionCount - Covered).
 
 
 -endif.
