@@ -647,7 +647,7 @@ multifailure_r2_pre_test() ->
     multi_failure_tester(256, fun find_coverage/5),
     multi_failure_tester(512, fun find_coverage/5).
 
-multifailure_r2_tester(PartitionCount, CoverageFun) when PartitionCount >= 32 ->
+multi_failure_tester(PartitionCount, CoverageFun) when PartitionCount >= 32 ->
     % If there are failures at least target_n_val appart, a r=2 coverage plan
     % can still be produced
     ReqId = rand:uniform(99999),
