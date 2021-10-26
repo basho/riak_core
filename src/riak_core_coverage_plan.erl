@@ -529,6 +529,33 @@ changing_repeated_vnode_tester(CoverageFun, Runs) ->
 
     MaxCount.
 
+all_refactor_1024ring_test_() ->
+    {timeout, 1200, fun all_refactor_1024_ring_tester/0}.
+
+all_refactor_1024_ring_tester() ->
+    PVC = 1,
+    TestFun =
+        fun(ReqId) ->
+            {ok, VnodeCovers} = initiate_plan(ReqId, 3, 1024, [], PVC),
+            PC = array:new(1024, {default, 0}),
+            PC1 =
+                lists:foldl(
+                    fun({_I, L}, Acc) ->
+                        lists:foldl(fun(P, IA) ->
+                                            array:set(P,
+                                                        array:get(P, IA) + 1,
+                                                        IA)
+                                        end,
+                                        Acc,
+                                        L)
+                    end,
+                    PC,
+                    VnodeCovers),
+            lists:foreach(fun(C) -> ?assertEqual(PVC, C) end, array:to_list(PC1))
+        end,
+
+    lists:foreach(fun(I) -> TestFun(I) end, lists:seq(0, 1023)).
+
 
 refactor_2048ring_test() ->
     ring_tester(2048, fun initiate_plan/5).
@@ -581,14 +608,17 @@ compare_tester(RingSize) ->
     % used worse
     ?assertMatch(true, RFC =< (PFC +  1)).
 
+
 ring_tester(PartitionCount, CoverageFun) ->
-    Offset = 0,
+    ring_tester(PartitionCount, CoverageFun, 0).
+
+ring_tester(PartitionCount, CoverageFun, ReqId) ->
     NVal = 3,
     UnavailableKeySpaces = [],
     PVC = 1,
     {Vnodes, CoveredKeySpaces} =
         ring_tester(PartitionCount, CoverageFun,
-                    Offset, NVal, UnavailableKeySpaces, PVC),
+                    ReqId, NVal, UnavailableKeySpaces, PVC),
     ExpVnodeCount = (PartitionCount div NVal) +  2,
     KeySpaces = lists:seq(0, PartitionCount - 1),
     ?assertMatch(KeySpaces, CoveredKeySpaces),
@@ -638,7 +668,8 @@ multifailure_r2_post_test() ->
     multi_failure_tester(64, fun initiate_plan/5),
     multi_failure_tester(128, fun initiate_plan/5),
     multi_failure_tester(256, fun initiate_plan/5),
-    multi_failure_tester(512, fun initiate_plan/5).
+    multi_failure_tester(512, fun initiate_plan/5),
+    multi_failure_tester(1024, fun initiate_plan/5).
 
 multifailure_r2_pre_test() ->
     multi_failure_tester(32, fun find_coverage/5),
