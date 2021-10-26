@@ -26,6 +26,12 @@
 
 -module(riak_core_coverage_plan).
 
+-ifdef(EQC).
+-include_lib("eqc/include/eqc.hrl").
+-export([prop_cover_partitions/0, prop_distribution/0,
+         prop_find_coverage_partitions/0, prop_find_coverage_distribution/0,
+         prop_pvc/0]).
+-endif.
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -45,7 +51,7 @@
 
 %% @doc Create a coverage plan to distribute work to a set
 %%      covering VNodes around the ring.
--spec create_plan(all | allup, pos_integer(), pos_integer(), 
+-spec create_plan(all | allup, pos_integer(), pos_integer(),
                   req_id(), atom()) ->
                          {error, term()} | coverage_plan().
 create_plan(VNodeSelector, NVal, PVC, ReqId, Service) ->
@@ -88,7 +94,7 @@ create_plan(VNodeSelector, NVal, PVC, ReqId, Service) ->
                         {CoverageVNode, Acc}
                 end
         end,
-    
+
     CoveragePlanFun =
         case application:get_env(riak_core, legacy_coverage_planner, false) of
             true ->
@@ -145,10 +151,10 @@ create_plan(VNodeSelector, NVal, PVC, ReqId, Service) ->
                     pos_integer(),
                     pos_integer(),
                     list(non_neg_integer()),
-                    pos_integer()) -> 
-                        {ok, list(vnode_covers())} | 
-                            {insufficient_vnodes_available, 
-                                list(non_neg_integer()), 
+                    pos_integer()) ->
+                        {ok, list(vnode_covers())} |
+                            {insufficient_vnodes_available,
+                                list(non_neg_integer()),
                                 list(vnode_covers())}.
 initiate_plan(ReqId, NVal, PartitionCount, UnavailableVnodes, PVC) ->
     % Order the vnodes for the fold.  Will number each vnode in turn between
@@ -193,7 +199,7 @@ initiate_plan(ReqId, NVal, PartitionCount, UnavailableVnodes, PVC) ->
     % Subtract any Unavailable vnodes.  Must only assign available primary
     % vnodes a role in the coverage plan
     AvailableVnodes = lists:subtract(OrderedVnodes, UnavailableVnodes),
-    
+
     develop_plan(AvailableVnodes, NVal, PartitionWants, Countdown, []).
 
 
@@ -244,15 +250,15 @@ develop_plan([HeadVnode|RestVnodes], NVal,
                             PartitionWants, PartitionCountdown,
                             VnodeCovers)
     end.
-    
+
 -spec find_coverage(non_neg_integer(),
                     pos_integer(),
                     pos_integer(),
                     list(non_neg_integer()),
-                    pos_integer()) -> 
-                        {ok, list(vnode_covers())} | 
-                            {insufficient_vnodes_available, 
-                                list(non_neg_integer()), 
+                    pos_integer()) ->
+                        {ok, list(vnode_covers())} |
+                            {insufficient_vnodes_available,
+                                list(non_neg_integer()),
                                 list(vnode_covers())}.
 find_coverage(ReqId, NVal, PartitionCount, UnavailableKeySpaces, PVC) ->
     AllKeySpaces = lists:seq(0, PartitionCount - 1),
@@ -264,16 +270,16 @@ find_coverage(ReqId, NVal, PartitionCount, UnavailableKeySpaces, PVC) ->
                     UnavailableKeySpaces, PVC, []).
 
 %% @private
--spec find_coverage(list(non_neg_integer()), 
+-spec find_coverage(list(non_neg_integer()),
                     non_neg_integer(),
                     pos_integer(),
                     pos_integer(),
                     list(non_neg_integer()),
                     pos_integer(),
-                    list(vnode_covers())) -> 
-                        {ok, list(vnode_covers())} | 
-                            {insufficient_vnodes_available, 
-                                list(non_neg_integer()), 
+                    list(vnode_covers())) ->
+                        {ok, list(vnode_covers())} |
+                            {insufficient_vnodes_available,
+                                list(non_neg_integer()),
                                 list(vnode_covers())}.
 find_coverage(AllKeySpaces, Offset, NVal, PartitionCount, UnavailableKeySpaces, PVC, []) ->
     %% Calculate the available keyspaces.
@@ -420,13 +426,142 @@ covers(KeySpace, CoversKeys) ->
 %%% Test
 %%%============================================================================
 
+-ifdef(EQC).
+
+pow(N, Gen) when not is_integer(Gen) ->
+    ?LET(Exp, Gen, pow(N, Exp));
+pow(_, 0) ->
+    1;
+pow(N, Exp) when is_integer(Exp), Exp > 0 ->
+    N * pow(N, Exp - 1).
+
+uniq_n_out_of_m(N, M) when N =< M ->
+    ?LET({Candidates, Split}, {shuffle(lists:seq(0, M - 1)), choose(0, N - 1)},
+         begin
+             {L, _} = lists:split(Split, Candidates), L
+         end).
+
+prop_cover_partitions() ->
+    prop_cover_partitions(fun initiate_plan/5).
+
+prop_find_coverage_partitions() ->
+    prop_cover_partitions(fun find_coverage/5).
+
+%% A coverage plan should contain all partitions
+%% and should not return an unavailable node
+prop_cover_partitions(F) ->
+    ?FORALL({NVal, PartitionCount}, {choose(3,5), pow(2, choose(3, 10))},
+    ?FORALL({ReqId, Unavailable}, {choose(0, PartitionCount - 1), uniq_n_out_of_m(NVal, PartitionCount)},
+            begin
+                KeySpaces = lists:seq(0, PartitionCount - 1),
+                PVC = 1,
+                {ok, Plan} = F(ReqId, NVal, PartitionCount, Unavailable, PVC),
+                conjunction([{partitions,
+                              equals(lists:sort([ P || {_, Ps} <- Plan, P <- Ps ]),
+                                     KeySpaces)},
+                             {no_unavailable,
+                              equals(Unavailable -- [ N || {N, _} <- Plan ],
+                                     Unavailable)}])
+            end)).
+
+prop_distribution() ->
+    prop_distribution(fun initiate_plan/5).
+
+prop_find_coverage_distribution() ->
+    prop_distribution(fun find_coverage/5).
+
+%% Compute all possible plans and check that there is no "hot" node that is
+%% used more than all other nodes in the plan.
+%% Also check that the resulting plans have approximately the same
+%% number of nodes to select partitions from (not one plan that takes it from 3
+%% nodes and another taking it from 8.
+%% If one of the plans fails, then they should all fail. Failing should not
+%% depend on the choosen ReqId.
+prop_distribution(F) ->
+    ?FORALL({NVal, PartitionCount}, {choose(3,5), pow(2, choose(3, 9))},
+    ?FORALL(Unavailable, uniq_n_out_of_m(NVal, PartitionCount),
+            begin
+                PVC = 1,
+                Plans = [ begin
+                              F(ReqId, NVal, PartitionCount, Unavailable, PVC)
+                          end
+                          || ReqId <- lists:seq(0, PartitionCount -1) ],
+                Tags = lists:usort([ element(1, Plan) || Plan <- Plans ]),
+                ?WHENFAIL(eqc:format("Plans: ~p with distribution ~p\n", [Plans, distribution(Plans)]),
+                          conjunction([{nok_all_nok, length(Tags) == 1}] ++
+                                      [{similar_set, max_diff(length(Unavailable),
+                                                              [ length(Plan) || {_, Plan} <- Plans ])}
+                                       || Tags == [ok]] ++
+                                          [{hot_node, same_count(distribution(Plans))}]))
+            end)).
+
+%% Computing with PVC larger than 1 takes a lot of time.
+%% We take slightly smaller paertition size here to test more in same time
+%%
+%% If PVC is 2 then each partition should appear on two returned nodes
+%% But, if nodes are unavailable, then this might not work out, then
+%% a next best solution should be presented.
+prop_pvc() ->
+    ?FORALL({NVal, PartitionCount}, {choose(3,5), pow(2, choose(3, 8))},
+    ?FORALL({ReqId, Unavailable}, {choose(0, PartitionCount),
+                                   uniq_n_out_of_m(NVal, PartitionCount)},
+    ?FORALL(PVC, choose(1, NVal),
+            collect({pvc, PVC},
+            begin
+                PVCPlan = initiate_plan(ReqId, NVal, PartitionCount, Unavailable, PVC),
+                OnePlan = initiate_plan(ReqId, NVal, PartitionCount, Unavailable, 1),
+                case {OnePlan, PVCPlan} of
+                    {{ok, _}, {ok, Plan}} ->
+                         Distribution = distribution([ P || {_, Ps} <- Plan, P <- Ps ], []),
+                         ?WHENFAIL(eqc:format("Plan: ~p with distribution ~p\n", [Plan, Distribution]),
+                                   conjunction([{partition_count, same_count([{x, PVC} | Distribution])}]));
+                    {{ok, _}, {insufficient_vnodes_available, _, Plan}} ->
+                        Distribution = distribution([ P || {_, Ps} <- Plan, P <- Ps ], []),
+                        conjunction([{unavailable, PVC > NVal - length(Unavailable)},
+                                     {partitions,
+                                      equals(lists:usort([ P || {_, Ps} <- Plan, P <- Ps ]),
+                                             lists:seq(0, PartitionCount - 1))},
+                                     {no_unavailable,
+                                      equals(Unavailable -- [ N || {N, _} <- Plan ],
+                                             Unavailable)},
+                                     {good_enough, equals([ Count || {_, Count} <- Distribution,
+                                                                     Count <  NVal - length(Unavailable)], [])}]);
+                    _ ->
+                        equals(element(1, PVCPlan), insufficient_vnodes_available)
+                end
+            end)))).
+
+max_diff(N, List) ->
+    lists:max(List) - lists:min(List) =< N.
+
+distribution(Plans) ->
+    distribution([ Node || {_, Plan} <- Plans, {Node, _} <- Plan ], []).
+
+distribution([], Dist) ->
+    Dist;
+distribution([N|Ns], Dist) ->
+    case lists:keyfind(N, 1, Dist) of
+        false ->
+            distribution(Ns, [{N, 1} | Dist]);
+        {_, Count} ->
+             distribution(Ns, lists:keyreplace(N, 1, Dist, {N, Count +1}))
+    end.
+
+same_count([]) ->
+    true;
+same_count([{_, Count} | Rest]) ->
+    equals([ C || {_, C} <- Rest, C /= Count ], []).
+
+
+-endif.
+
 -ifdef(TEST).
 
 %% Unit testing at moment, but there appear to be some obvious properties:
 %% - The output of find_coverage is [{A, [B]}] - where accumulation of all [B]
 %% should be equal to the KeySpaces
 %% - The accumulation of [A] should not include any unavailable KeySpaces
-%% - The length of the list should be optimal? 
+%% - The length of the list should be optimal?
 
 eight_vnode_prefactor_test() ->
     Offset = 0,
@@ -440,7 +575,7 @@ eight_vnode_prefactor_test() ->
                         PVC),
     R0 = [{0, [5, 6, 7]}, {3, [0, 1, 2]}, {5, [3, 4]}],
     ?assertMatch(R0, VnodeCovers0),
-    
+
     UnavailableKeySpaces1 = [3, 7],
     {ok, VnodeCovers1} =
         find_coverage(Offset, NVal, PartitionCount,
@@ -451,7 +586,7 @@ eight_vnode_prefactor_test() ->
     % Actual result returned needs to cover 4 vnodes
     R1 = [{0, [5, 6, 7]}, {1, [0]}, {4, [1, 2, 3]}, {5, [4]}],
     ?assertMatch(R1, VnodeCovers1),
-    
+
     Offset2 = 1,
     {ok, VnodeCovers2} =
         find_coverage(Offset2, NVal, PartitionCount,
@@ -461,7 +596,7 @@ eight_vnode_prefactor_test() ->
     % distinct choices of cover vnodes, and [2, 4, 7] is distinct to [0, 3, 5]
     R2 = [{2, [0, 1, 7]}, {4, [2, 3]}, {7, [4, 5, 6]}],
     ?assertMatch(R2, VnodeCovers2),
-    
+
     Offset3 = 2,
     {ok, VnodeCovers3} =
         find_coverage(Offset3, NVal, PartitionCount,
@@ -469,7 +604,7 @@ eight_vnode_prefactor_test() ->
                         PVC),
     R3 = [{1, [0, 6, 7]}, {3, [1, 2]}, {6, [3, 4, 5]}],
     ?assertMatch(R3, VnodeCovers3),
-    
+
     %% The Primay Vnode Count- now set to 2 (effectively a r value of 2)
     %% Each partition must be included twice in the result
     PVC4 = 2,
@@ -519,10 +654,10 @@ changing_repeated_vnode_tester(CoverageFun, Runs) ->
                     lists:ukeysort(1, [{V, 1}|Acc])
             end
         end,
-    [{Vnode, MaxCount}|_RestCounts] = 
+    [{Vnode, MaxCount}|_RestCounts] =
         lists:reverse(
             lists:keysort(2, lists:foldl(CountVnodesFun, [], AllVnodes))),
-    
+
     io:format(user,
                 "~nVnode=~w MaxCount=~w out of ~w queries~n",
                 [Vnode, MaxCount, Runs]),
@@ -646,7 +781,7 @@ nonstandardring_tester(PartitionCount, CoverageFun) ->
         CoverageFun(Offset, NVal, PartitionCount,
                         UnavailableKeySpaces,
                         PVC),
-    
+
     PC = array:new(PartitionCount, {default, 0}),
     PC1 =
         lists:foldl(
@@ -703,7 +838,7 @@ multi_failure_tester(PartitionCount, CoverageFun) when PartitionCount >= 32 ->
             PC,
             VnodeCovers),
     lists:foreach(fun(Cnt) -> ?assertEqual(2, Cnt) end, array:to_list(PC0)),
-    
+
     % Fail two vnodes together - now can only get partial coverage from a r=2
     % plan
     RVN = rand:uniform(PartitionCount),
@@ -732,4 +867,3 @@ multi_failure_tester(PartitionCount, CoverageFun) when PartitionCount >= 32 ->
 
 
 -endif.
-
