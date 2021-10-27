@@ -840,7 +840,13 @@ multi_failure_tester(PartitionCount, CoverageFun) when PartitionCount >= 32 ->
     % Fail two vnodes together - now can only get partial coverage from a r=2
     % plan
     RVN = rand:uniform(PartitionCount),
-    UnavailableKeySpaces1 = [RVN - 1, (RVN - 2) rem PartitionCount],
+    UnavailableKeySpaces1 = 
+        case RVN of
+            1 ->
+                [0, PartitionCount - 1];
+            _ ->
+                [RVN - 1, RVN - 2]
+        end,
     {insufficient_vnodes_available, _, VnodeCovers1} =
         CoverageFun(ReqId, NVal, PartitionCount,
                     UnavailableKeySpaces1, PVC),
