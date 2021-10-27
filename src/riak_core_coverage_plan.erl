@@ -30,7 +30,7 @@
 -include_lib("eqc/include/eqc.hrl").
 -export([prop_cover_partitions/0,
             prop_distribution/0,
-            prop_find_coverage_partitions/0, 
+            prop_find_coverage_partitions/0,
             prop_pvc/0]).
 -endif.
 -ifdef(TEST).
@@ -480,19 +480,18 @@ prop_distribution() ->
 %% depend on the choosen ReqId.
 prop_distribution(F) ->
     ?FORALL({NVal, PartitionCount}, {choose(3,5), pow(2, choose(3, 9))},
+    ?FORALL(Unavailable, uniq_n_out_of_m(NVal, PartitionCount),
             begin
                 PVC = 1,
-                Plans = [ begin
-                              F(ReqId, NVal, PartitionCount, [], PVC)
-                          end
+                Plans = [ F(ReqId, NVal, PartitionCount, Unavailable, PVC)
                           || ReqId <- lists:seq(0, PartitionCount -1) ],
                 Tags = lists:usort([ element(1, Plan) || Plan <- Plans ]),
                 ?WHENFAIL(eqc:format("Plans: ~p with distribution ~p\n", [Plans, distribution(Plans)]),
                           conjunction([{nok_all_nok, length(Tags) == 1}] ++
-                                      [{similar_set, max_diff(0, [ length(Plan) || {_, Plan} <- Plans ])}
+                                      [{similar_set, max_diff(length(Unavailable), [ length(Plan) || {_, Plan} <- Plans ])}
                                        || Tags == [ok]] ++
-                                          [{hot_node, same_count(distribution(Plans))}]))
-            end).
+                                          [{hot_node, same_count(distribution(Plans))} || Unavailable == []]))
+            end)).
 
 %% Computing with PVC larger than 1 takes a lot of time.
 %% We take slightly smaller paertition size here to test more in same time
