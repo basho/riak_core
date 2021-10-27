@@ -107,7 +107,7 @@ create_plan(VNodeSelector, NVal, PVC, ReqId, Service) ->
                 fun initiate_plan/5
         end,
 
-    %% The offset value serves as a tiebreaker in the
+    %% The ReqId value serves as a tiebreaker in the
     %% compare_next_vnode function and is used to distribute
     %% work to different sets of VNodes.
     CoverageResult =
