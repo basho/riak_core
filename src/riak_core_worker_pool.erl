@@ -66,12 +66,11 @@
 
 -define(SHUTDOWN_WAIT, 60000).
 
--record(state, {
-				queue = queue:new(),
-				pool :: pid(),
-				monitors = [] :: list(),
-				shutdown :: undefined | {pid(), reference()},
-				callback_mod :: atom()
+-record(state, {queue = queue:new(),
+                pool :: pid(),
+                monitors = [] :: list(),
+                shutdown :: undefined | {pid(), reference()},
+                callback_mod :: atom()
     }).
 
 
@@ -89,7 +88,7 @@
 
 
 start_link(PoolBoyArgs, CallbackMod) ->
-	gen_fsm:start_link(?MODULE, [PoolBoyArgs, CallbackMod], []).
+    gen_fsm:start_link(?MODULE, [PoolBoyArgs, CallbackMod], []).
 
 handle_work(Pid, Work, From) ->
     gen_fsm:send_event(Pid, {work, Work, From}).
@@ -102,8 +101,8 @@ shutdown_pool(Pid, Wait) ->
     gen_fsm:sync_send_all_state_event(Pid, {shutdown, Wait}, infinity).
 
 init([PoolBoyArgs, CallbackMod]) ->
-	{ok, Pid} = CallbackMod:do_init(PoolBoyArgs),
-	{ok, ready, #state{pool=Pid, callback_mod=CallbackMod}}.
+    {ok, Pid} = CallbackMod:do_init(PoolBoyArgs),
+    {ok, ready, #state{pool=Pid, callback_mod=CallbackMod}}.
 	
 ready(_Event, _From, State) ->
     {reply, ok, ready, State}.
@@ -114,15 +113,19 @@ queueing(_Event, _From, State) ->
 shutdown(_Event, _From, State) ->
     {reply, ok, shutdown, State}.
 
-ready({work, Work, From} = Msg, #state{pool=Pool, queue=Q, monitors=Monitors} = State) ->
+ready({work, Work, From} = Msg,
+        #state{pool=Pool, queue=Q, monitors=Monitors} = State) ->
     case poolboy:checkout(Pool, false) of
         full ->
             {next_state, queueing, State#state{queue=queue:in(Msg, Q)}};
         Pid when is_pid(Pid) ->
             NewMonitors =
-				riak_core_worker_pool:monitor_worker(Pid, From, Work, Monitors),
+                riak_core_worker_pool:monitor_worker(Pid,
+                                                        From,
+                                                        Work,
+                                                        Monitors),
             Mod = State#state.callback_mod,
-			Mod:do_work(Pid, Work, From),
+            Mod:do_work(Pid, Work, From),
             {next_state, ready, State#state{monitors=NewMonitors}}
     end;
 ready(_Event, State) ->
@@ -136,7 +139,7 @@ queueing(_Event, State) ->
 shutdown({work, _Work, From}, State) ->
     %% tell the process requesting work that we're shutting down
     Mod = State#state.callback_mod,
-	Mod:reply(From, {error, vnode_shutdown}),
+    Mod:reply(From, {error, vnode_shutdown}),
     {next_state, shutdown, State};
 shutdown(_Event, State) ->
     {next_state, shutdown, State}.
@@ -157,15 +160,16 @@ handle_event({checkin, Worker}, _, #state{pool = Pool, queue=Q, monitors=Monitor
             %% the worker back in, just hand it more work to do
             NewMonitors = monitor_worker(Worker, From, Work, Monitors),
             Mod = State#state.callback_mod,
-			Mod:do_work(Worker, Work, From),
-            {next_state, queueing, State#state{queue=Rem,
-                                               monitors=NewMonitors}};
+            Mod:do_work(Worker, Work, From),
+            {next_state,
+                queueing, State#state{queue=Rem, monitors=NewMonitors}};
         {empty, Empty} ->
             NewMonitors = demonitor_worker(Worker, Monitors),
             poolboy:checkin(Pool, Worker),
             {next_state, ready, State#state{queue=Empty, monitors=NewMonitors}}
     end;
-handle_event(worker_start, StateName, #state{pool=Pool, queue=Q, monitors=Monitors}=State) ->
+handle_event(worker_start, StateName,
+                #state{pool=Pool, queue=Q, monitors=Monitors}=State) ->
     %% a new worker just started - if we have work pending, try to do it
     case queue:out(Q) of
         {{value, {work, Work, From}}, Rem} ->
@@ -175,18 +179,22 @@ handle_event(worker_start, StateName, #state{pool=Pool, queue=Q, monitors=Monito
                 Pid when is_pid(Pid) ->
                     NewMonitors = monitor_worker(Pid, From, Work, Monitors),
                     Mod = State#state.callback_mod,
-					Mod:do_work(Pid, Work, From),
-                    {next_state, queueing, State#state{queue=Rem, monitors=NewMonitors}}
+                    Mod:do_work(Pid, Work, From),
+                    {next_state,
+                        queueing,
+                        State#state{queue=Rem, monitors=NewMonitors}}
             end;
         {empty, _} ->
-	    {next_state,
-	     %% If we are in state queueing with nothing in the queue,
-	     %% move to the ready state so that the next incoming job
-	     %% checks out the new worker from poolboy.
-	     if StateName==queueing -> ready;
-		true -> StateName
-	     end,
-	     State}
+            {next_state,
+                %% If we are in state queueing with nothing in the queue,
+                %% move to the ready state so that the next incoming job
+                %% checks out the new worker from poolboy.
+                if StateName==queueing ->
+                        ready;
+                    true ->
+                        StateName
+                end,
+                State}
     end;
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
@@ -216,8 +224,8 @@ handle_info({'DOWN', _Ref, _, Pid, Info}, StateName, #state{monitors=Monitors} =
     %% remove the listing for the dead worker
     case lists:keyfind(Pid, 1, Monitors) of
         {Pid, _, From, Work} ->
-			Mod = State#state.callback_mod,
-			Mod:reply(From, {error, {worker_crash, Info, Work}}),
+            Mod = State#state.callback_mod,
+            Mod:reply(From, {error, {worker_crash, Info, Work}}),
             NewMonitors = lists:keydelete(Pid, 1, Monitors),
             %% trigger to do more work will be 'worker_start' message
             %% when poolboy replaces this worker (if not a 'checkin'
@@ -228,9 +236,9 @@ handle_info({'DOWN', _Ref, _, Pid, Info}, StateName, #state{monitors=Monitors} =
     end;
 handle_info(shutdown, shutdown, #state{monitors=Monitors} = State) ->
     %% we've waited too long to shutdown, time to force the issue
-	Mod = State#state.callback_mod,
-    _ = [Mod:reply(From, {error, vnode_shutdown}) || 
-            {_, _, From, _} <- Monitors],
+    Mod = State#state.callback_mod,
+    _ = [Mod:reply(From, {error, vnode_shutdown})
+            ||  {_, _, From, _} <- Monitors],
     {stop, shutdown, State};
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.

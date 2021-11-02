@@ -32,7 +32,7 @@
 	% Allows you to set up a DSCP-style set of pools (assuming the
 	% vnode_worker_pool counts as ef.  Otherwise can just have a
 	% single node_worker_pool
-	:: be_pool|af1_pool|af2_pool|af3_pool|af4_pool|node_worker_pool.
+    :: be_pool|af1_pool|af2_pool|af3_pool|af4_pool|node_worker_pool.
 
 -export_type([worker_pool/0]).
 
@@ -63,26 +63,23 @@ dscp_pools() ->
     [af1(), af2(), af3(), af4(), be()].
 
 -spec start_link(atom(), pos_integer(), list(), list(), worker_pool())
-                -> {ok, pid()}.
+                    -> {ok, pid()}.
 %% @doc
 %% Start a worker pool, and register under the name PoolType, which should be
 %% a recognised name from type worker_pool()
 start_link(WorkerMod, PoolSize, WorkerArgs, WorkerProps, PoolType)
-  when PoolType == be_pool;
-       PoolType == af1_pool;
-       PoolType == af2_pool;
-       PoolType == af3_pool;
-       PoolType == af4_pool;
-       PoolType == node_worker_pool ->
+    when PoolType == be_pool;
+            PoolType == af1_pool;
+            PoolType == af2_pool;
+            PoolType == af3_pool;
+            PoolType == af4_pool;
+            PoolType == node_worker_pool ->
     {ok, Pid} =
-        riak_core_worker_pool:start_link([WorkerMod,
-                                          PoolSize,
-                                          WorkerArgs,
-                                          WorkerProps],
-                                         ?MODULE),
+        riak_core_worker_pool:start_link(
+            [WorkerMod, PoolSize, WorkerArgs, WorkerProps], ?MODULE),
     register(PoolType, Pid),
     lager:info("Registered worker pool of type ~w and size ~w",
-               [PoolType, PoolSize]),
+                [PoolType, PoolSize]),
     {ok, Pid}.
 
 do_init([WorkerMod, PoolSize, WorkerArgs, WorkerProps]) ->
@@ -108,10 +105,10 @@ stop(Pid, Reason) ->
 
 %% wait for all the workers to finish any current work
 shutdown_pool(Pid, Wait) ->
-	riak_core_worker_pool:shutdown_pool(Pid, Wait).
+    riak_core_worker_pool:shutdown_pool(Pid, Wait).
 
 reply(From, Msg) ->
-	riak_core_vnode:reply(From, Msg).
+    riak_core_vnode:reply(From, Msg).
 
 do_work(Pid, Work, From) ->
-	riak_core_vnode_worker:handle_work(Pid, Work, From).
+    riak_core_vnode_worker:handle_work(Pid, Work, From).

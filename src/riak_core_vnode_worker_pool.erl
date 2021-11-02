@@ -49,33 +49,29 @@
 start_link(WorkerMod,
 			PoolSize, VNodeIndex,
 			WorkerArgs, WorkerProps) ->
-	riak_core_worker_pool:start_link([WorkerMod,
-										PoolSize,
-										VNodeIndex,
-										WorkerArgs,
-										WorkerProps],
-										?MODULE).
+    riak_core_worker_pool:start_link(
+        [WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps], ?MODULE).
 	
 handle_work(Pid, Work, From) ->
     riak_core_stat:update({worker_pool, vnode_pool}),
-	riak_core_worker_pool:handle_work(Pid, Work, From).
+    riak_core_worker_pool:handle_work(Pid, Work, From).
 
 stop(Pid, Reason) ->
     riak_core_worker_pool:stop(Pid, Reason).
 
 %% wait for all the workers to finish any current work
 shutdown_pool(Pid, Wait) ->
-	riak_core_worker_pool:shutdown_pool(Pid, Wait).
+    riak_core_worker_pool:shutdown_pool(Pid, Wait).
 
 reply(From, Msg) ->
-	riak_core_vnode:reply(From, Msg).
+    riak_core_vnode:reply(From, Msg).
 
 do_init([WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps]) ->
-    poolboy:start_link([{worker_module, riak_core_vnode_worker},
-							{worker_args,
-								[VNodeIndex, WorkerArgs, WorkerProps, self()]},
-							{worker_callback_mod, WorkerMod},
-							{size, PoolSize}, {max_overflow, 0}]).
+    poolboy:start_link([{worker_module, riak_core_vnode_worker}, 
+                            {worker_args, 
+                                [VNodeIndex, WorkerArgs, WorkerProps, self()]}, 
+                            {worker_callback_mod, WorkerMod}, 
+                            {size, PoolSize}, {max_overflow, 0}]).
 
 do_work(Pid, Work, From) ->
-	riak_core_vnode_worker:handle_work(Pid, Work, From).
+    riak_core_vnode_worker:handle_work(Pid, Work, From).
