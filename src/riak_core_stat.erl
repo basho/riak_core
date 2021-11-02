@@ -224,7 +224,7 @@ nwp_stats() ->
                 {95    , vnode_worker_pool_checkouts_95},
                 {max   , vnode_worker_pool_checkouts_100}]},
         {[vnode, worker_pool_queue_events], counter, [],
-            [{value, vnode_worker_pool_queue_events}]}] ++
+            [{value, vnode_worker_pool_qevents}]}] ++
 
         [nwp_stat(Pool) || Pool <- PoolNames] ++
         
