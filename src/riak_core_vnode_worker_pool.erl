@@ -46,9 +46,7 @@
 %% API
 -export([start_link/5, stop/2, shutdown_pool/2, handle_work/3]).
 
-start_link(WorkerMod,
-			PoolSize, VNodeIndex,
-			WorkerArgs, WorkerProps) ->
+start_link(WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps) ->
     riak_core_worker_pool:start_link(
         [WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps], ?MODULE).
 	

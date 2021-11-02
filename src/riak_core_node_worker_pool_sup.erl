@@ -22,11 +22,11 @@
 
 %% Helper macro for declaring children of supervisor
 -define(CHILD(I, PoolType, Args, Type, Timeout),
-		{PoolType,
-			{I, start_link, Args},
-			permanent, Timeout, Type, [I]}).
+            {PoolType,
+                {I, start_link, Args},
+                permanent, Timeout, Type, [I]}).
 -define(CHILD(I, PoolType, Args, Type),
-		?CHILD(I, PoolType, Args, Type, 5000)).
+            ?CHILD(I, PoolType, Args, Type, 5000)).
 
 -type worker_pool() :: riak_core_node_worker_pool:worker_pool().
 
@@ -53,8 +53,8 @@ start_pool(WorkerMod, PoolSize, WorkerArgs, WorkerProps, QueueType) ->
     end.
 
 pool(WorkerMod, PoolSize, WorkerArgs, WorkerProps, QueueType) ->
-    ?CHILD(riak_core_node_worker_pool,
-           QueueType,
-           [WorkerMod, PoolSize, WorkerArgs, WorkerProps, QueueType],
-           worker).
+        ?CHILD(riak_core_node_worker_pool,
+                QueueType,
+                [WorkerMod, PoolSize, WorkerArgs, WorkerProps, QueueType],
+                worker).
 
