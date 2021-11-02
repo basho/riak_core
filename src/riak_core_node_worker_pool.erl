@@ -76,7 +76,7 @@ start_link(WorkerMod, PoolSize, WorkerArgs, WorkerProps, PoolType)
             PoolType == node_worker_pool ->
     {ok, Pid} =
         riak_core_worker_pool:start_link(
-            [WorkerMod, PoolSize, WorkerArgs, WorkerProps], ?MODULE),
+            [WorkerMod, PoolSize, WorkerArgs, WorkerProps], ?MODULE, PoolType),
     register(PoolType, Pid),
     lager:info("Registered worker pool of type ~w and size ~w",
                 [PoolType, PoolSize]),

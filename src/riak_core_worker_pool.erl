@@ -51,7 +51,7 @@
 -export([init/1, handle_event/3, handle_sync_event/4, handle_info/3,
         terminate/3, code_change/4]).
 
--export([start_link/2, handle_work/3, stop/2, shutdown_pool/2]).
+-export([start_link/3, handle_work/3, stop/2, shutdown_pool/2]).
 
 %% gen_fsm states
 -export([queueing/2, ready/2, ready/3, queueing/3, shutdown/2, shutdown/3]).
@@ -70,7 +70,9 @@
                 pool :: pid(),
                 monitors = [] :: list(),
                 shutdown :: undefined | {pid(), reference()},
-                callback_mod :: atom()
+                callback_mod :: atom(),
+                pool_name :: atom(),
+                checkouts = 0 :: non_neg_integer()
     }).
 
 
@@ -87,8 +89,8 @@
 -callback do_work(Pid::pid(), Work::term(), From::term()) -> any().
 
 
-start_link(PoolBoyArgs, CallbackMod) ->
-    gen_fsm:start_link(?MODULE, [PoolBoyArgs, CallbackMod], []).
+start_link(PoolBoyArgs, CallbackMod, PoolName) ->
+    gen_fsm:start_link(?MODULE, [PoolBoyArgs, CallbackMod, PoolName], []).
 
 handle_work(Pid, Work, From) ->
     gen_fsm:send_event(Pid, {work, Work, From}).
@@ -100,9 +102,11 @@ stop(Pid, Reason) ->
 shutdown_pool(Pid, Wait) ->
     gen_fsm:sync_send_all_state_event(Pid, {shutdown, Wait}, infinity).
 
-init([PoolBoyArgs, CallbackMod]) ->
+init([PoolBoyArgs, CallbackMod, PoolName]) ->
     {ok, Pid} = CallbackMod:do_init(PoolBoyArgs),
-    {ok, ready, #state{pool=Pid, callback_mod=CallbackMod}}.
+    {ok,
+        ready,
+        #state{pool=Pid, callback_mod = CallbackMod, pool_name = PoolName}}.
 	
 ready(_Event, _From, State) ->
     {reply, ok, ready, State}.
@@ -115,18 +119,20 @@ shutdown(_Event, _From, State) ->
 
 ready({work, Work, From} = Msg,
         #state{pool=Pool, queue=Q, monitors=Monitors} = State) ->
-    case poolboy:checkout(Pool, false) of
-        full ->
-            {next_state, queueing, State#state{queue=queue:in(Msg, Q)}};
-        Pid when is_pid(Pid) ->
+    case poolboy_checkout(Pool, State) of
+        {full, State0} ->
+            riak_core_stat:update({worker_pool,
+                                    queue_event,
+                                    State#state.pool_name}),
+            {next_state, queueing, State0#state{queue=queue:in(Msg, Q)}};
+        {Pid, State0} when is_pid(Pid) ->
             NewMonitors =
                 riak_core_worker_pool:monitor_worker(Pid,
                                                         From,
                                                         Work,
                                                         Monitors),
-            Mod = State#state.callback_mod,
-            Mod:do_work(Pid, Work, From),
-            {next_state, ready, State#state{monitors=NewMonitors}}
+            do_work(Pid, Work, From, State0),
+            {next_state, ready, State0#state{monitors=NewMonitors}}
     end;
 ready(_Event, State) ->
     {next_state, ready, State}.
@@ -146,12 +152,12 @@ shutdown(_Event, State) ->
 
 handle_event({checkin, Pid}, shutdown, #state{pool=Pool, monitors=Monitors0} = State) ->
     Monitors = demonitor_worker(Pid, Monitors0),
-    poolboy:checkin(Pool, Pid),
+    {ok, State0} = poolboy_checkin(Pool, Pid, State),
     case Monitors of
         [] -> %% work all done, time to exit!
-            {stop, shutdown, State};
+            {stop, shutdown, State0};
         _ ->
-            {next_state, shutdown, State#state{monitors=Monitors}}
+            {next_state, shutdown, State0#state{monitors=Monitors}}
     end;
 handle_event({checkin, Worker}, _, #state{pool = Pool, queue=Q, monitors=Monitors} = State) ->
     case queue:out(Q) of
@@ -159,30 +165,28 @@ handle_event({checkin, Worker}, _, #state{pool = Pool, queue=Q, monitors=Monitor
             %% there is outstanding work to do - instead of checking
             %% the worker back in, just hand it more work to do
             NewMonitors = monitor_worker(Worker, From, Work, Monitors),
-            Mod = State#state.callback_mod,
-            Mod:do_work(Worker, Work, From),
+            do_work(Worker, Work, From, State),
             {next_state,
                 queueing, State#state{queue=Rem, monitors=NewMonitors}};
         {empty, Empty} ->
             NewMonitors = demonitor_worker(Worker, Monitors),
-            poolboy:checkin(Pool, Worker),
-            {next_state, ready, State#state{queue=Empty, monitors=NewMonitors}}
+            {ok, State0} = poolboy_checkin(Pool, Worker, State),
+            {next_state, ready, State0#state{queue=Empty, monitors=NewMonitors}}
     end;
 handle_event(worker_start, StateName,
                 #state{pool=Pool, queue=Q, monitors=Monitors}=State) ->
     %% a new worker just started - if we have work pending, try to do it
     case queue:out(Q) of
         {{value, {work, Work, From}}, Rem} ->
-            case poolboy:checkout(Pool, false) of
-                full ->
-                    {next_state, queueing, State};
-                Pid when is_pid(Pid) ->
+            case poolboy_checkout(Pool, State) of
+                {full, State0} ->
+                    {next_state, queueing, State0};
+                {Pid, State0} when is_pid(Pid) ->
                     NewMonitors = monitor_worker(Pid, From, Work, Monitors),
-                    Mod = State#state.callback_mod,
-                    Mod:do_work(Pid, Work, From),
+                    do_work(Pid, Work, From, State0),
                     {next_state,
                         queueing,
-                        State#state{queue=Rem, monitors=NewMonitors}}
+                        State0#state{queue=Rem, monitors=NewMonitors}}
             end;
         {empty, _} ->
             {next_state,
@@ -286,3 +290,20 @@ discard_queued_work(Q, Mod) ->
             ok
     end.
 
+poolboy_checkin(Pool, Worker, State) ->
+    R = poolboy:checkin(Pool, Worker),
+    {R, State#state{checkouts = max(State#state.checkouts - 1, 0)}}.
+
+poolboy_checkout(Pool, State) ->
+    R = poolboy:checkout(Pool, false),
+    {R, State#state{checkouts = State#state.checkouts + 1}}.
+
+do_work(Pid, Work, From, State) ->
+    % We must have checked out to do some work, raise the stat as the number
+    % of checkouts prior to this one
+    riak_core_stat:update({worker_pool,
+                            work_event,
+                            State#state.pool_name,
+                            max(State#state.checkouts - 1, 0)}),
+    Mod = State#state.callback_mod,
+    Mod:do_work(Pid, Work, From).
