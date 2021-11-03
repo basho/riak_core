@@ -299,7 +299,7 @@ vnodeq_atom(Service, Desc) ->
 
 -spec nwp_name_atom(atom(), binary()) -> atom().
 nwp_name_atom(QueueName, StatName) ->
-    binary_to_atom(<< <<"core_worker_">>/binary,
+    binary_to_atom(<< <<"worker_">>/binary,
                         (atom_to_binary(QueueName, latin1))/binary,
                         StatName/binary >>,
                     latin1).
@@ -308,8 +308,7 @@ nwp_name_atom(QueueName, StatName) ->
 -ifdef(TEST).
 
 nwp_name_to_atom_test() ->
-    ?assertEqual(core_worker_af1_pool_total,
-                    nwp_name_atom(af1_pool, <<"_total">>)).
+    ?assertEqual(worker_af1_pool_total, nwp_name_atom(af1_pool, <<"_total">>)).
 
 
 %% Check vnodeq aggregation function
