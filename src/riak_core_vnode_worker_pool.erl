@@ -50,7 +50,8 @@ start_link(WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps) ->
     riak_core_worker_pool:start_link(
         [WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps],
             ?MODULE,
-            vnode_pool).
+            vnode_pool,
+            PoolSize div 2).
 	
 handle_work(Pid, Work, From) ->
     riak_core_stat:update({worker_pool, vnode_pool}),

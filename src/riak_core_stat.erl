@@ -138,22 +138,14 @@ handle_call(_Req, _From, State) ->
 handle_cast({update, {worker_pool, vnode_pool}}, State) ->
     exometer_update([prefix(), ?APP, vnode, worker_pool], 1),
     {noreply, State};
-handle_cast({update, {worker_pool, work_event, vnode_pool, Checkouts}}, State) ->
-    exometer_update([prefix(), ?APP, vnode, worker_pool_checkouts],
-                        Checkouts),
+handle_cast({update, {worker_pool, threshold_event, Pool}}, State) ->
+    exometer_update([prefix(), ?APP, worker_pool_threshold_events, Pool], 1),
     {noreply, State};
-handle_cast({update, {worker_pool, queue_event, vnode_pool}}, State) ->
-    exometer_update([prefix(), ?APP, vnode, worker_pool_queue_events], 1),
+handle_cast({update, {worker_pool, queue_time, Pool, QueueTime}}, State) ->
+    exometer_update([prefix(), ?APP, worker_pool_queue_time, Pool], QueueTime),
     {noreply, State};
 handle_cast({update, {worker_pool, Pool}}, State) ->
     exometer_update([prefix(), ?APP, node, worker_pool, Pool], 1),
-    {noreply, State};
-handle_cast({update, {worker_pool, work_event, Pool, Checkouts}}, State) ->
-    exometer_update([prefix(), ?APP, node, worker_pool_checkouts, Pool],
-                        Checkouts),
-    {noreply, State};
-handle_cast({update, {worker_pool, queue_event, Pool}}, State) ->
-    exometer_update([prefix(), ?APP, node, worker_pool_queue_events, Pool], 1),
     {noreply, State};
 handle_cast({update, Arg}, State) ->
     exometer_update([prefix(), ?APP, update_metric(Arg)], update_value(Arg)),
@@ -217,35 +209,27 @@ nwp_stats() ->
     PoolNames = [unregistered] ++ riak_core_node_worker_pool:pools(),
 
     [{[vnode, worker_pool], counter, [],
-            [{value, vnode_worker_pool_total}]},
-        {[vnode, worker_pool_checkouts], histogram, [],
-            [{mean  , vnode_worker_pool_checkouts_mean},
-                {median, vnode_worker_pool_checkouts_median},
-                {95    , vnode_worker_pool_checkouts_95},
-                {max   , vnode_worker_pool_checkouts_100}]},
-        {[vnode, worker_pool_queue_events], counter, [],
-            [{value, vnode_worker_pool_qevents}]}] ++
-
+            [{value, vnode_worker_pool_total}]}] ++
+    
         [nwp_stat(Pool) || Pool <- PoolNames] ++
         
-        [nwpc_stat(Pool) || Pool <- PoolNames] ++
+        [nwpqt_stat(Pool) || Pool <- [vnode_pool|PoolNames]] ++
 
-        [nwpq_stat(Pool) || Pool <- PoolNames].
+        [nwpte_stat(Pool) || Pool <- [vnode_pool|PoolNames]].
 
 nwp_stat(Pool) ->
     {[node, worker_pool, Pool], counter, [],
         [{value, nwp_name_atom(Pool, <<"_total">>)}]}.
 
-nwpc_stat(Pool) ->
-    {[node, worker_pool_checkouts, Pool], histogram, [],
-        [{mean  , nwp_name_atom(Pool, <<"_checkouts_mean">>)},
-            {median, nwp_name_atom(Pool, <<"_checkouts_median">>)},
-            {95    , nwp_name_atom(Pool, <<"_checkouts_95">>)},
-            {max   , nwp_name_atom(Pool, <<"_checkouts_100">>)}]}.
+nwpqt_stat(Pool) ->
+    {[worker_pool_queuetime, Pool], histogram, [],
+        [{mean  , nwp_name_atom(Pool, <<"_queuetime_mean">>)},
+            {max   , nwp_name_atom(Pool, <<"_queuetime_100">>)}]}.
 
-nwpq_stat(Pool) ->
-    {[node, worker_pool_queue_events, Pool], counter, [],
-        [{value, nwp_name_atom(Pool, <<"_qevents">>)}]}.
+nwpte_stat(Pool) ->
+    {[worker_pool_threshold_events, Pool], spiral, [],
+        [{count, nwp_name_atom(Pool, <<"_threshold_events_total">>)},
+            {one, nwp_name_atom(Pool, <<"_threshold_events">>)}]}.
 
 system_stats() ->
     [
@@ -315,7 +299,7 @@ vnodeq_atom(Service, Desc) ->
 
 -spec nwp_name_atom(atom(), binary()) -> atom().
 nwp_name_atom(QueueName, StatName) ->
-    binary_to_atom(<< <<"node_worker_pool_">>/binary,
+    binary_to_atom(<< <<"core_worker_">>/binary,
                         (atom_to_binary(QueueName, latin1))/binary,
                         StatName/binary >>,
                     latin1).
@@ -324,7 +308,7 @@ nwp_name_atom(QueueName, StatName) ->
 -ifdef(TEST).
 
 nwp_name_to_atom_test() ->
-    ?assertEqual(node_worker_pool_af1_pool_total,
+    ?assertEqual(core_worker_af1_pool_total,
                     nwp_name_atom(af1_pool, <<"_total">>)).
 
 
