@@ -206,16 +206,13 @@ stats() ->
                                       {last, rebalance_delay_last}]} |  nwp_stats()].
 
 nwp_stats() ->
-    PoolNames = [unregistered] ++ riak_core_node_worker_pool:pools(),
-
-    [{[vnode, worker_pool], counter, [],
-            [{value, vnode_worker_pool_total}]}] ++
+    PoolNames = [vnode_pool, unregistered] ++ riak_core_node_worker_pool:pools(),
     
-        [nwp_stat(Pool) || Pool <- PoolNames] ++
-        
-        [nwpqt_stat(Pool) || Pool <- [vnode_pool|PoolNames]] ++
+    [nwp_stat(Pool) || Pool <- PoolNames] ++
+    
+    [nwpqt_stat(Pool) || Pool <- PoolNames] ++
 
-        [nwpte_stat(Pool) || Pool <- [vnode_pool|PoolNames]].
+    [nwpte_stat(Pool) || Pool <- PoolNames].
 
 nwp_stat(Pool) ->
     {[node, worker_pool, Pool], counter, [],
