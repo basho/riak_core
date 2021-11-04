@@ -313,6 +313,10 @@ poolboy_checkout(Pool, State) ->
         full ->
             {full, State};
         P when is_pid(P) ->
+            riak_core_stat:update({worker_pool,
+                                    queue_time,
+                                    State#state.pool_name,
+                                    0}),
             Checkouts = [{P, os:timestamp()}|State#state.checkouts],
             {P, State#state{checkouts = Checkouts}}
     end.
