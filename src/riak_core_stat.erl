@@ -141,7 +141,7 @@ handle_cast({update, {worker_pool, vnode_pool}}, State) ->
 handle_cast({update, {worker_pool, queue_time, Pool, QueueTime}}, State) ->
     exometer_update([prefix(), ?APP, worker_pool_queue_time, Pool], QueueTime),
     {noreply, State};
-handle_cast({update, {worker_pool, worker_time, Pool, WorkTime}}, State) ->
+handle_cast({update, {worker_pool, work_time, Pool, WorkTime}}, State) ->
     exometer_update([prefix(), ?APP, worker_pool_work_time, Pool], WorkTime),
     {noreply, State};
 handle_cast({update, {worker_pool, Pool}}, State) ->

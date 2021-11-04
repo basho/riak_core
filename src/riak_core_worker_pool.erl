@@ -125,9 +125,6 @@ ready({work, Work, From} = Msg,
         #state{pool=Pool, queue=Q, monitors=Monitors} = State) ->
     case poolboy_checkout(Pool, State) of
         {full, State0} ->
-            riak_core_stat:update({worker_pool,
-                                    queue_event,
-                                    State#state.pool_name}),
             {next_state, queueing, State0#state{queue=push_to_queue(Msg, Q)}};
         {Pid, State0} when is_pid(Pid) ->
             NewMonitors =
