@@ -78,8 +78,7 @@ start_link(WorkerMod, PoolSize, WorkerArgs, WorkerProps, PoolType)
         riak_core_worker_pool:start_link(
             [WorkerMod, PoolSize, WorkerArgs, WorkerProps],
             ?MODULE,
-            PoolType, 
-            PoolSize),
+            PoolType),
     register(PoolType, Pid),
     {ok, Pid}.
 

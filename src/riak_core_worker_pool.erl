@@ -51,9 +51,7 @@
 -export([init/1, handle_event/3, handle_sync_event/4, handle_info/3,
         terminate/3, code_change/4]).
 
--export([start_link/2]). % for backwards compatability
-
--export([start_link/4, handle_work/3, stop/2, shutdown_pool/2]).
+-export([start_link/3, handle_work/3, stop/2, shutdown_pool/2]).
 
 %% gen_fsm states
 -export([queueing/2, ready/2, ready/3, queueing/3, shutdown/2, shutdown/3]).
@@ -74,10 +72,10 @@
                 shutdown :: undefined | {pid(), reference()},
                 callback_mod :: atom(),
                 pool_name :: atom(),
-                checkouts = 0 :: non_neg_integer(),
-                threshold :: non_neg_integer()
+                checkouts = [] :: list(checkout())
     }).
 
+-type checkout() :: {pid(), erlang:timestamp()}.
 -type state() :: #state{}.
 
 -callback handle_work(Pid::pid(), Work::term(), From::term()) -> any().
@@ -93,13 +91,8 @@
 -callback do_work(Pid::pid(), Work::term(), From::term()) -> any().
 
 
-start_link(PoolBoyArgs, CallbackMod) ->
-    start_link(PoolBoyArgs, CallbackMod, unregistered, 1).
-
-start_link(PoolBoyArgs, CallbackMod, PoolName, ThresholdLogPoint) ->
-    gen_fsm:start_link(?MODULE,
-        [PoolBoyArgs, CallbackMod, PoolName, ThresholdLogPoint],
-        []).
+start_link(PoolBoyArgs, CallbackMod, PoolName) ->
+    gen_fsm:start_link(?MODULE, [PoolBoyArgs, CallbackMod, PoolName], []).
 
 handle_work(Pid, Work, From) ->
     gen_fsm:send_event(Pid, {work, Work, From}).
@@ -111,14 +104,13 @@ stop(Pid, Reason) ->
 shutdown_pool(Pid, Wait) ->
     gen_fsm:sync_send_all_state_event(Pid, {shutdown, Wait}, infinity).
 
-init([PoolBoyArgs, CallbackMod, PoolName, ThresholdLogPoint]) ->
+init([PoolBoyArgs, CallbackMod, PoolName]) ->
     {ok, Pid} = CallbackMod:do_init(PoolBoyArgs),
     {ok,
         ready,
         #state{pool=Pid,
                 callback_mod = CallbackMod,
-                pool_name = PoolName,
-                threshold = ThresholdLogPoint}}.
+                pool_name = PoolName}}.
 	
 ready(_Event, _From, State) ->
     {reply, ok, ready, State}.
@@ -305,22 +297,30 @@ discard_queued_work(Q, Mod) ->
 -spec poolboy_checkin(pid(), pid(), state()) -> {ok, state()}.
 poolboy_checkin(Pool, Worker, State) ->
     R = poolboy:checkin(Pool, Worker),
-    {R, State#state{checkouts = max(State#state.checkouts - 1, 0)}}.
+    case lists:keytake(Worker, 1, State#state.checkouts) of
+        {value, {Worker, WT}, Checkouts} ->
+            riak_core_stat:update({worker_pool,
+                                    work_time,
+                                    State#state.pool_name,
+                                    timer:now_diff(os:timestamp(), WT)}),
+            {R, State#state{checkouts = Checkouts}};
+        _ ->
+            lager:warning(
+                "Unexplained poolboy behaviour - failure to track checkouts"),
+            {R, State}
+    end.
 
 -spec poolboy_checkout(pid(), state()) -> {pid() | full, state()}.
 poolboy_checkout(Pool, State) ->
-    R = poolboy:checkout(Pool, false),
-    {R, State#state{checkouts = State#state.checkouts + 1}}.
+    case poolboy:checkout(Pool, false) of
+        full ->
+            {full, State};
+        P when is_pid(P) ->
+            Checkouts = [{P, os:timestamp()}|State#state.checkouts],
+            {P, State#state{checkouts = Checkouts}}
+    end.
 
 do_work(Pid, Work, From, State) ->
-    case State#state.checkouts of
-        C when C >= State#state.threshold ->
-            riak_core_stat:update({worker_pool,
-                                    threshold_breach,
-                                    State#state.pool_name});
-        _ ->
-            ok
-    end,
     Mod = State#state.callback_mod,
     Mod:do_work(Pid, Work, From).
 

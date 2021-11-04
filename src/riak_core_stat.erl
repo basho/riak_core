@@ -138,11 +138,11 @@ handle_call(_Req, _From, State) ->
 handle_cast({update, {worker_pool, vnode_pool}}, State) ->
     exometer_update([prefix(), ?APP, vnode, worker_pool], 1),
     {noreply, State};
-handle_cast({update, {worker_pool, threshold_event, Pool}}, State) ->
-    exometer_update([prefix(), ?APP, worker_pool_threshold_events, Pool], 1),
-    {noreply, State};
 handle_cast({update, {worker_pool, queue_time, Pool, QueueTime}}, State) ->
     exometer_update([prefix(), ?APP, worker_pool_queue_time, Pool], QueueTime),
+    {noreply, State};
+handle_cast({update, {worker_pool, worker_time, Pool, WorkTime}}, State) ->
+    exometer_update([prefix(), ?APP, worker_pool_work_time, Pool], WorkTime),
     {noreply, State};
 handle_cast({update, {worker_pool, Pool}}, State) ->
     exometer_update([prefix(), ?APP, node, worker_pool, Pool], 1),
@@ -211,8 +211,8 @@ nwp_stats() ->
     [nwp_stat(Pool) || Pool <- PoolNames] ++
     
     [nwpqt_stat(Pool) || Pool <- PoolNames] ++
-
-    [nwpte_stat(Pool) || Pool <- PoolNames].
+    
+    [nwpwt_stat(Pool) || Pool <- PoolNames].
 
 nwp_stat(Pool) ->
     {[node, worker_pool, Pool], counter, [],
@@ -223,10 +223,10 @@ nwpqt_stat(Pool) ->
         [{mean  , nwp_name_atom(Pool, <<"_queuetime_mean">>)},
             {max   , nwp_name_atom(Pool, <<"_queuetime_100">>)}]}.
 
-nwpte_stat(Pool) ->
-    {[worker_pool_threshold_events, Pool], spiral, [],
-        [{count, nwp_name_atom(Pool, <<"_threshold_events_total">>)},
-            {one, nwp_name_atom(Pool, <<"_threshold_events">>)}]}.
+nwpwt_stat(Pool) ->
+    {[worker_pool_worktime, Pool], histogram, [],
+        [{mean  , nwp_name_atom(Pool, <<"_worktime_mean">>)},
+            {max   , nwp_name_atom(Pool, <<"_worktime_100">>)}]}.
 
 system_stats() ->
     [
