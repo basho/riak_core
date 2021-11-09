@@ -76,7 +76,6 @@
     }).
 
 -type checkout() :: {pid(), erlang:timestamp()}.
--type state() :: #state{}.
 
 -callback handle_work(Pid::pid(), Work::term(), From::term()) -> any().
 
@@ -122,18 +121,24 @@ shutdown(_Event, _From, State) ->
     {reply, ok, shutdown, State}.
 
 ready({work, Work, From} = Msg,
-        #state{pool=Pool, queue=Q, monitors=Monitors} = State) ->
-    case poolboy_checkout(Pool, State) of
-        {full, State0} ->
-            {next_state, queueing, State0#state{queue=push_to_queue(Msg, Q)}};
-        {Pid, State0} when is_pid(Pid) ->
-            NewMonitors =
+        #state{pool=Pool,
+                queue=Q,
+                pool_name=PoolName,
+                checkouts=Checkouts0,
+                monitors=Monitors0} = State) ->
+    case poolboy_checkout(Pool, PoolName, Checkouts0) of
+        full ->
+            {next_state, queueing, State#state{queue=push_to_queue(Msg, Q)}};
+        {Pid, Checkouts} when is_pid(Pid) ->
+            Monitors =
                 riak_core_worker_pool:monitor_worker(Pid,
                                                         From,
                                                         Work,
-                                                        Monitors),
-            do_work(Pid, Work, From, State0),
-            {next_state, ready, State0#state{monitors=NewMonitors}}
+                                                        Monitors0),
+            do_work(Pid, Work, From, State#state.callback_mod),
+            {next_state,
+                ready,
+                State#state{monitors=Monitors, checkouts = Checkouts}}
     end;
 ready(_Event, State) ->
     {next_state, ready, State}.
@@ -151,43 +156,68 @@ shutdown({work, _Work, From}, State) ->
 shutdown(_Event, State) ->
     {next_state, shutdown, State}.
 
-handle_event({checkin, Pid}, shutdown, #state{pool=Pool, monitors=Monitors0} = State) ->
+handle_event({checkin, Pid},
+                shutdown,
+                #state{pool=Pool,
+                        pool_name=PoolName,
+                        monitors=Monitors0,
+                        checkouts=Checkouts0} = State) ->
     Monitors = demonitor_worker(Pid, Monitors0),
-    {ok, State0} = poolboy_checkin(Pool, Pid, State),
+    {ok, Checkouts} =
+        poolboy_checkin(Pool, Pid, PoolName, Checkouts0),
     case Monitors of
         [] -> %% work all done, time to exit!
-            {stop, shutdown, State0};
+            {stop, shutdown, State};
         _ ->
-            {next_state, shutdown, State0#state{monitors=Monitors}}
+            {next_state,
+                shutdown,
+                State#state{monitors=Monitors, checkouts=Checkouts}}
     end;
-handle_event({checkin, Worker}, _, #state{pool = Pool, queue=Q, monitors=Monitors} = State) ->
+handle_event({checkin, Worker},
+                _,
+                #state{pool=Pool,
+                        queue=Q,
+                        pool_name=PoolName,
+                        checkouts=Checkouts0,
+                        monitors=Monitors0} = State) ->
     case consume_from_queue(Q, State#state.pool_name) of
         {{value, {work, Work, From}}, Rem} ->
             %% there is outstanding work to do - instead of checking
             %% the worker back in, just hand it more work to do
-            NewMonitors = monitor_worker(Worker, From, Work, Monitors),
-            do_work(Worker, Work, From, State),
+            Monitors = monitor_worker(Worker, From, Work, Monitors0),
+            do_work(Worker, Work, From, State#state.callback_mod),
             {next_state,
-                queueing, State#state{queue=Rem, monitors=NewMonitors}};
+                queueing, State#state{queue=Rem, monitors=Monitors}};
         {empty, Empty} ->
-            NewMonitors = demonitor_worker(Worker, Monitors),
-            {ok, State0} = poolboy_checkin(Pool, Worker, State),
-            {next_state, ready, State0#state{queue=Empty, monitors=NewMonitors}}
+            Monitors = demonitor_worker(Worker, Monitors0),
+            {ok, Checkouts} =
+                poolboy_checkin(Pool, Worker, PoolName, Checkouts0),
+            {next_state,
+                ready,
+                State#state{queue=Empty,
+                            monitors=Monitors,
+                            checkouts=Checkouts}}
     end;
 handle_event(worker_start, StateName,
-                #state{pool=Pool, queue=Q, monitors=Monitors}=State) ->
+                #state{pool=Pool,
+                        queue=Q,
+                        pool_name=PoolName,
+                        checkouts=Checkouts0,
+                        monitors=Monitors}=State) ->
     %% a new worker just started - if we have work pending, try to do it
     case consume_from_queue(Q, State#state.pool_name) of
         {{value, {work, Work, From}}, Rem} ->
-            case poolboy_checkout(Pool, State) of
-                {full, State0} ->
-                    {next_state, queueing, State0};
-                {Pid, State0} when is_pid(Pid) ->
+            case poolboy_checkout(Pool, PoolName, Checkouts0) of
+                full ->
+                    {next_state, queueing, State};
+                {Pid, Checkouts} when is_pid(Pid) ->
                     NewMonitors = monitor_worker(Pid, From, Work, Monitors),
-                    do_work(Pid, Work, From, State0),
+                    do_work(Pid, Work, From, State#state.callback_mod),
                     {next_state,
                         queueing,
-                        State0#state{queue=Rem, monitors=NewMonitors}}
+                        State#state{queue=Rem,
+                                        monitors=NewMonitors,
+                                        checkouts=Checkouts}}
             end;
         {empty, _} ->
             {next_state,
@@ -225,17 +255,19 @@ handle_sync_event({shutdown, Time}, From, _StateName, #state{queue=Q,
 handle_sync_event(_Event, _From, StateName, State) ->
     {reply, {error, unknown_message}, StateName, State}.
 
-handle_info({'DOWN', _Ref, _, Pid, Info}, StateName, #state{monitors=Monitors} = State) ->
+handle_info({'DOWN', _Ref, _, Pid, Info},
+                StateName,
+                #state{monitors=Monitors0} = State) ->
     %% remove the listing for the dead worker
-    case lists:keyfind(Pid, 1, Monitors) of
+    case lists:keyfind(Pid, 1, Monitors0) of
         {Pid, _, From, Work} ->
             Mod = State#state.callback_mod,
             Mod:reply(From, {error, {worker_crash, Info, Work}}),
-            NewMonitors = lists:keydelete(Pid, 1, Monitors),
+            Monitors = lists:keydelete(Pid, 1, Monitors0),
             %% trigger to do more work will be 'worker_start' message
             %% when poolboy replaces this worker (if not a 'checkin'
             %% or 'handle_work')
-            {next_state, StateName, State#state{monitors=NewMonitors}};
+            {next_state, StateName, State#state{monitors=Monitors}};
         false ->
             {next_state, StateName, State}
     end;
@@ -291,38 +323,38 @@ discard_queued_work(Q, Mod) ->
             ok
     end.
 
--spec poolboy_checkin(pid(), pid(), state()) -> {ok, state()}.
-poolboy_checkin(Pool, Worker, State) ->
+-spec poolboy_checkin(pid(), pid(), atom(), list(checkout()))
+                                                -> {ok, list(checkout())}.
+poolboy_checkin(Pool, Worker, PoolName, Checkouts) ->
     R = poolboy:checkin(Pool, Worker),
-    case lists:keytake(Worker, 1, State#state.checkouts) of
-        {value, {Worker, WT}, Checkouts} ->
+    case lists:keytake(Worker, 1, Checkouts) of
+        {value, {Worker, WT}, Checkouts0} ->
             riak_core_stat:update({worker_pool,
                                     work_time,
-                                    State#state.pool_name,
+                                    PoolName,
                                     timer:now_diff(os:timestamp(), WT)}),
-            {R, State#state{checkouts = Checkouts}};
+            {R, Checkouts0};
         _ ->
             lager:warning(
                 "Unexplained poolboy behaviour - failure to track checkouts"),
-            {R, State}
+            {R, Checkouts}
     end.
 
--spec poolboy_checkout(pid(), state()) -> {pid() | full, state()}.
-poolboy_checkout(Pool, State) ->
+-spec poolboy_checkout(pid(), atom(), list(checkout()))
+                                        -> full | {pid(), list(checkout())}.
+poolboy_checkout(Pool, PoolName, Checkouts) ->
     case poolboy:checkout(Pool, false) of
         full ->
-            {full, State};
+            full;
         P when is_pid(P) ->
             riak_core_stat:update({worker_pool,
                                     queue_time,
-                                    State#state.pool_name,
+                                    PoolName,
                                     0}),
-            Checkouts = [{P, os:timestamp()}|State#state.checkouts],
-            {P, State#state{checkouts = Checkouts}}
+            {P, [{P, os:timestamp()}|Checkouts]}
     end.
 
-do_work(Pid, Work, From, State) ->
-    Mod = State#state.callback_mod,
+do_work(Pid, Work, From, Mod) ->
     Mod:do_work(Pid, Work, From).
 
 -spec push_to_queue({work, term(), term()}, queue:queue()) -> queue:queue().
