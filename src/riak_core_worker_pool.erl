@@ -203,7 +203,7 @@ handle_event(worker_start, StateName,
                         queue=Q,
                         pool_name=PoolName,
                         checkouts=Checkouts0,
-                        monitors=Monitors}=State) ->
+                        monitors=Monitors0}=State) ->
     %% a new worker just started - if we have work pending, try to do it
     case consume_from_queue(Q, State#state.pool_name) of
         {{value, {work, Work, From}}, Rem} ->
@@ -211,12 +211,12 @@ handle_event(worker_start, StateName,
                 full ->
                     {next_state, queueing, State};
                 {Pid, Checkouts} when is_pid(Pid) ->
-                    NewMonitors = monitor_worker(Pid, From, Work, Monitors),
+                    Monitors = monitor_worker(Pid, From, Work, Monitors0),
                     do_work(Pid, Work, From, State#state.callback_mod),
                     {next_state,
                         queueing,
                         State#state{queue=Rem,
-                                        monitors=NewMonitors,
+                                        monitors=Monitors,
                                         checkouts=Checkouts}}
             end;
         {empty, _} ->
