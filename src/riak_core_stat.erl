@@ -138,6 +138,12 @@ handle_call(_Req, _From, State) ->
 handle_cast({update, {worker_pool, vnode_pool}}, State) ->
     exometer_update([prefix(), ?APP, vnode, worker_pool], 1),
     {noreply, State};
+handle_cast({update, {worker_pool, queue_time, Pool, QueueTime}}, State) ->
+    exometer_update([prefix(), ?APP, worker_pool_queuetime, Pool], QueueTime),
+    {noreply, State};
+handle_cast({update, {worker_pool, work_time, Pool, WorkTime}}, State) ->
+    exometer_update([prefix(), ?APP, worker_pool_worktime, Pool], WorkTime),
+    {noreply, State};
 handle_cast({update, {worker_pool, Pool}}, State) ->
     exometer_update([prefix(), ?APP, node, worker_pool, Pool], 1),
     {noreply, State};
@@ -200,12 +206,27 @@ stats() ->
                                       {last, rebalance_delay_last}]} |  nwp_stats()].
 
 nwp_stats() ->
-    [ {[vnode, worker_pool], counter, [], [{value, vnode_worker_pool_total}]},
-      {[node, worker_pool, unregistered], counter, [], [{value, node_worker_pool_unregistered_total}]} |
-      [nwp_stat(Pool) || Pool <- riak_core_node_worker_pool:pools()]].
+    PoolNames = [vnode_pool, unregistered] ++ riak_core_node_worker_pool:pools(),
+    
+    [nwp_stat(Pool) || Pool <- PoolNames] ++
+    
+    [nwpqt_stat(Pool) || Pool <- PoolNames] ++
+    
+    [nwpwt_stat(Pool) || Pool <- PoolNames].
 
 nwp_stat(Pool) ->
-    {[node, worker_pool, Pool], counter, [], [{value, nwp_name_atom(Pool)}]}.
+    {[node, worker_pool, Pool], counter, [],
+        [{value, nwp_name_atom(Pool, <<"_total">>)}]}.
+
+nwpqt_stat(Pool) ->
+    {[worker_pool_queuetime, Pool], histogram, [],
+        [{mean  , nwp_name_atom(Pool, <<"_queuetime_mean">>)},
+            {max   , nwp_name_atom(Pool, <<"_queuetime_100">>)}]}.
+
+nwpwt_stat(Pool) ->
+    {[worker_pool_worktime, Pool], histogram, [],
+        [{mean  , nwp_name_atom(Pool, <<"_worktime_mean">>)},
+            {max   , nwp_name_atom(Pool, <<"_worktime_100">>)}]}.
 
 system_stats() ->
     [
@@ -273,16 +294,19 @@ vnodeq_aggregate(Service, MQLs0) ->
 vnodeq_atom(Service, Desc) ->
     binary_to_atom(<<(atom_to_binary(Service, latin1))/binary, Desc/binary>>, latin1).
 
-nwp_name_atom(Atom) ->
-    binary_to_atom(<< <<"node_worker_pool_">>/binary,
-                      (atom_to_binary(Atom, latin1))/binary,
-                      <<"_total">>/binary>>, latin1).
+-spec nwp_name_atom(atom(), binary()) -> atom().
+nwp_name_atom(QueueName, StatName) ->
+    binary_to_atom(<< <<"worker_">>/binary,
+                        (atom_to_binary(QueueName, latin1))/binary,
+                        StatName/binary >>,
+                    latin1).
 
 
 -ifdef(TEST).
 
 nwp_name_to_atom_test() ->
-    ?assertEqual(node_worker_pool_af1_pool_total, nwp_name_atom(af1_pool)).
+    ?assertEqual(worker_af1_pool_total, nwp_name_atom(af1_pool, <<"_total">>)).
+
 
 %% Check vnodeq aggregation function
 vnodeq_aggregate_empty_test() ->
