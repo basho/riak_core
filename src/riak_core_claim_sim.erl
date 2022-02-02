@@ -27,6 +27,8 @@
 -compile(nowarn_export_all).
 -compile(export_all).
 
+-include_lib("kernel/include/logger.hrl").
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
@@ -435,7 +437,7 @@ commission(Base, Test, {Wants, Choose}) ->
                               riak_core_claim_util:ring_stats(Ring2, TN)
                           catch
                               _:Reason ->
-                                  lager:info("Ring stats failed - ~p\n", [Reason]),
+                                  ?LOG_INFO("Ring stats failed - ~p\n", [Reason]),
                                   []
                           end,
                   io:format(SeqFh, "\"~w\",~p,~p,~p\n",
@@ -470,7 +472,7 @@ commission(Base, Test, {Wants, Choose}) ->
                               riak_core_claim_util:ring_stats(Ring2, TN)
                           catch
                               _:Reason ->
-                                  lager:info("Ring stats failed - ~p\n", [Reason]),
+                                  ?LOG_INFO("Ring stats failed - ~p\n", [Reason]),
                                   []
                           end,
                   io:format(BulkFh, "\"~w\",~p,~p,~p\n",

@@ -39,6 +39,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -include("riak_core_metadata.hrl").
 
 -define(SERVER, ?MODULE).
@@ -207,7 +209,7 @@ handle_info({'DOWN', BuildRef, process, _Pid, normal}, State=#state{built=BuildR
     State1 = build_done(State),
     {noreply, State1};
 handle_info({'DOWN', BuildRef, process, _Pid, Reason}, State=#state{built=BuildRef}) ->
-    lager:error("building tree failed: ~p", [Reason]),
+    ?LOG_ERROR("building tree failed: ~p", [Reason]),
     State1 = build_error(State),
     {noreply, State1};
 handle_info({'DOWN', LockRef, process, _Pid, _Reason}, State=#state{lock={_, LockRef}}) ->

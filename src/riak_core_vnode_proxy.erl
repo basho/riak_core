@@ -21,6 +21,9 @@
          unregister_vnode/3, command_return_vnode/2, overloaded/1]).
 -export([system_continue/3, system_terminate/4, system_code_change/4]).
 -export([soft_load_mailbox_check/2]).
+
+-include_lib("kernel/include/logger.hrl").
+
 -include("riak_core_vnode.hrl").
 
 -compile({nowarn_deprecated_function, 
@@ -79,7 +82,7 @@ init([Parent, RegName, Mod, Index]) ->
             true ->
                 Interval;
             false ->
-                lager:warning("Setting riak_core/vnode_check_interval to ~b",
+                ?LOG_WARNING("Setting riak_core/vnode_check_interval to ~b",
                               [Threshold div 2]),
                 Threshold div 2
         end,
@@ -88,7 +91,7 @@ init([Parent, RegName, Mod, Index]) ->
             true ->
                 RequestInterval;
             false ->
-                lager:warning("Setting riak_core/vnode_check_request_interval "
+                ?LOG_WARNING("Setting riak_core/vnode_check_request_interval "
                               "to ~b", [SafeInterval div 2]),
                 SafeInterval div 2
         end,
@@ -146,7 +149,7 @@ loop(Parent, State) ->
     receive
         {'$vnode_proxy_call', From, Msg} ->
             {reply, Reply, NewState} = handle_call(Msg, From, State),
-            {_, Reply} = gen:reply(From, Reply),
+            ok = gen:reply(From, Reply),
             loop(Parent, NewState);
         {'$vnode_proxy_cast', Msg} ->
             {noreply, NewState} = handle_cast(Msg, State),

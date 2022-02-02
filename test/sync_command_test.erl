@@ -94,9 +94,7 @@ stop_servers(_Pid) ->
     stop_pid(whereis(riak_core_vnode_manager)),
     stop_pid(whereis(riak_core_vnode_events)),
     stop_pid(whereis(riak_core_vnode_sup)),
-    application:stop(exometer),
-    application:stop(lager),
-    application:stop(goldrush).
+    application:stop(exometer).
 
 stop_pid(undefined) ->
     ok;

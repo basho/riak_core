@@ -43,7 +43,7 @@
 %% Field debugging
 -export([get_tab/0]).
 
--include("stacktrace.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -323,7 +323,7 @@ handle_call({xfer_complete, ModSrcTgt}, _From, State) ->
     ModPartition = {Mod, Partition},
     case get_repair(ModPartition, Repairs) of
         none ->
-            lager:error("Received xfer_complete for non-existing repair: ~p",
+            ?LOG_ERROR("Received xfer_complete for non-existing repair: ~p",
                         [ModPartition]),
             {reply, ok, State};
         #repair{minus_one_xfer=MOX, plus_one_xfer=POX}=R ->
@@ -334,7 +334,7 @@ handle_call({xfer_complete, ModSrcTgt}, _From, State) ->
                          POX2 = POX#xfer_status{status=complete},
                          R#repair{plus_one_xfer=POX2};
                     true ->
-                         lager:error("Received xfer_complete for "
+                         ?LOG_ERROR("Received xfer_complete for "
                                      "non-existing xfer: ~p", [ModSrcTgt])
                  end,
 
@@ -398,7 +398,7 @@ create_repair(Pairs, ModPartition, FilterModFun, Mod, Partition, Repairs, State)
                      plus_one_xfer = POXStatus},
     Repairs2 = Repairs ++ [Repair],
     State2 = State#state{repairs = Repairs2},
-    lager:debug("add repair ~p", [ModPartition]),
+    ?LOG_DEBUG("add repair ~p", [ModPartition]),
     {reply, {ok, Pairs}, State2}.
 
 %% @private
@@ -433,7 +433,7 @@ handle_cast(maybe_start_vnodes, State) ->
     {noreply, State2};
 
 handle_cast({kill_repairs, Reason}, State) ->
-    lager:warning("Killing all repairs: ~p", [Reason]),
+    ?LOG_WARNING("Killing all repairs: ~p", [Reason]),
     kill_repairs(State#state.repairs, Reason),
     {noreply, State#state{repairs=[]}};
 
@@ -539,15 +539,14 @@ maybe_ensure_vnodes_started(Ring) ->
 ensure_vnodes_started(Ring) ->
     case riak_core_ring:check_lastgasp(Ring) of
         true ->
-            lager:info("Don't start vnodes - last gasp ring");
+            ?LOG_INFO("Don't start vnodes - last gasp ring");
         false ->    
             spawn(fun() ->
                   try
                       riak_core_ring_handler:ensure_vnodes_started(Ring)
                   catch
-                      ?_exception_(T, R, StackToken) ->
-                          StackTrace = ?_get_stacktrace_(StackToken),
-                          lager:error("~p", [{T, R, StackTrace}])
+                      Class:Reason:Stacktrace ->
+                          ?LOG_ERROR("~p", [{Class, Reason, Stacktrace}])
                   end
             end)
     end.
@@ -621,13 +620,13 @@ get_vnode(IdxList, Mod, State) ->
     StartFun =
         fun(Idx) ->
                 ForwardTo = get_forward(Mod, Idx, State),
-                lager:debug("Will start VNode for partition ~p", [Idx]),
+                ?LOG_DEBUG("Will start VNode for partition ~p", [Idx]),
                 {ok, Pid} =
                     riak_core_vnode_sup:start_vnode(Mod, Idx, ForwardTo),
                 register_vnode_stats(Mod, Idx, Pid),
-                lager:debug("Started VNode, waiting for initialization to complete ~p, ~p ", [Pid, Idx]),
+                ?LOG_DEBUG("Started VNode, waiting for initialization to complete ~p, ~p ", [Pid, Idx]),
                 ok = riak_core_vnode:wait_for_init(Pid),
-                lager:debug("VNode initialization ready ~p, ~p", [Pid, Idx]),
+                ?LOG_DEBUG("VNode initialization ready ~p, ~p", [Pid, Idx]),
                 {Idx, Pid}
         end,
     MaxStart = app_helper:get_env(riak_core, vnode_parallel_start,

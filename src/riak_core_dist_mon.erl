@@ -29,6 +29,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -record(state, {
           sndbuf :: non_neg_integer(),
           recbuf :: non_neg_integer()
@@ -65,11 +67,11 @@ handle_call({set_dist_buf_sizes, SndBuf, RecBuf}, _From, State) ->
      || {_Node, Port} <- erlang:system_info(dist_ctrl)],
     {reply, ok, State#state{sndbuf=SndBuf, recbuf=RecBuf}};
 handle_call(Msg, _From, State) ->
-    lager:warning("unknown call message received: ~p", [Msg]),
+    ?LOG_WARNING("unknown call message received: ~p", [Msg]),
     {noreply, State}.
 
 handle_cast(Msg, State) ->
-    lager:warning("unknown cast message received: ~p", [Msg]),
+    ?LOG_WARNING("unknown cast message received: ~p", [Msg]),
     {noreply, State}.
 
 
@@ -78,7 +80,7 @@ handle_info({nodeup, Node, _InfoList}, #state{sndbuf=SndBuf,
     DistCtrl = erlang:system_info(dist_ctrl),
     case proplists:get_value(Node, DistCtrl) of
         undefined ->
-            lager:error("Could not get dist for ~p\n~p\n", [Node, DistCtrl]),
+            ?LOG_ERROR("Could not get dist for ~p\n~p\n", [Node, DistCtrl]),
             {noreply, State};
         Port ->
             ok = set_port_buffers(Port, SndBuf, RecBuf),
@@ -88,7 +90,7 @@ handle_info({nodedown, _Node, _InfoList}, State) ->
     %% don't think we need to do anything here
     {noreply, State};
 handle_info(Msg, State) ->
-    lager:warning("unknown info message received: ~p", [Msg]),
+    ?LOG_WARNING("unknown info message received: ~p", [Msg]),
     {noreply, State}.
 
 terminate(_Reason, _State) ->

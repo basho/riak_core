@@ -27,6 +27,8 @@
 %% Application callbacks
 -export([start/2, stop/1]).
 
+-include_lib("kernel/include/logger.hrl").
+
 %% ===================================================================
 %% Application callbacks
 %% ===================================================================
@@ -38,7 +40,7 @@ start(_StartType, _StartArgs) ->
 
     case application:get_env(riak_core, delayed_start) of
         {ok, Delay} ->
-            lager:info("Delaying riak_core startup as requested"),
+            ?LOG_INFO("Delaying riak_core startup as requested"),
             timer:sleep(Delay);
         _ ->
             ok
@@ -51,10 +53,10 @@ start(_StartType, _StartArgs) ->
         ok ->
             ok;
         {error, RingReason} ->
-            lager:critical(
+            ?LOG_CRITICAL(
               "Ring state directory ~p does not exist, "
               "and could not be created: ~p",
-              [RingStateDir, lager:posix_error(RingReason)]),
+              [RingReason]),
             throw({error, invalid_ring_state_dir})
     end,
 
@@ -113,5 +115,5 @@ start(_StartType, _StartArgs) ->
     end.
 
 stop(_State) ->
-    lager:info("Stopped  application riak_core.\n", []),
+    ?LOG_INFO("Stopped  application riak_core.\n", []),
     ok.

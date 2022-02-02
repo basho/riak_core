@@ -42,6 +42,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -define(SERVER, ?MODULE).
 
 -type nodename()        :: any().
@@ -347,7 +349,7 @@ handle_graft({ok, Message}, MessageId, Mod, Round, Root, From, State) ->
     _ = send({broadcast, MessageId, Message, Mod, Round, Root, node()}, From),
     State1;
 handle_graft({error, Reason}, _MessageId, Mod, _Round, _Root, _From, State) ->
-    lager:error("unable to graft message from ~p. reason: ~p", [Mod, Reason]),
+    ?LOG_ERROR("unable to graft message from ~p. reason: ~p", [Mod, Reason]),
     State.
 
 neighbors_down(Removed, State=#state{common_eagers=CommonEagers,eager_sets=EagerSets,
@@ -417,7 +419,7 @@ maybe_exchange(Peer, State=#state{mods=[Mod | _],exchanges=Exchanges}) ->
 exchange(Peer, State=#state{mods=[Mod | Mods],exchanges=Exchanges}) ->
     State1 = case Mod:exchange(Peer) of
                  {ok, Pid} ->
-                     lager:debug("started ~p exchange with ~p (~p)", [Mod, Peer, Pid]),
+                     ?LOG_DEBUG("started ~p exchange with ~p (~p)", [Mod, Peer, Pid]),
                      Ref = monitor(process, Pid),
                      State#state{exchanges=[{Mod, Peer, Ref, Pid} | Exchanges]};
                  {error, _Reason} ->

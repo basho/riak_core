@@ -36,6 +36,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+-include_lib("kernel/include/logger.hrl").
+
 %% Keep 6 x 10s worth of data plus an extra sample for working out rates
 -define(DEFAULT_LIMIT, 7).
 -define(DEFAULT_INTERVAL, timer:seconds(10)).
@@ -162,7 +164,7 @@ rate([TS1 | TSRest], [C1 | CRest], Acc) ->
     rate(TSRest, CRest, [Rate | Acc]).
 
 init(Props) ->
-    lager:info("Starting TCP Monitor"),
+    ?LOG_INFO("Starting TCP Monitor"),
     ok = net_kernel:monitor_nodes(true, [{node_type, visible}, nodedown_reason]),
     % blow up here if any state fields would not be sane so subsequent code
     % can assume they're positive integers
@@ -202,14 +204,14 @@ handle_call({monitor, Socket, Tag, Transport}, _From, State) ->
                                         transport = Transport}, State)}.
 
 handle_cast(Msg, State) ->
-    lager:warning("unknown message received: ~p", [Msg]),
+    ?LOG_WARNING("unknown message received: ~p", [Msg]),
     {noreply, State}.
 
 handle_info({nodeup, Node, _InfoList}, State) ->
     DistCtrl = erlang:system_info(dist_ctrl),
     case proplists:get_value(Node, DistCtrl) of
         undefined ->
-            lager:error("Could not get dist for ~p\n~p\n", [Node, DistCtrl]),
+            ?LOG_ERROR("Could not get dist for ~p\n~p\n", [Node, DistCtrl]),
             {noreply, State};
         Port ->
             {noreply, add_dist_conn(Node, Port, State)}
@@ -290,7 +292,7 @@ unwrap_socket(Socket) ->
     Socket.
 
 terminate(_Reason, _State) ->
-    lager:info("Shutting down TCP Monitor"),
+    ?LOG_INFO("Shutting down TCP Monitor"),
     %% TODO: Consider trying to do something graceful with poolboy?
     ok.
 

@@ -36,6 +36,8 @@
 %% New CLI API
 -export([command/1]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -spec command([string()]) -> ok.
 command(Cmd) ->
     clique:run(Cmd).
@@ -233,7 +235,7 @@ transfers([]) ->
         end
     catch
         Exception:Reason ->
-            lager:error("Transfers failed ~p:~p", [Exception,
+            ?LOG_ERROR("Transfers failed ~p:~p", [Exception,
                     Reason]),
             io:format("Transfers failed, see log for details~n"),
             error
@@ -431,7 +433,7 @@ stage_leave(Node) ->
         end
     catch
         Exception:Reason ->
-            lager:error("Leave failed ~p:~p", [Exception, Reason]),
+            ?LOG_ERROR("Leave failed ~p:~p", [Exception, Reason]),
             io:format("Leave failed, see log for details~n"),
             error
     end.
@@ -457,7 +459,7 @@ stage_remove(Node) ->
         end
     catch
         Exception:Reason ->
-            lager:error("Remove failed ~p:~p", [Exception, Reason]),
+            ?LOG_ERROR("Remove failed ~p:~p", [Exception, Reason]),
             io:format("Remove failed, see log for details~n"),
             error
     end.
@@ -491,7 +493,7 @@ stage_replace(Node1, Node2) ->
         end
     catch
         Exception:Reason ->
-            lager:error("Node replacement failed ~p:~p", [Exception, Reason]),
+            ?LOG_ERROR("Node replacement failed ~p:~p", [Exception, Reason]),
             io:format("Node replacement failed, see log for details~n"),
             error
     end.
@@ -524,7 +526,7 @@ stage_force_replace(Node1, Node2) ->
         end
     catch
         Exception:Reason ->
-            lager:error("Forced node replacement failed ~p:~p",
+            ?LOG_ERROR("Forced node replacement failed ~p:~p",
                         [Exception, Reason]),
             io:format("Forced node replacement failed, see log for details~n"),
             error
@@ -542,7 +544,7 @@ stage_resize_ring(["abort"]) ->
         end
     catch
         Exception:Reason ->
-            lager:error("Abort resize ring request failed ~p:~p",
+            ?LOG_ERROR("Abort resize ring request failed ~p:~p",
                         [Exception, Reason]),
             io:format("Abort resize ring request failed, see log for details~n"),
             error
@@ -583,7 +585,7 @@ stage_resize_ring(NewRingSize) ->
         end
     catch
         Exception:Reason ->
-            lager:error("Resize ring request failed ~p:~p",
+            ?LOG_ERROR("Resize ring request failed ~p:~p",
                         [Exception, Reason]),
             io:format("Resize ring request failed, see log for details~n"),
             error
@@ -598,7 +600,7 @@ clear_staged([]) ->
         end
     catch
         Exception:Reason ->
-            lager:error("Failed to clear staged cluster changes ~p:~p",
+            ?LOG_ERROR("Failed to clear staged cluster changes ~p:~p",
                         [Exception, Reason]),
             io:format("Failed to clear staged cluster changes, see log "
                       "for details~n"),

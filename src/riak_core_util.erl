@@ -76,6 +76,8 @@
          report_job_request_disposition/6
         ]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -include("riak_core_vnode.hrl").
 
 -ifdef(TEST).
@@ -802,7 +804,7 @@ job_class_enabled(Class) ->
             % but since the value *can* be manipulated externally be more
             % accommodating. If someone mucks it up, nothing's going to be
             % allowed, but give them a chance to catch on instead of crashing.
-            _ = lager:error(
+            ?LOG_ERROR(
                 "riak_core.job_accept_class is not a list: ~p", [Other]),
             false
     end.
@@ -838,14 +840,10 @@ job_class_disabled_message(text, Class) ->
 %%    available, Client is an atom representing the protocol through which the
 %%    request was received.
 %%
-report_job_request_disposition(true, Class, Mod, Func, Line, Client) ->
-    lager:log(debug,
-        [{pid, erlang:self()}, {module, Mod}, {function, Func}, {line, Line}],
-        "Request '~p' accepted from ~p", [Class, Client]);
-report_job_request_disposition(false, Class, Mod, Func, Line, Client) ->
-    lager:log(warning,
-        [{pid, erlang:self()}, {module, Mod}, {function, Func}, {line, Line}],
-        "Request '~p' disabled from ~p", [Class, Client]).
+report_job_request_disposition(true, Class, _Mod, _Func, _Line, Client) ->
+    ?LOG_DEBUG("Request '~p' accepted from ~p", [Class, Client]);
+report_job_request_disposition(false, Class, _Mod, _Func, _Line, Client) ->
+    ?LOG_WARNING("Request '~p' disabled from ~p", [Class, Client]).
 
 %% ===================================================================
 %% EUnit tests

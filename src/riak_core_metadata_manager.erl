@@ -51,6 +51,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -export_type([metadata_iterator/0]).
 
 -include("riak_core_metadata.hrl").
@@ -283,7 +285,7 @@ graft({PKey, Context}) ->
         undefined ->
             %% There would have to be a serious error in implementation to hit this case.
             %% Catch if here b/c it would be much harder to detect
-            lager:error("object not found during graft for key: ~p", [PKey]),
+            ?LOG_ERROR("object not found during graft for key: ~p", [PKey]),
             {error, {not_found, PKey}};
          Obj ->
             graft(Context, Obj)

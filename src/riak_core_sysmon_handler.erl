@@ -31,7 +31,7 @@
 -export([init/1, handle_event/2, handle_call/2,
          handle_info/2, terminate/2, code_change/3]).
 
--include("stacktrace.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -record(state, {timer_ref :: reference() | undefined}).
 
@@ -91,12 +91,12 @@ handle_event({monitor, PidOrPort, Type, Info}, State=#state{timer_ref=TimerRef})
     %% Reset the inactivity timeout
     NewTimerRef = reset_timer(TimerRef),
     {Fmt, Args} = format_pretty_proc_or_port_info(PidOrPort, almost_current_function),
-    lager:info("monitor ~w ~w "++ Fmt ++ " ~w",
+    ?LOG_INFO("monitor ~w ~w "++ Fmt ++ " ~w",
                           [Type, PidOrPort] ++ Args ++ [Info]),
     {ok, State#state{timer_ref=NewTimerRef}};
 handle_event(Event, State=#state{timer_ref=TimerRef}) ->
     NewTimerRef = reset_timer(TimerRef),
-    lager:info("Monitor got ~p", [Event]),
+    ?LOG_INFO("Monitor got ~p", [Event]),
     {ok, State#state{timer_ref=NewTimerRef}}.
 
 %%--------------------------------------------------------------------
@@ -137,7 +137,7 @@ handle_info(inactivity_timeout, State) ->
     %% so hibernate to free up resources.
     {ok, State, hibernate};
 handle_info(Info, State) ->
-    lager:info("handle_info got ~p", [Info]),
+    ?LOG_INFO("handle_info got ~p", [Info]),
     {ok, State}.
 
 %%--------------------------------------------------------------------
@@ -181,9 +181,9 @@ format_pretty_proc_or_port_info(PidOrPort, Acf) ->
             Res ->
                 Res
         end
-    catch ?_exception_(X, Y, StackToken) ->
+    catch Class:Reason:Stacktrace ->
         {"Pid ~w, ~W ~W at ~w\n",
-            [PidOrPort, X, 20, Y, 20, ?_get_stacktrace_(StackToken)]}
+            [PidOrPort, Class, 20, Reason, 20, Stacktrace]}
     end.
 
 %% Enabling warnings_as_errors prevents a build since this function is

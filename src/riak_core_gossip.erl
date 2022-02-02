@@ -41,6 +41,8 @@
           recursive_gossip/1, random_recursive_gossip/1, rejoin/2,
           gossip_version/0]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -include("riak_core_ring.hrl").
 
 -ifdef(TEST).
@@ -246,7 +248,7 @@ handle_cast({rejoin, RingIn}, State) ->
                     ok ->
                         ok;
                     {error, Reason} ->
-                        lager:error("Could not rejoin cluster: ~p", [Reason]),
+                        ?LOG_ERROR("Could not rejoin cluster: ~p", [Reason]),
                         ok
                 end,
             {noreply, State};
@@ -359,13 +361,13 @@ do_log_membership_changes([], [{NewNode, NewStatus}|New]) ->
     do_log_membership_changes([], New).
 
 log_node_changed(Node, Old, New) ->
-    lager:info("'~s' changed from '~s' to '~s'~n", [Node, Old, New]).
+    ?LOG_INFO("'~s' changed from '~s' to '~s'~n", [Node, Old, New]).
 
 log_node_added(Node, New) ->
-    lager:info("'~s' joined cluster with status '~s'~n", [Node, New]).
+    ?LOG_INFO("'~s' joined cluster with status '~s'~n", [Node, New]).
 
 log_node_removed(Node, Old) ->
-    lager:info("'~s' removed from cluster (previously: '~s')~n", [Node, Old]).
+    ?LOG_INFO("'~s' removed from cluster (previously: '~s')~n", [Node, Old]).
 
 remove_from_cluster(Ring, ExitingNode) ->
     remove_from_cluster(Ring, ExitingNode, rand:seed(exrop, os:timestamp())).

@@ -90,6 +90,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -type capability() :: atom() | {atom(), atom()}.
 -type mode() :: term().
 
@@ -266,7 +268,7 @@ schedule_tick() ->
 reload(State=#state{registered=[]}) ->
     State;
 reload(State) ->
-    lager:info("Reloading capabilities"),
+    ?LOG_INFO("Reloading capabilities"),
     State2 =
         orddict:fold(
           fun(Capability, Info, S) ->
@@ -552,14 +554,14 @@ process_capability_changes(OldModes, NewModes) ->
     Diff = riak_core_util:orddict_delta(OldModes, NewModes),
     orddict:fold(fun(Capability, {'$none', New}, _) ->
                          ets:insert(?ETS, {Capability, New}),
-                         lager:info("New capability: ~p = ~p", [Capability, New]);
+                         ?LOG_INFO("New capability: ~p = ~p", [Capability, New]);
                     (Capability, {Old, '$none'}, _) ->
                          ets:delete(?ETS, Capability),
-                         lager:info("Removed capability ~p (previously: ~p)",
+                         ?LOG_INFO("Removed capability ~p (previously: ~p)",
                                     [Capability, Old]);
                     (Capability, {Old, New}, _) ->
                          ets:insert(?ETS, {Capability, New}),
-                         lager:info("Capability changed: ~p / ~p -> ~p",
+                         ?LOG_INFO("Capability changed: ~p / ~p -> ~p",
                                     [Capability, Old, New])
                  end, ok, Diff).
 

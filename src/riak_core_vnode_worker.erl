@@ -29,6 +29,8 @@
         code_change/3]).
 -export([start_link/1, handle_work/3, handle_work/4]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -ifdef(PULSE).
 -compile(export_all).
 -compile({parse_transform, pulse_instrument}).
@@ -70,7 +72,7 @@ init([Module, VNodeIndex, WorkerArgs, WorkerProps, Caller]) ->
     {ok, #state{module=Module, modstate=WorkerState}}.
 
 handle_call(Event, _From, State) ->
-    lager:debug("Vnode worker received synchronous event: ~p.", [Event]),
+    ?LOG_DEBUG("Vnode worker received synchronous event: ~p.", [Event]),
     {reply, ok, State}.
 
 handle_cast({work, Work, WorkFrom, Caller},

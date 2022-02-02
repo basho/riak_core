@@ -43,7 +43,8 @@ invalid_states_test() ->
 
     %% Confirm that we made it to validation and test that each expected failure
     %% message is present.
-    cuttlefish_unit:assert_error_in_phase(Config, validation),
+    ?assertMatch({error, validation, {errorlist, _}}, Config),
+    %%cuttlefish_unit:assert_error_in_phase(Config, validation),
     cuttlefish_unit:assert_error_message(Config, "handoff.ip invalid, must be a valid IP address"),
     ok.
 

@@ -49,6 +49,8 @@
          handoff_change_enabled_setting/2
         ]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -include("riak_core_handoff.hrl").
 
 -export_type([ho_type/0]).
@@ -252,7 +254,7 @@ handle_cast({add_exclusion, {Mod, Idx}}, State=#state{excl=Excl}) ->
 handle_cast({status_update, ModSrcTgt, StatsUpdate}, State=#state{handoffs=HS}) ->
     case lists:keyfind(ModSrcTgt, #handoff_status.mod_src_tgt, HS) of
         false ->
-            lager:error("status_update for non-existing handoff ~p", [ModSrcTgt]),
+            ?LOG_ERROR("status_update for non-existing handoff ~p", [ModSrcTgt]),
             {noreply, State};
         HO ->
             Stats2 = update_stats(StatsUpdate, HO#handoff_status.stats),
@@ -297,10 +299,10 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}, State=#state{handoffs=HS}) ->
                     X when X == max_concurrency orelse
                            (element(1, X) == shutdown andalso
                             element(2, X) == max_concurrency) ->
-                        lager:info("An ~w handoff of partition ~w ~w was terminated for reason: ~w~n", [Dir,M,I,Reason]),
+                        ?LOG_INFO("An ~w handoff of partition ~w ~w was terminated for reason: ~w~n", [Dir,M,I,Reason]),
                         true;
                     _ ->
-                        lager:error("An ~w handoff of partition ~w ~w was terminated for reason: ~w~n", [Dir,M,I,Reason]),
+                        ?LOG_ERROR("An ~w handoff of partition ~w ~w was terminated for reason: ~w~n", [Dir,M,I,Reason]),
                         true
                 end,
 
@@ -337,7 +339,7 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}, State=#state{handoffs=HS}) ->
                  NewHS} ->
                     %% In this case the vnode died and the handoff
                     %% sender must be killed.
-                    lager:error("An ~w handoff of partition ~w ~w was "
+                    ?LOG_ERROR("An ~w handoff of partition ~w ~w was "
                                 "terminated because the vnode died",
                                 [Dir, M, I]),
                     demonitor(TransM),
@@ -617,7 +619,7 @@ kill_xfer_i(ModSrcTarget, Reason, HS) ->
                 undefined ->
                     ok;
                 _ ->
-                    lager:info(Msg, [Type, Mod, SrcNode, SrcPartition,
+                    ?LOG_INFO(Msg, [Type, Mod, SrcNode, SrcPartition,
                                      TargetNode, TargetPartition, Reason])
             end,
             exit(TP, {kill_xfer, Reason}),

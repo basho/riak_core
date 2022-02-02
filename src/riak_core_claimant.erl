@@ -50,6 +50,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -type action() :: leave
                 | remove
                 | {replace, node()}
@@ -694,7 +696,7 @@ tick(PreFetchRing, RingID, State=#state{last_ring_id=LastID}) ->
                 end,
             case riak_core_ring:check_lastgasp(Ring) of
                 true ->
-                    lager:info("Ingoring fresh ring as shutting down"),
+                    ?LOG_INFO("Ingoring fresh ring as shutting down"),
                     ok;
                 false ->
                     maybe_bootstrap_root_ensemble(Ring),
@@ -724,7 +726,7 @@ do_maybe_force_ring_update(Ring) ->
         {ok, NextRing} ->
             case same_plan(Ring, NextRing) of
                 false ->
-                    lager:warning("Forcing update of stalled ring"),
+                    ?LOG_WARNING("Forcing update of stalled ring"),
                     riak_core_ring_manager:force_update();
                 true ->
                     ok
@@ -854,7 +856,7 @@ enable_ensembles(Ring) ->
             %% that ensembles are properly bootstrapped.
             riak_ensemble_manager:enable(),
             riak_core_ring_manager:force_update(),
-            lager:info("Activated consensus subsystem for cluster");
+            ?LOG_INFO("Activated consensus subsystem for cluster");
         _ ->
             ok
     end.
@@ -1566,15 +1568,15 @@ no_log(_, _) ->
     ok.
 
 log(debug, {Msg, Args}) ->
-    lager:debug(Msg, Args);
+    ?LOG_DEBUG(Msg, Args);
 log(ownership, {Idx, NewOwner, CState}) ->
     Owner = riak_core_ring:index_owner(CState, Idx),
-    lager:debug("(new-owner) ~b :: ~p -> ~p~n", [Idx, Owner, NewOwner]);
+    ?LOG_DEBUG("(new-owner) ~b :: ~p -> ~p~n", [Idx, Owner, NewOwner]);
 log(reassign, {Idx, NewOwner, CState}) ->
     Owner = riak_core_ring:index_owner(CState, Idx),
-    lager:debug("(reassign) ~b :: ~p -> ~p~n", [Idx, Owner, NewOwner]);
+    ?LOG_DEBUG("(reassign) ~b :: ~p -> ~p~n", [Idx, Owner, NewOwner]);
 log(next, {Idx, Owner, NewOwner}) ->
-    lager:debug("(pending) ~b :: ~p -> ~p~n", [Idx, Owner, NewOwner]);
+    ?LOG_DEBUG("(pending) ~b :: ~p -> ~p~n", [Idx, Owner, NewOwner]);
 log(_, _) ->
     ok.
 

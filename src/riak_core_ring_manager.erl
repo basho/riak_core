@@ -90,6 +90,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
         terminate/2, code_change/3]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -record(state, {
         mode,
         raw_ring,
@@ -246,7 +248,7 @@ do_write_ringfile(Ring, FN) ->
         ok = riak_core_util:replace_file(FN, term_to_binary(Ring))
     catch
         _:Err ->
-            lager:error("Unable to write ring to \"~s\" - ~p\n", [FN, Err]),
+            ?LOG_ERROR("Unable to write ring to \"~s\" - ~p\n", [FN, Err]),
             {error,Err}
     end.
 
@@ -347,25 +349,25 @@ reload_ring(live) ->
         {ok, RingFile} ->
             case riak_core_ring_manager:read_ringfile(RingFile) of
                 {error, Reason} ->
-                    lager:critical("Failed to read ring file: ~p",
-                                   [lager:posix_error(Reason)]),
+                    ?LOG_CRITICAL("Failed to read ring file: ~p",
+                                   [Reason]),
                     throw({error, Reason});
                 Ring ->
                     %% Upgrade the ring data structure if necessary.
                     case riak_core_ring:legacy_ring(Ring) of
                         true ->
-                            lager:info("Upgrading legacy ring"),
+                            ?LOG_INFO("Upgrading legacy ring"),
                             riak_core_ring:upgrade(Ring);
                         false ->
                             Ring
                     end
             end;
         {error, not_found} ->
-            lager:warning("No ring file available."),
+            ?LOG_WARNING("No ring file available."),
             riak_core_ring:fresh();
         {error, Reason} ->
-            lager:critical("Failed to load ring file: ~p",
-                           [lager:posix_error(Reason)]),
+            ?LOG_CRITICAL("Failed to load ring file: ~p",
+                           [Reason]),
             throw({error, Reason})
     end.
 
@@ -415,7 +417,7 @@ handle_call({ring_trans, Fun, Args}, _From, State=#state{raw_ring=Ring}) ->
         {ignore, Reason} ->
             {reply, {not_changed, Reason}, State};
         Other ->
-            lager:error("ring_trans: invalid return value: ~p",
+            ?LOG_ERROR("ring_trans: invalid return value: ~p",
                                    [Other]),
             {reply, not_changed, State}
     end;
@@ -453,7 +455,7 @@ handle_cast(write_ringfile, State=#state{raw_ring=Ring}) ->
 handle_info(inactivity_timeout, State) ->
     case is_stable_ring(State) of
         {true,DeltaMS} ->
-            lager:debug("Promoting ring after ~p", [DeltaMS]),
+            ?LOG_DEBUG("Promoting ring after ~p", [DeltaMS]),
             promote_ring(),
             State2 = State#state{inactivity_timer=undefined},
             {noreply, State2};
@@ -506,13 +508,13 @@ run_fixups([{App, Fixup}|T], BucketName, BucketProps) ->
         {ok, NewBucketProps} ->
             NewBucketProps;
         {error, Reason} ->
-            lager:error("Error while running bucket fixup module "
+            ?LOG_ERROR("Error while running bucket fixup module "
                 "~p from application ~p on bucket ~p: ~p", [Fixup, App,
                     BucketName, Reason]),
             BucketProps
     catch
         What:Why ->
-            lager:error("Crash while running bucket fixup module "
+            ?LOG_ERROR("Crash while running bucket fixup module "
                 "~p from application ~p on bucket ~p : ~p:~p", [Fixup, App,
                     BucketName, What, Why]),
             BucketProps

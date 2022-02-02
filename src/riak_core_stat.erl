@@ -39,6 +39,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -compile({parse_transform, riak_core_stat_xform}).
 
 -ifdef(TEST).
@@ -166,7 +168,7 @@ code_change(_OldVsn, State, _Extra) ->
 exometer_update(Name, Value) ->
     case exometer:update(Name, Value) of
         {error, not_found} ->
-            lager:debug("~p not found on update.", [Name]);
+            ?LOG_DEBUG("~p not found on update.", [Name]);
         ok ->
             ok
     end.

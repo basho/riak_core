@@ -143,6 +143,8 @@
          vnode_type/2,
          deletion_complete/3]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -export_type([riak_core_ring/0, ring_size/0, partition_id/0]).
 
 -include("riak_core.hrl").
@@ -268,7 +270,7 @@ check_tainted(Ring=?CHSTATE{}, Msg) ->
             riak_core:stop(Msg),
             ok;
         {{ok, true}, false} ->
-            lager:error(Msg),
+            ?LOG_ERROR(Msg),
             ok;
         _ ->
             ok
@@ -1521,19 +1523,19 @@ pick_val({N1,M1}, {N2,M2}) ->
 %% @private
 %% Log ring metadata input and result for debug purposes
 log_meta_merge(M1, M2, Meta) ->
-    lager:debug("Meta A: ~p", [M1]),
-    lager:debug("Meta B: ~p", [M2]),
-    lager:debug("Meta result: ~p", [Meta]).
+    ?LOG_DEBUG("Meta A: ~p", [M1]),
+    ?LOG_DEBUG("Meta B: ~p", [M2]),
+    ?LOG_DEBUG("Meta result: ~p", [Meta]).
 
 %% @private
 %% Log result of a ring reconcile. In the case of ring churn,
 %% subsequent log messages will allow us to track ring versions.
 %% Handle legacy rings as well.
 log_ring_result(#chstate_v2{vclock=V,members=Members,next=Next}) ->
-    lager:debug("Updated ring vclock: ~p, Members: ~p, Next: ~p", 
+    ?LOG_DEBUG("Updated ring vclock: ~p, Members: ~p, Next: ~p", 
         [V, Members, Next]);
 log_ring_result(Ring) ->
-    lager:debug("Ring: ~p", [Ring]).
+    ?LOG_DEBUG("Ring: ~p", [Ring]).
 
 %% @private
 internal_reconcile(State, OtherState) ->

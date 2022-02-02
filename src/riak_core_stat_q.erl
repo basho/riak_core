@@ -33,6 +33,8 @@
 -export_type([path/0,
               stat_name/0]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -type path() :: [] | [atom()|binary()].
 -type stats() :: [stat()].
 -type stat() :: {stat_name(), stat_value()}.
@@ -80,7 +82,7 @@ stat_return({error,not_found}) -> unavailable;
 stat_return({ok, Value}) -> Value.
 
 log_error(StatName, ErrClass, ErrReason) ->
-    lager:warning("Failed to calculate stat ~p with ~p:~p", [StatName, ErrClass, ErrReason]).
+    ?LOG_WARNING("Failed to calculate stat ~p with ~p:~p", [StatName, ErrClass, ErrReason]).
 
 %% some crazy people put funs in gauges (exometer has a 'function' metric)
 %% so that they can have a consistent interface

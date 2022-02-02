@@ -34,6 +34,8 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -record(state, {sock :: port() | undefined,
                 peer :: term() | undefined,
                 ssl_opts :: [] | list(),
@@ -94,19 +96,19 @@ handle_call({set_socket, Socket0}, _From, State = #state{ssl_opts = SslOpts}) ->
 
 handle_info({tcp_closed,_Socket},State=#state{partition=Partition,count=Count,
                                               peer=Peer}) ->
-    lager:info("Handoff receiver for partition ~p exited after processing ~p"
+    ?LOG_INFO("Handoff receiver for partition ~p exited after processing ~p"
                           " objects from ~p", [Partition, Count, Peer]),
     {stop, normal, State};
 handle_info({tcp_error, _Socket, Reason}, State=#state{partition=Partition,count=Count,
                                                        peer=Peer}) ->
-    lager:info("Handoff receiver for partition ~p exited after processing ~p"
+    ?LOG_INFO("Handoff receiver for partition ~p exited after processing ~p"
                           " objects from ~p: TCP error ~p", [Partition, Count, Peer, Reason]),
     {stop, normal, State};
 handle_info({tcp, Socket, Data}, State) ->
     [MsgType|MsgData] = Data,
     case catch(process_message(MsgType, MsgData, State)) of
         {'EXIT', Reason} ->
-            lager:error("Handoff receiver for partition ~p exited abnormally after "
+            ?LOG_ERROR("Handoff receiver for partition ~p exited abnormally after "
                                    "processing ~p objects from ~p: ~p", [State#state.partition, State#state.count, State#state.peer, Reason]),
             {stop, normal, State};
         NewState when is_record(NewState, state) ->
@@ -123,14 +125,14 @@ handle_info({ssl_error, Socket, Reason}, State) ->
 handle_info({ssl, Socket, Data}, State) ->
     handle_info({tcp, Socket, Data}, State);
 handle_info(timeout, State) ->
-            lager:error("Handoff receiver for partition ~p timed out after "
+            ?LOG_ERROR("Handoff receiver for partition ~p timed out after "
                                    "processing ~p objects from ~p.", [State#state.partition, State#state.count, State#state.peer]),
     {stop, normal, State}.
 
 process_message(?PT_MSG_INIT, MsgData, State=#state{vnode_mod=VNodeMod,
                                                     peer=Peer}) ->
     <<Partition:160/integer>> = MsgData,
-    lager:info("Receiving handoff data for partition ~p:~p from ~p", [VNodeMod, Partition, Peer]),
+    ?LOG_INFO("Receiving handoff data for partition ~p:~p from ~p", [VNodeMod, Partition, Peer]),
     {ok, VNode} = riak_core_vnode_master:get_vnode_pid(Partition, VNodeMod),
     Data = [{mod_src_tgt, {VNodeMod, undefined, Partition}},
             {vnode_pid, VNode}],
