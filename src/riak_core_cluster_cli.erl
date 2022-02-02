@@ -37,6 +37,8 @@
     partition/3
 ]).
 
+-include_lib("kernel/include/logger.hrl").
+
 register_cli() ->
     register_all_usage(),
     register_all_commands().
@@ -308,7 +310,7 @@ stage_set_location([_, _, _, Location], _, Flags) ->
     end
   catch
     Exception:Reason ->
-      lager:error("Setting node location failed ~p:~p", [Exception, Reason]),
+      ?LOG_ERROR("Setting node location failed ~p:~p", [Exception, Reason]),
       make_alert("Setting node location failed, see log for details~n")
   end.
 

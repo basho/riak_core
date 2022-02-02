@@ -58,6 +58,8 @@
 
 -export([monitor_worker/4]).
 
+-include_lib("kernel/include/logger.hrl").
+
 -ifdef(PULSE).
 -compile(export_all).
 -compile({parse_transform, pulse_instrument}).
@@ -335,7 +337,7 @@ poolboy_checkin(Pool, Worker, PoolName, Checkouts) ->
                                     timer:now_diff(os:timestamp(), WT)}),
             {R, Checkouts0};
         _ ->
-            lager:warning(
+            ?LOG_WARNING(
                 "Unexplained poolboy behaviour - failure to track checkouts"),
             {R, Checkouts}
     end.
