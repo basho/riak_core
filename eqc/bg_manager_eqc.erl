@@ -52,7 +52,9 @@
           %% and their state
           locks  :: [{bg_eqc_type(), [{reference(), pid(), [], held | released}]}],
           %% number of tokens taken by type
-          tokens :: [{bg_eqc_type(), non_neg_integer()}]
+          tokens :: [{bg_eqc_type(), non_neg_integer()}],
+          %% commands excluded from test
+          exclude :: [atom()]
          }).
 
 %% @doc Returns the state in which each test case starts. (Unless a different
@@ -67,7 +69,8 @@ initial_state() ->
        limits = [],
        counts = [],
        locks  = [],
-       tokens = []
+       tokens = [],
+       exclude = []
       }.
 
 %% ------ Grouped operator: set_concurrency_limit
@@ -229,9 +232,10 @@ start_process() ->
 start_process_next(S=#state{procs=Procs}, Value, []) ->
     S#state{ procs = lists:keystore(Value, 1, Procs, {Value, running}) }.
 
-%% @doc postcondition for start_process
-start_process_post(_S, [], Pid)->
-    is_process_alive(Pid).
+%% @doc postcondition not needed, but in particular should not  check
+%% is_process_alive(Pid), since in parallel commands we re-run without side-effects
+start_process_post(_S, [], _Pid)->
+    true.
 
 %% ------ Grouped operator: stop_process
 %% @doc stop_process_command - Argument generator
@@ -269,8 +273,8 @@ stop_process_next(S=#state{procs=Procs}, _Value, [Pid]) ->
 
 
 %% @doc postcondition for stop_process
-stop_process_post(_S, [Pid], ok) ->
-    not is_process_alive(Pid);
+stop_process_post(_S, [_Pid], ok) ->
+    true;
 stop_process_post(_S, [Pid], {error, didnotexit}) ->
     {error, {didnotexit, Pid}}.
 
@@ -655,21 +659,27 @@ all_resources_() ->
     choose(0, 10).
 
 %% @doc weight/2 - Distribution of calls
-weight(_S, set_concurrency_limit) -> 3;
-weight(_S, concurrency_limit) -> 3;
-weight(_S, concurrency_limit_reached) -> 3;
-weight(_S, start_process) -> 3;
-weight(#state{alive=true}, stop_process) -> 3;
-weight(#state{alive=false}, stop_process) -> 3;
-weight(_S, get_lock) -> 20;
-weight(_S, set_token_rate) -> 3;
-weight(_S, token_rate) -> 0;
-weight(_S, get_token) -> 20;
-weight(_S, refill_tokens) -> 10;
-weight(_S, all_resources) -> 3;
-weight(_S, crash) -> 3;
-weight(_S, revive) -> 1;
-weight(_S, _Cmd) -> 1.
+weight(S, Cmd) ->
+    case lists:member(Cmd, S#state.exclude) of
+        true -> 0;
+        false -> weight_inc(S, Cmd)
+    end.
+
+weight_inc(_S, set_concurrency_limit) -> 3;
+weight_inc(_S, concurrency_limit) -> 3;
+weight_inc(_S, concurrency_limit_reached) -> 3;
+weight_inc(_S, start_process) -> 3;
+weight_inc(#state{alive=true}, stop_process) -> 3;
+weight_inc(#state{alive=false}, stop_process) -> 3;
+weight_inc(_S, get_lock) -> 20;
+weight_inc(_S, set_token_rate) -> 3;
+weight_inc(_S, token_rate) -> 0;
+weight_inc(_S, get_token) -> 20;
+weight_inc(_S, refill_tokens) -> 10;
+weight_inc(_S, all_resources) -> 3;
+weight_inc(_S, crash) -> 3;
+weight_inc(_S, revive) -> 1;
+weight_inc(_S, _Cmd) -> 1.
 
 %% Other Functions
 limit(Type, State) ->
@@ -828,17 +838,17 @@ prop_bgmgr() ->
 
 
 prop_bgmgr_parallel() ->
-    ?FORALL(Cmds, parallel_commands(?MODULE),
+    ?FORALL(Cmds, parallel_commands(?MODULE, (initial_state())#state{exclude = [bypass]}),
             aggregate(command_names(Cmds),
                       ?TRAPEXIT(
                          begin
                              stop_pid(whereis(riak_core_bg_manager)),
-                             {ok, BgMgr} = riak_core_bg_manager:start(),
-                             {Seq, Par, Res} = run_parallel_commands(?MODULE,Cmds),
+                             {ok, _BgMgr} = riak_core_bg_manager:start(),
+                             {Seq, Par, Res} = run_parallel_commands(?MODULE, Cmds),
                              InfoTable = ets:tab2list(?BG_INFO_ETS_TABLE),
                              EntryTable = ets:tab2list(?BG_ENTRY_ETS_TABLE),
                              Monitors = bg_manager_monitors(),
-                             stop_pid(BgMgr),
+                             stop_pid(whereis(riak_core_bg_manager)),
                              ?WHENFAIL(
                                 begin
                                     io:format("~n~nbackground_mgr tables: ~n"),
