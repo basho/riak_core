@@ -92,7 +92,7 @@ set_concurrency_limit_next(S=#state{limits=Limits}, _Value, [Type,Limit,_Kill]) 
     S#state{ limits = lists:keystore(Type, 1, Limits, {Type, Limit}) }.
 
 %% @doc set_concurrency_limit_post - Postcondition for set_concurrency_limit
-set_concurrency_limit_post(S, [Type,_Limit,_Kill], Res) ->
+set_concurrency_limit_post(S, [Type, _Limit, _Kill], Res) ->
     %% check returned value is equal to value we have in state prior to this call
     %% since returned value is promised to be previous one that was set
     eq(limit(Type, S), Res).
@@ -497,9 +497,14 @@ bypass_next(S, _Value, [Switch]) ->
     S#state{bypassed=Switch}.
 
 %% @doc bypass command
+%% This command is not atomic and therefore cannot be
+%% included in a parallel commands test
+%% Removing the synchronising second call won't
+%% work, because then interference with other commands will
+%% happen (even) in sequential testing.
 bypass(Switch) ->
     Res = riak_core_bg_manager:bypass(Switch), %% expect 'ok'
-    Value = riak_core_bg_manager:bypassed(),  %% expect eq(Value, Switch)
+    Value = riak_core_bg_manager:bypassed(),   %% expect eq(Value, Switch)
     {Res, Value}.
 
 %% @doc bypass postcondition
@@ -799,7 +804,7 @@ prop_bgmgr() ->
                          begin
                              stop_pid(whereis(riak_core_bg_manager)),
                              {ok, _BgMgr} = riak_core_bg_manager:start(),
-                             {H, S, Res} = run_commands(?MODULE,Cmds),
+                             {H, S, Res} = run_commands(?MODULE, Cmds),
                              InfoTable = ets:tab2list(?BG_INFO_ETS_TABLE),
                              EntryTable = ets:tab2list(?BG_ENTRY_ETS_TABLE),
                              Monitors = bg_manager_monitors(),
