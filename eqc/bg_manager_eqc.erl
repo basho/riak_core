@@ -856,6 +856,12 @@ bg_manager_monitors(Pid) ->
     process_info(Pid, monitors).
 
 prop_bgmgr() ->
+    ?SETUP(fun() ->
+                   error_logger:tty(false),
+                   fun() ->
+                        error_logger:tty(true)
+                   end
+           end,
     ?FORALL(Cmds, commands(?MODULE),
     ?SOMETIMES(2,
             aggregate(command_names(Cmds),
@@ -898,10 +904,16 @@ prop_bgmgr() ->
                                 end,
                                 pretty_commands(?MODULE, Cmds, {H, S, Res},
                                                 Res == ok))
-                         end)))).
+                         end))))).
 
 
 prop_bgmgr_parallel() ->
+    ?SETUP(fun() ->
+                   error_logger:tty(false),
+                   fun() ->
+                        error_logger:tty(true)
+                   end
+           end,
     ?FORALL(Cmds, parallel_commands(?MODULE, (initial_state())#state{exclude = [bypass]}),
     ?SOMETIMES(2,
             aggregate(command_names(Cmds),
@@ -929,6 +941,6 @@ prop_bgmgr_parallel() ->
                                 end,
                                 pretty_commands(?MODULE, Cmds, {Seq, Par, Res},
                                                 Res == ok))
-                         end)))).
+                         end))))).
 
 -endif.

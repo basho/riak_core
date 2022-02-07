@@ -72,7 +72,6 @@ setup_simple() ->
     fun() ->
             riak_core_ring_manager:stop(),
             application:stop(exometer),
-            application:stop(lager),
             application:stop(goldrush),
             [ok = application:set_env(riak_core, K, V) || {K,V} <- OldVars],
             ok
