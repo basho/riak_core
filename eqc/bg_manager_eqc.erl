@@ -16,6 +16,15 @@
 %% specific language governing permissions and limitations
 %% under the License.
 %%
+%% QuickCheck may fail for both properties in this module
+%% The commands are not atomic and we cannot faithfully model
+%% the side effect of locking and freeing resources when the
+%% implementation leaves that to a background side-effect of
+%% the monitor.
+%% A better way to do this is to control the monitor as well
+%% by mocking the call to release_resource.
+%% That however, would require a eqc_compnent specification
+%% instead of the current eqc_statem.
 
 -module(bg_manager_eqc).
 
