@@ -169,11 +169,12 @@ get_lock_next(S=#state{enabled=Enabled, bypassed=Bypassed}, Res, [Type, Pid, Met
     TypeLimit = limit(Type, S),
     Held = held_locks(Type, S),
     ReallyEnabled = Enabled andalso resource_enabled(Type, S),
+    IsRunning = lists:member(Pid, running_procs(S)),
     case (ReallyEnabled andalso length(Held) < TypeLimit) orelse Bypassed of
         %% got lock
-        true -> add_held_lock(Type, Res, Pid, Meta, S);
+        true when IsRunning -> add_held_lock(Type, Res, Pid, Meta, S);
         %% failed to get lock
-        false -> S
+        _ -> S
     end.
 
 %% @doc Postcondition for get_lock
@@ -181,7 +182,7 @@ get_lock_next(S=#state{enabled=Enabled, bypassed=Bypassed}, Res, [Type, Pid, Met
 %% We expect to get ok if bypassed or under the limit.
 get_lock_post(#state{bypassed=true}, [_Type, _Pid, _Meta], max_concurrency) ->
     'max_concurrency returned when bypassed';
-get_lock_post(S=#state{enabled=Enabled}, [Type, _Pid, _Meta], max_concurrency) ->
+get_lock_post(S=#state{enabled=Enabled}, [Type, Pid, _Meta], max_concurrency) ->
     %% Since S reflects the state before we check that it
     %% was already at the limit.
     Limit = limit(Type, S),
@@ -189,19 +190,21 @@ get_lock_post(S=#state{enabled=Enabled}, [Type, _Pid, _Meta], max_concurrency) -
     %% check >= because we may have lowered limit *without*
     %% forcing some processes to release their locks by killing them
     ReallyEnabled = Enabled andalso resource_enabled(Type, S),
-    case (not ReallyEnabled) orelse ExistingCount >= Limit of
+    IsRunning = lists:member(Pid, running_procs(S)),
+    case (not ReallyEnabled) orelse ExistingCount >= Limit orelse not IsRunning of
         true -> true;
         false ->
             %% hack to get more informative post-cond failure (like eq)
             {ExistingCount, 'not >=', Limit}
     end;
-get_lock_post(S=#state{bypassed=Bypassed, enabled=Enabled}, [Type, _Pid, _Meta], _LockRef) ->
+get_lock_post(S=#state{bypassed=Bypassed, enabled=Enabled}, [Type, Pid, _Meta], _LockRef) ->
     %% Since S reflects the state before we check that it
     %% was not already at the limit.
     Limit = limit(Type, S),
     ExistingCount = length(held_locks(Type, S)),
     ReallyEnabled = Enabled andalso resource_enabled(Type, S),
-    case (ReallyEnabled andalso ExistingCount <  Limit) orelse Bypassed of
+    IsRunning = lists:member(Pid, running_procs(S)),
+    case (ReallyEnabled andalso ExistingCount <  Limit) orelse Bypassed orelse not IsRunning of
         true -> true;
         false ->
             %% hack to get more informative post-cond failure (like eq)
