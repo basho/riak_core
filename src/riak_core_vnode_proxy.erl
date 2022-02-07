@@ -149,7 +149,7 @@ loop(Parent, State) ->
     receive
         {'$vnode_proxy_call', From, Msg} ->
             {reply, Reply, NewState} = handle_call(Msg, From, State),
-            ok = gen:reply(From, Reply),
+            gen:reply(From, Reply),
             loop(Parent, NewState);
         {'$vnode_proxy_cast', Msg} ->
             {noreply, NewState} = handle_cast(Msg, State),
