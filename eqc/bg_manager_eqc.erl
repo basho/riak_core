@@ -151,10 +151,11 @@ get_lock_pre(S) ->
     RunningProcs andalso is_alive(S).
 
 %% @doc Precondition for generation of get_lock command
-get_lock_pre(S, [Type, _Pid, _Meta]) ->
+get_lock_pre(S, [Type, Pid, _Meta]) ->
     %% must call set_concurrency_limit at least once
     %% TODO: we can probably remove and test this restriction instead
-    is_integer(limit(Type, unregistered, S)).
+    is_integer(limit(Type, unregistered, S)) andalso
+        lists:member(Pid, running_procs(S)).
 
 get_lock(Type, Pid, Meta) ->
     case riak_core_bg_manager:get_lock(Type, Pid, Meta) of
@@ -326,38 +327,32 @@ token_rate_post(S, [Type], Res) ->
     ExpectedRate = mk_token_rate(max_num_tokens(Type, {unregistered, Type}, S)),
     eq(ExpectedRate, Res).
 
-%% ------ Grouped operator: get_token
+%% ------ Grouped operator: get_token using Pid
 %% @doc get_token args generator
+get_token_pre(S) ->
+    length(running_procs(S)) > 0.
+
 get_token_args(S) ->
-    %% TODO: generate meta for future query tests
-    ArityTwo = [[token_type(), oneof(running_procs(S))] || length(running_procs(S)) > 0],
-    ArityOne = [[token_type()]],
-    oneof(ArityTwo ++ ArityOne).
+    [token_type(), oneof(running_procs(S))].
 
 %% @doc Precondition for get_token
-get_token_pre(S, [Type, _Pid]) ->
-    get_token_pre(S, [Type]);
-get_token_pre(S, [Type]) ->
+get_token_pre(S, [Type, Pid]) ->
     %% must call set_token_rate at least once
     %% TODO: we can probably remove and test this restriction instead
-    is_integer(max_num_tokens(Type, unregistered, S)) andalso is_alive(S).
+    is_integer(max_num_tokens(Type, unregistered, S)) andalso is_alive(S)
+        andalso lists:member(Pid, running_procs(S)).
 
 %% @doc get_token state transition
-get_token_next(S, Value, [Type, _Pid]) ->
-    get_token_next(S, Value, [Type]);
-get_token_next(S=#state{bypassed=Bypassed, enabled=Enabled}, _Value, [Type]) ->
+get_token_next(S=#state{bypassed=Bypassed, enabled=Enabled}, _Value, [Type, _Pid]) ->
     CurCount = num_tokens(Type, S),
     %% NOTE: this assumes the precondition requires we call set_token_rate at least once
     %% in case we don't we treat the max as 0
     Max = max_num_tokens(Type, unregistered, S),
     ReallyEnabled = Enabled andalso resource_enabled(Type, S),
-    case (ReallyEnabled andalso CurCount < Max) orelse Bypassed of
+    case ((ReallyEnabled andalso CurCount < Max) orelse Bypassed) of
         true -> increment_token_count(Type, S);
         false -> S
     end.
-
-get_token(Type) ->
-    riak_core_bg_manager:get_token(Type).
 
 get_token(Type, Pid) ->
     riak_core_bg_manager:get_token(Type, Pid).
@@ -365,11 +360,9 @@ get_token(Type, Pid) ->
 %% @doc Postcondition for get_token
 %% We expect to get max_concurrency if globally disabled or we hit the limit.
 %% We expect to get ok if bypassed or under the limit.
-get_token_post(S, [Type, _Pid], Res) ->
-    get_token_post(S, [Type], Res);
-get_token_post(#state{bypassed=true}, [_Type], max_concurrency) ->
+get_token_post(#state{bypassed=true}, [_Type, _Pid], max_concurrency) ->
     'max_concurrency returned while bypassed';
-get_token_post(S=#state{enabled=Enabled}, [Type], max_concurrency) ->
+get_token_post(S=#state{enabled=Enabled}, [Type, _Pid], max_concurrency) ->
     CurCount = num_tokens(Type, S),
     %% NOTE: this assumes the precondition requires we call set_token_rate at least once
     %% in case we don't we treat the max as 0
@@ -381,7 +374,62 @@ get_token_post(S=#state{enabled=Enabled}, [Type], max_concurrency) ->
             %% hack to get more info out of postcond failure
             {CurCount, 'not >=', Max}
     end;
-get_token_post(S=#state{bypassed=Bypassed, enabled=Enabled}, [Type], ok) ->
+get_token_post(S=#state{bypassed=Bypassed, enabled=Enabled}, [Type, _Pid], ok) ->
+    CurCount = num_tokens(Type, S),
+    %% NOTE: this assumes the precondition requires we call set_token_rate at least once
+    %% in case we don't we treat the max as 0
+    Max = max_num_tokens(Type, unregistered, S),
+    ReallyEnabled = Enabled andalso resource_enabled(Type, S),
+    case (ReallyEnabled andalso CurCount < Max) orelse Bypassed of
+        true -> true;
+        false ->
+            {CurCount, 'not <', Max}
+    end.
+
+%% ------ Grouped operator: get_token without Pid
+%% @doc get_token args generator
+get_Token_args(_S) ->
+    [token_type()].
+
+%% @doc Precondition for get_token
+get_Token_pre(S, [Type]) ->
+    %% must call set_token_rate at least once
+    %% TODO: we can probably remove and test this restriction instead
+    is_integer(max_num_tokens(Type, unregistered, S)) andalso is_alive(S).
+
+%% @doc get_token state transition
+get_Token_next(S=#state{bypassed=Bypassed, enabled=Enabled}, _Value, [Type]) ->
+    CurCount = num_tokens(Type, S),
+    %% NOTE: this assumes the precondition requires we call set_token_rate at least once
+    %% in case we don't we treat the max as 0
+    Max = max_num_tokens(Type, unregistered, S),
+    ReallyEnabled = Enabled andalso resource_enabled(Type, S),
+    case ((ReallyEnabled andalso CurCount < Max) orelse Bypassed) of
+        true -> increment_token_count(Type, S);
+        false -> S
+    end.
+
+get_Token(Type) ->
+    riak_core_bg_manager:get_token(Type).
+
+%% @doc Postcondition for get_token
+%% We expect to get max_concurrency if globally disabled or we hit the limit.
+%% We expect to get ok if bypassed or under the limit.
+get_Token_post(#state{bypassed=true}, [_Type], max_concurrency) ->
+    'max_concurrency returned while bypassed';
+get_Token_post(S=#state{enabled=Enabled}, [Type], max_concurrency) ->
+    CurCount = num_tokens(Type, S),
+    %% NOTE: this assumes the precondition requires we call set_token_rate at least once
+    %% in case we don't we treat the max as 0
+    Max = max_num_tokens(Type, unregistered, S),
+    ReallyEnabled = Enabled andalso resource_enabled(Type, S),
+    case (not ReallyEnabled) orelse CurCount >= Max of
+        true -> true;
+        false ->
+            %% hack to get more info out of postcond failure
+            {CurCount, 'not >=', Max}
+    end;
+get_Token_post(S=#state{bypassed=Bypassed, enabled=Enabled}, [Type], ok) ->
     CurCount = num_tokens(Type, S),
     %% NOTE: this assumes the precondition requires we call set_token_rate at least once
     %% in case we don't we treat the max as 0
@@ -680,6 +728,7 @@ weight_inc(_S, get_lock) -> 20;
 weight_inc(_S, set_token_rate) -> 3;
 weight_inc(_S, token_rate) -> 0;
 weight_inc(_S, get_token) -> 20;
+weight_inc(_S, get_Token) -> 10;
 weight_inc(_S, refill_tokens) -> 10;
 weight_inc(_S, all_resources) -> 3;
 weight_inc(_S, crash) -> 3;
