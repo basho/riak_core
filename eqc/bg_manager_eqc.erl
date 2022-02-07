@@ -857,6 +857,7 @@ bg_manager_monitors(Pid) ->
 
 prop_bgmgr() ->
     ?FORALL(Cmds, commands(?MODULE),
+    ?SOMETIMES(2,
             aggregate(command_names(Cmds),
                       ?TRAPEXIT(
                          begin
@@ -897,11 +898,12 @@ prop_bgmgr() ->
                                 end,
                                 pretty_commands(?MODULE, Cmds, {H, S, Res},
                                                 Res == ok))
-                         end))).
+                         end)))).
 
 
 prop_bgmgr_parallel() ->
     ?FORALL(Cmds, parallel_commands(?MODULE, (initial_state())#state{exclude = [bypass]}),
+    ?SOMETIMES(2,
             aggregate(command_names(Cmds),
                       ?TRAPEXIT(
                          begin
@@ -927,6 +929,6 @@ prop_bgmgr_parallel() ->
                                 end,
                                 pretty_commands(?MODULE, Cmds, {Seq, Par, Res},
                                                 Res == ok))
-                         end))).
+                         end)))).
 
 -endif.
