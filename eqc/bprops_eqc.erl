@@ -249,6 +249,7 @@ prop_buckets() ->
     ).
 
 setup_cleanup() ->
+    error_logger:tty(false),
     meck:new(riak_core_capability, []),
     meck:expect(
         riak_core_capability, get,
@@ -257,6 +258,7 @@ setup_cleanup() ->
         end
     ),
     fun() ->
+        error_logger:tty(true),
         meck:unload(riak_core_capability)
     end.
 
