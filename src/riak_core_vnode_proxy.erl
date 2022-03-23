@@ -233,7 +233,7 @@ handle_proxy(Msg, State=#state{check_counter=Counter,
     %%       When changing this function, please run:
     %%         erts_debug:df(riak_core_vnode_proxy)
     %%       and look over the generated riak_core_vnode_proxy.dis file to
-    %%       ensure unnecessary work is not being performed needlessly.
+    %%       ensure unnecessary work is not being performed.
     %%
     case State#state.vnode_pid of
         undefined ->
