@@ -21,7 +21,7 @@
 
 -behaviour(riak_core_worker_pool).
 
--export([do_init/1, reply/2, do_work/3]).
+-export([do_init/1, reply/2, do_work/3, to_log/0]).
 %% export the names of the pools as functions
 -export([af1/0, af2/0, af3/0, af4/0, be/0, nwp/0, dscp_pools/0, pools/0]).
 
@@ -112,3 +112,5 @@ reply(From, Msg) ->
 
 do_work(Pid, Work, From) ->
     riak_core_vnode_worker:handle_work(Pid, Work, From).
+
+to_log() -> true.

@@ -65,6 +65,7 @@
 -endif.
 
 -define(SHUTDOWN_WAIT, 60000).
+-define(LOG_LOOP_MS, 60000).
 
 -record(state, {queue = queue:new(),
                 pool :: pid(),
@@ -89,6 +90,8 @@
 
 -callback do_work(Pid::pid(), Work::term(), From::term()) -> any().
 
+-callback to_log() -> boolean().
+
 
 start_link(PoolBoyArgs, CallbackMod, PoolName) ->
     gen_fsm:start_link(?MODULE, [PoolBoyArgs, CallbackMod, PoolName], []).
@@ -105,6 +108,7 @@ shutdown_pool(Pid, Wait) ->
 
 init([PoolBoyArgs, CallbackMod, PoolName]) ->
     {ok, Pid} = CallbackMod:do_init(PoolBoyArgs),
+    erlang:send_after(?LOG_LOOP_MS, self(), log_timer),
     {ok,
         ready,
         #state{pool=Pid,
@@ -231,6 +235,7 @@ handle_event(worker_start, StateName,
                 end,
                 State}
     end;
+
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
 
@@ -255,6 +260,28 @@ handle_sync_event({shutdown, Time}, From, _StateName, #state{queue=Q,
 handle_sync_event(_Event, _From, StateName, State) ->
     {reply, {error, unknown_message}, StateName, State}.
 
+handle_info(log_timer, StateName, State) ->
+    Mod = State#state.callback_mod,
+    case Mod:to_log() of
+        true ->
+            [{_P, LastChOutTime}|_Rest] =
+                lists:reverse(lists:keysort(2, State#state.checkouts)),
+            LastCheckout =
+                timer:now_diff(os:timestamp(), LastChOutTime),
+            QL = queue:len(State#state.queue),
+            _ = 
+                lager:info(
+                    "Worker_Pool=~w has length=~w with last_chekcout=~w s ago",
+                    [State#state.pool_name,
+                        QL,
+                        LastCheckout  div (1000 * 1000)]),
+            ok;
+        false ->
+            ok
+    end,
+    NextLogTimer = ?LOG_LOOP_MS - rand:uniform(max(?LOG_LOOP_MS div 10, 1)),
+    erlang:send_after(NextLogTimer, self(), log_timer),
+    {next_state, StateName, State};
 handle_info({'DOWN', _Ref, _, Pid, Info},
                 StateName,
                 #state{monitors=Monitors0} = State) ->
