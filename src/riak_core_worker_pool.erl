@@ -262,8 +262,8 @@ handle_sync_event(_Event, _From, StateName, State) ->
 
 handle_info(log_timer, StateName, State) ->
     Mod = State#state.callback_mod,
-    case Mod:to_log() of
-        true ->
+    case {Mod:to_log(), State#state.checkouts} of
+        {true, Checkouts} when length(Checkouts) > 0 ->
             [{_P, LastChOutTime}|_Rest] =
                 lists:reverse(lists:keysort(2, State#state.checkouts)),
             LastCheckout =
@@ -271,12 +271,17 @@ handle_info(log_timer, StateName, State) ->
             QL = queue:len(State#state.queue),
             _ = 
                 lager:info(
-                    "Worker_Pool=~w has length=~w with last_chekcout=~w s ago",
+                    "Worker_Pool=~w has length=~w with last_checkout=~w s ago",
                     [State#state.pool_name,
                         QL,
                         LastCheckout  div (1000 * 1000)]),
             ok;
-        false ->
+        {true, []} ->
+            _ =
+                lager:info(
+                    "Worker_Pool=~w has length=0 and no items checked out",
+                    [State#state.pool_name]);
+        _ ->
             ok
     end,
     NextLogTimer = ?LOG_LOOP_MS - rand:uniform(max(?LOG_LOOP_MS div 10, 1)),
