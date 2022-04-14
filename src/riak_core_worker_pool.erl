@@ -348,7 +348,7 @@ demonitor_worker(Worker, Monitors) ->
 
 discard_queued_work(Q, Mod) ->
     case queue:out(Q) of
-        {{value, {work, _Work, From}}, Rem} ->
+        {{value, {_QT, {work, _Work, From}}}, Rem} ->
             Mod:reply(From, {error, vnode_shutdown}),
             discard_queued_work(Rem, Mod);
         {empty, _Empty} ->
