@@ -271,7 +271,7 @@ handle_info(log_timer, StateName, State) ->
             QL = queue:len(State#state.queue),
             _ = 
                 lager:info(
-                    "Worker_Pool=~w has length=~w with last_checkout=~w s ago",
+                    "worker_pool=~w has qlen=~w with last_checkout=~w s ago",
                     [State#state.pool_name,
                         QL,
                         LastCheckout  div (1000 * 1000)]),
@@ -279,7 +279,7 @@ handle_info(log_timer, StateName, State) ->
         {true, []} ->
             _ =
                 lager:info(
-                    "Worker_Pool=~w has length=0 and no items checked out",
+                    "worker_pool=~w has qlen=0 and no items checked out",
                     [State#state.pool_name]);
         _ ->
             ok
