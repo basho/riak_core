@@ -52,13 +52,8 @@
 %% set the timeout for the vnode to process the handoff_data msg to 60s
 -define(VNODE_TIMEOUT, 60000).
 
--ifdef(deprecated_21).
 ssl_handshake(Socket, SslOpts, Timeout) ->
     ssl:handshake(Socket, SslOpts, Timeout).
--else.
-ssl_handshake(Socket, SslOpts, Timeout) ->
-    ssl:ssl_accept(Socket, SslOpts, Timeout).
--endif.
 
 start_link() ->
     start_link([]).

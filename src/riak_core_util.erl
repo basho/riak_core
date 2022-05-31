@@ -211,19 +211,11 @@ integer_to_list(I0, Base, R0) ->
 	    integer_to_list(I1, Base, R1)
     end.
 
--ifndef(old_hash).
 sha(Bin) ->
     crypto:hash(sha, Bin).
 
 md5(Bin) ->
     crypto:hash(md5, Bin).
--else.
-sha(Bin) ->
-    crypto:sha(Bin).
-
-md5(Bin) ->
-    crypto:md5(Bin).
--endif.
 
 %% @spec unique_id_62() -> string()
 %% @doc Create a random identifying integer, returning its string

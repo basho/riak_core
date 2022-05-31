@@ -272,7 +272,7 @@ handle_info(log_timer, StateName, State) ->
                 timer:now_diff(os:timestamp(), LastChOutTime),
             QL = queue:len(State#state.queue),
             _ = 
-                lager:info(
+                ?LOG_INFO(
                     "worker_pool=~w has qlen=~w with last_checkout=~w s ago",
                     [State#state.pool_name,
                         QL,
@@ -280,7 +280,7 @@ handle_info(log_timer, StateName, State) ->
             ok;
         {true, []} ->
             _ =
-                lager:info(
+                ?LOG_INFO(
                     "worker_pool=~w has qlen=0 and no items checked out",
                     [State#state.pool_name]);
         _ ->

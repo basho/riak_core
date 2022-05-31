@@ -97,13 +97,8 @@ lookup(IndexAsInt, CHash) ->
     {IndexAsInt, X} = proplists:lookup(IndexAsInt, Nodes),
     X.
 
--ifndef(old_hash).
 sha(Bin) ->
     crypto:hash(sha, Bin).
--else.
-sha(Bin) ->
-    crypto:sha(Bin).
--endif.
 
 %% @doc Given any term used to name an object, produce that object's key
 %%      into the ring.  Two names with the same SHA-1 hash value are

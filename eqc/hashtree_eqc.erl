@@ -66,13 +66,8 @@
 integer_to_binary(Int) ->
     list_to_binary(integer_to_list(Int)).
 
--ifndef(old_hash).
 sha(Bin) ->
     crypto:hash(sha, Bin).
--else.
-sha(Bin) ->
-    crypto:sha(Bin).
--endif.
 
 key() ->
     ?LET(Key, int(), ?MODULE:integer_to_binary(Key)).
