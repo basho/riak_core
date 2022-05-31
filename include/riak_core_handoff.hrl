@@ -1,8 +1,4 @@
--ifdef(namespaced_types).
 -type riak_core_handoff_dict() :: dict:dict().
--else.
--type riak_core_handoff_dict() :: dict().
--endif.
 
 -define(PT_MSG_INIT, 0).
 -define(PT_MSG_OBJ, 1).

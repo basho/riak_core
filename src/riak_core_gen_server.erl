@@ -182,13 +182,8 @@
 %%%  Preprocessor
 %%%=========================================================================
 
--ifdef(deprecated_22).
 get_log(Debug) ->
     sys:get_log(Debug).
--else.
-get_log(Debug) ->
-    sys:get_debug(log, Debug, []).
--endif.
 
 %%%  -----------------------------------------------------------------
 %%% Starts a generic server.

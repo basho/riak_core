@@ -41,7 +41,7 @@
 
 -behaviour(riak_core_worker_pool).
 
--export([do_init/1, reply/2, do_work/3]).
+-export([do_init/1, reply/2, do_work/3, to_log/0]).
 
 %% API
 -export([start_link/5, stop/2, shutdown_pool/2, handle_work/3]).
@@ -75,3 +75,5 @@ do_init([WorkerMod, PoolSize, VNodeIndex, WorkerArgs, WorkerProps]) ->
 
 do_work(Pid, Work, From) ->
     riak_core_vnode_worker:handle_work(Pid, Work, From).
+
+to_log() -> false.

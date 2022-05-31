@@ -391,13 +391,8 @@ format_socket_stats([{K,V}|T], Buf) ->
 
 -ifdef(TEST).
 
--ifdef(deprecated_21).
 ssl_handshake(Socket) ->
     ssl:handshake(Socket).
--else.
-ssl_handshake(Socket) ->
-    ssl:ssl_accept(Socket).
--endif.
 
 updown() ->
     %% Set the stat gathering interval to 100ms
