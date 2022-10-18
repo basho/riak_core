@@ -25,6 +25,7 @@ jobs:
       image: erlang:${{ matrix.otp }}
 
     steps:
+      - uses: lukka/get-cmake@latest
       - uses: actions/checkout@v2
       - name: Compile
         run: ./rebar3 compile
