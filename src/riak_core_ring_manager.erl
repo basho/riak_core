@@ -236,6 +236,7 @@ do_write_ringfile(Ring) ->
         Dir ->
             FN = generate_ring_filename(
                 Dir, app_helper:get_env(riak_core, cluster_name)),
+            false = riak_core_ring:check_lastgasp(Ring),
             do_write_ringfile(Ring, FN)
     end.
 
@@ -248,7 +249,6 @@ generate_ring_filename(Dir, ClusterName) ->
 do_write_ringfile(Ring, FN) ->
     ok = filelib:ensure_dir(FN),
     try
-        false = riak_core_ring:check_lastgasp(Ring),
         ok = riak_core_util:replace_file(FN, term_to_binary(Ring))
     catch
         _:Err ->
