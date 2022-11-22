@@ -79,7 +79,7 @@
          prune_ringfiles/0,
          read_ringfile/1,
          find_latest_ringfile/0,
-         find_latest_ringfile/1,
+         find_latest_ringfile/2,
          force_update/0,
          generate_ring_filename/2,
          do_write_ringfile/1,
@@ -259,12 +259,12 @@ do_write_ringfile(Ring, FN) ->
 
 %% @spec find_latest_ringfile() -> string()
 find_latest_ringfile() ->
-    find_latest_ringfile(ring_dir()).
+    find_latest_ringfile(
+        ring_dir(), app_helper:get_env(riak_core, cluster_name)).
 
-find_latest_ringfile(Dir) ->
+find_latest_ringfile(Dir, Cluster) ->
     case file:list_dir(Dir) of
         {ok, Filenames} ->
-            Cluster = app_helper:get_env(riak_core, cluster_name),
             Timestamps = [list_to_integer(TS) || {"riak_core_ring", C1, TS} <-
                                                      [list_to_tuple(string:tokens(FN, ".")) || FN <- Filenames],
                                                  C1 =:= Cluster],
