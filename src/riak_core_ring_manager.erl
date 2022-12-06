@@ -79,8 +79,11 @@
          prune_ringfiles/0,
          read_ringfile/1,
          find_latest_ringfile/0,
+         find_latest_ringfile/2,
          force_update/0,
+         generate_ring_filename/2,
          do_write_ringfile/1,
+         do_write_ringfile/2,
          ring_trans/2,
          run_fixups/3,
          set_cluster_name/1,
@@ -233,18 +236,21 @@ do_write_ringfile(Ring) ->
     case ring_dir() of
         "<nostore>" -> nop;
         Dir ->
-            {{Year, Month, Day},{Hour, Minute, Second}} = calendar:universal_time(),
-            TS = io_lib:format(".~B~2.10.0B~2.10.0B~2.10.0B~2.10.0B~2.10.0B",
-                               [Year, Month, Day, Hour, Minute, Second]),
-            Cluster = app_helper:get_env(riak_core, cluster_name),
-            FN = Dir ++ "/riak_core_ring." ++ Cluster ++ TS,
+            FN = generate_ring_filename(
+                Dir, app_helper:get_env(riak_core, cluster_name)),
+            false = riak_core_ring:check_lastgasp(Ring),
             do_write_ringfile(Ring, FN)
     end.
+
+generate_ring_filename(Dir, ClusterName) ->
+    {{Year, Month, Day},{Hour, Minute, Second}} = calendar:universal_time(),
+    TS = io_lib:format(".~B~2.10.0B~2.10.0B~2.10.0B~2.10.0B~2.10.0B",
+                        [Year, Month, Day, Hour, Minute, Second]),
+    Dir ++ "/riak_core_ring." ++ ClusterName ++ TS.
 
 do_write_ringfile(Ring, FN) ->
     ok = filelib:ensure_dir(FN),
     try
-        false = riak_core_ring:check_lastgasp(Ring),
         ok = riak_core_util:replace_file(FN, term_to_binary(Ring))
     catch
         _:Err ->
@@ -255,10 +261,12 @@ do_write_ringfile(Ring, FN) ->
 
 %% @spec find_latest_ringfile() -> string()
 find_latest_ringfile() ->
-    Dir = ring_dir(),
+    find_latest_ringfile(
+        ring_dir(), app_helper:get_env(riak_core, cluster_name)).
+
+find_latest_ringfile(Dir, Cluster) ->
     case file:list_dir(Dir) of
         {ok, Filenames} ->
-            Cluster = app_helper:get_env(riak_core, cluster_name),
             Timestamps = [list_to_integer(TS) || {"riak_core_ring", C1, TS} <-
                                                      [list_to_tuple(string:tokens(FN, ".")) || FN <- Filenames],
                                                  C1 =:= Cluster],
