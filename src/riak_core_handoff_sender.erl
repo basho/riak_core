@@ -65,8 +65,11 @@
           item_queue_length    :: non_neg_integer(),
           item_queue_byte_size :: non_neg_integer(),
 
-          acksync_threshold    :: non_neg_integer(),
-          acksync_timer        :: timer:tref() | undefined,
+          acksync_threshold    :: pos_integer(),
+          acklog_threshold     :: pos_integer(),
+          acklog_last          :: erlang:timestamp(),
+          handoff_batch_threshold   :: pos_integer(), % bytes
+          rcv_timeout          :: pos_integer(), % milliseconds
 
           type                 :: ho_type(),
 
@@ -134,7 +137,18 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
 
         RecvTimeout = get_handoff_receive_timeout(),
 
-        AckSyncThreshold = app_helper:get_env(riak_core, handoff_acksync_threshold, 25),
+        AckSyncThreshold =
+            app_helper:get_env(riak_core, handoff_acksync_threshold, 1),
+            % This will force a sync before each batch by default - so sending
+            % the next batch will be delayed until the previous batch has been
+            % processed.  Prior to 3.0.13, this was set to a default of 25
+        AckLogThreshold =
+            app_helper:get_env(riak_core, handoff_acklog_threshold, 100),
+            % As the batch size if 1MB, this will log progress every 100MB
+        HandoffBatchThreshold =
+            app_helper:get_env(
+                riak_core, handoff_batch_threshold, 1024 * 1024),
+            % Batch threshold is in bytes
 
         %% Now that handoff_concurrency applies to both outbound and
         %% inbound conns there is a chance that the receiver may
@@ -182,6 +196,10 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                     item_queue_byte_size=0,
 
                     acksync_threshold=AckSyncThreshold,
+                    acklog_threshold=AckLogThreshold,
+                    acklog_last = os:timestamp(),
+                    handoff_batch_threshold=HandoffBatchThreshold,
+                    rcv_timeout = RecvTimeout,
 
                     type=Type,
                     notsent_acc=UnsentAcc0,
@@ -205,21 +223,19 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
         if AccRecord == {error, vnode_shutdown} ->
                 ?log_info("because the local vnode was shutdown", []),
                 throw({be_quiet, error, local_vnode_shutdown_requested});
-        true ->
+            true ->
                 ok % If not #ho_acc, get badmatch below
         end,
         #ho_acc{
-        error=ErrStatus,
-        module=Module,
-        parent=ParentPid,
-        tcp_mod=TcpMod,
-        total_objects=TotalObjects,
-        total_bytes=TotalBytes,
-        stats=FinalStats,
-        acksync_timer=TRef,
-        notsent_acc=NotSentAcc} = AccRecord,
+            error=ErrStatus,
+            module=Module,
+            parent=ParentPid,
+            tcp_mod=TcpMod,
+            total_objects=TotalObjects,
+            total_bytes=TotalBytes,
+            stats=FinalStats,
+            notsent_acc=NotSentAcc} = AccRecord,
 
-        _ = timer:cancel(TRef),
         case ErrStatus of
             ok ->
                 %% One last sync to make sure the message has been received.
@@ -231,13 +247,20 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                     "~p ~p Sending final sync",
                     [SrcPartition, Module]),
                 ok = TcpMod:send(Socket, <<?PT_MSG_SYNC:8>>),
-
                 case TcpMod:recv(Socket, 0, RecvTimeout) of
                     {ok,[?PT_MSG_SYNC|<<"sync">>]} ->
                         lager:debug(
                             "~p ~p Final sync received",
                             [SrcPartition, Module]);
-                    {error, timeout} -> exit({shutdown, timeout})
+                    {error, timeout} -> 
+                        lager:error(
+                            "Final sync message returned error timeout "
+                            "between src_partition=~p trg_partition=~p "
+                            "type=~w module=~w ",
+                            [SrcPartition, TargetPartition,
+                                Type, Module]
+                        ),
+                        exit({shutdown, timeout})
                 end,
 
                 FoldTimeDiff = end_fold_time(StartFoldTime),
@@ -284,8 +307,8 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
              exit({shutdown, timeout});
          exit:{shutdown, {error, Reason}} ->
              ?log_fail("because of ~p", [Reason]),
-             gen_fsm:send_event(ParentPid, {handoff_error,
-                                            fold_error, Reason}),
+             gen_fsm:send_event(
+                ParentPid, {handoff_error, fold_error, Reason}),
              exit({shutdown, {error, Reason}});
          throw:{be_quiet, Err, Reason} ->
              gen_fsm:send_event(ParentPid, {handoff_error, Err, Reason});
@@ -295,82 +318,14 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
              gen_fsm:send_event(ParentPid, {handoff_error, Err, Reason})
      end.
 
-start_visit_item_timer() ->
-    Ival = case app_helper:get_env(riak_core, handoff_receive_timeout) of
-               TO when is_integer(TO) ->
-                   erlang:max(1000, TO div 3);
-               _ ->
-                   60*1000
-           end,
-    timer:send_interval(Ival, tick_send_sync).
-
-visit_item(K, V, Acc0 = #ho_acc{acksync_threshold = AccSyncThreshold}) ->
-    %% Eventually, a vnode worker proc will be doing this fold, but we don't
-    %% know the pid of that proc ahead of time.  So we have to start the
-    %% timer some time after the fold has started execution on that proc
-    %% ... like now, perhaps.
-    Acc = case get(is_visit_item_timer_set) of
-              undefined ->
-                  put(is_visit_item_timer_set, true),
-                  {ok, TRef} = start_visit_item_timer(),
-                  Acc0#ho_acc{acksync_timer = TRef};
-              _ ->
-                  Acc0
-          end,
-    receive
-        tick_send_sync ->
-            visit_item2(K, V, Acc#ho_acc{ack = AccSyncThreshold})
-    after 0 ->
-            visit_item2(K, V, Acc)
-    end.
-
-%% When a tcp error occurs, the ErrStatus argument is set to {error, Reason}.
-%% Since we can't abort the fold, this clause is just a no-op.
-visit_item2(_K, _V, Acc=#ho_acc{error={error, _Reason}}) ->
-    %% When a TCP/SSL error occurs, #ho_acc.error is set to {error, Reason}.
-    throw(Acc);
-visit_item2(
-        K,
-        V,
-        Acc =
-            #ho_acc{
-                ack = _AccSyncThreshold,
-                acksync_threshold = _AccSyncThreshold}) ->
-    
-    #ho_acc{
-        module=Module,
-        socket=Sock,
-        src_target={SrcPartition, TargetPartition},
-        stats=Stats,
-        tcp_mod=TcpMod} = Acc,
-
-    RecvTimeout = get_handoff_receive_timeout(),
-    M = <<?PT_MSG_SYNC:8, "sync">>,
-    NumBytes = byte_size(M),
-
-    Stats2 = incr_bytes(Stats, NumBytes),
-    Stats3 =
-        maybe_send_status({Module, SrcPartition, TargetPartition}, Stats2),
-
-    case TcpMod:send(Sock, M) of
-        ok ->
-            case TcpMod:recv(Sock, 0, RecvTimeout) of
-                {ok,[?PT_MSG_SYNC|<<"sync">>]} ->
-                    Acc2 = Acc#ho_acc{ack=0, error=ok, stats=Stats3},
-                    visit_item2(K, V, Acc2);
-                {error, Reason} ->
-                    Acc#ho_acc{ack=0, error={error, Reason}, stats=Stats3}
-            end;
-        {error, Reason} ->
-            Acc#ho_acc{ack=0, error={error, Reason}, stats=Stats3}
-    end;
-visit_item2(K, V, Acc) ->
+visit_item(K, V, Acc) ->
     #ho_acc{filter=Filter,
             module=Module,
             total_objects=TotalObjects,
             item_queue=ItemQueue,
             item_queue_length=ItemQueueLength,
             item_queue_byte_size=ItemQueueByteSize,
+            handoff_batch_threshold=HandoffBatchThreshold,
             notsent_fun=NotSentFun,
             notsent_acc=NotSentAcc} = Acc,
     case Filter(K) of
@@ -378,8 +333,8 @@ visit_item2(K, V, Acc) ->
             case Module:encode_handoff_item(K, V) of
                 corrupted ->
                     {Bucket, Key} = K,
-                    lager:warning("Unreadable object ~p/~p discarded",
-                                  [Bucket, Key]),
+                    lager:warning(
+                        "Unreadable object ~p/~p discarded", [Bucket, Key]),
                     Acc;
                 BinObj ->
                     ItemQueue2 = [BinObj | ItemQueue],
@@ -390,11 +345,6 @@ visit_item2(K, V, Acc) ->
                         Acc#ho_acc{
                             item_queue_length=ItemQueueLength2,
                             item_queue_byte_size=ItemQueueByteSize2},
-
-                    %% Unit size is bytes:
-                    HandoffBatchThreshold =
-                        app_helper:get_env(
-                            riak_core, handoff_batch_threshold, 1024 * 1024),
 
                     case ItemQueueByteSize2 =< HandoffBatchThreshold of
                         true  ->
@@ -428,7 +378,12 @@ send_objects(ItemsReverseList, Acc) ->
             src_target={SrcPartition, TargetPartition},
             stats=Stats,
             tcp_mod=TcpMod,
-
+            acksync_threshold=AckSyncThreshold,
+            acklog_threshold=AckLogThreshold,
+            acklog_last=AckLogLast,
+            handoff_batch_threshold=HandoffBatchThreshold,
+            rcv_timeout=RecvTimeout,
+            type=Type,
             total_objects=TotalObjects,
             total_bytes=TotalBytes,
             item_queue_length=NObjects
@@ -436,10 +391,64 @@ send_objects(ItemsReverseList, Acc) ->
 
     ObjectList = term_to_binary(Items),
 
+    SyncClock = os:timestamp(),
+    ReceiverInSync =
+        case Ack rem AckSyncThreshold of
+            0 ->
+                case TcpMod:send(Sock, <<?PT_MSG_SYNC:8,"sync">>) of
+                    ok ->
+                        case TcpMod:recv(Sock, 0, RecvTimeout) of
+                            {ok,[?PT_MSG_SYNC|<<"sync">>]} ->
+                                ok;
+                            {error, Reason} ->
+                                lager:error(
+                                    "Sync message returned error ~w "
+                                    "between src_partition=~p trg_partition=~p "
+                                    "type=~w module=~w ",
+                                    [Reason,
+                                        SrcPartition, TargetPartition,
+                                        Type, Module]
+                                ),
+                                {error, Reason}
+                        end;
+                    {error, Reason} ->
+                        lager:error(
+                            "sync message failed due to error ~w"
+                            "between src_partition=~p trg_partition=~p "
+                            "type=~w module=~w ",
+                            [Reason,
+                                SrcPartition, TargetPartition,
+                                Type, Module]
+                        ),
+                        {error, Reason}
+                end;
+            _ ->
+                ok
+        end,
+    UpdAckLogLast =
+        case {ReceiverInSync, Ack rem AckLogThreshold} of
+            {ok, 0} ->
+                lager:info(
+                    "Receiver in sync after "
+                    "batch_count=~w of batch_size=~w and total_batches=~w "
+                    "between src_partition=~p trg_partition=~p "
+                    "type=~w module=~w "
+                    "sync_time=~w ms batch_time=~w ms",
+                    [AckLogThreshold, HandoffBatchThreshold, Ack,
+                        SrcPartition, TargetPartition,
+                        Type, Module,
+                        timer:now_diff(os:timestamp(), SyncClock) div 1000,
+                        timer:now_diff(os:timestamp(), AckLogLast) div 1000]
+                );
+            {ok, _} ->
+                AckLogLast;
+            {{error, SyncFailure}, _} ->
+                throw(Acc#ho_acc{error = {error, SyncFailure}})
+        end,
+
     M = <<?PT_MSG_BATCH:8, ObjectList/binary>>,
 
     NumBytes = byte_size(M),
-
     Stats2 = incr_bytes(incr_objs(Stats, NObjects), NumBytes),
     Stats3 =
         maybe_send_status({Module, SrcPartition, TargetPartition}, Stats2),
@@ -449,11 +458,20 @@ send_objects(ItemsReverseList, Acc) ->
             Acc#ho_acc{ack=Ack+1, error=ok, stats=Stats3,
                        total_objects=TotalObjects+NObjects,
                        total_bytes=TotalBytes+NumBytes,
+                       acklog_last=UpdAckLogLast,
                        item_queue=[],
                        item_queue_length=0,
                        item_queue_byte_size=0};
-        {error, Reason} ->
-            Acc#ho_acc{error={error, Reason}, stats=Stats3}
+        {error, SendFailure} ->
+            lager:error(
+                "Send batch returned error ~w "
+                "between src_partition=~p trg_partition=~p "
+                "type=~w module=~w ",
+                [SendFailure,
+                    SrcPartition, TargetPartition,
+                    Type, Module]
+            ),
+            throw(Acc#ho_acc{error={error, SendFailure}, stats=Stats3})
     end.
 
 get_handoff_ip(Node) when is_atom(Node) ->
