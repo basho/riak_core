@@ -130,7 +130,7 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
             end,
 
         VMaster = list_to_atom(atom_to_list(Module) ++ "_master"),
-        Config = [{vnode_mod, VMaster}, {partition, TargetPartition}],
+        Config = [{vnode_mod, Module}, {partition, TargetPartition}],
         ConfigBin = term_to_binary(Config),
         Msg = <<?PT_MSG_CONFIGURE:8, ConfigBin/binary>>,
         ok = TcpMod:send(Socket, Msg),
