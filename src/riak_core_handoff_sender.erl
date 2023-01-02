@@ -157,10 +157,20 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
         %% protocol but for now the sender must assume that a closed
         %% socket at this point is a rejection by the receiver to
         %% enforce handoff_concurrency.
-        case TcpMod:recv(Socket, 0, RecvTimeout) of
-            {ok,[?PT_MSG_SYNC|<<"sync">>]} -> ok;
-            {error, timeout} -> exit({shutdown, timeout});
-            {error, closed} -> exit({shutdown, max_concurrency})
+        case send_sync(TcpMod, Socket, RecvTimeout) of
+            ok ->
+                ok;
+            {error, DirectionS, timeout} ->
+                lager:error(
+                    "Initial sync message returned ~w error timeout "
+                    "between src_partition=~p trg_partition=~p "
+                    "type=~w module=~w ",
+                    [DirectionS,
+                        SrcPartition, TargetPartition,
+                        Type, Module]),
+                exit({shutdown, timeout});
+            {error, _, closed} ->
+                exit({shutdown, max_concurrency})
         end,
 
         lager:info("Starting ~p transfer of ~p from ~p ~p to ~p ~p",
@@ -246,18 +256,16 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                 lager:debug(
                     "~p ~p Sending final sync",
                     [SrcPartition, Module]),
-                ok = TcpMod:send(Socket, <<?PT_MSG_SYNC:8>>),
-                case TcpMod:recv(Socket, 0, RecvTimeout) of
-                    {ok,[?PT_MSG_SYNC|<<"sync">>]} ->
-                        lager:debug(
-                            "~p ~p Final sync received",
-                            [SrcPartition, Module]);
-                    {error, timeout} -> 
+                case send_sync(TcpMod, Socket, RecvTimeout) of
+                    ok ->
+                        ok;
+                    {error, DirectionE, timeout} -> 
                         lager:error(
-                            "Final sync message returned error timeout "
+                            "Final sync message returned ~w error timeout "
                             "between src_partition=~p trg_partition=~p "
                             "type=~w module=~w ",
-                            [SrcPartition, TargetPartition,
+                            [DirectionE,
+                                SrcPartition, TargetPartition,
                                 Type, Module]
                         ),
                         exit({shutdown, timeout})
@@ -374,7 +382,7 @@ send_objects(ItemsReverseList, Acc) ->
 
     #ho_acc{ack=Ack,
             module=Module,
-            socket=Sock,
+            socket=Socket,
             src_target={SrcPartition, TargetPartition},
             stats=Stats,
             tcp_mod=TcpMod,
@@ -395,28 +403,15 @@ send_objects(ItemsReverseList, Acc) ->
     ReceiverInSync =
         case Ack rem AckSyncThreshold of
             0 ->
-                case TcpMod:send(Sock, <<?PT_MSG_SYNC:8,"sync">>) of
+                case send_sync(TcpMod, Socket, RecvTimeout) of
                     ok ->
-                        case TcpMod:recv(Sock, 0, RecvTimeout) of
-                            {ok,[?PT_MSG_SYNC|<<"sync">>]} ->
-                                ok;
-                            {error, Reason} ->
-                                lager:error(
-                                    "Sync message returned error ~w "
-                                    "between src_partition=~p trg_partition=~p "
-                                    "type=~w module=~w ",
-                                    [Reason,
-                                        SrcPartition, TargetPartition,
-                                        Type, Module]
-                                ),
-                                {error, Reason}
-                        end;
-                    {error, Reason} ->
+                        ok;
+                    {error, Direction, Reason} ->
                         lager:error(
-                            "sync message failed due to error ~w"
+                            "Sync message returned ~w error ~w "
                             "between src_partition=~p trg_partition=~p "
                             "type=~w module=~w ",
-                            [Reason,
+                            [Direction, Reason,
                                 SrcPartition, TargetPartition,
                                 Type, Module]
                         ),
@@ -453,7 +448,7 @@ send_objects(ItemsReverseList, Acc) ->
     Stats3 =
         maybe_send_status({Module, SrcPartition, TargetPartition}, Stats2),
 
-    case TcpMod:send(Sock, M) of
+    case TcpMod:send(Socket, M) of
         ok ->
             Acc#ho_acc{ack=Ack+1, error=ok, stats=Stats3,
                        total_objects=TotalObjects+NObjects,
@@ -599,6 +594,21 @@ get_filter(Opts) ->
     case proplists:get_value(filter, Opts) of
         none -> fun(_) -> true end;
         Filter -> Filter
+    end.
+
+-spec send_sync(
+    module(), gen_tcp:socket(), pos_integer()) -> ok|{error, snd|recv, any()}.
+send_sync(TcpMod, Socket, RecvTimeout) ->
+    case TcpMod:send(Socket, <<?PT_MSG_SYNC:8, "sync">>) of
+        ok ->
+            case TcpMod:recv(Socket, 0, RecvTimeout) of
+                {ok,[?PT_MSG_SYNC|<<"sync">>]} ->
+                    ok;
+                {error, Reason} ->
+                    {error, rcv, Reason}
+            end;
+        {error, Reason} ->
+            {error, snd, Reason}
     end.
 
 %% @private
