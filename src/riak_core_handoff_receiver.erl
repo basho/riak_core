@@ -28,9 +28,10 @@
             [{gen_fsm, sync_send_all_state_event, 3}]}).
 
 -export([start_link/0,                          % Don't use SSL
-         start_link/1,                          % SSL options list, empty=no SSL
-         set_socket/2,
-         supports_batching/0]).
+        start_link/1,                          % SSL options list, empty=no SSL
+        set_socket/2,
+        supports_batching/0,
+        get_handoff_timeout/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
@@ -81,9 +82,7 @@ init([SslOpts]) ->
                     true ->
                         gen_tcp
                 end,
-            recv_timeout_len =
-                app_helper:get_env(
-                    riak_core, handoff_receive_timeout, ?RECV_TIMEOUT),
+            recv_timeout_len = get_handoff_timeout(),
             vnode_timeout_len =
                 app_helper:get_env(
                     riak_core, handoff_receive_vnode_timeout, ?VNODE_TIMEOUT)
@@ -227,3 +226,6 @@ safe_peername(Skt, Mod) ->
         _ ->
             {unknown, unknown} % Real info is {Addr, Port}
     end.
+
+get_handoff_timeout() ->
+    app_helper:get_env(riak_core, handoff_receive_timeout, ?RECV_TIMEOUT).

@@ -35,6 +35,7 @@
 %% can be set with env riak_core, handoff_status_interval
 %% note this is in seconds
 -define(STATUS_INTERVAL, 2).
+-define(MEGA, 1000000).
 
 -define(log_info(Str, Args),
         lager:info("~p transfer of ~p from ~p ~p to ~p ~p failed " ++ Str,
@@ -61,12 +62,13 @@
           total_objects        :: non_neg_integer(),
           total_bytes          :: non_neg_integer(),
 
-          item_queue           :: [binary()],
+          item_queue           :: [binary()]|redacted,
           item_queue_length    :: non_neg_integer(),
           item_queue_byte_size :: non_neg_integer(),
 
           acksync_threshold    :: pos_integer(),
           acklog_threshold     :: pos_integer(),
+          keepalive_next       :: erlang:timestamp(),
           acklog_last          :: erlang:timestamp(),
           handoff_batch_threshold_size :: pos_integer(), % bytes
           handoff_batch_threshold_count :: pos_integer(),
@@ -78,6 +80,8 @@
           notsent_acc          :: term() | undefined,
           notsent_fun          :: function()| undefined
         }).
+
+-type ho_acc() :: #ho_acc{}.
 
 %%%===================================================================
 %%% API
@@ -211,6 +215,7 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                     acksync_threshold=AckSyncThreshold,
                     acklog_threshold=AckLogThreshold,
                     acklog_last = os:timestamp(),
+                    keepalive_next = next_keepalive_time(),
                     handoff_batch_threshold_size = HandoffBatchThresholdSize,
                     handoff_batch_threshold_count = HandoffBatchThresholdCount,
                     rcv_timeout = RecvTimeout,
@@ -331,7 +336,8 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
              gen_fsm:send_event(ParentPid, {handoff_error, Err, Reason})
      end.
 
-visit_item(K, V, Acc) ->
+visit_item(K, V, Acc0) ->
+    Acc = maybe_keepalive_receiver(Acc0),
     #ho_acc{filter=Filter,
             module=Module,
             total_objects=TotalObjects,
@@ -382,6 +388,35 @@ handle_not_sent_item(NotSentFun, Acc, Key) when is_function(NotSentFun) ->
     NotSentFun(Key, Acc);
 handle_not_sent_item(undefined, _, _) ->
     undefined.
+
+-spec maybe_keepalive_receiver(ho_acc()) -> ho_acc().
+maybe_keepalive_receiver(Acc = #ho_acc{keepalive_next=NextKeepalive}) ->
+    case os:timestamp() > NextKeepalive of
+        true ->
+            #ho_acc{
+                module=Module,
+                socket=Socket,
+                src_target={SrcPartition, TargetPartition},
+                tcp_mod=TcpMod,
+                type=Type,
+                rcv_timeout=RecvTimeout} = Acc,
+            case send_sync(TcpMod, Socket, RecvTimeout) of
+                ok ->
+                    Acc#ho_acc{keepalive_next=next_keepalive_time()};
+                {error, Direction, Reason} ->
+                    lager:error(
+                        "Keepalive message returned ~w error ~w "
+                        "between src_partition=~p trg_partition=~p "
+                        "type=~w module=~w ",
+                        [Direction, Reason,
+                            SrcPartition, TargetPartition,
+                            Type, Module]
+                    ),
+                    throw_error(Acc, {error, Reason})
+            end;
+        false ->
+            Acc
+    end.
 
 send_objects([], Acc) ->
     Acc;
@@ -449,7 +484,7 @@ send_objects(ItemsReverseList, Acc) ->
             {ok, _} ->
                 AckLogLast;
             {{error, SyncFailure}, _} ->
-                throw(Acc#ho_acc{error = {error, SyncFailure}})
+                throw_error(Acc, {error, SyncFailure})
         end,
 
     M = <<?PT_MSG_BATCH:8, ObjectList/binary>>,
@@ -465,6 +500,7 @@ send_objects(ItemsReverseList, Acc) ->
                        total_objects=TotalObjects+NObjects,
                        total_bytes=TotalBytes+NumBytes,
                        acklog_last=UpdAckLogLast,
+                       keepalive_next=next_keepalive_time(),
                        item_queue=[],
                        item_queue_length=0,
                        item_queue_byte_size=0};
@@ -477,8 +513,14 @@ send_objects(ItemsReverseList, Acc) ->
                     SrcPartition, TargetPartition,
                     Type, Module]
             ),
-            throw(Acc#ho_acc{error={error, SendFailure}, stats=Stats3})
+            throw_error(Acc#ho_acc{stats=Stats3}, {error, SendFailure})
     end.
+
+-spec throw_error(ho_acc(), {error, term()}) -> ok.
+throw_error(Acc, {error, Reason}) ->
+    % The item_queue may be large, and hence obfuscate interesting information
+    % in logs - so redact it before throwing an exception
+    throw(Acc#ho_acc{error={error, Reason}, item_queue=redacted}).
 
 get_handoff_ip(Node) when is_atom(Node) ->
     case riak_core_util:safe_rpc(
@@ -527,6 +569,7 @@ get_handoff_ssl_options() ->
             end
     end.
 
+-spec get_handoff_timeout() -> pos_integer().
 get_handoff_timeout() ->
     %% Whenever a Sync message is sent, the process will wait for this
     %% timeout, and throw an exception closing the fold if the timeout is
@@ -534,6 +577,16 @@ get_handoff_timeout() ->
     %% A sync message is sent every handoff_ack_sync_threshold batches, as 
     %% well as when initialising and closing the handoff.
     app_helper:get_env(riak_core, handoff_timeout, ?TCP_TIMEOUT).
+
+-spec get_receiver_handoff_timeout() -> pos_integer().
+get_receiver_handoff_timeout() ->
+    (riak_core_handoff_receiver:get_handoff_timeout() div 1000).
+
+-spec next_keepalive_time() -> erlang:timestamp().
+next_keepalive_time() ->
+    {Mega, Sec, Micro} = os:timestamp(),
+    NextSecs = Mega * ?MEGA + Sec + (get_receiver_handoff_timeout() div 3),
+    {NextSecs div ?MEGA, NextSecs rem ?MEGA, Micro}.
 
 end_fold_time(StartFoldTime) ->
     EndFoldTime = os:timestamp(),
