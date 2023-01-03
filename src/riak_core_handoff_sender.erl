@@ -142,12 +142,14 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
         RecvTimeout = get_handoff_timeout(),
 
         AckSyncThreshold =
-            app_helper:get_env(riak_core, handoff_acksync_threshold, 1),
+            app_helper:get_env(
+                riak_core, handoff_acksync_threshold, 1),
             % This will force a sync before each batch by default - so sending
             % the next batch will be delayed until the previous batch has been
             % processed.  Prior to 3.0.13, this was set to a default of 25
         AckLogThreshold =
-            app_helper:get_env(riak_core, handoff_acklog_threshold, 100),
+            app_helper:get_env(
+                riak_core, handoff_acklog_threshold, 100),
             % As the batch size if 1MB, this will log progress every 100MB
         HandoffBatchThresholdSize =
             app_helper:get_env(
@@ -155,7 +157,11 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
             % Batch threshold is in bytes
         HandoffBatchThresholdCount =
             app_helper:get_env(
-                riak_core, handoff_batch_threshold_count, 2000),
+                riak_core, handoff_batch_threshold_count, 1000),
+            % Batch threshold as a count of objects.  If the handoff_timeout
+            % is 60s, this requires the receiver vnode to handle each handoff
+            % item in less than 60ms (assuming the fold to crate the batch is
+            % fast).
 
         %% Now that handoff_concurrency applies to both outbound and
         %% inbound conns there is a chance that the receiver may
@@ -470,7 +476,7 @@ send_objects(ItemsReverseList, Acc) ->
             {ok, 0} ->
                 lager:info(
                     "Receiver in sync after batch_set=~w and total_batches=~w "
-                    "with next batch having batch_size=~w item_count=~w"
+                    "with next batch having batch_size=~w item_count=~w "
                     "between src_partition=~p trg_partition=~p "
                     "type=~w module=~w "
                     "last_sync_time=~w ms batch_set_time=~w ms",
@@ -580,6 +586,10 @@ get_handoff_timeout() ->
 
 -spec get_receiver_handoff_timeout() -> pos_integer().
 get_receiver_handoff_timeout() ->
+    %% If a receiver is idle for this time (seconds), i.e. not either
+    %% processing or receiving messages, it will timeout.  So if the sender
+    %% is non-performant it must sendd a keepalive (sync) message before this
+    %% timeout is breached
     (riak_core_handoff_receiver:get_handoff_timeout() div 1000).
 
 -spec next_keepalive_time() -> erlang:timestamp().

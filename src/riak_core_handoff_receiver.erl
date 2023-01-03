@@ -206,8 +206,10 @@ process_message(
     State;
 process_message(?PT_MSG_CONFIGURE, MsgData, State) ->
     ConfProps = binary_to_term(MsgData),
-    State#state{vnode_mod=proplists:get_value(vnode_mod, ConfProps),
-                partition=proplists:get_value(partition, ConfProps)};
+    % Partition used will be over-written by ?PT_MSG_INIT
+    State#state{
+        vnode_mod=proplists:get_value(vnode_mod, ConfProps),
+        partition=proplists:get_value(partition, ConfProps)};
 process_message(_, _MsgData, State=#state{sock=Socket,
                                           tcp_mod=TcpMod}) ->
     TcpMod:send(Socket, <<255:8,"unknown_msg">>),
