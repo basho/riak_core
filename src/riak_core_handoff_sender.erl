@@ -135,7 +135,7 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
         Msg = <<?PT_MSG_CONFIGURE:8, ConfigBin/binary>>,
         ok = TcpMod:send(Socket, Msg),
 
-        RecvTimeout = get_handoff_receive_timeout(),
+        RecvTimeout = get_handoff_timeout(),
 
         AckSyncThreshold =
             app_helper:get_env(riak_core, handoff_acksync_threshold, 1),
@@ -429,7 +429,7 @@ send_objects(ItemsReverseList, Acc) ->
                     "between src_partition=~p trg_partition=~p "
                     "type=~w module=~w "
                     "sync_time=~w ms batch_time=~w ms",
-                    [AckLogThreshold, HandoffBatchThreshold, Ack,
+                    [min(Ack, AckLogThreshold), HandoffBatchThreshold, Ack,
                         SrcPartition, TargetPartition,
                         Type, Module,
                         timer:now_diff(os:timestamp(), SyncClock) div 1000,
@@ -516,7 +516,12 @@ get_handoff_ssl_options() ->
             end
     end.
 
-get_handoff_receive_timeout() ->
+get_handoff_timeout() ->
+    %% Whenever a Sync message is sent, the process will wait for this
+    %% timeout, and throw an exception closing the fold if the timeout is
+    %% reached.
+    %% A sync message is sent every handoff_ack_sync_threshold batches, as 
+    %% well as when initialising and closing the handoff.
     app_helper:get_env(riak_core, handoff_timeout, ?TCP_TIMEOUT).
 
 end_fold_time(StartFoldTime) ->
