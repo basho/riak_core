@@ -68,7 +68,9 @@
           acksync_threshold    :: pos_integer(),
           acklog_threshold     :: pos_integer(),
           acklog_last          :: erlang:timestamp(),
-          handoff_batch_threshold   :: pos_integer(), % bytes
+          handoff_batch_threshold_size :: pos_integer(), % bytes
+          handoff_batch_threshold_count :: pos_integer(),
+
           rcv_timeout          :: pos_integer(), % milliseconds
 
           type                 :: ho_type(),
@@ -129,11 +131,9 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                 {Skt, gen_tcp}
             end,
 
-        VMaster = list_to_atom(atom_to_list(Module) ++ "_master"),
         Config = [{vnode_mod, Module}, {partition, TargetPartition}],
         ConfigBin = term_to_binary(Config),
-        Msg = <<?PT_MSG_CONFIGURE:8, ConfigBin/binary>>,
-        ok = TcpMod:send(Socket, Msg),
+        ok = TcpMod:send(Socket, <<?PT_MSG_CONFIGURE:8, ConfigBin/binary>>),
 
         RecvTimeout = get_handoff_timeout(),
 
@@ -145,10 +145,13 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
         AckLogThreshold =
             app_helper:get_env(riak_core, handoff_acklog_threshold, 100),
             % As the batch size if 1MB, this will log progress every 100MB
-        HandoffBatchThreshold =
+        HandoffBatchThresholdSize =
             app_helper:get_env(
                 riak_core, handoff_batch_threshold, 1024 * 1024),
             % Batch threshold is in bytes
+        HandoffBatchThresholdCount =
+            app_helper:get_env(
+                riak_core, handoff_batch_threshold_count, 2000),
 
         %% Now that handoff_concurrency applies to both outbound and
         %% inbound conns there is a chance that the receiver may
@@ -208,7 +211,8 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                     acksync_threshold=AckSyncThreshold,
                     acklog_threshold=AckLogThreshold,
                     acklog_last = os:timestamp(),
-                    handoff_batch_threshold=HandoffBatchThreshold,
+                    handoff_batch_threshold_size = HandoffBatchThresholdSize,
+                    handoff_batch_threshold_count = HandoffBatchThresholdCount,
                     rcv_timeout = RecvTimeout,
 
                     type=Type,
@@ -223,6 +227,7 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
         %% caught by handoff manager.  I know, this is confusing, a
         %% new handoff system will be written soon enough.
 
+        VMaster = list_to_atom(atom_to_list(Module) ++ "_master"),
         AccRecord0 =
             riak_core_vnode_master:sync_command(
                 {SrcPartition, SrcNode}, Req, VMaster, infinity),
@@ -333,7 +338,8 @@ visit_item(K, V, Acc) ->
             item_queue=ItemQueue,
             item_queue_length=ItemQueueLength,
             item_queue_byte_size=ItemQueueByteSize,
-            handoff_batch_threshold=HandoffBatchThreshold,
+            handoff_batch_threshold_size=HandoffBatchThresholdSize,
+            handoff_batch_threshold_count=HandoffBatchThresholdCount,
             notsent_fun=NotSentFun,
             notsent_acc=NotSentAcc} = Acc,
     case Filter(K) of
@@ -353,8 +359,11 @@ visit_item(K, V, Acc) ->
                         Acc#ho_acc{
                             item_queue_length=ItemQueueLength2,
                             item_queue_byte_size=ItemQueueByteSize2},
-
-                    case ItemQueueByteSize2 =< HandoffBatchThreshold of
+                    
+                    BatchReady = 
+                        (ItemQueueByteSize2 =< HandoffBatchThresholdSize) or
+                            (ItemQueueLength2 =< HandoffBatchThresholdCount),
+                    case BatchReady of
                         true  ->
                             Acc2#ho_acc{item_queue=ItemQueue2};
                         false ->
@@ -389,7 +398,6 @@ send_objects(ItemsReverseList, Acc) ->
             acksync_threshold=AckSyncThreshold,
             acklog_threshold=AckLogThreshold,
             acklog_last=AckLogLast,
-            handoff_batch_threshold=HandoffBatchThreshold,
             rcv_timeout=RecvTimeout,
             type=Type,
             total_objects=TotalObjects,
@@ -398,6 +406,8 @@ send_objects(ItemsReverseList, Acc) ->
            } = Acc,
 
     ObjectList = term_to_binary(Items),
+    BatchSize = byte_size(ObjectList),
+    BatchCount = length(Items),
 
     SyncClock = os:timestamp(),
     ReceiverInSync =
@@ -424,12 +434,13 @@ send_objects(ItemsReverseList, Acc) ->
         case {ReceiverInSync, Ack rem AckLogThreshold} of
             {ok, 0} ->
                 lager:info(
-                    "Receiver in sync after "
-                    "batch_count=~w of batch_size=~w and total_batches=~w "
+                    "Receiver in sync after batch_set=~w and total_batches=~w "
+                    "with next batch having batch_size=~w item_count=~w"
                     "between src_partition=~p trg_partition=~p "
                     "type=~w module=~w "
-                    "sync_time=~w ms batch_time=~w ms",
-                    [min(Ack, AckLogThreshold), HandoffBatchThreshold, Ack,
+                    "last_sync_time=~w ms batch_set_time=~w ms",
+                    [min(Ack, AckLogThreshold), Ack,
+                        BatchSize, BatchCount,
                         SrcPartition, TargetPartition,
                         Type, Module,
                         timer:now_diff(os:timestamp(), SyncClock) div 1000,
