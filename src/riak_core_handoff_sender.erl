@@ -62,7 +62,7 @@
           total_objects        :: non_neg_integer(),
           total_bytes          :: non_neg_integer(),
 
-          item_queue           :: [binary()]|redacted,
+          item_queue           :: [binary()],
           item_queue_length    :: non_neg_integer(),
           item_queue_byte_size :: non_neg_integer(),
 
@@ -163,13 +163,11 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
             % item in less than 60ms (assuming the fold to crate the batch is
             % fast).
 
-        %% Now that handoff_concurrency applies to both outbound and
-        %% inbound conns there is a chance that the receiver may
-        %% decide to reject the senders attempt to start a handoff.
-        %% In the future this will be part of the actual wire
-        %% protocol but for now the sender must assume that a closed
-        %% socket at this point is a rejection by the receiver to
-        %% enforce handoff_concurrency.
+        %% Since handoff_concurrency applies to both outbound and inbound
+        %% connections there is a chance that the receiver may decide to 
+        %% reject the senders attempt to start a handoff.
+        %% The sender must assume that a closed socket at this point is a 
+        %% rejection by the receiver to enforce handoff_concurrency.
         case send_sync(TcpMod, Socket, RecvTimeout) of
             ok ->
                 ok;
@@ -291,14 +289,14 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                 ThroughputBytes = TotalBytes/FoldTimeDiff,
 
                 ok = 
-                lager:info(
-                    "~p transfer of ~p from ~p ~p to ~p ~p"
-                    " completed: sent ~s bytes in ~p of ~p objects"
-                    " in ~.2f seconds (~s/second)",
-                    [Type, Module,
-                        SrcNode, SrcPartition,
-                        TargetNode, TargetPartition,
-                    riak_core_format:human_size_fmt(
+                    lager:info(
+                        "~p transfer of ~p from ~p ~p to ~p ~p"
+                        " completed: sent ~s bytes in ~p of ~p objects"
+                        " in ~.2f seconds (~s/second)",
+                        [Type, Module,
+                            SrcNode, SrcPartition,
+                            TargetNode, TargetPartition,
+                        riak_core_format:human_size_fmt(
                             "~.2f", TotalBytes),
                         FinalStats#ho_stats.objs, TotalObjects, FoldTimeDiff,
                         riak_core_format:human_size_fmt(
@@ -315,9 +313,9 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
                 end;
             {error, ErrReason} ->
                 if ErrReason == timeout ->
-                        exit({shutdown, timeout});
+                    exit({shutdown, timeout});
                 true ->
-                        exit({shutdown, {error, ErrReason}})
+                    exit({shutdown, {error, ErrReason}})
                 end
         end
      catch
@@ -373,13 +371,13 @@ visit_item(K, V, Acc0) ->
                             item_queue_byte_size=ItemQueueByteSize2},
                     
                     BatchReady = 
-                        (ItemQueueByteSize2 =< HandoffBatchThresholdSize) or
-                            (ItemQueueLength2 =< HandoffBatchThresholdCount),
+                        (ItemQueueByteSize2 > HandoffBatchThresholdSize) or
+                            (ItemQueueLength2 > HandoffBatchThresholdCount),
                     case BatchReady of
                         true  ->
-                            Acc2#ho_acc{item_queue=ItemQueue2};
+                            send_objects(ItemQueue2, Acc2);
                         false ->
-                            send_objects(ItemQueue2, Acc2)
+                            Acc2#ho_acc{item_queue=ItemQueue2}
                     end
             end;
         false ->
@@ -486,7 +484,8 @@ send_objects(ItemsReverseList, Acc) ->
                         Type, Module,
                         timer:now_diff(os:timestamp(), SyncClock) div 1000,
                         timer:now_diff(os:timestamp(), AckLogLast) div 1000]
-                );
+                ),
+                os:timestamp();
             {ok, _} ->
                 AckLogLast;
             {{error, SyncFailure}, _} ->
@@ -525,8 +524,8 @@ send_objects(ItemsReverseList, Acc) ->
 -spec throw_error(ho_acc(), {error, term()}) -> ok.
 throw_error(Acc, {error, Reason}) ->
     % The item_queue may be large, and hence obfuscate interesting information
-    % in logs - so redact it before throwing an exception
-    throw(Acc#ho_acc{error={error, Reason}, item_queue=redacted}).
+    % in logs - so empty the queue before throwing an exception
+    throw(Acc#ho_acc{error={error, Reason}, item_queue=[]}).
 
 get_handoff_ip(Node) when is_atom(Node) ->
     case riak_core_util:safe_rpc(
