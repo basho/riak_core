@@ -45,7 +45,8 @@
          merge/2,
          is_stale/1,
          graft/1,
-         exchange/1]).
+         exchange/1,
+         waitfor_exchange/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -309,6 +310,26 @@ exchange(Peer) ->
     case riak_core_metadata_exchange_fsm:start(Peer, Timeout) of
         {ok, Pid} ->
             {ok, Pid};
+        {error, Reason} ->
+            {error, Reason};
+        ignore ->
+            {error, ignore}
+    end.
+
+%% @doc Trigger an exchange and wait for it to complete 
+-spec waitfor_exchange(node()) -> ok | {error, term()}.
+waitfor_exchange(Peer) ->
+    Timeout = app_helper:get_env(riak_core, metadata_exchange_timeout, 60000),
+    case riak_core_metadata_exchange_fsm:start(Peer, self(), Timeout) of
+        {ok, Pid} ->
+            receive
+                complete ->
+                    ok
+            after
+                Timeout ->
+                    lager:warning("timeout on metadata exchange ~w", [Pid]),
+                    {error, timeout}
+            end;
         {error, Reason} ->
             {error, Reason};
         ignore ->
