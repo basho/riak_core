@@ -160,7 +160,7 @@ standard_join(Node, Ring, Rejoin, Auto) ->
             Ring6 = maybe_auto_join(Auto, node(), Ring5),
             riak_core_ring_manager:set_my_ring(Ring6),
             ok = riak_core_gossip:send_ring(Node, node()),
-            ok = riak_core_metadata_manager:waitfor_exchange(Node)
+            ok = riak_core_metadata_manager:attempt_exchange(Node)
 
     end.
 
