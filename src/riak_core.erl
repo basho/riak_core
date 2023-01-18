@@ -142,25 +142,28 @@ standard_join(Node, Ring, Rejoin, Auto) ->
             {error, different_ring_sizes};
         _ ->
             GossipVsn = riak_core_gossip:gossip_version(),
-            Ring2 = riak_core_ring:add_member(node(), Ring,
-                                              node()),
+            Ring2 =
+                riak_core_ring:add_member(
+                    node(), Ring, node()),
             Ring3 = riak_core_ring:set_owner(Ring2, node()),
             Ring4 =
-                riak_core_ring:update_member_meta(node(),
-                                                  Ring3,
-                                                  node(),
-                                                  gossip_vsn,
-                                                  GossipVsn),
-            ParticipateInCoverage = app_helper:get_env(riak_core,participate_in_coverage),
+                riak_core_ring:update_member_meta(
+                    node(), Ring3, node(), gossip_vsn, GossipVsn),
+            ParticipateInCoverage =
+                app_helper:get_env(riak_core,participate_in_coverage),
             Ring4a =
-                riak_core_ring:update_member_meta(node(),
-                                                  Ring4,
-                                                  node(),
-                                                  participate_in_coverage, ParticipateInCoverage),
+                riak_core_ring:update_member_meta(
+                    node(),
+                    Ring4,
+                    node(),
+                    participate_in_coverage,
+                    ParticipateInCoverage),
             {_, Ring5} = riak_core_capability:update_ring(Ring4a),
             Ring6 = maybe_auto_join(Auto, node(), Ring5),
             riak_core_ring_manager:set_my_ring(Ring6),
-            riak_core_gossip:send_ring(Node, node())
+            ok = riak_core_gossip:send_ring(Node, node()),
+            ok = riak_core_metadata_manager:attempt_exchange(Node)
+
     end.
 
 maybe_auto_join(false, _Node, Ring) ->

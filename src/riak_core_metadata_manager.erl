@@ -38,7 +38,8 @@
          iterator_done/1,
          iterator_close/1,
          put/3,
-         merge/3]).
+         merge/3,
+         attempt_exchange/1]).
 
 %% riak_core_broadcast_handler callbacks
 -export([broadcast_data/1,
@@ -315,6 +316,20 @@ exchange(Peer) ->
             {error, Reason};
         ignore ->
             {error, ignore}
+    end.
+
+%% @doc Trigger an attempt at an exchange and wait a timeout for it to complete
+-spec attempt_exchange(node()) -> ok.
+attempt_exchange(Peer) ->
+    Timeout = app_helper:get_env(riak_core, metadata_exchange_timeout, 60000),
+    {ok, Pid} = riak_core_metadata_exchange_fsm:start(Peer, self(), Timeout),
+    receive
+        complete ->
+            ok
+    after
+        Timeout ->
+            ?LOG_WARNING("timeout on metadata exchange ~w", [Pid]),
+            ok
     end.
 
 %%%===================================================================
