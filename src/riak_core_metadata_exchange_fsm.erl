@@ -26,7 +26,7 @@
                 {gen_fsm, send_event, 2}]}).
 
 %% API
--export([start/2]).
+-export([start/2, start/3]).
 
 %% gen_fsm callbacks
 -export([init/1, handle_event/3, handle_sync_event/4,
@@ -51,7 +51,8 @@
 
           %% length of time waited to aqcuire remote lock or
           %% update trees
-          timeout :: pos_integer()
+          timeout :: pos_integer(),
+          inform :: pid() | undefined
          }).
 
 -record(exchange, {
@@ -75,15 +76,22 @@
 %% to aqcuire the remote lock or to upate both trees.
 -spec start(node(), pos_integer()) -> {ok, pid()} | ignore | {error, term()}.
 start(Peer, Timeout) ->
-    gen_fsm:start(?MODULE, [Peer, Timeout], []).
+    start(Peer, undefined, Timeout).
+
+-spec start(node(), pid()|undefined, pos_integer()) ->
+        {ok, pid()} | ignore | {error, term()}.
+start(Peer, Inform, Timeout) ->
+    gen_fsm:start(?MODULE, [Peer, Inform, Timeout], []).
 
 %%%===================================================================
 %%% gen_fsm callbacks
 %%%===================================================================
 
-init([Peer, Timeout]) ->
+init([Peer, Inform, Timeout]) ->
     gen_fsm:send_event(self(), start),
-    {ok, prepare, #state{peer=Peer,built=0,timeout=Timeout}}.
+    {ok,
+        prepare,
+        #state{peer=Peer, built=0, inform=Inform, timeout=Timeout}}.
 
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
@@ -95,8 +103,13 @@ handle_sync_event(_Event, _From, StateName, State) ->
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
 
-terminate(_Reason, _StateName, _State) ->
-    ok.
+terminate(_Reason, _StateName, State) ->
+    case State#state.inform of
+        P when is_pid(P) ->
+            P ! complete;
+        _ ->
+            ok
+    end.
 
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
