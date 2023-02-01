@@ -294,6 +294,19 @@ example_test() ->
     false = vclock:descends(B1, A1),
     ok.
 
+equals_or_dominates_test() ->
+    A = vclock:fresh(),
+    A1 = vclock:increment(a, A),
+    A2 = vclock:increment(b, A1),
+    A3 = vclock:increment(a, A2),
+    B4 = vclock:increment(b, A3),
+    B5 = vclock:increment(b, A3),
+    ?assert(vclock:dominates(B4, A3)),
+    ?assertNot(vclock:dominates(A3, B4)),
+    ?assert(vclock:equal(B4, B5)),
+    ?assertNot(vclock:dominates(B4, B5)),
+    ?assertNot(vclock:dominates(B5, B4)).    
+
 prune_small_test() ->
     % vclock with less entries than small_vclock will be untouched
     Now = riak_core_util:moment(),
