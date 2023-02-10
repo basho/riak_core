@@ -29,7 +29,6 @@
 -include("riak_core_vnode.hrl").
 -include("riak_core_handoff.hrl").
 -include("stacktrace.hrl").
--define(ACK_COUNT, 1000).
 %% can be set with env riak_core, handoff_timeout
 -define(TCP_TIMEOUT, 60000).
 %% can be set with env riak_core, handoff_status_interval
@@ -150,17 +149,17 @@ start_fold(TargetNode, Module, {Type, Opts}, ParentPid, SslOpts) ->
         AckLogThreshold =
             app_helper:get_env(
                 riak_core, handoff_acklog_threshold, 100),
-            % As the batch size if 1MB, this will log progress every 100MB
+            % If the batch size is 1MB, this will log progress every 100MB
         HandoffBatchThresholdSize =
             app_helper:get_env(
                 riak_core, handoff_batch_threshold, 1024 * 1024),
             % Batch threshold is in bytes
         HandoffBatchThresholdCount =
             app_helper:get_env(
-                riak_core, handoff_batch_threshold_count, 1000),
+                riak_core, handoff_batch_threshold_count, 500),
             % Batch threshold as a count of objects.  If the handoff_timeout
             % is 60s, this requires the receiver vnode to handle each handoff
-            % item in less than 60ms (assuming the fold to crate the batch is
+            % item in less than 120ms (assuming the fold to create the batch is
             % fast).
 
         %% Since handoff_concurrency applies to both outbound and inbound
