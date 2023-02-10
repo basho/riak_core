@@ -44,6 +44,16 @@
   {commented, 2}
 ]}.
 
+%% @doc Handoff batch threshold count
+%% The maximum number of objects allowed in a single handoff batch.  If there
+%% are issues with handoff timeouts, then the first change should be to reduce
+%% this count - making the system more responsive to back-pressure.
+{mapping, "handoff_batch_threshold_count", "riak_core.handoff_batch_threshold_count", [
+    {datatype, integer},
+    {default, 500},
+    {commented, 500}
+]}.
+
 %% @doc Default location of ringstate
 {mapping, "ring.state_dir", "riak_core.ring_state_dir", [
   {datatype, directory},
