@@ -27,8 +27,7 @@ jobs:
     steps:
       - uses: lukka/get-cmake@latest
       - uses: actions/checkout@v2
-      - name: Install dependencies (Linux)
-        if: ${{ startsWith(matrix.os, 'ubuntu') }}
+      - name: Install dependencies
         run: |
           sudo apt-get -qq update
           sudo apt-get -qq install libsnappy-dev libc6-dev
