@@ -41,10 +41,10 @@
 %% It is generally safe to raise this number to increase concurrency.  A
 %% common value to use would be 8.  However, it is necessary to monitor for
 %% handoff timeouts.  If handoff timeouts occur, reduce the 
-%% handoff_batch_threshold_count.  If handoffs continue to occur, even with a
+%% handoff_batch_threshold_count.  If timeouts continue to occur, even with a
 %% low value for the handoff_batch_threshold_count (e.g. 200), then raise the
-%% handoff_timeout - and if using the leveled backend in Riak KV investigate
-%% raising the the backend_pause.
+%% handoff_timeout.  Further, if using the leveled backend in Riak KV
+%% investigate raising the the backend_pause.
 {mapping, "transfer_limit", "riak_core.handoff_concurrency", [
   {datatype, integer},
   {default, 2},
