@@ -11,23 +11,28 @@ jobs:
 
   build:
 
-    runs-on: ubuntu-latest
+    name: Test on ${{ matrix.os }} with OTP ${{ matrix.otp }}
+    runs-on: ${{ matrix.os }}
 
     strategy:
       fail-fast: false
       matrix:
-        otp:
-          - "25.1"
-          - "24.3"
-          - "22.3"
-
-    container:
-      image: erlang:${{ matrix.otp }}
+        otp: [22, 24, 25]
+        os: [ubuntu-latest]
+        # OTP lower than 23 does not run on ubuntu-latest (22.04), see
+        # https://github.com/erlef/setup-beam#compatibility-between-operating-system-and-erlangotp
+        exclude:
+          - otp: 22
+            os: ubuntu-latest
+        include:
+          - otp: 22
+            os: ubuntu-20.04
 
     steps:
       - uses: lukka/get-cmake@latest
       - uses: actions/checkout@v2
-      - name: Install dependencies
+      - name: Install dependencies (Ubuntu)
+        if: ${{ startsWith(matrix.os, 'ubuntu') }}
         run: |
           sudo apt-get -qq update
           sudo apt-get -qq install libsnappy-dev libc6-dev
