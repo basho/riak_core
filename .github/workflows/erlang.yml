@@ -27,6 +27,11 @@ jobs:
     steps:
       - uses: lukka/get-cmake@latest
       - uses: actions/checkout@v2
+      - name: Install dependencies (Linux)
+        if: ${{ startsWith(matrix.os, 'ubuntu') }}
+        run: |
+          sudo apt-get -qq update
+          sudo apt-get -qq install libsnappy-dev libc6-dev
       - name: Compile
         run: ./rebar3 compile
       - name: Run xref and dialyzer
