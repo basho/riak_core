@@ -38,6 +38,13 @@
  end}.
 
 %% @doc Number of concurrent node-to-node transfers allowed.
+%% It is generally safe to raise this number to increase concurrency.  A
+%% common value to use would be 8.  However, it is necessary to monitor for
+%% handoff timeouts.  If handoff timeouts occur, reduce the 
+%% handoff_batch_threshold_count.  If handoffs continue to occur, even with a
+%% low value for the handoff_batch_threshold_count (e.g. 200), then raise the
+%% handoff_timeout - and if using the leveled backend in Riak KV investigate
+%% raising the the backend_pause.
 {mapping, "transfer_limit", "riak_core.handoff_concurrency", [
   {datatype, integer},
   {default, 2},
@@ -52,6 +59,14 @@
     {datatype, integer},
     {default, 500},
     {commented, 500}
+]}.
+
+%% @doc Handoff timeout (milliseconds)
+%% The timeout to wait for acknowledgement of the previous handoff batch
+{mapping, "handoff_timeout", "riak_core.handoff_timeout", [
+    {datatype, integer},
+    {default, 120000},
+    {commented, 120000}
 ]}.
 
 %% @doc Default location of ringstate
