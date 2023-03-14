@@ -57,7 +57,7 @@ compare({_, NodesA}, {_, NodesB}) ->
       LengthA >= LengthB
   end.
 
--spec stripe_nodes_by_location([node()|undefined], dist:dict(), [node()|undefined]) ->
+-spec stripe_nodes_by_location([node()|undefined], dict:dict(), [node()|undefined]) ->
   [node()|undefined].
 stripe_nodes_by_location([], _LocationsNodes, NewNodeList)  ->
   lists:reverse(NewNodeList);
