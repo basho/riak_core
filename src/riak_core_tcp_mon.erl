@@ -453,6 +453,10 @@ nodeupdown_test_() ->
     {spawn, {timeout, 60, fun updown/0}}.
 
 ssl_test_() ->
+    %% Test depends on self-signed certificates
+    %% Certificates generated with:
+    %% openssl req -x509 -newkey rsa:4096 -keyout site1-key.pem -out site1-cert.pem -sha256 -days 3650 -subj "/CN=site1.basho.com" -nodes
+    %% openssl req -x509 -newkey rsa:4096 -keyout site2-key.pem -out site2-cert.pem -sha256 -days 3650 -subj "/CN=site1.basho.com" -nodes
     {timeout, 60, fun() ->
         ssl:start(),
         % Set the stat gathering interval to 100ms

@@ -416,7 +416,7 @@ remove_from_cluster(Ring, ExitingNode, Seed) ->
 %% although this may result in a large number of transfers
 -spec attempt_simple_transfer(transfer_ring(),
                                 term(),
-                                random:ran(),
+                                rand:state(),
                                 [{integer(), term()}],
                                 [term()]) ->
                                     {ok, transfer_ring()}|
@@ -454,7 +454,7 @@ attempt_simple_transfer(Ring, ExitingNode, Seed, Owners, Members) ->
                             pos_integer(),
                             term()},
                         transfer_ring(),
-                        {random:ran(),
+                        {rand:state(),
                             [{integer(), term()}],
                             [{term(), non_neg_integer()}]}) ->
                                 {ok, transfer_ring()}|target_n_fail.
