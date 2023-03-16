@@ -463,37 +463,43 @@ increase_takes([{Node, Own, Delta} | Rest], N, Max, Acc) when Delta > 0 ->
 increase_takes([NodeDelta | Rest], N, Max, Acc) ->
     increase_takes(Rest, N, Max, [NodeDelta | Acc]).
 
+    
 meets_target_n(Ring, TargetN) ->
     Owners = lists:keysort(1, riak_core_ring:all_owners(Ring)),
     meets_target_n(Owners, TargetN, 0, [], []).
-meets_target_n([{Part,Node}|Rest], TargetN, Index, First, Last) ->
+
+meets_target_n([{Part, Node}|Rest], TargetN, Index, First, Last) ->
     case lists:keytake(Node, 1, Last) of
         {value, {Node, LastIndex, _}, NewLast} ->
-            if Index-LastIndex >= TargetN ->
-                    %% node repeat respects TargetN
-                    meets_target_n(Rest, TargetN, Index+1, First,
-                                   [{Node, Index, Part}|NewLast]);
-               true ->
-                    %% violation of TargetN
-                    false
-            end;
+            if Index - LastIndex >= TargetN ->
+                %% node repeat respects TargetN
+                meets_target_n(Rest, TargetN, Index + 1, First,
+                                [{Node, Index, Part}|NewLast]);
+            true ->
+                %% violation of TargetN
+                false
+        end;
         false ->
             %% haven't seen this node yet
-            meets_target_n(Rest, TargetN, Index+1,
-                           [{Node, Index}|First], [{Node, Index, Part}|Last])
+            meets_target_n(Rest, TargetN, Index + 1,
+                            [{Node, Index}|First], [{Node, Index, Part}|Last])
     end;
 meets_target_n([], TargetN, Index, First, Last) ->
     %% start through end guarantees TargetN
     %% compute violations at wrap around, but don't fail
     %% because of them: handle during reclaim
     Violations = 
-        lists:filter(fun({Node, L, _}) ->
-                             {Node, F} = proplists:lookup(Node, First),
-                             (Index-L)+F < TargetN
-                     end,
-                     Last),
+        lists:filter(
+            fun({Node, L, _}) ->
+                {Node, F} = proplists:lookup(Node, First),
+                if ((Index - L) + F) < TargetN ->
+                        true;
+                    true ->
+                        false
+                end
+            end,
+            Last),
     {true, [ Part || {_, _, Part} <- Violations ]}.
-
 
 choose_claim_v3(Ring) ->
     choose_claim_v3(Ring, node()).
@@ -630,10 +636,9 @@ sequential_claim(Ring, Node) ->
 %% etc) However, different to `claim_rebalance_n', this function
 %% attempts to eliminate tail violations (for example a ring that
 %% starts/ends n1 | n2 | ...| n3 | n4 | n1)
--spec sequential_claim(riak_core_ring:riak_core_ring(),
-                       node(),
-                       integer()) ->
-                              riak_core_ring:riak_core_ring().
+-spec sequential_claim(
+    riak_core_ring:riak_core_ring(), node(), integer()) ->
+        riak_core_ring:riak_core_ring().
 sequential_claim(Ring0, Node, TargetN) ->
     Ring = riak_core_ring:upgrade(Ring0),
     OrigNodes = lists:usort([Node|riak_core_ring:claiming_members(Ring)]),
