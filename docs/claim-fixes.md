@@ -15,7 +15,7 @@ about the ring, what it is, and how it does it, skip down to
 
 As [Martin Sumner](https://twitter.com/masleeds) recently wrote in an
 in depth look at
-[claim in Riak](https://github.com/infinityworks/riak_core/blob/mas-claimv2issues/docs/ring_claim.md),
+[claim in Riak](ring_claim.md),
 the ring is something often illustrated, a useful metaphor, and
 typically a vaguely grasped abstraction. But the ring is not just
 conceptual, it's a concrete thing in Riak: a datastructure that
@@ -157,7 +157,7 @@ distinct physical replicas of your data but in fact there may only be
 
 This bug was found by modifying the [quickcheck](http://www.quviq.com/products/) tests to add
 multiple nodes to a cluster at once, and fixed by
-[Ramen Sen](https://github.com/ramensen) of NHS Digital. The fix
+[Rani Sen](https://github.com/ranisen) of NHS Digital. The fix
 firstly decides if there are tail violations (if the `ring size rem
 node count` is greater than zero but less than `target-n-val`) and if
 they can be solved given the number of nodes, target-n-val, and ring
