@@ -105,13 +105,21 @@ claim_until_balanced(Ring, Node, {WMod, WFun}=Want, Choose) ->
     case NeedsIndexes of
         no ->
             Ring;
-        {yes, _NumToClaim} ->
-            NewRing = case Choose of
-                          {CMod, CFun} ->
-                              CMod:CFun(Ring, Node);
-                          {CMod, CFun, Params} ->
-                              CMod:CFun(Ring, Node, Params)
-                      end,
+        {yes, NumToClaim} ->
+            UpdRing =
+                case NumToClaim of
+                    location_change ->
+                        riak_core_ring:clear_location_changed(Ring);
+                    _ ->
+                        Ring
+                end,
+            NewRing = 
+                case Choose of
+                    {CMod, CFun} ->
+                        CMod:CFun(UpdRing, Node);
+                    {CMod, CFun, Params} ->
+                        CMod:CFun(UpdRing, Node, Params)
+                end,
             claim_until_balanced(NewRing, Node, Want, Choose)
     end.
 
@@ -140,11 +148,16 @@ default_choose_claim(Ring, Node, Params) ->
             choose_claim_v2(Ring, Node, Params)
     end.
 
-%% @spec default_wants_claim(riak_core_ring()) -> {yes, integer()} | no
+-spec default_wants_claim(
+    riak_core_ring:riak_core_ring()) ->
+        no|{yes, location_change|non_neg_integer()}.
 %% @doc Want a partition if we currently have less than floor(ringsize/nodes).
 default_wants_claim(Ring) ->
     default_wants_claim(Ring, node()).
 
+-spec default_wants_claim(
+    riak_core_ring:riak_core_ring(), node()) ->
+        no|{yes, location_change|non_neg_integer()}.
 default_wants_claim(Ring, Node) ->
     case riak_core_ring:legacy_ring(Ring) of
         true ->
@@ -176,9 +189,15 @@ wants_claim_v1(Ring0, Node) ->
             no
     end.
 
+-spec wants_claim_v2(
+    riak_core_ring:riak_core_ring()) ->
+        no|{yes, location_change|non_neg_integer()}.
 wants_claim_v2(Ring) ->
     wants_claim_v2(Ring, node()).
 
+-spec wants_claim_v2(
+    riak_core_ring:riak_core_ring(), node()) ->
+        no|{yes, location_change|non_neg_integer()}. 
 wants_claim_v2(Ring, Node) ->
     Active = riak_core_ring:claiming_members(Ring),
     Owners = riak_core_ring:all_owners(Ring),
@@ -191,7 +210,7 @@ wants_claim_v2(Ring, Node) ->
         false ->
             case riak_core_ring:has_location_changed(Ring) of
               true ->
-                {yes, 1};
+                {yes, location_change};
               false ->
                 no
             end;
@@ -296,8 +315,7 @@ choose_claim_v2(Ring, Node) ->
     Params = default_choose_params(),
     choose_claim_v2(Ring, Node, Params).
 
-choose_claim_v2(RingOrig, Node, Params0) ->
-    Ring = riak_core_ring:clear_location_changed(RingOrig),
+choose_claim_v2(Ring, Node, Params0) ->
     Params = default_choose_params(Params0),
     %% Active::[node()]
     Active = riak_core_ring:claiming_members(Ring),
