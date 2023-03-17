@@ -323,7 +323,10 @@ choose_claim_v2(RingOrig, Node, Params0) ->
             %% claim indices that are currently causing violations, and then
             %% fallback to indices in linear order. The filtering steps below
             %% will ensure no new violations are introduced.
-            Violated = lists:flatten(find_violations(Ring, TargetN)),
+            Violated =
+                lists:flatten(
+                    find_node_violations(Ring, TargetN)
+                    ++ find_location_violations(Ring, TargetN)),
             Violated2 = [lists:keyfind(Idx, 2, AllIndices) || Idx <- Violated],
             Indices = Violated2 ++ (AllIndices -- Violated2);
         false ->
@@ -349,16 +352,22 @@ choose_claim_v2(RingOrig, Node, Params0) ->
     end,
 
     %% Filter out indices that conflict with the node's existing ownership
-    Indices2 = prefilter_violations(Ring, Node, AllIndices, Indices,
-                                    TargetN, RingSize),
+    Indices2 =
+        prefilter_violations(
+            Ring, Node, AllIndices, Indices, TargetN, RingSize),
     %% Claim indices from the remaining candidate set
-    Claim2 = case select_indices(Owners, Deltas, Indices2, TargetN, RingSize) of
-                 [] -> [];
-                 Claim -> lists:sublist(Claim, Want)
-             end,
-    NewRing = lists:foldl(fun(Idx, Ring0) ->
-                                  riak_core_ring:transfer_node(Idx, Node, Ring0)
-                          end, Ring, Claim2),
+    Claim2 = 
+        case select_indices(Owners, Deltas, Indices2, TargetN, RingSize) of
+            [] -> [];
+            Claim -> lists:sublist(Claim, Want)
+        end,
+    NewRing =
+        lists:foldl(
+            fun(Idx, Ring0) ->
+                riak_core_ring:transfer_node(Idx, Node, Ring0)
+            end,
+            Ring,
+            Claim2),
 
     RingChanged = ([] /= Claim2),
     RingMeetsTargetN = meets_target_n(NewRing, TargetN),
@@ -1036,8 +1045,29 @@ find_biggest_hole(Mine) ->
 %%
 %% @doc Determines indices that violate the given target_n spacing
 %% property.
-find_violations(Ring, TargetN) ->
+-spec find_node_violations(
+    riak_core_ring:riak_core_ring(), pos_integer()) ->
+        list({non_neg_integer(), non_neg_integer()}).
+find_node_violations(Ring, TargetN) ->
     Owners = riak_core_ring:all_owners(Ring),
+    find_violations(Owners, TargetN).
+
+-spec find_location_violations(
+    riak_core_ring:riak_core_ring(), pos_integer()) ->
+        list({non_neg_integer(), non_neg_integer()}).
+find_location_violations(Ring, TargetN) ->
+    case riak_core_location:support_locations_claim(Ring, TargetN) of
+        true ->
+            find_violations(
+                riak_core_location:get_location_owners(Ring), TargetN);
+        false ->
+            []
+    end.
+
+-spec find_violations(
+    list({non_neg_integer(), atom()}), pos_integer()) ->
+        list({non_neg_integer(), non_neg_integer()}).
+find_violations(Owners, TargetN) ->
     Suffix = lists:sublist(Owners, TargetN-1),
     %% Add owners at the front to the tail, to confirm no tail violations
     OwnersWithTail = Owners ++ Suffix,
@@ -1102,7 +1132,18 @@ get_member_count(Ring, Node) ->
 %% @doc Filter out candidate indices that would violate target_n given
 %% a node's current partition ownership.
 prefilter_violations(Ring, Node, AllIndices, Indices, TargetN, RingSize) ->
-    CurrentIndices = riak_core_ring:indices(Ring, Node),
+    LocalNodes =
+        case riak_core_location:support_locations_claim(Ring, TargetN) of
+            true ->
+                riak_core_location:local_nodes(Ring, Node);
+            false ->
+                [Node]
+        end,
+    CurrentIndices =
+        lists:flatten(
+            lists:map(
+                fun(N) -> riak_core_ring:indices(Ring, N) end,
+                LocalNodes)),
     CurrentNth = [lists:keyfind(Idx, 2, AllIndices) || Idx <- CurrentIndices],
     [{Nth, Idx} || {Nth, Idx} <- Indices,
                    lists:all(fun({CNth, _}) ->

@@ -2,11 +2,14 @@
 
 %% API
 -export([get_node_location/2,
-         has_location_set_in_cluster/1,
-         stripe_nodes_by_location/2,
-         check_ring/1,
-         check_ring/2,
-         check_ring/3]).
+        has_location_set_in_cluster/1,
+        stripe_nodes_by_location/2,
+        check_ring/1,
+        check_ring/2,
+        check_ring/3,
+        support_locations_claim/2,
+        get_location_owners/1,
+        local_nodes/2]).
 
 -spec get_node_location(node(), dict:dict()) -> string() | undefined.
 get_node_location(Node, Locations) ->
@@ -109,3 +112,53 @@ check_ring(Ring, Nval, MinimumNumberOfDistinctLocations, Locations) ->
   list().
 get_unique_locations(PrefLists, Locations) ->
   lists:usort([get_node_location(Node, Locations) || {_, Node} <- PrefLists]).
+
+%% @doc
+%% Are there sufficient locations to support an attempt to cluster claim a
+%% given nval.  This will be validated before using a location aware claim
+%% algorithm
+-spec support_locations_claim(
+    riak_core_ring:riak_core_ring(), pos_integer()) -> boolean().
+support_locations_claim(Ring, TargetNVal) ->
+    Locations = riak_core_ring:get_nodes_locations(Ring),
+    case has_location_set_in_cluster(Locations) of
+        true ->
+            UniqueLocations = 
+                lists:usort(
+                    lists:map(
+                        fun({_N, L}) -> L end,
+                        dict:to_list(Locations))),
+            length(UniqueLocations) >= TargetNVal;
+        false ->
+            false
+    end.
+
+%% @doc
+%% Find a mapping between Idx vales and the locations of the nodes which
+%% currently own them
+-spec get_location_owners(
+    riak_core_ring:riak_core_ring()) -> list({non_neg_integer(), atom()}).
+get_location_owners(Ring) ->
+    Locations = riak_core_ring:get_nodes_locations(Ring),
+    lists:map(
+        fun({Idx, Node}) ->
+            {Idx, get_node_location(Node, Locations)}
+        end,
+        riak_core_ring:all_owners(Ring)).
+
+%% @doc
+%% Find other nodes in the same location of this node
+-spec local_nodes(riak_core_ring:riak_core_ring(), node()) -> list(node()).
+local_nodes(Ring, Node) ->
+    Locations = riak_core_ring:get_nodes_locations(Ring),
+    ThisLocation = get_node_location(Node, Locations),
+    lists:filtermap(
+        fun({N, L}) ->
+            case {N, L} of
+                {N, ThisLocation} when N =/= Node ->
+                    {true, N};
+                _ ->
+                    false
+            end
+        end,
+        dict:to_list(Locations)).
