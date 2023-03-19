@@ -677,26 +677,119 @@ sequential_claim(Ring0, Node, TargetN) ->
     Overhang = RingSize rem NodeCount,
     HasTailViolation = (Overhang > 0 andalso Overhang < TargetN),
     Shortfall = TargetN - Overhang,
-    CompleteSequences = RingSize div NodeCount,
-    MaxFetchesPerSeq = NodeCount - TargetN,
-    MinFetchesPerSeq = ceiling(Shortfall / CompleteSequences),
-    CanSolveViolation = ((CompleteSequences * MaxFetchesPerSeq) >= Shortfall),
+    SolveableNodeViolation =
+        solveable_violation(RingSize, NodeCount, TargetN, Shortfall)
+        and HasTailViolation,
 
-    Zipped = case (HasTailViolation andalso CanSolveViolation) of
-                  true->
-                      Partitions = lists:sort([ I || {I, _} <- riak_core_ring:all_owners(Ring) ]),
-                      Nodelist = solve_tail_violations(RingSize, Nodes, Shortfall, MinFetchesPerSeq),
-                      lists:zip(Partitions, lists:flatten(Nodelist));
-                  false ->
-                      diagonal_stripe(Ring, Nodes)
-              end,
+    LocationsSupported =
+        riak_core_location:support_locations_claim(Ring, TargetN),
+    {SolveableLocationViolation, LocationShortfall} =
+        case {LocationsSupported, Overhang, RingSize div NodeCount} of
+            {true, OH, Loops} when OH > 0, OH > TargetN, Loops > 1 ->
+                MinDistance =
+                    check_for_location_tail_violation(
+                        Nodes, Ring, OH, TargetN),
+                case MinDistance of
+                    MD when MD =< TargetN ->
+                        SLV = 
+                            solveable_violation(
+                                RingSize, NodeCount, TargetN, TargetN - MD),
+                        {SLV, TargetN - MD};
+                    _ ->
+                        {false, 0}
+                end;
+            _ ->
+                {false, 0}
+        end,
+    
+    Partitions = lists:sort([ I || {I, _} <- riak_core_ring:all_owners(Ring) ]),
+    Zipped = 
+        case {SolveableNodeViolation, SolveableLocationViolation} of
+            {true, _} ->
+                Nodelist =
+                    solve_tail_violations(RingSize, Nodes, Shortfall),
+                lists:zip(Partitions, Nodelist);
+            {_, true} ->
+                Nodelist =
+                    solve_tail_violations(RingSize, Nodes, LocationShortfall),
+                lists:zip(Partitions, Nodelist);
+            _ ->
+                diagonal_stripe(Ring, Nodes)
+        end,
 
-    lists:foldl(fun({P, N}, Acc) ->
-                        riak_core_ring:transfer_node(P, N, Acc)
-                end,
-                Ring,
-                Zipped).
+    lists:foldl(
+        fun({P, N}, Acc) -> riak_core_ring:transfer_node(P, N, Acc) end,
+        Ring,
+        Zipped).
 
+
+-spec check_for_location_tail_violation(
+    list(node()),
+    riak_core_ring:riak_core_ring(),
+    pos_integer(),
+    pos_integer()) -> pos_integer().
+check_for_location_tail_violation(Nodes, Ring, OH, TargetN) ->
+    LastNodes = lists:sublist(Nodes, 1 + OH - TargetN, TargetN),
+    FirstNodes = lists:sublist(Nodes, TargetN),
+    LocationD = riak_core_ring:get_nodes_locations(Ring),
+    LocationFinder =
+        fun(N) -> riak_core_location:get_node_location(N, LocationD) end,
+    LastLocations = lists:map(LocationFinder, LastNodes),
+    FirstLocations =
+        lists:zip(
+            lists:map(LocationFinder, FirstNodes),
+            lists:seq(0, TargetN - 1)),
+    {MinDistance, _} =
+        lists:foldl(
+            fun(L, {MinStep, TailStep}) ->
+                case lists:keyfind(L, 1, FirstLocations) of
+                    {L, N} ->
+                        {min(TailStep + N, MinStep), TailStep - 1};
+                    false ->
+                        {MinStep, TailStep - 1}
+                end
+            end,
+            {TargetN, TargetN - 1},
+            LastLocations),
+    MinDistance.
+
+
+-spec solveable_violation(
+    pos_integer(), pos_integer(), pos_integer(), pos_integer()) -> boolean().
+solveable_violation(RingSize, NodeCount, TargetN, Shortfall) ->
+    case RingSize div NodeCount of 
+        1 ->
+            Shortfall < (NodeCount - TargetN);
+        CompleteSequences ->
+            CompleteSequences >= Shortfall
+    end.
+
+%% @doc
+%% The node list mosut be of length ring size.  It is made up of a set of
+%% complete loops of the node list, and then a partial loop with the addition
+%% of the shortfall.  The for each node in the shortfall a node in the complete
+%% loops must be removed
+-spec solve_tail_violations(
+    pos_integer(), [node()], non_neg_integer()) -> [[node()]].
+solve_tail_violations(RingSize, Nodes, Shortfall) ->
+    {LastLoop, Remainder} = 
+        lists:split(RingSize rem length(Nodes), Nodes),
+    ExcessLoop = lists:sublist(Remainder, Shortfall),
+    Tail = LastLoop ++ ExcessLoop,
+    case RingSize div length(Nodes) of
+        1 ->
+            InitialLoop = lists:subtract(Nodes, ExcessLoop),
+            InitialLoop ++ Tail;
+        LoopCount ->
+            CompleteLoops = 
+                lists:append(
+                    lists:duplicate(LoopCount - length(ExcessLoop), Nodes)),
+            PartialLoops =
+                lists:map(
+                    fun(N) -> lists:subtract(Nodes, [N]) end, 
+                    lists:reverse(ExcessLoop)),
+            CompleteLoops ++ lists:append(PartialLoops) ++ Tail
+    end.
 
 %% @private every module has a ceiling function
 -spec ceiling(float()) -> integer().
@@ -708,52 +801,6 @@ ceiling(F) ->
         false ->
             T + 1
     end.
-
-
-%% @private increase the tail so that there is no wrap around preflist
-%% violation, by taking a `Shortfall' number nodes from earlier in the
-%% preflist
--spec solve_tail_violations(pos_integer(), [node()], non_neg_integer(), pos_integer()) -> [[node()]].
-solve_tail_violations(RingSize, Nodes, Shortfall, MinFetchesPerSeq) ->
-    StartingNode = (RingSize rem length(Nodes)) + 1,
-    build_nodelist(RingSize, Nodes, Shortfall, StartingNode, MinFetchesPerSeq).
-
--spec build_nodelist(pos_integer(), [node()], non_neg_integer(), pos_integer(), pos_integer())
-                    -> [[node()]].
-build_nodelist(RingSize, Nodes, Shortfall, NodeCounter, MinFetchesPerSeq) ->
-    %% Build the tail with sufficient nodes to satisfy TargetN
-    NodeCount = length(Nodes),
-    LastSegLength = (RingSize rem NodeCount) + Shortfall,
-    NewSeq = lists:sublist(Nodes, 1, LastSegLength),
-    build_nodelist(RingSize, Nodes, Shortfall, NodeCounter, MinFetchesPerSeq, [NewSeq]).
-
-%% @private build the node list by building tail to satisfy TargetN, then removing
-%% the added nodes from earlier segments
--spec build_nodelist(pos_integer(), [node()], non_neg_integer(), pos_integer(), pos_integer(), [[node()]])
-                    -> [[node()]].
-build_nodelist(RingSize, Nodes, _Shortfall=0, _NodeCounter, _MinFetchesPerSeq, Acc) ->
-    %% Finished shuffling, backfill if required
-    ShuffledRing = lists:flatten(Acc),
-    backfill_ring(RingSize, Nodes,
-                  (RingSize-length(ShuffledRing)) div (length(Nodes)), Acc);
-build_nodelist(RingSize, Nodes, Shortfall, NodeCounter, MinFetchesPerSeq, Acc) ->
-    %% Build rest of list, subtracting minimum of MinFetchesPerSeq, Shortfall
-    %% or (NodeCount - NodeCounter) each time
-    NodeCount = length(Nodes),
-    NodesToRemove = min(min(MinFetchesPerSeq, Shortfall), NodeCount - NodeCounter),
-    RemovalList = lists:sublist(Nodes, NodeCounter, NodesToRemove),
-    NewSeq = lists:subtract(Nodes,RemovalList),
-    NewNodeCounter = NodeCounter + NodesToRemove,
-    build_nodelist(RingSize, Nodes, Shortfall - NodesToRemove, NewNodeCounter,
-                   MinFetchesPerSeq, [ NewSeq | Acc]).
-
-%% @private Backfill the ring with full sequences
--spec backfill_ring(pos_integer(), [node()], integer(), [[node()]]) -> [[node()]].
-backfill_ring(_RingSize, _Nodes, _Remaining=0, Acc) ->
-    Acc;
-backfill_ring(RingSize, Nodes, Remaining, Acc) ->
-    backfill_ring(RingSize, Nodes, Remaining - 1, [Nodes | Acc]).
-
 
 claim_rebalance_n(Ring0, Node) ->
     Ring = riak_core_ring:upgrade(Ring0),
@@ -1549,6 +1596,8 @@ get_nodes_by_location(Nodes, Ring) ->
 
 -ifdef(TEST).
 
+
+
 test_ring_fun(P, N, R) ->
     lists:keyreplace(P, 1, R, {P, N}).
 
@@ -1687,6 +1736,110 @@ wants_claim_test() ->
     ?assertEqual({yes, 1}, default_wants_claim(Ring)),
     riak_core_ring_manager:cleanup_ets(test),
     riak_core_ring_manager:stop().
+
+location_claim_t1_test() ->
+    JoiningNodes =
+        [{n2, loc1},
+        {n3, loc2}, {n4, loc2},
+        {n5, loc3}, {n6, loc3},
+        {n7, loc4}, {n8, loc4},
+        {n9, loc5}, {n10, loc5}
+    ],
+    location_claim_tester(loc1, JoiningNodes, 64),
+    location_claim_tester(loc1, JoiningNodes, 128),
+    location_claim_tester(loc1, JoiningNodes, 256),
+    location_claim_tester(loc1, JoiningNodes, 512),
+    location_claim_tester(loc1, JoiningNodes, 1024),
+    location_claim_tester(loc1, JoiningNodes, 2048).
+
+location_claim_t2_test() ->
+    JoiningNodes =
+        [{n2, loc1},
+            {n3, loc2}, {n4, loc2},
+            {n5, loc3}, {n6, loc3},
+            {n7, loc4}, {n8, loc4}
+        ],
+    location_claim_tester(loc1, JoiningNodes, 64),
+    location_claim_tester(loc1, JoiningNodes, 128),
+    location_claim_tester(loc1, JoiningNodes, 256),
+    location_claim_tester(loc1, JoiningNodes, 512),
+    location_claim_tester(loc1, JoiningNodes, 1024),
+    location_claim_tester(loc1, JoiningNodes, 2048).
+
+location_claim_t3_test() ->
+    JoiningNodes =
+        [{n2, loc1},
+            {n3, loc2}, {n4, loc2},
+            {n5, loc3}, {n6, loc3},
+            {n7, loc4}, {n8, loc4},
+            {n9, loc5}, {n10, loc5},
+            {n11, loc6}, {n12, loc7}, {n13, loc8}
+        ],
+    location_claim_tester(loc1, JoiningNodes, 64),
+    location_claim_tester(loc1, JoiningNodes, 128),
+    location_claim_tester(loc1, JoiningNodes, 256),
+    location_claim_tester(loc1, JoiningNodes, 512),
+    location_claim_tester(loc1, JoiningNodes, 1024),
+    location_claim_tester(loc1, JoiningNodes, 2048).
+
+
+location_claim_tester(N1Loc, NodeLocList, RingSize) ->
+    io:format(
+        "Testing NodeList ~w with RingSize~w~n",
+        [[{n1, N1Loc}|NodeLocList], RingSize]
+    ),
+    riak_core_ring_manager:setup_ets(test),
+    R1 = 
+        riak_core_ring:set_node_location(
+            n1,
+            N1Loc,
+            riak_core_ring:fresh(RingSize, n1)),
+
+    RAll =
+        lists:foldl(
+            fun({N, L}, AccR) ->
+                AccR0 = riak_core_ring:add_member(n1, AccR, N),
+                riak_core_ring:set_node_location(N, L, AccR0)
+            end,
+            R1,
+            NodeLocList
+        ),
+
+    riak_core_ring_manager:set_ring_global(RAll),
+    RClaim =
+        claim(
+            RAll,
+            {riak_core_claim,default_wants_claim},
+            {riak_core_claim, sequential_claim, 4}),
+    {RingSize, Mappings} = riak_core_ring:chash(RClaim),
+    NLs = riak_core_ring:get_nodes_locations(RClaim),
+    LocationMap =
+        lists:map(
+            fun({Idx, N}) ->
+                    {Idx, riak_core_location:get_node_location(N, NLs)}
+            end,
+            Mappings),
+    Prefix = lists:sublist(LocationMap, 3),
+    CheckableMap = LocationMap ++ Prefix,
+    {_, Failures} =
+        lists:foldl(
+            fun({Idx, L}, {Last3, Fails}) ->
+                case lists:member(L, Last3) of
+                    false ->
+                        {[L|lists:sublist(Last3, 2)], Fails};
+                    true ->
+                        {[L|lists:sublist(Last3, 2)], [{Idx, L, Last3}|Fails]}
+                end
+            end,
+            {[], []},
+            CheckableMap
+        ),
+    lists:foreach(fun(F) -> io:format("Failure ~p~n", [F]) end, Failures),
+    ?assert(length(Failures) == 0),
+    riak_core_ring_manager:cleanup_ets(test),
+    riak_core_ring_manager:stop().
+
+
 
 find_biggest_hole_test() ->
     Max = trunc(math:pow(2, 160)),
