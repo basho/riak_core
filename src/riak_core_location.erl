@@ -9,6 +9,7 @@
         check_ring/3,
         support_locations_claim/2,
         get_location_owners/1,
+        get_location_nodes/2,
         local_nodes/2]).
 
 -spec get_node_location(node(), dict:dict()) -> string() | undefined.

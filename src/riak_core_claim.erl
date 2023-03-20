@@ -701,17 +701,17 @@ sequential_claim(Ring0, Node, TargetN) ->
             _ ->
                 {false, 0}
         end,
-    
+        
     Partitions = lists:sort([ I || {I, _} <- riak_core_ring:all_owners(Ring) ]),
     Zipped = 
-        case {SolveableNodeViolation, SolveableLocationViolation} of
+        case {SolveableLocationViolation, SolveableNodeViolation} of
             {true, _} ->
                 Nodelist =
-                    solve_tail_violations(RingSize, Nodes, Shortfall),
+                    solve_tail_violations(RingSize, Nodes, LocationShortfall),
                 lists:zip(Partitions, Nodelist);
             {_, true} ->
                 Nodelist =
-                    solve_tail_violations(RingSize, Nodes, LocationShortfall),
+                    solve_tail_violations(RingSize, Nodes, Shortfall),
                 lists:zip(Partitions, Nodelist);
             _ ->
                 diagonal_stripe(Ring, Nodes)
@@ -1578,17 +1578,47 @@ circular_distance(I1, I2, Q) ->
     min((Q + I1 - I2) rem Q, (Q + I2 - I1) rem Q).
 
 %% @private
-%% Get active nodes ordered by take location parameters into account
+%% Get active nodes ordered by taking location parameters into account
 -spec get_nodes_by_location([node()|undefined], riak_core_ring:riak_core_ring()) ->
   [node()|undefined].
 get_nodes_by_location(Nodes, Ring) ->
-  NodesLocations = riak_core_ring:get_nodes_locations(Ring),
-  case riak_core_location:has_location_set_in_cluster(NodesLocations) of
-    false ->
-      Nodes;
-    true ->
-      riak_core_location:stripe_nodes_by_location(Nodes, NodesLocations)
-  end.
+    NodesLocations = riak_core_ring:get_nodes_locations(Ring),
+    case riak_core_location:has_location_set_in_cluster(NodesLocations) of
+        false ->
+            Nodes;
+        true ->
+            LocationNodesD =
+                riak_core_location:get_location_nodes(Nodes, NodesLocations),
+            stripe_nodes_by_location(LocationNodesD)
+    end.
+
+-spec stripe_nodes_by_location(dict:dict()) -> list(node()|undefined).
+stripe_nodes_by_location(NodesByLocation) ->
+    [LNodes|RestLNodes] =
+        sort_lists_by_length(
+            lists:map(fun({_L, NL}) -> NL end, dict:to_list(NodesByLocation))),
+    stripe_nodes_by_location(RestLNodes, lists:map(fun(N) -> [N] end, LNodes)).
+
+stripe_nodes_by_location([], Acc) ->
+    lists:flatten(Acc);
+stripe_nodes_by_location([LNodes|OtherLNodes], Acc) ->
+    SortedAcc = sort_lists_by_length(Acc),
+    {UpdatedAcc, []} =
+        lists:mapfoldl(
+            fun(NodeList, LocationNodesToAdd) ->
+                case LocationNodesToAdd of
+                    [NodeToAdd|TailNodes] ->
+                        {NodeList ++ [NodeToAdd], TailNodes};
+                    [] ->
+                        {NodeList, []}
+                end
+            end,
+            LNodes,
+            SortedAcc),
+    stripe_nodes_by_location(OtherLNodes, UpdatedAcc).
+
+sort_lists_by_length(ListOfLists) ->
+    lists:sort(fun(L1, L2) -> length(L1) > length(L2) end, ListOfLists).
 
 %% ===================================================================
 %% Unit tests
@@ -1745,12 +1775,12 @@ location_claim_t1_test() ->
         {n7, loc4}, {n8, loc4},
         {n9, loc5}, {n10, loc5}
     ],
-    location_claim_tester(loc1, JoiningNodes, 64),
-    location_claim_tester(loc1, JoiningNodes, 128),
-    location_claim_tester(loc1, JoiningNodes, 256),
-    location_claim_tester(loc1, JoiningNodes, 512),
-    location_claim_tester(loc1, JoiningNodes, 1024),
-    location_claim_tester(loc1, JoiningNodes, 2048).
+    location_claim_tester(n1, loc1, JoiningNodes, 64),
+    location_claim_tester(n1, loc1, JoiningNodes, 128),
+    location_claim_tester(n1, loc1, JoiningNodes, 256),
+    location_claim_tester(n1, loc1, JoiningNodes, 512),
+    location_claim_tester(n1, loc1, JoiningNodes, 1024),
+    location_claim_tester(n1, loc1, JoiningNodes, 2048).
 
 location_claim_t2_test() ->
     JoiningNodes =
@@ -1759,12 +1789,12 @@ location_claim_t2_test() ->
             {n5, loc3}, {n6, loc3},
             {n7, loc4}, {n8, loc4}
         ],
-    location_claim_tester(loc1, JoiningNodes, 64),
-    location_claim_tester(loc1, JoiningNodes, 128),
-    location_claim_tester(loc1, JoiningNodes, 256),
-    location_claim_tester(loc1, JoiningNodes, 512),
-    location_claim_tester(loc1, JoiningNodes, 1024),
-    location_claim_tester(loc1, JoiningNodes, 2048).
+    location_claim_tester(n1, loc1, JoiningNodes, 64),
+    location_claim_tester(n1, loc1, JoiningNodes, 128),
+    location_claim_tester(n1, loc1, JoiningNodes, 256),
+    location_claim_tester(n1, loc1, JoiningNodes, 512),
+    location_claim_tester(n1, loc1, JoiningNodes, 1024),
+    location_claim_tester(n1, loc1, JoiningNodes, 2048).
 
 location_claim_t3_test() ->
     JoiningNodes =
@@ -1775,30 +1805,62 @@ location_claim_t3_test() ->
             {n9, loc5}, {n10, loc5},
             {n11, loc6}, {n12, loc7}, {n13, loc8}
         ],
-    location_claim_tester(loc1, JoiningNodes, 64),
-    location_claim_tester(loc1, JoiningNodes, 128),
-    location_claim_tester(loc1, JoiningNodes, 256),
-    location_claim_tester(loc1, JoiningNodes, 512),
-    location_claim_tester(loc1, JoiningNodes, 1024),
-    location_claim_tester(loc1, JoiningNodes, 2048).
+    location_claim_tester(n1, loc1, JoiningNodes, 64),
+    location_claim_tester(n1, loc1, JoiningNodes, 128),
+    location_claim_tester(n1, loc1, JoiningNodes, 256),
+    location_claim_tester(n1, loc1, JoiningNodes, 512),
+    location_claim_tester(n1, loc1, JoiningNodes, 1024),
+    location_claim_tester(n1, loc1, JoiningNodes, 2048).
+
+location_claim_t4_test() ->
+    JoiningNodes =
+        [{l1n2, loc1}, {l1n3, loc1}, {l1n4, loc1},
+            {l1n5, loc1}, {l1n6, loc1}, {l1n7, loc1}, {l1n8, loc1},
+            {l2n1, loc2}, {l2n2, loc2}, {l2n3, loc2}, {l2n4, loc2},
+            {l2n5, loc2}, {l2n6, loc2}, {l2n7, loc2}, {l2n8, loc2},
+            {l3n1, loc3}, {l3n2, loc3}, {l3n3, loc3}, {l3n4, loc3},
+            {l3n5, loc3}, {l3n6, loc3}, {l3n7, loc3}, {l3n8, loc3},
+            {l4n1, loc4}, {l4n2, loc4}, {l4n3, loc4}, {l4n4, loc4},
+            {l4n5, loc4}, {l4n6, loc4}, {l4n7, loc4}, {l4n8, loc4},
+            {l5n1, loc5}, {l5n2, loc5}, {l5n3, loc5}, {l5n4, loc5},
+            {l5n5, loc5}, {l5n6, loc5}, {l5n7, loc5},
+            {l6n1, loc6}, {l6n2, loc6}, {l6n3, loc6}, {l6n4, loc6},
+            {l6n5, loc6}, {l6n6, loc6}, {l6n7, loc6},
+            {l7n1, loc7}, {l7n2, loc7}, {l7n3, loc7}],
+    location_claim_tester(l1n1, loc1, JoiningNodes, 1024).
+
+% location_claim_t5_test() ->
+%     JoiningNodes =
+%         [{n2, loc1},
+%             {n3, loc2}, {n4, loc2},
+%             {n5, loc3}, {n6, loc3},
+%             {n7, loc4}, {n8, loc4},
+%             {n9, loc5}
+%         ],
+%     location_claim_tester(n1, loc1, JoiningNodes, 64),
+%     location_claim_tester(n1, loc1, JoiningNodes, 128),
+%     location_claim_tester(n1, loc1, JoiningNodes, 256),
+%     location_claim_tester(n1, loc1, JoiningNodes, 512),
+%     location_claim_tester(n1, loc1, JoiningNodes, 1024),
+%     location_claim_tester(n1, loc1, JoiningNodes, 2048).
 
 
-location_claim_tester(N1Loc, NodeLocList, RingSize) ->
+location_claim_tester(N1, N1Loc, NodeLocList, RingSize) ->
     io:format(
         "Testing NodeList ~w with RingSize~w~n",
-        [[{n1, N1Loc}|NodeLocList], RingSize]
+        [[{N1, N1Loc}|NodeLocList], RingSize]
     ),
     riak_core_ring_manager:setup_ets(test),
     R1 = 
         riak_core_ring:set_node_location(
-            n1,
+            N1,
             N1Loc,
-            riak_core_ring:fresh(RingSize, n1)),
+            riak_core_ring:fresh(RingSize, N1)),
 
     RAll =
         lists:foldl(
             fun({N, L}, AccR) ->
-                AccR0 = riak_core_ring:add_member(n1, AccR, N),
+                AccR0 = riak_core_ring:add_member(N1, AccR, N),
                 riak_core_ring:set_node_location(N, L, AccR0)
             end,
             R1,
@@ -1806,6 +1868,7 @@ location_claim_tester(N1Loc, NodeLocList, RingSize) ->
         ),
 
     riak_core_ring_manager:set_ring_global(RAll),
+    
     RClaim =
         claim(
             RAll,
