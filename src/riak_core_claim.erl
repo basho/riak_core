@@ -377,7 +377,7 @@ choose_claim_v2(Ring, Node, Params0) ->
     Claim2 = 
         case select_indices(Owners, Deltas, Indices2, TargetN, RingSize) of
             [] -> [];
-            Claim -> lists:sublist(Claim, Want)
+            Claim ->  lists:sublist(Claim, Want)
         end,
     NewRing =
         lists:foldl(
@@ -701,7 +701,7 @@ sequential_claim(Ring0, Node, TargetN) ->
             _ ->
                 {false, 0}
         end,
-        
+    
     Partitions = lists:sort([ I || {I, _} <- riak_core_ring:all_owners(Ring) ]),
     Zipped = 
         case {SolveableLocationViolation, SolveableNodeViolation} of
@@ -1225,15 +1225,16 @@ prefilter_violations(Ring, Node, AllIndices, Indices, TargetN, RingSize) ->
     LocalNodes =
         case riak_core_location:support_locations_claim(Ring, TargetN) of
             true ->
-                riak_core_location:local_nodes(Ring, Node);
+                [Node|riak_core_location:local_nodes(Ring, Node)];
             false ->
                 [Node]
         end,
     CurrentIndices =
-        lists:flatten(
-            lists:map(
-                fun(N) -> riak_core_ring:indices(Ring, N) end,
-                LocalNodes)),
+        lists:usort(
+            lists:flatten(
+                lists:map(
+                    fun(N) -> riak_core_ring:indices(Ring, N) end,
+                    LocalNodes))),
     CurrentNth = [lists:keyfind(Idx, 2, AllIndices) || Idx <- CurrentIndices],
     [{Nth, Idx} || {Nth, Idx} <- Indices,
                    lists:all(fun({CNth, _}) ->
@@ -1264,22 +1265,22 @@ select_indices(Owners, Deltas, Indices, TargetN, RingSize) ->
     %% is willing to part with.  It's the subsequent partitions
     %% claimed by this node that must not break the target_n invariant.
     {Claim, _, _, _} =
-        lists:foldl(fun({Nth, Idx}, {Out, LastNth, DeltaDT, First}) ->
-                            Owner = dict:fetch(Idx, OwnerDT),
-                            Delta = dict:fetch(Owner, DeltaDT),
-                            MeetsTN = spaced_by_n(LastNth, Nth, TargetN,
-                                                  RingSize),
-                            case (Delta < 0) and (First or MeetsTN) of
-                                true ->
-                                    NextDeltaDT =
-                                        dict:update_counter(Owner, 1, DeltaDT),
-                                    {[Idx|Out], Nth, NextDeltaDT, false};
-                                false ->
-                                    {Out, LastNth, DeltaDT, First}
-                            end
-                    end,
-                    {[], FirstNth, dict:from_list(Deltas), true},
-                    Indices),
+        lists:foldl(
+            fun({Nth, Idx}, {Out, LastNth, DeltaDT, First}) ->
+                Owner = dict:fetch(Idx, OwnerDT),
+                Delta = dict:fetch(Owner, DeltaDT),
+                MeetsTN = spaced_by_n(LastNth, Nth, TargetN, RingSize),
+                case (Delta < 0) and (First or MeetsTN) of
+                    true ->
+                        NextDeltaDT =
+                            dict:update_counter(Owner, 1, DeltaDT),
+                        {[Idx|Out], Nth, NextDeltaDT, false};
+                    false ->
+                        {Out, LastNth, DeltaDT, First}
+                end
+            end,
+            {[], FirstNth, dict:from_list(Deltas), true},
+            Indices),
     lists:reverse(Claim).
 
 %% @private
@@ -1792,7 +1793,7 @@ wants_claim_test() ->
     riak_core_ring_manager:cleanup_ets(test),
     riak_core_ring_manager:stop().
 
-location_claim_t1_test() ->
+location_seqclaim_t1_test() ->
     JoiningNodes =
         [{n2, loc1},
         {n3, loc2}, {n4, loc2},
@@ -1807,7 +1808,7 @@ location_claim_t1_test() ->
     location_claim_tester(n1, loc1, JoiningNodes, 1024),
     location_claim_tester(n1, loc1, JoiningNodes, 2048).
 
-location_claim_t2_test() ->
+location_seqclaim_t2_test() ->
     JoiningNodes =
         [{n2, loc1},
             {n3, loc2}, {n4, loc2},
@@ -1821,7 +1822,7 @@ location_claim_t2_test() ->
     location_claim_tester(n1, loc1, JoiningNodes, 1024),
     location_claim_tester(n1, loc1, JoiningNodes, 2048).
 
-location_claim_t3_test() ->
+location_seqclaim_t3_test() ->
     JoiningNodes =
         [{n2, loc1},
             {n3, loc2}, {n4, loc2},
@@ -1837,7 +1838,7 @@ location_claim_t3_test() ->
     location_claim_tester(n1, loc1, JoiningNodes, 1024),
     location_claim_tester(n1, loc1, JoiningNodes, 2048).
 
-location_claim_t4_test() ->
+location_seqclaim_t4_test() ->
     JoiningNodes =
         [{l1n2, loc1}, {l1n3, loc1}, {l1n4, loc1},
             {l1n5, loc1}, {l1n6, loc1}, {l1n7, loc1}, {l1n8, loc1},
@@ -1858,7 +1859,7 @@ location_claim_t4_test() ->
     location_claim_tester(l1n1, loc1, JoiningNodes, 1024),
     location_claim_tester(l1n1, loc1, JoiningNodes, 2048).
 
-location_claim_t5_test() ->
+location_seqclaim_t5_test() ->
     JoiningNodes =
         [{l1n2, loc1}, {l1n3, loc1}, {l1n4, loc1},
             {l2n1, loc2}, {l2n2, loc2}, {l2n3, loc2}, {l2n4, loc2},
@@ -1873,7 +1874,7 @@ location_claim_t5_test() ->
     location_claim_tester(l1n1, loc1, JoiningNodes, 1024),
     location_claim_tester(l1n1, loc1, JoiningNodes, 2048).
 
-location_claim_t6_test() ->
+location_seqclaim_t6_test() ->
     JoiningNodes =
         [{l1n2, loc1}, {l1n3, loc1}, {l1n4, loc1},
             {l1n5, loc1}, {l1n6, loc1}, {l1n7, loc1}, {l1n8, loc1},
@@ -1891,7 +1892,7 @@ location_claim_t6_test() ->
     location_claim_tester(l1n1, loc1, JoiningNodes, 1024),
     location_claim_tester(l1n1, loc1, JoiningNodes, 2048).
 
-% location_claim_t7_test() ->
+% location_seqclaim_t7_test() ->
 %     JoiningNodes =
 %         [{n2, loc1},
 %             {n3, loc2}, {n4, loc2},
@@ -1906,45 +1907,18 @@ location_claim_t6_test() ->
 %     location_claim_tester(n1, loc1, JoiningNodes, 1024),
 %     location_claim_tester(n1, loc1, JoiningNodes, 2048).
 
-% slow_claim_test_() ->
-%     {timeout, 120, fun slow_claim_test_multi/0}.
 
-% slow_claim_test_multi() ->
-%     lists:foreach(
-%         fun(_I) -> slow_claim_tester() end, lists:seq(1, 1000)
-%     ).
+location_claimv2_t1_test() ->
+    JoiningNodes =
+        [{l1n2, loc1}, {l1n3, loc1}, {l1n4, loc1}, {l1n5, loc1},
+        {l2n1, loc2}, {l2n2, loc2}, {l2n3, loc2}, {l2n4, loc2}, {l2n5, loc2},
+        {l3n1, loc3}, {l3n2, loc3}, {l3n3, loc3}, {l3n4, loc3}, {l3n5, loc3},
+        {l4n1, loc4}, {l4n2, loc4}, {l4n3, loc4}, {l4n4, loc4}, {l4n5, loc4},
+        {l5n1, loc5}, {l5n2, loc5}, {l5n3, loc5}, {l5n4, loc5},
+        {l6n1, loc6}, {l6n2, loc6}, {l6n3, loc6}],
+    location_claim_tester(
+        l1n1, loc1, JoiningNodes, 128, sequential_claim, 3).
 
-% slow_claim_tester() ->
-%     Ring_1 = riak_core_ring:fresh(1024,n1),
-%     Ring_2 = riak_core_ring:set_node_location(n1,loc1,Ring_1),
-%     Ring_3 = riak_core_ring:add_member(n1,Ring_2,n2),
-%     Ring_4 = riak_core_ring:set_node_location(n2,loc1,Ring_3),
-%     Ring_5 = riak_core_ring:add_member(n1,Ring_4,n3),
-%     Ring_6 = riak_core_ring:set_node_location(n3,loc1,Ring_5),
-%     Ring_7 = riak_core_ring:add_member(n1,Ring_6,n4),
-%     Ring_8 = riak_core_ring:set_node_location(n4,loc1,Ring_7),
-%     Ring_9 = riak_core_ring:add_member(n1,Ring_8,n5),
-%     Ring_10 = riak_core_ring:set_node_location(n5,loc2,Ring_9),
-%     Ring_11 = riak_core_ring:add_member(n1,Ring_10,n6),
-%     Ring_12 = riak_core_ring:set_node_location(n6,loc2,Ring_11),
-%     Ring_13 = riak_core_ring:add_member(n1,Ring_12,n7),
-%     Ring_14 = riak_core_ring:set_node_location(n7,loc2,Ring_13),
-%     Ring_15 = riak_core_ring:add_member(n1,Ring_14,n8),
-%     Ring_16 = riak_core_ring:set_node_location(n8,loc2,Ring_15),
-%     Ring_17 = riak_core_ring:add_member(n1,Ring_16,n9),
-%     Ring_18 = riak_core_ring:set_node_location(n9,loc3,Ring_17),
-%     Ring_19 = riak_core_ring:add_member(n1,Ring_18,n10),
-%     Ring_20 = riak_core_ring:set_node_location(n10,loc3,Ring_19),
-%     Ring_21 = riak_core_ring:add_member(n1,Ring_20,n11),
-%     Ring_22 = riak_core_ring:set_node_location(n11,loc3,Ring_21),
-%     Ring_23 = riak_core_ring:add_member(n1,Ring_22,n12),
-%     Ring_24 = riak_core_ring:set_node_location(n12,loc3,Ring_23),
-%     Ring_25 = riak_core_claim:claim(
-%         Ring_24,
-%         {riak_core_claim,wants_claim_v2},
-%         {riak_core_claim,sequential_claim,3}),
-%     {RingSize, _Mappings} = riak_core_ring:chash(Ring_25),
-%     ?assert(RingSize == 1024).
 
 
 location_claim_tester(N1, N1Loc, NodeLocList, RingSize) ->
@@ -1953,7 +1927,7 @@ location_claim_tester(N1, N1Loc, NodeLocList, RingSize) ->
 
 location_claim_tester(N1, N1Loc, NodeLocList, RingSize, ClaimFun, TargetN) ->
     io:format(
-        "Testing NodeList ~w with RingSize~w~n",
+        "Testing NodeList ~w with RingSize ~w~n",
         [[{N1, N1Loc}|NodeLocList], RingSize]
     ),
     riak_core_ring_manager:setup_ets(test),
@@ -1975,11 +1949,18 @@ location_claim_tester(N1, N1Loc, NodeLocList, RingSize, ClaimFun, TargetN) ->
 
     riak_core_ring_manager:set_ring_global(RAll),
     
+    Params =
+        case ClaimFun of
+            sequential_claim ->
+                TargetN;
+            choose_claim_v2 ->
+                [{target_n_val, 3}]
+        end,
     RClaim =
         claim(
             RAll,
             {riak_core_claim,default_wants_claim},
-            {riak_core_claim, ClaimFun, TargetN}),
+            {riak_core_claim, ClaimFun, Params}),
     {RingSize, Mappings} = riak_core_ring:chash(RClaim),
     NLs = riak_core_ring:get_nodes_locations(RClaim),
     LocationMap =
@@ -1992,12 +1973,13 @@ location_claim_tester(N1, N1Loc, NodeLocList, RingSize, ClaimFun, TargetN) ->
     CheckableMap = LocationMap ++ Prefix,
     {_, Failures} =
         lists:foldl(
-            fun({Idx, L}, {Last3, Fails}) ->
-                case lists:member(L, Last3) of
+            fun({Idx, L}, {LastNminus1, Fails}) ->
+                case lists:member(L, LastNminus1) of
                     false ->
-                        {[L|lists:sublist(Last3, 2)], Fails};
+                        {[L|lists:sublist(LastNminus1, TargetN - 2)], Fails};
                     true ->
-                        {[L|lists:sublist(Last3, 2)], [{Idx, L, Last3}|Fails]}
+                        {[L|lists:sublist(LastNminus1, TargetN - 2)],
+                            [{Idx, L, LastNminus1}|Fails]}
                 end
             end,
             {[], []},
