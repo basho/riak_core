@@ -757,11 +757,13 @@ check_for_location_tail_violation(Nodes, Ring, OH, TargetN) ->
 -spec solveable_violation(
     pos_integer(), pos_integer(), pos_integer(), pos_integer()) -> boolean().
 solveable_violation(RingSize, NodeCount, TargetN, Shortfall) ->
-    case RingSize div NodeCount of 
-        1 ->
-            Shortfall < (NodeCount - TargetN);
-        CompleteSequences ->
-            CompleteSequences >= Shortfall
+    case RingSize div NodeCount of
+        LoopCount when LoopCount >= Shortfall ->
+            true;
+        LoopCount ->
+            SplitSize = Shortfall div LoopCount,
+            BiggestTake = Shortfall - ((LoopCount - 1) * SplitSize),
+            (NodeCount - BiggestTake) >= TargetN
     end.
 
 %% @doc
@@ -776,20 +778,43 @@ solve_tail_violations(RingSize, Nodes, Shortfall) ->
         lists:split(RingSize rem length(Nodes), Nodes),
     ExcessLoop = lists:sublist(Remainder, Shortfall),
     Tail = LastLoop ++ ExcessLoop,
-    case RingSize div length(Nodes) of
-        1 ->
-            InitialLoop = lists:subtract(Nodes, ExcessLoop),
-            InitialLoop ++ Tail;
-        LoopCount ->
-            CompleteLoops = 
-                lists:append(
-                    lists:duplicate(LoopCount - length(ExcessLoop), Nodes)),
-            PartialLoops =
-                lists:map(
-                    fun(N) -> lists:subtract(Nodes, [N]) end, 
-                    lists:reverse(ExcessLoop)),
-            CompleteLoops ++ lists:append(PartialLoops) ++ Tail
-    end.
+    LoopCount = RingSize div length(Nodes),
+    RemoveList =
+        divide_list_for_removes(lists:reverse(ExcessLoop), LoopCount),
+    CompleteLoops =
+        lists:append(
+            lists:duplicate(LoopCount - length(RemoveList), Nodes)),
+    PartialLoops =
+        lists:map(
+            fun(ENL) -> lists:subtract(Nodes, ENL) end, 
+            RemoveList),
+    CompleteLoops ++ lists:append(PartialLoops) ++ Tail.
+
+%% @doc 
+%% Normally need to remove one of the excess nodes each loop around the node
+%% list.  However, if there are not enough loops, more than one can be removed
+%% per loop - assuming the solveable_violation/4 condition passes (i.e. this
+%% will not breach the TargetN).
+-spec divide_list_for_removes(list(node()), pos_integer())
+        -> list(list(node())).
+divide_list_for_removes(Excess, LoopCount) when LoopCount >= length(Excess) ->
+    lists:map(fun(N) -> [N] end, Excess);
+divide_list_for_removes(Excess, 1) ->
+    [Excess];
+divide_list_for_removes(Excess, LoopCount) ->
+    FetchesPerLoop = length(Excess) div LoopCount,
+    LastFetch = length(Excess) - FetchesPerLoop * (LoopCount - 1),
+    {[], GroupedFetches} =
+        lists:foldl(
+            fun(FC, {ENs, GroupedENs}) ->
+                {NextGroup, Remainder} = lists:split(FC, ENs),
+                {Remainder, GroupedENs ++ [NextGroup]}
+            end,
+            {Excess, []},
+            lists:duplicate(LoopCount - 1, FetchesPerLoop) ++ [LastFetch]
+        ),
+    GroupedFetches.
+
 
 %% @private every module has a ceiling function
 -spec ceiling(float()) -> integer().
@@ -817,13 +842,15 @@ claim_rebalance_n(Ring0, Node) ->
 diagonal_stripe(Ring, Nodes) ->
     %% diagonal stripes guarantee most disperse data
     Partitions = lists:sort([ I || {I, _} <- riak_core_ring:all_owners(Ring) ]),
-    Zipped = lists:zip(Partitions,
-                       lists:sublist(
-                         lists:flatten(
-                           lists:duplicate(
-                             1+(length(Partitions) div length(Nodes)),
-                             Nodes)),
-                         1, length(Partitions))),
+    Zipped = 
+        lists:zip(
+            Partitions,
+            lists:sublist(
+                lists:flatten(
+                    lists:duplicate(
+                        1 + (length(Partitions) div length(Nodes)), Nodes)),
+                    1,
+                    length(Partitions))),
     Zipped.
 
 random_choose_claim(Ring) ->
@@ -1012,8 +1039,6 @@ simple_transfer([{P, N}|Rest], Statics, Ring, {Seed, Prev, Counts}) ->
     simple_transfer(Rest, Statics, Ring, {Seed, [{P, N}|Prev], Counts});
 simple_transfer([], _Statics, Ring, _LoopAccs) ->
     {ok, Ring}.
-
-
 
 
 %% ===================================================================
@@ -1827,9 +1852,46 @@ location_claim_t4_test() ->
             {l6n1, loc6}, {l6n2, loc6}, {l6n3, loc6}, {l6n4, loc6},
             {l6n5, loc6}, {l6n6, loc6}, {l6n7, loc6},
             {l7n1, loc7}, {l7n2, loc7}, {l7n3, loc7}],
-    location_claim_tester(l1n1, loc1, JoiningNodes, 1024).
+    location_claim_tester(l1n1, loc1, JoiningNodes, 128),
+    location_claim_tester(l1n1, loc1, JoiningNodes, 256),
+    location_claim_tester(l1n1, loc1, JoiningNodes, 512),
+    location_claim_tester(l1n1, loc1, JoiningNodes, 1024),
+    location_claim_tester(l1n1, loc1, JoiningNodes, 2048).
 
-% location_claim_t5_test() ->
+location_claim_t5_test() ->
+    JoiningNodes =
+        [{l1n2, loc1}, {l1n3, loc1}, {l1n4, loc1},
+            {l2n1, loc2}, {l2n2, loc2}, {l2n3, loc2}, {l2n4, loc2},
+            {l3n1, loc3}, {l3n2, loc3}, {l3n3, loc3}, {l3n4, loc3},
+            {l4n1, loc4}, {l4n2, loc4}, {l4n3, loc4}, {l4n4, loc4},
+            {l5n1, loc5}, {l5n2, loc5}, {l5n3, loc5},
+            {l6n1, loc6}, {l6n2, loc6}, {l6n3, loc6}, {l6n4, loc6},
+            {l7n1, loc7}, {l7n2, loc7}],
+    location_claim_tester(l1n1, loc1, JoiningNodes, 128),
+    location_claim_tester(l1n1, loc1, JoiningNodes, 256),
+    location_claim_tester(l1n1, loc1, JoiningNodes, 512),
+    location_claim_tester(l1n1, loc1, JoiningNodes, 1024),
+    location_claim_tester(l1n1, loc1, JoiningNodes, 2048).
+
+location_claim_t6_test() ->
+    JoiningNodes =
+        [{l1n2, loc1}, {l1n3, loc1}, {l1n4, loc1},
+            {l1n5, loc1}, {l1n6, loc1}, {l1n7, loc1}, {l1n8, loc1},
+            {l2n1, loc2}, {l2n2, loc2}, {l2n3, loc2}, {l2n4, loc2},
+            {l2n5, loc2}, {l2n6, loc2}, {l2n7, loc2}, {l2n8, loc2},
+            {l3n1, loc3}, {l3n2, loc3}, {l3n3, loc3}, {l3n4, loc3},
+            {l3n5, loc3}, {l3n6, loc3}, {l3n7, loc3}, {l3n8, loc3},
+            {l4n1, loc4}, {l4n2, loc4}, {l4n3, loc4}, {l4n4, loc4},
+            {l4n5, loc4}, {l4n6, loc4}, {l4n7, loc4}, {l4n8, loc4},
+            {l5n1, loc5}, {l5n2, loc5},
+            {l6n1, loc6}, {l6n2, loc6}, {l6n3, loc6}, {l6n4, loc6},
+            {l6n5, loc6}, {l6n6, loc6}, {l6n7, loc6}, {l6n8, loc8}],
+    location_claim_tester(l1n1, loc1, JoiningNodes, 256),
+    location_claim_tester(l1n1, loc1, JoiningNodes, 512),
+    location_claim_tester(l1n1, loc1, JoiningNodes, 1024),
+    location_claim_tester(l1n1, loc1, JoiningNodes, 2048).
+
+% location_claim_t7_test() ->
 %     JoiningNodes =
 %         [{n2, loc1},
 %             {n3, loc2}, {n4, loc2},
@@ -1844,8 +1906,51 @@ location_claim_t4_test() ->
 %     location_claim_tester(n1, loc1, JoiningNodes, 1024),
 %     location_claim_tester(n1, loc1, JoiningNodes, 2048).
 
+% slow_claim_test_() ->
+%     {timeout, 120, fun slow_claim_test_multi/0}.
+
+% slow_claim_test_multi() ->
+%     lists:foreach(
+%         fun(_I) -> slow_claim_tester() end, lists:seq(1, 1000)
+%     ).
+
+% slow_claim_tester() ->
+%     Ring_1 = riak_core_ring:fresh(1024,n1),
+%     Ring_2 = riak_core_ring:set_node_location(n1,loc1,Ring_1),
+%     Ring_3 = riak_core_ring:add_member(n1,Ring_2,n2),
+%     Ring_4 = riak_core_ring:set_node_location(n2,loc1,Ring_3),
+%     Ring_5 = riak_core_ring:add_member(n1,Ring_4,n3),
+%     Ring_6 = riak_core_ring:set_node_location(n3,loc1,Ring_5),
+%     Ring_7 = riak_core_ring:add_member(n1,Ring_6,n4),
+%     Ring_8 = riak_core_ring:set_node_location(n4,loc1,Ring_7),
+%     Ring_9 = riak_core_ring:add_member(n1,Ring_8,n5),
+%     Ring_10 = riak_core_ring:set_node_location(n5,loc2,Ring_9),
+%     Ring_11 = riak_core_ring:add_member(n1,Ring_10,n6),
+%     Ring_12 = riak_core_ring:set_node_location(n6,loc2,Ring_11),
+%     Ring_13 = riak_core_ring:add_member(n1,Ring_12,n7),
+%     Ring_14 = riak_core_ring:set_node_location(n7,loc2,Ring_13),
+%     Ring_15 = riak_core_ring:add_member(n1,Ring_14,n8),
+%     Ring_16 = riak_core_ring:set_node_location(n8,loc2,Ring_15),
+%     Ring_17 = riak_core_ring:add_member(n1,Ring_16,n9),
+%     Ring_18 = riak_core_ring:set_node_location(n9,loc3,Ring_17),
+%     Ring_19 = riak_core_ring:add_member(n1,Ring_18,n10),
+%     Ring_20 = riak_core_ring:set_node_location(n10,loc3,Ring_19),
+%     Ring_21 = riak_core_ring:add_member(n1,Ring_20,n11),
+%     Ring_22 = riak_core_ring:set_node_location(n11,loc3,Ring_21),
+%     Ring_23 = riak_core_ring:add_member(n1,Ring_22,n12),
+%     Ring_24 = riak_core_ring:set_node_location(n12,loc3,Ring_23),
+%     Ring_25 = riak_core_claim:claim(
+%         Ring_24,
+%         {riak_core_claim,wants_claim_v2},
+%         {riak_core_claim,sequential_claim,3}),
+%     {RingSize, _Mappings} = riak_core_ring:chash(Ring_25),
+%     ?assert(RingSize == 1024).
+
 
 location_claim_tester(N1, N1Loc, NodeLocList, RingSize) ->
+    location_claim_tester(N1, N1Loc, RingSize, sequential_claim, 4).
+
+location_claim_tester(N1, N1Loc, NodeLocList, RingSize, ClaimFun, TargetN) ->
     io:format(
         "Testing NodeList ~w with RingSize~w~n",
         [[{N1, N1Loc}|NodeLocList], RingSize]
@@ -1873,7 +1978,7 @@ location_claim_tester(N1, N1Loc, NodeLocList, RingSize) ->
         claim(
             RAll,
             {riak_core_claim,default_wants_claim},
-            {riak_core_claim, sequential_claim, 4}),
+            {riak_core_claim, ClaimFun, TargetN}),
     {RingSize, Mappings} = riak_core_ring:chash(RClaim),
     NLs = riak_core_ring:get_nodes_locations(RClaim),
     LocationMap =
@@ -1903,6 +2008,18 @@ location_claim_tester(N1, N1Loc, NodeLocList, RingSize) ->
     riak_core_ring_manager:stop().
 
 
+divide_excess_test() ->
+    ?assertMatch(
+        [[n1], [n2], [n3]], divide_list_for_removes([n1, n2, n3], 3)),
+    ?assertMatch(
+        [[n1, n2, n3]], divide_list_for_removes([n1, n2, n3], 1)),
+    ?assertMatch(
+        [[n1], [n2, n3]], divide_list_for_removes([n1, n2, n3], 2)),
+    ?assertMatch(
+        [[n1, n2], [n3, n4]], divide_list_for_removes([n1, n2, n3, n4], 2)),
+    ?assertMatch(
+        [[n1, n2], [n3, n4, n5]],
+            divide_list_for_removes([n1, n2, n3, n4, n5], 2)).    
 
 find_biggest_hole_test() ->
     Max = trunc(math:pow(2, 160)),
