@@ -89,11 +89,31 @@ claim(Ring) ->
     Choose = app_helper:get_env(riak_core, choose_claim_fun),
     claim(Ring, Want, Choose).
 
-claim(Ring, Want, Choose) ->
+claim(Ring, {WMod, WFun}=Want, Choose) ->
     Members = riak_core_ring:claiming_members(Ring),
-    lists:foldl(fun(Node, Ring0) ->
-                        claim_until_balanced(Ring0, Node, Want, Choose)
-                end, Ring, Members).
+    NoInitialWants =
+        lists:all(
+            fun(N) -> apply(WMod, WFun, [Ring, N]) == no end, Members),
+    case NoInitialWants of
+        true ->
+            case riak_core_ring:has_location_changed(Ring) of
+                true ->
+                    [HeadMember|_Rest] = Members,
+                    choose_new_ring(
+                        riak_core_ring:clear_location_changed(Ring),
+                        HeadMember,
+                        Choose);
+                false ->
+                    Ring
+            end;
+        false ->
+            lists:foldl(
+                fun(Node, Ring0) ->
+                    claim_until_balanced(Ring0, Node, Want, Choose)
+                end,
+                riak_core_ring:clear_location_changed(Ring),
+                Members)
+    end.
 
 claim_until_balanced(Ring, Node) ->
     Want = app_helper:get_env(riak_core, wants_claim_fun),
@@ -105,22 +125,17 @@ claim_until_balanced(Ring, Node, {WMod, WFun}=Want, Choose) ->
     case NeedsIndexes of
         no ->
             Ring;
-        {yes, NumToClaim} ->
-            UpdRing =
-                case NumToClaim of
-                    location_change ->
-                        riak_core_ring:clear_location_changed(Ring);
-                    _ ->
-                        Ring
-                end,
-            NewRing = 
-                case Choose of
-                    {CMod, CFun} ->
-                        CMod:CFun(UpdRing, Node);
-                    {CMod, CFun, Params} ->
-                        CMod:CFun(UpdRing, Node, Params)
-                end,
+        {yes, _NumToClaim} ->
+            NewRing = choose_new_ring(Ring, Node, Choose),
             claim_until_balanced(NewRing, Node, Want, Choose)
+    end.
+
+choose_new_ring(Ring, Node, Choose) ->
+    case Choose of
+        {CMod, CFun} ->
+            CMod:CFun(Ring, Node);
+        {CMod, CFun, Params} ->
+            CMod:CFun(Ring, Node, Params)
     end.
 
 %% ===================================================================
@@ -197,7 +212,7 @@ wants_claim_v2(Ring) ->
 
 -spec wants_claim_v2(
     riak_core_ring:riak_core_ring(), node()) ->
-        no|{yes, location_change|non_neg_integer()}. 
+        no|{yes, non_neg_integer()}. 
 wants_claim_v2(Ring, Node) ->
     Active = riak_core_ring:claiming_members(Ring),
     Owners = riak_core_ring:all_owners(Ring),
@@ -208,12 +223,7 @@ wants_claim_v2(Ring, Node) ->
     Count = proplists:get_value(Node, Counts, 0),
     case Count < Avg of
         false ->
-            case riak_core_ring:has_location_changed(Ring) of
-              true ->
-                {yes, location_change};
-              false ->
-                no
-            end;
+            no;
         true ->
             {yes, Avg - Count}
     end.
