@@ -1948,7 +1948,8 @@ location_claim_t6_test() ->
 
 
 location_claim_tester(N1, N1Loc, NodeLocList, RingSize) ->
-    location_claim_tester(N1, N1Loc, RingSize, sequential_claim, 4).
+    location_claim_tester(
+        N1, N1Loc, NodeLocList, RingSize, sequential_claim, 4).
 
 location_claim_tester(N1, N1Loc, NodeLocList, RingSize, ClaimFun, TargetN) ->
     io:format(
