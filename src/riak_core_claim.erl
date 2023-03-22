@@ -94,11 +94,12 @@ claim(Ring, {WMod, WFun}=Want, Choose) ->
     NoInitialWants =
         lists:all(
             fun(N) -> apply(WMod, WFun, [Ring, N]) == no end, Members),
+    SortedMembers = sort_members_for_choose(Ring, Members),
     case NoInitialWants of
         true ->
             case riak_core_ring:has_location_changed(Ring) of
                 true ->
-                    [HeadMember|_Rest] = Members,
+                    [HeadMember|_Rest] = SortedMembers,
                     choose_new_ring(
                         riak_core_ring:clear_location_changed(Ring),
                         HeadMember,
@@ -112,7 +113,7 @@ claim(Ring, {WMod, WFun}=Want, Choose) ->
                     claim_until_balanced(Ring0, Node, Want, Choose)
                 end,
                 riak_core_ring:clear_location_changed(Ring),
-                Members)
+                SortedMembers)
     end.
 
 claim_until_balanced(Ring, Node) ->
@@ -137,6 +138,39 @@ choose_new_ring(Ring, Node, Choose) ->
         {CMod, CFun, Params} ->
             CMod:CFun(Ring, Node, Params)
     end.
+
+sort_members_for_choose(Ring, Members) ->
+    Owners = riak_core_ring:all_owners(Ring),
+    Ls = riak_core_ring:get_nodes_locations(Ring),
+    LNCounts =
+        lists:foldl(
+            fun({_Idx, Node}, Counts) ->
+                OwnerLocation =
+                    riak_core_location:get_node_location(Node, Ls),
+                lists:map(
+                    fun({LC, NC, N, L}) ->
+                        case {N, L} of
+                            {Node, _} ->
+                                {LC + 1, NC + 1, N, L};
+                            {_, OwnerLocation} ->
+                                {LC + 1, NC, N, L};
+                            _ ->
+                                {LC, NC, N, L}
+                        end
+                    end,
+                    Counts 
+                )
+            end,
+            lists:map(
+                fun(N) ->
+                    {0, 0, N, riak_core_location:get_node_location(N, Ls)}
+                end,
+                Members),
+            Owners),
+    lists:map(
+        fun({_LC, _NC, N, _L}) -> N end,
+        lists:sort(LNCounts)).
+
 
 %% ===================================================================
 %% Claim Function Implementations 
@@ -345,6 +379,7 @@ choose_claim_v2(Ring, Node, Params0) ->
     EnoughNodes =
         (NodeCount > TargetN)
         or ((NodeCount == TargetN) and (RingSize rem TargetN =:= 0)),
+    
     case EnoughNodes of
         true ->
             %% If we have enough nodes to meet target_n, then we prefer to
@@ -366,7 +401,8 @@ choose_claim_v2(Ring, Node, Params0) ->
             Padding = lists:duplicate(TargetN, undefined),
             Expanded = lists:sublist(Active ++ Padding, TargetN),
             ExpandedLocation = get_nodes_by_location(Expanded, Ring),
-            PreferredClaim = riak_core_claim:diagonal_stripe(Ring, ExpandedLocation),
+            PreferredClaim =
+                riak_core_claim:diagonal_stripe(Ring, ExpandedLocation),
             PreferredNth = [begin
                                 {Nth, Idx} = lists:keyfind(Idx, 2, AllIndices),
                                 Nth
@@ -383,6 +419,7 @@ choose_claim_v2(Ring, Node, Params0) ->
     Indices2 =
         prefilter_violations(
             Ring, Node, AllIndices, Indices, TargetN, RingSize),
+
     %% Claim indices from the remaining candidate set
     Claim2 = 
         case select_indices(Owners, Deltas, Indices2, TargetN, RingSize) of
@@ -399,6 +436,7 @@ choose_claim_v2(Ring, Node, Params0) ->
 
     RingChanged = ([] /= Claim2),
     RingMeetsTargetN = meets_target_n(NewRing, TargetN),
+
     case {RingChanged, EnoughNodes, RingMeetsTargetN} of
         {false, _, _} ->
             %% Unable to claim, fallback to re-diagonalization
@@ -1193,15 +1231,19 @@ find_violations(Owners, TargetN) ->
 -spec get_counts([node()], [{non_neg_integer(), node()}]) ->
                         [{node(), pos_integer()}].
 get_counts(Nodes, PartitionOwners) ->
-    Empty = [{Node, 0} || Node <- Nodes],
-    Counts = lists:foldl(fun({_Idx, Node}, Counts) ->
-                                 case lists:member(Node, Nodes) of
-                                     true ->
-                                         dict:update_counter(Node, 1, Counts);
-                                     false ->
-                                         Counts
-                                 end
-                         end, dict:from_list(Empty), PartitionOwners),
+    EmptyNodes = [{Node, 0} || Node <- Nodes],
+    Counts =
+        lists:foldl(
+            fun({_Idx, Node}, NodeCounts) ->
+                case lists:member(Node, Nodes) of
+                    true ->
+                        dict:update_counter(Node, 1, NodeCounts);
+                    false ->
+                        NodeCounts
+                end
+            end,
+            dict:from_list(EmptyNodes),
+            PartitionOwners),
     dict:to_list(Counts).
 
 %% @private
@@ -1918,6 +1960,160 @@ location_seqclaim_t6_test() ->
 %     location_claim_tester(n1, loc1, JoiningNodes, 2048).
 
 
+location_multistage_t1_test_() ->
+    {timeout, 60, fun location_multistage_t1_tester/0}.
+
+location_multistage_t2_test_() ->
+    {timeout, 60, fun location_multistage_t2_tester/0}.
+
+% location_multistage_t3_test_() ->
+%     {timeout, 60, fun location_multistage_t3_tester/0}.
+
+location_multistage_t1_tester() ->
+    %% This is a tricky corner case where we would fail to meet TargetN for
+    %% locations if joining all 9 nodes in one claim (as sequential_claim will
+    %% not succeed).  However, If we join 8 nodes, then add the 9th, TargetN
+    %% is always achieved
+    JoiningNodes =
+        [{l1n2, loc1},
+            {l2n3, loc2}, {l2n4, loc2},
+            {l3n5, loc3}, {l3n6, loc3},
+            {l4n7, loc4}, {l4n8, loc4}
+        ],
+    location_multistage_claim_tester(64, JoiningNodes, 4, l5n9, loc5, 4),
+    location_multistage_claim_tester(128, JoiningNodes, 4, l5n9, loc5, 4),
+    location_multistage_claim_tester(256, JoiningNodes, 4, l5n9, loc5, 4),
+    location_multistage_claim_tester(512, JoiningNodes, 4, l5n9, loc5, 4),
+    location_multistage_claim_tester(1024, JoiningNodes, 4, l5n9, loc5, 4),
+    location_multistage_claim_tester(2048, JoiningNodes, 4, l5n9, loc5, 4).
+
+location_multistage_t2_tester() ->
+    %% This is a tricky corner case as with location_multistage_t1_tester/1,
+    %% but now, because the TargetN does not divide evenly by the ring size
+    %% only TargetN - 1 can be achieved for locations.
+    JoiningNodes =
+        [{l1n2, loc1},
+            {l2n3, loc2}, {l2n4, loc2},
+            {l3n5, loc3}, {l3n6, loc3}
+        ],
+    location_multistage_claim_tester(64, JoiningNodes, 3, l4n7, loc4, 2),
+    location_multistage_claim_tester(128, JoiningNodes, 3, l4n7, loc4, 2),
+    location_multistage_claim_tester(256, JoiningNodes, 3, l4n7, loc4, 2),
+    location_multistage_claim_tester(512, JoiningNodes, 3, l4n7, loc4, 2),
+    location_multistage_claim_tester(1024, JoiningNodes, 3, l4n7, loc4, 2),
+    location_multistage_claim_tester(2048, JoiningNodes, 3, l4n7, loc4, 2).
+
+% location_multistage_t3_tester() ->
+%     %% This is a minimal case for having TargetN locations, and an uneven
+%     %% Alloctaion around the locations.  Is TargetN - 1 still held up
+%     JoiningNodes =
+%         [{l1n2, loc1},
+%             {l2n3, loc2}, {l2n6, loc2},
+%             {l3n4, loc3},
+%             {l4n5, loc4}
+%         ],
+%     location_multistage_claim_tester(64, JoiningNodes, 4, l3n7, loc3, 3),
+%     location_multistage_claim_tester(128, JoiningNodes, 4, l3n7, loc3, 3),
+%     location_multistage_claim_tester(256, JoiningNodes, 4, l3n7, loc3, 3),
+%     location_multistage_claim_tester(512, JoiningNodes, 4, l3n7, loc3, 3),
+%     location_multistage_claim_tester(1024, JoiningNodes, 4, l3n7, loc3, 3),
+%     location_multistage_claim_tester(2048, JoiningNodes, 4, l3n7, loc3, 3).
+
+location_multistage_claim_tester(
+        RingSize, JoiningNodes, TargetN, NewNode, NewLocation, VerifyN) ->
+    SW0 = os:timestamp(),
+    N1 = l1n1,
+    N1Loc = loc1,
+    io:format(
+        "Testing NodeList ~w with RingSize ~w~n",
+        [[{N1, N1Loc}|JoiningNodes], RingSize]
+    ),
+    R1 = 
+        riak_core_ring:set_node_location(
+            N1,
+            N1Loc,
+            riak_core_ring:fresh(RingSize, N1)),
+
+    RAll =
+        lists:foldl(
+            fun({N, L}, AccR) ->
+                AccR0 = riak_core_ring:add_member(N1, AccR, N),
+                riak_core_ring:set_node_location(N, L, AccR0)
+            end,
+            R1,
+            JoiningNodes
+        ),
+    Params = [{target_n_val, TargetN}],
+    SW1 = os:timestamp(),
+    RClaimInit =
+        claim(
+            RAll,
+            {riak_core_claim,default_wants_claim},
+            {riak_core_claim, choose_claim_v2, Params}),
+    SW2 = os:timestamp(),
+    io:format("Reclaiming without committing~n"),
+
+    RingExtendA =
+        riak_core_ring:set_node_location(
+            NewNode,
+            NewLocation,
+            riak_core_ring:add_member(N1, RClaimInit, NewNode)),
+    RClaimExtendA =
+        claim(
+            RingExtendA,
+            {riak_core_claim,default_wants_claim},
+            {riak_core_claim, choose_claim_v2, Params}),
+    
+    io:format("Commit initial claim~n"),
+    SW3 = os:timestamp(),
+
+    RClaimInitCommit =
+        riak_core_ring:increment_vclock(
+            node(),
+            riak_core_ring:clear_location_changed(RClaimInit)),
+    
+    io:format("Reclaiming following commit~n"),
+    SW4 = os:timestamp(),
+
+    RingExtendB =
+        riak_core_ring:set_node_location(
+            NewNode,
+            NewLocation,
+            riak_core_ring:add_member(N1, RClaimInitCommit, NewNode)),
+    RClaimExtendB =
+        claim(
+            RingExtendB,
+            {riak_core_claim,default_wants_claim},
+            {riak_core_claim, choose_claim_v2, Params}),
+    
+    {_RingSizeInit, MappingsInit} = riak_core_ring:chash(RClaimInit),
+    {RingSizeA, MappingsA} = riak_core_ring:chash(RClaimExtendA),
+    {RingSizeB, MappingsB} = riak_core_ring:chash(RClaimExtendB),
+
+    SW5 = os:timestamp(),
+
+    ?assert(RingSizeA == RingSizeB),
+    ?assert(MappingsA == MappingsB),
+
+    io:format("Testing initial Mappings:~n~n~p~n", [MappingsInit]),
+    check_for_failures(MappingsInit, VerifyN, RClaimInit),
+    io:format("Testing secondary Mappings:~n~n~p~n", [MappingsB]),
+    check_for_failures(MappingsB, VerifyN, RClaimExtendB),
+    
+    SW6 = os:timestamp(),
+    io:format(
+        "Test for RingSize ~w had timings:"
+        "Setup ~w  First Claim ~w  Next Claim ~w Commit ~w Other Claims ~w Verify ~w~n",
+        [RingSize,
+            timer:now_diff(SW1, SW0) div 1000,
+            timer:now_diff(SW2, SW1) div 1000,
+            timer:now_diff(SW3, SW2) div 1000,
+            timer:now_diff(SW4, SW3) div 1000,
+            timer:now_diff(SW5, SW4) div 1000,
+            timer:now_diff(SW6, SW5) div 1000]
+    ).
+
+
 location_claimv2_t1_test() ->
     JoiningNodes =
         [{l1n2, loc1}, {l1n3, loc1}, {l1n4, loc1}, {l1n5, loc1},
@@ -1930,12 +2126,12 @@ location_claimv2_t1_test() ->
         l1n1, loc1, JoiningNodes, 128, sequential_claim, 3).
 
 
-
 location_claim_tester(N1, N1Loc, NodeLocList, RingSize) ->
     location_claim_tester(
         N1, N1Loc, NodeLocList, RingSize, sequential_claim, 4).
 
-location_claim_tester(N1, N1Loc, NodeLocList, RingSize, ClaimFun, TargetN) ->
+location_claim_tester(
+        N1, N1Loc, NodeLocList, RingSize, ClaimFun, TargetN) ->
     io:format(
         "Testing NodeList ~w with RingSize ~w~n",
         [[{N1, N1Loc}|NodeLocList], RingSize]
@@ -1972,6 +2168,14 @@ location_claim_tester(N1, N1Loc, NodeLocList, RingSize, ClaimFun, TargetN) ->
             {riak_core_claim,default_wants_claim},
             {riak_core_claim, ClaimFun, Params}),
     {RingSize, Mappings} = riak_core_ring:chash(RClaim),
+
+    check_for_failures(Mappings, TargetN, RClaim),
+
+    riak_core_ring_manager:cleanup_ets(test),
+    riak_core_ring_manager:stop().
+
+
+check_for_failures(Mappings, TargetN, RClaim) ->
     NLs = riak_core_ring:get_nodes_locations(RClaim),
     LocationMap =
         lists:map(
@@ -1996,9 +2200,7 @@ location_claim_tester(N1, N1Loc, NodeLocList, RingSize, ClaimFun, TargetN) ->
             CheckableMap
         ),
     lists:foreach(fun(F) -> io:format("Failure ~p~n", [F]) end, Failures),
-    ?assert(length(Failures) == 0),
-    riak_core_ring_manager:cleanup_ets(test),
-    riak_core_ring_manager:stop().
+    ?assert(length(Failures) == 0).
 
 
 divide_excess_test() ->
