@@ -1835,9 +1835,9 @@ transfer_needstobesorted_tester(I) ->
 
 
 prefilter_violations_test_() ->
-    % Be strict on test timeout.  Unrefined code took > 5s, whereas the
+    % Be strict on test timeout.  Unrefined code took > 10s, whereas the
     % refactored code should be << 1s.
-    {timeout, 2, fun prefilter_violations_perf/0}.
+    {timeout, 5, fun prefilter_violations_perf/0}.
 
 prefilter_violations_perf() ->
     JoiningNodes =
@@ -1875,13 +1875,27 @@ prefilter_violations_perf() ->
         lists:zip(
             lists:seq(0, length(Owners)-1), [Idx || {Idx, _} <- Owners]),
 
-    {T0, FilteredIndices} =
+    {T0, FilteredIndices0} =
         timer:tc(
             fun prefilter_violations/6,
             [RAll, l1n2, AllIndices, AllIndices, 4, RingSize]),
     io:format("Prefilter violations took ~w ms~n", [T0 div 1000]),
+    ?assert(FilteredIndices0 == []),
     
-    ?assert(FilteredIndices == []).
+    {T1, FilteredIndices1} =
+        timer:tc(
+            fun prefilter_violations/6,
+            [RAll, l2n3, AllIndices, AllIndices, 4, RingSize]),
+    io:format("Prefilter violations took ~w ms~n", [T1 div 1000]),
+    ?assertMatch(RingSize, length(FilteredIndices1)),
+    
+    RTrans = riak_core_ring:transfer_node(0, l2n3, RAll),
+    {T2, FilteredIndices2} =
+        timer:tc(
+            fun prefilter_violations/6,
+            [RTrans, l2n3, AllIndices, AllIndices, 4, RingSize]),
+    io:format("Prefilter violations took ~w ms~n", [T2 div 1000]),
+    ?assertMatch(RingSize, length(FilteredIndices2) + 7).
 
 simple_transfer_evendistribution_test() ->
     R0 = [{0, n1}, {1, n2}, {2, n3}, {3, n4}, {4, n5}, 
