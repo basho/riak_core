@@ -139,6 +139,13 @@ choose_new_ring(Ring, Node, Choose) ->
             CMod:CFun(Ring, Node, Params)
     end.
 
+%% @doc
+%% Count the number of claimed nodes for each node, considering the total for
+%% the location, as well as the node.  Then sort so that the lowest count is
+%% first.  This means that the node with the most to claim, will choose their
+%% claim first.
+-spec sort_members_for_choose(
+    riak_core_ring:riak_core_ring(), list(node())) -> list(node()).
 sort_members_for_choose(Ring, Members) ->
     Owners = riak_core_ring:all_owners(Ring),
     Ls = riak_core_ring:get_nodes_locations(Ring),
@@ -1272,7 +1279,15 @@ get_member_count(Ring, Node) ->
 %% @private
 %%
 %% @doc Filter out candidate indices that would violate target_n given
-%% a node's current partition ownership.
+%% a node's current partition ownership.  Only interested in indices which
+%% are not currently owned within a location
+-spec prefilter_violations(
+    riak_core_ring:riak_core_ring(),
+    node(),
+    list({non_neg_integer(), non_neg_integer()}),
+    list({non_neg_integer(), non_neg_integer()}),
+    pos_integer(),
+    pos_integer()) -> list({non_neg_integer(), non_neg_integer()}).
 prefilter_violations(Ring, Node, AllIndices, Indices, TargetN, RingSize) ->
     LocalNodes =
         case riak_core_location:support_locations_claim(Ring, TargetN) of
@@ -1282,16 +1297,28 @@ prefilter_violations(Ring, Node, AllIndices, Indices, TargetN, RingSize) ->
                 [Node]
         end,
     CurrentIndices =
-        lists:usort(
-            lists:flatten(
-                lists:map(
-                    fun(N) -> riak_core_ring:indices(Ring, N) end,
-                    LocalNodes))),
-    CurrentNth = [lists:keyfind(Idx, 2, AllIndices) || Idx <- CurrentIndices],
-    [{Nth, Idx} || {Nth, Idx} <- Indices,
-                   lists:all(fun({CNth, _}) ->
-                                     spaced_by_n(CNth, Nth, TargetN, RingSize)
-                             end, CurrentNth)].
+        lists:flatten(
+            lists:map(
+                fun(N) -> riak_core_ring:indices(Ring, N) end,
+                LocalNodes)),
+    CurrentNth =
+        lists:filter(
+            fun({_N, Idx}) -> lists:member(Idx, CurrentIndices) end,
+            AllIndices),
+    NonLocalViolations =
+        lists:filter(
+            fun({_N, Idx}) -> not lists:member(Idx, CurrentIndices) end,
+            Indices),
+    lists:filter(
+        fun({Nth, _Idx}) ->
+            lists:all(
+                fun({CNth, _}) ->
+                    spaced_by_n(CNth, Nth, TargetN, RingSize)
+                end,
+                CurrentNth)
+        end,
+        NonLocalViolations 
+    ).
 
 %% @private
 %%
@@ -1805,6 +1832,56 @@ transfer_needstobesorted_tester(I) ->
                             [],
                             lists:keydelete(n3, 1, count_nodes(R0))}),
     ?assertMatch({13, n4}, lists:keyfind(13, 1, R1)).
+
+
+prefilter_violations_test_() ->
+    % Be strict on test timeout.  Unrefined code took > 5s, whereas the
+    % refactored code should be << 1s.
+    {timeout, 2, fun prefilter_violations_perf/0}.
+
+prefilter_violations_perf() ->
+    JoiningNodes =
+        [{l1n2, loc1}, {l1n3, loc1}, {l1n4, loc1},
+            {l2n1, loc2}, {l2n2, loc2}, {l2n3, loc2}, {l2n4, loc2},
+            {l3n1, loc3}, {l3n2, loc3}, {l3n3, loc3}, {l3n4, loc3},
+            {l4n1, loc4}, {l4n2, loc4}, {l4n3, loc4}, {l4n4, loc4},
+            {l5n1, loc5}, {l5n2, loc5}, {l5n3, loc5},
+            {l6n1, loc6}, {l6n2, loc6}, {l6n3, loc6}, {l6n4, loc6},
+            {l7n1, loc7}, {l7n2, loc7}],
+    N1 = l1n1,
+    N1Loc = loc1,
+    RingSize = 4096,
+    io:format(
+        "Testing NodeList ~w with RingSize ~w~n",
+        [[{N1, N1Loc}|JoiningNodes], RingSize]
+    ),
+    R1 = 
+        riak_core_ring:set_node_location(
+            N1,
+            N1Loc,
+            riak_core_ring:fresh(RingSize, N1)),
+
+    RAll =
+        lists:foldl(
+            fun({N, L}, AccR) ->
+                AccR0 = riak_core_ring:add_member(N1, AccR, N),
+                riak_core_ring:set_node_location(N, L, AccR0)
+            end,
+            R1,
+            JoiningNodes
+        ),
+    Owners = riak_core_ring:all_owners(RAll),
+    AllIndices =
+        lists:zip(
+            lists:seq(0, length(Owners)-1), [Idx || {Idx, _} <- Owners]),
+
+    {T0, FilteredIndices} =
+        timer:tc(
+            fun prefilter_violations/6,
+            [RAll, l1n2, AllIndices, AllIndices, 4, RingSize]),
+    io:format("Prefilter violations took ~w ms~n", [T0 div 1000]),
+    
+    ?assert(FilteredIndices == []).
 
 simple_transfer_evendistribution_test() ->
     R0 = [{0, n1}, {1, n2}, {2, n3}, {3, n4}, {4, n5}, 
