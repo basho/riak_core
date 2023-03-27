@@ -55,15 +55,14 @@
 -export([claim/1, claim/3, claim_until_balanced/2, claim_until_balanced/4]).
 -export([default_wants_claim/1, default_wants_claim/2,
          default_choose_claim/1, default_choose_claim/2, default_choose_claim/3,
-         never_wants_claim/1, never_wants_claim/2,
-         random_choose_claim/1, random_choose_claim/2, random_choose_claim/3]).
+         default_choose_params/0, default_choose_params/1]).
 -export([wants_claim_v2/1, wants_claim_v2/2,
          wants_claim_v3/1, wants_claim_v3/2,
          choose_claim_v2/1, choose_claim_v2/2, choose_claim_v2/3,
          choose_claim_v3/1, choose_claim_v3/2, choose_claim_v3/3,
          claim_rebalance_n/2, claim_diversify/3, claim_diagonal/3,
          wants/1, wants_owns_diff/2, meets_target_n/2, diagonal_stripe/2,
-         sequential_claim/2, get_counts/2]).
+         sequential_claim/2, get_counts/2, spaced_by_n/4, get_target_n/0]).
 
 -ifdef(TEST).
 -compile(export_all).
@@ -76,6 +75,7 @@
         eqc_check/2,
         prop_claim_ensures_unique_nodes_v2/0,
         % prop_claim_ensures_unique_nodes_v3/0,
+        prop_claim_ensures_unique_nodes_v4/0,
         prop_take_idxs/0
     ]).
 -include_lib("eqc/include/eqc.hrl").
@@ -106,7 +106,7 @@ claim(Ring) ->
             choose_claim_v3 ->
                 {riak_core_memberhsip_claim, choose_claim_v3};
             choose_claim_v4 ->
-                {riak_core_memberhsip_claim, choose_claim_v4};
+                {riak_core_claim_location, choose_claim_v4};
             {CMod, CFun} ->
                 {CMod, CFun}
         end,
@@ -232,11 +232,14 @@ default_choose_params() ->
 default_choose_params(Params) ->
     case proplists:get_value(target_n_val, Params) of
         undefined ->
-            TN = app_helper:get_env(riak_core, target_n_val, ?DEF_TARGET_N),
+            TN = get_target_n(),
             [{target_n_val, TN} | Params];
         _->
             Params
     end.
+
+get_target_n() ->
+    app_helper:get_env(riak_core, target_n_val, ?DEF_TARGET_N).
 
 %% ===================================================================
 %% Claim Function Implementations 
@@ -537,8 +540,8 @@ choose_claim_v3(Ring) ->
     choose_claim_v3(Ring, node()).
 
 choose_claim_v3(Ring, ClaimNode) ->
-    Params = [{target_n_val, app_helper:get_env(riak_core, target_n_val, 
-                                                ?DEF_TARGET_N)}],
+    Params =
+        [{target_n_val, get_target_n()}],
     choose_claim_v3(Ring, ClaimNode, Params).
 
 choose_claim_v3(Ring, _ClaimNode, Params) ->
@@ -594,7 +597,7 @@ choose_claim_v3(Ring, _ClaimNode, Params) ->
 %% Lower diversity score is better, 0 if nodes are perfectly diverse.
 %%
 claim_v3(Wants, Owners, Params) ->
-    TN = proplists:get_value(target_n_val, Params, ?DEF_TARGET_N),
+    TN = proplists:get_value(target_n_val, Params, get_target_n()),
     Q = length(Owners),
     Claiming = [N || {N,W} <- Wants, W > 0],
     Trials = proplists:get_value(trials, Params, 100),
@@ -660,7 +663,7 @@ claim_diagonal(Wants, Owners, Params) ->
     {lists:flatten([lists:duplicate(Reps, Claiming), Last]), [diagonalized]}.
 
 sequential_claim(Ring, Node) ->
-    TN = app_helper:get_env(riak_core, target_n_val, ?DEF_TARGET_N),
+    TN = get_target_n(),
     sequential_claim(Ring, Node, TN).
 
 %% @private fall back to diagonal striping vnodes across nodes in a
@@ -784,27 +787,9 @@ diagonal_stripe(Ring, Nodes) ->
                          1, length(Partitions))),
     Zipped.
 
-random_choose_claim(Ring) ->
-    random_choose_claim(Ring, node()).
-
-random_choose_claim(Ring, Node) ->
-    random_choose_claim(Ring, Node, []).
-
-random_choose_claim(Ring0, Node, _Params) ->
-    Ring = riak_core_ring:upgrade(Ring0),
-    riak_core_ring:transfer_node(riak_core_ring:random_other_index(Ring),
-                                 Node, Ring).
-
-%% @spec never_wants_claim(riak_core_ring()) -> no
-%% @doc For use by nodes that should not claim any partitions.
-never_wants_claim(_) -> no.
-never_wants_claim(_,_) -> no.
-
 %% ===================================================================
 %% Private
 %% ===================================================================
-
-
 
 %% @private
 %%
@@ -833,14 +818,17 @@ find_violations(Ring, TargetN) ->
                         [{node(), pos_integer()}].
 get_counts(Nodes, PartitionOwners) ->
     Empty = [{Node, 0} || Node <- Nodes],
-    Counts = lists:foldl(fun({_Idx, Node}, Counts) ->
-                                 case lists:member(Node, Nodes) of
-                                     true ->
-                                         dict:update_counter(Node, 1, Counts);
-                                     false ->
-                                         Counts
-                                 end
-                         end, dict:from_list(Empty), PartitionOwners),
+    Counts =
+        lists:foldl(
+            fun({_Idx, Node}, Counts) ->
+                    case lists:member(Node, Nodes) of
+                        true ->
+                            dict:update_counter(Node, 1, Counts);
+                        false ->
+                            Counts
+                    end
+            end,
+            dict:from_list(Empty), PartitionOwners),
     dict:to_list(Counts).
 
 %% @private
@@ -904,8 +892,6 @@ select_indices(Owners, Deltas, Indices, TargetN, RingSize) ->
                     Indices),
     lists:reverse(Claim).
 
-%% @private
-%%
 %% @doc Determine if two positions in the ring meet target_n spacing.
 spaced_by_n(NthA, NthB, TargetN, RingSize) ->
     case NthA > NthB of
@@ -1329,6 +1315,19 @@ prop_claim_ensures_unique_nodes_v2() ->
 %%
 % prop_claim_ensures_unique_nodes_v3() ->
 %    prop_claim_ensures_unique_nodes(choose_claim_v3).
+
+prop_claim_ensures_unique_nodes_v4() ->
+    prop_claim_ensures_unique_nodes(choose_claim_v4).
+
+choose_claim_v4(Ring) ->
+    choose_claim_v4(Ring, node()).
+
+choose_claim_v4(Ring, Node) ->
+    Params = default_choose_params(),
+    choose_claim_v4(Ring, Node, Params).
+
+choose_claim_v4(Ring, Node, Params) ->
+    riak_core_claim_location:choose_claim_v4(Ring, Node, Params).
 
 %% NOTE: this is a less than adequate test that has been re-instated
 %% so that we don't leave the code worse than we found it. Work that
