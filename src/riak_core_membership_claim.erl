@@ -57,10 +57,8 @@
          default_choose_claim/1, default_choose_claim/2, default_choose_claim/3,
          never_wants_claim/1, never_wants_claim/2,
          random_choose_claim/1, random_choose_claim/2, random_choose_claim/3]).
--export([wants_claim_v1/1, wants_claim_v1/2,
-         wants_claim_v2/1, wants_claim_v2/2,
+-export([wants_claim_v2/1, wants_claim_v2/2,
          wants_claim_v3/1, wants_claim_v3/2,
-         choose_claim_v1/1, choose_claim_v1/2, choose_claim_v1/3,
          choose_claim_v2/1, choose_claim_v2/2, choose_claim_v2/3,
          choose_claim_v3/1, choose_claim_v3/2, choose_claim_v3/3,
          claim_rebalance_n/2, claim_diversify/3, claim_diagonal/3,
@@ -69,12 +67,20 @@
 
 -ifdef(TEST).
 -compile(export_all).
+
 -ifdef(EQC).
--export([prop_claim_ensures_unique_nodes/1, prop_wants/0, prop_wants_counts/0,eqc_check/2,
-         prop_claim_ensures_unique_nodes_v2/0, % prop_claim_ensures_unique_nodes_v3/0,
-         prop_take_idxs/0]).
+-export(
+    [
+        prop_claim_ensures_unique_nodes/1,
+        prop_wants/0, prop_wants_counts/0,
+        eqc_check/2,
+        prop_claim_ensures_unique_nodes_v2/0,
+        % prop_claim_ensures_unique_nodes_v3/0,
+        prop_take_idxs/0
+    ]).
 -include_lib("eqc/include/eqc.hrl").
 -endif.
+
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
@@ -124,20 +130,10 @@ default_choose_claim(Ring) ->
     default_choose_claim(Ring, node()).
 
 default_choose_claim(Ring, Node) ->
-    case riak_core_ring:legacy_ring(Ring) of
-        true ->
-            choose_claim_v1(Ring, Node);
-        false ->
-            choose_claim_v2(Ring, Node)
-    end.
+    choose_claim_v2(Ring, Node).
 
 default_choose_claim(Ring, Node, Params) ->
-    case riak_core_ring:legacy_ring(Ring) of
-        true ->
-            choose_claim_v1(Ring, Node, Params);
-        false ->
-            choose_claim_v2(Ring, Node, Params)
-    end.
+    choose_claim_v2(Ring, Node, Params).
 
 %% @spec default_wants_claim(riak_core_ring()) -> {yes, integer()} | no
 %% @doc Want a partition if we currently have less than floor(ringsize/nodes).
@@ -145,35 +141,7 @@ default_wants_claim(Ring) ->
     default_wants_claim(Ring, node()).
 
 default_wants_claim(Ring, Node) ->
-    case riak_core_ring:legacy_ring(Ring) of
-        true ->
-            wants_claim_v1(Ring, Node);
-        false ->
-            wants_claim_v2(Ring, Node)
-    end.
-
-%% @deprecated
-wants_claim_v1(Ring) ->
-    wants_claim_v1(Ring, node()).
-
-%% @deprecated
-wants_claim_v1(Ring0, Node) ->
-    Ring = riak_core_ring:upgrade(Ring0),
-    %% Calculate the expected # of partitions for a perfectly balanced ring. Use
-    %% this expectation to determine the relative balance of the ring. If the
-    %% ring isn't within +-2 partitions on all nodes, we need to rebalance.
-    ExpParts = get_expected_partitions(Ring, Node),
-    PCounts = lists:foldl(fun({_Index, ANode}, Acc) ->
-                                  orddict:update_counter(ANode, 1, Acc)
-                          end, [{Node, 0}], riak_core_ring:all_owners(Ring)),
-    RelativeCounts = [I - ExpParts || {_ANode, I} <- PCounts],
-    WantsClaim = (lists:min(RelativeCounts) < -2) or (lists:max(RelativeCounts) > 2),
-    case WantsClaim of
-        true ->
-            {yes, 0};
-        false ->
-            no
-    end.
+    wants_claim_v2(Ring, Node).
 
 wants_claim_v2(Ring) ->
     wants_claim_v2(Ring, node()).
@@ -262,30 +230,6 @@ default_choose_params(Params) ->
             [{target_n_val, TN} | Params];
         _->
             Params
-    end.
-
-%% @deprecated
-choose_claim_v1(Ring) ->
-    choose_claim_v1(Ring, node()).
-
-%% @deprecated
-choose_claim_v1(Ring0, Node) ->
-    choose_claim_v1(Ring0, Node, []).
-
-choose_claim_v1(Ring0, Node, Params0) ->
-    Params = default_choose_params(Params0),
-    Ring = riak_core_ring:upgrade(Ring0),
-    TargetN = proplists:get_value(target_n_val, Params),
-    case meets_target_n(Ring, TargetN) of
-        {true, TailViolations} ->
-            %% if target N is met, then it doesn't matter where
-            %% we claim vnodes, as long as we don't violate the
-            %% target N with any of our additions
-            %% (== claim partitions at least N steps apart)
-            claim_with_n_met(Ring, TailViolations, Node);
-        false ->
-            %% we don't meet target N yet, rebalance
-            claim_rebalance_n(Ring, Node)
     end.
 
 choose_claim_v2(Ring) ->
@@ -455,10 +399,11 @@ increase_takes([], N, _Max, Acc) when N < 0 ->
     [{Node, Delta} || {Node, _Own, Delta} <- lists:usort(Acc)];
 increase_takes([{Node, Own, Delta} | Rest], N, Max, Acc) when Delta > 0 ->
     WouldOwn = Own + Delta,
-    Additive = case WouldOwn +1 =< Max of
-                   true -> 1;
-                   false -> 0
-               end,
+    Additive = 
+        case (WouldOwn + 1) =< Max of
+            true -> 1;
+            false -> 0
+        end,
     increase_takes(Rest, N+Additive, Max, [{Node, Own, Delta+Additive} | Acc]);
 increase_takes([NodeDelta | Rest], N, Max, Acc) ->
     increase_takes(Rest, N, Max, [NodeDelta | Acc]).
@@ -466,13 +411,15 @@ increase_takes([NodeDelta | Rest], N, Max, Acc) ->
 meets_target_n(Ring, TargetN) ->
     Owners = lists:keysort(1, riak_core_ring:all_owners(Ring)),
     meets_target_n(Owners, TargetN, 0, [], []).
+
 meets_target_n([{Part,Node}|Rest], TargetN, Index, First, Last) ->
     case lists:keytake(Node, 1, Last) of
         {value, {Node, LastIndex, _}, NewLast} ->
             if Index-LastIndex >= TargetN ->
                     %% node repeat respects TargetN
-                    meets_target_n(Rest, TargetN, Index+1, First,
-                                   [{Node, Index, Part}|NewLast]);
+                    meets_target_n(
+                        Rest, TargetN, Index + 1, First,
+                        [{Node, Index, Part}|NewLast]);
                true ->
                     %% violation of TargetN
                     false
@@ -487,11 +434,16 @@ meets_target_n([], TargetN, Index, First, Last) ->
     %% compute violations at wrap around, but don't fail
     %% because of them: handle during reclaim
     Violations = 
-        lists:filter(fun({Node, L, _}) ->
-                             {Node, F} = proplists:lookup(Node, First),
-                             (Index-L)+F < TargetN
-                     end,
-                     Last),
+        lists:filter(
+            fun({Node, L, _}) ->
+                {Node, F} = proplists:lookup(Node, First),
+                if ((Index - L) + F) < TargetN ->
+                        true;
+                    true ->
+                        false
+               end
+            end,
+            Last),
     {true, [ Part || {_, _, Part} <- Violations ]}.
 
 
@@ -766,91 +718,7 @@ never_wants_claim(_,_) -> no.
 %% Private
 %% ===================================================================
 
-%% @private
-claim_hole(Ring, Mine, Owners, Node) ->
-    Choices = case find_biggest_hole(Mine) of
-                  {I0, I1} when I0 < I1 ->
-                      %% start-middle of the ring
-                      lists:takewhile(
-                        fun({I, _}) -> I /= I1 end,
-                        tl(lists:dropwhile(
-                             fun({I, _}) -> I /= I0 end,
-                             Owners)));
-                  {I0, I1} when I0 > I1 ->
-                      %% wrap-around end-start of the ring
-                      tl(lists:dropwhile(
-                           fun({I, _}) -> I /= I0 end, Owners))
-                          ++lists:takewhile(
-                              fun({I, _}) -> I /= I1 end, Owners);
-                  {I0, I0} ->
-                      %% node only has one claim
-                      {Start, End} =
-                          lists:splitwith(
-                            fun({I, _}) -> I /= I0 end,
-                            Owners),
-                      tl(End)++Start
-              end,
-    Half = length(Choices) div 2,
-    {I, _} = lists:nth(Half, Choices),
-    riak_core_ring:transfer_node(I, Node, Ring).
 
-%% @private
-claim_with_n_met(Ring, TailViolations, Node) ->
-    CurrentOwners = lists:keysort(1, riak_core_ring:all_owners(Ring)),
-    Nodes = lists:usort([Node|riak_core_ring:claiming_members(Ring)]),
-    case lists:sort([ I || {I, N} <- CurrentOwners, N == Node ]) of
-        [] ->
-            %% node hasn't claimed anything yet - just claim stuff
-            Spacing = length(Nodes),
-            [{First,_}|OwnList] =
-                case TailViolations of
-                    [] ->
-                        %% no wrap-around problems - choose whatever
-                        lists:nthtail(Spacing-1, CurrentOwners);
-                    [TV|_] ->
-                        %% attempt to cure a wrap-around problem
-                        lists:dropwhile(
-                             fun({I, _}) -> I /= TV end,
-                             lists:reverse(CurrentOwners))
-                end,
-            {_, NewRing} = lists:foldl(
-                             fun({I, _}, {0, Acc}) ->
-                                     {Spacing, riak_core_ring:transfer_node(I, Node, Acc)};
-                                (_, {S, Acc}) ->
-                                     {S-1, Acc}
-                             end,
-                             {Spacing, riak_core_ring:transfer_node(First, Node, Ring)},
-                             OwnList),
-            NewRing;
-        Mine ->
-            %% node already has claims - respect them
-            %% pick biggest hole & sit in the middle
-            %% rebalance will cure any mistake on the next pass
-            claim_hole(Ring, Mine, CurrentOwners, Node)
-    end.
-
-%% @private
-find_biggest_hole(Mine) ->
-    lists:foldl(fun({I0, I1}, none) ->
-                        {I0, I1};
-                   ({I0, I1}, {C0, C1}) when I0 < I1->
-                        %% start-middle of the ring
-                        if I1-I0 > C1-C0 ->
-                                {I0, I1};
-                           true ->
-                                {C0, C1}
-                        end;
-                   ({I0, I1}, {C0, C1}) ->
-                        %% wrap-around end-start of the ring
-                        Span = I1+trunc(math:pow(2, 160))-1-I0,
-                        if Span > C1-C0 ->
-                                {I0, I1};
-                           true ->
-                                {C0, C1}
-                        end
-                end,
-                none,
-                lists:zip(Mine, tl(Mine)++[hd(Mine)])).
 
 %% @private
 %%
@@ -895,22 +763,6 @@ add_default_deltas(IdxOwners, Deltas, Default) ->
     Owners2 = lists:usort(Owners),
     Defaults = [{Member, Default} || Member <- Owners2],
     lists:ukeysort(1, Deltas ++ Defaults).
-
-%% @private
-get_expected_partitions(Ring, Node) ->
-    riak_core_ring:num_partitions(Ring) div get_member_count(Ring, Node).
-
-%% @private
-get_member_count(Ring, Node) ->
-    %% Determine how many nodes are involved with the ring; if the requested
-    %% node is not yet part of the ring, include it in the count.
-    AllMembers = riak_core_ring:claiming_members(Ring),
-    case lists:member(Node, AllMembers) of
-        true ->
-            length(AllMembers);
-        false ->
-            length(AllMembers) + 1
-    end.
 
 %% @private
 %%
@@ -1312,29 +1164,6 @@ wants_claim_test() ->
     riak_core_ring_manager:cleanup_ets(test),
     riak_core_ring_manager:stop().
 
-find_biggest_hole_test() ->
-    Max = trunc(math:pow(2, 160)),
-    Part16 = Max/16,
-
-    %% single partition claimed
-    ?assertEqual({Part16*5, Part16*5},
-                 find_biggest_hole([Part16*5])),
-    
-    %% simple hole is in the middle
-    ?assertEqual({Part16*3, Part16*13},
-                 find_biggest_hole([Part16*3, Part16*13])),
-    %% complex hole in the middle
-    ?assertEqual({Part16*5, Part16*10},
-                 find_biggest_hole([Part16*3, Part16*5,
-                                    Part16*10, Part16*15])),
-    
-    %% simple hole is around the end
-    ?assertEqual({Part16*10, Part16*8},
-                 find_biggest_hole([Part16*8, Part16*10])),
-    %% complex hole is around the end
-    ?assertEqual({Part16*13, Part16*3},
-                 find_biggest_hole([Part16*3, Part16*7,
-                                    Part16*10, Part16*13])).
 
 %% @private console helper function to return node lists for claiming
 %% partitions

@@ -517,9 +517,7 @@ commission_tests_rest() ->
         ].
 
 commission_claims() ->
-    [{{riak_core_membership_claim, wants_claim_v1},
-        {riak_core_membership_claim, choose_claim_v1}},
-     {{riak_core_membership_claim, wants_claim_v2},
+    [{{riak_core_membership_claim, wants_claim_v2},
         {riak_core_membership_claim, choose_claim_v2}},
      {{riak_core_membership_claim, wants_claim_v3},
         {riak_core_memberhsip_claim, choose_claim_v3}}].
@@ -547,18 +545,7 @@ run_test() ->
                  {cmds, [[{join,a}],[{join,b}]]},
                  {print,false},
                  {return_ring, true}]),
-    ?assert(is_tuple(Ring2)),
-    {ok, Fh} = file:open("sim.out", [write]),
-    ?assertEqual(ok, run([{ring, Ring2},
-                          {target_n_val,4},
-                          {wants,{riak_core_membership_claim,wants_claim_v1}},
-                          {choose,{riak_core_membership_claim,choose_claim_v1}},
-                          {cmds, [[{join,3}]]},
-                          {analysis, [{failures, 2},{n_val, 3}]},
-                          {print,Fh},
-                          {return_ring, false}])),
-    file:close(Fh),
-    file:delete("sim.out").
+    ?assert(is_tuple(Ring2)).
 
 
 %% Decided not to run by default, perhaps better as an
