@@ -81,9 +81,6 @@
 
 -define(DEF_TARGET_N, 4).
 
--type delta() :: {node(), Ownership::non_neg_integer(), Delta::integer()}.
--type deltas() :: [delta()].
-
 claim(Ring) ->
     Want = app_helper:get_env(riak_core, wants_claim_fun),
     Choose = app_helper:get_env(riak_core, choose_claim_fun),
@@ -554,98 +551,6 @@ assess_deltas(RingSize, NodeCount, Ownerships) ->
     Deltas =
         lists:map(fun({N, VNs}) -> {N, MinVnodes - VNs} end, Ownerships),
     {MinVnodes, MaxVnodes, Deltas}.
-
-%% @private for each node in owners return a tuple of owner and delta
-%% where delta is an integer that expresses how many nodes the owner
-%% needs it's ownership to change by. A positive means the owner needs
-%% that many more partitions, a negative means the owner can lose that
-%% many paritions.
--spec get_deltas(RingSize::pos_integer(),
-                 NodeCount::pos_integer(),
-                 Owners::[{Index::non_neg_integer(), node()}],
-                 Ownerships::[{node(), non_neg_integer()}]) ->
-                        [{node(), integer()}].
-get_deltas(RingSize, NodeCount, Owners, Ownerships) ->
-    Avg = RingSize / NodeCount,
-    %% the most any node should own
-    Max = ceiling(Avg),
-    ActiveDeltas = [{Member, Ownership, normalise_delta(Avg - Ownership)}
-                    || {Member, Ownership} <- Ownerships],
-    BalancedDeltas = rebalance_deltas(ActiveDeltas, Max, RingSize),
-    add_default_deltas(Owners, BalancedDeltas, 0).
-
-%% @private a node can only claim whole partitions, but if RingSize
-%% rem NodeCount /= 0, a delta will be a float. This function decides
-%% if that float should be floored or ceilinged
--spec normalise_delta(float()) -> integer().
-normalise_delta(Delta) when Delta < 0 ->
-    %% if the node has too many (a negative delta) give up the most
-    %% you can (will be rebalanced)
-    ceiling(abs(Delta)) * -1;
-normalise_delta(Delta) ->
-    %% if the node wants partitions, ask for the fewest for least
-    %% movement
-    trunc(Delta).
-
-%% @private so that we don't end up with an imbalanced ring where one
-%% node has more vnodes than it should (e.g. [{n1, 6}, {n2, 6}, {n3,
-%% 6}, {n4, 8}, {n5,6}] we rebalance the deltas so that select_indices
-%% doesn't leave some node not giving up enough partitions
--spec rebalance_deltas(deltas(),
-                       Max::pos_integer(), RingSize::pos_integer()) ->
-                              [{node(), integer()}].
-rebalance_deltas(ActiveDeltas, Max, RingSize) ->
-    AppliedDeltas = [Own + Delta || {_, Own, Delta} <- ActiveDeltas],
-
-    case lists:sum(AppliedDeltas) - RingSize of
-        0 ->
-            [{Node, Delta} || {Node, _Cnt, Delta} <- ActiveDeltas];
-        N when N < 0 ->
-            increase_keeps(ActiveDeltas, N, Max, [])
-    end.
-
-%% @private increases the delta for (some) nodes giving away
-%% partitions to the max they can keep
--spec increase_keeps(deltas(),
-                     WantsError::integer(),
-                     Max::pos_integer(),
-                     Acc:: deltas() | []) ->
-                            [{node(), integer()}].
-increase_keeps(Rest, 0, _Max, Acc) ->
-    [{Node, Delta} || {Node, _Own, Delta} <- lists:usort(lists:append(Rest, Acc))];
-increase_keeps([], N, Max, Acc) when N < 0 ->
-    increase_takes(lists:reverse(Acc), N, Max, []);
-increase_keeps([{Node, Own, Delta} | Rest], N, Max, Acc) when Delta < 0 ->
-    WouldOwn = Own + Delta,
-    Additive = case WouldOwn +1 =< Max of
-                   true -> 1;
-                   false -> 0
-               end,
-    increase_keeps(Rest, N+Additive, Max, [{Node, Own, Delta+Additive} | Acc]);
-increase_keeps([NodeDelta | Rest], N, Max, Acc) ->
-    increase_keeps(Rest, N, Max, [NodeDelta | Acc]).
-
-%% @private increases the delta for (some) nodes taking partitions to the max
-%% they can ask for
--spec increase_takes(deltas(),
-                      WantsError::integer(),
-                      Max::pos_integer(),
-                      Acc::deltas() | []) ->
-                             Rebalanced::[{node(), integer()}].
-increase_takes(Rest, 0, _Max, Acc) ->
-    [{Node, Delta} || {Node, _Own, Delta} <- lists:usort(lists:append(Rest, Acc))];
-increase_takes([], N, _Max, Acc) when N < 0 ->
-    [{Node, Delta} || {Node, _Own, Delta} <- lists:usort(Acc)];
-increase_takes([{Node, Own, Delta} | Rest], N, Max, Acc) when Delta > 0 ->
-    WouldOwn = Own + Delta,
-    Additive = case WouldOwn +1 =< Max of
-                   true -> 1;
-                   false -> 0
-               end,
-    increase_takes(Rest, N+Additive, Max, [{Node, Own, Delta+Additive} | Acc]);
-increase_takes([NodeDelta | Rest], N, Max, Acc) ->
-    increase_takes(Rest, N, Max, [NodeDelta | Acc]).
-
     
 meets_target_n(Ring, TargetN) ->
     Owners = lists:keysort(1, riak_core_ring:all_owners(Ring)),
@@ -970,17 +875,6 @@ divide_list_for_removes(Excess, LoopCount) ->
         ),
     GroupedFetches.
 
-
-%% @private every module has a ceiling function
--spec ceiling(float()) -> integer().
-ceiling(F) ->
-    T = trunc(F),
-    case F - T == 0 of
-        true ->
-            T;
-        false ->
-            T + 1
-    end.
 
 claim_rebalance_n(Ring0, Node) ->
     Ring = riak_core_ring:upgrade(Ring0),
@@ -1351,13 +1245,6 @@ get_counts(Nodes, PartitionOwners) ->
             dict:from_list(EmptyNodes),
             PartitionOwners),
     dict:to_list(Counts).
-
-%% @private
-add_default_deltas(IdxOwners, Deltas, Default) ->
-    {_, Owners} = lists:unzip(IdxOwners),
-    Owners2 = lists:usort(Owners),
-    Defaults = [{Member, Default} || Member <- Owners2],
-    lists:ukeysort(1, Deltas ++ Defaults).
 
 %% @private
 get_expected_partitions(Ring, Node) ->
