@@ -152,7 +152,7 @@ add_choose_params(Choose, TN) ->
     {CMod, CFun, Params1}.
 
 run_rebalance(Ring, Wants, Choose, Rebalance) ->
-    Ring2 = riak_core_claim:claim(Ring, Wants, Choose),
+    Ring2 = riak_core_membership_claim:claim(Ring, Wants, Choose),
     Rebalance(Ring, Ring2),
     Ring2.
 
@@ -517,9 +517,12 @@ commission_tests_rest() ->
         ].
 
 commission_claims() ->
-    [{{riak_core_claim, wants_claim_v1}, {riak_core_claim, choose_claim_v1}},
-     {{riak_core_claim, wants_claim_v2}, {riak_core_claim, choose_claim_v2}},
-     {{riak_core_claim, wants_claim_v3}, {riak_core_claim, choose_claim_v3}}].
+    [{{riak_core_membership_claim, wants_claim_v1},
+        {riak_core_membership_claim, choose_claim_v1}},
+     {{riak_core_membership_claim, wants_claim_v2},
+        {riak_core_membership_claim, choose_claim_v2}},
+     {{riak_core_membership_claim, wants_claim_v3},
+        {riak_core_memberhsip_claim, choose_claim_v3}}].
 
 
 %% -------------------------------------------------------------------
@@ -532,15 +535,15 @@ run_test() ->
     Ring = riak_core_ring:fresh(64, anode),
     ?assertEqual(ok, run([{ring, Ring},
                           {target_n_val,2},
-                          {wants,{riak_core_claim,wants_claim_v2}},
-                          {choose,{riak_core_claim,choose_claim_v2}},
+                          {wants,{riak_core_membership_claim,wants_claim_v2}},
+                          {choose,{riak_core_membership_claim,choose_claim_v2}},
                           {cmds, [[{join,a}],[{join,b}]]},
                           {print,false},
                           {return_ring, false}])),
     Ring2 = run([{ring, Ring},
                  {target_n_val,2},
-                 {wants,{riak_core_claim,wants_claim_v2}},
-                 {choose,{riak_core_claim,choose_claim_v2}},
+                 {wants,{riak_core_membership_claim,wants_claim_v2}},
+                 {choose,{riak_core_membership_claim,choose_claim_v2}},
                  {cmds, [[{join,a}],[{join,b}]]},
                  {print,false},
                  {return_ring, true}]),
@@ -548,8 +551,8 @@ run_test() ->
     {ok, Fh} = file:open("sim.out", [write]),
     ?assertEqual(ok, run([{ring, Ring2},
                           {target_n_val,4},
-                          {wants,{riak_core_claim,wants_claim_v1}},
-                          {choose,{riak_core_claim,choose_claim_v1}},
+                          {wants,{riak_core_membership_claim,wants_claim_v1}},
+                          {choose,{riak_core_membership_claim,choose_claim_v1}},
                           {cmds, [[{join,3}]]},
                           {analysis, [{failures, 2},{n_val, 3}]},
                           {print,Fh},

@@ -34,13 +34,13 @@
 %% number of partitions owned by the same node.
 
 %% The exact amount that is considered tolerable is determined by the
-%% application env variable "target_n_val".  The functions in riak_core_claim
-%% will ensure that all sequences up to target_n_val long contain no repeats if
-%% at all possible.  The effect of this is that when the number of nodes in the
-%% system is smaller than target_n_val, a potentially large number of partitions
-%% must be moved in order to safely add a new node.  After the cluster has grown
-%% beyond that size, a minimal number of partitions (1/NumNodes) will generally
-%% be moved.
+%% application env variable "target_n_val".  The functions in
+%% riak_core_membership claim will ensure that all sequences up to target_n_val
+%% long contain no repeats if at all possible.  The effect of this is that when
+%% the number of nodes in the system is smaller than target_n_val, a potentially
+%% large number of partitions must be moved in order to safely add a new node.
+%% After the cluster has grown beyond that size, a minimal number of partitions
+%% (1/NumNodes) will generally be moved.
 
 %% If the number of nodes does not divide evenly into the number of partitions,
 %% it may not be possible to perfectly achieve the maximum spread constraint.
@@ -51,7 +51,7 @@
 %% to set it to the largest value you expect to use for any bucket's n_val.  The
 %% default is 4.
 
--module(riak_core_claim).
+-module(riak_core_membership_claim).
 -export([claim/1, claim/3, claim_until_balanced/2, claim_until_balanced/4]).
 -export([default_wants_claim/1, default_wants_claim/2,
          default_choose_claim/1, default_choose_claim/2, default_choose_claim/3,
@@ -334,7 +334,7 @@ choose_claim_v2(RingOrig, Node, Params0) ->
             Padding = lists:duplicate(TargetN, undefined),
             Expanded = lists:sublist(Active ++ Padding, TargetN),
             ExpandedLocation = get_nodes_by_location(Expanded, Ring),
-            PreferredClaim = riak_core_claim:diagonal_stripe(Ring, ExpandedLocation),
+            PreferredClaim = diagonal_stripe(Ring, ExpandedLocation),
             PreferredNth = [begin
                                 {Nth, Idx} = lists:keyfind(Idx, 2, AllIndices),
                                 Nth

@@ -1456,7 +1456,7 @@ rebalance_ring(CNode, CState) ->
     rebalance_ring(CNode, Next, CState).
 
 rebalance_ring(_CNode, [], CState) ->
-    CState2 = riak_core_claim:claim(CState),
+    CState2 = riak_core_membership_claim:claim(CState),
     Owners1 = riak_core_ring:all_owners(CState),
     Owners2 = riak_core_ring:all_owners(CState2),
     Owners3 = lists:zip(Owners1, Owners2),
@@ -1505,13 +1505,16 @@ remove_node(CState, Node, Status, Replacing, Seed, Log) ->
 remove_node(CState, _Node, _Status, _Replacing, _Seed, _Log, []) ->
     CState;
 remove_node(CState, Node, Status, Replacing, Seed, Log, Indices) ->
-    CStateT1 = riak_core_ring:change_owners(CState,
-                                            riak_core_ring:all_next_owners(CState)),
+    CStateT1 =
+        riak_core_ring:change_owners(
+            CState, riak_core_ring:all_next_owners(CState)),
     case orddict:find(Node, Replacing) of
         {ok, NewNode} ->
             CStateT2 = reassign_indices_to(Node, NewNode, CStateT1);
         error ->
-            CStateT2 = riak_core_gossip:remove_from_cluster(CStateT1, Node, Seed)
+            CStateT2 =
+                riak_core_membership_leave:remove_from_cluster(
+                    CStateT1, Node, Seed)
     end,
 
     Owners1 = riak_core_ring:all_owners(CState),
