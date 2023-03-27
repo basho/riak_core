@@ -86,20 +86,103 @@
 
 -define(DEF_TARGET_N, 4).
 
+-type choose_function() ::
+        {module(), atom()}|{module(), atom(), list(tuple())}.
 -type delta() :: {node(), Ownership::non_neg_integer(), Delta::integer()}.
 -type deltas() :: [delta()].
 
+%% ===================================================================
+%% Claim API and supporting functions
+%% ===================================================================
+
+-spec claim(
+    riak_core_ring:riak_core_ring()) -> riak_core_ring:riak_core_ring().
 claim(Ring) ->
     Want = app_helper:get_env(riak_core, wants_claim_fun),
-    Choose = app_helper:get_env(riak_core, choose_claim_fun),
+    Choose =
+        case app_helper:get_env(riak_core, choose_claim_fun) of
+            choose_claim_v2 ->
+                {riak_core_memberhsip_claim, choose_claim_v2};
+            choose_claim_v3 ->
+                {riak_core_memberhsip_claim, choose_claim_v3};
+            choose_claim_v4 ->
+                {riak_core_memberhsip_claim, choose_claim_v4};
+            {CMod, CFun} ->
+                {CMod, CFun}
+        end,
     claim(Ring, Want, Choose).
 
-claim(Ring, Want, Choose) ->
+%% @doc claim/3 is used in tests as it allows for {Mod, Fun, Params} to be
+%% passed in as the choose function, to override selection of defaults from
+%% application environment for target n_vals.
+-spec claim(
+    riak_core_ring:riak_core_ring(),
+    {module(), atom()},
+    choose_function()) -> riak_core_ring:riak_core_ring().
+claim(Ring, {WMod, WFun}=Want, Choose) ->
     Members = riak_core_ring:claiming_members(Ring),
-    lists:foldl(fun(Node, Ring0) ->
-                        claim_until_balanced(Ring0, Node, Want, Choose)
-                end, Ring, Members).
+    Owners =
+        lists:usort(
+            lists:map(
+                fun({_Idx, N}) -> N end,
+                riak_core_ring:all_owners(Ring))),
+    NoInitialWants =
+        lists:all(
+            fun(N) -> apply(WMod, WFun, [Ring, N]) == no end, Members),
+    SortedMembers = sort_members_for_choose(Ring, Members, Owners, Choose),
+    case NoInitialWants of
+        true ->
+            case riak_core_ring:has_location_changed(Ring) of
+                true ->
+                    [HeadMember|_Rest] = SortedMembers,
+                    choose_new_ring(
+                        riak_core_ring:clear_location_changed(Ring),
+                        HeadMember,
+                        Choose);
+                false ->
+                    Ring
+            end;
+        false ->
+            lists:foldl(
+                fun(Node, Ring0) ->
+                    claim_until_balanced(Ring0, Node, Want, Choose)
+                end,
+                riak_core_ring:clear_location_changed(Ring),
+                SortedMembers)
+    end.
 
+-spec choose_new_ring(
+    riak_core_ring:riak_core_ring(),node(), choose_function()) ->
+        riak_core_ring:riak_core_ring().
+choose_new_ring(Ring, Node, Choose) ->
+    case Choose of
+        {CMod, CFun} ->
+            CMod:CFun(Ring, Node);
+        {CMod, CFun, Params} ->
+            CMod:CFun(Ring, Node, Params)
+    end.
+
+%% @doc
+%% The order by which members are passed in to claim may make a difference
+%% to the outcome, so prepare to allow for this order to be changeable in
+%% different claim versions
+-spec sort_members_for_choose(
+    riak_core_ring:riak_core_ring(),
+    list(node()),
+    list(node()),
+    choose_function()) -> list(node()).
+sort_members_for_choose(Ring, Members, Owners, Choose) ->
+    CMod = element(1, Choose),
+    case erlang:function_exported(CMod, sort_members_for_choose, 3) of
+        true ->
+            CMod:sort_members_for_choose(Ring, Members, Owners);
+        false ->
+            Members
+    end.
+
+-spec claim_until_balanced(
+    riak_core_ring:riak_core_ring(), node()) ->
+        riak_core_ring:riak_core_ring().
 claim_until_balanced(Ring, Node) ->
     Want = app_helper:get_env(riak_core, wants_claim_fun),
     Choose = app_helper:get_env(riak_core, choose_claim_fun),
@@ -111,21 +194,19 @@ claim_until_balanced(Ring, Node, {WMod, WFun}=Want, Choose) ->
         no ->
             Ring;
         {yes, _NumToClaim} ->
-            NewRing = case Choose of
-                          {CMod, CFun} ->
-                              CMod:CFun(Ring, Node);
-                          {CMod, CFun, Params} ->
-                              CMod:CFun(Ring, Node, Params)
-                      end,
+            NewRing =
+                case Choose of
+                    {CMod, CFun} ->
+                        CMod:CFun(Ring, Node);
+                    {CMod, CFun, Params} ->
+                        CMod:CFun(Ring, Node, Params)
+                end,
             claim_until_balanced(NewRing, Node, Want, Choose)
     end.
 
-%% ===================================================================
-%% Claim Function Implementations 
-%% ===================================================================
-
-%% @spec default_choose_claim(riak_core_ring()) -> riak_core_ring()
 %% @doc Choose a partition at random.
+-spec default_choose_claim(
+    riak_core_ring:riak_core_ring()) -> riak_core_ring:riak_core_ring().
 default_choose_claim(Ring) ->
     default_choose_claim(Ring, node()).
 
@@ -135,17 +216,41 @@ default_choose_claim(Ring, Node) ->
 default_choose_claim(Ring, Node, Params) ->
     choose_claim_v2(Ring, Node, Params).
 
-%% @spec default_wants_claim(riak_core_ring()) -> {yes, integer()} | no
 %% @doc Want a partition if we currently have less than floor(ringsize/nodes).
+-spec default_wants_claim(
+    riak_core_ring:riak_core_ring()) -> {yes, integer()} | no.
 default_wants_claim(Ring) ->
     default_wants_claim(Ring, node()).
 
 default_wants_claim(Ring, Node) ->
     wants_claim_v2(Ring, Node).
 
+%% Provide default choose parameters if none given
+default_choose_params() ->
+    default_choose_params([]).
+
+default_choose_params(Params) ->
+    case proplists:get_value(target_n_val, Params) of
+        undefined ->
+            TN = app_helper:get_env(riak_core, target_n_val, ?DEF_TARGET_N),
+            [{target_n_val, TN} | Params];
+        _->
+            Params
+    end.
+
+%% ===================================================================
+%% Claim Function Implementations 
+%% ===================================================================
+
+-spec wants_claim_v2(
+    riak_core_ring:riak_core_ring()) ->
+        no|{yes, location_change|non_neg_integer()}.
 wants_claim_v2(Ring) ->
     wants_claim_v2(Ring, node()).
 
+-spec wants_claim_v2(
+    riak_core_ring:riak_core_ring(), node()) ->
+        no|{yes, non_neg_integer()}. 
 wants_claim_v2(Ring, Node) ->
     Active = riak_core_ring:claiming_members(Ring),
     Owners = riak_core_ring:all_owners(Ring),
@@ -156,12 +261,7 @@ wants_claim_v2(Ring, Node) ->
     Count = proplists:get_value(Node, Counts, 0),
     case Count < Avg of
         false ->
-            case riak_core_ring:has_location_changed(Ring) of
-              true ->
-                {yes, 1};
-              false ->
-                no
-            end;
+            no;
         true ->
             {yes, Avg - Count}
     end.
@@ -219,19 +319,6 @@ wants_claim_v3(Ring, _Node) ->
             end
     end.
 
-%% Provide default choose parameters if none given
-default_choose_params() ->
-    default_choose_params([]).
-
-default_choose_params(Params) ->
-    case proplists:get_value(target_n_val, Params) of
-        undefined ->
-            TN = app_helper:get_env(riak_core, target_n_val, ?DEF_TARGET_N),
-            [{target_n_val, TN} | Params];
-        _->
-            Params
-    end.
-
 choose_claim_v2(Ring) ->
     choose_claim_v2(Ring, node()).
 
@@ -239,8 +326,7 @@ choose_claim_v2(Ring, Node) ->
     Params = default_choose_params(),
     choose_claim_v2(Ring, Node, Params).
 
-choose_claim_v2(RingOrig, Node, Params0) ->
-    Ring = riak_core_ring:clear_location_changed(RingOrig),
+choose_claim_v2(Ring, Node, Params0) ->
     Params = default_choose_params(Params0),
     %% Active::[node()]
     Active = riak_core_ring:claiming_members(Ring),
