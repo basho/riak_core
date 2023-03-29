@@ -135,7 +135,7 @@ support_locations_claim(Ring, TargetNVal) ->
     end.
 
 %% @doc
-%% Find a mapping between Idx vales and the locations of the nodes which
+%% Find a mapping between Idx ids and the locations of the nodes which
 %% currently own them
 -spec get_location_owners(
     riak_core_ring:riak_core_ring()) -> list({non_neg_integer(), atom()}).

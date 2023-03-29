@@ -30,6 +30,11 @@
         sort_members_for_choose/3
     ]).
 
+-spec sort_members_for_choose(
+        riak_core_ring:riak_core_ring(),
+        list(node()),
+        list({non_neg_integer(), node()})) ->
+            list({non_neg_integer(), node()}).
 sort_members_for_choose(Ring, Members, Owners) ->
     NodesLocations = riak_core_ring:get_nodes_locations(Ring),
     case riak_core_location:has_location_set_in_cluster(NodesLocations) of
@@ -73,13 +78,16 @@ choose_claim_v4(Ring, Node) ->
     Params = riak_core_membership_claim:default_choose_params(),
     choose_claim_v4(Ring, Node, Params).
 
+-spec choose_claim_v4(
+        riak_core_ring:riak_core_ring(), node(), list(tuple())) ->
+            riak_core_ring:riak_core_ring().
 choose_claim_v4(Ring, Node, Params0) ->
     Params = riak_core_membership_claim:default_choose_params(Params0),
     Active = riak_core_ring:claiming_members(Ring),
     Owners = riak_core_ring:all_owners(Ring),
     Ownerships = riak_core_membership_claim:get_counts(Active, Owners),
     RingSize = riak_core_ring:num_partitions(Ring),
-    NodeCount = erlang:length(Active),
+    NodeCount = length(Active),
     {MinVnodes, MaxVnodes, Deltas}
         = assess_deltas(RingSize, NodeCount, Ownerships),
     {Node, CurrentOwnerships} =
@@ -104,94 +112,42 @@ choose_claim_v4(Ring, Node, Params0) ->
             [Idx || {Idx, _} <- Owners]
             ),
     AllIndices =
-        case NodesAllClaimed of
-            true ->
-                ZippedIndices;
-            false ->
-                StripeCount = max(1, (length(Active) - 1)),
-                StripeList =
-                    lists:map(
-                        fun({Nth, I}) -> {Nth rem StripeCount, Nth, I} end,
-                        ZippedIndices),
-                Counter =
-                    dict:from_list(
-                        lists:map(
-                            fun(I) -> {I, 0} end,
-                            lists:seq(0, StripeCount - 1))
-                    ),
-                Counted =
-                    lists:foldl(
-                        fun({R, _Nth, _I}, C) ->
-                            dict:update_counter(R, 1, C)
-                        end,
-                        Counter,
-                        StripeList),
-                lists:map(
-                    fun({_OD, _RC, _R, Nth, I}) -> {Nth, I} end,
-                    lists:sort(
-                        lists:map(
-                            fun({R, Nth, I}) ->
-                                {I, Owner} = lists:keyfind(I, 1, Owners),
-                                {Owner, Delta} = lists:keyfind(Owner, 1, Deltas),
-                                {Delta, dict:fetch(R, Counted), R, Nth, I}
-                            end,
-                            lists:reverse(StripeList)
-                            )
-                        )
-                    )
-        end,
+        sort_indices_for_claim(
+            ZippedIndices, length(Active), Owners, Deltas, NodesAllClaimed),
     
     EnoughNodes =
         (NodeCount > TargetN)
         or ((NodeCount == TargetN) and (RingSize rem TargetN =:= 0)),
     
-    case EnoughNodes of
-        true ->
-            %% If we have enough nodes to meet target_n, then we prefer to
-            %% claim indices that are currently causing violations, and then
-            %% fallback to indices in linear order. The filtering steps below
-            %% will ensure no new violations are introduced.
-            NodeViolations = find_node_violations(Ring, TargetN),
-            LocationViolations =
-                lists:subtract(
-                    find_location_violations(Ring, TargetN), NodeViolations),
-            {DirtyNodeIndices, OtherIndices} =
-                lists:splitwith(
-                    fun({_Nth, Idx}) ->
-                        lists:member(Idx, NodeViolations)
-                    end,
-                    AllIndices),
-            {DirtyLocationIndices, CleanIndices} =
-                lists:splitwith(
-                    fun({_Nth, Idx}) ->
-                        lists:member(Idx, LocationViolations)
-                    end,
-                    OtherIndices
-                ),
-            Indices = DirtyNodeIndices ++ DirtyLocationIndices ++ CleanIndices;
-        false ->
-            %% If we do not have enough nodes to meet target_n, then we prefer
-            %% claiming the same indices that would occur during a
-            %% re-diagonalization of the ring with target_n nodes, falling
-            %% back to linear offsets off these preferred indices when the
-            %% number of indices desired is less than the computed set.
-            Padding = lists:duplicate(TargetN, undefined),
-            Expanded = lists:sublist(Active ++ Padding, TargetN),
-            ExpandedLocation = get_nodes_by_location(Expanded, Ring),
-            PreferredClaim =
-                riak_core_membership_claim:diagonal_stripe(
-                    Ring, ExpandedLocation),
-            PreferredNth = [begin
-                                {Nth, Idx} = lists:keyfind(Idx, 2, AllIndices),
-                                Nth
-                            end || {Idx,Owner} <- PreferredClaim,
-                                   Owner =:= Node],
-            Offsets = lists:seq(0, RingSize div length(PreferredNth)),
-            AllNth = lists:sublist([(X+Y) rem RingSize || Y <- Offsets,
-                                                          X <- PreferredNth],
-                                   RingSize),
-            Indices = [lists:keyfind(Nth, 1, AllIndices) || Nth <- AllNth]
-    end,
+    Indices =
+        case EnoughNodes of
+            true ->
+                %% If we have enough nodes to meet target_n, then we prefer to
+                %% claim indices that are currently causing violations, and
+                %% then fallback to indices in linear order. The filtering
+                %% steps below will ensure no new violations are introduced.
+                NodeViolations = find_node_violations(Ring, TargetN),
+                LocationViolations =
+                    lists:subtract(
+                        find_location_violations(Ring, TargetN),
+                        NodeViolations),
+                {DirtyNodeIndices, OtherIndices} =
+                    lists:splitwith(
+                        fun({_Nth, Idx}) ->
+                            lists:member(Idx, NodeViolations)
+                        end,
+                        AllIndices),
+                {DirtyLocationIndices, CleanIndices} =
+                    lists:splitwith(
+                        fun({_Nth, Idx}) ->
+                            lists:member(Idx, LocationViolations)
+                        end,
+                        OtherIndices
+                    ),
+                DirtyNodeIndices ++ DirtyLocationIndices ++ CleanIndices;
+            false ->
+                AllIndices
+        end,
 
     %% Filter out indices that conflict with the node's existing ownership
     ClaimableIdxs =
@@ -215,25 +171,179 @@ choose_claim_v4(Ring, Node, Params0) ->
             Ring,
             Claim2),
 
-    BadRing =
-        riak_core_membership_claim:meets_target_n(NewRing, TargetN) == false,
+    BadRing = length(meets_target_n(NewRing, TargetN)) > 0,
     DeficientClaim = (length(Claim2) + CurrentOwnerships) < MinVnodes,
     BadClaim = EnoughNodes and BadRing and NodesAllClaimed,
+
+    MaybeBalancedRing =
+        case NodesAllClaimed and (MinVnodes < MaxVnodes) of
+            true ->
+                NewOwners = riak_core_ring:all_owners(NewRing),
+                NewOwnerships =
+                    riak_core_membership_claim:get_counts(Active, NewOwners),
+                {MinVnodes, MaxVnodes, NewDeltas}
+                    = assess_deltas(RingSize, NodeCount, NewOwnerships),
+                NodesToGive =
+                    lists:filter(
+                        fun({_N, D}) ->
+                            case D of
+                                D when D < (MinVnodes - MaxVnodes) ->
+                                    true;
+                                _ ->
+                                    false
+                            end
+                        end,
+                        NewDeltas),
+                NodesToTake =
+                    lists:filtermap(
+                        fun({N, D}) -> 
+                            case D of 0 -> {true, N}; _ -> false end
+                        end,
+                        NewDeltas),
+                give_partitions(
+                    NodesToGive, NodesToTake, ZippedIndices, TargetN, NewRing);
+            false ->
+                NewRing
+        end,
     
     case BadClaim or DeficientClaim of
         true ->
-            %% Unable to claim, fallback to re-diagonalization
             sequential_claim(Ring, Node, TargetN);
         _ ->
-            NewRing
+            MaybeBalancedRing
+    end.
+
+-spec give_partitions(
+        list({node(), integer()}),
+        list(node()),
+        list({non_neg_integer(), non_neg_integer()}),
+        pos_integer(),
+        riak_core_ring:riak_core_ring()) -> riak_core_ring:riak_core_ring().
+give_partitions([], _TakeNodes, _ZipIndices, _TargetN, Ring) ->
+    Ring;
+give_partitions(_, [], _ZipIndices, _TargetN, Ring) ->
+    Ring;
+give_partitions([{_Node, -1}|Rest], TakeNodes, ZipIndices, TargetN, Ring) ->
+    give_partitions(Rest, TakeNodes, ZipIndices, TargetN, Ring);
+give_partitions([{Node, D}|Rest], TakeNodes, ZipIndices, TargetN, Ring) ->
+    Owners = riak_core_ring:all_owners(Ring),
+    Partitions =
+        lists:filtermap(
+            fun({Idx, N}) -> case N of Node -> {true, Idx}; _ -> false end end,
+            Owners),
+    {Success, ClaimableIdx, ReceivingNode} = 
+        lists:foldl(
+            fun (_Idx, {true, P, RcvNode}) ->
+                    {true, P, RcvNode};
+                (Idx, {false, undefined, undefined}) ->
+                    PotentialHomes =
+                        find_home(
+                            Idx, TakeNodes, ZipIndices, TargetN, Owners, Ring),
+                    case PotentialHomes of
+                        [] ->
+                            {false, undefined, undefined};
+                        [HN|_Rest] ->
+                            {true, Idx, HN}
+                    end
+            end,
+            {false, undefined, undefined},
+            Partitions),
+    case {Success, ClaimableIdx, ReceivingNode} of
+        {true, ClaimableIdx, ReceivingNode} ->
+            give_partitions(
+                [{Node, D + 1}|Rest],
+                TakeNodes -- [ReceivingNode],
+                ZipIndices,
+                TargetN,
+                riak_core_ring:transfer_node(
+                    ClaimableIdx, ReceivingNode, Ring));
+        {false, undefined, undefined} ->
+            give_partitions(Rest, TakeNodes, ZipIndices, TargetN, Ring)
     end.
 
 
+find_home(Idx, TakeNodes, ZippedIndices, TargetN, Owners, Ring) ->
+    {Nth, Idx} = lists:keyfind(Idx, 2, ZippedIndices),
+    RS = length(ZippedIndices),
+    OwningNodes =
+        lists:usort(
+            lists:map(
+                fun(N0) -> 
+                    N1 =
+                        case N0 of
+                            N0 when N0 < 0 -> RS + N0;
+                            N0 when N0 >= RS -> N0 - RS;
+                            N0 -> N0
+                        end,
+                    {N1, I} = lists:keyfind(N1, 1, ZippedIndices),
+                    {I, O} = lists:keyfind(I, 1, Owners),
+                    O
+                end,
+                lists:seq((Nth + 1) - TargetN, Nth + TargetN - 1) -- [Nth])
+        ),
+    NodesLocations = riak_core_ring:get_nodes_locations(Ring),
+    case riak_core_location:has_location_set_in_cluster(NodesLocations) of
+        false ->
+            TakeNodes -- OwningNodes;
+        true ->
+            Locations =
+                lists:usort(
+                    lists:map(
+                        fun(N) ->
+                            riak_core_location:get_node_location(
+                                N, NodesLocations)
+                        end,
+                        OwningNodes)),
+            lists:filter(
+                fun(TN0) ->
+                    not lists:member(
+                            riak_core_location:get_node_location(
+                                TN0, NodesLocations),
+                            Locations)
+                end,
+                TakeNodes)
+        end.
+
+
+-spec sort_indices_for_claim(
+    list({non_neg_integer(), non_neg_integer()}),
+    pos_integer(),
+    [{non_neg_integer(), node()}],
+    [{node(), integer()}],
+    boolean()) -> list({non_neg_integer(), non_neg_integer()}).
+sort_indices_for_claim(
+        ZippedIndices, ActiveMemberCount, Owners, Deltas, _NodesAllClaimed) ->
+    StripeCount = max(1, (ActiveMemberCount - 1)),
+    StripeList =
+        lists:map(
+            fun({Nth, I}) -> {Nth rem StripeCount, Nth, I} end,
+            ZippedIndices),
+    Counter =
+        dict:from_list(
+            lists:map(fun(I) -> {I, 0} end, lists:seq(0, StripeCount - 1))),
+    Counted =
+        lists:foldl(
+            fun({R, _Nth, _I}, C) -> dict:update_counter(R, 1, C) end,
+            Counter,
+            StripeList),
+    lists:map(
+        fun({_OD, _RC, _R, Nth, I}) -> {Nth, I} end,
+        lists:sort(
+            lists:map(
+                fun({R, Nth, I}) ->
+                    {I, Owner} = lists:keyfind(I, 1, Owners),
+                    {Owner, Delta} = lists:keyfind(Owner, 1, Deltas),
+                    {Delta, dict:fetch(R, Counted), R, Nth, I}
+                end,
+                lists:reverse(StripeList)
+                ))).
+
 %% @doc
-%% Assess what the mnimum and maximum number of vnodes which should be owned by
-%% each node, and return a list of nodes with the Deltas from the minimum i.e.
-%% where a node has more vnodes than the minimum the delta will be a negative
-%% number indicating the number of vnodes it can offer to a node with wants.
+%% Assess what the minimum and maximum number of vnodes which should be owned
+%% by each node, and return a list of nodes with the Deltas from the minimum
+%% i.e. where a node has more vnodes than the minimum the delta will be a
+%% negative number indicating the number of vnodes it can offer to a node with
+%% wants.
 -spec assess_deltas(
     pos_integer(), pos_integer(), [{node(), non_neg_integer()}]) ->
         {non_neg_integer(), pos_integer(), [{node(), integer()}]}.
@@ -322,6 +432,31 @@ safe_indices(
         end,
         IndicesToCheck 
     ).
+
+
+-spec meets_target_n(
+        riak_core_ring:riak_core_ring(), pos_integer()) ->
+            list({non_neg_integer(), node(), list(node())}).
+meets_target_n(Ring, TargetN) when TargetN > 1 ->
+    {_RingSize, Mappings} = riak_core_ring:chash(Ring),
+    Prefix = lists:sublist(Mappings, TargetN - 1),
+    CheckableMap = Mappings ++ Prefix,
+    {_, Failures} =
+        lists:foldl(
+            fun({Idx, N}, {LastNminus1, Fails}) ->
+                case lists:member(N, LastNminus1) of
+                    false ->
+                        {[N|lists:sublist(LastNminus1, TargetN - 2)], Fails};
+                    true ->
+                        {[N|lists:sublist(LastNminus1, TargetN - 2)],
+                            [{Idx, N, LastNminus1}|Fails]}
+                end
+            end,
+            {[], []},
+            CheckableMap),
+    Failures;
+meets_target_n(_Ring, _TargetN) ->
+    true.
 
 %% @private
 %%
@@ -428,8 +563,7 @@ sequential_claim(Ring, Node) ->
 -spec sequential_claim(
     riak_core_ring:riak_core_ring(), node(), integer()) ->
         riak_core_ring:riak_core_ring().
-sequential_claim(Ring0, Node, TargetN) ->
-    Ring = riak_core_ring:upgrade(Ring0),
+sequential_claim(Ring, Node, TargetN) ->
     OrigNodes = lists:usort([Node|riak_core_ring:claiming_members(Ring)]),
     Nodes = get_nodes_by_location(OrigNodes, Ring),
     NodeCount = length(Nodes),
@@ -627,6 +761,27 @@ sort_lists_by_length(ListOfLists) ->
 -ifdef(TEST).
 
 -include_lib("eunit/include/eunit.hrl").
+
+simple_cluster_test() ->
+    RingSize = 32,
+    TargetN = 4,
+    NodeList = [n1, n2, n3, n4, n5, n6],
+    R0 = riak_core_ring:fresh(RingSize, n1),
+    R1 =
+        lists:foldl(
+            fun(N, AccR) -> riak_core_ring:add_member(n1, AccR, N) end,
+            R0,
+            NodeList -- [n1]),
+    Props = [{target_n_val, TargetN}],
+    RClaim =
+        riak_core_membership_claim:claim(
+            R1,
+            {riak_core_membership_claim, default_wants_claim},
+            {riak_core_claim_location, choose_claim_v4, Props}),
+    Failures = meets_target_n(RClaim, TargetN),
+    lists:foreach(fun(F) -> io:format("Failure ~p~n", [F]) end, Failures),
+    ?assert(length(Failures) == 0).
+    
 
 prefilter_violations_test_() ->
     % Be strict on test timeout.  Unrefined code took > 10s, whereas the
@@ -1045,6 +1200,155 @@ location_multistage_claim_tester(
             timer:now_diff(SW4, SW3) div 1000,
             timer:now_diff(SW5, SW4) div 1000,
             timer:now_diff(SW6, SW5) div 1000]
+    ).
+
+location_typical_expansion_test() ->
+    location_typical_expansion_tester(256)
+    %,
+    % location_typical_expansion_tester(512)
+    .
+
+location_typical_expansion_tester(RingSize) ->
+    N1 = l1n1,
+    N1Loc = loc1,
+    TargetN = 4,
+    InitJoiningNodes =
+        [{l1n2, loc1},
+            {l2n3, loc2}, {l2n4, loc2},
+            {l3n5, loc3}, {l3n6, loc3},
+            {l4n7, loc4}, {l4n8, loc4}],
+
+    io:format(
+        "Testing NodeList ~w with RingSize ~w~n",
+        [[{N1, N1Loc}|InitJoiningNodes], RingSize]
+    ),
+    R1 = 
+        riak_core_ring:set_node_location(
+            N1,
+            N1Loc,
+            riak_core_ring:fresh(RingSize, N1)),
+
+    RAll =
+        lists:foldl(
+            fun({N, L}, AccR) ->
+                AccR0 = riak_core_ring:add_member(N1, AccR, N),
+                riak_core_ring:set_node_location(N, L, AccR0)
+            end,
+            R1,
+            InitJoiningNodes
+        ),
+    Params = [{target_n_val, TargetN}],
+    RClaimInit =
+        riak_core_membership_claim:claim(
+            RAll,
+            {riak_core_membership_claim, default_wants_claim},
+            {riak_core_claim_location, choose_claim_v4, Params}),
+    {RingSize, MappingsInit} = riak_core_ring:chash(RClaimInit),
+
+    check_for_failures(MappingsInit, TargetN, RClaimInit),
+
+    Stage1Ring =
+        lists:foldl(
+            fun(JN, R) ->
+                riak_core_ring:set_member(node(), R, JN, valid, same_vclock)
+            end,
+            RClaimInit,
+            riak_core_ring:members(RClaimInit, [joining])
+        ),
+    
+    RClaimStage2 = add_node(Stage1Ring, N1, l5n9, loc5, Params),
+    {RingSize, Mappings2} = riak_core_ring:chash(RClaimStage2),
+    check_for_failures(Mappings2, TargetN, RClaimStage2),
+    Stage2Ring = commit_change(RClaimStage2),
+        
+    RClaimStage3 = add_node(Stage2Ring, N1, l5n10, loc5, Params),
+    {RingSize, Mappings3} = riak_core_ring:chash(RClaimStage3),
+    check_for_failures(Mappings3, TargetN, RClaimStage3),
+    Stage3Ring = commit_change(RClaimStage3),
+    
+    RClaimStage4 = add_node(Stage3Ring, N1, l6n11, loc6, Params),
+    {RingSize, Mappings4} = riak_core_ring:chash(RClaimStage4),
+    check_for_failures(Mappings4, TargetN, RClaimStage4),
+    Stage4Ring = commit_change(RClaimStage4),
+    
+    RClaimStage5 = add_node(Stage4Ring, N1, l6n12, loc6, Params),
+    {RingSize, Mappings5} = riak_core_ring:chash(RClaimStage5),
+    check_for_failures(Mappings5, TargetN, RClaimStage5),
+    Stage5Ring = commit_change(RClaimStage5),
+    
+    RClaimStage6 = add_node(Stage5Ring, N1, l1n13, loc1, Params),
+    {RingSize, Mappings6} = riak_core_ring:chash(RClaimStage6),
+    check_for_failures(Mappings6, TargetN, RClaimStage6),
+    Stage6Ring = commit_change(RClaimStage6),
+    
+    RClaimStage7 = add_node(Stage6Ring, N1, l2n14, loc2, Params),
+    {RingSize, Mappings7} = riak_core_ring:chash(RClaimStage7),
+    check_for_failures(Mappings7, TargetN, RClaimStage7),
+    _Stage7Ring = commit_change(RClaimStage7)
+
+    % ,
+    % RClaimStage8 = add_node(Stage7Ring, N1, l3n15, loc3, Params),
+    % {RingSize, Mappings8} = riak_core_ring:chash(RClaimStage8),
+    % check_for_failures(Mappings8, TargetN, RClaimStage8),
+    % Stage8Ring = commit_change(RClaimStage8),
+    
+    % RClaimStage9 = add_node(Stage8Ring, N1, l4n16, loc4, Params),
+    % {RingSize, Mappings9} = riak_core_ring:chash(RClaimStage9),
+    % check_for_failures(Mappings9, TargetN, RClaimStage9),
+    % _Stage9Ring = commit_change(RClaimStage9)
+    .
+
+
+add_node(Ring, Claimant, Node, Location, Params) ->
+    RingA = riak_core_ring:add_member(Claimant, Ring, Node),
+    RingB = riak_core_ring:set_node_location(Node, Location, RingA),
+    RingC =
+        riak_core_membership_claim:claim(
+            RingB,
+            {riak_core_membership_claim, default_wants_claim},
+            {riak_core_claim_location, choose_claim_v4, Params}),
+    OwnersPre = riak_core_ring:all_owners(RingA),
+    OwnersPost = riak_core_ring:all_owners(RingC),
+    OwnersZip = lists:zip(OwnersPre, OwnersPost),
+    Next =
+        [{Idx, PrevOwner, NewOwner, [], awaiting} ||
+            {{Idx, PrevOwner}, {Idx, NewOwner}} <- OwnersZip,
+            PrevOwner /= NewOwner],
+    % StartingNodes = riak_core_ring:all_members(Ring),
+    % ExpectedTransferMax = 2 * (length(OwnersPre) div length(StartingNodes)),
+    NodeCountD =
+        lists:foldl(
+            fun({_Idx, N}, D) ->
+                dict:update_counter(N, 1, D)
+            end,
+            dict:new(),
+            OwnersPost
+        ),
+    NodeCounts =
+        lists:map(fun({_N, C}) -> C end, dict:to_list(NodeCountD)),
+    io:format(
+        % user,
+        "NodeCounts~w~n",
+        [dict:to_list(NodeCountD)]),
+    io:format(
+        % user,
+        "Adding node ~w in location ~w - ~w transfers ~w max ~w min vnodes~n",
+        [Node, Location,
+            length(Next), lists:max(NodeCounts), lists:min(NodeCounts)]),
+    ?assert(
+        (lists:min(NodeCounts) == (lists:max(NodeCounts) - 1)) or
+        (lists:min(NodeCounts) == lists:max(NodeCounts))
+    ),
+    % ?assert(length(Next) =< ExpectedTransferMax),
+    RingC.
+
+commit_change(Ring) ->
+    lists:foldl(
+        fun(JN, R) ->
+            riak_core_ring:set_member(node(), R, JN, valid, same_vclock)
+        end,
+        Ring,
+        riak_core_ring:members(Ring, [joining])
     ).
 
 -endif.

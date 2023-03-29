@@ -102,9 +102,9 @@ claim(Ring) ->
     Choose =
         case app_helper:get_env(riak_core, choose_claim_fun) of
             choose_claim_v2 ->
-                {riak_core_memberhsip_claim, choose_claim_v2};
+                {riak_core_membership_claim, choose_claim_v2};
             choose_claim_v3 ->
-                {riak_core_memberhsip_claim, choose_claim_v3};
+                {riak_core_membership_claim, choose_claim_v3};
             choose_claim_v4 ->
                 {riak_core_claim_location, choose_claim_v4};
             {CMod, CFun} ->
