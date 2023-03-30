@@ -595,7 +595,7 @@ sequential_claim(Ring, Node, TargetN) ->
                     _ ->
                         {false, 0}
                 end;
-            LInfo ->
+            _ ->
                 {false, 0}
         end,
     
