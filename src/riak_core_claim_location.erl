@@ -30,6 +30,8 @@
         sort_members_for_choose/3
     ]).
 
+-type location_finder() :: fun((node()) -> atom()).
+
 -spec sort_members_for_choose(
         riak_core_ring:riak_core_ring(),
         list(node()),
@@ -580,7 +582,7 @@ sequential_claim(Ring, Node, TargetN) ->
         riak_core_location:support_locations_claim(Ring, TargetN),
     {SolveableLocationViolation, LocationShortfall} =
         case {LocationsSupported, Overhang, RingSize div NodeCount} of
-            {true, OH, Loops} when OH > 0, OH > TargetN, Loops > 1 ->
+            {true, OH, Loops} when OH > 0, Loops > 1 ->
                 MinDistance =
                     check_for_location_tail_violation(
                         Nodes, Ring, OH, TargetN),
@@ -593,7 +595,7 @@ sequential_claim(Ring, Node, TargetN) ->
                     _ ->
                         {false, 0}
                 end;
-            _ ->
+            LInfo ->
                 {false, 0}
         end,
     
@@ -601,12 +603,15 @@ sequential_claim(Ring, Node, TargetN) ->
     Zipped = 
         case {SolveableLocationViolation, SolveableNodeViolation} of
             {true, _} ->
+                F = location_finder(Ring),
                 Nodelist =
-                    solve_tail_violations(RingSize, Nodes, LocationShortfall),
+                    solve_tail_violations(
+                        RingSize, Nodes, LocationShortfall, TargetN, true, F),
                 lists:zip(Partitions, Nodelist);
             {_, true} ->
                 Nodelist =
-                    solve_tail_violations(RingSize, Nodes, Shortfall),
+                    solve_tail_violations(
+                        RingSize, Nodes, Shortfall, TargetN, false, undefined),
                 lists:zip(Partitions, Nodelist);
             _ ->
                 riak_core_membership_claim:diagonal_stripe(Ring, Nodes)
@@ -617,6 +622,12 @@ sequential_claim(Ring, Node, TargetN) ->
         Ring,
         Zipped).
 
+-spec location_finder(riak_core_ring:riak_core_ring()) -> location_finder().
+location_finder(Ring) ->
+    LocationD = riak_core_ring:get_nodes_locations(Ring),
+    fun(N) ->
+        riak_core_location:get_node_location(N, LocationD)
+    end.
 
 -spec check_for_location_tail_violation(
     list(node()),
@@ -624,16 +635,18 @@ sequential_claim(Ring, Node, TargetN) ->
     pos_integer(),
     pos_integer()) -> pos_integer().
 check_for_location_tail_violation(Nodes, Ring, OH, TargetN) ->
-    LastNodes = lists:sublist(Nodes, 1 + OH - TargetN, TargetN),
-    FirstNodes = lists:sublist(Nodes, TargetN),
-    LocationD = riak_core_ring:get_nodes_locations(Ring),
-    LocationFinder =
-        fun(N) -> riak_core_location:get_node_location(N, LocationD) end,
+    {LastLoop, ExtraNodes} = lists:split(OH, Nodes),
+    LastNodes =
+        lists:reverse(
+            lists:sublist(
+                lists:reverse(ExtraNodes ++ LastLoop), TargetN - 1)),
+    FirstNodes = lists:sublist(Nodes, TargetN - 1),
+    LocationFinder = location_finder(Ring),
     LastLocations = lists:map(LocationFinder, LastNodes),
     FirstLocations =
         lists:zip(
             lists:map(LocationFinder, FirstNodes),
-            lists:seq(0, TargetN - 1)),
+            lists:seq(1, TargetN - 1)),
     {MinDistance, _} =
         lists:foldl(
             fun(L, {MinStep, TailStep}) ->
@@ -644,7 +657,7 @@ check_for_location_tail_violation(Nodes, Ring, OH, TargetN) ->
                         {MinStep, TailStep - 1}
                 end
             end,
-            {TargetN, TargetN - 1},
+            {TargetN, TargetN - 2},
             LastLocations),
     MinDistance.
 
@@ -662,13 +675,20 @@ solveable_violation(RingSize, NodeCount, TargetN, Shortfall) ->
     end.
 
 %% @doc
-%% The node list mosut be of length ring size.  It is made up of a set of
+%% The node list must be of length ring size.  It is made up of a set of
 %% complete loops of the node list, and then a partial loop with the addition
 %% of the shortfall.  The for each node in the shortfall a node in the complete
 %% loops must be removed
 -spec solve_tail_violations(
-    pos_integer(), [node()], non_neg_integer()) -> [[node()]].
-solve_tail_violations(RingSize, Nodes, Shortfall) ->
+    pos_integer(),
+    [node()],
+    non_neg_integer(),
+    pos_integer(),
+    boolean(),
+    undefined|location_finder()) ->
+        [[node()]].
+solve_tail_violations(
+        RingSize, Nodes, Shortfall, _TargetN, false, _LocFinder) ->
     {LastLoop, Remainder} = 
         lists:split(RingSize rem length(Nodes), Nodes),
     ExcessLoop = lists:sublist(Remainder, Shortfall),
@@ -683,7 +703,221 @@ solve_tail_violations(RingSize, Nodes, Shortfall) ->
         lists:map(
             fun(ENL) -> lists:subtract(Nodes, ENL) end, 
             RemoveList),
-    CompleteLoops ++ lists:append(PartialLoops) ++ Tail.
+    CompleteLoops ++ lists:append(PartialLoops) ++ Tail;
+solve_tail_violations(
+        RingSize, Nodes, Shortfall, TargetN, true, LocFinder) ->
+    {LastLoop, Remainder} = 
+        lists:split(RingSize rem length(Nodes), Nodes),
+    PostLoop = lists:sublist(Nodes, TargetN - 1),
+    PreExcess =
+        lists:reverse(
+            lists:sublist(
+                lists:reverse(Nodes ++ LastLoop), TargetN - 1)),
+    {SafeList, SafeAdditions} =
+        case safe_to_remove(Nodes, LastLoop, TargetN, LocFinder) of
+            SL when length(SL) >= Shortfall ->
+                {lists:sublist(SL, Shortfall), Remainder};
+            SL ->
+                RemovableExcess =
+                    safe_to_remove(
+                        Nodes, Remainder, TargetN, LocFinder),
+                {SL, RemovableExcess}
+        end,
+    ExcessLoop =
+        case length(SafeAdditions) of
+            NodesToCheck when NodesToCheck >= Shortfall ->
+                safe_to_add(
+                    PreExcess, PostLoop, SafeAdditions, LocFinder, Shortfall);
+            NodesToCheck ->
+                CheckList = 
+                    SafeAdditions ++
+                    lists:sublist(
+                        lists:subtract(Remainder, SafeAdditions),
+                        Shortfall - NodesToCheck),
+                safe_to_add(
+                        PreExcess, PostLoop, CheckList, LocFinder, Shortfall)
+        end,
+                
+    Tail = LastLoop ++ ExcessLoop,
+    LoopCount = RingSize div length(Nodes),
+    RemoveCount = length(ExcessLoop),
+    RemoveList =
+        divide_list_for_removes(
+            lists:sublist(SafeList ++ ExcessLoop, RemoveCount), LoopCount),
+    
+    case LoopCount > (2 * RemoveCount) of
+        true ->
+            PartialLoops =
+                lists:map(
+                    fun(ENL) -> lists:subtract(Nodes, ENL) ++ Nodes end, 
+                    RemoveList),
+            CompleteLoops =
+                lists:flatten(
+                    lists:duplicate(LoopCount - (2 * RemoveCount), Nodes)),
+            CompleteLoops ++ lists:append(PartialLoops) ++ Tail;
+        false ->
+            CompleteLoops =
+                lists:flatten(
+                    lists:duplicate(LoopCount - RemoveCount, Nodes)),
+            PartialLoops =
+                lists:map(
+                    fun(ENL) -> lists:subtract(Nodes, ENL) end, 
+                    RemoveList),
+            CompleteLoops ++ lists:append(PartialLoops) ++ Tail
+    end.
+
+
+-spec safe_to_add(
+    list(node()),
+    list(node()),
+    list(node()),
+    location_finder()|undefined,
+    pos_integer()) -> list(node()).
+safe_to_add(PreExcess, PostLoop, NodesToCheck, LocFinder, Shortfall) ->
+    NodePositions =
+        score_for_adding(
+            lists:zip(
+                lists:map(LocFinder, lists:reverse(PreExcess)),
+                lists:seq(1, length(PreExcess))),
+            lists:zip(
+                lists:map(LocFinder, PostLoop),
+                lists:seq(1, length(PostLoop))),
+            lists:map(LocFinder, NodesToCheck),
+            [],
+            Shortfall),
+    PositionsByNode = lists:zip(NodePositions, NodesToCheck),
+    Positions = lists:seq(1, Shortfall),
+    case choose_positions(Positions, PositionsByNode, [], {[], LocFinder}) of
+        fail ->
+            lists:sublist(NodesToCheck, Shortfall);
+        NodeList ->
+            lists:reverse(NodeList)
+    end.
+
+choose_positions([], _PositionsByNode, NodeList, _LocationCheck) ->
+    NodeList;
+choose_positions([Pos|RestPos], PositionsByNode, NodeList, {LocList, LocF}) ->
+    SortedPositionsByNode =
+        lists:filter(
+            fun({PL, _N}) -> length(PL) > 0 end,
+            lists:sort(PositionsByNode)),
+    case SortedPositionsByNode of
+        [{TopPL, TopN}|RestPBN] ->
+            TopL = LocF(TopN),
+            case {lists:member(Pos, TopPL), lists:member(TopL, LocList)} of
+                {true, false} ->
+                    choose_positions(
+                        RestPos,
+                        lists:map(
+                            fun({PL, N}) -> {PL -- [Pos], N} end,
+                            RestPBN),
+                        [TopN|NodeList],
+                        {[TopL|LocList], LocF});
+                {true, true} ->
+                    choose_positions(
+                        [Pos|RestPos],
+                        RestPBN,
+                        NodeList,
+                        {LocList, LocF});
+                _ ->
+                    fail
+            end;
+        _ ->
+            fail
+    end.
+
+
+-spec score_for_adding(
+    list({node()|atom(), pos_integer()}),
+    list({node()|atom(), pos_integer()}),
+    list(node()|atom()),
+    list(list(pos_integer())),
+    pos_integer()) ->
+        list(list(pos_integer())).
+score_for_adding(_PreExcess, _PostLoop, [], NodePositions, _Shortfall) ->
+    lists:reverse(NodePositions);
+score_for_adding(PreExcess, PostLoop, [HD|Rest], NodePositions, Shortfall) ->
+    BackPositions =
+        case lists:keyfind(HD, 1, PreExcess) of
+            {HD, BS} ->
+                lists:filter(
+                    fun(P) -> (P + BS - 1) > length(PreExcess) end,
+                    lists:seq(1, Shortfall) 
+                );
+            false ->
+                lists:seq(1, Shortfall)
+        end,
+    ForwardPositions =
+        case lists:keyfind(HD, 1, PostLoop) of
+            {HD, FS} ->
+                lists:filter(
+                    fun(P) -> (FS + Shortfall - P) > length(PostLoop) end,
+                    lists:seq(1, Shortfall));
+            false ->
+                lists:seq(1, Shortfall)
+        end,
+    SupportedPositions =
+        lists:filter(
+            fun(BP) -> lists:member(BP, ForwardPositions) end, BackPositions),
+    score_for_adding(
+        PreExcess,
+        PostLoop,
+        Rest,
+        [SupportedPositions|NodePositions],
+        Shortfall).
+
+
+-spec safe_to_remove(
+    list(node()),
+    list(node()),
+    pos_integer(),
+    location_finder()|undefined) -> list(node()).
+safe_to_remove(Nodes, NodesToCheck, TargetN, LocFinder) ->
+    LocationFinder = fun(N) -> {N, LocFinder(N)} end,
+    safe_to_remove_loop(
+        lists:map(LocationFinder, Nodes),
+        lists:map(LocationFinder, NodesToCheck),
+        [],
+        TargetN).
+
+safe_to_remove_loop(_Nodes, [], SafeList, _TargetN) ->
+    SafeList;
+safe_to_remove_loop(Nodes, [HD|Rest], SafeList, TargetN) ->
+    WrappedNodes = (Nodes -- [HD]) ++ lists:sublist(Nodes, 1, TargetN),
+    {Node, _Location} = HD,
+    CheckFun =
+        fun({_N, L}, CheckList) ->
+            case lists:keyfind(L, 2, CheckList) of
+                false ->
+                    false;
+                _ ->
+                    true
+            end
+        end,
+    IsSafe =
+        lists:foldl(
+            fun(N, Acc) ->
+                case Acc of
+                    fail ->
+                        fail;
+                    LastNminus1 when is_list(LastNminus1) ->
+                        case CheckFun(N, LastNminus1) of
+                            false ->
+                                [N|lists:sublist(LastNminus1, TargetN - 2)];
+                            true ->
+                                fail
+                        end
+                end
+            end,
+            [],
+            WrappedNodes),
+    case IsSafe of
+        fail ->
+            safe_to_remove_loop(Nodes, Rest, SafeList, TargetN);
+        _ ->
+            safe_to_remove_loop(Nodes, Rest, [Node|SafeList], TargetN)
+    end.
+
 
 %% @doc 
 %% Normally need to remove one of the excess nodes each loop around the node
@@ -712,8 +946,8 @@ divide_list_for_removes(Excess, LoopCount) ->
 
 %% @private
 %% Get active nodes ordered by taking location parameters into account
--spec get_nodes_by_location([node()|undefined], riak_core_ring:riak_core_ring()) ->
-    [node()|undefined].
+-spec get_nodes_by_location(
+    [node()|undefined], riak_core_ring:riak_core_ring()) -> [node()|undefined].
 get_nodes_by_location(Nodes, Ring) ->
     NodesLocations = riak_core_ring:get_nodes_locations(Ring),
     case riak_core_location:has_location_set_in_cluster(NodesLocations) of
@@ -733,9 +967,9 @@ stripe_nodes_by_location(NodesByLocation) ->
     stripe_nodes_by_location(RestLNodes, lists:map(fun(N) -> [N] end, LNodes)).
 
 stripe_nodes_by_location([], Acc) ->
-    lists:flatten(Acc);
+    lists:flatten(lists:reverse(sort_lists_by_length(Acc)));
 stripe_nodes_by_location([LNodes|OtherLNodes], Acc) ->
-    SortedAcc = sort_lists_by_length(Acc),
+    SortedAcc = lists:reverse(sort_lists_by_length(Acc)),
     {UpdatedAcc, []} =
         lists:mapfoldl(
             fun(NodeList, LocationNodesToAdd) ->
@@ -762,7 +996,30 @@ sort_lists_by_length(ListOfLists) ->
 
 -include_lib("eunit/include/eunit.hrl").
 
-simple_cluster_test() ->
+choose_positions_test() ->
+    NodePositions = [{[1,2],l4n5},{[1,2],l5n5},{[1,2],l6n5},{[],l1n6}],
+    Positions = [1, 2],
+    LocF = fun(N) -> list_to_atom(lists:sublist(atom_to_list(N), 2)) end,
+    ?assertMatch(
+        [l4n5, l5n5],
+        lists:reverse(
+            choose_positions(Positions, NodePositions, [], {[], LocF}))).
+
+
+score_for_adding_test() ->
+    PreExcess = [n2, n3, n4],
+    PostLoop = [n1, n2, n3],
+    PE = lists:zip(lists:reverse(PreExcess), lists:seq(1, length(PreExcess))),
+    PL = lists:zip(PostLoop, lists:seq(1, length(PostLoop))),
+    Candidates = [n1, n4, n5, n6, n7],
+    Shortfall = 4,
+    ExpectedResult =
+        [[1], [4], [1, 2, 3, 4], [1, 2, 3, 4], [1, 2, 3, 4]],
+    ActualResult =
+        score_for_adding(PE, PL, Candidates, [], Shortfall),
+    ?assertMatch(ExpectedResult, ActualResult).
+
+simple_cluster_t1_test() ->
     RingSize = 32,
     TargetN = 4,
     NodeList = [n1, n2, n3, n4, n5, n6],
@@ -781,7 +1038,19 @@ simple_cluster_test() ->
     Failures = meets_target_n(RClaim, TargetN),
     lists:foreach(fun(F) -> io:format("Failure ~p~n", [F]) end, Failures),
     ?assert(length(Failures) == 0).
-    
+
+sort_list_t1_test() ->
+    OtherLoc = 
+        [[l2n1, l2n2], [l3n1, l3n2], [l4n1, l4n2], [l5n1, l5n2],
+            [l6n1], [l7n1], [l8n1]],
+    FirstLoc = [[l1n1], [l1n2]],
+    NodeList = stripe_nodes_by_location(OtherLoc, FirstLoc),
+    ExpectedNodeList =
+        [l1n1, l2n2, l3n1, l4n2, l5n1, l7n1,
+            l1n2, l2n1, l3n2, l4n1, l5n2, l6n1, l8n1],
+    ?assertMatch(
+        ExpectedNodeList, NodeList
+    ).
 
 prefilter_violations_test_() ->
     % Be strict on test timeout.  Unrefined code took > 10s, whereas the
@@ -960,6 +1229,19 @@ location_seqclaim_t6_test() ->
     location_claim_tester(l1n1, loc1, JoiningNodes, 1024),
     location_claim_tester(l1n1, loc1, JoiningNodes, 2048).
 
+location_seqclaim_t7_test() ->
+    JoiningNodes =
+        [{l1n2, loc1}, {l1n3, loc1},
+            {l2n1, loc2}, {l2n2, loc2}, {l2n3, loc2},
+            {l3n1, loc3}, {l3n2, loc3}, {l3n3, loc3},
+            {l4n1, loc4}, {l4n2, loc4},
+            {l5n1, loc5}, {l5n2, loc5},
+            {l6n1, loc6}, {l6n2, loc6}],
+    location_claim_tester(l1n1, loc1, JoiningNodes, 256),
+    location_claim_tester(l1n1, loc1, JoiningNodes, 512),
+    location_claim_tester(l1n1, loc1, JoiningNodes, 1024),
+    location_claim_tester(l1n1, loc1, JoiningNodes, 2048).
+
 location_claim_tester(N1, N1Loc, NodeLocList, RingSize) ->
     location_claim_tester(
         N1, N1Loc, NodeLocList, RingSize, sequential_claim, 4).
@@ -1101,11 +1383,11 @@ location_multistage_t4_tester() ->
             {l5n9, loc5}
         ],
 
-    location_multistage_claim_tester(64, JoiningNodes, 4, l5n10, loc5, 4).
-    % location_multistage_claim_tester(128, JoiningNodes, 4, l5n10, loc5, 4),
-    % location_multistage_claim_tester(256, JoiningNodes, 4, l5n10, loc5, 4),
-    % location_multistage_claim_tester(512, JoiningNodes, 4, l5n10, loc5, 4),
-    % location_multistage_claim_tester(1024, JoiningNodes, 4, l5n10, loc5, 4),
+    location_multistage_claim_tester(64, JoiningNodes, 4, l5n10, loc5, 4),
+    location_multistage_claim_tester(128, JoiningNodes, 4, l5n10, loc5, 4),
+    location_multistage_claim_tester(256, JoiningNodes, 4, l5n10, loc5, 4),
+    location_multistage_claim_tester(512, JoiningNodes, 4, l5n10, loc5, 4),
+    location_multistage_claim_tester(1024, JoiningNodes, 4, l5n10, loc5, 4). %,
     % location_multistage_claim_tester(2048, JoiningNodes, 4, l5n10, loc5, 4).
 
 location_multistage_claim_tester(
@@ -1203,10 +1485,8 @@ location_multistage_claim_tester(
     ).
 
 location_typical_expansion_test() ->
-    location_typical_expansion_tester(256)
-    %,
-    % location_typical_expansion_tester(512)
-    .
+    location_typical_expansion_tester(256),
+    location_typical_expansion_tester(512).
 
 location_typical_expansion_tester(RingSize) ->
     N1 = l1n1,
@@ -1284,19 +1564,17 @@ location_typical_expansion_tester(RingSize) ->
     RClaimStage7 = add_node(Stage6Ring, N1, l2n14, loc2, Params),
     {RingSize, Mappings7} = riak_core_ring:chash(RClaimStage7),
     check_for_failures(Mappings7, TargetN, RClaimStage7),
-    _Stage7Ring = commit_change(RClaimStage7)
+    Stage7Ring = commit_change(RClaimStage7),
 
-    % ,
-    % RClaimStage8 = add_node(Stage7Ring, N1, l3n15, loc3, Params),
-    % {RingSize, Mappings8} = riak_core_ring:chash(RClaimStage8),
-    % check_for_failures(Mappings8, TargetN, RClaimStage8),
-    % Stage8Ring = commit_change(RClaimStage8),
+    RClaimStage8 = add_node(Stage7Ring, N1, l3n15, loc3, Params),
+    {RingSize, Mappings8} = riak_core_ring:chash(RClaimStage8),
+    check_for_failures(Mappings8, TargetN, RClaimStage8),
+    Stage8Ring = commit_change(RClaimStage8),
     
-    % RClaimStage9 = add_node(Stage8Ring, N1, l4n16, loc4, Params),
-    % {RingSize, Mappings9} = riak_core_ring:chash(RClaimStage9),
-    % check_for_failures(Mappings9, TargetN, RClaimStage9),
-    % _Stage9Ring = commit_change(RClaimStage9)
-    .
+    RClaimStage9 = add_node(Stage8Ring, N1, l4n16, loc4, Params),
+    {RingSize, Mappings9} = riak_core_ring:chash(RClaimStage9),
+    check_for_failures(Mappings9, TargetN, RClaimStage9),
+    _Stage9Ring = commit_change(RClaimStage9).
 
 
 add_node(Ring, Claimant, Node, Location, Params) ->
