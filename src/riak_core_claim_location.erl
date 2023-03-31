@@ -582,7 +582,7 @@ sequential_claim(Ring, Node, TargetN) ->
         riak_core_location:support_locations_claim(Ring, TargetN),
     {SolveableLocationViolation, LocationShortfall} =
         case {LocationsSupported, Overhang, RingSize div NodeCount} of
-            {true, OH, Loops} when OH > 0, Loops > 1 ->
+            {true, OH, Loops} when OH > 0, Loops >= 1 ->
                 MinDistance =
                     check_for_location_tail_violation(
                         Nodes, Ring, OH, TargetN),
@@ -595,7 +595,7 @@ sequential_claim(Ring, Node, TargetN) ->
                     _ ->
                         {false, 0}
                 end;
-            _ ->
+            _NotSolveable ->
                 {false, 0}
         end,
     
@@ -737,13 +737,19 @@ solve_tail_violations(
                 safe_to_add(
                         PreExcess, PostLoop, CheckList, LocFinder, Shortfall)
         end,
-                
+
     Tail = LastLoop ++ ExcessLoop,
     LoopCount = RingSize div length(Nodes),
     RemoveCount = length(ExcessLoop),
+    UpdSafeList =
+        SafeList ++ 
+        lists:filter(
+            fun(N) -> lists:member(N, ExcessLoop) end, SafeAdditions) ++
+        (ExcessLoop -- SafeAdditions),
+
     RemoveList =
         divide_list_for_removes(
-            lists:sublist(SafeList ++ ExcessLoop, RemoveCount), LoopCount),
+            lists:sublist(UpdSafeList, RemoveCount), LoopCount),
     RemoveLoops = length(RemoveList),
     
     case LoopCount > (2 * RemoveLoops) of
@@ -842,7 +848,10 @@ score_for_adding(PreExcess, PostLoop, [HD|Rest], NodePositions, Shortfall) ->
         case lists:keyfind(HD, 1, PreExcess) of
             {HD, BS} ->
                 lists:filter(
-                    fun(P) -> (P + BS - 1) > length(PreExcess) end,
+                    fun(P) -> 
+                        {A, B} = {(P + BS - 1), length(PreExcess)},
+                        A > B
+                    end,
                     lists:seq(1, Shortfall) 
                 );
             false ->
@@ -852,7 +861,10 @@ score_for_adding(PreExcess, PostLoop, [HD|Rest], NodePositions, Shortfall) ->
         case lists:keyfind(HD, 1, PostLoop) of
             {HD, FS} ->
                 lists:filter(
-                    fun(P) -> (FS + Shortfall - P) > length(PostLoop) end,
+                    fun(P) ->
+                        {A, B} = {(FS + Shortfall - P), length(PostLoop)},
+                        A > B
+                    end,
                     lists:seq(1, Shortfall));
             false ->
                 lists:seq(1, Shortfall)
@@ -965,25 +977,34 @@ stripe_nodes_by_location(NodesByLocation) ->
     [LNodes|RestLNodes] =
         sort_lists_by_length(
             lists:map(fun({_L, NL}) -> NL end, dict:to_list(NodesByLocation))),
-    stripe_nodes_by_location(RestLNodes, lists:map(fun(N) -> [N] end, LNodes)).
+    stripe_nodes_by_location(
+        RestLNodes,
+        lists:map(
+            fun({I, L}) -> {1, I, L} end,
+            lists:zip(
+                lists:seq(1, length(LNodes)),
+                lists:map(fun(N) -> [N] end, LNodes)))).
 
 stripe_nodes_by_location([], Acc) ->
-    lists:flatten(lists:reverse(sort_lists_by_length(Acc)));
+    lists:flatten(
+        lists:map(fun({_L, _I, NL}) -> NL end, lists:sort(Acc))
+    );
 stripe_nodes_by_location([LNodes|OtherLNodes], Acc) ->
-    SortedAcc = lists:reverse(sort_lists_by_length(Acc)),
+    SortedAcc = lists:sort(Acc),
     {UpdatedAcc, []} =
         lists:mapfoldl(
-            fun(NodeList, LocationNodesToAdd) ->
+            fun({L, I, NodeList}, LocationNodesToAdd) ->
                 case LocationNodesToAdd of
                     [NodeToAdd|TailNodes] ->
-                        {NodeList ++ [NodeToAdd], TailNodes};
+                        {{L + 1, I, NodeList ++ [NodeToAdd]}, TailNodes};
                     [] ->
-                        {NodeList, []}
+                        {{L, I, NodeList}, []}
                 end
             end,
             LNodes,
             SortedAcc),
     stripe_nodes_by_location(OtherLNodes, UpdatedAcc).
+            
 
 sort_lists_by_length(ListOfLists) ->
     lists:sort(fun(L1, L2) -> length(L1) >= length(L2) end, ListOfLists).
@@ -1044,11 +1065,11 @@ sort_list_t1_test() ->
     OtherLoc = 
         [[l2n1, l2n2], [l3n1, l3n2], [l4n1, l4n2], [l5n1, l5n2],
             [l6n1], [l7n1], [l8n1]],
-    FirstLoc = [[l1n1], [l1n2]],
+    FirstLoc = [{1, 1, [l1n1]}, {1, 2, [l1n2]}],
     NodeList = stripe_nodes_by_location(OtherLoc, FirstLoc),
     ExpectedNodeList =
-        [l1n1, l2n2, l3n1, l4n2, l5n1, l7n1,
-            l1n2, l2n1, l3n2, l4n1, l5n2, l6n1, l8n1],
+        [l1n2, l2n2, l3n2, l4n2, l5n2, l7n1, 
+            l1n1, l2n1, l3n1, l4n1, l5n1, l6n1, l8n1],
     ?assertMatch(
         ExpectedNodeList, NodeList
     ).
@@ -1191,6 +1212,7 @@ location_seqclaim_t4_test() ->
             {l6n1, loc6}, {l6n2, loc6}, {l6n3, loc6}, {l6n4, loc6},
             {l6n5, loc6}, {l6n6, loc6}, {l6n7, loc6},
             {l7n1, loc7}, {l7n2, loc7}, {l7n3, loc7}],
+    location_claim_tester(l1n1, loc1, JoiningNodes, 64),
     location_claim_tester(l1n1, loc1, JoiningNodes, 128),
     location_claim_tester(l1n1, loc1, JoiningNodes, 256),
     location_claim_tester(l1n1, loc1, JoiningNodes, 512),
@@ -1242,6 +1264,17 @@ location_seqclaim_t7_test() ->
     location_claim_tester(l1n1, loc1, JoiningNodes, 512),
     location_claim_tester(l1n1, loc1, JoiningNodes, 1024),
     location_claim_tester(l1n1, loc1, JoiningNodes, 2048).
+
+location_seqclaim_t8_test() ->
+    JoiningNodes =
+        [{l1n2, loc1}, {l1n3, loc1}, {l1n4, loc1},
+            {l2n1, loc2}, {l2n2, loc2}, {l2n3, loc2},
+            {l3n1, loc3}, {l3n2, loc3}, {l3n3, loc3},
+            {l4n1, loc4}, {l4n2, loc4}, {l4n3, loc4}],
+    location_claim_tester(l1n1, loc1, JoiningNodes, 256, sequential_claim, 3),
+    location_claim_tester(l1n1, loc1, JoiningNodes, 512, sequential_claim, 3),
+    location_claim_tester(l1n1, loc1, JoiningNodes, 1024, sequential_claim, 3),
+    location_claim_tester(l1n1, loc1, JoiningNodes, 2048, sequential_claim, 3).
 
 location_claim_tester(N1, N1Loc, NodeLocList, RingSize) ->
     location_claim_tester(
@@ -1319,11 +1352,8 @@ location_multistage_t1_test_() ->
 location_multistage_t2_test_() ->
     {timeout, 60, fun location_multistage_t2_tester/0}.
 
-% location_multistage_t3_test_() ->
-%     {timeout, 60, fun location_multistage_t3_tester/0}.
-
-location_multistage_t4_test_() ->
-    {timeout, 60, fun location_multistage_t4_tester/0}.
+location_multistage_t3_test_() ->
+    {timeout, 60, fun location_multistage_t3_tester/0}.
 
 location_multistage_t1_tester() ->
     %% This is a tricky corner case where we would fail to meet TargetN for
@@ -1359,23 +1389,7 @@ location_multistage_t2_tester() ->
     location_multistage_claim_tester(1024, JoiningNodes, 3, l4n7, loc4, 2),
     location_multistage_claim_tester(2048, JoiningNodes, 3, l4n7, loc4, 2).
 
-% location_multistage_t3_tester() ->
-%     %% This is a minimal case for having TargetN locations, and an uneven
-%     %% Alloctaion around the locations.  Is TargetN - 1 still held up
-%     JoiningNodes =
-%         [{l1n2, loc1},
-%             {l2n3, loc2}, {l2n6, loc2},
-%             {l3n4, loc3},
-%             {l4n5, loc4}
-%         ],
-%     location_multistage_claim_tester(64, JoiningNodes, 4, l3n7, loc3, 3),
-%     location_multistage_claim_tester(128, JoiningNodes, 4, l3n7, loc3, 3),
-%     location_multistage_claim_tester(256, JoiningNodes, 4, l3n7, loc3, 3),
-%     location_multistage_claim_tester(512, JoiningNodes, 4, l3n7, loc3, 3),
-%     location_multistage_claim_tester(1024, JoiningNodes, 4, l3n7, loc3, 3),
-%     location_multistage_claim_tester(2048, JoiningNodes, 4, l3n7, loc3, 3).
-
-location_multistage_t4_tester() ->
+location_multistage_t3_tester() ->
     JoiningNodes =
         [{l1n2, loc1},
             {l2n3, loc2}, {l2n4, loc2},
@@ -1388,8 +1402,8 @@ location_multistage_t4_tester() ->
     location_multistage_claim_tester(128, JoiningNodes, 4, l5n10, loc5, 4),
     location_multistage_claim_tester(256, JoiningNodes, 4, l5n10, loc5, 4),
     location_multistage_claim_tester(512, JoiningNodes, 4, l5n10, loc5, 4),
-    location_multistage_claim_tester(1024, JoiningNodes, 4, l5n10, loc5, 4). %,
-    % location_multistage_claim_tester(2048, JoiningNodes, 4, l5n10, loc5, 4).
+    location_multistage_claim_tester(1024, JoiningNodes, 4, l5n10, loc5, 4),
+    location_multistage_claim_tester(2048, JoiningNodes, 4, l5n10, loc5, 4).
 
 location_multistage_claim_tester(
         RingSize, JoiningNodes, TargetN, NewNode, NewLocation, VerifyN) ->

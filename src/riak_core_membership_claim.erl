@@ -241,6 +241,7 @@ default_choose_params(Params) ->
 get_target_n() ->
     app_helper:get_env(riak_core, target_n_val, ?DEF_TARGET_N).
 
+
 %% ===================================================================
 %% Claim Function Implementations 
 %% ===================================================================
