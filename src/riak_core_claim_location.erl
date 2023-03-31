@@ -744,8 +744,9 @@ solve_tail_violations(
     RemoveList =
         divide_list_for_removes(
             lists:sublist(SafeList ++ ExcessLoop, RemoveCount), LoopCount),
+    RemoveLoops = length(RemoveList),
     
-    case LoopCount > (2 * RemoveCount) of
+    case LoopCount > (2 * RemoveLoops) of
         true ->
             PartialLoops =
                 lists:map(
@@ -753,12 +754,12 @@ solve_tail_violations(
                     RemoveList),
             CompleteLoops =
                 lists:flatten(
-                    lists:duplicate(LoopCount - (2 * RemoveCount), Nodes)),
+                    lists:duplicate(LoopCount - (2 * RemoveLoops), Nodes)),
             CompleteLoops ++ lists:append(PartialLoops) ++ Tail;
         false ->
             CompleteLoops =
                 lists:flatten(
-                    lists:duplicate(LoopCount - RemoveCount, Nodes)),
+                    lists:duplicate(LoopCount - RemoveLoops, Nodes)),
             PartialLoops =
                 lists:map(
                     fun(ENL) -> lists:subtract(Nodes, ENL) end, 
