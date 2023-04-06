@@ -27,7 +27,6 @@
         {
          ring_size,
          placements = []          :: [{Name :: atom(), Location :: atom()}], %% AWS Partition placement groups
-         extra_placements = []    :: [{Name :: atom(), Location :: atom()}], %% AWS Partition placement groups
          nodes = []               :: [Name :: atom()],                       %% all nodes that should be part of next plan
          ring = undefined,
          claimant = undefined     :: atom(),
@@ -72,18 +71,18 @@ wrap_call(S, {call, Mod, Cmd, Args}) ->
 %%
 %% we may want to add a location 'undefined' if we want to test that specific feature
 placements_args(S) ->
-  [ locnodes(S#state.nval), [] ].
+  [ locnodes(S#state.nval) ].
 
-placements(_, _Primary, _Secondary) ->
+placements(_, _Primary) ->
   ok.
 
-placements_next(S, _, [Primary, Secondary]) ->
-  S#state{placements = Primary, extra_placements = Secondary,
+placements_next(S, _, [Primary]) ->
+  S#state{placements = Primary,
           nodes = []}.
 
-placements_features(S, [Primary, Secondary], _Res) ->
+placements_features(S, [Primary], _Res) ->
   [{with_location, S#state.with_location},
-   {primary_secondary, {length(Primary), length(Secondary)}}].
+   {nr_nodes, length(Primary)}].
 
 
 %% --- Operation: add_node ---
@@ -94,14 +93,10 @@ add_claimant_pre(S) ->
 add_claimant_args(S) ->
    [hd(S#state.placements), S#state.with_location, ringsize()].
 
-
 add_claimant_pre(S, [LocNode, _, RingSize]) ->
   LocNodes = S#state.placements,
   length(LocNodes) =< RingSize andalso
     lists:member(LocNode, LocNodes).
- %% andalso
- %%  (RingSize rem length(LocNodes) == 0 orelse RingSize rem length(LocNodes) >= S#state.nval).
-
 
 add_claimant(_, {Loc, Node}, WithLocation, RingSize) ->
   NewRing =
@@ -126,16 +121,16 @@ add_claimant_features(_S, [_, _WithLocation, RingSize], _Res) ->
 add_node_pre(S) ->
   S#state.claimant /= undefined
     andalso S#state.plan == []
-    andalso length(S#state.nodes) < length(S#state.placements ++ S#state.extra_placements).
+    andalso length(S#state.nodes) < length(S#state.placements).
 
 add_node_args(S) ->
-  ?LET(NewNode, elements([ {Loc, Node} || {Loc, Node} <- S#state.placements ++ S#state.extra_placements,
+  ?LET(NewNode, elements([ {Loc, Node} || {Loc, Node} <- S#state.placements,
                                           not lists:member(Node, S#state.nodes) ]),
            [NewNode, S#state.with_location, S#state.claimant]).
 
 add_node_pre(S, [{Loc, Node}, _, Claimant]) ->
   not lists:member(Node, S#state.nodes) andalso S#state.claimant == Claimant andalso
-    lists:member({Loc, Node}, S#state.placements ++ S#state.extra_placements).
+    lists:member({Loc, Node}, S#state.placements).
 
 add_node(Ring, {Loc, Node}, WithLocation, Claimant) ->
   NewRing =
@@ -158,11 +153,7 @@ add_node_post(_S, [{_Loc, Node}, _, _Claimant], NextRing) ->
 %% Add one node per primary partition
 %%
 add_located_nodes_pre(S) ->
-  false andalso
-    S#state.plan == [] andalso
-  S#state.claimant /= undefined
-    andalso length(S#state.nodes) < length(S#state.placements)       %% maximum is all planned nodes added
-    andalso (S#state.ring_size div (length(S#state.nodes)+1)) > 3.   %% I don't know why this requirement exists
+    add_node_pre(S).
 
 add_located_nodes_args(S) ->
   [ S#state.placements -- [{location(S, S#state.claimant), S#state.claimant}],
@@ -173,7 +164,7 @@ add_located_nodes_pre(S, [NodesL, _, Claimant]) ->
   length(S#state.placements) rem (length(S#state.nodes) + length(NodesL)) == 0 andalso
   lists:all(fun({Loc, Node}) ->
                 not lists:member(Node, S#state.nodes) andalso
-                  lists:member({Loc, Node}, S#state.placements ++ S#state.extra_placements)
+                  lists:member({Loc, Node}, S#state.placements)
             end, NodesL) andalso S#state.claimant == Claimant.
 
 
@@ -202,7 +193,7 @@ claim_pre(S) ->
     andalso S#state.plan == [] andalso S#state.staged_nodes /= [].  %% make sure there is something sensible to do
 
 claim_args(S) ->
-  [elements([v4]), S#state.nval].
+  [elements([v5]), S#state.nval].
 
 claim(Ring, default, Nval) ->
   pp(riak_core_membership_claim, claim, [Ring,
@@ -212,48 +203,25 @@ claim(Ring, v2, Nval) ->
   pp(riak_core_membership_claim, claim, [Ring,
                               {riak_core_membership_claim, wants_claim_v2},
                               {riak_core_membership_claim, choose_claim_v2, [{target_n_val, Nval}]}]);
-claim(Ring, v4, Nval) ->
-  pp(riak_core_membership_claim, claim, [Ring,
-                              {riak_core_membership_claim, wants_claim_v2},
-                              {riak_core_claim_location, choose_claim_v4, [{target_n_val, Nval}]}]);
 claim(Ring, v5, Nval) ->
-  pp(riak_core_membership_claim, claim, [Ring,
-                              {riak_core_claim_location5, wants_claim_v5},
-                              {riak_core_claim_location5, choose_claim_v5, [{target_n_val, Nval}]}]).
+  pp(riak_core_membership_claim, claim,
+     [Ring, undefined,
+      {riak_core_claim_swapping, choose_claim_v5, [{target_n_val, Nval}]}]).
+
+claim_pre(S, [v5, _Nval]) ->
+    not known_hard(S) andalso (length(S#state.nodes) < S#state.ring_size div 2);
+claim_pre(_, [_, _]) ->
+    true.
+
+
 
 claim_next(S, NewRing, [_, _]) ->
   S#state{ring = NewRing, plan = S#state.staged_nodes, staged_nodes = []}.
 
-claim_post(S, [Version, NVal], NewRing) ->
-  OrgRing = S#state.ring,
-  case claimpost(S, NewRing) of
-    true ->
-      CompareRing = claim(OrgRing, other_version(Version), NVal),
-      case claimpost(S, CompareRing) of
-        true ->
-          true;
-          %% case {diff_nodes(OrgRing, NewRing), diff_nodes(OrgRing, CompareRing)} of
-          %%   {D1, D2} when length(D1) >= length(D2) -> true;
-          %%   Other ->
-          %%     {differences, Other}
-          %% end;
-        Failure ->
-          {_, R} = element(4, if Version == v4 -> NewRing; true -> CompareRing end),
-          [Failure, {different, Version, passed, other_version(Version), failed, [{location(S, N), N} || {_, N}<-R], length(R)}]
-      end;
-    _Fail ->
-      true
-  end.
-
-other_version(v5) ->
-  v4;
-other_version(v4) ->
-  v5.
-
-
-claimpost(#state{nval = Nval, ring_size = RingSize, nodes = Nodes} = S, NewRing) ->
+claim_post(#state{nval = Nval, ring_size = RingSize, nodes = Nodes} = S, [_, _], NewRing) ->
   Preflists = riak_core_ring:all_preflists(NewRing, Nval),
-  LocNval = Nval,
+  LocNval = if Nval > 3 -> Nval - 1;
+               true -> Nval end,
   ImperfectPLs =
     lists:foldl(fun(PL,Acc) ->
                     PLNodes = lists:usort([N || {_,N} <- PL]),
@@ -288,16 +256,21 @@ claimpost(#state{nval = Nval, ring_size = RingSize, nodes = Nodes} = S, NewRing)
   eqc_statem:conj([eqc_statem:tag(ring_size, eq(RiakRingSize, RingSize)),
                    eqc_statem:tag(node_count, eq(RiakNodeCount, length(Nodes))),
                    eqc_statem:tag(meets_target_n, eq(riak_core_membership_claim:meets_target_n(NewRing, Nval), {true, []})),
+                   eqc_statem:tag(correct_nodes, eq(chash:members(riak_core_ring:chash(NewRing)), lists:sort(Nodes))),
                    eqc_statem:tag(perfect_pls, eq(ImperfectPLs, [])),
                    eqc_statem:tag(perfect_locations, eq(ImperfectLocations, [])),
+                   %% eqc_statem:tag(few_moves, length(S#state.committed_nodes) =< 1 orelse length(diff_nodes(S#state.ring, NewRing)) < S#state.ring_size div 2),
                    eqc_statem:tag(balanced_ring, BalancedRing)]).
 
 claim_features(#state{nodes = Nodes} = S, [Alg, _], Res) ->
   [{claimed_nodes, length(Nodes)},
    {algorithm, Alg}] ++
     %% and if we add to an already claimed ring
-  [{moving, {S#state.ring_size, S#state.nval, length(S#state.nodes), length(diff_nodes(S#state.ring, Res))}}
-   || S#state.committed_nodes /= []].
+  [{moving, {S#state.ring_size, S#state.nval,
+             {joining, length(S#state.nodes -- S#state.committed_nodes)},
+             {leaving, length(S#state.committed_nodes -- S#state.nodes)},
+             {moves, length(diff_nodes(S#state.ring, Res))}}}
+   || length(S#state.committed_nodes) > 1].
 
 
 diff_nodes(Ring1, Ring2) ->
@@ -321,12 +294,7 @@ necessary_conditions(S) when not S#state.with_location ->
   Remainder =  S#state.ring_size rem length(S#state.nodes),
   Remainder == 0 orelse Remainder >= S#state.nval;
 necessary_conditions(S) ->
-  LocNodes =
-    lists:foldl(fun(N, Acc) ->
-                    Loc = location(S, N),
-                    Acc#{Loc =>  maps:get(Loc, Acc, 0) + 1}
-                end, #{}, S#state.nodes),
-  Locations = maps:values(LocNodes),
+  Locations = to_config(S),
   Rounds = S#state.ring_size div S#state.nval,
   NumNodes = length(S#state.nodes),
   MinOccs = S#state.ring_size div NumNodes,
@@ -350,15 +318,21 @@ necessary_conditions(S) ->
                 || S#state.nval == length(Locations) ]
            ).
 
+to_config(S) ->
+    LocNodes =
+        lists:foldl(fun(N, Acc) ->
+                            Loc = location(S, N),
+                            Acc#{Loc =>  maps:get(Loc, Acc, 0) + 1}
+                    end, #{}, S#state.nodes),
+    maps:values(LocNodes).
+
 
 
 
 
 %% --- Operation: leave_node ---
 leave_node_pre(S)  ->
-  false andalso
-  S#state.with_location == false andalso
-    length(S#state.nodes) > 1.   %% try > 1 not to delete the initial node
+    length(S#state.nodes) > 1 andalso S#state.committed_nodes/= [].   %% try > 1 not to delete the initial node
 
 leave_node_args(S) ->
   %% TODO consider re-leaving leaved nodes
@@ -410,9 +384,9 @@ commit_post(#state{nodes = Nodes}, [_], Ring) ->
 
 
 weight(S, add_node) when not S#state.with_location ->
-  1 + 4*(length(S#state.placements ++ S#state.extra_placements) - length(S#state.nodes));
+  1 + 4*(length(S#state.placements) - length(S#state.nodes));
 weight(S, add_located_nodes) when S#state.with_location->
-  1 + 4*(length(S#state.placements ++ S#state.extra_placements) - length(S#state.nodes));
+  0;
 weight(S, leave_node) ->
   1 + (length(S#state.committed_nodes) div 4);
 weight(_S, _Cmd) -> 1.
@@ -436,7 +410,7 @@ prop_claim(WithLocation) ->
     put(ring_nr, 0),
     {H, S, Res} = run_commands(Cmds),
     measure(length, commands_length(Cmds),
-    aggregate_feats([claimed_nodes, ring_size, with_location, primary_secondary, moving, algorithm],
+    aggregate_feats([claimed_nodes, ring_size, with_location, nr_nodes, moving, algorithm],
                     call_features(H),
             check_command_names(Cmds,
                pretty_commands(?MODULE, Cmds, {H, S, Res},
@@ -454,7 +428,7 @@ with_location(S, Bool) ->
   S#state{with_location = Bool}.
 
 location(S, N) when is_record(S, state) ->
-  location(S#state.placements ++ S#state.extra_placements, N);
+  location(S#state.placements, N);
 location(LocNodes, N) ->
   case lists:keyfind(N, 2, LocNodes) of
     {Loc, _} -> Loc;
@@ -472,7 +446,7 @@ locnodes(Nval) ->
   ?LET(MaxLoc, choose(Nval, Nval * 2), configs(MaxLoc, Nval)).
 
 ringsize() ->
-  ?LET(Exp, 4, %% choose(4, 11),
+  ?LET(Exp, choose(5, 8),
        power2(Exp)).
 
 configs(MaxLocations, Nval) when MaxLocations < Nval ->
@@ -541,7 +515,16 @@ as_ring(_, Term) ->
   lists:flatten(io_lib:format("~p", [Term])).
 
 
-
+known_hard(S) ->
+    lists:member({S#state.ring_size, lists:sort(to_config(S)), S#state.nval},
+                 [{16, [1,1,1,2,2,2], 5},
+                  {16, [1,1,1,1,3,3], 5},
+                  {16, [1,1,1,3,3], 4},
+                  {16, [1,1,1,1,2,3], 4},
+                  {16, [1,1,4,4], 3},
+                  {16, [1,2,2,2,3], 4},
+                  {128, [1,1,2,2,2,2], 5}
+                 ]).
 
 
 

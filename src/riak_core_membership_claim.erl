@@ -107,6 +107,8 @@ claim(Ring) ->
                 {riak_core_membership_claim, choose_claim_v3};
             choose_claim_v4 ->
                 {riak_core_claim_location, choose_claim_v4};
+            choose_claim_v5 ->
+                {riak_core_claim_swapping, choose_claim_v5};
             {CMod, CFun} ->
                 {CMod, CFun}
         end,
@@ -119,6 +121,10 @@ claim(Ring) ->
     riak_core_ring:riak_core_ring(),
     {module(), atom()},
     choose_function()) -> riak_core_ring:riak_core_ring().
+claim(Ring, _Want, {riak_core_claim_swapping, choose_claim_v5}) ->
+    riak_core_claim_swapping:claim_v5(Ring);
+claim(Ring, _Want, {riak_core_claim_swapping, choose_claim_v5, Params}) ->
+    riak_core_claim_swapping:claim_v5(Ring, Params);
 claim(Ring, {WMod, WFun}=Want, Choose) ->
     Members = riak_core_ring:claiming_members(Ring),
     Owners =
