@@ -42,37 +42,31 @@
 %% a solution from scratch, which may involve many transfers.
 %%
 %% Not all configurations do have a solution. If no solution can be found,
-%% the algorithm provides is best effort solution.
+%% the algorithm provides a best effort solution.
 
 -module(riak_core_claim_swapping).
 
--export([claim_v5/1, claim_v5/2]).
-
-%% LEAVE is a thing we can fix here. Make sure that translation of the nodes is such that
-%% leaving node is the top of a location.. eg B1 B2 B3 B4, then B4 is the node you want to remove
-%% after this mapping on old node, new node only gets B1 B2 B3 and computes minimal
-                                                % transfers to solve that. Back translation now gives right nodes.
+-export([claim/1, claim/2,
+         choose_claim_v4/3]).
 
 
-%% For backward compatibility.
 %% The algorithm does not use any wants claim logic.
-%% -spec wants_claim_v5(riak_core_ring:riak_core_ring()) -> no.
-%% wants_claim_v5(Ring) ->
-%%     wants_claim_v5(Ring, node()).
+%% For backward compatibility one can combine wants_claim_v2 with the choose here
 
-%% -spec wants_claim_v5(riak_core_ring:riak_core_ring(), node()) -> no.
-%% wants_claim_v5(_Ring, _Node) ->
-%%     no.
-
-
--spec claim_v5(riak_core_ring:riak_core_ring()) -> riak_core_ring:riak_core_ring().
-claim_v5(Ring) ->
-    Params = riak_core_membership_claim:default_choose_params(),
-    claim_v5(Ring, Params).
-
--spec claim_v5(riak_core_ring:riak_core_ring(), [{atom(), term()}]) ->
+%% Backward compatible interface
+-spec choose_claim_v4(riak_core_ring:riak_core_ring(), node(), [{atom(), term()}]) ->
           riak_core_ring:riak_core_ring().
-claim_v5(Ring, Params0) ->
+choose_claim_v4(Ring, _Node, Params) ->
+    claim(Ring, Params).
+
+-spec claim(riak_core_ring:riak_core_ring()) -> riak_core_ring:riak_core_ring().
+claim(Ring) ->
+    Params = riak_core_membership_claim:default_choose_params(),
+    claim(Ring, Params).
+
+-spec claim(riak_core_ring:riak_core_ring(), [{atom(), term()}]) ->
+          riak_core_ring:riak_core_ring().
+claim(Ring, Params0) ->
     Params = riak_core_membership_claim:default_choose_params(Params0),
     TargetN = proplists:get_value(target_n_val, Params),
     LocationDict = riak_core_ring:get_nodes_locations(Ring),
@@ -95,7 +89,6 @@ claim_v5(Ring, Params0) ->
     %% Compute old ring
 
     {BinRing0, _OldLocRel} = to_binring(Ring),
-    io:format("OldRing = ~p\n", [BinRing0]),
 
     {Config, NewLocRel} = to_config(Ring),
     LocRel = NewLocRel,
@@ -106,8 +99,6 @@ claim_v5(Ring, Params0) ->
     BinRing =
         case riak_core_claim_binring_alg:zero_violations(BinRing1, NVals) of
             false ->
-                io:format("~s\n->\n~s\n", [ring:show(BinRing0, NVals),
-                                           ring:show(BinRing1, NVals)]),
                 riak_core_claim_binring_alg:solve(RingSize, Config, NVals);
             true ->
                 BinRing1
@@ -118,7 +109,7 @@ claim_v5(Ring, Params0) ->
         [ begin
               {_Loc, Node} = proplists:get_value({LocIdx, NodeIdx}, LocRel),
               {Inc * (Idx-1), Node}
-          end || {Idx, {LocIdx, NodeIdx}} <- enumerate(ring:to_list(BinRing)) ],
+          end || {Idx, {LocIdx, NodeIdx}} <- enumerate(riak_core_claim_binring_alg:to_list(BinRing)) ],
 
     NewRing =
         lists:foldl(
@@ -154,20 +145,18 @@ to_binring(Ring) ->
                 {Node, _} = lists:keyfind({L, N}, 2, LocationRel),
                 Node
               end || {L, N} <- LocationRing ],
-    {ring:from_list(Nodes), LocationRel}.
+    {riak_core_claim_binring_alg:from_list(Nodes), LocationRel}.
 
 to_config(Ring) ->
     Claiming = riak_core_ring:claiming_members(Ring),
     LocationDict = riak_core_ring:get_nodes_locations(Ring),
     LocationNodes = [ {riak_core_location:get_node_location(N, LocationDict), N} || N <- Claiming ],
-    io:format("Location Nodes = ~p\n", [LocationNodes]),
     %% keep order of locations the same as in old ring
     Locs = lists:usort([ L || {L, _} <- LocationNodes ]),
     LocNodes = [ {Loc, [N || {L, N} <- LocationNodes, L == Loc]} || Loc <- Locs ],
     LocationRel =
         [{{LocIdx, Idx}, {Loc, N}} || {LocIdx, {Loc, Ns}} <- enumerate(LocNodes),
                                       {Idx, N} <- enumerate(Ns)],
-    io:format("New Relation: ~p\n", [LocationRel]),
 
     {[ length(Ns) || {_, Ns} <- LocNodes ], LocationRel}.
 
@@ -208,7 +197,7 @@ simple_cluster_t1_test() ->
             NodeList -- [n1]),
     Props = [{target_n_val, TargetN}],
     RClaim =
-       claim_v5(R1, Props),
+       claim(R1, Props),
     ?assert(true, riak_core_membership_claim:meets_target_n(RClaim, TargetN)).
 
 
@@ -227,7 +216,7 @@ location_t1_test_() ->
        location_claim_tester(n1, loc1, JoiningNodes, 256, 4)
        %% Don't test large rings in automated testing
        %% location_claim_tester(n1, loc1, JoiningNodes, 512, 4),
-       %% location_claim_tester(n1, loc1, JoiningNodes, 1024, 4),
+       %% location_claim_tester(n1, loc1, JoiningNodes, 1024, 4)
        %% location_claim_tester(n1, loc1, JoiningNodes, 2048, 4)
       ]}}.
 
@@ -242,11 +231,10 @@ location_t2_test_() ->
      {inparallel,
       [location_claim_tester(n1, loc1, JoiningNodes, 64, 4),
        location_claim_tester(n1, loc1, JoiningNodes, 128, 4),
-       location_claim_tester(n1, loc1, JoiningNodes, 256, 4)
-       %% Don't test large rings in automated testing
-       %% location_claim_tester(n1, loc1, JoiningNodes, 512, 4),
-       %% location_claim_tester(n1, loc1, JoiningNodes, 1024, 4),
-       %% location_claim_tester(n1, loc1, JoiningNodes, 2048, 4),
+       location_claim_tester(n1, loc1, JoiningNodes, 256, 4),
+       location_claim_tester(n1, loc1, JoiningNodes, 512, 4),
+       location_claim_tester(n1, loc1, JoiningNodes, 1024, 4),
+       location_claim_tester(n1, loc1, JoiningNodes, 2048, 4)
       ]}}.
 
 location_t8_test_() ->
@@ -256,12 +244,14 @@ location_t8_test_() ->
          {l3n1, loc3}, {l3n2, loc3}, {l3n3, loc3},
          {l4n1, loc4}, {l4n2, loc4}, {l4n3, loc4}],
     {"[4, 3, 3, 3] nval 4",
-     location_claim_tester(l1n1, loc1, JoiningNodes, 256, 3)
+     {inparallel,
+      [location_claim_tester(l1n1, loc1, JoiningNodes, 64, 3),
+       location_claim_tester(l1n1, loc1, JoiningNodes, 256, 3)
      %% Don't test large rings in automated testing
      %% location_claim_tester(n1, loc1, JoiningNodes, 512, 4),
      %% location_claim_tester(n1, loc1, JoiningNodes, 1024, 4),
      %% location_claim_tester(n1, loc1, JoiningNodes, 2048, 4)
-    }.
+      ]}}.
 
 location_claim_tester(N1, N1Loc, NodeLocList, RingSize, TargetN) ->
     {"Ringsize "++integer_to_list(RingSize),
@@ -291,10 +281,15 @@ add_nodes_to_ring(Ring, Claimant, NodeLocList, Params) ->
                 end,
                 Ring,
                 NodeLocList),
-    claim_v5(NewRing, Params).
+    claim(NewRing, Params).
 
 
 check_for_failures(Mappings, TargetN, RClaim) ->
+    Failures = compute_failures(Mappings, TargetN, RClaim),
+    lists:foreach(fun(F) -> io:format("Failure ~p~n", [F]) end, Failures),
+    ?assert(length(Failures) == 0).
+
+compute_failures(Mappings, TargetN, RClaim) ->
     NLs = riak_core_ring:get_nodes_locations(RClaim),
     LocationMap =
         lists:map(
@@ -318,8 +313,8 @@ check_for_failures(Mappings, TargetN, RClaim) ->
             {[], []},
             CheckableMap
         ),
-    lists:foreach(fun(F) -> io:format("Failure ~p~n", [F]) end, Failures),
-    ?assert(length(Failures) == 0).
+    Failures.
+
 
 
 location_multistage_t1_test_() ->
@@ -345,6 +340,8 @@ location_multistage_t1_test_() ->
 
 
 location_multistage_claim_tester(RingSize, JoiningNodes, TargetN, NewNode, NewLocation, VerifyN) ->
+    {timeout, 240,
+    {"Ringsize " ++ integer_to_list(RingSize),
      fun() ->
              SW0 = os:timestamp(),
              N1 = l1n1,
@@ -371,7 +368,7 @@ location_multistage_claim_tester(RingSize, JoiningNodes, TargetN, NewNode, NewLo
                    NewNode,
                    NewLocation,
                    riak_core_ring:add_member(N1, RClaimInit, NewNode)),
-             RClaimExtendA = claim_v5(RingExtendA, Params),
+             RClaimExtendA = claim(RingExtendA, Params),
 
              io:format("Commit initial claim~n"),
              SW3 = os:timestamp(),
@@ -389,7 +386,7 @@ location_multistage_claim_tester(RingSize, JoiningNodes, TargetN, NewNode, NewLo
                    NewNode,
                    NewLocation,
                    riak_core_ring:add_member(N1, RClaimInitCommit, NewNode)),
-             RClaimExtendB = claim_v5(RingExtendB, Params),
+             RClaimExtendB = claim(RingExtendB, Params),
 
              {_RingSizeInit, MappingsInit} = riak_core_ring:chash(RClaimInit),
              {RingSizeA, MappingsA} = riak_core_ring:chash(RClaimExtendA),
@@ -417,15 +414,17 @@ location_multistage_claim_tester(RingSize, JoiningNodes, TargetN, NewNode, NewLo
                 timer:now_diff(SW5, SW4) div 1000,
                 timer:now_diff(SW6, SW5) div 1000]
               )
-     end.
+     end}}.
 
 location_typical_expansion_test_() ->
-    {inparallel, [location_typical_expansion_tester(64),
-                  location_typical_expansion_tester(128),
-                  location_typical_expansion_tester(256),
-                  location_typical_expansion_tester(512)]}.
+    {inparallel,
+     [location_typical_expansion_tester(64),
+      location_typical_expansion_tester(128),
+      location_typical_expansion_tester(256),
+      location_typical_expansion_tester(512)]}.
 
 location_typical_expansion_tester(RingSize) ->
+    {timeout, 120,
     {"Ringsize "++integer_to_list(RingSize),
      fun() ->
              N1 = l1n1,
@@ -453,14 +452,7 @@ location_typical_expansion_tester(RingSize) ->
 
              check_for_failures(MappingsInit, TargetN, RClaimInit),
 
-             Stage1Ring =
-                 lists:foldl(
-                   fun(JN, R) ->
-                           riak_core_ring:set_member(node(), R, JN, valid, same_vclock)
-                   end,
-                   RClaimInit,
-                   riak_core_ring:members(RClaimInit, [joining])
-                  ),
+             Stage1Ring = commit_change(RClaimInit),
 
              RClaimStage2 = add_node(Stage1Ring, N1, l5n9, loc5, Params),
              {RingSize, Mappings2} = riak_core_ring:chash(RClaimStage2),
@@ -501,7 +493,7 @@ location_typical_expansion_tester(RingSize) ->
              {RingSize, Mappings9} = riak_core_ring:chash(RClaimStage9),
              check_for_failures(Mappings9, TargetN, RClaimStage9),
              _Stage9Ring = commit_change(RClaimStage9)
-     end}.
+     end}}.
 
 
 add_node(Ring, Claimant, Node, Location, Params) ->
@@ -549,5 +541,169 @@ commit_change(Ring) ->
         Ring,
         riak_core_ring:members(Ring, [joining])
     ).
+
+%% Test that if there is no solution without violations, we still present
+%% a balanced "solution" in finite time
+impossible_config_test_() ->
+    {timeout, 120,
+     fun() ->
+             N1 = l1n1,
+             N1Loc = loc1,
+             TargetN = 2,
+             RingSize = 16,
+             InitJoiningNodes =
+                 [{l2n1, loc2},
+                  {l2n2, loc2}, {l2n3, loc2},
+                  {l2n4, loc2}, {l2n5, loc2}],
+
+             Params = [{target_n_val, TargetN}],
+             R1 =
+                 riak_core_ring:set_node_location(
+                   N1,
+                   N1Loc,
+                   riak_core_ring:fresh(RingSize, N1)),
+
+             RClaimInit = add_nodes_to_ring(R1, N1, InitJoiningNodes, Params),
+             {RingSize, MappingsInit} = riak_core_ring:chash(RClaimInit),
+
+             ?assert(compute_failures(MappingsInit, TargetN, RClaimInit) /= [])
+     end}.
+
+leave_node_test_() ->
+    {inorder,
+     [leave_node_from_location_test(l4n8),
+      leave_node_from_location_test(l4n7)]}.
+
+leave_node_from_location_test(Leaving) ->
+    {timeout, 120,
+     fun() ->
+             N1 = l1n1,
+             N1Loc = loc1,
+             TargetN = 4,
+             RingSize = 64,
+             InitJoiningNodes =
+                 [{l1n2, loc1},
+                  {l2n3, loc2}, {l2n4, loc2},
+                  {l3n5, loc3}, {l3n6, loc3},
+                  {l4n7, loc4}, {l4n8, loc4},
+                  {l5n9, loc5}, {l5n10, loc5}],
+
+             Params = [{target_n_val, TargetN}],
+             LeavingLoc = proplists:get_value(Leaving, InitJoiningNodes),
+             R1 =
+                 riak_core_ring:set_node_location(
+                   N1,
+                   N1Loc,
+                   riak_core_ring:fresh(RingSize, N1)),
+
+             RClaimInit = add_nodes_to_ring(R1, N1, InitJoiningNodes, Params),
+             {RingSize, MappingsInit} = riak_core_ring:chash(RClaimInit),
+
+             check_for_failures(MappingsInit, TargetN, RClaimInit),
+
+             Stage1Ring = commit_change(RClaimInit),
+
+             %% One node leaves, check it is actually not an owner any more
+             RLeave = riak_core_ring:leave_member(N1, Stage1Ring, Leaving),
+             RClaimStage2 = claim(RLeave, Params),
+
+             {RingSize, Mappings2} = riak_core_ring:chash(RClaimStage2),
+             Nodes2 = lists:usort([ N || {_, N} <- Mappings2 ]),
+             check_for_failures(Mappings2, TargetN, RClaimStage2),
+             ?assert(not lists:member(Leaving, Nodes2)),
+
+             %% We should not change the ring if we rename a node at a certain location:
+             RAdd1 =
+                 riak_core_ring:set_node_location(l4ne, loc4,
+                                                  riak_core_ring:add_member(N1, Stage1Ring, l4ne)),
+             RLeave1 =
+                 riak_core_ring:leave_member(N1, RAdd1, Leaving),
+             RClaimStage3 = claim(RLeave1, Params),
+
+             {RingSize, Mappings3} = riak_core_ring:chash(RClaimStage3),
+             check_for_failures(Mappings3, TargetN, RClaimStage3),
+             Diffs = [ {Idx, N} || {Idx, N} <- Mappings3,
+                          case proplists:get_value(Idx, MappingsInit) of
+                              Leaving ->
+                                  not (N == l4ne orelse
+                                       %% balanced by another node at that location
+                                       lists:member(N, [Node || {Node, Loc} <- InitJoiningNodes, Loc == LeavingLoc]));
+                              OldN ->
+                                  OldN /= N
+                          end
+                     ],
+             ?assertEqual(Diffs, [])
+     end}.
+
+
+
+leave_location_test_() ->
+    {timeout, 120,
+     fun() ->
+             N1 = l1n1,
+             N1Loc = loc1,
+             TargetN = 3,
+             RingSize = 64,
+             InitJoiningNodes =
+                 [{l1n2, loc1},
+                  {l2n3, loc2}, {l2n4, loc2},
+                  {l3n1, loc3}, {l3n2, loc3},
+                  {l4n1, loc4}, {l4n2, loc4},
+                  {l5n1, loc5}],
+
+             Params = [{target_n_val, TargetN}],
+             LeaveLoc = loc3,
+             LeaveNodes = [ N || {N, Loc} <- InitJoiningNodes, Loc == LeaveLoc ],
+             R1 =
+                 riak_core_ring:set_node_location(
+                   N1,
+                   N1Loc,
+                   riak_core_ring:fresh(RingSize, N1)),
+
+             RClaimInit = add_nodes_to_ring(R1, N1, InitJoiningNodes, Params),
+             {RingSize, MappingsInit} = riak_core_ring:chash(RClaimInit),
+
+             check_for_failures(MappingsInit, TargetN, RClaimInit),
+
+             Stage1Ring = commit_change(RClaimInit),
+
+             %% One location leaves, check nodes no longer owner
+             RLeave =
+                 lists:foldl(fun(N, R) ->
+                                     riak_core_ring:leave_member(N1, R, N)
+                             end, Stage1Ring, LeaveNodes),
+             RClaimStage2 = claim(RLeave, Params),
+
+             {RingSize, Mappings2} = riak_core_ring:chash(RClaimStage2),
+             Nodes2 = lists:usort([ N || {_, N} <- Mappings2 ]),
+             check_for_failures(Mappings2, TargetN, RClaimStage2),
+             ?assertEqual(Nodes2 -- LeaveNodes, Nodes2),
+
+             %% We should not move nodes in locations that are not involved if
+             %% we "rename" a location by leaving a node in one location
+             %% and adding one to the next [2, 2, 2, 2, 1] -> [2, 2, 2, 1, 2]:
+             RAdd1 =
+                 riak_core_ring:set_node_location(l5n2, loc5,
+                                                  riak_core_ring:add_member(N1, Stage1Ring, l5n2)),
+             RLeave3 =
+                 riak_core_ring:leave_member(N1, RAdd1, l4n2),
+             RClaimStage3 = claim(RLeave3, Params),
+             InvolvedNodes = [ N ||  {N, Loc} <- InitJoiningNodes ++ [{l5n2, loc5}],
+                                     Loc == loc4 orelse Loc == loc5 ],
+
+             {RingSize, Mappings3} = riak_core_ring:chash(RClaimStage3),
+             check_for_failures(Mappings3, TargetN, RClaimStage3),
+             Diffs = [ {Idx, N}
+                       || {Idx, N} <- Mappings3,
+                          not case lists:member(proplists:get_value(Idx, MappingsInit), InvolvedNodes) of
+                                  true ->
+                                      lists:member(N, InvolvedNodes);
+                                  false ->
+                                      N == proplists:get_value(Idx, MappingsInit)
+                              end
+                     ],
+             ?assertEqual(Diffs, [])
+     end}.
+
 
 -endif.

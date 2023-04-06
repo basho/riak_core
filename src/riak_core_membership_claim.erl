@@ -106,9 +106,7 @@ claim(Ring) ->
             choose_claim_v3 ->
                 {riak_core_membership_claim, choose_claim_v3};
             choose_claim_v4 ->
-                {riak_core_claim_location, choose_claim_v4};
-            choose_claim_v5 ->
-                {riak_core_claim_swapping, choose_claim_v5};
+                {riak_core_claim_swapping, choose_claim_v4};
             {CMod, CFun} ->
                 {CMod, CFun}
         end,
@@ -121,26 +119,17 @@ claim(Ring) ->
     riak_core_ring:riak_core_ring(),
     {module(), atom()},
     choose_function()) -> riak_core_ring:riak_core_ring().
-claim(Ring, _Want, {riak_core_claim_swapping, choose_claim_v5}) ->
-    riak_core_claim_swapping:claim_v5(Ring);
-claim(Ring, _Want, {riak_core_claim_swapping, choose_claim_v5, Params}) ->
-    riak_core_claim_swapping:claim_v5(Ring, Params);
+
 claim(Ring, {WMod, WFun}=Want, Choose) ->
     Members = riak_core_ring:claiming_members(Ring),
-    Owners =
-        lists:usort(
-            lists:map(
-                fun({_Idx, N}) -> N end,
-                riak_core_ring:all_owners(Ring))),
     NoInitialWants =
         lists:all(
             fun(N) -> apply(WMod, WFun, [Ring, N]) == no end, Members),
-    SortedMembers = sort_members_for_choose(Ring, Members, Owners, Choose),
     case NoInitialWants of
         true ->
             case riak_core_ring:has_location_changed(Ring) of
                 true ->
-                    [HeadMember|_Rest] = SortedMembers,
+                    [HeadMember|_Rest] = Members,
                     choose_new_ring(
                         riak_core_ring:clear_location_changed(Ring),
                         HeadMember,
@@ -154,7 +143,7 @@ claim(Ring, {WMod, WFun}=Want, Choose) ->
                     claim_until_balanced(Ring0, Node, Want, Choose)
                 end,
                 riak_core_ring:clear_location_changed(Ring),
-                SortedMembers)
+                Members)
     end.
 
 -spec choose_new_ring(
@@ -168,23 +157,7 @@ choose_new_ring(Ring, Node, Choose) ->
             CMod:CFun(Ring, Node, Params)
     end.
 
-%% @doc
-%% The order by which members are passed in to claim may make a difference
-%% to the outcome, so prepare to allow for this order to be changeable in
-%% different claim versions
--spec sort_members_for_choose(
-    riak_core_ring:riak_core_ring(),
-    list(node()),
-    list(node()),
-    choose_function()) -> list(node()).
-sort_members_for_choose(Ring, Members, Owners, Choose) ->
-    CMod = element(1, Choose),
-    case erlang:function_exported(CMod, sort_members_for_choose, 3) of
-        true ->
-            CMod:sort_members_for_choose(Ring, Members, Owners);
-        false ->
-            Members
-    end.
+
 
 -spec claim_until_balanced(
     riak_core_ring:riak_core_ring(), node()) ->
@@ -1334,7 +1307,7 @@ choose_claim_v4(Ring, Node) ->
     choose_claim_v4(Ring, Node, Params).
 
 choose_claim_v4(Ring, Node, Params) ->
-    riak_core_claim_location:choose_claim_v4(Ring, Node, Params).
+    riak_core_claim_swapping:choose_claim_v4(Ring, Node, Params).
 
 %% NOTE: this is a less than adequate test that has been re-instated
 %% so that we don't leave the code worse than we found it. Work that
@@ -1344,7 +1317,7 @@ choose_claim_v4(Ring, Node, Params) ->
 %% test re-instated to pass.
 prop_claim_ensures_unique_nodes_old(ChooseFun) ->
     %% NOTE: We know that this doesn't work for the case of {_, 3}.
-    ?FORALL({PartsPow, NodeCount}, {choose(4,9), choose(4,15)}, %{choose(4, 9), choose(4, 15)},
+    ?FORALL({PartsPow, NodeCount}, {choose(4,9), choose(4,15)},
             begin
                 Nval = 3,
                 TNval = Nval + 1,
@@ -1392,7 +1365,7 @@ prop_claim_ensures_unique_nodes(ChooseFun) ->
             begin
                 Nval = 3,
                 TNval = Nval + 1,
-                _Params = [{target_n_val, TNval}],
+                Params = [{target_n_val, TNval}],
 
                 Partitions = ?POW_2(PartsPow),
                 [Node0 | RestNodes] = test_nodes(NodeCount),
@@ -1402,7 +1375,7 @@ prop_claim_ensures_unique_nodes(ChooseFun) ->
                                              riak_core_ring:add_member(Node0, Racc, Node)
                                      end, R0, RestNodes),
 
-                Rfinal = claim(RAdded, {?MODULE, wants_claim_v2}, {?MODULE, ChooseFun}),
+                Rfinal = claim(RAdded, {?MODULE, wants_claim_v2}, {?MODULE, ChooseFun, Params}),
 
                 Preflists = riak_core_ring:all_preflists(Rfinal, Nval),
                 ImperfectPLs = orddict:to_list(
@@ -1445,7 +1418,7 @@ prop_claim_ensures_unique_nodes_adding_groups(ChooseFun) ->
             begin
                 Nval = 3,
                 TNval = Nval + 1,
-                _Params = [{target_n_val, TNval}],
+                Params = [{target_n_val, TNval}],
 
                 Partitions = ?POW_2(PartsPow),
                 [Node0 | RestNodes] = test_nodes(BaseNodes),
@@ -1459,12 +1432,12 @@ prop_claim_ensures_unique_nodes_adding_groups(ChooseFun) ->
                                              riak_core_ring:add_member(Node0, Racc, Node)
                                      end, R0, RestNodes),
 
-                Rinterim = claim(RBase, {?MODULE, wants_claim_v2}, {?MODULE, ChooseFun}),
+                Rinterim = claim(RBase, {?MODULE, wants_claim_v2}, {?MODULE, ChooseFun, Params}),
                 RAdded = lists:foldl(fun(Node, Racc) ->
                                              riak_core_ring:add_member(Node0, Racc, Node)
                                      end, Rinterim, AddNodes),
 
-                Rfinal = claim(RAdded, {?MODULE, wants_claim_v2}, {?MODULE, ChooseFun}),
+                Rfinal = claim(RAdded, {?MODULE, wants_claim_v2}, {?MODULE, ChooseFun, Params}),
 
                 Preflists = riak_core_ring:all_preflists(Rfinal, Nval),
                 ImperfectPLs = orddict:to_list(
@@ -1515,9 +1488,7 @@ prop_claim_ensures_unique_nodes_adding_singly(ChooseFun) ->
                 R0 = riak_core_ring:fresh(Partitions, Node0),
                 Rfinal = lists:foldl(fun(Node, Racc) ->
                                              Racc0 = riak_core_ring:add_member(Node0, Racc, Node),
-                                             %% TODO which is it? Claim or ChooseFun??
-                                             %%claim(Racc0, {?MODULE, wants_claim_v2}, {?MODULE, ChooseFun})
-                                             ?MODULE:ChooseFun(Racc0, Node, Params)
+                                             claim(Racc0, {?MODULE, wants_claim_v2}, {?MODULE, ChooseFun, Params})
                                      end, R0, RestNodes),
                 Preflists = riak_core_ring:all_preflists(Rfinal, Nval),
                 ImperfectPLs = orddict:to_list(
