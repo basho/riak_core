@@ -29,10 +29,13 @@
 
 -export([solve/3,
          update/3,
-         zero_violations/2]).
+         zero_violations/2,
+         moves/2,
+         to_list/1, from_list/1]).
 
 -ifdef(TEST).
 -compile([export_all, nowarn_export_all]).
+-define(DEBUG_FUNS, true).
 -ifdef(EQC).
 -include_lib("eqc/include/eqc.hrl").
 -endif.
@@ -40,6 +43,7 @@
 
 -ifdef(DEBUG).
 -compile([export_all, nowarn_export_all]).
+-define(DEBUG_FUNS).
 -define(PROFILE, true).
 -include_lib("eqc/include/eqc_profile.hrl").
 -define(debug(Fmt, Args), io:format(Fmt, Args)).
@@ -78,14 +82,14 @@ to_list(Ring) -> [ {Loc, Ix} || <<Loc, Ix>> <= Ring ].
 -spec get_node(ring(), vnode()) -> pnode().
 get_node(Ring, Ix) -> hd(window(Ring, Ix, 1)).
 
--spec set_node(ring(), vnode(), node()) -> ring().
+-spec set_node(ring(), vnode(), pnode()) -> ring().
 set_node(Ring, VNode, {Loc, Ix}) ->
     B = VNode * 2,
     <<Before:B/binary, _:16, After/binary>> = Ring,
     <<Before/binary, Loc, Ix, After/binary>>.
 
 %% Insert a node at the given vnode, making the ring one bigger.
--spec insert_node(ring(), vnode(), node()) -> ring().
+-spec insert_node(ring(), vnode(), pnode()) -> ring().
 insert_node(Ring, VNode, {Loc, Ix}) ->
     B = VNode * 2,
     <<Before:B/binary, After/binary>> = Ring,
@@ -98,7 +102,7 @@ delete_node(Ring, VNode) ->
     <<Before/binary, After/binary>>.
 
 %% Return a window of size 2 * NVal - 1 centered on the given vnode.
--spec window(ring(), vnode(), nval()) -> [node()].
+-spec window(ring(), vnode(), nval()) -> [pnode()].
 window(Ring, Ix, NVal) ->
     Size = ring_size(Ring),
     Len  = 2 * NVal - 1,
@@ -462,7 +466,7 @@ find_swap(Ring, New, ToRemove, NVals) ->
 
 %% -- Debugging -----------------------------------------------------------
 
--ifdef(DEBUG).
+-ifdef(DEBUG_FUNS).
 pp_violations({L, N}) -> pp_violations({L, N, 0});
 pp_violations({L, N, L1}) -> pp_violations({L, N, L1, 0});
 pp_violations({L, N, A, B}) ->
@@ -547,11 +551,11 @@ typical_scenarios_tests() ->
             fun(_Config, Err={error, _}) ->
                     Err;
                (Config, {undefined, Diffs}) ->
-                    {ring:solve(Size, Config, NVal), Diffs};
+                    {solve(Size, Config, NVal), Diffs};
                (Config, {OldRing, Diffs}) ->
-                    NewRing = ring:update(OldRing, Config, NVal),
-                    V       = ring:violations(NewRing, NVal),
-                    Diff    = ring:moves(OldRing, NewRing),
+                    NewRing = update(OldRing, Config, NVal),
+                    V       = violations(NewRing, NVal),
+                    Diff    = moves(OldRing, NewRing),
                     if ?is_zero_v(V) -> {NewRing, Diffs ++ [Diff]};
                        true -> {error, {Size, OldRing, NewRing, Config, V}}
                     end
@@ -590,16 +594,16 @@ prop_window() ->
     ?FORALL(Nodes, ring(),
             ?FORALL({Ix, NVal}, {choose(0, length(Nodes) - 1), choose(1, 5)},
                     begin
-                        Ring   = ring:from_list(Nodes),
+                        Ring   = from_list(Nodes),
                         Window = subring(Nodes, Ix - NVal + 1, 2 * NVal - 1),
-                        equals(ring:window(Ring, Ix, NVal), Window)
+                        equals(window(Ring, Ix, NVal), Window)
                     end)).
 
 prop_get_node() ->
     ?FORALL(Nodes, ring(),
             begin
-                Ring = ring:from_list(Nodes),
-                equals([ ring:get_node(Ring, I) || I <- lists:seq(0, ring:ring_size(Ring) - 1) ],
+                Ring = from_list(Nodes),
+                equals([ get_node(Ring, I) || I <- lists:seq(0, ring_size(Ring) - 1) ],
                        Nodes)
             end).
 
@@ -611,13 +615,13 @@ prop_swap_violations() ->
     ?FORALL(Nodes, ring(),
             ?FORALL({Op, NVals}, {op(length(Nodes)), nvals()},
                     begin
-                        Ring        = ring:from_list(Nodes),
-                        V           = ring:violations(Ring, NVals),
-                        {Ring1, DV} = ring:op(Ring, NVals, Op),
-                        V1          = ring:violations(Ring1, NVals),
+                        Ring        = from_list(Nodes),
+                        V           = violations(Ring, NVals),
+                        {Ring1, DV} = op(Ring, NVals, Op),
+                        V1          = violations(Ring1, NVals),
                         ?WHENFAIL(io:format("Original: ~s\nSwapped:  ~s\nV  = ~p\nV1 = ~p\nDV = ~p\n",
-                                            [ring:show(Ring, NVals), ring:show(Ring1, NVals), V, V1, DV]),
-                                  equals(ring:add_v(V, DV), V1))
+                                            [show(Ring, NVals), show(Ring1, NVals), V, V1, DV]),
+                                  equals(add_v(V, DV), V1))
                     end)).
 
 %% In legacy riak there are no locations and only NVal for nodes is
@@ -625,12 +629,12 @@ prop_swap_violations() ->
 %% with 1 location and location nval == 1 or each node its own
 %% location.
 prop_no_locations() ->
-    ?FORALL({Size, Nodes, NVal}, {elements([16,32,64,128,256, 512]), choose(1, 64), choose(1,5)},
+    ?FORALL({Size, Nodes, NVal}, {elements([16, 32, 64, 128, 256, 512]), choose(1, 64), choose(1,5)},
             begin
-                {OneT, OneRing} = timer:tc(ring, solve, [Size, [Nodes], {NVal, 1}]),
-                {_, OneViolations} = ring:violations(OneRing, {NVal, 1}),
-                {SepT, SepRing} = timer:tc(ring, solve, [Size, lists:duplicate(Nodes, 1), NVal]),
-                {_, SepViolations} = ring:violations(SepRing, NVal),
+                {OneT, OneRing} = timer:tc(?MODULE, solve, [Size, [Nodes], {NVal, 1}]),
+                {_, OneViolations} = violations(OneRing, {NVal, 1}),
+                {SepT, SepRing} = timer:tc(?MODULE, solve, [Size, lists:duplicate(Nodes, 1), NVal]),
+                {_, SepViolations} = violations(SepRing, NVal),
                 measure(one_location, OneT,
                         measure(sep_location, SepT,
                                 equals(OneViolations, SepViolations)))

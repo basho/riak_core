@@ -2,12 +2,13 @@
 %%% @doc QuickCheck model to replace riak_core_claim_statem
 %%%      by testing that part as well as testing location awareness
 %%%      (rack_awareness_test.erl)
-%%%      TODO check whether we can also test things that were simulated before in
-%%%      disabled: claim_simulation.erl and riak_core_claim_sim.erl
 %%%
 %%%      In reality each node has its own Ring structure. In this test we only build the ring structure
-%%%      for 1 claimant. ??? Shall we then add joiners for the different nodes as in rack_aw<reness_test L201 or is that wrong ???
+%%%      for 1 claimant.
 %%%
+%%%      We use the API as defined in riak_core_membership_claim.
+%%%
+%%%      RUN WITH ./rebar3 as test eqc
 %%%
 %%%
 %%% @end
@@ -149,39 +150,6 @@ add_node_next(S=#state{nodes=Nodes}, Ring, [{_, Node}, _, _]) ->
 add_node_post(_S, [{_Loc, Node}, _, _Claimant], NextRing) ->
     lists:member(Node, riak_core_ring:members(NextRing, [joining])).
 
-%% --- Operation: add_nodes ---
-%% Add one node per primary partition
-%%
-add_located_nodes_pre(S) ->
-    add_node_pre(S).
-
-add_located_nodes_args(S) ->
-  [ S#state.placements -- [{location(S, S#state.claimant), S#state.claimant}],
-    S#state.with_location,
-    S#state.claimant].
-
-add_located_nodes_pre(S, [NodesL, _, Claimant]) ->
-  length(S#state.placements) rem (length(S#state.nodes) + length(NodesL)) == 0 andalso
-  lists:all(fun({Loc, Node}) ->
-                not lists:member(Node, S#state.nodes) andalso
-                  lists:member({Loc, Node}, S#state.placements)
-            end, NodesL) andalso S#state.claimant == Claimant.
-
-
-add_located_nodes(Ring, NodesL, WithLocation, Claimant) ->
-  lists:foldl(fun({Loc, Node}, R) ->
-                  add_node(R, {Loc, Node}, WithLocation, Claimant)
-              end, Ring, NodesL).
-
-add_located_nodes_next(S, Ring, [NodesL, WithLocation, Claimant]) ->
-  lists:foldl(fun(LocNode, NS) ->
-                  add_node_next(NS, Ring, [LocNode, WithLocation, Claimant])
-              end, S, NodesL).
-
-add_located_nodes_post(_S, [NodesL, _, _], NextRing) ->
-  lists:all(fun({_, Node}) ->
-                lists:member(Node, riak_core_ring:members(NextRing, [joining]))
-            end, NodesL).
 
 
 %% --- Operation: claim ---
@@ -193,7 +161,7 @@ claim_pre(S) ->
     andalso S#state.plan == [] andalso S#state.staged_nodes /= [].  %% make sure there is something sensible to do
 
 claim_args(S) ->
-  [elements([v5]), S#state.nval].
+  [elements([v4]), S#state.nval].
 
 claim(Ring, default, Nval) ->
   pp(riak_core_membership_claim, claim, [Ring,
@@ -203,12 +171,12 @@ claim(Ring, v2, Nval) ->
   pp(riak_core_membership_claim, claim, [Ring,
                               {riak_core_membership_claim, wants_claim_v2},
                               {riak_core_membership_claim, choose_claim_v2, [{target_n_val, Nval}]}]);
-claim(Ring, v5, Nval) ->
-  pp(riak_core_membership_claim, claim,
-     [Ring, undefined,
-      {riak_core_claim_swapping, choose_claim_v5, [{target_n_val, Nval}]}]).
+claim(Ring, v4, Nval) ->
+  pp(riak_core_membership_claim, claim, [Ring,
+                              {riak_core_membership_claim, wants_claim_v2},
+                              {riak_core_claim_swapping, choose_claim_v4, [{target_n_val, Nval}]}]).
 
-claim_pre(S, [v5, _Nval]) ->
+claim_pre(S, [v4, _Nval]) ->
     not known_hard(S) andalso (length(S#state.nodes) < S#state.ring_size div 2);
 claim_pre(_, [_, _]) ->
     true.
@@ -253,14 +221,15 @@ claim_post(#state{nval = Nval, ring_size = RingSize, nodes = Nodes} = S, [_, _],
         riak_core_membership_claim:balanced_ring(RiakRingSize,
                                       RiakNodeCount, NewRing),
   %% S#state.committed_nodes == [] orelse
-  eqc_statem:conj([eqc_statem:tag(ring_size, eq(RiakRingSize, RingSize)),
-                   eqc_statem:tag(node_count, eq(RiakNodeCount, length(Nodes))),
-                   eqc_statem:tag(meets_target_n, eq(riak_core_membership_claim:meets_target_n(NewRing, Nval), {true, []})),
-                   eqc_statem:tag(correct_nodes, eq(chash:members(riak_core_ring:chash(NewRing)), lists:sort(Nodes))),
-                   eqc_statem:tag(perfect_pls, eq(ImperfectPLs, [])),
-                   eqc_statem:tag(perfect_locations, eq(ImperfectLocations, [])),
-                   %% eqc_statem:tag(few_moves, length(S#state.committed_nodes) =< 1 orelse length(diff_nodes(S#state.ring, NewRing)) < S#state.ring_size div 2),
-                   eqc_statem:tag(balanced_ring, BalancedRing)]).
+  eqc_statem:conj(
+    [eqc_statem:tag(ring_size, eq(RiakRingSize, RingSize)),
+     eqc_statem:tag(node_count, eq(RiakNodeCount, length(Nodes))),
+     eqc_statem:tag(meets_target_n, eq(riak_core_membership_claim:meets_target_n(NewRing, Nval), {true, []})),
+     eqc_statem:tag(correct_nodes, eq(chash:members(riak_core_ring:chash(NewRing)), lists:sort(Nodes))),
+     eqc_statem:tag(perfect_pls, eq(ImperfectPLs, [])),
+     eqc_statem:tag(perfect_locations, eq(ImperfectLocations, [])),
+     %% eqc_statem:tag(few_moves, length(S#state.committed_nodes) =< 1 orelse length(diff_nodes(S#state.ring, NewRing)) < S#state.ring_size div 2),
+     eqc_statem:tag(balanced_ring, BalancedRing)]).
 
 claim_features(#state{nodes = Nodes} = S, [Alg, _], Res) ->
   [{claimed_nodes, length(Nodes)},
@@ -396,15 +365,13 @@ weight(_S, _Cmd) -> 1.
 %% --- ... more operations
 
 %% -- Property ---------------------------------------------------------------
-prop_claim() ->
-  prop_claim(false).
 
-prop_claim(WithLocation) ->
+prop_claim() ->
   case ets:whereis(timing) of
     undefined -> ets:new(timing, [public, named_table, bag]);
     _ -> ok
   end,
-  ?FORALL(Nval, choose(2, 5),
+  ?FORALL({Nval, WithLocation}, {choose(2, 5), bool()},
   ?FORALL(Cmds, commands(?MODULE, with_location(initial_state(Nval), WithLocation)),
   begin
     put(ring_nr, 0),
