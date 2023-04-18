@@ -24,6 +24,59 @@
 %%
 %% The algorithm can be studied in isolation to make it easier
 %% to understand how it works.
+%%
+%% This algorithm computes a layout of nodes in a ring, such that
+%% when data is replicated on TargetN consecutive nodes in that ring,
+%% the consecutive nodes never co-incide.
+%% Example, if you have 3 nodes that you want to put in a ring of size 16
+%% such that 2 consecutive nodes never are the same, you could use:
+%%
+%% A1 A3 A1 A2 A1 A2 A3 A1 A2 A3 A1 A2 A3 A1 A2 A3
+%% None of the adjacent nodes is the same, but if we were
+%% to replace the final A3 with A1, then we would have a
+%% violation, since last and first are also adjacent.
+%%
+%% Riak has always had the possibility to compute such placements,
+%% but when adding location awareness, things get a bit tricky.
+%% Now we do not have just one location "A", but possibly 2 locations,
+%% A and B. Such that we do never want two adjacent locations.
+%% With ringsize 16 and 2 nodes for each location A and B a solution
+%% would be:
+%% A2 B2 A1 B1 A1 B1 A2 B2 A1 B1 A2 B2 A1 B1 A2 B2
+%% Where an important additional property of this algorithm is that
+%% none of the nodes is over represented. That is, each node occurs
+%% either N or N+1 times in the list. We would violate this
+%% requirement if 2 A1 nodes are replaced by an A2.
+%%
+%% Thus, the algorithm computes, given a configuration of nodes,
+%% a ring size and a TargetN, a placement in a ring.
+%%
+%% show(riak_core_claim_binring_alg:solve(16, [1,1,2], 2), 2).
+%% "B1 C2 A1 C1 A1 C1 B1 C2 A1 C1 B1 C2 A1 C1 B1 C2 (0 violations)"
+%%
+%% Configurations are provided as a list of integers: [1, 1, 2] means
+%% 1 node in location A, 1 node in location B and 2 nodes in location C.
+%%
+%% There is not always a solution. (By using a SAT solver we identified
+%% 82 impossible configuration for ring size 16 and TargetN, 2 or 3.
+%% E.g. [2, 1] is impossible for ring size 16.)
+%% If there is no solution, then the algorithm is supposed to provide
+%% a best-effort approach.
+%%
+%% Instead of solving, we can also update an existing ring to a new
+%% configuration. One can add a new location with some nodes, or
+%% add/remove nodes. Again, a best-effort approach is provided in
+%% which the amount of transfers needed from one node to the other is
+%% also tried to keep low.
+%% For example if we update the ring:
+%% Ring = riak_core_claim_binring_alg:solve(16, [1,1,2], 2),
+%% show(Ring, 2).
+%% "B1 C2 A1 C1 A1 C1 B1 C2 A1 C1 B1 C2 A1 C1 B1 C2 (0 violations)"
+%% show(riak_core_claim_binring_alg:update(Ring, [2,2], 2), 2).
+%% "B1 A2 B2 A1 B2 A1 B2 A2 B1 A1 B2 A2 B1 A1 B1 A2 (0 violations)"
+%% Then we collapsed 2 nodes on different location to be at the same
+%% location.
+%% Just this example introduces a lot of data transfers.
 
 -module(riak_core_claim_binring_alg).
 

@@ -86,10 +86,7 @@ claim(Ring, Params0) ->
     %% Therefore it is important to have leaving nodes mapped to
     %% indices that are not occuring in the new ring
 
-    %% Compute old ring
-
     {BinRing0, _OldLocRel} = to_binring(Ring),
-
     {Config, LocRel} = to_config(Ring),
 
     %% io:format("Config = ~p RingSize ~p nval ~p\n", [Config, RingSize, NVals]),
