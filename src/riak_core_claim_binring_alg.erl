@@ -24,6 +24,68 @@
 %%
 %% The algorithm can be studied in isolation to make it easier
 %% to understand how it works.
+%%
+%% This algorithm computes a layout of nodes in a ring, such that
+%% when data is replicated on TargetN consecutive nodes in that ring,
+%% the consecutive nodes never co-incide.
+%%
+%% Riak has always had the possibility to compute such placements,
+%% but when adding location awareness, things get a bit tricky.
+%% Now we do not have just one location "A", but possibly 2 locations,
+%% A and B. Such that we do never want two adjacent locations.
+%% With ringsize 16 and 2 nodes for each location A and B a solution
+%% would be:
+%% A2 B2 A1 B1 A1 B1 A2 B2 A1 B1 A2 B2 A1 B1 A2 B2
+%% Where an important additional property of this algorithm is that
+%% none of the nodes is over represented. That is, each node occurs
+%% either N or N+1 times in the list. We would violate this
+%% requirement if 2 A1 nodes are replaced by an A2.
+%%
+%% Thus, the algorithm computes, given a configuration of nodes,
+%% a ring size and a TargetN, a placement in a ring.
+%%
+%% We refer to the markup document in the docs directory for more
+%% details on the use of the algorithm.
+%%
+%% Below we describe the actual algorithm in more detail.
+%%
+%% The algorithm is brute-force trying to get to a placement given
+%% a ring size, target n-val and configuration of number of nodes in
+%% each location.
+%%
+%% Step 1.
+%% Since the ring should be balanced, the initial step is to
+%% put all the given nodes in a sequence such that n-val is met.
+%% For example, if there are 7 nodes in two locations (say 3 and 4
+%% respectively) then the algorithm first places those 7 nodes in
+%% the best way it can w.r.t. the given n-val. Clearly, if we have
+%% only 2 locations, n-val should be at most 2. But then, there are
+%% solutions that place those 7 nodes such that the locations (and
+%% therewith the nodes) are not consecutive, even when wrapping around.
+%%
+%% Step 2.
+%% Repeat this small ring as often as possible in the ringsize.
+%% Thus, if ring size is 32 and we have 7 nodes, then we can repeat the
+%% small ring 4 times and are 4 nodes short.
+%% It would be unrealistic to provide a ring size that is less than
+%% the number of nodes one provides. So assume it to fit always at least
+%% once.
+%%
+%% Step 3.
+%% Fill the gaps with additional nodes (part of the small ring) if needed
+%% to get to full ring size.
+%% While n-val not reached (zero_violations is false):
+%%   swap nodes (exchange position) or move nodes
+%%      (moving vnode I to before vnode J).
+%%
+%% Step 3 gives a best effort solution, but given the enormous amount of
+%% possible operations, it can take while to return. But it always terminate.
+%%
+%% When we update a ring, then we want as little transfers as possible,
+%% so first an effort is performed to just swap nodes. If that would not
+%% work to get a solution, a brute-force attempt is taken to get best-effort
+%% again.
+
 
 -module(riak_core_claim_binring_alg).
 

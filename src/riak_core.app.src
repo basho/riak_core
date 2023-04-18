@@ -45,7 +45,7 @@
          {wants_claim_fun,
             {riak_core_membership_claim, default_wants_claim}},
          {choose_claim_fun,
-            {riak_core_memberhsip_claim, default_choose_claim}},
+            {riak_core_membership_claim, default_choose_claim}},
 
          %% Vnode inactivity timeout (how often to check if fallback vnodes
          %% should return their data) in ms.
