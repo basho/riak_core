@@ -93,7 +93,7 @@ claim(Ring, Params0) ->
     {Config, NewLocRel} = to_config(Ring),
     LocRel = NewLocRel,
 
-    io:format("Config = ~p RingSize ~p nval ~p\n", [Config, RingSize, NVals]),
+    %% io:format("Config = ~p RingSize ~p nval ~p\n", [Config, RingSize, NVals]),
     BinRing1 = riak_core_claim_binring_alg:update(BinRing0, Config, NVals),
 
     BinRing =
@@ -139,7 +139,6 @@ to_binring(Ring) ->
     LocationRel =
         [{{LocIdx, Idx}, {Loc, N}} || {LocIdx, {Loc, Ns}} <- enumerate(LocNodes),
                                       {Idx, N} <- enumerate(Ns)],
-    io:format("Old Relation: ~p\n", [LocationRel]),
 
     Nodes = [ begin
                 {Node, _} = lists:keyfind({L, N}, 2, LocationRel),
