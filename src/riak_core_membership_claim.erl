@@ -1248,6 +1248,43 @@ has_violations(Diag) ->
     Overhang = RS rem NC,
     (Overhang > 0 andalso Overhang < 4). %% hardcoded target n of 4
 
+%% Test that if there is no solution without violations, we still present
+%% a balanced "solution" in finite time
+impossible_config_test_() ->
+    {timeout, 120,
+     fun() ->
+             N1 = l1n1,
+             N1Loc = loc1,
+             TargetN = 2,
+             RingSize = 16,
+             InitJoiningNodes =
+                 [{l2n1, loc2},
+                  {l2n2, loc2}, {l2n3, loc2},
+                  {l2n4, loc2}, {l2n5, loc2}],
+
+             Params = [{target_n_val, TargetN}],
+             R1 =
+                 riak_core_ring:set_node_location(
+                   N1,
+                   N1Loc,
+                   riak_core_ring:fresh(RingSize, N1)),
+
+             RClaimInit = lists:foldl(
+                            fun({N, L}, AccR) ->
+                                    AccR0 = riak_core_ring:add_member(N1, AccR, N),
+                                    riak_core_ring:set_node_location(N, L, AccR0)
+                            end,
+                            R1,
+                            InitJoiningNodes),
+             %% Use the entry for ?MODULE here:
+             NewRing =
+                 claim(RClaimInit,
+                       {?MODULE, default_wants_claim},
+                       {riak_core_claim_swapping, choose_claim_v4, Params}),
+
+             %% There are location violations, but no node violations!
+             ?assertEqual(find_violations(NewRing, TargetN), [])
+     end}.
 
 location_seqclaim_t1_test() ->
     JoiningNodes =

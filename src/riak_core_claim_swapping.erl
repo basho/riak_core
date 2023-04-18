@@ -90,8 +90,7 @@ claim(Ring, Params0) ->
 
     {BinRing0, _OldLocRel} = to_binring(Ring),
 
-    {Config, NewLocRel} = to_config(Ring),
-    LocRel = NewLocRel,
+    {Config, LocRel} = to_config(Ring),
 
     %% io:format("Config = ~p RingSize ~p nval ~p\n", [Config, RingSize, NVals]),
     BinRing1 = riak_core_claim_binring_alg:update(BinRing0, Config, NVals),
@@ -416,11 +415,12 @@ location_multistage_claim_tester(RingSize, JoiningNodes, TargetN, NewNode, NewLo
      end}}.
 
 location_typical_expansion_test_() ->
-    {inparallel,
-     [location_typical_expansion_tester(64),
-      location_typical_expansion_tester(128),
-      location_typical_expansion_tester(256),
-      location_typical_expansion_tester(512)]}.
+    {"Typical expansion",
+     {inparallel,
+      [location_typical_expansion_tester(64),
+       location_typical_expansion_tester(128),
+       location_typical_expansion_tester(256),
+       location_typical_expansion_tester(512)]}}.
 
 location_typical_expansion_tester(RingSize) ->
     {timeout, 120,
@@ -540,33 +540,6 @@ commit_change(Ring) ->
         Ring,
         riak_core_ring:members(Ring, [joining])
     ).
-
-%% Test that if there is no solution without violations, we still present
-%% a balanced "solution" in finite time
-impossible_config_test_() ->
-    {timeout, 120,
-     fun() ->
-             N1 = l1n1,
-             N1Loc = loc1,
-             TargetN = 2,
-             RingSize = 16,
-             InitJoiningNodes =
-                 [{l2n1, loc2},
-                  {l2n2, loc2}, {l2n3, loc2},
-                  {l2n4, loc2}, {l2n5, loc2}],
-
-             Params = [{target_n_val, TargetN}],
-             R1 =
-                 riak_core_ring:set_node_location(
-                   N1,
-                   N1Loc,
-                   riak_core_ring:fresh(RingSize, N1)),
-
-             RClaimInit = add_nodes_to_ring(R1, N1, InitJoiningNodes, Params),
-             {RingSize, MappingsInit} = riak_core_ring:chash(RClaimInit),
-
-             ?assert(compute_failures(MappingsInit, TargetN, RClaimInit) /= [])
-     end}.
 
 leave_node_test_() ->
     {inorder,
