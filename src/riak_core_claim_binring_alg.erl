@@ -83,7 +83,8 @@
 -export([solve/3,
          update/3,
          zero_violations/2,
-         moves/2]).
+         moves/2,
+         to_list/1, from_list/1]).
 
 -ifdef(TEST).
 -compile([export_all, nowarn_export_all]).
@@ -134,14 +135,14 @@ to_list(Ring) -> [ {Loc, Ix} || <<Loc, Ix>> <= Ring ].
 -spec get_node(ring(), vnode()) -> pnode().
 get_node(Ring, Ix) -> hd(window(Ring, Ix, 1)).
 
--spec set_node(ring(), vnode(), node()) -> ring().
+-spec set_node(ring(), vnode(), pnode()) -> ring().
 set_node(Ring, VNode, {Loc, Ix}) ->
     B = VNode * 2,
     <<Before:B/binary, _:16, After/binary>> = Ring,
     <<Before/binary, Loc, Ix, After/binary>>.
 
 %% Insert a node at the given vnode, making the ring one bigger.
--spec insert_node(ring(), vnode(), node()) -> ring().
+-spec insert_node(ring(), vnode(), pnode()) -> ring().
 insert_node(Ring, VNode, {Loc, Ix}) ->
     B = VNode * 2,
     <<Before:B/binary, After/binary>> = Ring,
@@ -154,7 +155,7 @@ delete_node(Ring, VNode) ->
     <<Before/binary, After/binary>>.
 
 %% Return a window of size 2 * NVal - 1 centered on the given vnode.
--spec window(ring(), vnode(), nval()) -> [node()].
+-spec window(ring(), vnode(), nval()) -> [pnode()].
 window(Ring, Ix, NVal) ->
     Size = ring_size(Ring),
     Len  = 2 * NVal - 1,
