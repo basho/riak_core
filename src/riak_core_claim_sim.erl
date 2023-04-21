@@ -520,7 +520,7 @@ commission_claims() ->
     [{{riak_core_membership_claim, wants_claim_v2},
         {riak_core_membership_claim, choose_claim_v2}},
      {{riak_core_membership_claim, wants_claim_v3},
-        {riak_core_memberhsip_claim, choose_claim_v3}}].
+        {riak_core_membership_claim, choose_claim_v3}}].
 
 
 %% -------------------------------------------------------------------
