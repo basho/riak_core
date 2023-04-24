@@ -86,8 +86,8 @@ claim(Ring, Params0) ->
     %% Therefore it is important to have leaving nodes mapped to
     %% indices that are not occuring in the new ring
 
-    {BinRing0, _OldLocRel} = to_binring(Ring),
-    {Config, LocRel} = to_config(Ring),
+    {BinRing0, OldLocRel} = to_binring(Ring),
+    {Config, LocRel} = to_config(Ring, OldLocRel),
 
     %% io:format("Config = ~p RingSize ~p nval ~p\n", [Config, RingSize, NVals]),
     BinRing1 = riak_core_claim_binring_alg:update(BinRing0, Config, NVals),
@@ -142,15 +142,23 @@ to_binring(Ring) ->
               end || {L, N} <- LocationRing ],
     {riak_core_claim_binring_alg:from_list(Nodes), LocationRel}.
 
-to_config(Ring) ->
+to_config(Ring, OldLocRel) ->
+    OldLocIdxs = [ {LI, L} || {{LI, _}, {L,_}} <- OldLocRel ],
+    OldLocs = lists:usort([ L || {_, {L,_}} <- OldLocRel ]),
+
     Claiming = riak_core_ring:claiming_members(Ring),
     LocationDict = riak_core_ring:get_nodes_locations(Ring),
     LocationNodes = [ {riak_core_location:get_node_location(N, LocationDict), N} || N <- Claiming ],
     %% keep order of locations the same as in old ring
-    Locs = lists:usort([ L || {L, _} <- LocationNodes ]),
+    Locs = lists:usort([ L || {L, _} <- LocationNodes ]++OldLocs),
+    NewLocs = Locs -- OldLocs,
     LocNodes = [ {Loc, [N || {L, N} <- LocationNodes, L == Loc]} || Loc <- Locs ],
+    LocIdxs = OldLocIdxs ++ enumerate(length(OldLocs) + 1, NewLocs),
     LocationRel =
-        [{{LocIdx, Idx}, {Loc, N}} || {LocIdx, {Loc, Ns}} <- enumerate(LocNodes),
+        [ begin
+            {LocIdx, _} = lists:keyfind(Loc, 2, LocIdxs),
+            {{LocIdx, Idx}, {Loc, N}}
+          end || {Loc, Ns} <- LocNodes,
                                       {Idx, N} <- enumerate(Ns)],
 
     {[ length(Ns) || {_, Ns} <- LocNodes ], LocationRel}.
@@ -170,7 +178,10 @@ uleaving_last(Nodes, [Leave|Leaves], Acc) ->
 
 %% in OTP 25 one can use lists:enumerate
 enumerate(List) ->
-    lists:zip(lists:seq(1, length(List)), List).
+    enumerate(1, List).
+
+enumerate(Start, List) ->
+    lists:zip(lists:seq(Start, Start+length(List)-1), List).
 
 %% ===================================================================
 %% eunit tests
@@ -604,8 +615,6 @@ leave_node_from_location_test(Leaving) ->
              ?assertEqual(Diffs, [])
      end}.
 
-
-
 leave_location_test_() ->
     {timeout, 120,
      fun() ->
@@ -672,6 +681,60 @@ leave_location_test_() ->
                               end
                      ],
              ?assertEqual(Diffs, [])
+     end}.
+
+move_location_test_() ->
+    {timeout, 120,
+     fun() ->
+         N1 = l1n1,
+         N1Loc = loc1,
+         TargetN = 2,
+         RingSize = 16,
+         InitJoiningNodes =
+           [{l2n1, loc2},
+            {l3n1, loc3}, {l3n2, loc3}],
+
+         Params = [{target_n_val, TargetN}],
+         R1 =
+           riak_core_ring:set_node_location(
+             N1,
+             N1Loc,
+             riak_core_ring:fresh(RingSize, N1)),
+
+         RClaimInit = add_nodes_to_ring(R1, N1, InitJoiningNodes, Params),
+         {RingSize, MappingsInit} = riak_core_ring:chash(RClaimInit),
+
+         check_for_failures(MappingsInit, TargetN, RClaimInit),
+
+         Stage1Ring = commit_change(RClaimInit),
+
+         %% [1, 1, 2] -> [2, 0, 2]
+         RMove =
+           riak_core_ring:set_node_location(l2n1, loc1, Stage1Ring),
+         RClaimStage2 = claim(RMove, Params),
+
+         {RingSize, Mappings3} = riak_core_ring:chash(RClaimStage2),
+         check_for_failures(Mappings3, TargetN, RClaimStage2),
+
+         ?assertEqual(riak_core_ring:chash(RClaimStage2), riak_core_ring:chash(Stage1Ring)),
+         RAdd =
+           riak_core_ring:set_node_location(l1n2, loc1,
+                                            riak_core_ring:add_member(N1, Stage1Ring, l1n2)),
+         RLeave =
+           riak_core_ring:leave_member(N1, RAdd, l2n1),
+         RClaimStage3 = claim(RLeave, Params),
+         {RingSize, Mappings4} = riak_core_ring:chash(RClaimStage3),
+
+         Diffs = [ {Idx, N} || {Idx, N} <- Mappings4,
+                          case proplists:get_value(Idx, MappingsInit) of
+                              l2n1 ->
+                                  N /= l1n2;
+                              OldN ->
+                                  OldN /= N
+                          end
+                     ],
+         ?assertEqual(Diffs, [])
+
      end}.
 
 
