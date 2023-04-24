@@ -28,13 +28,6 @@
 %% This algorithm computes a layout of nodes in a ring, such that
 %% when data is replicated on TargetN consecutive nodes in that ring,
 %% the consecutive nodes never co-incide.
-%% Example, if you have 3 nodes that you want to put in a ring of size 16
-%% such that 2 consecutive nodes never are the same, you could use:
-%%
-%% A1 A3 A1 A2 A1 A2 A3 A1 A2 A3 A1 A2 A3 A1 A2 A3
-%% None of the adjacent nodes is the same, but if we were
-%% to replace the final A3 with A1, then we would have a
-%% violation, since last and first are also adjacent.
 %%
 %% Riak has always had the possibility to compute such placements,
 %% but when adding location awareness, things get a bit tricky.
@@ -51,32 +44,48 @@
 %% Thus, the algorithm computes, given a configuration of nodes,
 %% a ring size and a TargetN, a placement in a ring.
 %%
-%% show(riak_core_claim_binring_alg:solve(16, [1,1,2], 2), 2).
-%% "B1 C2 A1 C1 A1 C1 B1 C2 A1 C1 B1 C2 A1 C1 B1 C2 (0 violations)"
+%% We refer to the markup document in the docs directory for more
+%% details on the use of the algorithm.
 %%
-%% Configurations are provided as a list of integers: [1, 1, 2] means
-%% 1 node in location A, 1 node in location B and 2 nodes in location C.
+%% Below we describe the actual algorithm in more detail.
 %%
-%% There is not always a solution. (By using a SAT solver we identified
-%% 82 impossible configuration for ring size 16 and TargetN, 2 or 3.
-%% E.g. [2, 1] is impossible for ring size 16.)
-%% If there is no solution, then the algorithm is supposed to provide
-%% a best-effort approach.
+%% The algorithm is brute-force trying to get to a placement given
+%% a ring size, target n-val and configuration of number of nodes in
+%% each location.
 %%
-%% Instead of solving, we can also update an existing ring to a new
-%% configuration. One can add a new location with some nodes, or
-%% add/remove nodes. Again, a best-effort approach is provided in
-%% which the amount of transfers needed from one node to the other is
-%% also tried to keep low.
-%% For example if we update the ring:
-%% Ring = riak_core_claim_binring_alg:solve(16, [1,1,2], 2),
-%% show(Ring, 2).
-%% "B1 C2 A1 C1 A1 C1 B1 C2 A1 C1 B1 C2 A1 C1 B1 C2 (0 violations)"
-%% show(riak_core_claim_binring_alg:update(Ring, [2,2], 2), 2).
-%% "B1 A2 B2 A1 B2 A1 B2 A2 B1 A1 B2 A2 B1 A1 B1 A2 (0 violations)"
-%% Then we collapsed 2 nodes on different location to be at the same
-%% location.
-%% Just this example introduces a lot of data transfers.
+%% Step 1.
+%% Since the ring should be balanced, the initial step is to
+%% put all the given nodes in a sequence such that n-val is met.
+%% For example, if there are 7 nodes in two locations (say 3 and 4
+%% respectively) then the algorithm first places those 7 nodes in
+%% the best way it can w.r.t. the given n-val. Clearly, if we have
+%% only 2 locations, n-val should be at most 2. But then, there are
+%% solutions that place those 7 nodes such that the locations (and
+%% therewith the nodes) are not consecutive, even when wrapping around.
+%%
+%% Step 2.
+%% Repeat this small ring as often as possible in the ringsize.
+%% Thus, if ring size is 32 and we have 7 nodes, then we can repeat the
+%% small ring 4 times and are 4 nodes short.
+%% It would be unrealistic to provide a ring size that is less than
+%% the number of nodes one provides. So assume it to fit always at least
+%% once.
+%%
+%% Step 3.
+%% Fill the gaps with additional nodes (part of the small ring) if needed
+%% to get to full ring size.
+%% While n-val not reached (zero_violations is false):
+%%   swap nodes (exchange position) or move nodes
+%%      (moving vnode I to before vnode J).
+%%
+%% Step 3 gives a best effort solution, but given the enormous amount of
+%% possible operations, it can take while to return. But it always terminate.
+%%
+%% When we update a ring, then we want as little transfers as possible,
+%% so first an effort is performed to just swap nodes. If that would not
+%% work to get a solution, a brute-force attempt is taken to get best-effort
+%% again.
+
 
 -module(riak_core_claim_binring_alg).
 
