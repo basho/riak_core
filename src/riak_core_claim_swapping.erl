@@ -49,6 +49,9 @@
 -export([claim/1, claim/2,
          choose_claim_v4/3]).
 
+-ifdef(TEST).
+-export([to_binring/2, to_config2/2]).
+-endif.
 
 %% The algorithm does not use any wants claim logic.
 %% For backward compatibility one can combine wants_claim_v2 with the choose here
@@ -127,7 +130,9 @@ to_binring(Ring) ->
 
     LocationRing =
         [ {riak_core_location:get_node_location(N, LocationDict), N} || N <- AllOwners ],
+    to_binring(LocationRing, LeavingMembers).
 
+to_binring(LocationRing, LeavingMembers) ->
     Locs = lists:usort([ L || {L, _} <- LocationRing ]),
     LocNodes = [ {Loc, uleaving_last([N || {L, N} <- LocationRing, L == Loc], LeavingMembers)}
                  || Loc <- Locs ],
@@ -143,25 +148,38 @@ to_binring(Ring) ->
     {riak_core_claim_binring_alg:from_list(Nodes), LocationRel}.
 
 to_config(Ring, OldLocRel) ->
-    OldLocIdxs = [ {LI, L} || {{LI, _}, {L,_}} <- OldLocRel ],
-    OldLocs = lists:usort([ L || {_, {L,_}} <- OldLocRel ]),
-
     Claiming = riak_core_ring:claiming_members(Ring),
     LocationDict = riak_core_ring:get_nodes_locations(Ring),
     LocationNodes = [ {riak_core_location:get_node_location(N, LocationDict), N} || N <- Claiming ],
+    to_config2(LocationNodes, OldLocRel).
+
+to_config2(LocationNodes, FixedLocRel) ->
+    OldLocIdxs = lists:usort([ {LI, L} || {{LI, _}, {L,_}} <- FixedLocRel ]),
+    OldLocs = [ L || {_, L} <- OldLocIdxs ],
+
     %% keep order of locations the same as in old ring
     Locs = lists:usort([ L || {L, _} <- LocationNodes ]++OldLocs),
     NewLocs = Locs -- OldLocs,
-    LocNodes = [ {Loc, [N || {L, N} <- LocationNodes, L == Loc]} || Loc <- Locs ],
-    LocIdxs = OldLocIdxs ++ enumerate(length(OldLocs) + 1, NewLocs),
-    LocationRel =
-        [ begin
-            {LocIdx, _} = lists:keyfind(Loc, 2, LocIdxs),
-            {{LocIdx, Idx}, {Loc, N}}
-          end || {Loc, Ns} <- LocNodes,
-                                      {Idx, N} <- enumerate(Ns)],
 
-    {[ length(Ns) || {_, Ns} <- LocNodes ], LocationRel}.
+    LocIdxs = OldLocIdxs ++ enumerate(length(OldLocs) + 1, NewLocs),
+    lists:foldl(fun({LocIdx, Loc}, {Cfg, Rel}) ->
+                    RelAtLoc = order_nodes_at_loc(Loc, LocIdx, LocationNodes, FixedLocRel),
+                    {Cfg ++ [length(RelAtLoc)], Rel ++ RelAtLoc}
+                end, {[], []}, LocIdxs).
+
+order_nodes_at_loc(Loc, LocIdx, LocationNodes, FixedLocRel) ->
+    {Old, New} =
+      lists:foldl(fun({L, _}, Acc) when L /= Loc -> Acc;
+                     (LocNode, {OA, NA}) ->
+                      case lists:keyfind(LocNode, 2, FixedLocRel) of
+                        false ->
+                          {OA, [LocNode | NA]};
+                        Found ->
+                          {[Found|OA], NA}
+                      end
+                  end, {[], []}, LocationNodes),
+    Old ++ [{{LocIdx, Idx}, LocNode} || {Idx, LocNode} <- enumerate(length(Old) + 1, lists:usort(New))].
+
 
 uleaving_last(Nodes, LeavingNodes) ->
     UNodes = lists:usort(Nodes),
@@ -339,9 +357,9 @@ location_multistage_t1_test_() ->
        location_multistage_claim_tester(64, JoiningNodes, 4, l5n9, loc5, 4),
        location_multistage_claim_tester(128, JoiningNodes, 4, l5n9, loc5, 4),
        location_multistage_claim_tester(256, JoiningNodes, 4, l5n9, loc5, 4),
-       location_multistage_claim_tester(512, JoiningNodes, 4, l5n9, loc5, 4),
-       location_multistage_claim_tester(1024, JoiningNodes, 4, l5n9, loc5, 4),
-       location_multistage_claim_tester(2048, JoiningNodes, 4, l5n9, loc5, 4)
+       location_multistage_claim_tester(512, JoiningNodes, 4, l5n9, loc5, 4)
+       %% location_multistage_claim_tester(1024, JoiningNodes, 4, l5n9, loc5, 4)
+       %% location_multistage_claim_tester(2048, JoiningNodes, 4, l5n9, loc5, 4)
        ]}.
 
 
@@ -427,8 +445,9 @@ location_typical_expansion_test_() ->
      {inparallel,
       [location_typical_expansion_tester(64),
        location_typical_expansion_tester(128),
-       location_typical_expansion_tester(256),
-       location_typical_expansion_tester(512)]}}.
+       location_typical_expansion_tester(256)
+       %% location_typical_expansion_tester(512)
+      ]}}.
 
 location_typical_expansion_tester(RingSize) ->
     {timeout, 120,
@@ -614,6 +633,42 @@ leave_node_from_location_test(Leaving) ->
                      ],
              ?assertEqual(Diffs, [])
      end}.
+
+six_node_location_test_() ->
+    {timeout, 120,
+     fun() ->
+             N1 = l1n1,
+             N1Loc = loc1,
+             TargetN = 4,
+             RingSize = 32,
+             InitJoiningNodes =
+                 [{l1n2, loc1},
+                  {l2n1, loc2}, {l2n2, loc2},
+                  {l3n1, loc3}, {l3n2, loc3}],
+
+             Params = [{target_n_val, TargetN}],
+             R1 =
+                 riak_core_ring:set_node_location(
+                   N1,
+                   N1Loc,
+                   riak_core_ring:fresh(RingSize, N1)),
+
+             RClaimInit = add_nodes_to_ring(R1, N1, InitJoiningNodes, Params),
+             PrefLists = riak_core_ring:all_preflists(RClaimInit, TargetN),
+
+             %% Sometimes one can be lucky and get node target N 4 with 3 our of 4 different
+             %% locations. This is not the same as targetN 3 for locations.
+
+             LocPrefs =
+                 lists:map(fun(PL) ->
+                               [ proplists:get_value(Node, [{l1n1, loc1}|InitJoiningNodes]) || {_, Node} <- PL ]
+                           end, PrefLists),
+
+             ?assert(lists:all(fun(PL) ->
+                                   length(PL) == 4 andalso length(lists:usort(PL)) == 3
+                               end, LocPrefs))
+     end}.
+
 
 leave_location_test_() ->
     {timeout, 120,

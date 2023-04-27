@@ -501,3 +501,19 @@ equal([X|Ls1], [X|Ls2]) ->
   equal(Ls1, Ls2);
 equal(X, Y) ->
   equals(X, Y).
+
+%% create a config and add or leave nodes for next config
+prop_translate() ->
+  ?FORALL(LocNodes1, ?LET(X, configs(4, 2), shuffle(X)),
+    ?FORALL([LocNodesA, LocNodesL], vector(2, ?LET(C, configs(4,2), sublist(C))),
+      ?FORALL(LocNodes2, shuffle((LocNodes1 -- LocNodesL) ++ LocNodesA),
+          begin
+            Leaving = [ N || {L, N} <- LocNodes1, not lists:member({L, N}, LocNodes2)],
+            {_R, OldLocRel} = riak_core_claim_swapping:to_binring(LocNodes1, Leaving),
+            StayTheSame = [ {Idx, {L, N}} || {Idx, {L, N}} <- OldLocRel, not lists:member(N, Leaving) ],
+            {_Config, NewLocRel} = riak_core_claim_swapping:to_config2(LocNodes2, OldLocRel),
+            equals([ Same
+                     || {Idx1, {L,N}} = Same <- StayTheSame,
+                        {Idx2, _} <- [lists:keyfind({L,N}, 2, NewLocRel)],
+                        Idx1 == Idx2], StayTheSame)
+          end))).
