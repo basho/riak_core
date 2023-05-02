@@ -142,7 +142,7 @@ claim(Ring, {WMod, WFun}=Want, Choose) ->
                 fun(Node, Ring0) ->
                     claim_until_balanced(Ring0, Node, Want, Choose)
                 end,
-                riak_core_ring:clear_location_changed(Ring),
+                Ring,
                 Members)
     end.
 
@@ -670,14 +670,19 @@ sequential_claim(Ring0, Node, TargetN) ->
     MinFetchesPerSeq = ceiling(Shortfall / CompleteSequences),
     CanSolveViolation = ((CompleteSequences * MaxFetchesPerSeq) >= Shortfall),
 
-    Zipped = case (HasTailViolation andalso CanSolveViolation) of
-                  true->
-                      Partitions = lists:sort([ I || {I, _} <- riak_core_ring:all_owners(Ring) ]),
-                      Nodelist = solve_tail_violations(RingSize, Nodes, Shortfall, MinFetchesPerSeq),
-                      lists:zip(Partitions, lists:flatten(Nodelist));
-                  false ->
-                      diagonal_stripe(Ring, Nodes)
-              end,
+    Zipped = 
+        case (HasTailViolation andalso CanSolveViolation) of
+            true->
+                Partitions =
+                    lists:sort(
+                        [ I || {I, _} <- riak_core_ring:all_owners(Ring) ]),
+                Nodelist =
+                    solve_tail_violations(
+                        RingSize, Nodes, Shortfall, MinFetchesPerSeq),
+                lists:zip(Partitions, lists:flatten(Nodelist));
+            false ->
+                diagonal_stripe(Ring, Nodes)
+        end,
 
     lists:foldl(fun({P, N}, Acc) ->
                         riak_core_ring:transfer_node(P, N, Acc)
@@ -1195,13 +1200,15 @@ circular_distance(I1, I2, Q) ->
 -spec get_nodes_by_location([node()|undefined], riak_core_ring:riak_core_ring()) ->
   [node()|undefined].
 get_nodes_by_location(Nodes, Ring) ->
-  NodesLocations = riak_core_ring:get_nodes_locations(Ring),
-  case riak_core_location:has_location_set_in_cluster(NodesLocations) of
-    false ->
-      Nodes;
-    true ->
-      riak_core_location:stripe_nodes_by_location(Nodes, NodesLocations)
-  end.
+    NodesLocations = riak_core_ring:get_nodes_locations(Ring),
+    NodeList =
+        case riak_core_location:has_location_set_in_cluster(NodesLocations) of
+            false ->
+                Nodes;
+            true ->
+                riak_core_location:stripe_nodes_by_location(Nodes, NodesLocations)
+        end,
+    NodeList.
 
 %% ===================================================================
 %% Unit tests
@@ -1278,6 +1285,107 @@ impossible_config_test_() ->
              %% There are location violations, but no node violations!
              ?assertEqual(find_violations(NewRing, TargetN), [])
      end}.
+
+location_seqclaim_t1_test() ->
+    JoiningNodes =
+        [{n2, loc1},
+            {n3, loc2}, {n4, loc2},
+            {n5, loc3}, {n6, loc3}
+    ],
+    location_claim_tester(n1, loc1, JoiningNodes, 64).
+
+location_claim_tester(N1, N1Loc, NodeLocList, RingSize) ->
+    location_claim_tester(
+        N1, N1Loc, NodeLocList, RingSize, choose_claim_v2, 4, 3),
+    location_claim_tester(
+        N1, N1Loc, NodeLocList, RingSize, sequential_claim, 4, 3).
+
+location_claim_tester(
+        N1, N1Loc, NodeLocList, RingSize, ClaimFun, TargetN, CheckerN) ->
+    io:format(
+        "Testing NodeList ~w with RingSize ~w~n",
+        [[{N1, N1Loc}|NodeLocList], RingSize]
+    ),
+    R1 = 
+        riak_core_ring:set_node_location(
+            N1,
+            N1Loc,
+            riak_core_ring:fresh(RingSize, N1)),
+
+    RAll =
+        lists:foldl(
+            fun({N, L}, AccR) ->
+                AccR0 = riak_core_ring:add_member(N1, AccR, N),
+                riak_core_ring:set_node_location(N, L, AccR0)
+            end,
+            R1,
+            NodeLocList
+        ),
+    Params =
+        case ClaimFun of
+            sequential_claim ->
+                TargetN;
+            choose_claim_v2 ->
+                [{target_n_val, TargetN}]
+        end,
+    RClaim =
+        claim(
+            RAll,
+            {riak_core_membership_claim, default_wants_claim},
+            {riak_core_membership_claim, ClaimFun, Params}),
+    {RingSize, Mappings} = riak_core_ring:chash(RClaim),
+
+    ?assertEqual(
+        [],
+        riak_core_location:check_ring(RClaim, TargetN, CheckerN)
+    ),
+    
+    check_for_failures(Mappings, TargetN, CheckerN, RClaim),
+
+    RClaim2 =
+        claim(
+            riak_core_ring:set_node_location(
+                N1,
+                N1Loc,
+                RClaim),
+            {riak_core_membership_claim, default_wants_claim},
+            {riak_core_membership_claim, ClaimFun, Params}),
+    {RingSize, Mappings2} = riak_core_ring:chash(RClaim2),
+
+    check_for_failures(Mappings2, TargetN, CheckerN, RClaim2).
+
+
+check_for_failures(Mappings, TargetN, CheckerN, RClaim) ->
+    NLs = riak_core_ring:get_nodes_locations(RClaim),
+    LocationMap =
+        lists:map(
+            fun({Idx, N}) ->
+                    {Idx, riak_core_location:get_node_location(N, NLs)}
+            end,
+            Mappings),
+    Prefix = lists:sublist(LocationMap, TargetN - 1),
+    LastPart =
+        lists:sublist(
+            LocationMap, length(LocationMap) - (TargetN - 1), TargetN - 1),
+    CheckableMap = LocationMap ++ Prefix,
+    {_, Failures} =
+        lists:foldl(
+            fun({Idx, L}, {LastNminus1, Fails}) ->
+                case length(lists:usort([L|LastNminus1])) of
+                    UniqL when UniqL < CheckerN ->
+                        {[L|lists:sublist(LastNminus1, TargetN - 2)],
+                            [{Idx, L, LastNminus1}|Fails]};
+                    _ ->
+                        {[L|lists:sublist(LastNminus1, TargetN - 2)], Fails}
+                end
+            end,
+            {LastPart, []},
+            CheckableMap
+        ),
+    lists:foreach(fun(F) -> io:format("Failure ~p~n", [F]) end, Failures),
+    ?assert(length(Failures) == 0).
+
+    
 
 -ifdef(EQC).
 
