@@ -453,8 +453,7 @@ maybe_commit_staged(Ring, NextRing, #state{next_ring=PlannedRing}) ->
         {_, _, false} ->
             {ignore, plan_changed};
         _ ->
-            NewRing0 = riak_core_ring:clear_location_changed(NextRing),
-            NewRing1 = riak_core_ring:increment_vclock(Claimant, NewRing0),
+            NewRing1 = riak_core_ring:increment_vclock(Claimant, NextRing),
             {new_ring, NewRing1}
     end.
 
@@ -672,9 +671,7 @@ same_plan(RingA, RingB) ->
     (riak_core_ring:pending_changes(RingA) == riak_core_ring:pending_changes(RingB)).
 
 schedule_tick() ->
-    Tick = app_helper:get_env(riak_core,
-                              claimant_tick,
-                              10000),
+    Tick = app_helper:get_env(riak_core, claimant_tick, 10000),
     erlang:send_after(Tick, ?MODULE, tick).
 
 tick(PreFetchRing, RingID, State=#state{last_ring_id=LastID}) ->
@@ -1355,7 +1352,7 @@ update_ring(CNode, CState, Replacing, Seed, Log, false) ->
 
     %% Rebalance the ring as necessary. If pending changes exist ring
     %% is not rebalanced
-    Next3 = rebalance_ring(CNode, CState4),
+    {Next3, LocationChanged} = rebalance_ring(CState4),
     Log(debug,{"Pending ownership transfers: ~b~n",
                [length(riak_core_ring:pending_changes(CState4))]}),
 
@@ -1373,7 +1370,10 @@ update_ring(CNode, CState, Replacing, Seed, Log, false) ->
             ?ROUT("Updating ring :: next3 : ~p~n", [Next4]),
             CState5 = riak_core_ring:set_pending_changes(CState4, Next4),
             CState6 = riak_core_ring:increment_ring_version(CNode, CState5),
-            {true, CState6};
+            CState7 =
+                riak_core_ring:force_location_changed(
+                    CState6, LocationChanged),
+            {true, CState7};
         false ->
             {false, CState}
     end;
@@ -1451,11 +1451,14 @@ reassign_indices(CState, Replacing, Seed, Log) ->
     {RingChanged or NextChanged, CState3}.
 
 %% @private
-rebalance_ring(CNode, CState) ->
+-spec rebalance_ring(
+    riak_core_ring:riak_core_ring()) ->
+        {[{non_neg_integer(), node(), node(), list(), awaiting}], boolean()}.
+rebalance_ring(CState) ->
     Next = riak_core_ring:pending_changes(CState),
-    rebalance_ring(CNode, Next, CState).
+    rebalance_ring(Next, CState).
 
-rebalance_ring(_CNode, [], CState) ->
+rebalance_ring([], CState) ->
     CState2 = riak_core_membership_claim:claim(CState),
     Owners1 = riak_core_ring:all_owners(CState),
     Owners2 = riak_core_ring:all_owners(CState2),
@@ -1463,9 +1466,9 @@ rebalance_ring(_CNode, [], CState) ->
     Next = [{Idx, PrevOwner, NewOwner, [], awaiting}
             || {{Idx, PrevOwner}, {Idx, NewOwner}} <- Owners3,
                PrevOwner /= NewOwner],
-    Next;
-rebalance_ring(_CNode, Next, _CState) ->
-    Next.
+    {Next, riak_core_ring:has_location_changed(CState2)};
+rebalance_ring(Next, CState) ->
+    {Next, riak_core_ring:has_location_changed(CState)}.
 
 %% @private
 handle_down_nodes(CState, Next) ->
