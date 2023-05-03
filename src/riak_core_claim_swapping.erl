@@ -47,7 +47,7 @@
 -module(riak_core_claim_swapping).
 
 -export([claim/1, claim/2,
-         choose_claim_v4/3]).
+         choose_claim_v4/3, choose_claim_v4/2]).
 
 -ifdef(TEST).
 -export([to_binring/2, to_config2/2]).
@@ -61,6 +61,11 @@
           riak_core_ring:riak_core_ring().
 choose_claim_v4(Ring, _Node, Params) ->
     claim(Ring, Params).
+
+-spec choose_claim_v4(riak_core_ring:riak_core_ring(), node()) ->
+    riak_core_ring:riak_core_ring().
+choose_claim_v4(Ring, _Node) ->
+    claim(Ring).
 
 -spec claim(riak_core_ring:riak_core_ring()) -> riak_core_ring:riak_core_ring().
 claim(Ring) ->
