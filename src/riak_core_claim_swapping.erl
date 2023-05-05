@@ -275,6 +275,20 @@ simple_cluster_t1_test() ->
        claim(R1, Props),
     ?assert(true, riak_core_membership_claim:meets_target_n(RClaim, TargetN)).
 
+locs_and_no_locs_test() ->
+    RingSize = 32,
+    TargetN = 2,
+    NodeList = [{n1, loc1}, {n2, loc2}, n3, n4],
+    R0 = riak_core_ring:set_node_location(n1, loc1, riak_core_ring:fresh(RingSize, n1)),
+    Params = [{target_n_val, TargetN}],
+    RClaim = add_nodes_to_ring(R0, n1, NodeList -- [{n1, loc1}], Params),
+    ?assert(true, riak_core_membership_claim:meets_target_n(RClaim, TargetN)),
+    RMove = riak_core_ring:set_node_location(n1, loc3, RClaim),
+    RClaim2 = claim(RMove, Params),
+    ?assertEqual(riak_core_ring:all_owners(RClaim2),
+                 riak_core_ring:all_owners(RClaim)).
+
+
 
 location_t1_test_() ->
     JoiningNodes =
@@ -352,7 +366,9 @@ add_nodes_to_ring(Ring, Claimant, NodeLocList, Params) ->
     NewRing = lists:foldl(
                 fun({N, L}, AccR) ->
                         AccR0 = riak_core_ring:add_member(Claimant, AccR, N),
-                        riak_core_ring:set_node_location(N, L, AccR0)
+                        riak_core_ring:set_node_location(N, L, AccR0);
+                    (N, AccR) ->
+                        riak_core_ring:add_member(Claimant, AccR, N)
                 end,
                 Ring,
                 NodeLocList),
