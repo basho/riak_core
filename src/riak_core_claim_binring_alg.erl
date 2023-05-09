@@ -311,22 +311,33 @@ brute_force(Ring, NVals, Options) ->
                brute_force(Ring, NVals, Options, violations(Ring, NVals))).
 
 brute_force(Ring, NVals, Options, V) ->
+    brute_force(Ring, NVals, Options, V, false).
+
+brute_force(Ring, NVals, Options, V, OrigSwaps) ->
     TryHard = proplists:get_bool(try_hard, Options),
     case V of
         _ when not TryHard, ?is_zero_v(V) -> Ring;
         ?zero_v -> Ring;
         _ ->
             N = ring_size(Ring),
-            %% TODO: keep swaps so we don't start over every time (earlier swaps are less likely to work)
-            Swaps = [ {swap, I, J} || I <- lists:seq(0, N - 2), J <- lists:seq(I, N - 1) ] ++
-                lists:sort(fun({move, I1, J1}, {move, I2, J2}) -> abs(I1 - J1) =< abs(I2 - J2) end,
-                           [ {move, I, J} || not proplists:get_bool(only_swap, Options)
-                                                 , I <- lists:seq(0, N - 1), J <- lists:seq(0, N - 1)
-                                                 , D <- [mod_dist(J, I, N)]
-                                                 , D > 2 orelse D < -1   %% Moving just one step is a swap
-                           ]),
-            brute_force(Ring, NVals, V, Options, Ring, ?zero_v, Swaps)
+            Swaps =
+                case OrigSwaps of
+                    false ->
+                        generate_swaps(N, Options);
+                    OrigSwaps when is_list(OrigSwaps) ->
+                        OrigSwaps
+                end,
+            brute_force(Ring, NVals, V, Options, Ring, ?zero_v, Swaps, Swaps)
     end.
+
+generate_swaps(N, Options) ->
+    [ {swap, I, J} || I <- lists:seq(0, N - 2), J <- lists:seq(I, N - 1) ] ++
+        lists:sort(fun({move, I1, J1}, {move, I2, J2}) -> abs(I1 - J1) =< abs(I2 - J2) end,
+                   [ {move, I, J} || not proplists:get_bool(only_swap, Options)
+                                         , I <- lists:seq(0, N - 1), J <- lists:seq(0, N - 1)
+                                         , D <- [mod_dist(J, I, N)]
+                                         , D > 2 orelse D < -1   %% Moving just one step is a swap
+                   ]).
 
 mod_dist(I, J, N) ->
     D = (J - I + N) rem N,
@@ -335,20 +346,20 @@ mod_dist(I, J, N) ->
     end.
 
 %% TODO: Don't use DeltaV for BestV (total violations instead)
-brute_force(_Ring, NVals, V, Options, Best, BestV, []) when BestV < ?zero_v ->
+brute_force(_Ring, NVals, V, Options, Best, BestV, [], OrigSwaps) when BestV < ?zero_v ->
     ?debug("~s\n", [show(Best, NVals)]),
-    brute_force(Best, NVals, Options, add_v(V, BestV));
-brute_force(_Ring, _NVals, _V, _Options, Best, _BestV, []) -> Best;
-brute_force(Ring, NVals, V, Options, Best, BestV, [Op | Swaps]) ->
+    brute_force(Best, NVals, Options, add_v(V, BestV), OrigSwaps);
+brute_force(_Ring, _NVals, _V, _Options, Best, _BestV, [], _OrigSwaps) -> Best;
+brute_force(Ring, NVals, V, Options, Best, BestV, [Op | Swaps], OrigSwaps) ->
     {Ring1, DV} = op(Ring, NVals, Op),
     TryHard = proplists:get_bool(try_hard, Options),
     if DV < ?zero_v, not TryHard ->
             ?debug("~s\n", [show(Ring1, NVals)]),
-            brute_force(Ring1, NVals, Options, add_v(V, DV));
+            brute_force(Ring1, NVals, Options, add_v(V, DV), OrigSwaps);
        DV < BestV ->
-            brute_force(Ring, NVals, V, Options, Ring1, DV, Swaps);
+            brute_force(Ring, NVals, V, Options, Ring1, DV, Swaps, OrigSwaps);
        true ->
-            brute_force(Ring, NVals, V, Options, Best, BestV, Swaps)
+            brute_force(Ring, NVals, V, Options, Best, BestV, Swaps, OrigSwaps)
     end.
 
 op(Ring, NVals, {swap, I, J}) ->
@@ -560,6 +571,19 @@ show_update(RingSize, OldConfig, NewConfig, NVals) ->
 %% -- Tetsing --------------------------------------------------------------
 
 -ifdef(TEST).
+
+generate_swaps_test() ->
+    time_generating_swaps(32),
+    time_generating_swaps(128),
+    time_generating_swaps(1024).
+
+time_generating_swaps(N) ->
+    SW = os:timestamp(),
+    Swaps = generate_swaps(N, []),
+    io:format(
+        user,
+        "Generate swaps for RS ~w in ~w ms length ~w~n",
+        [N, timer:now_diff(os:timestamp(), SW) div 1000, length(Swaps)]).
 
 %% -- Unit tests for experimentation ---------------------------------------
 %% These tests take a bit of time when running.
