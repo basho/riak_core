@@ -47,7 +47,8 @@
 -module(riak_core_claim_swapping).
 
 -export([claim/1, claim/2,
-         choose_claim_v4/3, choose_claim_v4/2]).
+         choose_claim_v4/3, choose_claim_v4/2,
+         necessary_condition/2]).
 
 -ifdef(TEST).
 -export([to_binring/2, to_config2/2]).
@@ -139,12 +140,20 @@ claim(Ring, Params0) ->
     BinRing =
         case UpdateSolved of
             false ->
-                memoize(
-                    binring_solve,
-                    {RingSize, Config, NVals},
-                    fun() ->
-                        riak_core_claim_binring_alg:solve(RingSize, Config, NVals)
-                    end);
+                BinRing2 =
+                  memoize(
+                      binring_solve,
+                      {RingSize, Config, NVals},
+                      fun() ->
+                          riak_core_claim_binring_alg:solve(RingSize, Config, NVals)
+                      end);
+                case riak_core_claim_binring_alg:zero_violations(BinRing2, NVals) of
+                    false ->
+                        %% prefer less transfers in case both have violations
+                        BinRing1;
+                    true ->
+                        BinRing2
+                end;
             true ->
                 BinRing1
         end,
@@ -171,6 +180,56 @@ claim(Ring, Params0) ->
 
     NewRing.
 
+-spec necessary_condition(riak_core_ring:riak_core_ring(), [{atom(), term()}]) -> boolean().
+necessary_condition(Ring, Params) ->
+    TargetN = proplists:get_value(target_n_val, Params),
+    LocationDict = riak_core_ring:get_nodes_locations(Ring),
+    HasLocations = riak_core_location:has_location_set_in_cluster(LocationDict),
+    TargetLN =
+        if HasLocations -> proplists:get_value(target_location_n_val, Params, TargetN);
+           true -> 1
+        end,
+    necessary_conditions(Ring, {TargetN, TargetLN}).
+
+necessary_conditions(Ring, NVal) when is_integer(NVal) ->
+    necessary_conditions(Ring, {NVal, NVal});
+necessary_conditions(Ring, {_NVal, 1}) ->
+    RingSize = riak_core_ring:num_partitions(Ring),
+    Owners = lists:usort(claiming_nodes(Ring)),
+    length(Owners) =< RingSize;
+necessary_conditions(Ring, {_NVal, LocNVal}) ->
+    {Locations, _} = to_config(Ring, []),
+    false = lists:member(0, Locations),
+
+    RingSize = riak_core_ring:num_partitions(Ring),
+    Nodes = lists:usort([ Node || {_, Node} <- claiming_nodes(Ring)]),
+    NumNodes = length(Nodes),
+    Rounds = RingSize div LocNVal,
+    MinOccs = RingSize div NumNodes,
+    MaxOccs =
+        if  RingSize rem NumNodes == 0 -> MinOccs;
+            true -> 1 + MinOccs
+        end,
+
+    MinOccForLocWith =
+       fun(N) -> max(N * MinOccs, RingSize - MaxOccs * lists:sum(Locations -- [N])) end,
+     MaxOccForLocWith =
+       fun(N) -> min(N * MaxOccs, RingSize - MinOccs * lists:sum(Locations -- [N])) end,
+
+    lists:all(fun(B) -> B end,
+            [length(Locations) >= RingSize || Rounds < 2] ++
+              [length(Locations) >= LocNVal] ++
+              [ MinOccForLocWith(Loc) =< Rounds || Loc <- Locations ] ++
+              [ Rounds =< MaxOccForLocWith(LSize)
+                || LocNVal == length(Locations), LSize <- Locations] ++
+              [ RingSize rem LocNVal == 0
+                || LocNVal == length(Locations) ]
+           ).
+
+claiming_nodes(Ring) ->
+    Claiming = riak_core_ring:claiming_members(Ring),
+    LocationDict = riak_core_ring:get_nodes_locations(Ring),
+    [ {riak_core_location:get_node_location(N, LocationDict), N} || N <- Claiming ].
 
 to_binring(Ring) ->
     LocationDict = riak_core_ring:get_nodes_locations(Ring),
@@ -199,10 +258,7 @@ to_binring(LocationRing, LeavingMembers) ->
     {riak_core_claim_binring_alg:from_list(Nodes), LocationRel}.
 
 to_config(Ring, OldLocRel) ->
-    Claiming = riak_core_ring:claiming_members(Ring),
-    LocationDict = riak_core_ring:get_nodes_locations(Ring),
-    LocationNodes = [ {riak_core_location:get_node_location(N, LocationDict), N} || N <- Claiming ],
-    to_config2(LocationNodes, OldLocRel).
+    to_config2(claiming_nodes(Ring), OldLocRel).
 
 to_config2(LocationNodes, FixedLocRel) ->
     OldLocIdxs = lists:usort([ {LI, L} || {{LI, _}, {L,_}} <- FixedLocRel ]),
