@@ -1459,7 +1459,12 @@ rebalance_ring(CState) ->
     rebalance_ring(Next, CState).
 
 rebalance_ring([], CState) ->
+    SW = os:timestamp(),
     CState2 = riak_core_membership_claim:claim(CState),
+    lager:info(
+        "Claim algorithm request completed in claim_time=~w ms",
+        [timer:now_diff(os:timestamp(), SW) div 1000]
+    ),
     Owners1 = riak_core_ring:all_owners(CState),
     Owners2 = riak_core_ring:all_owners(CState2),
     Owners3 = lists:zip(Owners1, Owners2),
