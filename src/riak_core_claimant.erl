@@ -125,7 +125,7 @@ plan() ->
 %%      A commit is only allowed to succeed if the ring is ready and if the
 %%      current set of changes matches those computed by the most recent
 %%      call to plan/0.
--spec commit() -> ok | {error, term()}.
+-spec commit() -> ok | {error, term()} | error.
 commit() ->
     gen_server:call(claimant(), commit, infinity).
 
