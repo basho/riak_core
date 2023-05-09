@@ -197,7 +197,7 @@ moves(Ring1, Ring2) ->
 -type violations() :: {non_neg_integer(), non_neg_integer()}.
 
 -define(zero_v, {0, 0}).
--define(is_zero_v(V), element(1, V) == 0 andalso element(2, V) == 0).
+-define(is_zero_v(V), (element(1, V) == 0 andalso element(2, V) == 0)).
 
 zip_v(F, {A1, B1},         {A2, B2})         -> {F(A1, A2), F(B1, B2)};
 zip_v(F, {A1, B1, C1},     {A2, B2, C2})     -> {F(A1, A2), F(B1, B2), F(C1, C2)};
@@ -571,19 +571,6 @@ show_update(RingSize, OldConfig, NewConfig, NVals) ->
 %% -- Tetsing --------------------------------------------------------------
 
 -ifdef(TEST).
-
-generate_swaps_test() ->
-    time_generating_swaps(32),
-    time_generating_swaps(128),
-    time_generating_swaps(1024).
-
-time_generating_swaps(N) ->
-    SW = os:timestamp(),
-    Swaps = generate_swaps(N, []),
-    io:format(
-        user,
-        "Generate swaps for RS ~w in ~w ms length ~w~n",
-        [N, timer:now_diff(os:timestamp(), SW) div 1000, length(Swaps)]).
 
 %% -- Unit tests for experimentation ---------------------------------------
 %% These tests take a bit of time when running.
