@@ -91,7 +91,7 @@
 
 -export([solve/3,
          update/3,
-         zero_violations/2,
+         zero_violations/2, node_loc_violations/2,
          moves/2,
          to_list/1, from_list/1]).
 
@@ -216,6 +216,11 @@ sum_v(Vs) -> lists:foldl(fun add_v/2, ?zero_v, Vs).
 zero_violations(Ring, NVals) ->
     V = violations(Ring, NVals),
     ?is_zero_v(V).
+
+-spec node_loc_violations(ring(), nvals()) -> {non_neg_integer(), non_neg_integer()}.
+node_loc_violations(Ring, NVals) ->
+    V = violations(Ring, NVals),
+    {element(2, V), element(1, V)}.
 
 %% What's the maximum distance from an updated vnode where a violation change
 %% can happen.
@@ -411,6 +416,9 @@ swap(Ring, I, J) ->
     Y = get_node(Ring, J),
     set_node(set_node(Ring, I, Y), J, X).
 
+worth_brute_force(RingSize, V) ->
+    element(1, V) + element(2, V) < RingSize.
+
 %% -- The solver ----------------------------------------------------------
 
 -spec solve(ring_size(), config(), nvals()) -> ring().
@@ -432,12 +440,19 @@ solve(RingSize, Config, NVals) ->
             BigRingI  = solve_node_insertions(Cycle(Rounds), NVals, Extras),
             ?debug("Insert\n~s\n", [show(BigRingI, NVals)]),
             VI        = violations(BigRingI, NVals),
-            if VI < VD ->
+            {BFRing, V} =
+               if VI < VD ->
                     ?debug("Chose insert\n", []),
-                    brute_force(BigRingI, NVals);
+                    {BigRingI, VI};
                true    ->
                     ?debug("Chose delete\n", []),
-                    brute_force(BigRingD, NVals)
+                    {BigRingD, VD}
+            end,
+            case worth_brute_force(RingSize, V) of
+                true ->
+                    brute_force(BFRing, NVals);
+                false ->
+                    BFRing
             end
     end.
 
@@ -517,8 +532,13 @@ update(OldRing, Config, NVals) ->
     ToRemove = OldNodes -- NewNodes,
     %% Swap in new nodes for old nodes (in a moderately clever way)
     NewRing = swap_in_nodes(OldRing, ToAdd, ToRemove, NVals),
-    %% Brute force fix any remaining conflicts
-    brute_force(NewRing, NVals, []).
+    case worth_brute_force(RingSize, violations(NewRing, NVals)) of
+        true ->
+            %% Brute force fix any remaining conflicts
+            brute_force(NewRing, NVals, []);
+       false ->
+            NewRing
+    end.
 
 swap_in_nodes(Ring, [], [], _NVals) -> Ring;
 swap_in_nodes(Ring, [New | ToAdd], ToRemove, NVals) ->
@@ -577,32 +597,32 @@ show_update(RingSize, OldConfig, NewConfig, NVals) ->
 %% Not intended to be included in automatic testing.
 
 known_hard_tests() ->
-    Tests = [ {16,  [4, 3, 3, 2],       3}
-            , {32,  [3, 2, 1, 4, 3],    3}
-            , {32,  [5, 6, 5, 1, 1],    3}
-            , {128, [1, 1, 1, 1, 1, 1], 5}
-            , {16,  [4, 4, 4, 3],       4}
-            , {16,  [4, 4, 3, 3],       4}
-            , {16,  [4, 3, 3, 3],       4}
-            , {32,  [4, 3, 3, 3],       4}
-            , {48,  [4, 3, 3, 3],       4}
-            , {32,  [2, 2, 2, 2, 2],    4}
-            , {16,  [2, 2, 1, 2, 2],    4}
-            , {16,  [2, 2, 4, 2],       4}
-            , {16,  [3, 2, 2, 2],       4}
-            , {32,  [3, 2, 2, 2],       4}
-            , {32,  [3, 3, 3, 1, 1],    4}
-            , {16,  [1, 3, 2, 1, 1, 1], 4}
-            , {64,  [2, 2, 1, 2, 2, 2], 5}
-            , {256, [6, 5, 2], 2}
-            , {64,  [3, 3, 3, 2, 1], 4}
-            , {32,  [3, 3, 3, 3, 1], 4}
-            , {512, [4, 4, 4, 4, 1], 4}
+    Tests = [ {16,  [4, 3, 3, 2],       3, ?zero_v}
+            , {32,  [3, 2, 1, 4, 3],    3, ?zero_v}
+            , {32,  [5, 6, 5, 1, 1],    3, ?zero_v}
+            , {128, [1, 1, 1, 1, 1, 1], 5, ?zero_v}
+            , {16,  [4, 4, 4, 3],       4, ?zero_v}
+            , {16,  [4, 4, 3, 3],       4, ?zero_v}
+            , {16,  [4, 3, 3, 3],       4, ?zero_v}
+            , {32,  [4, 3, 3, 3],       4, ?zero_v}
+            , {48,  [4, 3, 3, 3],       4, ?zero_v}
+            , {32,  [2, 2, 2, 2, 2],    4, {2,0}}
+            , {16,  [2, 2, 1, 2, 2],    4, ?zero_v}
+            , {16,  [2, 2, 4, 2],       4, ?zero_v}
+            , {16,  [3, 2, 2, 2],       4, ?zero_v}
+            , {32,  [3, 2, 2, 2],       4, {8, 0}}
+            , {32,  [3, 3, 3, 1, 1],    4, {16,0}}
+            , {16,  [1, 3, 2, 1, 1, 1], 4, {4, 0}}
+            , {64,  [2, 2, 1, 2, 2, 2], 5, ?zero_v}
+            , {256, [6, 5, 2],          2, ?zero_v}
+            , {64,  [3, 3, 3, 2, 1],    4, {4,0}}
+            , {32,  [3, 3, 3, 3, 1],    4, {4,0}}
+            , {512, [4, 4, 4, 4, 1],    4, {4,0}}
             ],
     [ {Size, Config, NVal, '->', V}
-      || {Size, Config, NVal} <- Tests
-             , V <- [violations(solve(Size, Config, NVal), NVal)]
-             , not ?is_zero_v(V)
+      || {Size, Config, NVal, Expect} <- Tests
+           , V <- [violations(solve(Size, Config, NVal), NVal)]
+           , V /= Expect
     ].
 
 typical_scenarios_tests() ->

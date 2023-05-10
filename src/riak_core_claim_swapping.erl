@@ -120,48 +120,23 @@ claim(Ring, Params0) ->
     {BinRing0, OldLocRel} = to_binring(Ring),
     {Config, LocRel} = to_config(Ring, OldLocRel),
 
-    SWup = os:timestamp(),
-    BinRing1 =
-        memoize(
-            binring_update,
-            {BinRing0, Config, NVals},
-            fun() ->
-                riak_core_claim_binring_alg:update(BinRing0, Config, NVals)
-            end),
-    lager:info(
-        "~w Swapping algorithm update in ~w ms Config ~w NVals ~w h(BinRing) ~w",
-        [self(), timer:now_diff(os:timestamp(), SWup) div 1000,
-            Config, NVals, erlang:phash2(BinRing1)]
-    ),
-
-    SWsv = os:timestamp(),
-    UpdateSolved =
-        riak_core_claim_binring_alg:zero_violations(BinRing1, NVals),
     BinRing =
-        case UpdateSolved of
-            false ->
-                BinRing2 =
-                  memoize(
-                      binring_solve,
-                      {RingSize, Config, NVals},
-                      fun() ->
-                          riak_core_claim_binring_alg:solve(RingSize, Config, NVals)
-                      end);
-                case riak_core_claim_binring_alg:zero_violations(BinRing2, NVals) of
-                    false ->
-                        %% prefer less transfers in case both have violations
-                        BinRing1;
-                    true ->
-                        BinRing2
-                end;
+        case length(OldLocRel) == 1 of
             true ->
-                BinRing1
+              %% Only one node in old ring, don't even try update
+              solve_memoized(RingSize, Config, NVals);
+            false ->
+              BinRingU = update_memoized(BinRing0, Config, NVals),
+              case riak_core_claim_binring_alg:node_loc_violations(BinRingU, NVals) of
+                  {0, 0} -> BinRingU;
+                  UV ->
+                      BinRingS = riak_core_claim_binring_alg:solve_memoized(RingSize, Config, NVals),
+                      SV = riak_core_claim_binring_alg:node_loc_violations(BinRingS, NVals),
+                      if SV < UV -> BinRingS;
+                         true -> BinRingU
+                      end
+              end
         end,
-    lager:info(
-        "~w Swapping algorithm solve in ~w ms as solve_required=~w",
-        [self(), timer:now_diff(os:timestamp(), SWsv) div 1000,
-            not UpdateSolved]
-    ),
 
     Inc = chash:ring_increment(RingSize),
     SolvedNodes =
@@ -179,6 +154,35 @@ claim(Ring, Params0) ->
           SolvedNodes),
 
     NewRing.
+
+update_memoized(BinRing, Config, NVals) ->
+    TS = os:timestamp(),
+    BinRingU =
+        memoize(
+          binring_update,
+          {BinRing, Config, NVals},
+          fun() ->
+              riak_core_claim_binring_alg:update(BinRing, Config, NVals)
+          end),
+    lager:info(
+      "~w Swapping algorithm update in ~w ms Config ~w NVals ~w h(BinRing) ~w",
+      [self(), timer:now_diff(os:timestamp(), TS) div 1000,
+       Config, NVals, erlang:phash2(BinRingU)]
+     ),
+     BinRingU.
+
+solve_memoized(RingSize, Config, NVals) ->
+    memoize(
+        binring_solve,
+      {RingSize, Config, NVals},
+      fun() ->
+          riak_core_claim_binring_alg:solve_memoized(RingSize, Config, NVals)
+      end),
+  lager:info(
+        "~w Swapping algorithm solve in ~w ms as solve_required=~w",
+        [self(), timer:now_diff(os:timestamp(), SWsv) div 1000,
+            not UpdateSolved]
+    ),
 
 -spec necessary_condition(riak_core_ring:riak_core_ring(), [{atom(), term()}]) -> boolean().
 necessary_condition(Ring, Params) ->
