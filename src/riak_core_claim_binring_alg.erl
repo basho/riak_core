@@ -105,7 +105,9 @@
 
 -ifdef(DEBUG).
 -compile([export_all, nowarn_export_all]).
--define(DEBUG_FUNS).
+-ifndef(DEBUG_FUNS).
+-define(DEBUG_FUNS, true).
+-endif.
 -define(PROFILE, true).
 -include_lib("eqc/include/eqc_profile.hrl").
 -define(debug(Fmt, Args), io:format(Fmt, Args)).
@@ -411,8 +413,9 @@ swap(Ring, I, J) ->
     Y = get_node(Ring, J),
     set_node(set_node(Ring, I, Y), J, X).
 
-worth_brute_force(RingSize, V) ->
-    element(1, V) + element(2, V) < RingSize.
+worth_brute_force(RingSize, V, NumNodes) ->
+    NumNodes > 1 andalso
+        element(1, V) + element(2, V) < RingSize.
 
 %% -- The solver ----------------------------------------------------------
 
@@ -444,7 +447,7 @@ solve(RingSize, Config, NValsMap) ->
                     ?debug("Chose delete\n", []),
                     {BigRingD, VD}
             end,
-            case worth_brute_force(RingSize, V) of
+            case worth_brute_force(RingSize, V, NumNodes) of
                 true ->
                     brute_force(BFRing, NVals);
                 false ->
@@ -529,7 +532,7 @@ update(OldRing, Config, NValsMap) ->
     ToRemove = OldNodes -- NewNodes,
     %% Swap in new nodes for old nodes (in a moderately clever way)
     NewRing = swap_in_nodes(OldRing, ToAdd, ToRemove, NVals),
-    case worth_brute_force(RingSize, violations(NewRing, NVals)) of
+    case worth_brute_force(RingSize, violations(NewRing, NVals), lists:sum(Config)) of
         true ->
             %% Brute force fix any remaining conflicts
             brute_force(NewRing, NVals, []);
