@@ -56,6 +56,28 @@
 %% The algorithm does not use any wants claim logic.
 %% For backward compatibility one can combine wants_claim_v2 with the choose here
 
+-spec memoize(
+    binring_solve|binring_update,
+    {binary()|pos_integer(),
+        list(pos_integer()),
+        {pos_integer(), pos_integer()}},
+    fun(() -> binary())) -> binary().
+memoize(Registry, Key, Fun) ->
+    V4Solutions =
+        case get(v4_solutions) of
+            undefined -> [];
+            V4SL -> V4SL
+        end,
+   case lists:keyfind({Registry, Key}, 1, V4Solutions) of
+        {{Registry, Key}, Solution} ->
+            lager:info("Retrieved solve from memory for ~w", [Registry]),
+            Solution;
+       _ ->
+            Value = Fun(),
+            riak_core_claimant:update_v4_solutions({{Registry, Key}, Value}),
+            Value
+   end.
+
 %% Backward compatible interface
 -spec choose_claim_v4(riak_core_ring:riak_core_ring(), node(), [{atom(), term()}]) ->
           riak_core_ring:riak_core_ring().
@@ -97,16 +119,40 @@ claim(Ring, Params0) ->
     {BinRing0, OldLocRel} = to_binring(Ring),
     {Config, LocRel} = to_config(Ring, OldLocRel),
 
-    %% io:format("Config = ~p RingSize ~p nval ~p\n", [Config, RingSize, NVals]),
-    BinRing1 = riak_core_claim_binring_alg:update(BinRing0, Config, NVals),
+    SWup = os:timestamp(),
+    BinRing1 =
+        memoize(
+            binring_update,
+            {BinRing0, Config, NVals},
+            fun() ->
+                riak_core_claim_binring_alg:update(BinRing0, Config, NVals)
+            end),
+    lager:info(
+        "~w Swapping algorithm update in ~w ms Config ~w NVals ~w h(BinRing) ~w",
+        [self(), timer:now_diff(os:timestamp(), SWup) div 1000,
+            Config, NVals, erlang:phash2(BinRing1)]
+    ),
 
+    SWsv = os:timestamp(),
+    UpdateSolved =
+        riak_core_claim_binring_alg:zero_violations(BinRing1, NVals),
     BinRing =
-        case riak_core_claim_binring_alg:zero_violations(BinRing1, NVals) of
+        case UpdateSolved of
             false ->
-                riak_core_claim_binring_alg:solve(RingSize, Config, NVals);
+                memoize(
+                    binring_solve,
+                    {RingSize, Config, NVals},
+                    fun() ->
+                        riak_core_claim_binring_alg:solve(RingSize, Config, NVals)
+                    end);
             true ->
                 BinRing1
         end,
+    lager:info(
+        "~w Swapping algorithm solve in ~w ms as solve_required=~w",
+        [self(), timer:now_diff(os:timestamp(), SWsv) div 1000,
+            not UpdateSolved]
+    ),
 
     Inc = chash:ring_increment(RingSize),
     SolvedNodes =

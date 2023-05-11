@@ -43,7 +43,8 @@
          get_bucket_type/2,
          get_bucket_type/3,
          bucket_type_iterator/0,
-         set_node_location/2]).
+         set_node_location/2,
+        update_v4_solutions/1]).
 -export([reassign_indices/1]). % helpers for claim sim
 
 %% gen_server callbacks
@@ -62,21 +63,32 @@
 %%   {Ring, NewRing} where NewRing = f(Ring)
 -type ring_transition() :: {riak_core_ring(), riak_core_ring()}.
 
+-type v4_solution() ::
+    {{binring_solve|binring_update,
+        {binary()|pos_integer(),
+            list(pos_integer()),
+            {pos_integer(), pos_integer()}}},
+        binary()}.
+
 -record(state, {
-          last_ring_id,
-          %% The set of staged cluster changes
-          changes :: [{node(), action()}],
+            last_ring_id,
+            %% The set of staged cluster changes
+            changes :: [{node(), action()}],
 
-          %% Ring computed during the last planning stage based on
-          %% applying a set of staged cluster changes. When commiting
-          %% changes, the computed ring must match the previous planned
-          %% ring to be allowed.
-          next_ring :: riak_core_ring()|undefined,
+            %% Ring computed during the last planning stage based on
+            %% applying a set of staged cluster changes. When commiting
+            %% changes, the computed ring must match the previous planned
+            %% ring to be allowed.
+            next_ring :: riak_core_ring()|undefined,
 
-          %% Random number seed passed to remove_node to ensure the
-          %% current randomized remove algorithm is deterministic
-          %% between plan and commit phases
-          seed}).
+            %% Random number seed passed to remove_node to ensure the
+            %% current randomized remove algorithm is deterministic
+            %% between plan and commit phases
+            seed,
+        
+            %% List of v4 solutions - to be copied to the process memory of
+            %% the riak_core_ring_manager when 
+            v4_solutions = [] :: list(v4_solution())}).
 
 -define(ROUT(S,A),ok).
 %%-define(ROUT(S,A),?debugFmt(S,A)).
@@ -116,6 +128,10 @@ plan() ->
 -spec commit() -> ok | {error, term()}.
 commit() ->
     gen_server:call(claimant(), commit, infinity).
+
+-spec update_v4_solutions(v4_solution()) -> ok.
+update_v4_solutions(V4Solution) ->
+    gen_server:cast(?MODULE, {update_v4_solutions, V4Solution}).
 
 %% @doc Stage a request for `Node' to leave the cluster. If committed, `Node'
 %%      will handoff all of its data to other nodes in the cluster and then
@@ -345,6 +361,12 @@ handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
 
+handle_cast({update_v4_solutions, V4Solution}, State) ->
+    {noreply,
+        State#state{
+            v4_solutions =
+                lists:ukeysort(1, [V4Solution|State#state.v4_solutions])
+            }};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -397,6 +419,7 @@ generate_plan([], _, State) ->
     %% There are no changes to apply
     {{ok, [], []}, State};
 generate_plan(Changes, Ring, State=#state{seed=Seed}) ->
+    put(v4_solutions, State#state.v4_solutions),
     case compute_all_next_rings(Changes, Seed, Ring) of
         {error, invalid_resize_claim} ->
             {{error, invalid_resize_claim}, State};
@@ -432,10 +455,12 @@ maybe_commit_staged(State) ->
 %% @private
 maybe_commit_staged(Ring, State=#state{changes=Changes, seed=Seed}) ->
     Changes2 = filter_changes(Changes, Ring),
+    put(v4_solutions, State#state.v4_solutions),
     case compute_next_ring(Changes2, Seed, Ring) of
         {error, invalid_resize_claim} ->
             {ignore, invalid_resize_claim};
         {ok, NextRing} ->
+            erase(v4_solutions),
             maybe_commit_staged(Ring, NextRing, State)
     end.
 
