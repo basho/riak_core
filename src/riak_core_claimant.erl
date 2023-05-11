@@ -66,8 +66,8 @@
 -type v4_solution() ::
     {{binring_solve|binring_update,
         {binary()|pos_integer(),
-            list(pos_integer()),
-            {pos_integer(), pos_integer()}}},
+            list(non_neg_integer()),
+            #{location := pos_integer(), node := pos_integer()}}},
         binary()}.
 
 -record(state, {

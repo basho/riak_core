@@ -60,8 +60,8 @@
 -spec memoize(
     binring_solve|binring_update,
     {binary()|pos_integer(),
-        list(pos_integer()),
-        {pos_integer(), pos_integer()}},
+        list(non_neg_integer()),
+        #{location := pos_integer(), node := pos_integer()}},
     fun(() -> binary())) -> binary().
 memoize(Registry, Key, Fun) ->
     V4Solutions =
@@ -108,7 +108,7 @@ claim(Ring, Params0) ->
            true -> 1
         end,
     RingSize = riak_core_ring:num_partitions(Ring),
-    NVals = {TargetN, TargetLN},
+    NVals = #{node => TargetN, location => TargetLN},
 
     %% Now we need to map the locations and nodes to a configuration that
     %% basically is a list of locations with the number of nodes in it.
@@ -130,7 +130,7 @@ claim(Ring, Params0) ->
               case riak_core_claim_binring_alg:node_loc_violations(BinRingU, NVals) of
                   {0, 0} -> BinRingU;
                   UV ->
-                      BinRingS = riak_core_claim_binring_alg:solve_memoized(RingSize, Config, NVals),
+                      BinRingS = solve_memoized(RingSize, Config, NVals),
                       SV = riak_core_claim_binring_alg:node_loc_violations(BinRingS, NVals),
                       if SV < UV -> BinRingS;
                          true -> BinRingU
@@ -172,17 +172,19 @@ update_memoized(BinRing, Config, NVals) ->
      BinRingU.
 
 solve_memoized(RingSize, Config, NVals) ->
-    memoize(
-        binring_solve,
-      {RingSize, Config, NVals},
-      fun() ->
-          riak_core_claim_binring_alg:solve_memoized(RingSize, Config, NVals)
-      end),
-  lager:info(
-        "~w Swapping algorithm solve in ~w ms as solve_required=~w",
-        [self(), timer:now_diff(os:timestamp(), SWsv) div 1000,
-            not UpdateSolved]
-    ),
+    TS = os:timestamp(),
+    BinRingS =
+        memoize(
+          binring_solve,
+          {RingSize, Config, NVals},
+          fun() ->
+              riak_core_claim_binring_alg:solve(RingSize, Config, NVals)
+          end),
+    lager:info(
+      "~w Swapping algorithm solve in ~w ms",
+      [self(), timer:now_diff(os:timestamp(), TS) div 1000]
+     ),
+     BinRingS.
 
 -spec necessary_condition(riak_core_ring:riak_core_ring(), [{atom(), term()}]) -> boolean().
 necessary_condition(Ring, Params) ->
@@ -193,15 +195,13 @@ necessary_condition(Ring, Params) ->
         if HasLocations -> proplists:get_value(target_location_n_val, Params, TargetN);
            true -> 1
         end,
-    necessary_conditions(Ring, {TargetN, TargetLN}).
+    necessary_conditions(Ring, #{node => TargetN, location => TargetLN}).
 
-necessary_conditions(Ring, NVal) when is_integer(NVal) ->
-    necessary_conditions(Ring, {NVal, NVal});
-necessary_conditions(Ring, {_NVal, 1}) ->
+necessary_conditions(Ring, #{location := 1}) ->
     RingSize = riak_core_ring:num_partitions(Ring),
     Owners = lists:usort(claiming_nodes(Ring)),
     length(Owners) =< RingSize;
-necessary_conditions(Ring, {_NVal, LocNVal}) ->
+necessary_conditions(Ring, #{location := LocNVal}) ->
     {Locations, _} = to_config(Ring, []),
     false = lists:member(0, Locations),
 

@@ -91,7 +91,7 @@
 
 -export([solve/3,
          update/3,
-         zero_violations/2, node_loc_violations/2,
+         node_loc_violations/2,
          moves/2,
          to_list/1, from_list/1]).
 
@@ -120,10 +120,11 @@
 %% byte node index.
 -type ring()      :: binary().
 -type ring_size() :: non_neg_integer().
--type nval()      :: non_neg_integer().
+-type nval()      :: pos_integer().
 -type node_nval() :: nval().
 -type loc_nval()  :: nval().
--type nvals()     :: nval() | {node_nval(), loc_nval()}.
+-type nvals()     :: {node_nval(), loc_nval()}.
+-type nvalsmap()  :: #{node => node_nval(), location => loc_nval()}.
 
 -type config() :: [non_neg_integer()].  %% List of node counts per location
 
@@ -199,6 +200,9 @@ moves(Ring1, Ring2) ->
 -define(zero_v, {0, 0}).
 -define(is_zero_v(V), (element(1, V) == 0 andalso element(2, V) == 0)).
 
+to_nvals(#{location := LNVal, node := NVal}) ->
+  {NVal, LNVal}.
+
 zip_v(F, {A1, B1},         {A2, B2})         -> {F(A1, A2), F(B1, B2)};
 zip_v(F, {A1, B1, C1},     {A2, B2, C2})     -> {F(A1, A2), F(B1, B2), F(C1, C2)};
 zip_v(F, {A1, B1, C1, D1}, {A2, B2, C2, D2}) -> {F(A1, A2), F(B1, B2), F(C1, C2), F(D1, D2)}.
@@ -212,21 +216,15 @@ sub_v(V1, V2) -> zip_v(fun erlang:'-'/2, V1, V2).
 -spec sum_v([violations()]) -> violations().
 sum_v(Vs) -> lists:foldl(fun add_v/2, ?zero_v, Vs).
 
--spec zero_violations(ring(), nvals()) -> boolean().
-zero_violations(Ring, NVals) ->
-    V = violations(Ring, NVals),
-    ?is_zero_v(V).
-
--spec node_loc_violations(ring(), nvals()) -> {non_neg_integer(), non_neg_integer()}.
-node_loc_violations(Ring, NVals) ->
-    V = violations(Ring, NVals),
+-spec node_loc_violations(ring(), nvalsmap()) -> {non_neg_integer(), non_neg_integer()}.
+node_loc_violations(Ring, NValsMap) ->
+    V = violations(Ring, to_nvals(NValsMap)),
     {element(2, V), element(1, V)}.
 
 %% What's the maximum distance from an updated vnode where a violation change
 %% can happen.
 -spec max_violation_dist(nvals()) -> non_neg_integer().
-max_violation_dist({N, L}) -> max(N, L);
-max_violation_dist(N)      -> N.
+max_violation_dist({N, L}) -> max(N, L).
 
 -spec violations(ring(), nvals()) -> violations().
 violations(Ring, NVals) ->
@@ -242,10 +240,7 @@ violations(Ring, NVals, VNodes) when is_list(VNodes) ->
     sum_v([ violations(Ring, NVals, I) || I <- VNodes ]);
 violations(Ring, NVals, VNode) ->
     ?BENCHMARK(violations, begin
-                               {NVal, LVal} = case NVals of
-                                                  {N, L} -> {N, L};
-                                                  N      -> {N, N}
-                                              end,
+                               {NVal, LVal} = NVals,
                                Locs = fun(Ns) -> [ L || {L, _} <- Ns ] end,
                                NV  = window_violations(     window(Ring, VNode, NVal),     NVal),
 
@@ -421,8 +416,9 @@ worth_brute_force(RingSize, V) ->
 
 %% -- The solver ----------------------------------------------------------
 
--spec solve(ring_size(), config(), nvals()) -> ring().
-solve(RingSize, Config, NVals) ->
+-spec solve(ring_size(), config(), nvalsmap()) -> ring().
+solve(RingSize, Config, NValsMap) ->
+    NVals = to_nvals(NValsMap),
     NumNodes  = lists:sum(Config),
     Rounds    = RingSize div NumNodes,
     AllNodes  = nodes_in_config(Config),
@@ -522,8 +518,9 @@ nodes_in_ring(RingSize, Config) ->
     X = RingSize div lists:sum(Config),
     lists:append(lists:duplicate(X, nodes_in_config(Config))) ++ extra_nodes(RingSize, Config).
 
--spec update(ring(), config(), nvals()) -> ring().
-update(OldRing, Config, NVals) ->
+-spec update(ring(), config(), nvalsmap()) -> ring().
+update(OldRing, Config, NValsMap) ->
+    NVals = to_nvals(NValsMap),
     %% Diff old and new config
     RingSize = ring_size(OldRing),
     OldNodes = to_list(OldRing),
@@ -536,7 +533,7 @@ update(OldRing, Config, NVals) ->
         true ->
             %% Brute force fix any remaining conflicts
             brute_force(NewRing, NVals, []);
-       false ->
+        false ->
             NewRing
     end.
 
@@ -579,12 +576,14 @@ show(Ring, NVals) ->
                                 [ [io_lib:format(Color(V, "~c~p "), [L + $A - 1, I]) || {{L, I}, V} <- lists:zip(to_list(Ring), Vs)]
                                 , pp_violations(TotalV) ])).
 
-show_solve(RingSize, Config, NVals) ->
-    io:format("~s\n", [show(solve(RingSize, Config, NVals), NVals)]).
+show_solve(RingSize, Config, NValsMap) ->
+    NVals = to_nvals(NValsMap),
+    io:format("~s\n", [show(solve(RingSize, Config, NValsMap), NVals)]).
 
-show_update(RingSize, OldConfig, NewConfig, NVals) ->
-    OldRing = solve(RingSize, OldConfig, NVals),
-    NewRing = update(OldRing, NewConfig, NVals),
+show_update(RingSize, OldConfig, NewConfig, NValsMap) ->
+    NVals = to_nvals(NValsMap),
+    OldRing = solve(RingSize, OldConfig, NValsMap),
+    NewRing = update(OldRing, NewConfig, NValsMap),
     io:format("Old\n~s\nNew\n~s\nDiff=~p\n", [show(OldRing, NVals), show(NewRing, NVals), moves(OldRing, NewRing)]).
 -endif.
 
@@ -621,7 +620,7 @@ known_hard_tests() ->
             ],
     [ {Size, Config, NVal, '->', V}
       || {Size, Config, NVal, Expect} <- Tests
-           , V <- [violations(solve(Size, Config, NVal), NVal)]
+           , V <- [violations(solve(Size, Config, #{location => NVal, node => NVal}), {NVal, NVal})]
            , V /= Expect
     ].
 
@@ -644,10 +643,10 @@ typical_scenarios_tests() ->
             fun(_Config, Err={error, _}) ->
                     Err;
                (Config, {undefined, Diffs}) ->
-                    {solve(Size, Config, NVal), Diffs};
+                    {solve(Size, Config, #{location => NVal, node => NVal}), Diffs};
                (Config, {OldRing, Diffs}) ->
-                    NewRing = update(OldRing, Config, NVal),
-                    V       = violations(NewRing, NVal),
+                    NewRing = update(OldRing, Config, #{location => NVal, node => NVal}),
+                    V       = violations(NewRing, {NVal, NVal}),
                     Diff    = moves(OldRing, NewRing),
                     if ?is_zero_v(V) -> {NewRing, Diffs ++ [Diff]};
                        true -> {error, {Size, OldRing, NewRing, Config, V}}
@@ -680,7 +679,7 @@ ring() -> non_empty(list(pnode())).
 
 nvals() -> ?LET(NVal, choose(1, 5),
                 ?LET(LVal, choose(1, NVal),
-                     if NVal == LVal -> NVal; true -> {NVal, LVal} end)).
+                     {NVal, LVal})).
 
 op(N) ->
     Ix = choose(0, N - 1),
@@ -733,10 +732,10 @@ prop_swap_violations() ->
 prop_no_locations() ->
     ?FORALL({Size, Nodes, NVal}, {elements([16, 32, 64, 128, 256, 512]), choose(1, 64), choose(1,5)},
             begin
-                {OneT, OneRing} = timer:tc(?MODULE, solve, [Size, [Nodes], {NVal, 1}]),
+                {OneT, OneRing} = timer:tc(fun() -> solve(Size, [Nodes], #{node => NVal, location => 1}) end),
                 {_, OneViolations} = violations(OneRing, {NVal, 1}),
-                {SepT, SepRing} = timer:tc(?MODULE, solve, [Size, lists:duplicate(Nodes, 1), NVal]),
-                {_, SepViolations} = violations(SepRing, NVal),
+                {SepT, SepRing} = timer:tc(fun() -> solve(Size, lists:duplicate(Nodes, 1), #{node => NVal, location => NVal}) end),
+                {_, SepViolations} = violations(SepRing, {NVal, NVal}),
                 measure(one_location, OneT,
                         measure(sep_location, SepT,
                                 equals(OneViolations, SepViolations)))
