@@ -655,11 +655,20 @@ typical_scenarios_tests() ->
             end, {undefined, [0]}, Tests)
           || Size <- [64, 128, 256, 512, 1024]
         ],
+    HistoricDiffs =
+     [[0,56,8,8,6,8,26,5,4,4],
+      [0,112,15,12,12,14,9,12,9,8],
+      [0,224,29,31,24,21,21,21,23,16],
+      [0,448,57,59,47,48,39,45,36,32],
+      [0,896,114,119,94,85,78,87,79,64]],
     case [ Err || {error, Err} <- Results ] of
-        []   -> {ok, [ Diff || {_Ring, Diff} <- Results ]};
+        []   ->
+           true =
+               lists:all(fun({L1, L2}) ->
+                             lists:sum(L1) =< lists:sum(L2)
+                         end, lists:zip([ Diff || {_Ring, Diff} <- Results ], HistoricDiffs));
         Errs -> {error, Errs}
     end.
-
 
 -ifdef(EQC).
 
