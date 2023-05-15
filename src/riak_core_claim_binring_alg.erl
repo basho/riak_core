@@ -313,21 +313,23 @@ brute_force(Ring, NVals, Options) ->
 brute_force(Ring, NVals, Options, V) ->
     brute_force(Ring, NVals, Options, V, false).
 
-brute_force(Ring, NVals, Options, V, OrigSwaps) ->
+brute_force(Ring, NVals, Options, V, LoopSwaps) ->
     TryHard = proplists:get_bool(try_hard, Options),
     case V of
-        _ when not TryHard, ?is_zero_v(V) -> Ring;
-        ?zero_v -> Ring;
+        _ when not TryHard, ?is_zero_v(V) ->
+            Ring;
+        ?zero_v ->
+            Ring;
         _ ->
             N = ring_size(Ring),
             Swaps =
-                case OrigSwaps of
+                case LoopSwaps of
                     false ->
                         generate_swaps(N, Options);
-                    OrigSwaps when is_list(OrigSwaps) ->
-                        OrigSwaps
+                    LoopSwaps when is_list(LoopSwaps) ->
+                        LoopSwaps
                 end,
-            brute_force(Ring, NVals, V, Options, Ring, ?zero_v, Swaps, Swaps)
+            brute_force_loop(Ring, NVals, V, Options, Ring, ?zero_v, Swaps, [])
     end.
 
 generate_swaps(N, Options) ->
@@ -346,20 +348,26 @@ mod_dist(I, J, N) ->
     end.
 
 %% TODO: Don't use DeltaV for BestV (total violations instead)
-brute_force(_Ring, NVals, V, Options, Best, BestV, [], OrigSwaps) when BestV < ?zero_v ->
+brute_force_loop(_Ring, NVals, V, Options, Best, BestV, [], _Attempts) when BestV < ?zero_v ->
     ?debug("~s\n", [show(Best, NVals)]),
-    brute_force(Best, NVals, Options, add_v(V, BestV), OrigSwaps);
-brute_force(_Ring, _NVals, _V, _Options, Best, _BestV, [], _OrigSwaps) -> Best;
-brute_force(Ring, NVals, V, Options, Best, BestV, [Op | Swaps], OrigSwaps) ->
+    brute_force(Best, NVals, Options, add_v(V, BestV), false);
+brute_force_loop(_Ring, _NVals, _V, _Options, Best, _BestV, [], _Attempts) ->
+    Best;
+brute_force_loop(Ring, NVals, V, Options, Best, BestV, [Op | Swaps], Attempts) ->
     {Ring1, DV} = op(Ring, NVals, Op),
     TryHard = proplists:get_bool(try_hard, Options),
     if DV < ?zero_v, not TryHard ->
             ?debug("~s\n", [show(Ring1, NVals)]),
-            brute_force(Ring1, NVals, Options, add_v(V, DV), OrigSwaps);
+            brute_force(
+                Ring1,
+                NVals,
+                Options,
+                add_v(V, DV),
+                Swaps ++ lists:reverse([Op|Attempts]));
        DV < BestV ->
-            brute_force(Ring, NVals, V, Options, Ring1, DV, Swaps, OrigSwaps);
+            brute_force_loop(Ring, NVals, V, Options, Ring1, DV, Swaps, [Op|Attempts]);
        true ->
-            brute_force(Ring, NVals, V, Options, Best, BestV, Swaps, OrigSwaps)
+            brute_force_loop(Ring, NVals, V, Options, Best, BestV, Swaps, [Op|Attempts])
     end.
 
 op(Ring, NVals, {swap, I, J}) ->

@@ -107,7 +107,7 @@ claim(Ring, Params0) ->
            true -> 1
         end,
     RingSize = riak_core_ring:num_partitions(Ring),
-    NVals = {TargetN, TargetLN},
+    NVals = {TargetLN, TargetN},
 
     %% Now we need to map the locations and nodes to a configuration that
     %% basically is a list of locations with the number of nodes in it.
