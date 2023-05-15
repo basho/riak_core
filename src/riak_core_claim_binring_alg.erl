@@ -413,13 +413,21 @@ swap(Ring, I, J) ->
     Y = get_node(Ring, J),
     set_node(set_node(Ring, I, Y), J, X).
 
-worth_brute_force(RingSize, V, NumNodes) ->
-    NumNodes > 1 andalso
-        element(1, V) + element(2, V) < RingSize.
+worth_brute_force(RingSize, V) ->
+    element(1, V) + element(2, V) < RingSize.
+
+maybe_brute_force(Ring, NVals) ->
+    case worth_brute_force(ring_size(Ring), violations(Ring, NVals)) of
+        true  -> brute_force(Ring, NVals);
+        false -> Ring
+    end.
+
 
 %% -- The solver ----------------------------------------------------------
 
 -spec solve(ring_size(), config(), nvalsmap()) -> ring().
+solve(RingSize, [1], _NValsMap) ->
+    from_list(lists:duplicate(RingSize, {1,1}));
 solve(RingSize, Config, NValsMap) ->
     NVals = to_nvals(NValsMap),
     NumNodes  = lists:sum(Config),
@@ -435,24 +443,22 @@ solve(RingSize, Config, NValsMap) ->
     ?debug("Delete\n~s\n", [show(BigRingD, NVals)]),
     case VD of
         ?zero_v -> brute_force(BigRingD, NVals);
+        _ when NumNodes > RingSize ->
+            %% Should not ask for this case
+            brute_force(BigRingD, NVals);
         _       ->
             BigRingI  = solve_node_insertions(Cycle(Rounds), NVals, Extras),
             ?debug("Insert\n~s\n", [show(BigRingI, NVals)]),
             VI        = violations(BigRingI, NVals),
-            {BFRing, V} =
+            BFRing =
                if VI < VD ->
                     ?debug("Chose insert\n", []),
-                    {BigRingI, VI};
+                    BigRingI;
                true    ->
                     ?debug("Chose delete\n", []),
-                    {BigRingD, VD}
+                    BigRingD
             end,
-            case worth_brute_force(RingSize, V, NumNodes) of
-                true ->
-                    brute_force(BFRing, NVals);
-                false ->
-                    BFRing
-            end
+            maybe_brute_force(BFRing, NVals)
     end.
 
 %% The "small ring" is the solution when RingSize == NumNodes. If we can solve
@@ -522,6 +528,8 @@ nodes_in_ring(RingSize, Config) ->
     lists:append(lists:duplicate(X, nodes_in_config(Config))) ++ extra_nodes(RingSize, Config).
 
 -spec update(ring(), config(), nvalsmap()) -> ring().
+update(OldRing, [1], NValsMap) ->
+    solve(ring_size(OldRing), [1], NValsMap);
 update(OldRing, Config, NValsMap) ->
     NVals = to_nvals(NValsMap),
     %% Diff old and new config
@@ -532,13 +540,7 @@ update(OldRing, Config, NValsMap) ->
     ToRemove = OldNodes -- NewNodes,
     %% Swap in new nodes for old nodes (in a moderately clever way)
     NewRing = swap_in_nodes(OldRing, ToAdd, ToRemove, NVals),
-    case worth_brute_force(RingSize, violations(NewRing, NVals), lists:sum(Config)) of
-        true ->
-            %% Brute force fix any remaining conflicts
-            brute_force(NewRing, NVals, []);
-        false ->
-            NewRing
-    end.
+    maybe_brute_force(NewRing, NVals).
 
 swap_in_nodes(Ring, [], [], _NVals) -> Ring;
 swap_in_nodes(Ring, [New | ToAdd], ToRemove, NVals) ->
@@ -744,6 +746,34 @@ prop_no_locations() ->
                                 equals(OneViolations, SepViolations)))
             end).
 
+config_gen() ->
+  ?LET(N, choose(1,7), vector(N, choose(1,8))).
+
+prop_brute_force_optimize() ->
+   ?FORALL({Size, Config, NValsMap}, {elements([16, 32, 64, 128, 256, 512]),
+                                      config_gen(),
+                                      ?LET(N, choose(2,5), #{node => N, location => default(N, choose(2, N))})},
+            begin
+                {T1, FirstRing} = timer:tc(fun() -> solve(Size, Config, NValsMap) end),
+                {T2, VS, VBF} =
+                  case violations(FirstRing, to_nvals(NValsMap)) of
+                    ?zero_v -> {0, ?zero_v, ?zero_v};
+                    V ->
+                      case worth_brute_force(Size, V) of
+                        true ->
+                          %% already done brute force
+                          {0, V, V};
+                        false ->
+                          {T, BFRing} = timer:tc(fun() -> brute_force(FirstRing, to_nvals(NValsMap)) end),
+                          V2 = violations(BFRing, to_nvals(NValsMap)),
+                          {T, V, V2}
+                      end
+                  end,
+                measure(first_solve, T1,
+                measure(brute_force_solve, if VS > VBF -> T2; true -> 0 end,
+                aggregate([{Size, Config, NValsMap, T2, VS, VBF} || VS > VBF andalso length(Config) >= maps:get(location, NValsMap)],
+                          VS >= VBF orelse VBF /= ?zero_v)))
+            end).
 
 -endif.
 -endif.
