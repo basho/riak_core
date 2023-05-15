@@ -287,12 +287,11 @@ location_t1_test_() ->
     {"[2, 2, 2, 2, 2] nval 4",
      {inparallel,
       [location_claim_tester(n1, loc1, JoiningNodes, 64, 4),
-       location_claim_tester(n1, loc1, JoiningNodes, 128, 4),
-       location_claim_tester(n1, loc1, JoiningNodes, 256, 4)
+        location_claim_tester(n1, loc1, JoiningNodes, 128, 4),
+        location_claim_tester(n1, loc1, JoiningNodes, 256, 4),
        %% Don't test large rings in automated testing
-       %% location_claim_tester(n1, loc1, JoiningNodes, 512, 4),
-       %% location_claim_tester(n1, loc1, JoiningNodes, 1024, 4)
-       %% location_claim_tester(n1, loc1, JoiningNodes, 2048, 4)
+        location_claim_tester(n1, loc1, JoiningNodes, 512, 4),
+        location_claim_tester(n1, loc1, JoiningNodes, 1024, 4)
       ]}}.
 
 location_t2_test_() ->
@@ -308,8 +307,7 @@ location_t2_test_() ->
        location_claim_tester(n1, loc1, JoiningNodes, 128, 4),
        location_claim_tester(n1, loc1, JoiningNodes, 256, 4),
        location_claim_tester(n1, loc1, JoiningNodes, 512, 4),
-       location_claim_tester(n1, loc1, JoiningNodes, 1024, 4),
-       location_claim_tester(n1, loc1, JoiningNodes, 2048, 4)
+       location_claim_tester(n1, loc1, JoiningNodes, 1024, 4)
       ]}}.
 
 location_t8_test_() ->
@@ -321,16 +319,15 @@ location_t8_test_() ->
     {"[4, 3, 3, 3] nval 4",
      {inparallel,
       [location_claim_tester(l1n1, loc1, JoiningNodes, 64, 3),
-       location_claim_tester(l1n1, loc1, JoiningNodes, 256, 3)
-     %% Don't test large rings in automated testing
-     %% location_claim_tester(n1, loc1, JoiningNodes, 512, 4),
-     %% location_claim_tester(n1, loc1, JoiningNodes, 1024, 4),
-     %% location_claim_tester(n1, loc1, JoiningNodes, 2048, 4)
+        location_claim_tester(l1n1, loc1, JoiningNodes, 256, 3)
+        %% Don't test large rings in automated testing
+        %% location_claim_tester(n1, loc1, JoiningNodes, 512, 4),
+        %% location_claim_tester(n1, loc1, JoiningNodes, 1024, 4)
       ]}}.
 
 location_claim_tester(N1, N1Loc, NodeLocList, RingSize, TargetN) ->
     {"Ringsize "++integer_to_list(RingSize),
-    {timeout, 120,
+    {timeout, 600,
      fun() ->
              io:format(
                "Testing NodeList ~w with RingSize ~w~n",
@@ -391,7 +388,6 @@ compute_failures(Mappings, TargetN, RClaim) ->
     Failures.
 
 
-
 location_multistage_t1_test_() ->
     %% This is a tricky corner case where we would fail to meet TargetN for
     %% locations if joining all 9 nodes in one claim (as old sequential_claim will
@@ -408,9 +404,8 @@ location_multistage_t1_test_() ->
        location_multistage_claim_tester(64, JoiningNodes, 4, l5n9, loc5, 4),
        location_multistage_claim_tester(128, JoiningNodes, 4, l5n9, loc5, 4),
        location_multistage_claim_tester(256, JoiningNodes, 4, l5n9, loc5, 4),
-       location_multistage_claim_tester(512, JoiningNodes, 4, l5n9, loc5, 4)
-       %% location_multistage_claim_tester(1024, JoiningNodes, 4, l5n9, loc5, 4)
-       %% location_multistage_claim_tester(2048, JoiningNodes, 4, l5n9, loc5, 4)
+       location_multistage_claim_tester(512, JoiningNodes, 4, l5n9, loc5, 4),
+       location_multistage_claim_tester(1024, JoiningNodes, 4, l5n9, loc5, 4)
        ]}.
 
 
@@ -496,12 +491,13 @@ location_typical_expansion_test_() ->
      {inparallel,
       [location_typical_expansion_tester(64),
        location_typical_expansion_tester(128),
-       location_typical_expansion_tester(256)
-       %% location_typical_expansion_tester(512)
+       location_typical_expansion_tester(256),
+       location_typical_expansion_tester(512),
+       location_typical_expansion_tester(1024)
       ]}}.
 
 location_typical_expansion_tester(RingSize) ->
-    {timeout, 120,
+    {timeout, 600,
     {"Ringsize "++integer_to_list(RingSize),
      fun() ->
              N1 = l1n1,
