@@ -106,12 +106,7 @@ claim(Ring) ->
             choose_claim_v3 ->
                 {riak_core_membership_claim, choose_claim_v3};
             choose_claim_v4 ->
-                case riak_core_claim_swapping:necessary_condition(Ring, default_choose_params()) of
-                  true ->
-                    {riak_core_claim_swapping, choose_claim_v4};
-                  false ->
-                    {riak_core_membership_claim, choose_claim_v2}
-                end;
+                {riak_core_claim_swapping, choose_claim_v4};
             {CMod, CFun} ->
                 {CMod, CFun}
         end,
