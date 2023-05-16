@@ -178,7 +178,9 @@ claim(Ring, v4, Nval) ->
                               {riak_core_claim_swapping, choose_claim_v4, [{target_n_val, Nval}]}]).
 
 claim_pre(S, [v4, _Nval]) ->
-    not known_hard(S) andalso (length(S#state.nodes) < S#state.ring_size div 2);
+    %% Sufficient conditions to actually succeed
+    %% Remove this if you want to test in the shell and get some border cases.
+    sufficient_conditions(S);
 claim_pre(_, [_, _]) ->
     true.
 
