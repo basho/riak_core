@@ -40,10 +40,10 @@
 
 %% -- State and state functions ----------------------------------------------
 initial_state() ->
-  initial_state(3).
+  initial_state(3, 32).
 
-initial_state(Nval) ->
-  #state{nval = Nval}.
+initial_state(Nval, RingSize) ->
+  #state{nval = Nval, ring_size = RingSize}.
 
 %% -- Generators -------------------------------------------------------------
 
@@ -92,7 +92,7 @@ add_claimant_pre(S) ->
   S#state.claimant == undefined.
 
 add_claimant_args(S) ->
-   [hd(S#state.placements), S#state.with_location, ringsize()].
+   [hd(S#state.placements), S#state.with_location, S#state.ring_size].
 
 add_claimant_pre(S, [LocNode, _, RingSize]) ->
   LocNodes = S#state.placements,
@@ -161,6 +161,7 @@ claim_pre(S) ->
     andalso S#state.plan == [] andalso S#state.staged_nodes /= [].  %% make sure there is something sensible to do
 
 claim_args(S) ->
+  %% v2 does not take leaving nodes into account, but the model does
   [elements([v4]), S#state.nval].
 
 claim(Ring, default, Nval) ->
@@ -287,6 +288,12 @@ necessary_conditions(S) ->
                 || S#state.nval == length(Locations) ]
            ).
 
+sufficient_conditions(S) ->
+  Locations = to_config(S),
+  length(Locations) >= S#state.nval + 2
+    andalso length(S#state.nodes) < S#state.ring_size div 2
+    andalso lists:min(Locations) >= lists:max(Locations) - 2.
+
 to_config(S) ->
     LocNodes =
         lists:foldl(fun(N, Acc) ->
@@ -371,8 +378,8 @@ prop_claim() ->
     undefined -> ets:new(timing, [public, named_table, bag]);
     _ -> ok
   end,
-  ?FORALL({Nval, WithLocation}, {choose(2, 5), bool()},
-  ?FORALL(Cmds, commands(?MODULE, with_location(initial_state(Nval), WithLocation)),
+  ?FORALL({Nval, RingSize, WithLocation}, {choose(2, 5), ringsize(), bool()},
+  ?FORALL(Cmds, commands(?MODULE, with_location(initial_state(Nval, RingSize), WithLocation)),
   begin
     put(ring_nr, 0),
     {H, S, Res} = run_commands(Cmds),
