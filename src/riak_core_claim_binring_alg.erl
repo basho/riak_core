@@ -218,10 +218,18 @@ sub_v(V1, V2) -> zip_v(fun erlang:'-'/2, V1, V2).
 -spec sum_v([violations()]) -> violations().
 sum_v(Vs) -> lists:foldl(fun add_v/2, ?zero_v, Vs).
 
+-spec node_v(violations()) -> non_neg_integer().
+node_v(V) ->
+  element(2, V).
+
+-spec loc_v(violations()) -> non_neg_integer().
+loc_v(V) ->
+  element(1, V).
+
 -spec node_loc_violations(ring(), nvalsmap()) -> {non_neg_integer(), non_neg_integer()}.
 node_loc_violations(Ring, NValsMap) ->
     V = violations(Ring, to_nvals(NValsMap)),
-    {element(2, V), element(1, V)}.
+    {node_v(V), loc_v(V)}.
 
 %% What's the maximum distance from an updated vnode where a violation change
 %% can happen.
@@ -244,8 +252,7 @@ violations(Ring, NVals, VNode) ->
     ?BENCHMARK(violations, begin
                                {NVal, LVal} = NVals,
                                Locs = fun(Ns) -> [ L || {L, _} <- Ns ] end,
-                               NV  = window_violations(     window(Ring, VNode, NVal),     NVal),
-
+                               NV  = window_violations(window(Ring, VNode, NVal), NVal),
                                LocV  = fun(D) -> window_violations(Locs(window(Ring, VNode, LVal + D)), LVal + D) end,
                                LV    = LocV(0),
                                {LV, NV}
@@ -317,9 +324,12 @@ brute_force(Ring, NVals, Options, V) ->
 
 brute_force(Ring, NVals, Options, V, OrigSwaps) ->
     TryHard = proplists:get_bool(try_hard, Options),
+    AlwaysBruteForce = proplists:get_bool(brute_force, Options),
+    StopNodeOnly = proplists:get_bool(node_only, Options) andalso node_v(V) == 0,
     case V of
         _ when not TryHard, ?is_zero_v(V) -> Ring;
         ?zero_v -> Ring;
+        _ when StopNodeOnly, not AlwaysBruteForce -> Ring;
         _ ->
             N = ring_size(Ring),
             Swaps =
@@ -414,21 +424,31 @@ swap(Ring, I, J) ->
     set_node(set_node(Ring, I, Y), J, X).
 
 worth_brute_force(RingSize, V) ->
-    element(1, V) + element(2, V) < RingSize.
+    NodeOnly = node_v(V) < RingSize div 2,
+    Full = loc_v(V) + node_v(V) < RingSize,
+    if Full -> brute_force;
+       NodeOnly -> node_only;
+       true -> no_brute_force
+    end.
 
 maybe_brute_force(Ring, NVals) ->
     case worth_brute_force(ring_size(Ring), violations(Ring, NVals)) of
-        true  -> brute_force(Ring, NVals);
-        false -> Ring
+        brute_force  -> brute_force(Ring, NVals);
+        node_only -> brute_force(Ring, NVals, [node_only]);
+        no_brute_force -> Ring
     end.
 
 
 %% -- The solver ----------------------------------------------------------
 
 -spec solve(ring_size(), config(), nvalsmap()) -> ring().
-solve(RingSize, [1], _NValsMap) ->
-    from_list(lists:duplicate(RingSize, {1,1}));
 solve(RingSize, Config, NValsMap) ->
+    solve(RingSize, Config, NValsMap, []).
+
+-spec solve(ring_size(), config(), nvalsmap(), proplists:proplist()) -> ring().
+solve(RingSize, [1], _NValsMap, _) ->
+    from_list(lists:duplicate(RingSize, {1,1}));
+solve(RingSize, Config, NValsMap, Options) ->
     NVals = to_nvals(NValsMap),
     NumNodes  = lists:sum(Config),
     Rounds    = RingSize div NumNodes,
@@ -441,11 +461,16 @@ solve(RingSize, Config, NValsMap) ->
     BigRingD  = solve_node_deletions(Cycle(Rounds + 1), NVals, ToRemove),
     VD        = violations(BigRingD, NVals),
     ?debug("Delete\n~s\n", [show(BigRingD, NVals)]),
+    NoBruteForce = proplists:get_bool(no_brute_force, Options),
+    AlwaysBruteForce = proplists:get_bool(brute_force, Options),
     case VD of
-        ?zero_v -> brute_force(BigRingD, NVals);
+        ?zero_v -> BigRingD;
         _ when NumNodes > RingSize ->
             %% Should not ask for this case
-            brute_force(BigRingD, NVals);
+            if NoBruteForce -> BigRingD;
+               AlwaysBruteForce -> brute_force(BigRingD, NVals);
+               true -> maybe_brute_force(BigRingD, NVals)
+            end;
         _       ->
             BigRingI  = solve_node_insertions(Cycle(Rounds), NVals, Extras),
             ?debug("Insert\n~s\n", [show(BigRingI, NVals)]),
@@ -458,7 +483,10 @@ solve(RingSize, Config, NValsMap) ->
                     ?debug("Chose delete\n", []),
                     BigRingD
             end,
-            maybe_brute_force(BFRing, NVals)
+            if NoBruteForce -> BFRing;
+               AlwaysBruteForce -> brute_force(BigRingD, NVals);
+               true -> maybe_brute_force(BFRing, NVals)
+            end
     end.
 
 %% The "small ring" is the solution when RingSize == NumNodes. If we can solve
@@ -674,6 +702,16 @@ typical_scenarios_tests() ->
         Errs -> {error, Errs}
     end.
 
+wcets() ->
+  [ io:format("Size ~4b Time ~.1f sec\n", [Size, wcet(Size, 4) / 1000000])
+    || Size <- [16, 32, 64, 128, 256, 512, 1024, 2048] ].
+
+wcet(RingSize, NVal) ->
+  NValMap = #{location => NVal, node => NVal},
+  Ring = solve(RingSize, [1], NValMap),
+  {T, _} = timer:tc(fun() -> brute_force(Ring, {NVal, NVal}) end),
+  T.
+
 -ifdef(EQC).
 
 %% -- Generators ----------------------------------------------------------
@@ -750,30 +788,33 @@ config_gen() ->
   ?LET(N, choose(1,7), vector(N, choose(1,8))).
 
 prop_brute_force_optimize() ->
-   ?FORALL({Size, Config, NValsMap}, {elements([16, 32, 64, 128, 256, 512]),
+   in_parallel(
+   ?FORALL({Size, Config, NValsMap}, {elements([16, 32, 64, 128, 256, 512, 1024]),
                                       config_gen(),
                                       ?LET(N, choose(2,5), #{node => N, location => default(N, choose(2, N))})},
+    ?IMPLIES(length(Config) >= maps:get(location, NValsMap),
             begin
-                {T1, FirstRing} = timer:tc(fun() -> solve(Size, Config, NValsMap) end),
-                {T2, VS, VBF} =
-                  case violations(FirstRing, to_nvals(NValsMap)) of
-                    ?zero_v -> {0, ?zero_v, ?zero_v};
-                    V ->
-                      case worth_brute_force(Size, V) of
-                        true ->
-                          %% already done brute force
-                          {0, V, V};
-                        false ->
-                          {T, BFRing} = timer:tc(fun() -> brute_force(FirstRing, to_nvals(NValsMap)) end),
-                          V2 = violations(BFRing, to_nvals(NValsMap)),
-                          {T, V, V2}
-                      end
+                NVals = to_nvals(NValsMap),
+                {T1, Ring1} = timer:tc(fun() -> solve(Size, Config, NValsMap, [no_brute_force]) end),
+                [{_, RV1}, {_, RV2}, {_, RV3}] = Res =
+                  case violations(Ring1, NVals) of
+                    ?zero_v -> [{T1, ?zero_v}, {0, ?zero_v}, {0, ?zero_v}];
+                    V1 ->
+                      {T2, Ring2} = timer:tc(fun() -> brute_force(Ring1, NVals, [node_only]) end),
+                      V2 = violations(Ring2, NVals),
+                      {T3, Ring3} = timer:tc(fun() -> brute_force(Ring2, NVals) end),
+                      V3 = violations(Ring3, NVals),
+                      [{T1 / 1000000, V1}, {T2 / 1000000, V2}, {T3 / 1000000, V3}]
                   end,
-                measure(first_solve, T1,
-                measure(brute_force_solve, if VS > VBF -> T2; true -> 0 end,
-                aggregate([{Size, Config, NValsMap, T2, VS, VBF} || VS > VBF andalso length(Config) >= maps:get(location, NValsMap)],
-                          VS >= VBF orelse VBF /= ?zero_v)))
-            end).
+                Improved = length(lists:usort([ RV1, RV2, RV3 ])) > 1,
+                WorthBF = worth_brute_force(Size, RV1),
+                FailNodeOnly = node_v(RV2) == 0 andalso WorthBF == no_brute_force,
+                FailBruteForce = ?is_zero_v(RV3) andalso WorthBF /= brute_force,
+                ?WHENFAIL(eqc:format("Worth brute force ~p for ~p\n", [WorthBF, Res]),
+                aggregate([{Size, Config, NValsMap, Res, WorthBF} || Improved andalso WorthBF /= brute_force],
+                          conjunction([{node_only, not FailNodeOnly},
+                                       {brute_force, not FailBruteForce}])))
+            end))).
 
 -endif.
 -endif.
