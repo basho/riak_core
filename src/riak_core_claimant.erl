@@ -66,8 +66,8 @@
 -type v4_solution() ::
     {{binring_solve|binring_update,
         {binary()|pos_integer(),
-            list(pos_integer()),
-            {pos_integer(), pos_integer()}}},
+            list(non_neg_integer()),
+            #{location := pos_integer(), node := pos_integer()}}},
         binary()}.
 
 -record(state, {
@@ -125,7 +125,7 @@ plan() ->
 %%      A commit is only allowed to succeed if the ring is ready and if the
 %%      current set of changes matches those computed by the most recent
 %%      call to plan/0.
--spec commit() -> ok | {error, term()}.
+-spec commit() -> ok | {error, term()} | error.
 commit() ->
     gen_server:call(claimant(), commit, infinity).
 

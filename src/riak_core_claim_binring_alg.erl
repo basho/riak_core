@@ -80,10 +80,13 @@
 %%
 %% Step 3 gives a best effort solution, but given the enormous amount of
 %% possible operations, it can take while to return. But it always terminate.
+%% In order to make it terminate, we added heuristics in "worth_brute_force".
+%% If we consider the number of violations too large for success, we just
+%% don't do Step 3 or only partly until we solve the Nval for nodes.
 %%
 %% When we update a ring, then we want as little transfers as possible,
 %% so first an effort is performed to just swap nodes. If that would not
-%% work to get a solution, a brute-force attempt is taken to get best-effort
+%% work to get a solution, a solve attempt is taken to get best-effort
 %% again.
 
 
@@ -91,7 +94,7 @@
 
 -export([solve/3,
          update/3,
-         zero_violations/2,
+         node_loc_violations/2,
          moves/2,
          to_list/1, from_list/1]).
 
@@ -105,7 +108,9 @@
 
 -ifdef(DEBUG).
 -compile([export_all, nowarn_export_all]).
--define(DEBUG_FUNS).
+-ifndef(DEBUG_FUNS).
+-define(DEBUG_FUNS, true).
+-endif.
 -define(PROFILE, true).
 -include_lib("eqc/include/eqc_profile.hrl").
 -define(debug(Fmt, Args), io:format(Fmt, Args)).
@@ -120,10 +125,11 @@
 %% byte node index.
 -type ring()      :: binary().
 -type ring_size() :: non_neg_integer().
--type nval()      :: non_neg_integer().
+-type nval()      :: pos_integer().
 -type node_nval() :: nval().
 -type loc_nval()  :: nval().
--type nvals()     :: nval() | {node_nval(), loc_nval()}.
+-type nvals()     :: {node_nval(), loc_nval()}.
+-type nvalsmap()  :: #{node => node_nval(), location => loc_nval()}.
 
 -type config() :: [non_neg_integer()].  %% List of node counts per location
 
@@ -197,7 +203,10 @@ moves(Ring1, Ring2) ->
 -type violations() :: {non_neg_integer(), non_neg_integer()}.
 
 -define(zero_v, {0, 0}).
--define(is_zero_v(V), element(1, V) == 0 andalso element(2, V) == 0).
+-define(is_zero_v(V), (element(1, V) == 0 andalso element(2, V) == 0)).
+
+to_nvals(#{location := LNVal, node := NVal}) ->
+  {NVal, LNVal}.
 
 zip_v(F, {A1, B1},         {A2, B2})         -> {F(A1, A2), F(B1, B2)};
 zip_v(F, {A1, B1, C1},     {A2, B2, C2})     -> {F(A1, A2), F(B1, B2), F(C1, C2)};
@@ -212,16 +221,23 @@ sub_v(V1, V2) -> zip_v(fun erlang:'-'/2, V1, V2).
 -spec sum_v([violations()]) -> violations().
 sum_v(Vs) -> lists:foldl(fun add_v/2, ?zero_v, Vs).
 
--spec zero_violations(ring(), nvals()) -> boolean().
-zero_violations(Ring, NVals) ->
-    V = violations(Ring, NVals),
-    ?is_zero_v(V).
+-spec node_v(violations()) -> non_neg_integer().
+node_v(V) ->
+  element(2, V).
+
+-spec loc_v(violations()) -> non_neg_integer().
+loc_v(V) ->
+  element(1, V).
+
+-spec node_loc_violations(ring(), nvalsmap()) -> {non_neg_integer(), non_neg_integer()}.
+node_loc_violations(Ring, NValsMap) ->
+    V = violations(Ring, to_nvals(NValsMap)),
+    {node_v(V), loc_v(V)}.
 
 %% What's the maximum distance from an updated vnode where a violation change
 %% can happen.
 -spec max_violation_dist(nvals()) -> non_neg_integer().
-max_violation_dist({N, L}) -> max(N, L);
-max_violation_dist(N)      -> N.
+max_violation_dist({N, L}) -> max(N, L).
 
 -spec violations(ring(), nvals()) -> violations().
 violations(Ring, NVals) ->
@@ -237,13 +253,9 @@ violations(Ring, NVals, VNodes) when is_list(VNodes) ->
     sum_v([ violations(Ring, NVals, I) || I <- VNodes ]);
 violations(Ring, NVals, VNode) ->
     ?BENCHMARK(violations, begin
-                               {NVal, LVal} = case NVals of
-                                                  {N, L} -> {N, L};
-                                                  N      -> {N, N}
-                                              end,
+                               {NVal, LVal} = NVals,
                                Locs = fun(Ns) -> [ L || {L, _} <- Ns ] end,
-                               NV  = window_violations(     window(Ring, VNode, NVal),     NVal),
-
+                               NV  = window_violations(window(Ring, VNode, NVal), NVal),
                                LocV  = fun(D) -> window_violations(Locs(window(Ring, VNode, LVal + D)), LVal + D) end,
                                LV    = LocV(0),
                                {LV, NV}
@@ -315,9 +327,12 @@ brute_force(Ring, NVals, Options, V) ->
 
 brute_force(Ring, NVals, Options, V, OrigSwaps) ->
     TryHard = proplists:get_bool(try_hard, Options),
+    AlwaysBruteForce = proplists:get_bool(brute_force, Options),
+    StopNodeOnly = proplists:get_bool(node_only, Options) andalso node_v(V) == 0,
     case V of
         _ when not TryHard, ?is_zero_v(V) -> Ring;
         ?zero_v -> Ring;
+        _ when StopNodeOnly, not AlwaysBruteForce -> Ring;
         _ ->
             N = ring_size(Ring),
             Swaps =
@@ -411,10 +426,33 @@ swap(Ring, I, J) ->
     Y = get_node(Ring, J),
     set_node(set_node(Ring, I, Y), J, X).
 
+worth_brute_force(RingSize, V) ->
+    NodeOnly = node_v(V) < RingSize div 2,
+    Full = loc_v(V) + node_v(V) < RingSize,
+    if Full -> brute_force;
+       NodeOnly -> node_only;
+       true -> no_brute_force
+    end.
+
+maybe_brute_force(Ring, NVals) ->
+    case worth_brute_force(ring_size(Ring), violations(Ring, NVals)) of
+        brute_force  -> brute_force(Ring, NVals);
+        node_only -> brute_force(Ring, NVals, [node_only]);
+        no_brute_force -> Ring
+    end.
+
+
 %% -- The solver ----------------------------------------------------------
 
--spec solve(ring_size(), config(), nvals()) -> ring().
-solve(RingSize, Config, NVals) ->
+-spec solve(ring_size(), config(), nvalsmap()) -> ring().
+solve(RingSize, Config, NValsMap) ->
+    solve(RingSize, Config, NValsMap, []).
+
+-spec solve(ring_size(), config(), nvalsmap(), proplists:proplist()) -> ring().
+solve(RingSize, [1], _NValsMap, _) ->
+    from_list(lists:duplicate(RingSize, {1,1}));
+solve(RingSize, Config, NValsMap, Options) ->
+    NVals = to_nvals(NValsMap),
     NumNodes  = lists:sum(Config),
     Rounds    = RingSize div NumNodes,
     AllNodes  = nodes_in_config(Config),
@@ -426,18 +464,31 @@ solve(RingSize, Config, NVals) ->
     BigRingD  = solve_node_deletions(Cycle(Rounds + 1), NVals, ToRemove),
     VD        = violations(BigRingD, NVals),
     ?debug("Delete\n~s\n", [show(BigRingD, NVals)]),
+    NoBruteForce = proplists:get_bool(no_brute_force, Options),
+    AlwaysBruteForce = proplists:get_bool(brute_force, Options),
     case VD of
-        ?zero_v -> brute_force(BigRingD, NVals);
+        ?zero_v -> BigRingD;
+        _ when NumNodes > RingSize ->
+            %% Should not ask for this case
+            if NoBruteForce -> BigRingD;
+               AlwaysBruteForce -> brute_force(BigRingD, NVals);
+               true -> maybe_brute_force(BigRingD, NVals)
+            end;
         _       ->
             BigRingI  = solve_node_insertions(Cycle(Rounds), NVals, Extras),
             ?debug("Insert\n~s\n", [show(BigRingI, NVals)]),
             VI        = violations(BigRingI, NVals),
-            if VI < VD ->
+            BFRing =
+               if VI < VD ->
                     ?debug("Chose insert\n", []),
-                    brute_force(BigRingI, NVals);
+                    BigRingI;
                true    ->
                     ?debug("Chose delete\n", []),
-                    brute_force(BigRingD, NVals)
+                    BigRingD
+            end,
+            if NoBruteForce -> BFRing;
+               AlwaysBruteForce -> brute_force(BigRingD, NVals);
+               true -> maybe_brute_force(BFRing, NVals)
             end
     end.
 
@@ -507,8 +558,11 @@ nodes_in_ring(RingSize, Config) ->
     X = RingSize div lists:sum(Config),
     lists:append(lists:duplicate(X, nodes_in_config(Config))) ++ extra_nodes(RingSize, Config).
 
--spec update(ring(), config(), nvals()) -> ring().
-update(OldRing, Config, NVals) ->
+-spec update(ring(), config(), nvalsmap()) -> ring().
+update(OldRing, [1], NValsMap) ->
+    solve(ring_size(OldRing), [1], NValsMap);
+update(OldRing, Config, NValsMap) ->
+    NVals = to_nvals(NValsMap),
     %% Diff old and new config
     RingSize = ring_size(OldRing),
     OldNodes = to_list(OldRing),
@@ -517,8 +571,7 @@ update(OldRing, Config, NVals) ->
     ToRemove = OldNodes -- NewNodes,
     %% Swap in new nodes for old nodes (in a moderately clever way)
     NewRing = swap_in_nodes(OldRing, ToAdd, ToRemove, NVals),
-    %% Brute force fix any remaining conflicts
-    brute_force(NewRing, NVals, []).
+    maybe_brute_force(NewRing, NVals).
 
 swap_in_nodes(Ring, [], [], _NVals) -> Ring;
 swap_in_nodes(Ring, [New | ToAdd], ToRemove, NVals) ->
@@ -559,12 +612,14 @@ show(Ring, NVals) ->
                                 [ [io_lib:format(Color(V, "~c~p "), [L + $A - 1, I]) || {{L, I}, V} <- lists:zip(to_list(Ring), Vs)]
                                 , pp_violations(TotalV) ])).
 
-show_solve(RingSize, Config, NVals) ->
-    io:format("~s\n", [show(solve(RingSize, Config, NVals), NVals)]).
+show_solve(RingSize, Config, NValsMap) ->
+    NVals = to_nvals(NValsMap),
+    io:format("~s\n", [show(solve(RingSize, Config, NValsMap), NVals)]).
 
-show_update(RingSize, OldConfig, NewConfig, NVals) ->
-    OldRing = solve(RingSize, OldConfig, NVals),
-    NewRing = update(OldRing, NewConfig, NVals),
+show_update(RingSize, OldConfig, NewConfig, NValsMap) ->
+    NVals = to_nvals(NValsMap),
+    OldRing = solve(RingSize, OldConfig, NValsMap),
+    NewRing = update(OldRing, NewConfig, NValsMap),
     io:format("Old\n~s\nNew\n~s\nDiff=~p\n", [show(OldRing, NVals), show(NewRing, NVals), moves(OldRing, NewRing)]).
 -endif.
 
@@ -572,50 +627,37 @@ show_update(RingSize, OldConfig, NewConfig, NVals) ->
 
 -ifdef(TEST).
 
-generate_swaps_test() ->
-    time_generating_swaps(32),
-    time_generating_swaps(128),
-    time_generating_swaps(1024).
-
-time_generating_swaps(N) ->
-    SW = os:timestamp(),
-    Swaps = generate_swaps(N, []),
-    io:format(
-        user,
-        "Generate swaps for RS ~w in ~w ms length ~w~n",
-        [N, timer:now_diff(os:timestamp(), SW) div 1000, length(Swaps)]).
-
 %% -- Unit tests for experimentation ---------------------------------------
 %% These tests take a bit of time when running.
 %% Not intended to be included in automatic testing.
 
 known_hard_tests() ->
-    Tests = [ {16,  [4, 3, 3, 2],       3}
-            , {32,  [3, 2, 1, 4, 3],    3}
-            , {32,  [5, 6, 5, 1, 1],    3}
-            , {128, [1, 1, 1, 1, 1, 1], 5}
-            , {16,  [4, 4, 4, 3],       4}
-            , {16,  [4, 4, 3, 3],       4}
-            , {16,  [4, 3, 3, 3],       4}
-            , {32,  [4, 3, 3, 3],       4}
-            , {48,  [4, 3, 3, 3],       4}
-            , {32,  [2, 2, 2, 2, 2],    4}
-            , {16,  [2, 2, 1, 2, 2],    4}
-            , {16,  [2, 2, 4, 2],       4}
-            , {16,  [3, 2, 2, 2],       4}
-            , {32,  [3, 2, 2, 2],       4}
-            , {32,  [3, 3, 3, 1, 1],    4}
-            , {16,  [1, 3, 2, 1, 1, 1], 4}
-            , {64,  [2, 2, 1, 2, 2, 2], 5}
-            , {256, [6, 5, 2], 2}
-            , {64,  [3, 3, 3, 2, 1], 4}
-            , {32,  [3, 3, 3, 3, 1], 4}
-            , {512, [4, 4, 4, 4, 1], 4}
+    Tests = [ {16,  [4, 3, 3, 2],       3, ?zero_v}
+            , {32,  [3, 2, 1, 4, 3],    3, ?zero_v}
+            , {32,  [5, 6, 5, 1, 1],    3, ?zero_v}
+            , {128, [1, 1, 1, 1, 1, 1], 5, ?zero_v}
+            , {16,  [4, 4, 4, 3],       4, ?zero_v}
+            , {16,  [4, 4, 3, 3],       4, ?zero_v}
+            , {16,  [4, 3, 3, 3],       4, ?zero_v}
+            , {32,  [4, 3, 3, 3],       4, ?zero_v}
+            , {48,  [4, 3, 3, 3],       4, ?zero_v}
+            , {32,  [2, 2, 2, 2, 2],    4, {2,0}}
+            , {16,  [2, 2, 1, 2, 2],    4, ?zero_v}
+            , {16,  [2, 2, 4, 2],       4, ?zero_v}
+            , {16,  [3, 2, 2, 2],       4, ?zero_v}
+            , {32,  [3, 2, 2, 2],       4, {8, 0}}
+            , {32,  [3, 3, 3, 1, 1],    4, {16,0}}
+            , {16,  [1, 3, 2, 1, 1, 1], 4, {4, 0}}
+            , {64,  [2, 2, 1, 2, 2, 2], 5, ?zero_v}
+            , {256, [6, 5, 2],          2, ?zero_v}
+            , {64,  [3, 3, 3, 2, 1],    4, {4,0}}
+            , {32,  [3, 3, 3, 3, 1],    4, {4,0}}
+            , {512, [4, 4, 4, 4, 1],    4, {4,0}}
             ],
     [ {Size, Config, NVal, '->', V}
-      || {Size, Config, NVal} <- Tests
-             , V <- [violations(solve(Size, Config, NVal), NVal)]
-             , not ?is_zero_v(V)
+      || {Size, Config, NVal, Expect} <- Tests
+           , V <- [violations(solve(Size, Config, #{location => NVal, node => NVal}), {NVal, NVal})]
+           , V /= Expect
     ].
 
 typical_scenarios_tests() ->
@@ -637,10 +679,10 @@ typical_scenarios_tests() ->
             fun(_Config, Err={error, _}) ->
                     Err;
                (Config, {undefined, Diffs}) ->
-                    {solve(Size, Config, NVal), Diffs};
+                    {solve(Size, Config, #{location => NVal, node => NVal}), Diffs};
                (Config, {OldRing, Diffs}) ->
-                    NewRing = update(OldRing, Config, NVal),
-                    V       = violations(NewRing, NVal),
+                    NewRing = update(OldRing, Config, #{location => NVal, node => NVal}),
+                    V       = violations(NewRing, {NVal, NVal}),
                     Diff    = moves(OldRing, NewRing),
                     if ?is_zero_v(V) -> {NewRing, Diffs ++ [Diff]};
                        true -> {error, {Size, OldRing, NewRing, Config, V}}
@@ -648,11 +690,30 @@ typical_scenarios_tests() ->
             end, {undefined, [0]}, Tests)
           || Size <- [64, 128, 256, 512, 1024]
         ],
+    HistoricDiffs =
+     [[0,56,8,8,6,8,26,5,4,4],
+      [0,112,15,12,12,14,9,12,9,8],
+      [0,224,29,31,24,21,21,21,23,16],
+      [0,448,57,59,47,48,39,45,36,32],
+      [0,896,114,119,94,85,78,87,79,64]],
     case [ Err || {error, Err} <- Results ] of
-        []   -> {ok, [ Diff || {_Ring, Diff} <- Results ]};
+        []   ->
+           true =
+               lists:all(fun({L1, L2}) ->
+                             lists:sum(L1) =< lists:sum(L2)
+                         end, lists:zip([ Diff || {_Ring, Diff} <- Results ], HistoricDiffs));
         Errs -> {error, Errs}
     end.
 
+wcets() ->
+  [ io:format("Size ~4b Time ~.1f sec\n", [Size, wcet(Size, 4) / 1000000])
+    || Size <- [16, 32, 64, 128, 256, 512, 1024, 2048] ].
+
+wcet(RingSize, NVal) ->
+  NValMap = #{location => NVal, node => NVal},
+  Ring = solve(RingSize, [1], NValMap),
+  {T, _} = timer:tc(fun() -> brute_force(Ring, {NVal, NVal}) end),
+  T.
 
 -ifdef(EQC).
 
@@ -664,7 +725,7 @@ ring() -> non_empty(list(pnode())).
 
 nvals() -> ?LET(NVal, choose(1, 5),
                 ?LET(LVal, choose(1, NVal),
-                     if NVal == LVal -> NVal; true -> {NVal, LVal} end)).
+                     {NVal, LVal})).
 
 op(N) ->
     Ix = choose(0, N - 1),
@@ -717,15 +778,46 @@ prop_swap_violations() ->
 prop_no_locations() ->
     ?FORALL({Size, Nodes, NVal}, {elements([16, 32, 64, 128, 256, 512]), choose(1, 64), choose(1,5)},
             begin
-                {OneT, OneRing} = timer:tc(?MODULE, solve, [Size, [Nodes], {NVal, 1}]),
+                {OneT, OneRing} = timer:tc(fun() -> solve(Size, [Nodes], #{node => NVal, location => 1}) end),
                 {_, OneViolations} = violations(OneRing, {NVal, 1}),
-                {SepT, SepRing} = timer:tc(?MODULE, solve, [Size, lists:duplicate(Nodes, 1), NVal]),
-                {_, SepViolations} = violations(SepRing, NVal),
+                {SepT, SepRing} = timer:tc(fun() -> solve(Size, lists:duplicate(Nodes, 1), #{node => NVal, location => NVal}) end),
+                {_, SepViolations} = violations(SepRing, {NVal, NVal}),
                 measure(one_location, OneT,
                         measure(sep_location, SepT,
                                 equals(OneViolations, SepViolations)))
             end).
 
+config_gen() ->
+  ?LET(N, choose(1,7), vector(N, choose(1,8))).
+
+prop_brute_force_optimize() ->
+   in_parallel(
+   ?FORALL({Size, Config, NValsMap}, {elements([16, 32, 64, 128, 256, 512, 1024]),
+                                      config_gen(),
+                                      ?LET(N, choose(2,5), #{node => N, location => default(N, choose(2, N))})},
+    ?IMPLIES(length(Config) >= maps:get(location, NValsMap),
+            begin
+                NVals = to_nvals(NValsMap),
+                {T1, Ring1} = timer:tc(fun() -> solve(Size, Config, NValsMap, [no_brute_force]) end),
+                [{_, RV1}, {_, RV2}, {_, RV3}] = Res =
+                  case violations(Ring1, NVals) of
+                    ?zero_v -> [{T1, ?zero_v}, {0, ?zero_v}, {0, ?zero_v}];
+                    V1 ->
+                      {T2, Ring2} = timer:tc(fun() -> brute_force(Ring1, NVals, [node_only]) end),
+                      V2 = violations(Ring2, NVals),
+                      {T3, Ring3} = timer:tc(fun() -> brute_force(Ring2, NVals) end),
+                      V3 = violations(Ring3, NVals),
+                      [{T1 / 1000000, V1}, {T2 / 1000000, V2}, {T3 / 1000000, V3}]
+                  end,
+                Improved = length(lists:usort([ RV1, RV2, RV3 ])) > 1,
+                WorthBF = worth_brute_force(Size, RV1),
+                FailNodeOnly = node_v(RV2) == 0 andalso WorthBF == no_brute_force,
+                FailBruteForce = ?is_zero_v(RV3) andalso WorthBF /= brute_force,
+                ?WHENFAIL(eqc:format("Worth brute force ~p for ~p\n", [WorthBF, Res]),
+                aggregate([{Size, Config, NValsMap, Res, WorthBF} || Improved andalso WorthBF /= brute_force],
+                          conjunction([{node_only, not FailNodeOnly},
+                                       {brute_force, not FailBruteForce}])))
+            end))).
 
 -endif.
 -endif.
