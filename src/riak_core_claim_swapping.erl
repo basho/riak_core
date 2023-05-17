@@ -439,9 +439,9 @@ location_multistage_t1_test_() ->
        location_multistage_claim_tester(64, JoiningNodes, 4, l5n9, loc5, 4),
        location_multistage_claim_tester(128, JoiningNodes, 4, l5n9, loc5, 4),
        location_multistage_claim_tester(256, JoiningNodes, 4, l5n9, loc5, 4),
-       location_multistage_claim_tester(512, JoiningNodes, 4, l5n9, loc5, 4)
-       %% location_multistage_claim_tester(1024, JoiningNodes, 4, l5n9, loc5, 4)
-       %% location_multistage_claim_tester(2048, JoiningNodes, 4, l5n9, loc5, 4)
+       location_multistage_claim_tester(512, JoiningNodes, 4, l5n9, loc5, 4),
+       location_multistage_claim_tester(1024, JoiningNodes, 4, l5n9, loc5, 4),
+       location_multistage_claim_tester(2048, JoiningNodes, 4, l5n9, loc5, 4)
        ]}.
 
 
@@ -527,8 +527,9 @@ location_typical_expansion_test_() ->
      {inparallel,
       [location_typical_expansion_tester(64),
        location_typical_expansion_tester(128),
-       location_typical_expansion_tester(256)
-       %% location_typical_expansion_tester(512)
+       location_typical_expansion_tester(256),
+       location_typical_expansion_tester(512),
+       location_typical_expansion_tester(1024)
       ]}}.
 
 location_typical_expansion_tester(RingSize) ->
