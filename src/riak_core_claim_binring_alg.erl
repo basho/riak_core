@@ -80,10 +80,13 @@
 %%
 %% Step 3 gives a best effort solution, but given the enormous amount of
 %% possible operations, it can take while to return. But it always terminate.
+%% In order to make it terminate, we added heuristics in "worth_brute_force".
+%% If we consider the number of violations too large for success, we just
+%% don't do Step 3 or only partly until we solve the Nval for nodes.
 %%
 %% When we update a ring, then we want as little transfers as possible,
 %% so first an effort is performed to just swap nodes. If that would not
-%% work to get a solution, a brute-force attempt is taken to get best-effort
+%% work to get a solution, a solve attempt is taken to get best-effort
 %% again.
 
 
