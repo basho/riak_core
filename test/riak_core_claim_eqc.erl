@@ -35,15 +35,19 @@
          committed_nodes = [],
          staged_nodes = []        :: [Name :: atom()],                       %% nodes added/left before claim,
          plan = [],                                                          %% staged nodes after claim
+         sufficient = false,
          with_location = false
         }).
 
 %% -- State and state functions ----------------------------------------------
 initial_state() ->
-  initial_state(3).
+  initial_state(#{}).
 
-initial_state(Nval) ->
-  #state{nval = Nval}.
+initial_state(Map) ->
+  #state{nval = maps:get(nval, Map, 4),
+         ring_size = maps:get(ring_size, Map, 32),
+         sufficient = maps:get(sufficient, Map, false),
+         with_location = maps:get(with_location, Map, true)}.
 
 %% -- Generators -------------------------------------------------------------
 
@@ -92,7 +96,7 @@ add_claimant_pre(S) ->
   S#state.claimant == undefined.
 
 add_claimant_args(S) ->
-   [hd(S#state.placements), S#state.with_location, ringsize()].
+   [hd(S#state.placements), S#state.with_location, S#state.ring_size].
 
 add_claimant_pre(S, [LocNode, _, RingSize]) ->
   LocNodes = S#state.placements,
@@ -161,6 +165,7 @@ claim_pre(S) ->
     andalso S#state.plan == [] andalso S#state.staged_nodes /= [].  %% make sure there is something sensible to do
 
 claim_args(S) ->
+  %% v2 does not take leaving nodes into account, but the model does
   [elements([v4]), S#state.nval].
 
 claim(Ring, default, Nval) ->
@@ -176,8 +181,9 @@ claim(Ring, v4, Nval) ->
                               {riak_core_membership_claim, wants_claim_v2},
                               {riak_core_claim_swapping, choose_claim_v4, [{target_n_val, Nval}]}]).
 
-claim_pre(S, [v4, _Nval]) ->
-    not known_hard(S) andalso (length(S#state.nodes) < S#state.ring_size div 2);
+claim_pre(#state{sufficient = true} = S, [v4, _Nval]) ->
+    %% Sufficient conditions to actually succeed
+    sufficient_conditions(S);
 claim_pre(_, [_, _]) ->
     true.
 
@@ -287,6 +293,12 @@ necessary_conditions(S) ->
                 || S#state.nval == length(Locations) ]
            ).
 
+sufficient_conditions(S) ->
+  Locations = to_config(S),
+  length(Locations) >= S#state.nval + 2
+    andalso length(S#state.nodes) < S#state.ring_size div 2
+    andalso lists:min(Locations) >= lists:max(Locations) - 2.
+
 to_config(S) ->
     LocNodes =
         lists:foldl(fun(N, Acc) ->
@@ -367,21 +379,33 @@ weight(_S, _Cmd) -> 1.
 %% -- Property ---------------------------------------------------------------
 
 prop_claim() ->
+  prop_claim([relaxed]).
+
+prop_claim(Options) ->
+  Relaxed = proplists:get_bool(relaxed, Options),
+  %% If relaxed, we restrict configurations to those that we can easily
+  %% determine have a solution (sufficient_condition).
   case ets:whereis(timing) of
     undefined -> ets:new(timing, [public, named_table, bag]);
     _ -> ok
   end,
-  ?FORALL({Nval, WithLocation}, {choose(2, 5), bool()},
-  ?FORALL(Cmds, commands(?MODULE, with_location(initial_state(Nval), WithLocation)),
+  ?FORALL({Nval, RingSize, WithLocation}, {choose(2, 5), ringsize(), bool()},
+  ?FORALL(Cmds, commands(?MODULE, initial_state(#{nval => Nval,
+                                                  ring_size => RingSize,
+                                                  sufficient => Relaxed,
+                                                  with_location => WithLocation})),
   begin
     put(ring_nr, 0),
     {H, S, Res} = run_commands(Cmds),
+    Config = lists:sort(to_config(S)),
     measure(length, commands_length(Cmds),
+    features([{RingSize, Config, Nval} ||  WithLocation  andalso
+                                             S#state.plan /= [] andalso Res == ok],
     aggregate_feats([claimed_nodes, ring_size, with_location, nr_nodes, moving, algorithm],
                     call_features(H),
             check_command_names(Cmds,
                pretty_commands(?MODULE, Cmds, {H, S, Res},
-                               Res == ok))))
+                               Res == ok)))))
   end)).
 
 aggregate_feats([], _, Prop) -> Prop;
@@ -390,9 +414,6 @@ aggregate_feats([Op | Ops], Features, Prop) ->
               [F || {Id, F} <- Features, Id == Op],
               aggregate_feats(Ops, Features, Prop)).
 
-
-with_location(S, Bool) ->
-  S#state{with_location = Bool}.
 
 location(S, N) when is_record(S, state) ->
   location(S#state.placements, N);
@@ -480,20 +501,6 @@ as_ring(Kind, Term) when is_tuple(Term) ->
   end;
 as_ring(_, Term) ->
   lists:flatten(io_lib:format("~p", [Term])).
-
-
-known_hard(S) ->
-    lists:member({S#state.ring_size, lists:sort(to_config(S)), S#state.nval},
-                 [{16, [1,1,1,2,2,2], 5},
-                  {16, [1,1,1,1,3,3], 5},
-                  {16, [1,1,1,3,3], 4},
-                  {16, [1,1,1,1,2,3], 4},
-                  {16, [1,1,4,4], 3},
-                  {16, [1,2,2,2,3], 4},
-                  {128, [1,1,2,2,2,2], 5}
-                 ]).
-
-
 
 equal({X, Ls1}, {X, Ls2}) ->
   equal(Ls1, Ls2);

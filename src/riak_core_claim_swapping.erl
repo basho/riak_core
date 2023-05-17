@@ -59,8 +59,8 @@
 -spec memoize(
     binring_solve|binring_update,
     {binary()|pos_integer(),
-        list(pos_integer()),
-        {pos_integer(), pos_integer()}},
+        list(non_neg_integer()),
+        #{location := pos_integer(), node := pos_integer()}},
     fun(() -> binary())) -> binary().
 memoize(Registry, Key, Fun) ->
     V4Solutions =
@@ -107,7 +107,7 @@ claim(Ring, Params0) ->
            true -> 1
         end,
     RingSize = riak_core_ring:num_partitions(Ring),
-    NVals = {TargetN, TargetLN},
+    NVals = #{node => TargetN, location => TargetLN},
 
     %% Now we need to map the locations and nodes to a configuration that
     %% basically is a list of locations with the number of nodes in it.
@@ -119,40 +119,23 @@ claim(Ring, Params0) ->
     {BinRing0, OldLocRel} = to_binring(Ring),
     {Config, LocRel} = to_config(Ring, OldLocRel),
 
-    SWup = os:timestamp(),
-    BinRing1 =
-        memoize(
-            binring_update,
-            {BinRing0, Config, NVals},
-            fun() ->
-                riak_core_claim_binring_alg:update(BinRing0, Config, NVals)
-            end),
-    lager:info(
-        "~w Swapping algorithm update in ~w ms Config ~w NVals ~w h(BinRing) ~w",
-        [self(), timer:now_diff(os:timestamp(), SWup) div 1000,
-            Config, NVals, erlang:phash2(BinRing1)]
-    ),
-
-    SWsv = os:timestamp(),
-    UpdateSolved =
-        riak_core_claim_binring_alg:zero_violations(BinRing1, NVals),
     BinRing =
-        case UpdateSolved of
-            false ->
-                memoize(
-                    binring_solve,
-                    {RingSize, Config, NVals},
-                    fun() ->
-                        riak_core_claim_binring_alg:solve(RingSize, Config, NVals)
-                    end);
+        case length(OldLocRel) == 1 of
             true ->
-                BinRing1
+              %% Only one node in old ring, don't even try update
+              solve_memoized(RingSize, Config, NVals);
+            false ->
+              BinRingU = update_memoized(BinRing0, Config, NVals),
+              case riak_core_claim_binring_alg:node_loc_violations(BinRingU, NVals) of
+                  {0, 0} -> BinRingU;
+                  UV ->
+                      BinRingS = solve_memoized(RingSize, Config, NVals),
+                      SV = riak_core_claim_binring_alg:node_loc_violations(BinRingS, NVals),
+                      if SV < UV -> BinRingS;
+                         true -> BinRingU
+                      end
+              end
         end,
-    lager:info(
-        "~w Swapping algorithm solve in ~w ms as solve_required=~w",
-        [self(), timer:now_diff(os:timestamp(), SWsv) div 1000,
-            not UpdateSolved]
-    ),
 
     Inc = chash:ring_increment(RingSize),
     SolvedNodes =
@@ -171,6 +154,41 @@ claim(Ring, Params0) ->
 
     NewRing.
 
+update_memoized(BinRing, Config, NVals) ->
+    TS = os:timestamp(),
+    BinRingU =
+        memoize(
+          binring_update,
+          {BinRing, Config, NVals},
+          fun() ->
+              riak_core_claim_binring_alg:update(BinRing, Config, NVals)
+          end),
+    lager:info(
+      "~w Swapping algorithm update in ~w ms Config ~w NVals ~w h(BinRing) ~w",
+      [self(), timer:now_diff(os:timestamp(), TS) div 1000,
+       Config, NVals, erlang:phash2(BinRingU)]
+     ),
+     BinRingU.
+
+solve_memoized(RingSize, Config, NVals) ->
+    TS = os:timestamp(),
+    BinRingS =
+        memoize(
+          binring_solve,
+          {RingSize, Config, NVals},
+          fun() ->
+              riak_core_claim_binring_alg:solve(RingSize, Config, NVals)
+          end),
+    lager:info(
+      "~w Swapping algorithm solve in ~w ms",
+      [self(), timer:now_diff(os:timestamp(), TS) div 1000]
+     ),
+     BinRingS.
+
+claiming_nodes(Ring) ->
+    Claiming = riak_core_ring:claiming_members(Ring),
+    LocationDict = riak_core_ring:get_nodes_locations(Ring),
+    [ {riak_core_location:get_node_location(N, LocationDict), N} || N <- Claiming ].
 
 to_binring(Ring) ->
     LocationDict = riak_core_ring:get_nodes_locations(Ring),
@@ -199,10 +217,7 @@ to_binring(LocationRing, LeavingMembers) ->
     {riak_core_claim_binring_alg:from_list(Nodes), LocationRel}.
 
 to_config(Ring, OldLocRel) ->
-    Claiming = riak_core_ring:claiming_members(Ring),
-    LocationDict = riak_core_ring:get_nodes_locations(Ring),
-    LocationNodes = [ {riak_core_location:get_node_location(N, LocationDict), N} || N <- Claiming ],
-    to_config2(LocationNodes, OldLocRel).
+    to_config2(claiming_nodes(Ring), OldLocRel).
 
 to_config2(LocationNodes, FixedLocRel) ->
     OldLocIdxs = lists:usort([ {LI, L} || {{LI, _}, {L,_}} <- FixedLocRel ]),
@@ -274,6 +289,20 @@ simple_cluster_t1_test() ->
     RClaim =
        claim(R1, Props),
     ?assert(true, riak_core_membership_claim:meets_target_n(RClaim, TargetN)).
+
+locs_and_no_locs_test() ->
+    RingSize = 32,
+    TargetN = 2,
+    NodeList = [{n1, loc1}, {n2, loc2}, n3, n4],
+    R0 = riak_core_ring:set_node_location(n1, loc1, riak_core_ring:fresh(RingSize, n1)),
+    Params = [{target_n_val, TargetN}],
+    RClaim = add_nodes_to_ring(R0, n1, NodeList -- [{n1, loc1}], Params),
+    ?assert(true, riak_core_membership_claim:meets_target_n(RClaim, TargetN)),
+    RMove = riak_core_ring:set_node_location(n1, loc3, RClaim),
+    RClaim2 = claim(RMove, Params),
+    ?assertEqual(riak_core_ring:all_owners(RClaim2),
+                 riak_core_ring:all_owners(RClaim)).
+
 
 
 location_t1_test_() ->
@@ -352,7 +381,9 @@ add_nodes_to_ring(Ring, Claimant, NodeLocList, Params) ->
     NewRing = lists:foldl(
                 fun({N, L}, AccR) ->
                         AccR0 = riak_core_ring:add_member(Claimant, AccR, N),
-                        riak_core_ring:set_node_location(N, L, AccR0)
+                        riak_core_ring:set_node_location(N, L, AccR0);
+                    (N, AccR) ->
+                        riak_core_ring:add_member(Claimant, AccR, N)
                 end,
                 Ring,
                 NodeLocList),
