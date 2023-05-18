@@ -315,13 +315,12 @@ location_t1_test_() ->
     ],
     {"[2, 2, 2, 2, 2] nval 4",
      {inparallel,
-      [location_claim_tester(n1, loc1, JoiningNodes, 64, 4),
-       location_claim_tester(n1, loc1, JoiningNodes, 128, 4),
-       location_claim_tester(n1, loc1, JoiningNodes, 256, 4)
-       %% Don't test large rings in automated testing
-       %% location_claim_tester(n1, loc1, JoiningNodes, 512, 4),
-       %% location_claim_tester(n1, loc1, JoiningNodes, 1024, 4)
-       %% location_claim_tester(n1, loc1, JoiningNodes, 2048, 4)
+      [
+        location_claim_tester(n1, loc1, JoiningNodes, 64, 4),
+        location_claim_tester(n1, loc1, JoiningNodes, 128, 4),
+        location_claim_tester(n1, loc1, JoiningNodes, 256, 4),
+        location_claim_tester(n1, loc1, JoiningNodes, 512, 4),
+        location_claim_tester(n1, loc1, JoiningNodes, 1024, 4)
       ]}}.
 
 location_t2_test_() ->
@@ -333,12 +332,12 @@ location_t2_test_() ->
         ],
     {"[2, 2, 2, 2] nval 4",
      {inparallel,
-      [location_claim_tester(n1, loc1, JoiningNodes, 64, 4),
-       location_claim_tester(n1, loc1, JoiningNodes, 128, 4),
-       location_claim_tester(n1, loc1, JoiningNodes, 256, 4),
-       location_claim_tester(n1, loc1, JoiningNodes, 512, 4),
-       location_claim_tester(n1, loc1, JoiningNodes, 1024, 4),
-       location_claim_tester(n1, loc1, JoiningNodes, 2048, 4)
+      [
+        location_claim_tester(n1, loc1, JoiningNodes, 64, 4),
+        location_claim_tester(n1, loc1, JoiningNodes, 128, 4),
+        location_claim_tester(n1, loc1, JoiningNodes, 256, 4),
+        location_claim_tester(n1, loc1, JoiningNodes, 512, 4),
+        location_claim_tester(n1, loc1, JoiningNodes, 1024, 4)
       ]}}.
 
 location_t8_test_() ->
@@ -347,14 +346,14 @@ location_t8_test_() ->
          {l2n1, loc2}, {l2n2, loc2}, {l2n3, loc2},
          {l3n1, loc3}, {l3n2, loc3}, {l3n3, loc3},
          {l4n1, loc4}, {l4n2, loc4}, {l4n3, loc4}],
-    {"[4, 3, 3, 3] nval 4",
+    {"[4, 3, 3, 3] nval 3",
      {inparallel,
-      [location_claim_tester(l1n1, loc1, JoiningNodes, 64, 3),
-       location_claim_tester(l1n1, loc1, JoiningNodes, 256, 3)
-     %% Don't test large rings in automated testing
-     %% location_claim_tester(n1, loc1, JoiningNodes, 512, 4),
-     %% location_claim_tester(n1, loc1, JoiningNodes, 1024, 4),
-     %% location_claim_tester(n1, loc1, JoiningNodes, 2048, 4)
+      [
+        location_claim_tester(l1n1, loc1, JoiningNodes, 64, 3),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 256, 3),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 512, 3),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 1024, 3),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 2048, 3)
       ]}}.
 
 location_claim_tester(N1, N1Loc, NodeLocList, RingSize, TargetN) ->
@@ -436,17 +435,15 @@ location_multistage_t1_test_() ->
         ],
      {inparallel,
       [
-       location_multistage_claim_tester(64, JoiningNodes, 4, l5n9, loc5, 4),
-       location_multistage_claim_tester(128, JoiningNodes, 4, l5n9, loc5, 4),
-       location_multistage_claim_tester(256, JoiningNodes, 4, l5n9, loc5, 4),
-       location_multistage_claim_tester(512, JoiningNodes, 4, l5n9, loc5, 4),
-       location_multistage_claim_tester(1024, JoiningNodes, 4, l5n9, loc5, 4),
-       location_multistage_claim_tester(2048, JoiningNodes, 4, l5n9, loc5, 4)
+       multistage_claim_tester(64, JoiningNodes, 4, l5n9, loc5, 4),
+       multistage_claim_tester(128, JoiningNodes, 4, l5n9, loc5, 4),
+       multistage_claim_tester(256, JoiningNodes, 4, l5n9, loc5, 4),
+       multistage_claim_tester(512, JoiningNodes, 4, l5n9, loc5, 4)
        ]}.
 
 
-location_multistage_claim_tester(RingSize, JoiningNodes, TargetN, NewNode, NewLocation, VerifyN) ->
-    {timeout, 240,
+multistage_claim_tester(RingSize, JoiningNodes, TargetN, NewNode, NewLocation, VerifyN) ->
+    {timeout, 300,
     {"Ringsize " ++ integer_to_list(RingSize),
      fun() ->
              SW0 = os:timestamp(),
@@ -522,91 +519,97 @@ location_multistage_claim_tester(RingSize, JoiningNodes, TargetN, NewNode, NewLo
               )
      end}}.
 
+location_typical_expansion_longrunning_test_() ->
+    %% Long-running as one step will require brute-force
+    {timeout,
+        300,
+        {"RingSize 2048", fun() -> typical_expansion_tester(2048) end}}.
+
 location_typical_expansion_test_() ->
     {"Typical expansion",
      {inparallel,
-      [location_typical_expansion_tester(64),
-       location_typical_expansion_tester(128),
-       location_typical_expansion_tester(256),
-       location_typical_expansion_tester(512),
-       location_typical_expansion_tester(1024)
+        [
+            {timeout, 60,
+                {"Ringsize 64", fun() -> typical_expansion_tester(64) end}},
+            {timeout, 60,
+                {"Ringsize 128", fun() -> typical_expansion_tester(128) end}},
+            {timeout, 60,
+                {"Ringsize 256", fun() -> typical_expansion_tester(256) end}},
+            {timeout, 60,
+                {"Ringsize 512", fun() -> typical_expansion_tester(512) end}}
       ]}}.
 
-location_typical_expansion_tester(RingSize) ->
-    {timeout, 120,
-    {"Ringsize "++integer_to_list(RingSize),
-     fun() ->
-             N1 = l1n1,
-             N1Loc = loc1,
-             TargetN = 4,
-             InitJoiningNodes =
-                 [{l1n2, loc1},
-                  {l2n3, loc2}, {l2n4, loc2},
-                  {l3n5, loc3}, {l3n6, loc3},
-                  {l4n7, loc4}, {l4n8, loc4}],
+typical_expansion_tester(RingSize) ->
+    N1 = l1n1,
+    N1Loc = loc1,
+    TargetN = 4,
+    InitJoiningNodes =
+        [{l1n2, loc1},
+        {l2n3, loc2}, {l2n4, loc2},
+        {l3n5, loc3}, {l3n6, loc3},
+        {l4n7, loc4}, {l4n8, loc4}],
 
-             io:format(
-               "Testing NodeList ~w with RingSize ~w~n",
-               [[{N1, N1Loc}|InitJoiningNodes], RingSize]
-              ),
-             Params = [{target_n_val, TargetN}],
-             R1 =
-                 riak_core_ring:set_node_location(
-                   N1,
-                   N1Loc,
-                   riak_core_ring:fresh(RingSize, N1)),
+    Params = [{target_n_val, TargetN}],
+    R1 =
+        riak_core_ring:set_node_location(
+        N1,
+        N1Loc,
+        riak_core_ring:fresh(RingSize, N1)),
 
-             RClaimInit = add_nodes_to_ring(R1, N1, InitJoiningNodes, Params),
-             {RingSize, MappingsInit} = riak_core_ring:chash(RClaimInit),
+    RClaimInit = add_nodes_to_ring(R1, N1, InitJoiningNodes, Params),
+    {RingSize, MappingsInit} = riak_core_ring:chash(RClaimInit),
 
-             check_for_failures(MappingsInit, TargetN, RClaimInit),
+    check_for_failures(MappingsInit, TargetN, RClaimInit),
 
-             Stage1Ring = commit_change(RClaimInit),
+    Stage1Ring = commit_change(RClaimInit),
 
-             RClaimStage2 = add_node(Stage1Ring, N1, l5n9, loc5, Params),
-             {RingSize, Mappings2} = riak_core_ring:chash(RClaimStage2),
-             check_for_failures(Mappings2, TargetN, RClaimStage2),
-             Stage2Ring = commit_change(RClaimStage2),
+    RClaimStage2 = add_node(Stage1Ring, N1, l5n9, loc5, Params),
+    {RingSize, Mappings2} = riak_core_ring:chash(RClaimStage2),
+    check_for_failures(Mappings2, TargetN, RClaimStage2),
+    Stage2Ring = commit_change(RClaimStage2),
 
-             RClaimStage3 = add_node(Stage2Ring, N1, l5n10, loc5, Params),
-             {RingSize, Mappings3} = riak_core_ring:chash(RClaimStage3),
-             check_for_failures(Mappings3, TargetN, RClaimStage3),
-             Stage3Ring = commit_change(RClaimStage3),
+    RClaimStage3 = add_node(Stage2Ring, N1, l5n10, loc5, Params),
+    {RingSize, Mappings3} = riak_core_ring:chash(RClaimStage3),
+    check_for_failures(Mappings3, TargetN, RClaimStage3),
+    Stage3Ring = commit_change(RClaimStage3),
 
-             RClaimStage4 = add_node(Stage3Ring, N1, l6n11, loc6, Params),
-             {RingSize, Mappings4} = riak_core_ring:chash(RClaimStage4),
-             check_for_failures(Mappings4, TargetN, RClaimStage4),
-             Stage4Ring = commit_change(RClaimStage4),
+    RClaimStage4 = add_node(Stage3Ring, N1, l6n11, loc6, Params),
+    {RingSize, Mappings4} = riak_core_ring:chash(RClaimStage4),
+    check_for_failures(Mappings4, TargetN, RClaimStage4),
+    Stage4Ring = commit_change(RClaimStage4),
 
-             RClaimStage5 = add_node(Stage4Ring, N1, l6n12, loc6, Params),
-             {RingSize, Mappings5} = riak_core_ring:chash(RClaimStage5),
-             check_for_failures(Mappings5, TargetN, RClaimStage5),
-             Stage5Ring = commit_change(RClaimStage5),
+    RClaimStage5 = add_node(Stage4Ring, N1, l6n12, loc6, Params),
+    {RingSize, Mappings5} = riak_core_ring:chash(RClaimStage5),
+    check_for_failures(Mappings5, TargetN, RClaimStage5),
+    Stage5Ring = commit_change(RClaimStage5),
 
-             RClaimStage6 = add_node(Stage5Ring, N1, l1n13, loc1, Params),
-             {RingSize, Mappings6} = riak_core_ring:chash(RClaimStage6),
-             check_for_failures(Mappings6, TargetN, RClaimStage6),
-             Stage6Ring = commit_change(RClaimStage6),
+    RClaimStage6 = add_node(Stage5Ring, N1, l1n13, loc1, Params),
+    {RingSize, Mappings6} = riak_core_ring:chash(RClaimStage6),
+    check_for_failures(Mappings6, TargetN, RClaimStage6),
+    Stage6Ring = commit_change(RClaimStage6),
 
-             RClaimStage7 = add_node(Stage6Ring, N1, l2n14, loc2, Params),
-             {RingSize, Mappings7} = riak_core_ring:chash(RClaimStage7),
-             check_for_failures(Mappings7, TargetN, RClaimStage7),
-             Stage7Ring = commit_change(RClaimStage7),
+    RClaimStage7 = add_node(Stage6Ring, N1, l2n14, loc2, Params),
+    {RingSize, Mappings7} = riak_core_ring:chash(RClaimStage7),
+    check_for_failures(Mappings7, TargetN, RClaimStage7),
+    Stage7Ring = commit_change(RClaimStage7),
 
-             RClaimStage8 = add_node(Stage7Ring, N1, l3n15, loc3, Params),
-             {RingSize, Mappings8} = riak_core_ring:chash(RClaimStage8),
-             check_for_failures(Mappings8, TargetN, RClaimStage8),
-             Stage8Ring = commit_change(RClaimStage8),
+    RClaimStage8 = add_node(Stage7Ring, N1, l3n15, loc3, Params),
+    {RingSize, Mappings8} = riak_core_ring:chash(RClaimStage8),
+    check_for_failures(Mappings8, TargetN, RClaimStage8),
+    Stage8Ring = commit_change(RClaimStage8),
 
-             RClaimStage9 = add_node(Stage8Ring, N1, l4n16, loc4, Params),
-             {RingSize, Mappings9} = riak_core_ring:chash(RClaimStage9),
-             check_for_failures(Mappings9, TargetN, RClaimStage9),
-             _Stage9Ring = commit_change(RClaimStage9)
-     end}}.
+    RClaimStage9 = add_node(Stage8Ring, N1, l4n16, loc4, Params),
+    {RingSize, Mappings9} = riak_core_ring:chash(RClaimStage9),
+    check_for_failures(Mappings9, TargetN, RClaimStage9),
+    _Stage9Ring = commit_change(RClaimStage9).
 
 
 add_node(Ring, Claimant, Node, Location, Params) ->
-    RingC = add_nodes_to_ring(Ring, Claimant, [{Node, Location}], Params),
+    {ClaimTime, RingC} =
+        timer:tc(
+            fun() ->
+                add_nodes_to_ring(Ring, Claimant, [{Node, Location}], Params) end
+            ),
 
     OwnersPre = riak_core_ring:all_owners(Ring),
     OwnersPost = riak_core_ring:all_owners(RingC),
@@ -627,19 +630,15 @@ add_node(Ring, Claimant, Node, Location, Params) ->
     NodeCounts =
         lists:map(fun({_N, C}) -> C end, dict:to_list(NodeCountD)),
     io:format(
-        % user,
-        "NodeCounts~w~n",
-        [dict:to_list(NodeCountD)]),
-    io:format(
-        % user,
-        "Adding node ~w in location ~w - ~w transfers ~w max ~w min vnodes~n",
+        "Adding node ~w in location ~w - ~w transfers ~w max ~w min vnodes"
+        " ClaimTime ~w ms~n",
         [Node, Location,
-            length(Next), lists:max(NodeCounts), lists:min(NodeCounts)]),
+            length(Next), lists:max(NodeCounts), lists:min(NodeCounts),
+            ClaimTime div 1000]),
     ?assert(
         (lists:min(NodeCounts) == (lists:max(NodeCounts) - 1)) or
         (lists:min(NodeCounts) == lists:max(NodeCounts))
     ),
-    % ?assert(length(Next) =< ExpectedTransferMax),
     RingC.
 
 commit_change(Ring) ->

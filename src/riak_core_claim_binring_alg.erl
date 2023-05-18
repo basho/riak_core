@@ -788,13 +788,13 @@ prop_no_locations() ->
             end).
 
 config_gen() ->
-  ?LET(N, choose(1,7), vector(N, choose(1,8))).
+    ?LET(N, choose(1,7), ?LET(M, choose(2, 6), vector(N, choose(M, M + 2)))).
 
 prop_brute_force_optimize() ->
    in_parallel(
-   ?FORALL({Size, Config, NValsMap}, {elements([16, 32, 64, 128, 256, 512, 1024]),
+   ?FORALL({Size, Config, NValsMap}, {elements([128, 256, 512]),
                                       config_gen(),
-                                      ?LET(N, choose(2,5), #{node => N, location => default(N, choose(2, N))})},
+                                      ?LET(N, choose(3, 4), #{node => N, location => default(N, choose(2, N))})},
     ?IMPLIES(length(Config) >= maps:get(location, NValsMap),
             begin
                 NVals = to_nvals(NValsMap),
