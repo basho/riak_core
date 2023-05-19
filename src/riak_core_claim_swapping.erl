@@ -70,9 +70,14 @@ memoize(Registry, Key, Fun) ->
         end,
    case lists:keyfind({Registry, Key}, 1, V4Solutions) of
         {{Registry, Key}, Solution} ->
-            lager:info("Retrieved solve from memory for ~w", [Registry]),
+            lager:info(
+                "Retrieved solve from cache of ~w for ~w",
+                [length(V4Solutions), Registry]),
             Solution;
        _ ->
+            lager:info(
+                "No cache hit from cache of ~w for ~w",
+                [length(V4Solutions), Registry]),
             Value = Fun(),
             riak_core_claimant:update_v4_solutions({{Registry, Key}, Value}),
             Value
@@ -356,24 +361,59 @@ location_t8_test_() ->
         location_claim_tester(l1n1, loc1, JoiningNodes, 2048, 3)
       ]}}.
 
+location_t9_test_() ->
+    JoiningNodes =
+        [{l1n2, loc1}, {l1n3, loc1}, {l1n4, loc1},
+            {l2n1, loc2}, {l2n2, loc2}, {l2n3, loc2},
+            {l3n1, loc3}, {l3n2, loc3}, {l3n3, loc3},
+            {l4n1, loc4}, {l4n2, loc4}, {l4n3, loc4}],
+    {"[4, 3, 3, 3] nval 4 location nval 3",
+        {inparallel,
+        [
+        location_claim_tester(l1n1, loc1, JoiningNodes, 64, 4, 3),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 256, 4, 3),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 512, 4, 3),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 1024, 4, 3),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 2048, 4, 3)
+        ]}}.
+
+location_t10_test_() ->
+    JoiningNodes =
+        [{l1n2, loc1}, {l2n3, loc2}, {l3n5, loc3}, {l4n7, loc4}, {l4n8, loc4}],
+    {"[2, 1, 1, 2] nval 4 location nval 3",
+        {inparallel,
+        [
+        location_claim_tester(l1n1, loc1, JoiningNodes, 64, 4, 3),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 256, 4, 3),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 512, 4, 3),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 1024, 4, 3),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 2048, 4, 3)
+        ]}}.
+
 location_claim_tester(N1, N1Loc, NodeLocList, RingSize, TargetN) ->
+    location_claim_tester(N1, N1Loc, NodeLocList, RingSize, TargetN, TargetN).
+
+location_claim_tester(N1, N1Loc, NodeLocList, RingSize, TargetN, TargetLN) ->
     {"Ringsize "++integer_to_list(RingSize),
-    {timeout, 120,
+    {timeout, 300,
      fun() ->
-             io:format(
-               "Testing NodeList ~w with RingSize ~w~n",
-               [[{N1, N1Loc}|NodeLocList], RingSize]
-              ),
-             R1 =
-                 riak_core_ring:set_node_location(
-                   N1,
-                   N1Loc,
-                   riak_core_ring:fresh(RingSize, N1)),
+        io:format(
+        "Testing NodeList ~w with RingSize ~w~n",
+        [[{N1, N1Loc}|NodeLocList], RingSize]
+        ),
+        R1 =
+            riak_core_ring:set_node_location(
+            N1,
+            N1Loc,
+            riak_core_ring:fresh(RingSize, N1)),
 
-             RClaim = add_nodes_to_ring(R1, N1, NodeLocList, [{target_n_val, TargetN}]),
-             {RingSize, Mappings} = riak_core_ring:chash(RClaim),
+        RClaim =
+            add_nodes_to_ring(
+                R1, N1, NodeLocList,
+                [{target_n_val, TargetN}, {target_location_n_val, TargetLN}]),
+        {RingSize, Mappings} = riak_core_ring:chash(RClaim),
 
-             check_for_failures(Mappings, TargetN, RClaim)
+        check_for_failures(Mappings, TargetLN, RClaim)
      end}}.
 
 add_nodes_to_ring(Ring, Claimant, NodeLocList, Params) ->

@@ -129,6 +129,9 @@ claim(Ring, {WMod, WFun}=Want, Choose) ->
         true ->
             case riak_core_ring:has_location_changed(Ring) of
                 true ->
+                    lager:info(
+                        "Claim requested with ~w due to location change",
+                        [Choose]),
                     [HeadMember|_Rest] = Members,
                     choose_new_ring(
                         riak_core_ring:clear_location_changed(Ring),
@@ -138,6 +141,8 @@ claim(Ring, {WMod, WFun}=Want, Choose) ->
                     Ring
             end;
         false ->
+            lager:info(
+                "Claim requested with ~w due to initial wants", [Choose]),
             lists:foldl(
                 fun(Node, Ring0) ->
                     claim_until_balanced(Ring0, Node, Want, Choose)
