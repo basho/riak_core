@@ -209,16 +209,18 @@ default_choose_params() ->
     default_choose_params([]).
 
 default_choose_params(Params) ->
-    case proplists:get_value(target_n_val, Params) of
-        undefined ->
-            TN = get_target_n(),
-            [{target_n_val, TN} | Params];
-        _->
-            Params
-    end.
+    TN = proplists:get_value(target_n_val, Params, get_target_n()),
+    TLN =
+        proplists:get_value(
+            target_location_n_val, Params, get_target_location_n(TN)),
+    lists:ukeysort(
+        1, [{target_n_val, TN}, {target_location_n_val, TLN}] ++ Params).
 
 get_target_n() ->
     app_helper:get_env(riak_core, target_n_val, ?DEF_TARGET_N).
+
+get_target_location_n(TargetN) ->
+    app_helper:get_env(riak_core, target_location_n_val, TargetN).
 
 
 %% ===================================================================

@@ -153,7 +153,7 @@ simple_transfer([{P, ExitingNode}|Rest],
                         lists:sublist(ForwardL, Steps)
                 end,
             fun({Node, _Count}) ->
-                %% Nodes will remian as candidates if they are not in the list
+                %% Nodes will remain as candidates if they are not in the list
                 %% of unsafe nodes
                 not lists:keymember(Node, 2, UnsafeNodeTuples)
             end
