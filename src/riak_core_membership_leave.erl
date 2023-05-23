@@ -28,18 +28,34 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--export([remove_from_cluster/2, remove_from_cluster/3]).
+-export([remove_from_cluster/2, remove_from_cluster/3, remove_from_cluster/4]).
 
 remove_from_cluster(Ring, ExitingNode) ->
-    remove_from_cluster(Ring, ExitingNode, rand:seed(exrop, os:timestamp())).
+    remove_from_cluster(
+        Ring, ExitingNode, rand:seed(exrop, os:timestamp())).
 
 remove_from_cluster(Ring, ExitingNode, Seed) ->
+    ForceRebalance =
+        app_helper:get_env(riak_core, full_rebalance_onleave, false),
+    remove_from_cluster(Ring, ExitingNode, Seed, ForceRebalance).
+
+
+remove_from_cluster(Ring, ExitingNode, Seed, ForceRebalance) ->
     % Transfer indexes to other nodes...
     Owners = riak_core_ring:all_owners(Ring),
     Members = riak_core_ring:claiming_members(Ring),
+
+    STR = 
+        case ForceRebalance of
+            true ->
+                force_rebalance;
+            false ->
+                attempt_simple_transfer(
+                    Ring, ExitingNode, Seed, Owners, Members)
+        end,
+
     ExitRing =
-        case attempt_simple_transfer(Ring, ExitingNode, Seed,
-                                        Owners, Members) of
+        case STR of
             {ok, NR} ->
                 NR;
             _ ->
@@ -84,25 +100,18 @@ remove_from_cluster(Ring, ExitingNode, Seed) ->
                                         target_n_fail|
                                         force_rebalance.
 attempt_simple_transfer(Ring, ExitingNode, Seed, Owners, Members) ->
-    ForceRebalance =
-        app_helper:get_env(riak_core, full_rebalance_onleave, false),
-    case ForceRebalance of
-        true ->
-            force_rebalance;
-        false ->
-            TargetN = app_helper:get_env(riak_core, target_n_val),
-            Counts =
-                riak_core_membership_claim:get_counts(Members, Owners),
-            RingFun = 
-                fun(Partition, Node, R) ->
-                    riak_core_ring:transfer_node(Partition, Node, R),
-                    R
-                end,
-            simple_transfer(Owners,
-                            {RingFun, TargetN, ExitingNode},
-                            Ring,
-                            {Seed, [], Counts})
-    end.
+    TargetN = app_helper:get_env(riak_core, target_n_val),
+    Counts =
+        riak_core_membership_claim:get_counts(Members, Owners),
+    RingFun = 
+        fun(Partition, Node, R) ->
+            riak_core_ring:transfer_node(Partition, Node, R),
+            R
+        end,
+    simple_transfer(Owners,
+                    {RingFun, TargetN, ExitingNode},
+                    Ring,
+                    {Seed, [], Counts}).
 
 %% @doc Simple transfer of leaving node's vnodes to safe place
 %% Iterates over Owners, which must be sorted by Index (from 0...), and

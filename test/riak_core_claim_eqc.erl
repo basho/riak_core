@@ -35,6 +35,7 @@
          committed_nodes = [],
          staged_nodes = []        :: [Name :: atom()],                       %% nodes added/left before claim,
          plan = [],                                                          %% staged nodes after claim
+         leaving_nodes = [],
          sufficient = false,
          with_location = false
         }).
@@ -168,25 +169,41 @@ claim_args(S) ->
   %% v2 does not take leaving nodes into account, but the model does
   [elements([v4]), S#state.nval].
 
-claim(Ring, default, Nval) ->
-  pp(riak_core_membership_claim, claim, [Ring,
-                              {riak_core_membership_claim, default_wants_claim},
-                              {riak_core_membership_claim, sequential_claim, Nval}]);
-claim(Ring, v2, Nval) ->
-  pp(riak_core_membership_claim, claim, [Ring,
+claim(Ring, Algo, Nval) ->
+  InitialRemoveRing =
+    case riak_core_ring:members(Ring, [leaving]) of
+      [] ->
+        Ring;
+      LeavingNodes ->
+        lists:foldl(
+          fun(RN, R) ->
+            riak_core_membership_leave:remove_from_cluster(
+              R, RN, rand:seed(exrop, os:timestamp()), true)
+          end,
+          Ring,
+          LeavingNodes
+        )
+    end,
+  case Algo of
+    v4 ->
+      pp(riak_core_membership_claim, claim, [InitialRemoveRing,
+                              {riak_core_membership_claim, wants_claim_v2},
+                              {riak_core_claim_swapping, choose_claim_v4, [{target_n_val, Nval}]}]);
+    v2 ->
+      pp(riak_core_membership_claim, claim, [InitialRemoveRing,
                               {riak_core_membership_claim, wants_claim_v2},
                               {riak_core_membership_claim, choose_claim_v2, [{target_n_val, Nval}]}]);
-claim(Ring, v4, Nval) ->
-  pp(riak_core_membership_claim, claim, [Ring,
-                              {riak_core_membership_claim, wants_claim_v2},
-                              {riak_core_claim_swapping, choose_claim_v4, [{target_n_val, Nval}]}]).
+    default ->
+      pp(riak_core_membership_claim, claim, [InitialRemoveRing,
+                              {riak_core_membership_claim, default_wants_claim},
+                              {riak_core_membership_claim, sequential_claim, Nval}])
+  end.
 
 claim_pre(#state{sufficient = true} = S, [v4, _Nval]) ->
     %% Sufficient conditions to actually succeed
     sufficient_conditions(S);
 claim_pre(_, [_, _]) ->
     true.
-
 
 
 claim_next(S, NewRing, [_, _]) ->
@@ -314,7 +331,9 @@ to_config(S) ->
 
 %% --- Operation: leave_node ---
 leave_node_pre(S)  ->
-    length(S#state.nodes) > 1 andalso S#state.committed_nodes/= [].   %% try > 1 not to delete the initial node
+    length(S#state.nodes) > 1 %% try > 1 not to delete the initial node
+      andalso S#state.committed_nodes/= []
+      andalso S#state.plan == [].   
 
 leave_node_args(S) ->
   %% TODO consider re-leaving leaved nodes
@@ -351,9 +370,20 @@ commit_args(S) ->
 
 commit(Ring, Claimant) ->
   JoiningNodes = riak_core_ring:members(Ring, [joining]),   %% [ Node || {Node, joining} <- riak_core_ring:all_member_status(Ring) ],
-  lists:foldl(fun(Node, R) ->
-                  riak_core_ring:set_member(Claimant, R, Node, valid, same_vclock)
-              end, Ring, JoiningNodes).
+  Ring0 =
+    lists:foldl(
+      fun(Node, R) ->
+        riak_core_ring:set_member(Claimant, R, Node, valid, same_vclock)
+      end,
+      Ring,
+      JoiningNodes),
+  LeavingNodes = riak_core_ring:members(Ring, [leaving]),
+  lists:foldl(
+    fun(Node, R) ->
+      riak_core_ring:remove_member(Claimant, R, Node)
+    end,
+    Ring0,
+    LeavingNodes).
 
 commit_next(S, NewRing, [_]) ->
   S#state{ring = NewRing, staged_nodes = [], plan = [], committed_nodes = S#state.nodes}.
