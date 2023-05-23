@@ -390,6 +390,49 @@ location_t10_test_() ->
         location_claim_tester(l1n1, loc1, JoiningNodes, 2048, 4, 3)
         ]}}.
 
+location_t11_test_() ->
+    JoiningNodes =
+        [{l2n2, loc2}, {l3n3, loc3}, {l3n4, loc3}, {l4n5, loc4}, {l5n6, loc5}],
+    {"[1, 1, 2, 1, 1] nval 3 location nval 3",
+        {inparallel,
+        [
+        location_claim_tester(l1n1, loc1, JoiningNodes, 32, 3, 3),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 64, 3, 3),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 256, 3, 3),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 512, 3, 3),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 1024, 3, 3),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 2048, 3, 3)
+        ]}}.
+
+location_t12_test_() ->
+    JoiningNodes =
+        [{l2n2, loc2}, {l3n3, loc3}, {l4n4, loc4}, {l5n5, loc5}, {l5n6, loc6}],
+    {"[1, 1, 1, 1, 1, 1] nval 5 location nval 5",
+        {inparallel,
+        [
+        location_claim_tester(l1n1, loc1, JoiningNodes, 32, 5, 5),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 64, 5, 5),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 256, 5, 5),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 512, 5, 5),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 1024, 5, 5),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 2048, 5, 5)
+        ]}}.
+
+location_t13_test_() ->
+    JoiningNodes =
+        [{l1n2, loc1}, {l2n3, loc2}, {l3n4, loc3}, {l4n5, loc4}],
+    {"[2, 1, 1, 1] nval 2 location nval 2",
+        {inparallel,
+        [
+        location_claim_tester(l1n1, loc1, JoiningNodes, 32, 2, 2),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 64, 2, 2),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 256, 2, 2),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 512, 2, 2),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 1024, 2, 2),
+        location_claim_tester(l1n1, loc1, JoiningNodes, 2048, 2, 2)
+        ]}}.
+        
+
 location_claim_tester(N1, N1Loc, NodeLocList, RingSize, TargetN) ->
     location_claim_tester(N1, N1Loc, NodeLocList, RingSize, TargetN, TargetN).
 

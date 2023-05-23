@@ -52,7 +52,7 @@
 %% default is 4.
 
 -module(riak_core_membership_claim).
--export([claim/1, claim/3, claim_until_balanced/2, claim_until_balanced/4, full_rebalance/2]).
+-export([claim/1, claim/3, claim_until_balanced/2, claim_until_balanced/4, full_rebalance/3]).
 -export([default_wants_claim/1, default_wants_claim/2,
          default_choose_claim/1, default_choose_claim/2, default_choose_claim/3,
          default_choose_params/0, default_choose_params/1]).
@@ -90,6 +90,7 @@
         {module(), atom()}|{module(), atom(), list(tuple())}.
 -type delta() :: {node(), Ownership::non_neg_integer(), Delta::integer()}.
 -type deltas() :: [delta()].
+-type choose_fun() :: choose_claim_v2|choose_claim_v3|choose_claim_v4.
 
 %% ===================================================================
 %% Claim API and supporting functions
@@ -113,9 +114,10 @@ claim(Ring) ->
     claim(Ring, Want, Choose).
 
 -spec full_rebalance(
-    riak_core_ring:riak_core_ring(), node()) -> riak_core_ring:riak_core_ring().
-full_rebalance(Ring, HeadNode) ->
-    case app_helper:get_env(riak_core, choose_claim_fun) of
+    riak_core_ring:riak_core_ring(), node(), choose_fun()|undefined)
+        -> riak_core_ring:riak_core_ring().
+full_rebalance(Ring, HeadNode, ChooseFun) ->
+    case ChooseFun of
         choose_claim_v2 ->
             sequential_claim(Ring, HeadNode);
         choose_claim_v3 ->

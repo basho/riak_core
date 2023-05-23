@@ -28,7 +28,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--export([remove_from_cluster/2, remove_from_cluster/3, remove_from_cluster/4]).
+-export([remove_from_cluster/2, remove_from_cluster/3, remove_from_cluster/5]).
 
 remove_from_cluster(Ring, ExitingNode) ->
     remove_from_cluster(
@@ -37,10 +37,12 @@ remove_from_cluster(Ring, ExitingNode) ->
 remove_from_cluster(Ring, ExitingNode, Seed) ->
     ForceRebalance =
         app_helper:get_env(riak_core, full_rebalance_onleave, false),
-    remove_from_cluster(Ring, ExitingNode, Seed, ForceRebalance).
+    ChooseFun =
+        app_helper:get_env(riak_core, choose_claim_fun),
+    remove_from_cluster(Ring, ExitingNode, Seed, ForceRebalance, ChooseFun).
 
 
-remove_from_cluster(Ring, ExitingNode, Seed, ForceRebalance) ->
+remove_from_cluster(Ring, ExitingNode, Seed, ForceRebalance, ChooseFun) ->
     % Transfer indexes to other nodes...
     Owners = riak_core_ring:all_owners(Ring),
     Members = riak_core_ring:claiming_members(Ring),
@@ -71,7 +73,8 @@ remove_from_cluster(Ring, ExitingNode, Seed, ForceRebalance) ->
                                 end,
                                 Ring,
                                 Owners),
-                riak_core_membership_claim:full_rebalance(TempRing, HN)
+                riak_core_membership_claim:full_rebalance(
+                    TempRing, HN, ChooseFun)
         end,
     ExitRing.
 
