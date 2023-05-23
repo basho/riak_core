@@ -434,11 +434,14 @@ worth_brute_force(RingSize, V) ->
        true -> no_brute_force
     end.
 
-maybe_brute_force(Ring, NVals) ->
+maybe_brute_force(Ring, NVals, Options) ->
     case worth_brute_force(ring_size(Ring), violations(Ring, NVals)) of
-        brute_force  -> brute_force(Ring, NVals);
-        node_only -> brute_force(Ring, NVals, [node_only]);
-        no_brute_force -> Ring
+        brute_force ->
+            brute_force(Ring, NVals, Options);
+        node_only ->
+            brute_force(Ring, NVals, [node_only|Options]);
+        no_brute_force ->
+            Ring
     end.
 
 
@@ -472,7 +475,7 @@ solve(RingSize, Config, NValsMap, Options) ->
             %% Should not ask for this case
             if NoBruteForce -> BigRingD;
                AlwaysBruteForce -> brute_force(BigRingD, NVals);
-               true -> maybe_brute_force(BigRingD, NVals)
+               true -> maybe_brute_force(BigRingD, NVals, [])
             end;
         _       ->
             BigRingI  = solve_node_insertions(Cycle(Rounds), NVals, Extras),
@@ -488,7 +491,7 @@ solve(RingSize, Config, NValsMap, Options) ->
             end,
             if NoBruteForce -> BFRing;
                AlwaysBruteForce -> brute_force(BigRingD, NVals);
-               true -> maybe_brute_force(BFRing, NVals)
+               true -> maybe_brute_force(BFRing, NVals, [])
             end
     end.
 
@@ -571,7 +574,7 @@ update(OldRing, Config, NValsMap) ->
     ToRemove = OldNodes -- NewNodes,
     %% Swap in new nodes for old nodes (in a moderately clever way)
     NewRing = swap_in_nodes(OldRing, ToAdd, ToRemove, NVals),
-    maybe_brute_force(NewRing, NVals).
+    maybe_brute_force(NewRing, NVals, [{only_swap, true}]).
 
 swap_in_nodes(Ring, [], [], _NVals) -> Ring;
 swap_in_nodes(Ring, [New | ToAdd], ToRemove, NVals) ->

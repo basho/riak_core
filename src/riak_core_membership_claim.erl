@@ -52,7 +52,7 @@
 %% default is 4.
 
 -module(riak_core_membership_claim).
--export([claim/1, claim/3, claim_until_balanced/2, claim_until_balanced/4]).
+-export([claim/1, claim/3, claim_until_balanced/2, claim_until_balanced/4, full_rebalance/2]).
 -export([default_wants_claim/1, default_wants_claim/2,
          default_choose_claim/1, default_choose_claim/2, default_choose_claim/3,
          default_choose_params/0, default_choose_params/1]).
@@ -111,6 +111,21 @@ claim(Ring) ->
                 {CMod, CFun}
         end,
     claim(Ring, Want, Choose).
+
+-spec full_rebalance(
+    riak_core_ring:riak_core_ring(), node()) -> riak_core_ring:riak_core_ring().
+full_rebalance(Ring, HeadNode) ->
+    case app_helper:get_env(riak_core, choose_claim_fun) of
+        choose_claim_v2 ->
+            sequential_claim(Ring, HeadNode);
+        choose_claim_v3 ->
+            sequential_claim(Ring, HeadNode);
+        choose_claim_v4 ->
+            riak_core_claim_swapping:claim(Ring);
+        _ ->
+            sequential_claim(Ring, HeadNode)
+    end.
+
 
 %% @doc claim/3 is used in tests as it allows for {Mod, Fun, Params} to be
 %% passed in as the choose function, to override selection of defaults from
