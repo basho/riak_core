@@ -74,7 +74,7 @@
 %% Step 3.
 %% Fill the gaps with additional nodes (part of the small ring) if needed
 %% to get to full ring size.
-%% While n-val not reached (zero_violations is false):
+%% While n-val not reached (zero violations is false):
 %%   swap nodes (exchange position) or move nodes
 %%      (moving vnode I to before vnode J).
 %%
@@ -791,14 +791,14 @@ prop_no_locations() ->
             end).
 
 config_gen() ->
-    ?LET(N, choose(1,7), ?LET(M, choose(2, 6), vector(N, choose(M, M + 2)))).
+   ?LET(N, choose(1,7), ?LET(M, choose(2, 6), vector(N, choose(M, M + 2)))).
 
 prop_brute_force_optimize() ->
    in_parallel(
    ?FORALL({Size, Config, NValsMap}, {elements([128, 256, 512]),
                                       config_gen(),
                                       ?LET(N, choose(3, 4), #{node => N, location => default(N, choose(2, N))})},
-    ?IMPLIES(length(Config) >= maps:get(location, NValsMap),
+   ?IMPLIES(length(Config) >= maps:get(location, NValsMap),
             begin
                 NVals = to_nvals(NValsMap),
                 {T1, Ring1} = timer:tc(fun() -> solve(Size, Config, NValsMap, [no_brute_force]) end),
