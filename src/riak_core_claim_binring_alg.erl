@@ -437,10 +437,13 @@ worth_brute_force(RingSize, V) ->
 maybe_brute_force(Ring, NVals, Options) ->
     case worth_brute_force(ring_size(Ring), violations(Ring, NVals)) of
         brute_force ->
+            ?debug("with nval ~p maybe brute force chose brute_force (~p) \n", [NVals, Options]),
             brute_force(Ring, NVals, Options);
         node_only ->
+            ?debug("with nval ~p maybe brute force chose node_only (~p) \n", [NVals, Options]),
             brute_force(Ring, NVals, [node_only|Options]);
         no_brute_force ->
+            ?debug("with nval ~p maybe brute force chose no_brute_force (~p)\n", [NVals, Options]),
             Ring
     end.
 
@@ -574,7 +577,14 @@ update(OldRing, Config, NValsMap) ->
     ToRemove = OldNodes -- NewNodes,
     %% Swap in new nodes for old nodes (in a moderately clever way)
     NewRing = swap_in_nodes(OldRing, ToAdd, ToRemove, NVals),
-    maybe_brute_force(NewRing, NVals, [{only_swap, true}]).
+    case node_v(violations(NewRing, NVals)) > max(64, RingSize div 3) of
+      true ->
+        %% Heuristics. For larger rings, if a third of the ring is misplaced, we can equally well just
+        %% start over by solving from start in next phase
+        NewRing;
+      false ->
+        maybe_brute_force(NewRing, NVals, [swap_only])
+    end.
 
 swap_in_nodes(Ring, [], [], _NVals) -> Ring;
 swap_in_nodes(Ring, [New | ToAdd], ToRemove, NVals) ->

@@ -177,8 +177,9 @@ claim(Ring, Algo, Nval) ->
       {LeavingNodes, v4} ->
         lists:foldl(
           fun(RN, R) ->
-            riak_core_membership_leave:remove_from_cluster(
-              R, RN, rand:seed(exrop, os:timestamp()), true, choose_claim_v4)
+            pp(riak_core_membership_leave,
+               remove_from_cluster,
+               [R, RN, rand:seed(exrop, os:timestamp()), true, choose_claim_v4])
           end,
           Ring,
           LeavingNodes
@@ -335,8 +336,8 @@ leave_node_args(S) ->
    S#state.with_location,
    S#state.claimant].
 
-leave_node_pre(#state{nodes=_Nodes}, [Node, _, Claimant]) ->
-  Claimant /= Node. %% andalso lists:member(Node, Nodes).
+leave_node_pre(#state{nodes = Nodes}, [Node, _, Claimant]) ->
+  Claimant /= Node andalso lists:member(Node, Nodes).
 
 leave_node(Ring, NodeName, _WithLocation, Claimant) ->
   pp(riak_core_ring, leave_member, [Claimant, Ring, NodeName]).
@@ -395,6 +396,8 @@ weight(S, add_located_nodes) when S#state.with_location->
   0;
 weight(S, leave_node) ->
   1 + (length(S#state.committed_nodes) div 4);
+weight(S, claim) when S#state.nodes /= [] ->
+  10;
 weight(_S, _Cmd) -> 1.
 
 
@@ -414,7 +417,7 @@ prop_claim(Options) ->
     undefined -> ets:new(timing, [public, named_table, bag]);
     _ -> ok
   end,
-  ?FORALL({Nval, RingSize, WithLocation}, {choose(2, 5), ringsize(), true},
+  ?FORALL({Nval, RingSize, WithLocation}, {choose(2, 5), ringsize(), bool()},
   ?FORALL(Cmds, commands(?MODULE, initial_state(#{nval => Nval,
                                                   ring_size => RingSize,
                                                   sufficient => Relaxed,
@@ -423,6 +426,7 @@ prop_claim(Options) ->
     put(ring_nr, 0),
     % application:set_env(riak_core, full_rebalance_onleave, true),
     % application:set_env(riak_core, choose_claim_fun, choose_claim_v4),
+    application:set_env(riak_core, target_n_val, Nval),
     {H, S, Res} = run_commands(Cmds),
     Config = lists:sort(to_config(S)),
     measure(length, commands_length(Cmds),
