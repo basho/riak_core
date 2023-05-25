@@ -28,7 +28,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--export([remove_from_cluster/2, remove_from_cluster/3, remove_from_cluster/5]).
+-export([remove_from_cluster/2, remove_from_cluster/3]).
 
 remove_from_cluster(Ring, ExitingNode) ->
     remove_from_cluster(

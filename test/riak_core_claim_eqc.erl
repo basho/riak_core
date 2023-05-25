@@ -185,9 +185,7 @@ claim(Ring, Algo, Nval) ->
       {LeavingNodes, _} ->
         lists:foldl(
           fun(RN, R) ->
-            pp(riak_core_membership_leave,
-               remove_from_cluster,
-               [R, RN, rand:seed(exrop, os:timestamp())])
+            pp(riak_core_membership_leave, remove_from_cluster, [R, RN])
           end,
           Ring,
           LeavingNodes
