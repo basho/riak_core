@@ -59,7 +59,16 @@ remove_from_cluster(Ring, ExitingNode, Seed, ForceRebalance, ChooseFun) ->
     ExitRing =
         case STR of
             {ok, NR} ->
-                NR;
+                case check_balanced_or_wanting(NR) of
+                    true ->
+                        NR;
+                    false ->
+                        lager:warning(
+                            "Leave produced unbalanced ring with no wants "
+                            "Consider enabling full_rebalance_onleave"
+                        ),
+                        NR
+                end;
             _ ->
                 %% re-diagonalize
                 %% first hand off all claims to *any* one else,
@@ -83,6 +92,28 @@ remove_from_cluster(Ring, ExitingNode, Seed, ForceRebalance, ChooseFun) ->
 -else.
 -type transfer_ring() :: riak_core_ring:riak_core_ring().
 -endif.
+
+-spec check_balanced_or_wanting(
+        riak_core_ring:riak_core_ring()) -> boolean().
+check_balanced_or_wanting(Ring) ->
+    Owners = riak_core_ring:all_owners(Ring),
+    Members = riak_core_ring:claiming_members(Ring),
+    MinVal = length(Owners) div length(Members),
+    MaxVal =
+        case length(Owners) rem length(Members) of
+            0 ->
+                MinVal;
+            _ ->
+                MinVal + 1
+        end,
+    Counts = riak_core_membership_claim:get_counts(Members, Owners),
+    case lists:ukeysort(2, Counts) of
+        [{_N, _C}] ->
+            true;
+        [{_LN, LC}|Rest] ->
+            [{_HN, HC}|_Rest] = lists:reverse(Rest),
+            (HC =< MaxVal) or (LC < MinVal)
+    end.
 
 %% @doc Simple transfer of leaving node's vnodes to safe place
 %% Where safe place is any node that satisfies target_n_val for that vnode -
@@ -319,6 +350,11 @@ transfer_needstobesorted_tester(I) ->
     ?assertMatch({13, n4}, lists:keyfind(13, 1, R1)).
 
 simple_transfer_evendistribution_test() ->
+    % This results in an uneven distribution
+    % After the remove, claim will be called.  For this to lead to a
+    % balanced ring there must still be Wants, that will allow for claim to
+    % run.
+    
     R0 = [{0, n1}, {1, n2}, {2, n3}, {3, n4}, {4, n5}, 
             {5, n6}, {6, n7}, {7, n8}, {8, n9}, {9, n10},
             {10, n1}, {11, n2}, {12, n3}, {13, n4}, {14, n5},
@@ -347,7 +383,48 @@ simple_transfer_evendistribution_test() ->
     io:format("NodeCounts ~w~n", [NodeCounts]),
     [{_LN, LC}|Rest] = NodeCounts,
     [{_HN, HC}|_] = lists:reverse(Rest),
-    true = HC - LC == 2.
+    true = HC - LC == 2,
+    true = LC < (length(R1) div 9).
+
+    simple_cluster_t1_test() ->
+        RingSize = 32,
+        TargetN = 4,
+        NodeList = [n1, n2, n3, n4, n5, n6],
+        R0 = riak_core_ring:fresh(RingSize, n1),
+        ?assert(check_balanced_or_wanting(R0)),
+        R1 =
+            lists:foldl(
+                fun(N, AccR) -> riak_core_ring:add_member(n1, AccR, N) end,
+                R0,
+                NodeList -- [n1]),
+        ?assert(check_balanced_or_wanting(R1)),
+        Props = [{target_n_val, TargetN}],
+        RClaim =
+           riak_core_claim_swapping:claim(R1, Props),
+        ?assert(
+            element(
+                1,
+                riak_core_membership_claim:meets_target_n(RClaim, TargetN))),
+        ?assert(check_balanced_or_wanting(RClaim)),
+        Owners = riak_core_ring:all_owners(RClaim),
+        Members = riak_core_ring:claiming_members(RClaim),
+        Counts =
+            lists:keysort(
+                2, 
+                riak_core_membership_claim:get_counts(Members, Owners)),
+        {LN, LC} = lists:nth(1, Counts),
+        {PN, HC} = lists:nth(5, Counts),
+        {HN, HC} = lists:nth(6, Counts),
+        ?assert(LC == 5),
+        ?assert(HC == 6),
+        {LP, LN} = lists:keyfind(LN, 2, Owners),
+        {HP, HN} = lists:keyfind(HN, 2, Owners),
+        RingWithWants =
+            riak_core_ring:transfer_node(LP, HN, RClaim),
+        ?assert(check_balanced_or_wanting(RingWithWants)),
+        RingUnbalancedWithoutWants =
+            riak_core_ring:transfer_node(HP, PN, RClaim),
+        ?assertNot(check_balanced_or_wanting(RingUnbalancedWithoutWants)).
 
 
 -endif.

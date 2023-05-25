@@ -176,7 +176,7 @@ claim(Ring, Algo, Nval) ->
       application:set_env(riak_core, full_rebalance_onleave, true);
     v2 ->
       application:set_env(riak_core, choose_claim_fun, choose_claim_v2),
-      application:set_env(riak_core, full_rebalance_onleave, false)
+      application:set_env(riak_core, full_rebalance_onleave, true)
   end,
   InitialRemoveRing =
     case {riak_core_ring:members(Ring, [leaving]), Algo} of
