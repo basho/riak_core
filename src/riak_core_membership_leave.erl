@@ -28,7 +28,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--export([remove_from_cluster/2, remove_from_cluster/3, remove_from_cluster/5]).
+-export([remove_from_cluster/2, remove_from_cluster/3]).
 
 remove_from_cluster(Ring, ExitingNode) ->
     remove_from_cluster(
@@ -108,8 +108,7 @@ attempt_simple_transfer(Ring, ExitingNode, Seed, Owners, Members) ->
         riak_core_membership_claim:get_counts(Members, Owners),
     RingFun = 
         fun(Partition, Node, R) ->
-            riak_core_ring:transfer_node(Partition, Node, R),
-            R
+            riak_core_ring:transfer_node(Partition, Node, R)
         end,
     simple_transfer(Owners,
                     {RingFun, TargetN, ExitingNode},

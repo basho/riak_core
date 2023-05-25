@@ -167,18 +167,25 @@ claim_pre(S) ->
 
 claim_args(S) ->
   %% v2 does not take leaving nodes into account, but the model does
-  [elements([v4]), S#state.nval].
+  [elements([v2, v4]), S#state.nval].
 
 claim(Ring, Algo, Nval) ->
+  case Algo of
+    v4 ->
+      application:set_env(riak_core, choose_claim_fun, choose_claim_v4),
+      application:set_env(riak_core, full_rebalance_onleave, true);
+    v2 ->
+      application:set_env(riak_core, choose_claim_fun, choose_claim_v2),
+      application:set_env(riak_core, full_rebalance_onleave, false)
+  end,
   InitialRemoveRing =
     case {riak_core_ring:members(Ring, [leaving]), Algo} of
       {[], _} ->
         Ring;
-      {LeavingNodes, v4} ->
+      {LeavingNodes, _} ->
         lists:foldl(
           fun(RN, R) ->
-            riak_core_membership_leave:remove_from_cluster(
-              R, RN, rand:seed(exrop, os:timestamp()), true, choose_claim_v4)
+            pp(riak_core_membership_leave, remove_from_cluster, [R, RN])
           end,
           Ring,
           LeavingNodes
@@ -190,12 +197,15 @@ claim(Ring, Algo, Nval) ->
           claim,
           [InitialRemoveRing,
             {riak_core_membership_claim, wants_claim_v2},
-            {riak_core_claim_swapping, choose_claim_v4, [{target_n_val, Nval}]}])
+           {riak_core_claim_swapping, choose_claim_v4, [{target_n_val, Nval}]}]);
+    v2 ->
+      pp(riak_core_membership_claim,
+          claim,
+          [InitialRemoveRing,
+           {riak_core_membership_claim, wants_claim_v2},
+           {riak_core_membership_claim, choose_claim_v2, [{target_n_val, Nval}]}])
   end.
 
-claim_pre(#state{sufficient = true} = S, [v4, _Nval]) ->
-    %% Sufficient conditions to actually succeed
-    sufficient_conditions(S);
 claim_pre(_, [_, _]) ->
     true.
 
@@ -203,7 +213,7 @@ claim_pre(_, [_, _]) ->
 claim_next(S, NewRing, [_, _]) ->
   S#state{ring = NewRing, plan = S#state.staged_nodes, staged_nodes = []}.
 
-claim_post(#state{nval = Nval, ring_size = RingSize, nodes = Nodes} = S, [_, _], NewRing) ->
+claim_post(#state{nval = Nval, ring_size = RingSize, nodes = Nodes} = S, [Algo, _], NewRing) ->
   Preflists = riak_core_ring:all_preflists(NewRing, Nval),
   LocNval = if Nval > 3 -> Nval - 1;
                true -> Nval end,
@@ -243,10 +253,10 @@ claim_post(#state{nval = Nval, ring_size = RingSize, nodes = Nodes} = S, [_, _],
      eqc_statem:tag(node_count, eq(RiakNodeCount, length(Nodes))),
      eqc_statem:tag(meets_target_n, eq(riak_core_membership_claim:meets_target_n(NewRing, Nval), {true, []})),
      eqc_statem:tag(correct_nodes, eq(chash:members(riak_core_ring:chash(NewRing)), lists:sort(Nodes))),
-     eqc_statem:tag(perfect_pls, eq(ImperfectPLs, [])),
-     eqc_statem:tag(perfect_locations, eq(ImperfectLocations, [])),
+     eqc_statem:tag(perfect_pls, eq(ImperfectPLs, [])) ] ++
+      [ eqc_statem:tag(perfect_locations, eq(ImperfectLocations, [])) || Algo == v4 andalso sufficient_conditions(S)] ++
      %% eqc_statem:tag(few_moves, length(S#state.committed_nodes) =< 1 orelse length(diff_nodes(S#state.ring, NewRing)) < S#state.ring_size div 2),
-     eqc_statem:tag(balanced_ring, BalancedRing)]).
+      [ eqc_statem:tag(balanced_ring, BalancedRing) ]).
 
 claim_features(#state{nodes = Nodes} = S, [Alg, _], Res) ->
   [{claimed_nodes, length(Nodes)},
@@ -335,8 +345,8 @@ leave_node_args(S) ->
    S#state.with_location,
    S#state.claimant].
 
-leave_node_pre(#state{nodes=_Nodes}, [Node, _, Claimant]) ->
-  Claimant /= Node. %% andalso lists:member(Node, Nodes).
+leave_node_pre(#state{nodes = Nodes}, [Node, _, Claimant]) ->
+  Claimant /= Node andalso lists:member(Node, Nodes).
 
 leave_node(Ring, NodeName, _WithLocation, Claimant) ->
   pp(riak_core_ring, leave_member, [Claimant, Ring, NodeName]).
@@ -395,6 +405,8 @@ weight(S, add_located_nodes) when S#state.with_location->
   0;
 weight(S, leave_node) ->
   1 + (length(S#state.committed_nodes) div 4);
+weight(S, claim) when S#state.nodes /= [] ->
+  10;
 weight(_S, _Cmd) -> 1.
 
 
@@ -414,7 +426,7 @@ prop_claim(Options) ->
     undefined -> ets:new(timing, [public, named_table, bag]);
     _ -> ok
   end,
-  ?FORALL({Nval, RingSize, WithLocation}, {choose(2, 5), ringsize(), true},
+  ?FORALL({Nval, RingSize, WithLocation}, {choose(2, 5), ringsize(), bool()},
   ?FORALL(Cmds, commands(?MODULE, initial_state(#{nval => Nval,
                                                   ring_size => RingSize,
                                                   sufficient => Relaxed,
@@ -423,6 +435,7 @@ prop_claim(Options) ->
     put(ring_nr, 0),
     % application:set_env(riak_core, full_rebalance_onleave, true),
     % application:set_env(riak_core, choose_claim_fun, choose_claim_v4),
+    application:set_env(riak_core, target_n_val, Nval),
     {H, S, Res} = run_commands(Cmds),
     Config = lists:sort(to_config(S)),
     measure(length, commands_length(Cmds),
