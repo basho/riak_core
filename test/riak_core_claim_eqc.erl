@@ -208,9 +208,6 @@ claim(Ring, Algo, Nval) ->
            {riak_core_membership_claim, choose_claim_v2, [{target_n_val, Nval}]}])
   end.
 
-claim_pre(#state{sufficient = true} = S, [v4, _Nval]) ->
-    %% Sufficient conditions to actually succeed
-    sufficient_conditions(S);
 claim_pre(_, [_, _]) ->
     true.
 
@@ -259,7 +256,7 @@ claim_post(#state{nval = Nval, ring_size = RingSize, nodes = Nodes} = S, [Algo, 
      eqc_statem:tag(meets_target_n, eq(riak_core_membership_claim:meets_target_n(NewRing, Nval), {true, []})),
      eqc_statem:tag(correct_nodes, eq(chash:members(riak_core_ring:chash(NewRing)), lists:sort(Nodes))),
      eqc_statem:tag(perfect_pls, eq(ImperfectPLs, [])) ] ++
-      [ eqc_statem:tag(perfect_locations, eq(ImperfectLocations, [])) || Algo == v4 ] ++
+      [ eqc_statem:tag(perfect_locations, eq(ImperfectLocations, [])) || Algo == v4 andalso sufficient_conditions(S)] ++
      %% eqc_statem:tag(few_moves, length(S#state.committed_nodes) =< 1 orelse length(diff_nodes(S#state.ring, NewRing)) < S#state.ring_size div 2),
       [ eqc_statem:tag(balanced_ring, BalancedRing) ]).
 
