@@ -583,7 +583,7 @@ update(OldRing, Config, NValsMap) ->
         %% start over by solving from start in next phase
         NewRing;
       false ->
-        maybe_brute_force(NewRing, NVals, [swap_only])
+        maybe_brute_force(NewRing, NVals, [{only_swap, true}])
     end.
 
 swap_in_nodes(Ring, [], [], _NVals) -> Ring;

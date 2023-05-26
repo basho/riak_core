@@ -314,6 +314,9 @@
 %% all nodes.
 %% Please carefully consider any cluster plan created with this option before
 %% committing
+%% If cluster planning with locations enabled, then `full_rebalance_onleave`
+%% should also be enabled.  With claim_v4 this should result in a cluster
+%% plan which is correct, but also relatively efficient.
 {mapping, "full_rebalance_onleave", "riak_core.full_rebalance_onleave", [
     {datatype, flag},
     {default, off}
