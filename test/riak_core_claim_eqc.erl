@@ -16,6 +16,8 @@
 
 -module(riak_core_claim_eqc).
 
+-ifdef(EQC).
+
 -include_lib("eqc/include/eqc.hrl").
 -include_lib("eqc/include/eqc_statem.hrl").
 
@@ -942,3 +944,5 @@ solution_list() ->
    {512,[5,5,4,4,5,1],#{location => 2,node => 2}},
    {512,[5,6,4,3],#{location => 3,node => 3}},
    {512,[6,5,4,4],#{location => 2,node => 2}}].
+
+-endif.
