@@ -188,8 +188,7 @@ where `n3` is indeed removed. (This typical example unfortunately requires a lot
 # Legacy: no locations
 
 The claim algorithms version 1 to 3 that have been used in Riak before, do not consider locations. There the goal is to just consider the n-val for nodes. The new algorithm also
-supports that, such that if you have no locations, you can use this newer algorithm. In fact, you can just configure to use this new claim algorithm and
-run as usual. The module `riak_code_claim_swapping` checks whether you have defined locations and if not, it puts all the nodes in one location.
+supports that, such that if you have no locations, you can use this newer algorithm. In fact, you can just configure to use this new claim algorithm and run as usual. The module `riak_code_claim_swapping` checks whether you have defined locations and if not, it puts all the nodes in one location.
 
 Effectively, the `solve` and `update` function are called with `{NVal, 1}` instead of `NVal` as argument, where the second element of the tuple is the location n-val.
 ```
@@ -197,6 +196,12 @@ BinRing = riak_core_claim_binring_alg:solve(16, [4], {2,1}).
 io:format("~s\n", [riak_core_claim_binring_alg:show(BinRing, {2, 1})]).
 A3 A1 A2 A4 A1 A2 A3 A4 A1 A2 A3 A4 A1 A2 A3 A4 (0 violations)
 ```
+
+# Different target n_vals - nodes and locations
+
+The default setting is to have a target_n_val of 4 for nodes, and a target_n_val of 3 for locations.  There will be some situations though, where a more optimal configuration would have been found by increasing the target_n_vals, and in particular matching the location and node n_val.  With higher n_vals there is a higher chance of an unsolveable configuration, and when the `riak admin cluster plan` function is called the operator would be notified of these violations.  In that case it will be possible to clear the plan, change these settings on the claimaint node (indicated with a `(C)` in the plan), and re-plan with alternative settings - to see if the outcome is preferable, perhaps as it reduces the number of required transfers.
+
+The plan function under claim_v4 will always return the same answer with the same configuration.  So reverting any changes and re-planning will return to the original plan.
 
 # Solvable configurations
 
