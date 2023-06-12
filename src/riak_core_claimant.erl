@@ -43,7 +43,9 @@
          get_bucket_type/2,
          get_bucket_type/3,
          bucket_type_iterator/0,
-         set_node_location/2]).
+         set_node_location/2,
+        update_v4_solutions/1,
+        update_v4_cache/1]).
 -export([reassign_indices/1]). % helpers for claim sim
 
 %% gen_server callbacks
@@ -62,21 +64,30 @@
 %%   {Ring, NewRing} where NewRing = f(Ring)
 -type ring_transition() :: {riak_core_ring(), riak_core_ring()}.
 
+-type v4_solution() ::
+    {{binring_solve|binring_update,
+        {binary()|pos_integer(),
+            list(non_neg_integer()),
+            #{location := pos_integer(), node := pos_integer()}}},
+        binary()}.
+
+-export_type([v4_solution/0]).
+
 -record(state, {
-          last_ring_id,
-          %% The set of staged cluster changes
-          changes :: [{node(), action()}],
+            last_ring_id,
+            %% The set of staged cluster changes
+            changes :: [{node(), action()}],
 
-          %% Ring computed during the last planning stage based on
-          %% applying a set of staged cluster changes. When commiting
-          %% changes, the computed ring must match the previous planned
-          %% ring to be allowed.
-          next_ring :: riak_core_ring()|undefined,
+            %% Ring computed during the last planning stage based on
+            %% applying a set of staged cluster changes. When commiting
+            %% changes, the computed ring must match the previous planned
+            %% ring to be allowed.
+            next_ring :: riak_core_ring()|undefined,
 
-          %% Random number seed passed to remove_node to ensure the
-          %% current randomized remove algorithm is deterministic
-          %% between plan and commit phases
-          seed}).
+            %% Random number seed passed to remove_node to ensure the
+            %% current randomized remove algorithm is deterministic
+            %% between plan and commit phases
+            seed}).
 
 -define(ROUT(S,A),ok).
 %%-define(ROUT(S,A),?debugFmt(S,A)).
@@ -113,9 +124,13 @@ plan() ->
 %%      A commit is only allowed to succeed if the ring is ready and if the
 %%      current set of changes matches those computed by the most recent
 %%      call to plan/0.
--spec commit() -> ok | {error, term()}.
+-spec commit() -> ok | {error, term()} | error.
 commit() ->
     gen_server:call(claimant(), commit, infinity).
+
+-spec update_v4_solutions(v4_solution()) -> ok.
+update_v4_solutions(V4Solution) ->
+    gen_server:cast(?MODULE, {update_v4_solutions, V4Solution}).
 
 %% @doc Stage a request for `Node' to leave the cluster. If committed, `Node'
 %%      will handoff all of its data to other nodes in the cluster and then
@@ -240,7 +255,16 @@ bucket_type_iterator() ->
     riak_core_metadata:iterator(?BUCKET_TYPE_PREFIX, [{default, undefined},
                                               {resolver, fun riak_core_bucket_props:resolve/2}]).
 
-
+-spec update_v4_cache(v4_solution()) -> ok.
+update_v4_cache(V4Solution) ->
+    Cache =
+        case get(v4_solutions) of
+            RetrievedCache when is_list(RetrievedCache) ->
+                RetrievedCache;
+            _ ->
+                []
+        end,
+    put(v4_solutions, lists:ukeysort(1, [V4Solution|Cache])).
 
 %%%===================================================================
 %%% Claim sim helpers until refactor
@@ -345,6 +369,10 @@ handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
 
+handle_cast({update_v4_solutions, V4Solution}, State) ->
+    update_v4_cache(V4Solution),
+    ok = riak_core_ring_manager:update_v4_solutions(V4Solution),
+    {noreply, State};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -407,6 +435,7 @@ generate_plan(Changes, Ring, State=#state{seed=Seed}) ->
             {Reply, State2}
     end.
 
+
 %% @private
 %% @doc Commit the set of staged cluster changes. See {@link commit/0}
 %%      for additional details.
@@ -453,8 +482,7 @@ maybe_commit_staged(Ring, NextRing, #state{next_ring=PlannedRing}) ->
         {_, _, false} ->
             {ignore, plan_changed};
         _ ->
-            NewRing0 = riak_core_ring:clear_location_changed(NextRing),
-            NewRing1 = riak_core_ring:increment_vclock(Claimant, NewRing0),
+            NewRing1 = riak_core_ring:increment_vclock(Claimant, NextRing),
             {new_ring, NewRing1}
     end.
 
@@ -672,9 +700,7 @@ same_plan(RingA, RingB) ->
     (riak_core_ring:pending_changes(RingA) == riak_core_ring:pending_changes(RingB)).
 
 schedule_tick() ->
-    Tick = app_helper:get_env(riak_core,
-                              claimant_tick,
-                              10000),
+    Tick = app_helper:get_env(riak_core, claimant_tick, 10000),
     erlang:send_after(Tick, ?MODULE, tick).
 
 tick(PreFetchRing, RingID, State=#state{last_ring_id=LastID}) ->
@@ -1095,12 +1121,14 @@ change({leave, Node}, Ring) ->
     Members = riak_core_ring:all_members(Ring),
     lists:member(Node, Members) orelse throw(invalid_member),
     Ring2 = riak_core_ring:leave_member(Node, Ring, Node),
-    Ring2;
+    Ring3 = update_location_on_leave(Ring2),
+    Ring3;
 change({remove, Node}, Ring) ->
     Members = riak_core_ring:all_members(Ring),
     lists:member(Node, Members) orelse throw(invalid_member),
     Ring2 = riak_core_ring:remove_member(Node, Ring, Node),
-    Ring2;
+    Ring3 = update_location_on_leave(Ring2),
+    Ring3;
 change({{replace, _NewNode}, Node}, Ring) ->
     %% Just treat as a leave, reassignment happens elsewhere
     Ring2 = riak_core_ring:leave_member(Node, Ring, Node),
@@ -1121,6 +1149,18 @@ change({abort_resize, _Node}, Ring) ->
     riak_core_ring:set_pending_resize_abort(Ring);
 change({{set_location, Location}, Node}, Ring) ->
     riak_core_ring:set_node_location(Node, Location, Ring).
+
+update_location_on_leave(Ring) ->
+    LocationAware =
+        riak_core_location:has_location_set_in_cluster(
+            riak_core_ring:get_nodes_locations(Ring)),
+    case LocationAware of
+        true ->
+            riak_core_ring:force_location_changed(Ring, true);
+        false ->
+            Ring
+    end.
+
 
 internal_ring_changed(Node, CState) ->
     {Changed, CState5} = do_claimant(Node, CState, fun log/2),
@@ -1355,7 +1395,7 @@ update_ring(CNode, CState, Replacing, Seed, Log, false) ->
 
     %% Rebalance the ring as necessary. If pending changes exist ring
     %% is not rebalanced
-    Next3 = rebalance_ring(CNode, CState4),
+    {Next3, LocationChanged} = rebalance_ring(CState4),
     Log(debug,{"Pending ownership transfers: ~b~n",
                [length(riak_core_ring:pending_changes(CState4))]}),
 
@@ -1373,7 +1413,10 @@ update_ring(CNode, CState, Replacing, Seed, Log, false) ->
             ?ROUT("Updating ring :: next3 : ~p~n", [Next4]),
             CState5 = riak_core_ring:set_pending_changes(CState4, Next4),
             CState6 = riak_core_ring:increment_ring_version(CNode, CState5),
-            {true, CState6};
+            CState7 =
+                riak_core_ring:force_location_changed(
+                    CState6, LocationChanged),
+            {true, CState7};
         false ->
             {false, CState}
     end;
@@ -1451,21 +1494,34 @@ reassign_indices(CState, Replacing, Seed, Log) ->
     {RingChanged or NextChanged, CState3}.
 
 %% @private
-rebalance_ring(CNode, CState) ->
+-spec rebalance_ring(
+    riak_core_ring:riak_core_ring()) ->
+        {[{non_neg_integer(), node(), node(), list(), awaiting}], boolean()}.
+rebalance_ring(CState) ->
     Next = riak_core_ring:pending_changes(CState),
-    rebalance_ring(CNode, Next, CState).
+    rebalance_ring(Next, CState).
 
-rebalance_ring(_CNode, [], CState) ->
-    CState2 = riak_core_claim:claim(CState),
+rebalance_ring([], CState) ->
+    SW = os:timestamp(),
+    CState2 = riak_core_membership_claim:claim(CState),
+    case CState2 of
+        CState ->
+            ok;
+        CState2 ->
+            lager:info(
+                "Claim algorithm completed in claim_time=~w ms",
+                [timer:now_diff(os:timestamp(), SW) div 1000]
+            )
+    end,
     Owners1 = riak_core_ring:all_owners(CState),
     Owners2 = riak_core_ring:all_owners(CState2),
     Owners3 = lists:zip(Owners1, Owners2),
     Next = [{Idx, PrevOwner, NewOwner, [], awaiting}
             || {{Idx, PrevOwner}, {Idx, NewOwner}} <- Owners3,
                PrevOwner /= NewOwner],
-    Next;
-rebalance_ring(_CNode, Next, _CState) ->
-    Next.
+    {Next, riak_core_ring:has_location_changed(CState2)};
+rebalance_ring(Next, CState) ->
+    {Next, riak_core_ring:has_location_changed(CState)}.
 
 %% @private
 handle_down_nodes(CState, Next) ->
@@ -1505,13 +1561,16 @@ remove_node(CState, Node, Status, Replacing, Seed, Log) ->
 remove_node(CState, _Node, _Status, _Replacing, _Seed, _Log, []) ->
     CState;
 remove_node(CState, Node, Status, Replacing, Seed, Log, Indices) ->
-    CStateT1 = riak_core_ring:change_owners(CState,
-                                            riak_core_ring:all_next_owners(CState)),
+    CStateT1 =
+        riak_core_ring:change_owners(
+            CState, riak_core_ring:all_next_owners(CState)),
     case orddict:find(Node, Replacing) of
         {ok, NewNode} ->
             CStateT2 = reassign_indices_to(Node, NewNode, CStateT1);
         error ->
-            CStateT2 = riak_core_gossip:remove_from_cluster(CStateT1, Node, Seed)
+            CStateT2 =
+                riak_core_membership_leave:remove_from_cluster(
+                    CStateT1, Node, Seed)
     end,
 
     Owners1 = riak_core_ring:all_owners(CState),

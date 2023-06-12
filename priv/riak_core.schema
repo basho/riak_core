@@ -227,6 +227,83 @@
     hidden
 ]}.
 
+%% @doc Choose claim function
+%% Claim function to be used when handling joins to the cluster.
+%% There are three supported functions:
+%% - choose_claim_v2 (the default) designed for environments without location
+%% awareness as a requirement
+%% - choose_claim_v3 (deprecated) a claim function which treats claim as an
+%% optimisation problem. It creates a number of possible claim plans and
+%% evaluates them for violations, balance and diversity, choosing the 'best'
+%% plan.  claim_v3 is not location aware
+%% - choose_claim_v4 a claim algorithm which refactors v2 to improve location
+%% awareness
+{mapping, "choose_claim_fun", "riak_core.choose_claim_fun", [
+    {commented, "choose_claim_v2"},
+    {datatype, {enum, [choose_claim_v2, choose_claim_v3, choose_claim_v4]}},
+    merge
+]}.
+
+%% @doc Target N Val for Cluster Administration
+%% Cluster change operations such as joins and leaves will use a target_n_val
+%% to control spacing of preflists across physical nodes.  The default value
+%% is 4, which is the default bucket propery for n_val + 1.  This means that
+%% the target for a cluster change operation is to make sure that all preflists
+%% of n_val 3 are on 3 deperate physical devices, even when a single failure
+%% has occurred.
+%% If the target_n_val is not met by a cluster chnage operation, the failure is
+%% not blocking -  a warning will be printed in the cluster plan, but the plan
+%% will not be prevented from being committed.
+%% In some cases, by reducing the target_n_val it may be possible to reduce the
+%% number of transfers necessary to complete a cluster change operation.
+%% In clusters with a large number of nodes, larger target_n_val values can be
+%% supported, and may result to a better spread of load across the cluster
+%% when node failure occurs.
+{mapping, "target_n_val", "riak_core.target_n_val", [
+  {datatype, integer},
+  {default, 4},
+  {validators, ["target_nval_max", "target_nval_min"]},
+  {commented, 4}
+]}.
+
+%% ring_size validators
+{validator, "target_nval_max",
+ "7 and larger are supported, but considered advanced config",
+ fun(Size) ->
+  Size =< 6
+ end}.
+
+{validator, "target_nval_min", "must be at least 1",
+ fun(Size) ->
+  Size >= 1
+ end}.
+
+%% @doc Target Location N Val for Cluster Administration
+%% Cluster change operations such as joins and leaves will use a
+%% target_location_n_val to control spacing of preflists across locations. This
+%% is to support clusters which have a concept of `location` failure as well as
+%% Node failure (e.g. rack awareness is required, or support for AWS placement
+%% groups).
+%% In this case, nodes are assigned to locations, and as well as supporting
+%% the splitting of data replicas across nodes, attempts will also be made
+%% during cluster chnage operations to split preflists across locations.
+%% If the target_location_n_val is not met by a cluster chnage operation, the failure is
+%% not blocking -  a warning will be printed in the cluster plan, but the plan
+%% will not be prevented from being committed.
+%% In some cases, by reducing the target_location_n_val it may be possible to
+%% reduce the number of transfers necessary to complete a cluster change
+%% operation.
+%% In clusters with a large number of nodes, larger target_location_n_val
+%% values can be supported.
+%% If the target_location_nval is greater than the target_nval, the target_nval
+%% will be used.
+{mapping, "target_location_n_val", "riak_core.target_location_n_val", [
+  {datatype, integer},
+  {default, 3},
+  {validators, ["target_nval_max", "target_nval_min"]},
+  {commented, 3}
+]}.
+
 %% @doc On cluster leave - force full rebalance partitions
 %% By default on a cluster leave there will first be an attempt to handoff
 %% vnodes to safe (in terms of target_n_val) locations.  In small clusters,
@@ -237,6 +314,9 @@
 %% all nodes.
 %% Please carefully consider any cluster plan created with this option before
 %% committing
+%% If cluster planning with locations enabled, then `full_rebalance_onleave`
+%% should also be enabled.  With claim_v4 this should result in a cluster
+%% plan which is correct, but also relatively efficient.
 {mapping, "full_rebalance_onleave", "riak_core.full_rebalance_onleave", [
     {datatype, flag},
     {default, off}

@@ -33,24 +33,12 @@
 -define(get(K, PL, D), proplists:get_value(K, PL, D)).
 
 basic_test_() ->
-    {timeout, 60000, [fun basic_default/0,
-                      fun basic_new/0]}.
+    {timeout, 60000, [fun basic_default/0]}.
 
 basic_default() ->
     Opts = [{suffix, "_default"},
             {wc_mf, {riak_core_claim, default_wants_claim}},
             {cc_mf, {riak_core_claim, default_choose_claim}},
-            {target_n_val, 4},
-            {ring_size, 32},
-            {node_count, 8},
-            {node_capacity, 24}
-           ],
-    run(Opts).
-
-basic_new() ->
-    Opts = [{suffix, "_new"},
-            {wc_mf, {riak_core_new_claim, new_wants_claim}},
-            {cc_mf, {riak_core_new_claim, new_choose_claim}},
             {target_n_val, 4},
             {ring_size, 32},
             {node_count, 8},
@@ -96,7 +84,8 @@ run(Opts) ->
                   {Sum, Curr}
           end, Owners1, Owners),
 
-    MeetTargetN = [riak_core_claim:meets_target_n(R, TargetN) || R <- Rings],
+    MeetTargetN =
+        [riak_core_membership_claim:meets_target_n(R, TargetN) || R <- Rings],
 
     FName = io_lib:format("/tmp/rings_~w_~w~s.txt",
                           [RingSize, NodeCount, Suffix]),
