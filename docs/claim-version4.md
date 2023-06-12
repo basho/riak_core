@@ -25,7 +25,7 @@ a mapping is returned that tries to fulfil the following:
 3. all n-val consecutive vnodes in the ring are in different locations.
 4. all n-val consecutive anodes in the ring are on different nodes (which should follow if 3 is true).
 
-It is expected that once a cluster is inititated the ring size and the target n-val will not normally change, hwoever the number of nodes in the cluster will be changed.
+It is expected that once a cluster is inititated the ring size and the target n-val will not normally change, however the number of nodes in the cluster will be changed.
 
 The first, second and fourth requirements cannot be relaxed. But the third one is not guaranteed to be possible at all. In fact, Bb using a SAT solver we identified
 82 impossible configuration for ring size 16 and n-val, 2 or 3.  In case there is no solution possible, the algorithm is supposed to return a placement that fulfils the first two requirements and does some kind of best effort for the third.
