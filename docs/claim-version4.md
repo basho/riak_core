@@ -184,7 +184,7 @@ where `n3` is indeed removed. (This typical example unfortunately requires a lot
 The claim algorithms version 1 to 3 that have been used in Riak before, do not consider locations. There the goal is to just consider the n-val for nodes. The new algorithm also
 supports that, such that if you have no locations, you can use this newer algorithm. In fact, you can just configure to use this new claim algorithm and run as usual. The module `riak_code_claim_swapping` checks whether you have defined locations and if not, it puts all the nodes in one location.
 
-Effectively, the `solve` and `update` function are called with `{NVal, 1}` instead of `NVal` as argument, where the second element of the tuple is the location n-val.
+Effectively, the `solve` and `update` function are called with `#{node => NVal, location => 1}` instead of `NVal` as argument.
 ```
 BinRing = riak_core_claim_binring_alg:solve(16, [4], {2,1}).
 io:format("~s\n", [riak_core_claim_binring_alg:show(BinRing, {2, 1})]).
