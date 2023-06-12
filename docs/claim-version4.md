@@ -186,7 +186,7 @@ supports that, such that if you have no locations, you can use this newer algori
 
 Effectively, the `solve` and `update` function are called with `#{node => NVal, location => 1}` instead of `NVal` as argument.
 ```
-BinRing = riak_core_claim_binring_alg:solve(16, [4], {2,1}).
+BinRing = riak_core_claim_binring_alg:solve(16, [4], #{node => 2, location => 1}).
 io:format("~s\n", [riak_core_claim_binring_alg:show(BinRing, {2, 1})]).
 A3 A1 A2 A4 A1 A2 A3 A4 A1 A2 A3 A4 A1 A2 A3 A4 (0 violations)
 ```
