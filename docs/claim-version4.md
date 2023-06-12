@@ -1,17 +1,16 @@
 # Riak Core Claim Version 4
 
-This post is about a new version of riak core's claim algorithm
-[riak-core's](https://github.com/basho/riak_core).
+This post is about a new version of [riak-core's](https://github.com/basho/riak_core) claim algorithm.
 
 An earlier post of [Russell](https://github.com/basho/riak_core/blob/develop/docs/claim-fixes.md) describes the present claim algorithm (version 2) in detail. That post is mainly about fixes performed to make things work with so called tail violations.
 
 Recent enhancement of riak core in the form of [location awareness](https://github.com/basho/riak_core/blob/develop/docs/rack-awareness.md) have made it interesting to revisit and redesign the claim algorithm.
 
-Riak is a replicated database. By default it stores three replicas of every key/value. The replication factor is called n-val meaning there are n replicas. If value has to be stored or retrieved, then the hash of that corresponds to one particular vnode in the ring. It is stored in that vnode and the n-1 next vnodes in the ring. When a vnode is unavailable (i.e. due to a failure on the node which hosts it), the node which owns the next vnode in the ring is required to start a fallback vnode as a replacement.
+Riak is a replicated database. By default it stores three replicas of every key/value. The replication factor is called n-val meaning there are n replicas. If value has to be stored or retrieved, then the hash of that corresponds to one particular vnode in the ring (the mth vnode). It is stored in that vnode and the n-1 next vnodes in the ring. If any of the vnodes is unavailable (i.e. due to a failure on the node which hosts it), the node which owns the next vnode in the ring (i.e. the m + n vnode) is required to start a fallback vnode as a replacement.
 
 Therefore it is important to allocate the vnodes in the ring to the nodes in a cluster, such that n-val + 1 consecutive vnodes are not the same physical node. After all, if a physical node is down and the next vnode in the ring maps to the same physical node, then there is little redundancy.  
 
-Taking this idea one step further, one may imagine a perfect ring with n-val replication, but two of the physical nodes are in the same "location", where location can be a rack or a data center. What if something happens that disconnects two consecutive physical nodes at once? Wouldn't it be nice if one could also take the location into consideration when placing the nodes in the ring, such that the each preflist in the ring conveniently spreads over locations?
+Taking this idea one step further, one may imagine a perfect ring with n-val replication, but two of the physical nodes are in the same "location", where location can be a rack or a data center. What if something happens within that location that disconnects two consecutive physical nodes at once? Wouldn't it be nice if one could also take the location into consideration when placing the nodes in the ring, such that the each preflist in the ring conveniently spreads over locations?
 
 We came up with a way to do so.
 
@@ -58,9 +57,7 @@ provided ring.
 
 ## Update
 
-When Riak is running, then it has an existing placement of nodes and locations
-in the ring. In that circumstance, one uses update to change the ring to a
-new configuration.
+When Riak is running, then it has an existing placement of nodes and locations in the ring. In that circumstance, one uses update to change the ring to a new configuration.
 
 ```
 Disclaimer:
@@ -68,8 +65,7 @@ Disclaimer:
 We have only considered updating the configuration. It would work to update the n-val, but not the ring-size.
 ```
 
-One can add a new location with new nodes, or add/remove nodes from existing locations. Again, a best-effort approach is provided.
-In this best effort approach, the amount of transfers needed from one node to the other is kept into consideration.
+One can add a new location with new nodes, or add/remove nodes from existing locations. Again, a best-effort approach is provided.  In this best effort approach, the amount of transfers needed from one node to the other is kept into consideration.
 
 ### Adding a node to a location
 
@@ -86,8 +82,7 @@ A1 B2 A1 B2 A1 C1 B1 C2 B1 C1 B1 C2 A1 C1 B2 C2 (0 violations)
 
 Clearly, the new ring is of size 16 and is balanced (4 A1, 3 B1, 3 B2, 3 C1 and 3 C2).
 
-It respects n-val 2, because no consecutive location is the same, not even when
-we wrap around.
+It respects n-val 2, because no consecutive location is the same, not even when we wrap around.
 
 Another observation here is that 11 of the nodes have the same location in the ring. Clearly, some transfer is needed, but if we had used the `solve` approach to compute the new ring, we would have been presented with:
 ```
@@ -97,8 +92,7 @@ In which only 4 nodes have the same place in the ring. *Minimising the number of
 
 ### Remove a node from a location (leave)
 
-We can use the same update function to remove a node from a location, which in Riak terms is called a "leave". The node is removed from the ring data structure,
-but the process of copying the data to create a new stable ring is a process that takes time, only after which the node is actually removed.  
+We can use the same update function to remove a node from a location, which in Riak terms is called a "leave". The node is removed from the ring data structure, but the process of copying the data to create a new stable ring is a process that takes time, only after which the node is actually removed.  
 
 Assume we want to remove the node we have just added above. In other words, we return to the initial configuration `[1, 1, 2]`:
 ```
@@ -138,7 +132,7 @@ In Riak the claim algorithm is configurable via `wants_claim_fun` and `choose_cl
 
 The main entry for claim is `riak_core_membership_claim:claim/1`. This in turn calls `riak_code_claim_swapping:choose_claim_v4/3`. This is just a wrapper to come to the real API, `riak_code_claim_swapping:claim/2` which takes the present ring and the n-val as input.
 
-Riak always starts from an existing ring to compute the placement (in case of a new node, the initial consists of that same node at each position). Therefore, we start with an update... if however `update` cannot find a solution without violations, we fall back to `solve`.
+Riak always starts from an existing ring to compute the placement (in case of a new node, the initial consists of that same node at each position). Therefore, we start with an update. if however `update` cannot find a solution without violations, we fall back to `solve`.
 
 ### Mapping node/location names
 
