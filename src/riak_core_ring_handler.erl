@@ -178,12 +178,7 @@ startable_vnodes(Mod, Ring) ->
             Excl = ModExcl -- riak_core_ring:disowning_indices(Ring, node()),
             case riak_core_ring:random_other_index(Ring, Excl) of
                 no_indices ->
-                    case length(Excl) =:= riak_core_ring:num_partitions(Ring) of
-                        true ->
-                            [];
-                        false ->
-                            riak_core_ring:my_indices(Ring)
-                    end;
+                    riak_core_ring:my_indices(Ring);
                 RO ->
                     [RO | riak_core_ring:my_indices(Ring)]
             end

@@ -88,7 +88,8 @@
          run_fixups/3,
          set_cluster_name/1,
          stop/0,
-         is_stable_ring/0]).
+         is_stable_ring/0,
+        update_v4_solutions/1]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
         terminate/2, code_change/3]).
@@ -238,8 +239,12 @@ do_write_ringfile(Ring) ->
         Dir ->
             FN = generate_ring_filename(
                 Dir, app_helper:get_env(riak_core, cluster_name)),
-            false = riak_core_ring:check_lastgasp(Ring),
-            do_write_ringfile(Ring, FN)
+            case riak_core_ring:check_lastgasp(Ring) of
+                false ->
+                    do_write_ringfile(Ring, FN);
+                _ ->
+                    {error, last_gasp}
+            end
     end.
 
 generate_ring_filename(Dir, ClusterName) ->
@@ -336,6 +341,10 @@ prune_ringfiles() ->
 %% @private (only used for test instances)
 stop() ->
     gen_server:cast(?MODULE, stop).
+
+-spec update_v4_solutions(riak_core_claimant:v4_solution()) -> ok.
+update_v4_solutions(V4Solution) ->
+    gen_server:cast(?MODULE, {update_v4_solutions, V4Solution}).
 
 
 %% ===================================================================
@@ -437,6 +446,9 @@ handle_call(is_stable_ring, _From, State) ->
     {IsStable, _DeltaMS} = is_stable_ring(State),
     {reply, IsStable, State}.
 
+handle_cast({update_v4_solutions, V4Solution}, State) ->
+    riak_core_claimant:update_v4_cache(V4Solution),
+    {noreply, State};
 handle_cast(stop, State) ->
     {stop,normal,State};
 

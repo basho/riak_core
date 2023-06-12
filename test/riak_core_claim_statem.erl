@@ -157,7 +157,11 @@ claim_args(_From, _To, #state{ring=Ring}) ->
 
 %% @doc claim - The actual operation
 claim(Ring) ->
-    R =riak_core_claim:claim(Ring, {riak_core_claim, wants_claim_v2}, {riak_core_claim, choose_claim_v2}),
+    R =
+        riak_core_membership_claim:claim(
+            Ring,
+            {riak_core_claim, wants_claim_v2},
+            {riak_core_claim, choose_claim_v2}),
     R.
 
 %% @doc claim_next - Next state function

@@ -207,9 +207,9 @@ do_generate_ring(Size, ContributorNodes) ->
   claim(NewRing).
 
 claim(Ring) ->
-  WantsClaimFun = {riak_core_claim, default_wants_claim},
-  ChooseClaimFun = {riak_core_claim, default_choose_claim},
-  riak_core_claim:claim(Ring, WantsClaimFun, ChooseClaimFun).
+  WantsClaimFun = {riak_core_membership_claim, default_wants_claim},
+  ChooseClaimFun = {riak_core_membership_claim, default_choose_claim},
+  riak_core_membership_claim:claim(Ring, WantsClaimFun, ChooseClaimFun).
 
 generate_site_names(Count) ->
   lists:map(fun(Name) -> binary_to_list(Name) end,

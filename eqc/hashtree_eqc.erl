@@ -185,7 +185,7 @@ command(_S = #state{started = true, tree_id = TreeId,
 %% to make sure the iterator code is fully exercised.
 %%
 %% Store the hashtree records in the process dictionary under keys 't1' and 't2'.
-%% 
+%%
 start(Params, [TreeId | ExtraIds], Tree1OpenOrEmpty, Tree2OpenOrEmpty) ->
     {Segments, Width, MemLevels} = Params,
     %% Return now so we can store symbolic value in procdict in next_state call
@@ -266,7 +266,7 @@ update_snapshot(T, S) ->
     ok.
 
 
-%% 
+%%
 %% Wrap the hashtree:update_perform call and erase the snapshot hashtree state.
 %% Should only happen if a snapshot state exists.
 %%
@@ -522,7 +522,7 @@ prop_correct() ->
                                                Res0
                                        end,
                                  %% Clean up after the test
-                                 case Res of 
+                                 case Res of
                                      ok -> %  if all went well, remove leveldb files
                                          catch cleanup_hashtree(get(t1)),
                                          catch cleanup_hashtree(get(t2));

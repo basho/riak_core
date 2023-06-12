@@ -83,6 +83,7 @@
          members/2,
          has_location_changed/1,
          clear_location_changed/1,
+         force_location_changed/2,
          set_node_location/3,
          get_nodes_locations/1,
          set_claimant/2,
@@ -334,12 +335,16 @@ members(?CHSTATE{members=Members}, Types) ->
 
 -spec has_location_changed(chstate()) -> boolean().
 has_location_changed(State) ->
-  {ok, Value} = get_meta('$nodes_locations_changed', false, State),
-  Value.
+    {ok, Value} = get_meta('$nodes_locations_changed', false, State),
+    Value.
 
 -spec clear_location_changed(chstate()) -> chstate().
 clear_location_changed(State) ->
-  update_meta('$nodes_locations_changed', false, State).
+    update_meta('$nodes_locations_changed', false, State).
+
+-spec force_location_changed(chstate(), boolean()) -> chstate().
+force_location_changed(State, Boolean) ->
+    update_meta('$nodes_locations_changed', Boolean, State).
 
 -spec set_node_location(node(), string(), chstate()) -> chstate().
 set_node_location(Node, Location, State) ->
