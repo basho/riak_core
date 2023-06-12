@@ -27,7 +27,7 @@ a mapping is returned that tries to fulfil the following:
 
 It is expected that once a cluster is inititated the ring size and the target n-val will not normally change, however the number of nodes in the cluster will be changed.
 
-The first, second and fourth requirements cannot be relaxed. But the third one is not guaranteed to be possible at all. In fact, Bb using a SAT solver we identified
+The first, second and fourth requirements cannot be relaxed. But the third one is not guaranteed to be possible at all. In fact, By using a SAT solver we identified
 82 impossible configuration for ring size 16 and n-val, 2 or 3.  In case there is no solution possible, the algorithm is supposed to return a placement that fulfils the first two requirements and does some kind of best effort for the third.
 
 In cases where the third requirement cannot be supported for a given n-val, it should also be possible have an n-val for locations that is less than the n-val for nodes, to create a relaxed condition which can then be met.
