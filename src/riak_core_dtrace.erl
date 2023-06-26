@@ -52,16 +52,8 @@ dtrace(ArgList) ->
         undefined ->
             case application:get_env(riak_core, dtrace_support) of
                 {ok, true} ->
-                    case string:to_float(erlang:system_info(version)) of
-                        {5.8, _} ->
-                            %% R14B04
-                            put(?MAGIC, dtrace),
-                            if ArgList == enabled_check -> true;
-                               true                     -> dtrace(ArgList)
-                            end;
-                        {Num, _} when Num > 5.8 ->
-                            %% R15B or higher, though dyntrace option
-                            %% was first available in R15B01.
+                    case dyntrace:available() of
+                        true ->
                             put(?MAGIC, dyntrace),
                             if ArgList == enabled_check -> true;
                                true                     -> dtrace(ArgList)
@@ -77,10 +69,6 @@ dtrace(ArgList) ->
         dyntrace ->
             if ArgList == enabled_check -> true;
                true                     -> erlang:apply(dyntrace, p, ArgList)
-            end;
-        dtrace ->
-            if ArgList == enabled_check -> true;
-               true                     -> erlang:apply(dtrace, p, ArgList)
             end;
         _ ->
             false
@@ -119,9 +107,11 @@ dtrace(Int0, Int1, Ints, String0, String1, Strings)
             dtrace([Int0, Int1] ++ Ints ++ [S0, String1] ++ Strings)
     end.
 
+-spec enabled() -> boolean().
 enabled() ->
     dtrace(enabled_check).
 
+-spec put_tag(iodata() | undefined) -> boolean() | undefined.
 put_tag(Tag) ->
     case enabled() of
         true ->
@@ -129,7 +119,7 @@ put_tag(Tag) ->
             put(?DTRACE_TAG_KEY, FTag),
             dyntrace:put_tag(FTag);
         false ->
-            ok
+            undefined
     end.
 
 timeit0(ArgList) ->
@@ -137,12 +127,7 @@ timeit0(ArgList) ->
         erlang:apply(dyntrace, p, ArgList)
     catch
         error:undef ->
-            try
-                erlang:apply(dtrace, p, ArgList)
-            catch
-                error:undef ->
-                    false
-            end
+            false
     end.
 
 timeit_mg(ArgList) ->
@@ -150,28 +135,14 @@ timeit_mg(ArgList) ->
         undefined ->
             case application:get_env(riak_core, dtrace_support) of
                 {ok, true} ->
-                    case string:to_float(erlang:system_info(version)) of
-                        {5.8, _} ->
-                            %% R14B04
-                            riak_core_mochiglobal:put(?MAGIC, dtrace),
-                            timeit_mg(ArgList);
-                        {Num, _} when Num > 5.8 ->
-                            %% R15B or higher, though dyntrace option
-                            %% was first available in R15B01.
-                            riak_core_mochiglobal:put(?MAGIC, dyntrace),
-                            timeit_mg(ArgList);
-                        _ ->
-                            riak_core_mochiglobal:put(?MAGIC, unsupported),
-                            false
-                    end;
+                    riak_core_mochiglobal:put(?MAGIC, dyntrace),
+                    timeit_mg(ArgList);
                 _ ->
                     riak_core_mochiglobal:put(?MAGIC, unsupported),
                     false
             end;
         dyntrace ->
             erlang:apply(dyntrace, p, ArgList);
-        dtrace ->
-            erlang:apply(dtrace, p, ArgList);
         unsupported ->
             false
     end.
