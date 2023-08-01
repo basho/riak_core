@@ -214,10 +214,10 @@ default_choose_claim(Ring) ->
     default_choose_claim(Ring, node()).
 
 default_choose_claim(Ring, Node) ->
-    choose_claim_v2(Ring, Node).
+    riak_core_claim_swapping:choose_claim_v4(Ring, Node).
 
 default_choose_claim(Ring, Node, Params) ->
-    choose_claim_v2(Ring, Node, Params).
+    riak_core_claim_swapping:choose_claim_v4(Ring, Node, Params).
 
 %% @doc Want a partition if we currently have less than floor(ringsize/nodes).
 -spec default_wants_claim(

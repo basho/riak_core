@@ -230,16 +230,17 @@
 %% @doc Choose claim function
 %% Claim function to be used when handling joins to the cluster.
 %% There are three supported functions:
-%% - choose_claim_v2 (the default) designed for environments without location
-%% awareness as a requirement
+%% - choose_claim_v2 (legacy) simple algorithm initially designed for
+%% environments without location awareness as a requirement
 %% - choose_claim_v3 (deprecated) a claim function which treats claim as an
 %% optimisation problem. It creates a number of possible claim plans and
 %% evaluates them for violations, balance and diversity, choosing the 'best'
 %% plan.  claim_v3 is not location aware
-%% - choose_claim_v4 a claim algorithm which refactors v2 to improve location
-%% awareness
+%% - choose_claim_v4 (the default) a claim algorithm which refactors v2 to
+%% improve location awareness, as well as optimising to reduce cluster
+%% transitions in non-location scenarios
 {mapping, "choose_claim_fun", "riak_core.choose_claim_fun", [
-    {commented, "choose_claim_v2"},
+    {commented, "choose_claim_v4"},
     {datatype, {enum, [choose_claim_v2, choose_claim_v3, choose_claim_v4]}},
     merge
 ]}.

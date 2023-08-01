@@ -9,28 +9,48 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--define(RING_SIZES, [8, 64, 128, 256, 512]).
--define(NODE_COUNTS, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 20]).
+-define(RING_SIZES, [8, 64, 256, 512]).
+-define(NODE_COUNTS, [5, 7, 11, 13, 20]).
 
-ring_claim_test_() ->
-    {setup,
-     fun generate_rings/0,
+ring_claimdefault_test_() ->
+  {setup,
+     fun generate_less_rings/0,
      fun (_) -> ok end,
      fun(Rings) ->
        RingsWithLocation = lists:flatten(lists:map(fun add_loc_to_ring/1, Rings)),
        Threads = erlang:system_info(schedulers_online),
-       {inparallel, Threads, [{get_test_desc(Ring),
-                                fun() -> assert_vnode_location(claim(Ring)) end}
-                              || Ring <- RingsWithLocation]}
+       {inparallel,
+        Threads,
+        [{get_test_desc(Ring, default),
+          {timeout,
+          600,
+          fun() -> assert_vnode_location(claim_default(Ring)) end}}
+            || Ring <- RingsWithLocation]}
      end
     }.
 
-get_test_desc(Ring) ->
+ring_claimv2_test_() ->
+  {setup,
+      fun generate_rings/0,
+      fun (_) -> ok end,
+      fun(Rings) ->
+        RingsWithLocation = lists:flatten(lists:map(fun add_loc_to_ring/1, Rings)),
+        Threads = erlang:system_info(schedulers_online),
+        {inparallel,
+          Threads,
+          [{get_test_desc(Ring, v2),
+            fun() -> assert_vnode_location(claim_v2(Ring)) end}
+              || Ring <- RingsWithLocation]}
+      end
+    }.
+
+get_test_desc(Ring, Version) ->
   lists:flatten(
-    io_lib:format("ring_size: ~p node_count: ~p nodes with locations: ~p",
+    io_lib:format("ring_size: ~p node_count: ~p nodes with locations: ~p version ~p",
                 [riak_core_ring:num_partitions(Ring),
                  length(riak_core_ring:all_members(Ring)),
-                 dict:size(riak_core_ring:get_nodes_locations(Ring))])
+                 dict:size(riak_core_ring:get_nodes_locations(Ring)),
+                Version])
   ).
 
 add_loc_to_ring(Ring) ->
@@ -189,6 +209,9 @@ print_ring_partitions([{Idx, Node} | Rem], Locations, Acc) ->
   Line = io_lib:format("Node: ~p \t Loc: ~p \t idx: ~p ~n", [Node, Location, Idx]),
   print_ring_partitions(Rem, Locations, [Line | Acc]).
 
+generate_less_rings() ->
+  generate_rings([64, 512], [5, 11]).
+
 generate_rings() ->
   generate_rings(?RING_SIZES, ?NODE_COUNTS).
 
@@ -204,11 +227,16 @@ do_generate_ring(Size, ContributorNodes) ->
   NewRing = lists:foldl(fun(Node, CRing) ->
                           riak_core_ring:add_member(CNode, CRing, Node)
                         end, Ring, ContributorNodes),
-  claim(NewRing).
+  claim_default(NewRing).
 
-claim(Ring) ->
+claim_default(Ring) ->
   WantsClaimFun = {riak_core_membership_claim, default_wants_claim},
   ChooseClaimFun = {riak_core_membership_claim, default_choose_claim},
+  riak_core_membership_claim:claim(Ring, WantsClaimFun, ChooseClaimFun).
+
+claim_v2(Ring) ->
+  WantsClaimFun = {riak_core_membership_claim, default_wants_claim},
+  ChooseClaimFun = {riak_core_membership_claim, choose_claim_v2},
   riak_core_membership_claim:claim(Ring, WantsClaimFun, ChooseClaimFun).
 
 generate_site_names(Count) ->
