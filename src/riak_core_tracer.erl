@@ -107,7 +107,7 @@ handle_call({filter, MFs, Filter}, _From, State) ->
 handle_call({collect, Duration, Nodes}, _From, State) ->
     cancel_timer(State#state.stop_tref),
     Tref = timer:send_after(Duration, collect_timeout),
-    dbg:stop_clear(),
+    dbg:stop(),
     dbg:tracer(process, {fun ({trace, _, call, {?MODULE, trigger_sentinel, _}}, Pid) ->
                                  gen_server:cast(Pid, stop_sentinel),
                                  Pid;
@@ -161,7 +161,7 @@ handle_call(stop, _From, State) ->
     {stop, normal, ok, State}.
 
 handle_cast(stop_sentinel, State) ->
-    dbg:stop_clear(),
+    dbg:stop(),
     case State#state.stop_from of
         undefined ->
             ok;
