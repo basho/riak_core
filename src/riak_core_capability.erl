@@ -133,6 +133,7 @@ register(Capability, Supported, Default, LegacyVar) ->
 register(Capability, Supported, Default) ->
     register(Capability, Supported, Default, undefined).
 
+            
 %% @doc Query the current negotiated mode for a given capability, throwing an
 %%      exception if the capability is unknown or the capability system is
 %%      unavailable.
